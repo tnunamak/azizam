@@ -418,15 +418,17 @@ class MeMediaRouterTests(unittest.TestCase):
             assets=[{"asset_id": asset_id} for asset_id in assets],
         ), path=self.jobs_db)
         expected = self.client.get("/me/api/media")
+        # The list reads the apps in one query and never asks per job or per asset.
         with patch.object(admin_store, "get_app", wraps=admin_store.get_app) as lookup:
             actual = self.client.get("/me/api/media")
             self.assertEqual(actual.status_code, 200, actual.text)
             self.assertEqual(actual.content, expected.content)
-            lookup.assert_called_once_with(self.app_a["id"], path=self.admin_db)
-        with patch.object(admin_store, "get_app", return_value={**self.app_a, "name": "Renamed"}) as lookup:
+            lookup.assert_not_called()
+        # Nothing is kept between requests: a renamed app shows at once.
+        renamed = [{**self.app_a, "name": "Renamed"}]
+        with patch.object(admin_store, "list_apps", return_value=renamed):
             refreshed = self.client.get("/me/api/media")
             self.assertTrue(all(item["source"]["label"] == "Renamed" for item in refreshed.json()["assets"]))
-            lookup.assert_called_once_with(self.app_a["id"], path=self.admin_db)
         self.current_user = self.bob
         self.assertEqual(self.client.get("/me/api/media").json()["assets"], [])
 

@@ -1,12 +1,9 @@
-import {
-  test,
-  expect,
-  type Page,
-  type APIRequestContext,
-} from "@playwright/test";
+import { type Page, type APIRequestContext } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import type { HomeSnapshot } from "../src/app/_home/home-api";
 import { readFile } from "node:fs/promises";
+import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
 
 test("the real seeded registry agrees on chat readiness across Home and Models", async ({
   page,
@@ -69,8 +66,7 @@ async function fixture(
     },
   ];
   await page.route("**/me/api/home", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         ...home,
         user,
         aliases,
@@ -159,14 +155,13 @@ async function fixture(
           counts: { total: 3, available: 1, affected: 2 },
         },
         receipts: [],
-      },
-    }),
+      }),
   );
   await page.route("**/admin/api/setup-progress", (route) =>
-    route.fulfill({ json: { complete: true, steps: [] } }),
+    fulfilJson(route, { complete: true, steps: [] }),
   );
-  await page.route("**/me/api/media?limit=50", (route) =>
-    route.fulfill({ json: { assets: [] } }),
+  await page.route("**/me/api/media?limit=12", (route) =>
+    fulfilJson(route, { assets: [] }),
   );
   return home;
 }
@@ -265,16 +260,14 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
   const checks: unknown[] = [];
   await page.route("**/me/api/connection-test", (route) => {
     checks.push(route.request().postDataJSON());
-    return route.fulfill({
-      json: {
+    return fulfilJson(route, {
         ok: true,
         latency_ms: 25,
         reason: "The selected key reached the gateway.",
         path: "/v1/models",
         model: null,
         request_id: null,
-      },
-    });
+      });
   });
   await page.goto("/");
   await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
@@ -339,8 +332,7 @@ test("Home recent media carries content while requests stay in receipts", async 
 }) => {
   const home = await fixture(page, request);
   await page.route("**/me/api/home", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         ...home,
         receipts: [
           {
@@ -350,12 +342,10 @@ test("Home recent media carries content while requests stay in receipts", async 
             status: "succeeded",
           },
         ],
-      },
-    }),
+      }),
   );
-  await page.route("**/me/api/media?limit=50", (route) =>
-    route.fulfill({
-      json: {
+  await page.route("**/me/api/media?limit=12", (route) =>
+    fulfilJson(route, {
         assets: [
           {
             asset_id: "polish-audio",
@@ -365,8 +355,7 @@ test("Home recent media carries content while requests stay in receipts", async 
             download_url: "/signed/polish-audio",
           },
         ],
-      },
-    }),
+      }),
   );
   await page.goto("/");
   await expect(
@@ -419,8 +408,7 @@ test("Home and Library render a frame from posterless video", async ({
     });
   });
   await page.route("**/me/api/media?**", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         assets: [
           {
             asset_id: "posterless-video",
@@ -437,11 +425,10 @@ test("Home and Library render a frame from posterless video", async ({
         ],
         models: ["local-video"],
         next_cursor: null,
-      },
-    }),
+      }),
   );
   await page.route("**/preview-test.mp4", (route) =>
-    route.fulfill({ body: videoBytes, contentType: "video/mp4" }),
+    fulfilBytes(route, { body: videoBytes, contentType: "video/mp4" }),
   );
 
   for (const route of ["home", "library"]) {
@@ -499,8 +486,7 @@ for (const width of [390, 1440]) {
     const imageUrl =
       "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Crect width='32' height='32' fill='teal'/%3E%3C/svg%3E";
     await page.route("**/me/api/media?**", (route) =>
-      route.fulfill({
-        json: {
+      fulfilJson(route, {
           assets: [
             {
               asset_id: "empty-prompt",
@@ -516,8 +502,7 @@ for (const width of [390, 1440]) {
             },
           ],
           has_more: false,
-        },
-      }),
+        }),
     );
     await page.goto("/");
     await expect(
@@ -546,8 +531,7 @@ test("Home failed images show a named unavailable preview", async ({
 }) => {
   await fixture(page, request);
   await page.route("**/me/api/media?**", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         assets: [
           {
             asset_id: "broken",
@@ -557,11 +541,10 @@ test("Home failed images show a named unavailable preview", async ({
           },
         ],
         has_more: false,
-      },
-    }),
+      }),
   );
   await page.route("**/azizam-home-broken.png", (route) =>
-    route.fulfill({ status: 404, body: "Unavailable" }),
+    fulfilBytes(route, { status: 404, body: "Unavailable" }),
   );
   await page.goto("/");
   await expect(

@@ -11,7 +11,7 @@ summary: Find, open, download and delete the pictures, videos and audio you made
 
 1. Open **Library**.
 2. Enter text in **Search your creations**. On a phone, select the search icon first.
-3. Use the kind choices to narrow the list. Select the filter icon to choose a model or a date range.
+3. Choose All, Images, Video or Audio to narrow the list. Select Filters to choose a Model or a Date: Any time, Last 7 days, Last 30 days or Last 90 days.
 
 If nothing matches, select **Clear filters**. A creation without a saved prompt is named by its type and time.
 
@@ -38,4 +38,4 @@ This removes the creation from your Library. Copies you downloaded stay where th
 
 ## When a file is unavailable
 
-Library lists creations whose file is missing separately. Select **Show them** to see these items, and **Refresh library** to check again. A creation with a missing file can still have a receipt.
+Library lists unavailable files separately. Select Show them to see these items, and Refresh library to check again. The message distinguishes files that are unavailable from files that are no longer stored. An unavailable creation can still have a receipt.

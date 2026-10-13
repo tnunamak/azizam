@@ -1,7 +1,7 @@
 # Agent instructions — Azizam
 
 This is a self-hosted, OpenAI-compatible gateway that fronts whatever local AI
-engines an operator runs (llama.cpp, vLLM, Ollama, TabbyAPI, ComfyUI, TTS/STT,
+engines an operator runs (llama.cpp, vLLM, Ollama, ComfyUI, TTS/STT,
 and whatever replaces them). Read this before doing engine-related work.
 
 **Restart rule:** restart the gateway only with `scripts/safe-restart` (`--llama` for llama-bee), never a bare `systemctl --user restart`. See `docs/ops/SAFE_RESTART.md`.
@@ -65,13 +65,13 @@ encoding per-engine fixes it must maintain.
 `tests/test_engine_knowledge_boundary.py` fails the build if new per-engine code
 appears in core (`if engine ==` / `if backend ==` branches with engine literals,
 `*<Engine>*Transform` classes, engine CLI flag literals like `--tool-call-parser`
-/ `--jinja`). proxy.py has no allowlist entries: the remaining reviewed engine
-literals (the kobold/tabby local-swap lifecycle set and similar properties) live
-in `gateway/engine_quarantine.py` as frozen migration debt, not operator data.
-The guard scans `proxy.py` and `gateway/**/*.py`, and freezes all eleven
-quarantine tables and their membership predicates: do not add IDs, tables or
-predicate behavior. Migrate each property to operator-owned configuration and
-delete its frozen entry with the consumer migration. The UI guard is a limited
+/ `--jinja`). proxy.py has no allowlist entries, and there is no quarantine module:
+behaviour that differs by backend is a field on the service record (lifecycle
+`driver_config`, `loaded_model_identity`, `aux`, `context_window_probe`).
+`gateway/engine_quarantine.py` stays deleted; the guard fails if it returns.
+A per-file ratchet (`tests/engine_knowledge_baseline.json`) counts every engine
+name in production Python and may only fall. The guard scans `proxy.py` and
+`gateway/**/*.py`. The UI guard is a limited
 syntactic check of known model/voice sinks and local bindings; catalog replacement
 component tests provide the behavioral backstop. Neither scanner proves full
 discovery provenance or replaces semantic review. The former engine-named
@@ -82,6 +82,14 @@ admin schema v5 preserves existing enabled local chat attachments once.
 the fix is to move the knowledge to data, not to add an allowlist entry.** Adding
 an allowlist entry requires an explicit, reviewed justification and is the
 exception, never the reflex.
+
+A second check, the ratchet, counts every engine name in all production Python
+(`proxy.py`, root modules, `gateway/**`): string literals anywhere, names,
+attributes and def/class names, not only `if` conditions. The per-file counts
+live in `tests/engine_knowledge_baseline.json`. A count may only fall: a rise or
+a new file fails the test, and a fall fails until you lower the baseline with
+`python tests/test_engine_knowledge_boundary.py --lower-baseline`. There is no
+allowlist; the target is an empty baseline.
 
 The full design and the four-bucket classification of every engine-touching
 item live in `docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md`. Read it before adding

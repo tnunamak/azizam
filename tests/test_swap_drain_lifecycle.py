@@ -83,6 +83,17 @@ async def _settle() -> None:
         await asyncio.sleep(0)
 
 
+async def _until(condition: Any) -> None:
+    """Wait for `condition()` to hold, yielding to the loop between checks.
+
+    `_settle` yields a fixed number of times, which cannot cover work that hops
+    through a worker thread (the outer hop's availability check): that work
+    finishes on the thread's schedule, not the loop's. Poll the state the test
+    asserts on, inside the scenario's own 10 s deadline from `_run`."""
+    while not condition():
+        await asyncio.sleep(0)
+
+
 # ---------------------------------------------------------------------------
 # Kill mid-request: the bug, and the fix
 # ---------------------------------------------------------------------------
@@ -171,8 +182,7 @@ def test_outer_and_inner_ensure_target_interleave_without_deadlock(engine) -> No
         # arrives while B owns the lock.
         engine.restart_gate = asyncio.Event()
         b_outer = asyncio.create_task(_outer_hop("p-b"))
-        await _settle()
-        assert proxy.swap_lock_for(BACKEND).locked()
+        await _until(proxy.swap_lock_for(BACKEND).locked)
         assert proxy._swap_drain.in_flight(BACKEND) == 0, "A is not counted between hops"
 
         # A, inner hop: blocks on the lock, holding no lease.

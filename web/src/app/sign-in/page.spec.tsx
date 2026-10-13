@@ -263,3 +263,25 @@ it("renders provider text through React escaping", async () => {
   expect(provider.querySelector("img")).toBeNull();
   expect(provider).toHaveTextContent(options.oidc_label);
 });
+
+it("shows a labelled email and password form for a password sign-in, with no recovery disclosure", async () => {
+  mount();
+  expect(await screen.findByLabelText("Email")).toBeVisible();
+  expect(screen.getByLabelText("Password")).toHaveAttribute(
+    "autocomplete",
+    "current-password",
+  );
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeVisible();
+  expect(screen.queryByText("Recovery and advanced setup")).toBeNull();
+});
+it("keeps one heading and no form when options fail to load", async () => {
+  vi.mocked(fetch).mockRejectedValue(new Error("Offline"));
+  mount();
+  expect(
+    await screen.findByRole("button", { name: "Try again" }),
+  ).toBeVisible();
+  expect(screen.getAllByRole("heading")).toHaveLength(1);
+  expect(screen.queryByRole("form")).toBeNull();
+  expect(screen.queryByLabelText("Email")).toBeNull();
+  expect(screen.queryByText("Recovery and advanced setup")).toBeNull();
+});

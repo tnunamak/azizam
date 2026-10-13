@@ -514,7 +514,7 @@ def test_capture_isolation_restarts_before_each_try_and_checks_state_identity():
     )[0]
     steps = [
         "await stopServer();",
-        "await rm(manifestPath, { force: true });",
+        "await removeIfPresent(rm, manifestPath);",
         "server = startServer();",
         "const seed = await readySeed();",
         "await newContext(seed,",

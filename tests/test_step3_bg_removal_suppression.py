@@ -44,7 +44,7 @@ class TestBackgroundRemovalOutboundPayload:
         fake = fake_upstreams.asgi(load_scenario("openai-compatible/json-decision", model="bg-decider-model"), host="bg.fk.test")
 
         async def active_backend() -> str:
-            return "tabby"
+            return "kobold"
 
         async def model_for_host(_host: str) -> str:
             return "bg-decider-model"
@@ -52,7 +52,7 @@ class TestBackgroundRemovalOutboundPayload:
         auth = proxy.AuthContext(identity=auth_identity(name="p", key_hash="sha256:p"))
         with patch.object(proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", True), \
              patch.object(proxy, "get_active_backend", active_backend), \
-             patch.dict(proxy.LLM_BACKEND_HOSTS, {"tabby": fake.base_url}), \
+             patch.dict(proxy.LLM_BACKEND_HOSTS, {"kobold": fake.base_url}), \
              patch.object(proxy, "effective_llm_model_for_host", model_for_host):
             decision = asyncio.run(proxy.decide_image_background_removal(prompt, auth_context=auth))
 
@@ -88,3 +88,33 @@ class TestBackgroundRemovalOutboundPayload:
         assert payload["temperature"] == 0
         assert payload["max_tokens"] == 160
         assert payload["response_format"] == {"type": "json_object"}
+
+
+class TestBackgroundRemovalGateIsLifecycleData:
+    """The active backend qualifies by its swap lifecycle driver, never by its id."""
+
+    def _decide(self, base_url: str, service_id: str, lifecycle: dict) -> "proxy.ImageBackgroundRemovalDecision":
+        async def active_backend() -> str:
+            return service_id
+
+        async def model_for_host(_host: str) -> str:
+            return "bg-decider-model"
+
+        auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="p", key_hash="sha256:p"))
+        backends = {**proxy.config.get("backends", {}), service_id: {"lifecycle": lifecycle}}
+        with patch.object(proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", True), \
+             patch.object(proxy, "get_active_backend", active_backend), \
+             patch.dict(proxy.config, {"backends": backends}), \
+             patch.dict(proxy.LLM_BACKEND_HOSTS, {service_id: base_url}), \
+             patch.object(proxy, "effective_llm_model_for_host", model_for_host):
+            return asyncio.run(proxy.decide_image_background_removal("A logo", auth_context=auth))
+
+    def test_new_service_id_with_a_swap_driver_is_asked(self, fake_upstreams) -> None:
+        fake = fake_upstreams.asgi(load_scenario("openai-compatible/json-decision", model="bg-decider-model"), host="bg2.fk.test")
+        decision = self._decide(fake.base_url, "brand-new-llm", {"driver": "systemd", "driver_config": {"unit": "x.service"}})
+        assert (decision.remove_background, decision.source) == (True, "llm")
+
+    def test_a_service_without_a_swap_driver_is_not_asked_whatever_its_id(self) -> None:
+        # No upstream exists: a request to this address would fail as "llm_error".
+        decision = self._decide("http://127.0.0.1:9", "kobold", {"driver": "external"})
+        assert decision.source == "llm_unavailable"

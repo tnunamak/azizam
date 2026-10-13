@@ -29,6 +29,17 @@ were still stored.
   ci-local then keeps it, prints its path and records it in
   `~/.tmp/azizam-ci-local.kept`; the next failed run deletes it. A run
   directory left by a killed `ci-local` is deleted by the next run.
+- At the start of each run, receipts are pruned (`scripts/ci/prune_receipts.py`):
+  the newest 20 runs, and any run with a signoff receipt from the last 7 days,
+  keep everything. Older runs keep only `run.tsv`, `PASS`, `FAIL` and
+  `signoff-*.tsv`.
+- Every test harness deletes its own scratch directory when it ends (trap on
+  EXIT, HUP, INT and TERM). A SIGKILL runs no trap, so each directory holds a
+  `.scratch-owner` marker (`<pid>-<start time>`) and the next start of that
+  harness deletes the directories whose owner is dead
+  (`scripts/lib/scratch.sh`, `scripts/scratch_owner.py`). A new harness that
+  makes a scratch directory must use one of them. Fixture gateways and copies
+  of owner data must never outlive the run.
 - Only one `ci-local` runs at a time on the host: it holds
   `flock ~/.tmp/azizam-ci.lock` for the whole run, and a second run waits
   (the lock file names the last `ci-local` that held it). Every job inherits
@@ -51,11 +62,15 @@ same order, so `scripts/ci-local --force --order-seed N` reproduces a failure.
   only on the seed and the node IDs, so every xdist worker collects the same
   list (xdist aborts the run when two workers' ordered lists differ).
 - vitest: `--sequence.shuffle --sequence.seed N`.
-- Playwright: the lane plan stays the legacy grouping (`plan_shards.py` without
-  a seed), so no stateful spec meets new neighbors before it is isolated
-  (TEST_STRATEGY.md 7, T0 item 1). `plan_shards.py plan` accepts a seed for the
-  last BI2 batch to turn on: it then places each spec file on a seeded choice
-  among the lanes within half the file's estimate of the least-loaded lane.
+- Playwright: the main run is one invocation. Parallel workers take tests in
+  the order Playwright assigns; every test gets its own namespace (the
+  `isolated` fixture, `web/e2e/fixtures/isolation.ts`), so a neighbor cannot
+  change its data. Tests that write owner-wide settings carry `@global-state`
+  and run serially on a second server. `--order-seed` does not reorder browser
+  tests; it only goes into the namespace text (`UI_E2E_RUN_ID`). The browser
+  tier's protection against bad neighbors is the data isolation above, which
+  `scripts/e2e/prove-isolation` checks with four copies of each isolated case on
+  four workers.
 
 ## Case receipts and policy
 
@@ -111,6 +126,14 @@ while a gate waits (`~/.tmp/azizam-ci.gate-waiting`). The units
 `docs/ops/azizam-test-nightly.{service,timer}` run it at 04:00 local; the
 owner enables them.
 
+The third task, `perf`, runs `scripts/perf/run.py` on a read-only copy of the live
+databases (ports 18520-18521): every GET route and every page against
+`scripts/perf/budgets.toml`. It lists no test files; over budget is FAIL and opens
+or updates the open GitHub issue labelled `perf-red`. That label does not block
+signoff. The gate holds the counts (SQLite statements and processes per request at
+two data sizes) in `tests/test_route_work_budget.py` and `tests/test_work_budget.py`.
+To investigate: `scripts/perf/README.md`.
+
 ## Signoff
 
 `scripts/ci-local --force --signoff --target main [--closes-nightly-red N]`
@@ -159,51 +182,68 @@ interrupted run, lock waiting, and a killed controller.
   in-flight requests on any host network change (`net::ERR_NETWORK_CHANGED`),
   so the browser lanes start only after Compose finishes. The native
   fresh-instance journey runs beside the lanes; it needs no Docker network.
-- `--shards N` (default `10`) main Playwright lanes run in parallel with the
-  live-data and household lanes. `scripts/e2e/plan_shards.py` assigns whole
-  spec files to lanes by the measured times in `web/e2e/shard-weights.tsv`
-  (longest first, to the least-loaded lane) and fails unless every listed
-  file is in exactly one lane. Each lane runs its list with `--test-list`.
-  `--shard i/N` splits by test count: with 12 lanes one lane ran 414 s and
-  another 18 s. Workers remain `1` within each fixture and each file keeps its
-  test order. Regenerate the weights after large spec changes with
-  `scripts/e2e/plan_shards.py weights <receipts>/logs/e2e-shard-*.log`; stale
-  weights change balance only, never coverage.
-- `--port BASE` defaults to `18640`. Main lane `i` uses `BASE + 10*i`
-  (i starts at 1); live-data and household use the next two lanes. Each lane
-  reserves gateway +0, fake engine +1 and strict-engine candidates +2 through +9.
-  The entire allocation must fit within 18000–18998 or the command fails early.
-  The fresh-instance journeys take the first free ports from 18000 upward.
-- Each browser lane has its own port-named worktree, state root, results,
-  screenshots and auth files. It receives an isolated copy of the completed web
-  directory (copy-on-write on supporting filesystems), and shares only the
-  completed, read-only browser Python environment. No npm install or build runs
-  concurrently against that directory. Legacy live-data auth/manifest names stay
-  compatible because their containing worktree is private to that lane.
+- `--browser-workers N` (default `10`) and `--browser-servers N` (default `2`)
+  size the main run. It is one `playwright test` invocation with up to five
+  servers: the parallel pool (project `chromium`, N workers spread over the
+  pool's servers by worker index) on ports `BASE+10`, `BASE+50`, `BASE+60`,
+  and two serial `@global-state` projects, each with one worker and a server of
+  its own (`chromium-global-state` on `BASE+20`, `chromium-global-state-2` on
+  `BASE+70`). The 33 cases write owner-wide settings, services, profiles,
+  categories or providers. `SECOND_GLOBAL_FILES` in `web/playwright.config.ts`
+  names the files that run on the second server (23 cases); any other file,
+  including a new one, runs on the first. The two projects are listed before
+  `chromium`, so they start with the pool and run beside it. The live-data
+  (`BASE+30`) and household (`BASE+40`) runs start at the same time. One
+  gateway is one Python process: with 6 or 10 workers on a single gateway the
+  run took 930-1000 s and failed on timeouts. Each server is one gateway and one
+  fake engine for its workers.
+  The cases of one file run in parallel in `chromium` (`fullyParallel`). A file
+  whose cases must stay in order or in one worker says so with
+  `test.describe.configure({ mode: "default" })`. The Try files do: Try mints one
+  key per sign-in and revokes the session's older Try keys, so two Try cases on
+  one server at once fail with "Invalid API key".
+  Per-test data comes from the `isolated` fixture: a namespaced
+  member, app, key and request log created through the admin API. Teardown
+  fails a test that leaves queued or running jobs, open fake-engine requests,
+  or a changed owner-wide setting it did not tag `@global-state`. The fixture
+  snapshots seven owner-wide settings before each test and restores them after.
+  `scripts/ci/policy.py` fails a gated spec that takes `test` from `@playwright/test`
+  instead of `./fixtures/isolation`.
+- `--port BASE` defaults to `18640`. Each server reserves gateway +0, fake
+  engine +1 and strict-engine candidates +2 through +9. The entire allocation
+  must fit within 18000–18998 or the command fails early. The fresh-instance
+  journeys take the first free ports from 18000 upward.
+- The browser steps share one completed web directory, read-only: no per-lane
+  copies and no npm install or build while they run. The runner writes
+  (`test-results`, auth files, screenshots, reports) go to the run directory;
+  `web/test-results` is a symlink to it. The step `e2e-tree-unchanged` fails
+  the run if any other file in `web/` changed.
 - Every step writes a private receipt and log. The parent waits for every job,
   aggregates receipts, rejects missing/nonzero/skipped steps, and retains all
-  failing-run browser evidence by port. Interrupts terminate job process groups
-  before worktrees are removed. `setsid` and GNU-compatible `cp --reflink` are
-  required. Extra worktrees and copied dependencies need additional disk space.
+  failing-run browser evidence. Interrupts terminate job process groups
+  before worktrees are removed. `setsid` is required.
 
 ## Duration
 
-Measured on 2026-10-11 (24 cores; other agents kept the load average at
-10-30). Seconds per step; steps overlap, so the total is the wall clock.
+Browser tier on one host at the same priority (nice 19, idle I/O), measured on
+2026-10-12 with a transient systemd scope: wall seconds, CPU seconds from the
+scope's cgroup `cpu.stat`, 735 case rows, load average at start and end. The
+host was shared with other agents (load 13-40).
 
-| Step | Before (4 shards, serial Python) | After (10 lanes, 12 workers) |
-|---|---|---|
-| python-hermetic | 2032 | 262-368 |
-| e2e main lanes (slowest) | 523 | 279-307 |
-| e2e-household | 97 | 152-170 |
-| fresh-compose | 66 (after the lanes) | 48-145 (before the lanes) |
-| web-check | 50 | 66-71 |
-| **Total** | **2032 (33 min 52 s)** | **421-488** |
+| Layout | Wall | CPU | Cases / first-try failures | Gateway+engine pairs |
+|---|---|---|---|---|
+| before: 10 shard lanes + live-data + household, copies of `web/` | 342 s | 3,321 | 735 / 0 | 12 |
+| after: 1 pool server, 6 workers | 999 s | 3,736 | 735 / 4 | 4 |
+| after: 1 pool server, 10 workers | 931 s | 4,879 | 735 / 3 | 4 |
+| after: 3 pool servers, 9 workers | 480 s | 3,033 | 735 / 0 | 6 |
+| VT moves to vitest (426 cases), same layout | 411 s | 2,125 | 426 / 0 | 6 |
+| global-state beside the pool on two servers, parallel cases per file, 2 pool servers, 10 workers (default), mean of 3 | 204 s | 1,779 | 426 / 0 | 6 |
 
-The Python suite alone takes 159 s with 20 workers and 216 s with 12. In
-the gate it finishes before the slowest browser lane, which ends the run, and
-all jobs share the CPU, so more workers would only add contention. The lanes
-start after Compose, whose time varies with Docker's build cache.
+Wall seconds stay noisy while other agents use the host (load 15-31 here). The
+two serial `@global-state` projects each run about 115 s of test time; the pool
+ends at about the same time. The tail now is `try.spec.ts`: its cases share the
+lane's Try key and run one after another, and the file sorts last. The rest of
+the gate (Python tier) is unchanged.
 
 ## Priority
 

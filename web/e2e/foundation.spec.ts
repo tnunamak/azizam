@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 
 const routes = [
@@ -23,9 +23,28 @@ const routes = [
   ["redoc", "/redoc"],
 ] as const;
 
-for (const theme of ["light", "dark"] as const) {
-  for (const width of [1440, 390]) {
+// Every route renders against the real gateway in the light desktop theme.
+// The dark phone pass covers the data-bearing app routes only: theme tokens
+// and 390 px geometry are one concept, not one concept per route.
+const darkPhoneRoutes = new Set([
+  "home",
+  "models",
+  "try",
+  "library",
+  "usage",
+  "apps",
+  "activity",
+  "settings",
+]);
+const passes = [
+  { theme: "light", width: 1440, only: null },
+  { theme: "dark", width: 390, only: darkPhoneRoutes },
+] as const;
+
+for (const { theme, width, only } of passes) {
+  {
     for (const [name, route] of routes) {
+      if (only && !only.has(name)) continue;
       test(`${name}: ${theme} at ${width}px`, async ({ page }) => {
         await page.setViewportSize({
           width,
@@ -75,6 +94,9 @@ for (const theme of ["light", "dark"] as const) {
             .toBe("1");
         }
         if (name !== "design") {
+          // A page that is still loading is not the page to scan: axe would
+          // read the placeholders. Every loading state sets aria-busy.
+          await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
           // Design examples intentionally show error states; axe still checks them.
           await expect(
             page
@@ -82,12 +104,15 @@ for (const theme of ["light", "dark"] as const) {
               .filter({ hasText: /could not|failed to|unable to/i }),
           ).toHaveCount(0);
         }
-        expect(
-          await page.evaluate(
-            () => document.documentElement.scrollWidth <= window.innerWidth,
-          ),
-          "Page must fit the viewport",
-        ).toBe(true);
+        await expect
+          .poll(
+            () =>
+              page.evaluate(
+                () => document.documentElement.scrollWidth <= window.innerWidth,
+              ),
+            { message: "Page must fit the viewport" },
+          )
+          .toBe(true);
         if (name === "status") {
           // D1: Refresh is a header action; the menu keeps Technical details.
           const refresh = page.getByRole("button", {

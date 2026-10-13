@@ -12,13 +12,10 @@ Send your app key as `x-api-key` or as a bearer token. Set the environment varia
 ## Messages with curl
 
 ```sh
-curl --fail-with-body -sS "$AZIZAM_BASE_URL/anthropic/v1/messages" \
-  -H "x-api-key: $AZIZAM_API_KEY" \
-  -H 'Content-Type: application/json' \
-  --data @- <<EOF
-{"model": "$AZIZAM_MODEL", "max_tokens": 256,
- "messages": [{"role": "user", "content": "Say hello in one sentence."}]}
-EOF
+python3 - <<'PY' | curl --fail-with-body -sS "$AZIZAM_BASE_URL/anthropic/v1/messages" -H "x-api-key: $AZIZAM_API_KEY" -H 'Content-Type: application/json' --data-binary @-
+import json, os
+print(json.dumps({"model": os.environ["AZIZAM_MODEL"], "max_tokens": 256, "messages": [{"role": "user", "content": "Say hello in one sentence."}]}))
+PY
 ```
 
 ## Messages with Python

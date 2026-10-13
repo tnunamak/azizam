@@ -225,7 +225,7 @@ class _NativePassthroughResponse:
     headers = {
         "content-type": "application/json",
         "content-length": "17",
-        "x-tabby-native": "1",
+        "x-native-marker": "1",
     }
     content = b'{"native": true}'
 
@@ -734,7 +734,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
         ), patch.object(
-            proxy, "_kobold_context_window", AsyncMock(return_value=8192)
+            proxy, "_probed_context_window", AsyncMock(return_value=8192)
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)
 
@@ -752,7 +752,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
         ), patch.object(
-            proxy, "_kobold_context_window", AsyncMock(return_value=8192)
+            proxy, "_probed_context_window", AsyncMock(return_value=8192)
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)
 
@@ -781,9 +781,9 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
-            proxy, "currently_loaded_kobold_model", lambda: loaded_path
+            proxy, "currently_loaded_model", lambda _backend: loaded_path
         ), patch.object(
-            proxy, "_kobold_context_window", AsyncMock(return_value=8192)
+            proxy, "_probed_context_window", AsyncMock(return_value=8192)
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)
 
@@ -797,7 +797,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
-            proxy, "currently_loaded_kobold_model", lambda: loaded_path
+            proxy, "currently_loaded_model", lambda _backend: loaded_path
         ):
             denied = self.client.post(
                 "/v1/chat/completions",
@@ -817,7 +817,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
         with authenticated_profile(current_loaded), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
-        ), patch.object(proxy, "currently_loaded_kobold_model", lambda: None):
+        ), patch.object(proxy, "currently_loaded_model", lambda _backend: None):
             response = self.client.post(
                 "/v1/embeddings",
                 headers=AUTH_HEADERS,
@@ -874,7 +874,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
-            proxy, "currently_loaded_kobold_model", lambda: loaded_path
+            proxy, "currently_loaded_model", lambda _backend: loaded_path
         ), patch.object(
             proxy, "send_llm_execution_request", forbidden_send
         ):
@@ -998,7 +998,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
-            proxy, "kobold_has_mmproj", return_value=True
+            proxy, "loaded_aux_present", return_value=True
         ), patch.object(
             proxy, "ensure_target", AsyncMock(return_value=True)
         ) as ensure_target, patch.object(
@@ -1092,7 +1092,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             response = self.client.get(path)
             self.assertEqual(response.status_code, 401, f"{path} should require auth")
 
-    def test_provider_native_tabby_requires_native_passthrough_policy(self) -> None:
+    def test_provider_native_kobold_requires_native_passthrough_policy(self) -> None:
         profile = plan_for("native-disabled", caps=())
         blocked = AssertionError("native backend should not be called")
 
@@ -1102,30 +1102,39 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             side_effect=blocked,
         ), patch.object(proxy.receipt_store, "record", return_value="req_test"):
             response = self.client.get(
-                "/gateway/v1/providers/tabby/v1/models",
+                "/gateway/v1/providers/kobold/v1/models",
                 headers=AUTH_HEADERS,
             )
 
         self.assertEqual(response.status_code, 403, response.text)
         self.assertEqual(response.json()["error"]["code"], "not_in_access_plan")
-        self.assertIn("Direct engine access to tabby isn't in your access plan", response.json()["error"]["message"])
+        self.assertIn("Direct engine access to kobold isn't in your access plan", response.json()["error"]["message"])
 
-    def test_provider_native_tabby_forwards_with_downstream_auth_only(self) -> None:
-        profile = plan_for("tabby-native", caps=(), engines=['tabby'], operations=['v1/models'])
+    def test_provider_native_kobold_forwards_with_downstream_auth_only(self) -> None:
+        profile = plan_for("kobold-native", caps=(), engines=['kobold'], operations=['v1/models'])
         downstream = {
-            "tabby": {
-                "api_key": "tabby-api-key",
-                "admin_key": "tabby-admin-key",
+            "kobold": {
+                "api_key": "kobold-api-key",
+                "admin_key": "kobold-admin-key",
             }
         }
 
-        with authenticated_profile(profile, downstream=downstream), patch.object(
+        # Downstream auth is operator data on the service record: the admin key
+        # for model-list paths, the api key otherwise.
+        inject = [
+            {"paths": ["/v1/models"], "header": "x-admin-key",
+             "secret": "admin_key", "secret_env": "FIXTURE_ADMIN_KEY"},
+            {"header": "x-api-key", "secret": "api_key", "secret_env": "FIXTURE_API_KEY"},
+        ]
+        with authenticated_profile(profile, downstream=downstream), patch.dict(
+            proxy.config["backends"]["kobold"], {"auth_inject": inject},
+        ), patch.object(
             proxy.httpx,
             "AsyncClient",
             _CaptureNativePassthroughClient,
         ), patch.object(proxy.receipt_store, "record", return_value="req_test"):
             response = self.client.get(
-                "/gateway/v1/providers/tabby/v1/models?limit=1&api_key=caller-query&API_KEY=second-query",
+                "/gateway/v1/providers/kobold/v1/models?limit=1&api_key=caller-query&API_KEY=second-query",
                 headers={
                     **AUTH_HEADERS,
                     "X-Api-Key": "caller-secret",
@@ -1140,7 +1149,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.json(), {"native": True})
         self.assertEqual(
             _CaptureNativePassthroughClient.calls[0]["url"],
-            f"{proxy.TABBY_HOST}/v1/models?limit=1",
+            f"{proxy.KOBOLD_HOST}/v1/models?limit=1",
         )
         forwarded_headers = {
             key.lower(): value
@@ -1150,13 +1159,12 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         }
         self.assertNotIn("authorization", forwarded_headers)
         self.assertNotEqual(forwarded_headers.get("x-api-key"), "caller-secret")
-        self.assertEqual(forwarded_headers["x-admin-key"], "tabby-admin-key")
+        self.assertEqual(forwarded_headers["x-admin-key"], "kobold-admin-key")
         for name in ("x-request-id", "cookie", "x-csrf-token", "x-azizam-internal-forward"):
             self.assertNotIn(name, forwarded_headers)
-        self.assertEqual(response.headers["x-tabby-native"], "1")
+        self.assertEqual(response.headers["x-native-marker"], "1")
 
     def test_provider_native_targets_include_configured_local_backends(self) -> None:
-        self.assertIn("tabby", proxy._PROVIDER_NATIVE_TARGETS)
         self.assertIn("kobold", proxy._PROVIDER_NATIVE_TARGETS)
         self.assertIn("tts", proxy._PROVIDER_NATIVE_TARGETS)
         self.assertIn("stt", proxy._PROVIDER_NATIVE_TARGETS)
@@ -1178,7 +1186,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(body["object"], "list")
         by_id = {row["id"]: row for row in body["data"]}
         self.assertIn("comfyui", by_id)
-        self.assertNotIn("tabby", by_id)
+        self.assertNotIn("kobold", by_id)
         self.assertNotIn("allowed", by_id["comfyui"])
         self.assertEqual(
             by_id["comfyui"]["policy"]["native_passthrough"],
@@ -1208,7 +1216,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
         with authenticated_profile(profile):
             response = self.client.get(
-                "/gateway/v1/providers/tabby",
+                "/gateway/v1/providers/kobold",
                 headers=AUTH_HEADERS,
             )
 
@@ -1219,7 +1227,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         profile = plan_for("native-detail", caps=(), engines='all', operations=['*'])
         blocked = AssertionError("metadata route should not call native backend")
 
-        downstream = {"tabby": {"api_key_env": "TABBY_API_KEY", "admin_key": "secret"}}
+        downstream = {"kobold": {"api_key_env": "KOBOLD_API_KEY", "admin_key": "secret"}}
 
         with authenticated_profile(profile, downstream=downstream), patch.object(
             proxy.httpx,
@@ -1227,25 +1235,25 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             side_effect=blocked,
         ):
             response = self.client.get(
-                "/gateway/v1/providers/tabby",
+                "/gateway/v1/providers/kobold",
                 headers=AUTH_HEADERS,
             )
 
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
-        self.assertEqual(body["id"], "tabby")
+        self.assertEqual(body["id"], "kobold")
         self.assertEqual(
             body["policy"]["native_passthrough"],
             {
                 "enabled": True,
                 "denied": False,
-                "allowed_backends": ["tabby"],
+                "allowed_backends": ["kobold"],
                 "allowed_operations_by_plan": {"native-detail": ["*"]},
                 "audit": True,
             },
         )
         self.assertEqual(body["auth"]["required"], "gateway_api_key")
-        self.assertEqual(body["auth"]["downstream_service"], "tabby")
+        self.assertEqual(body["auth"]["downstream_service"], "kobold")
         self.assertEqual(
             body["auth"]["downstream_auth_classes"],
             ["admin_key", "api_key"],
@@ -1306,7 +1314,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertNotIn("x-request-id", forwarded_headers)
 
     def test_provider_native_preserves_streaming_response_shape(self) -> None:
-        profile = plan_for("tabby-native-stream", caps=(), engines=['tabby'], operations=['POST /v1/chat/completions'])
+        profile = plan_for("kobold-native-stream", caps=(), engines=['kobold'], operations=['POST /v1/chat/completions'])
         _CaptureNativePassthroughClient.response = _NativeStreamingResponse([
             b'{"message":"hel"}\n',
             b'{"message":"lo","done":true}\n',
@@ -1318,7 +1326,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             _CaptureNativePassthroughClient,
         ), patch.object(proxy.receipt_store, "record", return_value="req_test"):
             response = self.client.post(
-                "/gateway/v1/providers/tabby/v1/chat/completions",
+                "/gateway/v1/providers/kobold/v1/chat/completions",
                 headers=AUTH_HEADERS,
                 json={"stream": True, "messages": []},
             )
@@ -1331,8 +1339,8 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         )
         self.assertNotIn("transfer-encoding", response.headers)
 
-    def test_provider_native_tabby_operation_allowlist_denies_before_backend(self) -> None:
-        profile = plan_for("tabby-native", caps=(), engines=['tabby'], operations=['v1/models'])
+    def test_provider_native_kobold_operation_allowlist_denies_before_backend(self) -> None:
+        profile = plan_for("kobold-native", caps=(), engines=['kobold'], operations=['v1/models'])
         blocked = AssertionError("native backend should not be called")
 
         with authenticated_profile(profile), patch.object(
@@ -1341,7 +1349,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             side_effect=blocked,
         ), patch.object(proxy.receipt_store, "record", return_value="req_test"):
             response = self.client.post(
-                "/gateway/v1/providers/tabby/v1/model/load",
+                "/gateway/v1/providers/kobold/v1/model/load",
                 headers=AUTH_HEADERS,
                 json={"model": "unsafe"},
             )

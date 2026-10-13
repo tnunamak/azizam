@@ -117,6 +117,7 @@ def test_queued_route_stores_no_prompt_and_completed_asset_has_none(household, m
         proxy.media_delivery._CONTEXT.set(None)
     assert b"queued route private sentinel" not in b"".join(p.read_bytes() for p in hh.root.rglob("*") if p.is_file())
     proxy._EPHEMERAL_MEDIA_JOB_PAYLOADS.clear()
+    proxy._EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES.clear()
     assert proxy._load_image_media_job_payload(job_id) is None, "forgotten jobs cannot resume after restart"
 
 

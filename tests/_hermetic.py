@@ -8,6 +8,7 @@ created in this process remain usable by fake-backend and raw-ASGI tests.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import socket
 import sys
@@ -40,6 +41,21 @@ _FORBIDDEN_COMMANDS = frozenset(
 
 def _current_test() -> str:
     return os.environ.get("PYTEST_CURRENT_TEST", "pytest collection")
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True for an address that stays inside this namespace.  A listener bound
+    to a wildcard answers on every local address, but a test connecting to a
+    non-loopback address through that port is reaching for the outside."""
+    if host == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False
+    if address.version == 6 and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return address.is_loopback or address.is_unspecified
 
 
 def _destination(address: Any) -> str:
@@ -107,8 +123,8 @@ class HermeticGuard:
         if family in _INET_FAMILIES and isinstance(address, tuple) and len(address) >= 2:
             host, port = str(address[0]), address[1]
             allowed = (family, host, port) in self._allowed_tcp
-            allowed = allowed or (family, "0.0.0.0", port) in self._allowed_tcp
-            allowed = allowed or (family, "::", port) in self._allowed_tcp
+            wildcard = (family, "0.0.0.0", port) in self._allowed_tcp or (family, "::", port) in self._allowed_tcp
+            allowed = allowed or (wildcard and _is_loopback_host(host))
             if allowed:
                 return
         elif family == socket.AF_UNIX and isinstance(address, (str, bytes)):

@@ -1,0 +1,40 @@
+{
+  "_doc": "Synthetic request sets for scripts/record-upstream: the shortest request that exercises each protocol path. Committed and reviewed; no real prompt or upload is ever recorded. {{model}} is filled from the operator's canaries.toml. A set's hash goes into every transcript's provenance, so editing a set marks its transcripts stale.",
+  "openai-compatible": {
+    "chat-text": {"feature": "text", "steps": [
+      {"method": "POST", "path": "/v1/chat/completions", "stream": false,
+       "json": {"model": "{{model}}", "messages": [{"role": "user", "content": "Say hi."}], "max_tokens": 8, "temperature": 0}}]},
+    "chat-stream": {"feature": "stream", "steps": [
+      {"method": "POST", "path": "/v1/chat/completions", "stream": true,
+       "json": {"model": "{{model}}", "messages": [{"role": "user", "content": "Say hi."}], "max_tokens": 8, "temperature": 0, "stream": true, "stream_options": {"include_usage": true}}}]},
+    "embeddings": {"feature": "embeddings", "steps": [
+      {"method": "POST", "path": "/v1/embeddings", "stream": false,
+       "json": {"model": "{{model}}", "input": "hi"}}]}
+  },
+  "anthropic": {
+    "messages-text": {"feature": "text", "steps": [
+      {"method": "POST", "path": "/v1/messages", "stream": false, "headers": {"anthropic-version": "2023-06-01"},
+       "json": {"model": "{{model}}", "max_tokens": 8, "messages": [{"role": "user", "content": "Say hi."}]}}]},
+    "messages-stream": {"feature": "stream", "steps": [
+      {"method": "POST", "path": "/v1/messages", "stream": true, "headers": {"anthropic-version": "2023-06-01"},
+       "json": {"model": "{{model}}", "max_tokens": 8, "stream": true, "messages": [{"role": "user", "content": "Say hi."}]}}]}
+  },
+  "ollama": {
+    "chat-text": {"feature": "text", "steps": [
+      {"method": "POST", "path": "/api/chat", "stream": false,
+       "json": {"model": "{{model}}", "stream": false, "options": {"num_predict": 8, "temperature": 0}, "messages": [{"role": "user", "content": "Say hi."}]}}]},
+    "chat-stream": {"feature": "stream", "steps": [
+      {"method": "POST", "path": "/api/chat", "stream": true,
+       "json": {"model": "{{model}}", "stream": true, "options": {"num_predict": 8, "temperature": 0}, "messages": [{"role": "user", "content": "Say hi."}]}}]},
+    "generate-text": {"feature": "text", "steps": [
+      {"method": "POST", "path": "/api/generate", "stream": false,
+       "json": {"model": "{{model}}", "stream": false, "prompt": "Say hi.", "options": {"num_predict": 8, "temperature": 0}}}]},
+    "embed": {"feature": "embeddings", "steps": [
+      {"method": "POST", "path": "/api/embed", "stream": false,
+       "json": {"model": "{{model}}", "input": "hi"}}]}
+  },
+  "comfyui": {
+    "observe": {"feature": "observe", "steps": [
+      {"method": "GET", "path": "/queue", "stream": false}]}
+  }
+}

@@ -1,6 +1,13 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { mkdir } from "node:fs/promises";
+import { fulfilJson } from "./fixtures/intercept";
+
+
+// Try mints one key per sign-in and revokes the session's older Try keys
+// (gateway/user_runtime.py ensure_try_session_key). Cases that open Try share the
+// lane's sign-in, so the cases of this file stay in one worker, one after another.
+test.describe.configure({ mode: "default" });
 
 const png =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
@@ -9,7 +16,7 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
   page,
 }) => {
   test.setTimeout(120_000);
-  await mkdir("/home/tnunamak/.tmp/longjobs-shots", { recursive: true });
+  await mkdir("test-results/screens/longjobs", { recursive: true });
   let started = false;
   let finished = false;
   let renewals = 0;
@@ -37,38 +44,34 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
       expect(params.get("watch")).toBe("1");
       const polledAt = Math.floor(Date.now() / 1000);
       polls.push({ since: params.get("since"), polledAt });
-      return route.fulfill({
-        json: {
+      return fulfilJson(route, {
           jobs: started ? [job()] : [],
           next_cursor: null,
           polled_at: polledAt,
-        },
-      });
+        });
     },
   );
   await page.route("**/gateway/v1/media/jobs/image-generations", (route) => {
     started = true;
-    return route.fulfill({ status: 202, json: { ...job(), id: "mj_long" } });
+    return fulfilJson(route, { ...job(), id: "mj_long" }, { status: 202 });
   });
   await page.route("**/gateway/v1/media/jobs/mj_long", (route) =>
-    route.fulfill({ json: { ...job(), id: "mj_long" } }),
+    fulfilJson(route, { ...job(), id: "mj_long" }),
   );
   await page.route("**/me/api/media?*", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         assets: finished ? [asset] : [],
         sources: [],
         models: [],
         next_cursor: null,
-      },
-    }),
+      }),
   );
   await page.route("**/me/api/media/img_long", (route) =>
-    route.fulfill({ json: { asset } }),
+    fulfilJson(route, { asset }),
   );
   await page.route("**/me/api/media/img_long/download?*", (route) => {
     renewals++;
-    return route.fulfill({ json: { download_url: png } });
+    return fulfilJson(route, { download_url: png });
   });
   await page.goto("/try/");
   // The job starts after an empty poll and finishes on another page. The
@@ -114,7 +117,7 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
           ).violations,
         ).toEqual([]);
         await page.screenshot({
-          path: `/home/tnunamak/.tmp/longjobs-shots/notice-${width}-${theme}-${scale}.png`,
+          path: `test-results/screens/longjobs/notice-${width}-${theme}-${scale}.png`,
         });
       }
     }

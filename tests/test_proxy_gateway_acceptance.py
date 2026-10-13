@@ -459,7 +459,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             )
 
         # Catch-all must come AFTER the gateway routes so /gateway/v1/* is
-        # served by the router, not the TabbyAPI fall-through.
+        # served by the router, not the catch-all fall-through.
         catch_all_idx = _catch_all_index(proxy.app)
         self.assertGreaterEqual(catch_all_idx, 0, "catch-all route missing")
         for route in proxy.app.routes:
@@ -487,7 +487,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             response = client.get("/gateway/v1/workflows")
             # Unauthenticated → 401. The catch-all would have returned a
             # ProxyError-shaped 401 too, but we additionally verify the body
-            # is the proxy's auth_error shape rather than a TabbyAPI passthrough.
+            # is the proxy's auth_error shape rather than a backend passthrough.
             self.assertEqual(response.status_code, 401)
             body = response.json()
             self.assertEqual(body.get("error", {}).get("type"), "access_error")
@@ -511,7 +511,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             return False
 
         async def fake_active(*_args, **_kwargs):
-            return "tabby"
+            return "kobold"
 
         def no_litellm_registry():
             return {"services": {}, "protocol_frontends": {}, "workflows": {}, "capabilities": {}}
@@ -525,8 +525,6 @@ class TestGatewayRouterMounting(unittest.TestCase):
             proxy, "default_model_for_operation", lambda *_args, **_kwargs: "local-default"
         ), patch.object(
             proxy, "get_active_backend", fake_active
-        ), patch.object(
-            proxy, "check_tabby_health", fake_false
         ), patch.object(
             proxy, "check_embeddings_health", fake_false
         ), patch.object(
@@ -864,11 +862,11 @@ class TestGatewayRouterMounting(unittest.TestCase):
         with authenticated(), patch.object(
             proxy,
             "LLM_BACKEND_HOSTS",
-            {"tabby": "http://127.0.0.1:5050"},
+            {"kobold": "http://127.0.0.1:5051"},
         ), patch.object(
             proxy,
             "get_active_backend",
-            AsyncMock(return_value="tabby"),
+            AsyncMock(return_value="kobold"),
         ), patch.object(
             proxy,
             "current_llm_model_for_backend",
@@ -2303,11 +2301,12 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
         seen: list[Any] = []
         original_project = proxy._capability_for_access
 
-        def spy_project(capability, auth_context, *, protocol=None):
+        def spy_project(capability, auth_context, *, protocol=None, **batch):
             projected = original_project(
                 capability,
                 auth_context,
                 protocol=protocol,
+                **batch,
             )
             seen.append(projected)
             return projected

@@ -50,11 +50,8 @@ def oidc_gateway(monkeypatch: pytest.MonkeyPatch, tmp_path):
         {"base_url": BASE_URL},
         path=path,
     )
-    proxy.ADMIN_OIDC_STATES.clear()
-    try:
-        yield path
-    finally:
-        proxy.ADMIN_OIDC_STATES.clear()
+    monkeypatch.setattr(proxy, "ADMIN_OIDC_STATES", {})
+    yield path
 
 
 def _client() -> TestClient:

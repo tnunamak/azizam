@@ -461,5 +461,5 @@ records:
         - requires provider-native protocol access
         - requires native_passthrough enabled for the App profile
         - provider and operation must be allowed by policy
-        - no root catch-all or legacy root Tabby shim
+        - no root catch-all
         - protocol frontend path collisions stay owned by the frontend; use /gateway/v1/providers/{provider}/{path...} for raw provider-native paths

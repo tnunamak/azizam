@@ -7,13 +7,13 @@ summary: Choose a protocol and base URL, authenticate with an app key, and handl
 
 The gateway speaks several protocols at one address. Use the protocol your app or SDK already knows.
 
-The full list of the gateway's own routes is in its [OpenAPI document](/openapi.json). Each gateway serves its own copy at `/openapi.json`. Some compatibility routes are not in it; their pages say so.
+Retrieve `openapi.json` from your own gateway at `$AZIZAM_BASE_URL/openapi.json`. It describes the routes included in that gateway's OpenAPI schema. Some compatibility routes are excluded; their pages say so.
 
 ## Set up your environment
 
-The examples in this section read three environment variables:
+Run the following setup in Bash. The shell examples require curl with `--fail-with-body` support; JSON-encoding examples also require Python 3. Run Bash first if your current shell is different.
 
-```sh
+```bash
 export AZIZAM_BASE_URL='http://127.0.0.1:5000'
 read -r -s -p 'App key: ' AZIZAM_API_KEY; printf '\n'; export AZIZAM_API_KEY
 export AZIZAM_MODEL='my-chat'
@@ -48,7 +48,7 @@ For the gateway's own discovery, use `/gateway/v1/capabilities`. If a model or p
 
 ## Handle errors
 
-Check both the HTTP status and the `code` in the body. [Error codes](../reference/errors.md) lists the shapes and codes. Compatibility routes keep their protocol's error format.
+Check both the HTTP status and the appropriate protocol's error body. Do not assume every error has a field named `code`. [Error codes](../reference/errors.md) lists the shapes and codes. Compatibility routes keep their protocol's error format.
 
 | Status | Meaning | What to do |
 | --- | --- | --- |
@@ -57,7 +57,7 @@ Check both the HTTP status and the `code` in the body. [Error codes](../referenc
 | 413 | The request is too large. | See [request limits](../reference/configuration.md#request-limits). |
 | 429, 503 | The gateway, an engine or a provider is busy, or the gateway is draining. | Wait for `Retry-After`, then retry. |
 
-Follow `Retry-After` when it is present. If you lose the response to a media request, retry with the same idempotency key and the same request. See [Media jobs](media-jobs.md#retry-safely).
+Follow `Retry-After` when it is present. For a media-job submission, retry a lost response with the same idempotency key and unchanged request, subject to the replay rules in [Media jobs](media-jobs.md#retry-safely). Do not assume that other media endpoints deduplicate retries.
 
 ## Protocols
 

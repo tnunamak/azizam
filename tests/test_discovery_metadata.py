@@ -369,7 +369,7 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertIn("/ollama/api", text)
         self.assertIn("/gateway/v1/providers/{provider}/{path...}", text)
         self.assertIn("native_passthrough", text)
-        self.assertIn("no root Tabby shim", text)
+        self.assertNotIn("Tabby", text)
         self.assertIn("unsupported_operation", text)
         self.assertIn("create/pull/push/copy/delete", text)
         self.assertIn("/v1/assets/{asset_id}/content", text)
@@ -381,6 +381,18 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
 class TestLiveDiscoveryRoutes(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
+
+    def test_discovery_lists_the_mcp_server_tools_the_server_exposes(self) -> None:
+        from gateway import mcp_server
+
+        mcp = self.client.get("/.well-known/azizam").json()["mcp"]
+        self.assertTrue(mcp["url"].endswith("/mcp"))
+        self.assertEqual(mcp["transport"], "streamable-http")
+        self.assertEqual(
+            [tool["name"] for tool in mcp["tools"]],
+            [tool["name"] for tool in mcp_server.TOOLS],
+        )
+        self.assertTrue(all(tool["description"] for tool in mcp["tools"]))
 
     def assert_public_origin(self, origin: str, *, headers: dict[str, str]) -> None:
         metadata = self.client.get("/.well-known/azizam", headers=headers).json()

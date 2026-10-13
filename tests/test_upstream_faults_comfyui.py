@@ -123,7 +123,6 @@ def test_submit_read_budget_wiring_on_the_real_clock_gives_a_504(fake_upstreams,
     assert _error(error) == (504, {"error": {"message": "ComfyUI request timeout", "type": "api_error"}})
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B7: a peer drop during the image download raises httpx.RemoteProtocolError out of the image round (fix/fk-upstream-faults)")
 def test_download_cut_by_the_upstream_skips_the_image_instead_of_failing_the_round(fake_upstreams, monkeypatch) -> None:
     fake = _serve(fake_upstreams, monkeypatch, "view-disconnect", wire=True)
 
@@ -136,7 +135,6 @@ def test_download_cut_by_the_upstream_skips_the_image_instead_of_failing_the_rou
     assert len(fake.calls("view")) == 1
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B7: a peer drop during a history check raises httpx.RemoteProtocolError out of the image round (fix/fk-upstream-faults)")
 def test_history_check_dropped_by_the_upstream_is_polled_again(fake_upstreams, monkeypatch) -> None:
     fake = _serve(fake_upstreams, monkeypatch, "history-disconnect", wire=True)
 
@@ -150,7 +148,6 @@ def test_history_check_dropped_by_the_upstream_is_polled_again(fake_upstreams, m
     assert len(fake.calls("history-dropped")) == 1
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B7: a peer drop on the submit raises httpx.RemoteProtocolError out of the image round (fix/fk-upstream-faults)")
 def test_submit_dropped_by_the_upstream_gives_a_502(fake_upstreams, monkeypatch) -> None:
     fake = _serve(fake_upstreams, monkeypatch, "prompt-disconnect", wire=True)
 
@@ -160,5 +157,5 @@ def test_submit_dropped_by_the_upstream_gives_a_502(fake_upstreams, monkeypatch)
         expect_fixed("FK-B7", f"raised {type(dropped).__name__}", "returned")
     else:
         assert images == []
-        assert _error(error) == (502, {"error": {"message": f"ComfyUI connection dropped at {fake.base_url}", "type": "api_error"}})
+        assert _error(error) == (502, {"error": {"message": f"Image backend connection dropped", "type": "api_error"}})
     assert len(fake.calls("prompt")) == 1

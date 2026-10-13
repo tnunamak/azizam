@@ -81,8 +81,7 @@ the caller's App profile policy and return metadata for a single provider. Raw
 passthrough itself is reserved for the deeper
 `/gateway/v1/providers/{provider}/{path...}` route. Passthrough requests must
 use a key whose App profile allows the `provider-native` protocol, enables
-`native_passthrough`, and permits the requested provider and operation. There is
-no legacy root Tabby shim.
+`native_passthrough`, and permits the requested provider and operation.
 
 ## Backend Adapter Targets
 

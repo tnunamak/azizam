@@ -52,7 +52,7 @@ def model_file_availability(
     """
 
     paths = _model_file_paths(model, models, service=service)
-    missing = [path for path in paths if not path.is_file()]
+    missing = [path for path in paths if not _is_installed(path)]
     if not missing:
         return None
     return {
@@ -70,6 +70,18 @@ def model_file_availability(
             "missing_file_count": len(missing),
         },
     }
+
+
+def _is_installed(path: Path) -> bool:
+    """``path.is_file()``, asked once per file in a read request.
+
+    Many rows name the same weight file (aliases, policy rows inheriting a base model), and
+    the models directory can be a slow mount; a listing asked the filesystem once per row.
+    Outside a read request every call asks.
+    """
+    from gateway import request_connections
+
+    return request_connections.memo(("installed-file", str(path)), path.is_file)
 
 
 def missing_model_file_caveat(

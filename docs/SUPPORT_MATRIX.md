@@ -18,6 +18,8 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | Method | Route | Support | Limits | Code evidence |
 |---|---|---|---|---|
 | `GET` | `/.well-known/azizam` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `well_known_azizam` |
+| `GET` | `/.well-known/oauth-authorization-server` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `as_metadata` |
+| `OPTIONS` | `/.well-known/oauth-authorization-server` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `preflight` |
 | `GET` | `/.well-known/oauth-protected-resource` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_server.py](../gateway/mcp_server.py) `protected_resource` |
 | `GET` | `/.well-known/oauth-protected-resource/mcp` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_server.py](../gateway/mcp_server.py) `protected_resource` |
 | `GET` | `/.well-known/skills` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `well_known_skills` |
@@ -80,6 +82,13 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `DELETE` | `/mcp` | unsupported | 405; stateless POST transport only | [gateway/mcp_server.py](../gateway/mcp_server.py) `mcp_no_stream` |
 | `GET` | `/mcp` | unsupported | 405; stateless POST transport only | [gateway/mcp_server.py](../gateway/mcp_server.py) `mcp_no_stream` |
 | `POST` | `/mcp` | partial | Protocol subset or configured-backend feature; see vendor facades | [gateway/mcp_server.py](../gateway/mcp_server.py) `mcp_post` |
+| `GET` | `/oauth/authorize` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `authorize` |
+| `OPTIONS` | `/oauth/register` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `preflight` |
+| `POST` | `/oauth/register` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `register_client` |
+| `OPTIONS` | `/oauth/revoke` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `preflight` |
+| `POST` | `/oauth/revoke` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `revoke` |
+| `OPTIONS` | `/oauth/token` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `preflight` |
+| `POST` | `/oauth/token` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `token` |
 | `HEAD` | `/ollama/api/blobs/{digest}` | unsupported | 501 after authentication and policy checks | [proxy.py](../proxy.py) `ollama_blobs` |
 | `POST` | `/ollama/api/blobs/{digest}` | unsupported | 501 after authentication and policy checks | [proxy.py](../proxy.py) `ollama_blobs` |
 | `POST` | `/ollama/api/chat` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `ollama_chat` |
@@ -180,6 +189,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `GET` | `/typesafe/v1/models` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/decisions_api.py](../gateway/decisions_api.py) `list_typesafe_models` |
 | `POST` | `/typesafe/v1/systemone` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/decisions_api.py](../gateway/decisions_api.py) `systemone` |
 | `GET` | `/v1/assets/{asset_id}/content` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `assets_content` |
+| `GET` | `/v1/assets/{asset_id}/thumbnail` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `assets_thumbnail` |
 | `DELETE` | `/v1/assistants{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_assistants_unsupported` |
 | `GET` | `/v1/assistants{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_assistants_unsupported` |
 | `PATCH` | `/v1/assistants{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_assistants_unsupported` |

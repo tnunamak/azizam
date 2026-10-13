@@ -1,0 +1,28 @@
+{
+  "protocol": "openai-compatible",
+  "name": "speech-buffered",
+  "description": "One buffered speech answer carrying caller-supplied WAV bytes.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "OpenAI-compatible POST /v1/audio/speech answering one buffered audio/wav body (the clip's bytes are a placeholder the test fills)"
+  },
+  "exchanges": [
+    {
+      "id": "speech",
+      "match": {
+        "method": "POST",
+        "path": "/v1/audio/speech"
+      },
+      "response": {
+        "headers": {
+          "content-type": "audio/wav"
+        },
+        "body": [
+          {
+            "hex": "{{wav_hex}}"
+          }
+        ]
+      }
+    }
+  ]
+}

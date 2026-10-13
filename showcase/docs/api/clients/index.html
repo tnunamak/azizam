@@ -41,7 +41,7 @@
 <p>Every client needs three things: the gateway address with the right base path, an app key, and a model name that the key can use. Menus and file formats change between client versions, so treat these as examples.</p>
 <details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#check-the-connection-first">Check the connection first</a></li><li class="toc-l2"><a href="#open-webui">Open WebUI</a></li><li class="toc-l2"><a href="#librechat">LibreChat</a></li><li class="toc-l2"><a href="#editors-with-an-openai-compatible-provider">Editors with an OpenAI Compatible provider</a></li><li class="toc-l2"><a href="#continue">Continue</a></li><li class="toc-l2"><a href="#sillytavern-pictures">SillyTavern pictures</a></li><li class="toc-l2"><a href="#when-setup-fails">When setup fails</a></li></ul></nav></details><p>For most chat apps and editors, use the OpenAI-compatible base URL. Use the Anthropic or Ollama routes only when a client requires them.</p>
 <h2 id="check-the-connection-first">Check the connection first <a class="anchor" href="#check-the-connection-first" aria-label="Link to Check the connection first">#</a></h2>
-<p>Run this on the same computer, or in the same container, as the client:</p>
+<p>First follow <a href="/showcase/docs/api/#set-up-your-environment">Set up your environment</a>. Run this check on the same computer, or in the same container, as the client.</p>
 <div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>-sS<span class="w"> </span><span class="s2">"</span><span class="nv">$AZIZAM_BASE_URL</span><span class="s2">/openai/v1/models"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$AZIZAM_API_KEY</span><span class="s2">"</span>
 </code></pre></div>
@@ -54,7 +54,7 @@
 </ul>
 <p>Refresh the model list. Model file management through Ollama panels does not work through the gateway. Picture making needs an image engine on the gateway.</p>
 <h2 id="librechat">LibreChat <a class="anchor" href="#librechat" aria-label="Link to LibreChat">#</a></h2>
-<p>Add a custom endpoint to <code>librechat.yaml</code>. Replace <code>my-chat</code> with a model name from your gateway.</p>
+<p>Add a custom endpoint to <code>librechat.yaml</code>. Replace <code>my-chat</code> with a model name returned by your gateway. Replace <code>baseURL</code> with the gateway address reachable from the LibreChat server or container, followed by <code>/v1</code>. Keep the loopback example only if both services share that network namespace.</p>
 <div class="codeblock"><div class="code-bar"><span class="code-lang">YAML</span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nt">endpoints</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">custom</span><span class="p">:</span>
 <span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">"Azizam"</span>

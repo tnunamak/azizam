@@ -19,12 +19,30 @@ deleted outside the sandbox only when a reviewed route change requires it.
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
 
+from anyio.from_thread import start_blocking_portal
 from starlette.routing import Match, Mount
 
 METHODS = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
 ACCEPTS = {"html": "text/html,application/xhtml+xml", "any": "*/*"}
 UNKNOWN = "zz-unknown-probe"
+
+
+@contextmanager
+def one_portal(client):
+    """Serve every request of ``client`` from one event loop instead of starting a portal per request.
+
+    Starlette's TestClient builds a portal (a thread and an event loop) for each request unless
+    ``client.portal`` is set; entering the client also sets it, but that runs the application's
+    lifespan, which this does not.  Matrix probes never change state, so they share nothing
+    through the loop."""
+    with start_blocking_portal(**client.async_backend) as portal:
+        client.portal = portal
+        try:
+            yield client
+        finally:
+            client.portal = None
 
 
 def _sample(path: str) -> str:

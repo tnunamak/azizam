@@ -1,10 +1,12 @@
-import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import { type APIRequestContext, type Page } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { chatAlias } from "../src/app/_home/recipes";
+import { fulfilJson } from "./fixtures/intercept";
 
 const homePath = "/";
 const homeApi = "**/me/api/home";
-const mediaApi = "**/me/api/media?limit=50";
+const mediaApi = "**/me/api/media?limit=12";
 const setupApi = "**/admin/api/setup-progress";
 
 
@@ -58,9 +60,7 @@ test("Home names a freshly checked on-demand task as ready to start", async ({
   await page.route(homeApi, async (route) => {
     const response = await route.fetch();
     const home = await response.json();
-    await route.fulfill({
-      response,
-      json: {
+    await fulfilJson(route, {
         ...home,
         capabilities: home.capabilities.map(
           (capability: { capability: string; availability?: object }) =>
@@ -82,8 +82,7 @@ test("Home names a freshly checked on-demand task as ready to start", async ({
                 }
               : capability,
         ),
-      },
-    });
+      }, { response });
   });
   await page.goto(homePath);
   await expect(page.locator("main")).toContainText(
@@ -99,9 +98,7 @@ test("Home refreshes capability evidence while it stays open", async ({
   await page.route(homeApi, async (route) => {
     const response = await route.fetch();
     const home = await response.json();
-    await route.fulfill({
-      response,
-      json: {
+    await fulfilJson(route, {
         ...home,
         capabilities: home.capabilities.map(
           (capability: { capability: string; availability?: object }) =>
@@ -124,8 +121,7 @@ test("Home refreshes capability evidence while it stays open", async ({
                 }
               : capability,
         ),
-      },
-    });
+      }, { response });
   });
   await page.goto(homePath);
   // The state badge sits in the row beside its link, so read the whole row.
@@ -152,7 +148,7 @@ async function openClientInstructionsOnPhone(page: Page, _width: number) {
   // "Add an app"; a newcomer sees it open.
   const addApp = page.getByRole("button", { name: "Add an app", exact: true });
   await expect(picker.or(addApp)).toBeVisible();
-  if (await addApp.isVisible()) await addApp.click();
+  if (await addApp.count()) await addApp.click();
   await expect(picker).toBeVisible();
   if ((await picker.getAttribute("aria-pressed")) !== "true") {
     await picker.click();
@@ -220,9 +216,7 @@ for (const theme of ["light", "dark"] as const) {
           await page.route(homeApi, async (route) => {
             const response = await route.fetch();
             const actual = await response.json();
-            await route.fulfill({
-              response,
-              json: {
+            await fulfilJson(route, {
                 ...actual,
                 apps: [],
                 capabilities: [],
@@ -237,20 +231,18 @@ for (const theme of ["light", "dark"] as const) {
                   affected_capability_ids: [],
                   counts: { total: 0, available: 0, affected: 0 },
                 },
-              },
-            });
+              }, { response });
           });
           await page.route(setupApi, (route) =>
-            route.fulfill({ json: { complete: true, steps: [] } }),
+            fulfilJson(route, { complete: true, steps: [] }),
           );
           await page.route(mediaApi, (route) =>
-            route.fulfill({ json: { assets: [], next_cursor: null } }),
+            fulfilJson(route, { assets: [], next_cursor: null }),
           );
         }
         if (state === "seeded") {
           await page.route(mediaApi, (route) =>
-            route.fulfill({
-              json: {
+            fulfilJson(route, {
                 assets: [
                   {
                     asset_id: "home-recorded-image",
@@ -263,19 +255,15 @@ for (const theme of ["light", "dark"] as const) {
                   },
                 ],
                 next_cursor: null,
-              },
-            }),
+              }),
           );
           await page.route(setupApi, (route) =>
-            route.fulfill({ json: { complete: true, steps: [] } }),
+            fulfilJson(route, { complete: true, steps: [] }),
           );
         }
         if (state === "error") {
           await page.route(homeApi, (route) =>
-            route.fulfill({
-              status: 503,
-              json: { error: { message: "Unavailable for this test" } },
-            }),
+            fulfilJson(route, { error: { message: "Unavailable for this test" } }, { status: 503 }),
           );
         }
 
@@ -437,10 +425,7 @@ test("Home setup notes fit a phone and remain accessible", async ({
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.route(setupApi, async (route) => {
     const response = await route.fetch();
-    await route.fulfill({
-      response,
-      json: { ...(await response.json()), complete: true },
-    });
+    await fulfilJson(route, { ...(await response.json()), complete: true }, { response });
   });
   await page.goto(homePath);
   const snapshot = await (await request.get("/me/api/home")).json();
@@ -517,19 +502,15 @@ test("member Home never requests owner APIs", async ({ page, request }) => {
     if (pathname.startsWith("/admin/api/")) ownerCalls.push(pathname);
   });
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         authenticated: true,
         csrf_token: "member-fixture",
         user: member,
         apps: [],
-      },
-    }),
+      }),
   );
   await page.route(homeApi, (route) =>
-    route.fulfill({
-      json: { ...actual, user: member, apps: [], receipts: [] },
-    }),
+    fulfilJson(route, { ...actual, user: member, apps: [], receipts: [] }),
   );
   await page.goto(homePath);
   await expect(
@@ -556,21 +537,15 @@ test("superadmin Home does not request the owner-only setup API", async ({
     await page.route(path, async (route) => {
       const response = await route.fetch();
       const actual = await response.json();
-      await route.fulfill({
-        response,
-        json: { ...actual, user: { ...actual.user, role: "superadmin" } },
-      });
+      await fulfilJson(route, { ...actual, user: { ...actual.user, role: "superadmin" } }, { response });
     });
   }
   // A superadmin is allowed to use the gateway, but the first-run checklist
   // belongs to its owner. Any accidental request gets the actual contract's 403.
   await page.route(setupApi, (route) =>
-    route.fulfill({
-      status: 403,
-      json: {
+    fulfilJson(route, {
         error: { code: "owner_required", message: "Owner access required." },
-      },
-    }),
+      }, { status: 403 }),
   );
   await page.goto(homePath);
   await expect(
@@ -627,7 +602,7 @@ for (const theme of ["light", "dark"] as const) {
   }
 }
 
-test("inline reveal-once key tests a real chat request and produces one owned receipt", async ({
+test("inline reveal-once key tests a real chat request and produces one owned receipt", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   request,
 }) => {
@@ -815,7 +790,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
   }
 });
 
-test("a new inherited key cannot borrow a broader existing app's recipe", async ({
+test("a new inherited key cannot borrow a broader existing app's recipe", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   request,
 }) => {

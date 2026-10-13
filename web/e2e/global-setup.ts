@@ -1,9 +1,26 @@
 import { request, type FullConfig } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 
-export default async function seed(config: FullConfig) {
+// Each fixture gateway in the config (one per distinct project baseURL) gets
+// the same seed once, before any worker starts: one owner, one engine, one
+// plan, one app with a key, and one real completion.
+export default async function setup(config: FullConfig) {
   await mkdir("test-results/screens", { recursive: true });
-  const baseURL = config.projects[0].use.baseURL!;
+  // The data namespace's run part (fixtures/isolation.ts); workers inherit it.
+  process.env.UI_E2E_RUN_ID ??= Date.now().toString(36);
+  const servers = new Map<string, string>();
+  for (const project of config.projects) {
+    const { baseURL, storageState } = project.use;
+    if (typeof baseURL !== "string" || typeof storageState !== "string")
+      throw new Error(`Project ${project.name} needs a baseURL and a storage-state file path`);
+    if (servers.has(baseURL) && servers.get(baseURL) !== storageState)
+      throw new Error(`Projects on ${baseURL} must share one storage-state file`);
+    servers.set(baseURL, storageState);
+  }
+  await Promise.all([...servers].map(([baseURL, storagePath]) => seed(baseURL, storagePath)));
+}
+
+async function seed(baseURL: string, storagePath: string) {
   const api = await request.newContext({ baseURL });
   const owner = await api.post("/setup/local-owner", {
     form: {
@@ -84,9 +101,6 @@ export default async function seed(config: FullConfig) {
   const result = await completion.json();
   if (!result.choices?.[0]?.message?.content)
     throw new Error("Seeded engine did not return a completion");
-  const storagePath = config.projects[0].use.storageState;
-  if (typeof storagePath !== "string")
-    throw new Error("Browser tests require a storage-state file path");
   await api.storageState({ path: storagePath });
   await api.dispose();
 }

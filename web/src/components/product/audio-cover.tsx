@@ -180,6 +180,7 @@ export function DayChip({
 export function AudioFace({
   peaksKey,
   src,
+  sizeBytes,
   visible,
   center,
   status,
@@ -187,13 +188,15 @@ export function AudioFace({
 }: {
   peaksKey: string;
   src?: string | null;
+  /** A large file keeps the glyph instead of being downloaded to draw a waveform. */
+  sizeBytes?: number | null;
   visible: boolean;
   center?: ReactNode;
   /** A short error line, shown at the top. */
   status?: ReactNode;
   className?: string;
 }) {
-  const peaks = useAudioPeaks(peaksKey, src, visible);
+  const peaks = useAudioPeaks(peaksKey, src, visible, 40, sizeBytes);
   return (
     <div
       className={cn(

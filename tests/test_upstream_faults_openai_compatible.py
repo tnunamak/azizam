@@ -132,7 +132,6 @@ def _forwarded_stream(fake: FakeUpstream) -> dict:
     return forwarded.json
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B1: the stream repair of leaked <think> tags runs per wire chunk, so a cut event is not repaired (fix/fk-upstream-faults)")
 def test_think_leak_cut_across_wire_chunks_is_repaired_like_an_uncut_event(fake_upstreams, monkeypatch, tmp_path) -> None:
     fake = _serve(fake_upstreams, monkeypatch, tmp_path, "stream-split-think", wire=True)
 
@@ -152,7 +151,6 @@ def test_think_leak_cut_across_wire_chunks_is_repaired_like_an_uncut_event(fake_
     expect_fixed("FK-B1", events[1:-2], expected[1:-2])
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B2: an upstream drop mid-stream ends the client stream as if complete (fix/fk-upstream-faults)")
 def test_upstream_drop_mid_stream_ends_with_an_error_event(fake_upstreams, monkeypatch, tmp_path) -> None:
     fake = _serve(fake_upstreams, monkeypatch, tmp_path, "stream-disconnect", wire=True)
 
@@ -198,11 +196,9 @@ def _slow_first_byte_call(stream: bool):
     return asyncio.run(call())
 
 
-_B3 = "FK-B3: the LLM substrate read timeout answers {'detail': ...}, not the OpenAI error envelope (fix/fk-upstream-faults)"
-_B3_ENVELOPE = {"error": {"message": "LiteLLM execution timed out.", "type": "api_error", "param": None, "code": "timeout"}}
+_B3_ENVELOPE = {"error": {"message": "Upstream chat request timed out.", "type": "api_error", "param": None, "code": "timeout"}}
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason=_B3)
 @pytest.mark.parametrize("stream", [False, True], ids=["text", "stream"])
 def test_first_byte_past_the_read_budget_gives_a_504_error_envelope(fake_upstreams, monkeypatch, tmp_path, stream: bool) -> None:
     """The read deadline passes once the fake has logged the request and holds the response."""
@@ -218,7 +214,6 @@ def test_first_byte_past_the_read_budget_gives_a_504_error_envelope(fake_upstrea
     expect_fixed("FK-B3", response.json(), _B3_ENVELOPE)
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason=_B3)
 def test_read_budget_wiring_on_the_real_clock_gives_a_504_error_envelope(fake_upstreams, monkeypatch, tmp_path) -> None:
     """The one real-clock case: the gateway's own UPSTREAM_READ_TIMEOUT, shortened.
 

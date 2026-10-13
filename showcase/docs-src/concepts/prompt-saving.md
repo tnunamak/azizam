@@ -42,6 +42,6 @@ When a person's choice and the owner's limit are both set, the shorter one wins.
 ## Limits
 
 - Not keeping a prompt does not delete the creation, and does not hide the request from Usage.
-- A normal job keeps its input privately until it finishes, so it can resume after a restart. A job whose prompt is not kept cannot resume.
+- Keeping a job's input does not guarantee that it will resume after a restart. An interrupted job can fail without being rerun. Check Library before making the item again.
 - The choice does not control what an engine or a provider keeps.
 - Service keys never save prompts for a person. See [Apps and keys](apps-and-keys.md).

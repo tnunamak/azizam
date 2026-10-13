@@ -5,7 +5,7 @@ import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { ROUTES, discoverAppRoutes, type SweepContext, type SweepRoute, type SweepState } from "./routes";
+import { DEV_REFERENCE_ROUTES, ROUTES, discoverAppRoutes, type SweepContext, type SweepRoute, type SweepState } from "./routes";
 import { lintText, loadTermList, type Role, type RuleId, type Severity, type TextItem } from "./rules";
 import { sweepPaths, sweepTarget } from "./target";
 
@@ -71,7 +71,6 @@ const SETTLE_MS = Number(process.env.SWEEP_SETTLE_MS ?? (target.name === "copy" 
 /** Wait until the page stops loading. A surface still busy at the deadline is an error, never a checked state. */
 async function settle(page: Page, timeoutMs = SETTLE_MS): Promise<boolean> {
   await page.waitForLoadState("domcontentloaded");
-  await page.waitForLoadState("networkidle", { timeout: timeoutMs / 2 }).catch(() => {});
   await page.waitForFunction(
     () => {
       const shown = (el: Element) => {
@@ -84,7 +83,14 @@ async function settle(page: Page, timeoutMs = SETTLE_MS): Promise<boolean> {
     { timeout: timeoutMs },
   );
   await page.evaluate(() => document.fonts.ready).catch(() => {});
-  await page.waitForTimeout(300);
+  await page.evaluate(async () => {
+    await Promise.all(
+      document
+        .getAnimations()
+        .filter((animation) => animation.effect?.getComputedTiming().iterations !== Infinity)
+        .map((animation) => animation.finished.catch(() => {})),
+    );
+  });
   return true;
 }
 
@@ -110,7 +116,7 @@ const stateRoles = (route: SweepRoute, state: SweepState) =>
   (state.roles ?? route.roles).filter((role) => route.roles.includes(role));
 
 test("every app route has a sweep entry", () => {
-  const covered = new Set(ROUTES.map((route) => route.appRoute));
+  const covered = new Set([...ROUTES, ...DEV_REFERENCE_ROUTES].map((route) => route.appRoute));
   const discovered = discoverAppRoutes();
   const missing = discovered.filter((route) => !covered.has(route));
   const stale = [...covered].filter((route) => !discovered.includes(route));
@@ -257,9 +263,8 @@ for (const route of ROUTES) {
                 flaggedRefs.add(hit.ref);
               }
               const contextByRef = new Map(probe.texts.map((item) => [item.ref, item.context]));
-              const textRole = route.dev ? "owner" : role === "anonymous" ? "member" : role;
+              const textRole = role === "anonymous" ? "member" : role;
               for (const hit of lintText(probe.texts, { role: textRole, research, jargon })) {
-                if (route.dev && !["raw-error", "path"].includes(hit.rule)) continue;
                 const note =
                   hit.rule === "unknown"
                     ? apiUnknown.length

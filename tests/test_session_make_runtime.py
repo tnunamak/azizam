@@ -44,6 +44,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
             (proxy, "IMAGE_CACHE_DIR", root / "cache"),
             (proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", root / "payloads"),
             (proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOADS", {}),
+            (proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES", {}),
         ):
             patcher = patch.object(target, name, value)
             patcher.start()

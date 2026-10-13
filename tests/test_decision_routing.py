@@ -16,6 +16,15 @@ from gateway.receipts import RouteReceipt
 from gateway.stable_aliases import resolve_alias, validate_aliases
 
 
+@pytest.fixture(autouse=True)
+def _isolated_decision_observations(monkeypatch):
+    """A successful dispatch through the process runtime caches the answering
+    engine; tests that read the discovery tags must start from an empty cache."""
+    import proxy
+
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed", {})
+
+
 def config():
     return {
         "backends": {
@@ -282,6 +291,7 @@ def test_existing_only_denied_profile_does_not_probe_decision_health(monkeypatch
     cfg = config()
     monkeypatch.setattr(proxy, "config", cfg)
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed", {})
+
     auth = proxy.AuthContext(RuntimeIdentity(
         "restricted",
         "hash",
@@ -305,6 +315,7 @@ def test_existing_only_catalog_uses_cached_engine_without_fresh_probe(monkeypatc
     cfg = config()
     monkeypatch.setattr(proxy, "config", cfg)
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed", {})
+
     auth = proxy.AuthContext(RuntimeIdentity(
         "cpu",
         "hash",
@@ -332,6 +343,7 @@ def test_existing_only_dispatch_rechecks_policy_after_fresh_engine_tags(monkeypa
     cfg = config()
     monkeypatch.setattr(proxy, "config", cfg)
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed", {})
+
     auth = proxy.AuthContext(RuntimeIdentity(
         "gpu",
         "hash",
@@ -369,13 +381,15 @@ def test_dispatch_propagates_remaining_deadline_to_engine():
 
 def test_dispatch_deadline_bounds_total_response_time(monkeypatch):
     import gateway.decision_routing as routing
-    monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", .03, raising=False)
+    # The deadline must outlast a stalled host's start-up, or the request
+    # expires before the handler runs; the handler then never finishes.
+    monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", .25, raising=False)
     rt = runtime()
     real = httpx.AsyncClient
     cancelled = []
     async def handler(request):
         try:
-            await asyncio.sleep(.12)
+            await asyncio.sleep(30)  # outlasts the deadline; only a missing bound lets it finish
             return httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 1, "output_tokens": 1}})
         except asyncio.CancelledError:
             cancelled.append(True)
@@ -393,7 +407,8 @@ def test_dispatch_deadline_includes_lifecycle_health_timeout(monkeypatch):
     cfg = config()
     cfg["backends"]["small"]["lifecycle"] = {
         "driver": "systemd",
-        "driver_config": {"health_timeout_s": .2},
+        # Large next to the 40 ms start, so a stalled host cannot spend it.
+        "driver_config": {"health_timeout_s": 30},
     }
     started = []
 
@@ -435,12 +450,15 @@ def test_configured_timeout_allows_on_demand_start_for_an_app_key(monkeypatch):
     # fits the operator's explicit service timeout and lifecycle health budget.
     monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", .03)
     cfg = config()
-    cfg["backends"]["large"].update(timeout=.3, lifecycle={
-        "driver": "systemd", "driver_config": {"health_timeout_s": .2},
+    # The budgets are large next to the 60 ms start, so a stalled host cannot
+    # spend them; the start only has to outlast the 30 ms default.
+    cfg["backends"]["large"].update(timeout=60, lifecycle={
+        "driver": "systemd", "driver_config": {"health_timeout_s": 30},
     })
     monkeypatch.setattr(proxy, "config", cfg)
     monkeypatch.setattr(proxy, "HEALTH_CHECK_TIMEOUT", .01)
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed", {})
+
     monkeypatch.setattr(lifecycle, "_poll_health", AsyncMock(return_value=False))
     starts = []
 
@@ -457,20 +475,20 @@ def test_configured_timeout_allows_on_demand_start_for_an_app_key(monkeypatch):
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "large-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 1, "output_tokens": 0}})))):
         result = asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, access(profile), {**BODY, "model": "decide-quality"}, "r"))
     assert result.status_code == 200
-    assert starts == [.2]
+    assert starts == [30]
 
 
 @pytest.mark.parametrize("timeout", [.03, None, "invalid", float("inf"), float("nan"), 0, -1])
 def test_configured_decision_timeout_still_bounds_startup(monkeypatch, timeout):
     import gateway.decision_routing as routing
-    monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", .03)
+    monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", .25)
     cfg = config()
-    cfg["backends"]["large"]["timeout"] = timeout
+    cfg["backends"]["large"]["timeout"] = .25 if timeout == .03 else timeout
     cancelled = []
 
     async def ensure(service):
         try:
-            await asyncio.sleep(.12)
+            await asyncio.sleep(30)  # outlasts the deadline; only a missing bound lets it finish
         except asyncio.CancelledError:
             cancelled.append(service)
             raise
@@ -484,14 +502,14 @@ def test_configured_decision_timeout_still_bounds_startup(monkeypatch, timeout):
 
 def test_explicit_timeout_bounds_lifecycle_and_fallback_budget(monkeypatch):
     import gateway.decision_routing as routing
-    monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", .3)
+    monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", 30)
     cfg = config()
-    cfg["backends"]["large"].update(timeout=.03, lifecycle={
-        "driver": "systemd", "driver_config": {"health_timeout_s": .2},
+    cfg["backends"]["large"].update(timeout=.25, lifecycle={
+        "driver": "systemd", "driver_config": {"health_timeout_s": 20},
     })
-    cfg["backends"]["small"]["timeout"] = .4
+    cfg["backends"]["small"]["timeout"] = 60
     async def start(service):
-        await asyncio.sleep(.06)
+        await asyncio.sleep(30)  # outlasts the deadline; only a missing bound lets it finish
 
     ensure = AsyncMock(side_effect=start)
     rt = runtime(cfg=cfg, ensure=ensure)

@@ -1,5 +1,7 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { type APIRequestContext, type Page } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const root = "/admin/api/categories";
 const widths = [1440, 390] as const;
@@ -157,10 +159,8 @@ test.describe("Categories real fixture journeys", () => {
     page.on("request", (request) => {
       if (request.method() !== "GET" && new URL(request.url()).pathname.startsWith(root)) writes.push(request.url());
     });
-    await page.route(`**${root}/active`, (route) => route.fulfill({
-      status: 409, json: { error: { code: "no_active_snapshot", message: "No policy snapshot has been activated." } },
-    }));
-    await page.route(`**${root}/history`, (route) => route.fulfill({ json: { history: [] } }));
+    await page.route(`**${root}/active`, (route) => fulfilJson(route, { error: { code: "no_active_snapshot", message: "No policy snapshot has been activated." } }, { status: 409 }));
+    await page.route(`**${root}/history`, (route) => fulfilJson(route, { history: [] }));
     for (const width of widths) {
       await surface(page, width);
       await page.goto("/categories/");
@@ -174,7 +174,7 @@ test.describe("Categories real fixture journeys", () => {
   });
 
   for (const width of widths) {
-    test(`seed, preview, restore and stale base at ${width}px`, async ({ page, request }) => {
+    test(`seed, preview, restore and stale base at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({ page, request }) => {
       test.setTimeout(180_000);
       await surface(page, width);
       await page.goto("/categories/");
@@ -280,12 +280,10 @@ test.describe("Categories real fixture journeys", () => {
       });
       // Same member-session simulation used by workflows.spec.ts; category
       // responses remain real and are never intercepted.
-      await page.route("**/me/api/session", (route) => route.fulfill({
-        json: {
+      await page.route("**/me/api/session", (route) => fulfilJson(route, {
           authenticated: true, csrf_token: "fixture", apps: [],
           user: { id: "member-categories", name: "Member", role: "member", email: "member@example.test" },
-        },
-      }));
+        }));
       await page.goto("/categories/");
       // The shell's owner-page guard answers before the page renders.
       await expect(page.getByRole("heading", { name: "Owner access required", exact: true })).toBeVisible();

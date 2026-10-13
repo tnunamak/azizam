@@ -540,6 +540,12 @@ it("announces the answer atomically as health changes", async () => {
     ),
   ).toBeVisible();
 });
+it("offers a local action when no remote providers are configured", async () => {
+  providerState.state = "ready";
+  mount();
+  expect(await screen.findByText("No remote providers are configured.")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Review connections" })).toHaveAttribute("href", "/engines");
+});
 it("moves from partial to healthy once provider status resolves", async () => {
   providerState.state = "error";
   mount();

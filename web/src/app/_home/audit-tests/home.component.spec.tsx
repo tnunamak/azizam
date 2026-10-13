@@ -218,13 +218,29 @@ describe("Home audit component behavior", () => {
             })),
             receipts: [],
           });
-        if (path === "/me/api/media?limit=50") return media;
+        if (path === "/me/api/media?limit=12") return media;
         if (path === "/admin/api/setup-progress")
           return Response.json({ ...progress(), complete: true });
         return Response.json({});
       }),
     );
   }
+
+  it("asks for Recent creations while Home is still loading", async () => {
+    const requested: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        requested.push(path);
+        if (path === "/me/api/home") return new Promise<Response>(() => {}); // Home never settles
+        return Response.json({ assets: [] });
+      }),
+    );
+    renderHome();
+    await waitFor(() => expect(requested).toContain("/me/api/media?limit=12"));
+    expect(requested).toContain("/me/api/home");
+  });
 
   it("stacks Recent and Make something with only the section gap", async () => {
     mockCraftHome();
@@ -303,7 +319,7 @@ describe("Home audit component behavior", () => {
         if (path === "/me/api/home") return Response.json(home);
         if (path === "/admin/api/setup-progress")
           return Response.json({ ...progress(), complete: true });
-        if (path === "/me/api/media?limit=50")
+        if (path === "/me/api/media?limit=12")
           return Response.json({
             assets: [
               {
@@ -388,7 +404,7 @@ describe("Home audit component behavior", () => {
         if (path === "/me/api/home") return Response.json(home);
         if (path === "/admin/api/setup-progress")
           return Response.json({ ...progress(), complete: true });
-        if (path === "/me/api/media?limit=50")
+        if (path === "/me/api/media?limit=12")
           return Response.json({
             assets: [
               { asset_id: "image-no-content", kind: "image" },
@@ -472,7 +488,7 @@ describe("Home audit component behavior", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const route = String(input);
         if (route === "/me/api/home") return Response.json(serverHome);
-        if (route === "/me/api/media?limit=50")
+        if (route === "/me/api/media?limit=12")
           return Response.json({ assets: [] });
         if (route === "/admin/api/setup-progress")
           return Response.json({
@@ -521,7 +537,7 @@ describe("Home audit component behavior", () => {
           return Response.json({ service: { name: "Family gateway" } });
         if (path === "/me/api/home")
           return Response.json({ ...home, receipts: [] });
-        if (path === "/me/api/media?limit=50")
+        if (path === "/me/api/media?limit=12")
           return Response.json({ assets: [] });
         if (path === "/admin/api/setup-progress")
           return Response.json(progress());
@@ -548,7 +564,7 @@ describe("Home audit component behavior", () => {
           return Response.json({ service: { name: "Family gateway" } });
         if (path === "/me/api/home")
           return Response.json({ ...home, receipts: [] });
-        if (path === "/me/api/media?limit=50")
+        if (path === "/me/api/media?limit=12")
           return Response.json({ assets: [] });
         if (path === "/me/api/session")
           return Response.json({ authenticated: true, csrf_token: "csrf" });
@@ -629,7 +645,7 @@ describe("Home audit component behavior", () => {
               },
             ],
           });
-        if (path === "/me/api/media?limit=50")
+        if (path === "/me/api/media?limit=12")
           return Response.json({ assets: [] });
         throw new Error(`Unexpected request: ${path}`);
       }),
@@ -660,7 +676,7 @@ describe("Home audit component behavior", () => {
         if (path === "/.well-known/azizam")
           return Response.json({ service: { name: "Family gateway" } });
         if (path === "/me/api/home") return Response.json(home);
-        if (path === "/me/api/media?limit=50")
+        if (path === "/me/api/media?limit=12")
           return Response.json({ assets: [] });
         if (path === "/admin/api/setup-progress")
           return Response.json({ ...progress(), complete: true });

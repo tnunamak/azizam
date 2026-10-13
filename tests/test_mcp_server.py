@@ -123,7 +123,8 @@ def env():
 
     deps = McpDeps(authenticate=authenticate, call=core.call, catalog=lambda: CATALOG, aliases=lambda: ALIASES,
                    store_asset=core.store_asset, read_asset=core.read_asset,
-                   public_base_url=lambda r: "https://gw.test", poll_interval=0.0)
+                   public_base_url=lambda r: "https://gw.test", poll_interval=0.0,
+                   allowed_origins=lambda r: ["https://gw.test"])
     app = FastAPI()
     mcp_server.register_mcp_routes(app, deps)
     return SimpleNamespace(core=core, client=TestClient(app))
@@ -140,6 +141,8 @@ def rpc(env, method, params=None, *, headers=None, modern=False, id_=1):
         hdrs.update({"mcp-protocol-version": MODERN, "mcp-method": method})
         if method == "tools/call":
             hdrs["mcp-name"] = params["name"]
+    elif method != "initialize":
+        hdrs["mcp-protocol-version"] = "2025-11-25"  # sent after initialize since 2025-06-18
     hdrs.update(headers or {})
     return env.client.post("/mcp", json={"jsonrpc": "2.0", "id": id_, "method": method, "params": params}, headers=hdrs)
 
@@ -160,15 +163,41 @@ def test_missing_key_is_401_with_resource_metadata_challenge(env):
         'Bearer resource_metadata="https://gw.test/.well-known/oauth-protected-resource/mcp"')
 
 
+def test_presented_but_rejected_token_gets_invalid_token_and_scope():
+    deps = McpDeps(authenticate=lambda r, p: JSONResponse({"error": {"message": "no"}}, status_code=401),
+                   call=None, catalog=lambda: [], aliases=lambda: {}, store_asset=None, read_asset=None,
+                   public_base_url=lambda r: "https://gw.test", scopes=("mcp",),
+                   authorization_servers=lambda r: ["https://gw.test"])
+    app = FastAPI()
+    mcp_server.register_mcp_routes(app, deps)
+    client = TestClient(app)
+    bare = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert bare.headers["www-authenticate"] == (
+        'Bearer resource_metadata="https://gw.test/.well-known/oauth-protected-resource/mcp", scope="mcp"')
+    stale = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                        headers={"authorization": "Bearer old"})
+    assert stale.headers["www-authenticate"].startswith('Bearer error="invalid_token", error_description=')
+    assert 'scope="mcp"' in stale.headers["www-authenticate"]
+    body = client.get("/.well-known/oauth-protected-resource").json()
+    assert body["authorization_servers"] == ["https://gw.test"] and body["scopes_supported"] == ["mcp"]
+    assert "offline_access" not in body["scopes_supported"]
+
+
 def test_protected_resource_metadata_names_header_bearer_only(env):
     body = env.client.get("/.well-known/oauth-protected-resource/mcp").json()
     assert body["resource"] == "https://gw.test/mcp"
     assert body["bearer_methods_supported"] == ["header"]
 
 
-def test_foreign_origin_is_403_and_same_origin_passes(env):
+def test_foreign_origin_is_403_and_listed_origin_passes(env):
     assert rpc(env, "ping", headers={"origin": "https://evil.example"}).status_code == 403
-    assert rpc(env, "ping", headers={"origin": "http://testserver"}).status_code == 200
+    assert rpc(env, "ping", headers={"origin": "https://GW.test"}).status_code == 200
+
+
+def test_dns_rebinding_page_cannot_vouch_for_itself_with_host(env):
+    # A rebinding page controls both Host and Origin; only the list counts.
+    headers = {"origin": "http://evil.example", "host": "evil.example"}
+    assert rpc(env, "ping", headers=headers).status_code == 403
 
 
 def test_get_and_delete_are_405_because_there_is_no_stream(env):
@@ -182,6 +211,44 @@ def test_garbage_body_is_a_parse_error(env):
 
 
 # ------------------------------------------------------------- legacy era
+
+
+def test_modern_request_without_required_meta_is_400_invalid_params(env):
+    headers = {**H, "mcp-protocol-version": MODERN, "mcp-method": "tools/list"}
+    for meta in (None, {"io.modelcontextprotocol/clientCapabilities": {}},
+                 {"io.modelcontextprotocol/protocolVersion": MODERN}):
+        params = {} if meta is None else {"_meta": meta}
+        resp = env.client.post("/mcp", headers=headers,
+                               json={"jsonrpc": "2.0", "id": 7, "method": "tools/list", "params": params})
+        assert resp.status_code == 400, meta
+        assert resp.json()["error"]["code"] == mcp_server.INVALID_PARAMS and resp.json()["id"] == 7
+
+
+def test_modern_era_has_no_initialize_or_ping(env):
+    for method in ("initialize", "ping"):
+        resp = rpc(env, method, modern=True)
+        assert resp.status_code == 404 and resp.json()["error"]["code"] == mcp_server.METHOD_NOT_FOUND
+
+
+def test_modern_results_name_the_server_in_meta(env):
+    result = rpc(env, "tools/list", modern=True).json()["result"]
+    assert result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "azizam"
+
+
+def test_batches_are_refused_outside_2025_03_26(env):
+    batch = [{"jsonrpc": "2.0", "id": 1, "method": "ping"}]
+    resp = env.client.post("/mcp", json=batch, headers={**H, "mcp-protocol-version": "2025-11-25"})
+    assert resp.status_code == 400 and resp.json()["error"]["code"] == mcp_server.INVALID_REQUEST
+    mixed = env.client.post("/mcp", json=[{"jsonrpc": "2.0", "id": 1, "method": "ping"}, {"id": 2}], headers=H)
+    assert [r.get("error", {}).get("code") for r in mixed.json()] == [None, mcp_server.INVALID_REQUEST]
+
+
+def test_2025_03_26_results_carry_text_only(env):
+    resp = env.client.post("/mcp", headers=H, json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                                     "params": {"name": "capabilities", "arguments": {}}})
+    result = resp.json()["result"]
+    assert "structuredContent" not in result
+    assert [c["type"] for c in result["content"]] == ["text"]
 
 
 def test_legacy_initialize_negotiates_and_mints_no_session(env):
@@ -482,7 +549,7 @@ def test_run_slow_job_waits_until_positive_deadline(monkeypatch):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="https://gw.test"
         ) as client:
-            task = asyncio.create_task(client.post("/mcp", headers=H, json={
+            task = asyncio.create_task(client.post("/mcp", headers={**H, "mcp-protocol-version": "2025-11-25"}, json={
                 "jsonrpc": "2.0", "id": 1, "method": "tools/call",
                 "params": {"name": "run", "arguments": {
                     "target": "video", "inputs": {"prompt": "waves"}, "wait_seconds": 5}}}))

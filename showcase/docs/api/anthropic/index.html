@@ -41,13 +41,10 @@
 <p>Set your SDK's base URL to <code>$AZIZAM_BASE_URL/anthropic</code>. The Messages route is <code>/anthropic/v1/messages</code>, and <code>/v1/messages</code> also works.</p>
 <details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#messages-with-curl">Messages with curl</a></li><li class="toc-l2"><a href="#messages-with-python">Messages with Python</a></li><li class="toc-l2"><a href="#what-works">What works</a></li><li class="toc-l2"><a href="#limits">Limits</a></li></ul></nav></details><p>Send your app key as <code>x-api-key</code> or as a bearer token. Set the environment variables in the <a href="/showcase/docs/api/#set-up-your-environment">API overview</a> first.</p>
 <h2 id="messages-with-curl">Messages with curl <a class="anchor" href="#messages-with-curl" aria-label="Link to Messages with curl">#</a></h2>
-<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>-sS<span class="w"> </span><span class="s2">"</span><span class="nv">$AZIZAM_BASE_URL</span><span class="s2">/anthropic/v1/messages"</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s2">"x-api-key: </span><span class="nv">$AZIZAM_API_KEY</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--data<span class="w"> </span>@-<span class="w"> </span><span class="s">&lt;&lt;EOF</span>
-<span class="s">{"model": "$AZIZAM_MODEL", "max_tokens": 256,</span>
-<span class="s"> "messages": [{"role": "user", "content": "Say hello in one sentence."}]}</span>
-<span class="s">EOF</span>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>python3<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;'PY' | curl --fail-with-body -sS "$AZIZAM_BASE_URL/anthropic/v1/messages" -H "x-api-key: $AZIZAM_API_KEY" -H 'Content-Type: application/json' --data-binary @-</span>
+<span class="s">import json, os</span>
+<span class="s">print(json.dumps({"model": os.environ["AZIZAM_MODEL"], "max_tokens": 256, "messages": [{"role": "user", "content": "Say hello in one sentence."}]}))</span>
+<span class="s">PY</span>
 </code></pre></div>
 <h2 id="messages-with-python">Messages with Python <a class="anchor" href="#messages-with-python" aria-label="Link to Messages with Python">#</a></h2>
 <p>Install the <code>anthropic</code> package first.</p>

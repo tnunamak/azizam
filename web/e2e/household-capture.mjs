@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
+import { quiet, removeIfPresent } from "./capture-settle.mjs";
 
 const web = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repo = path.resolve(web, "..");
@@ -43,7 +44,7 @@ try {
   if (error.message?.includes("already serving")) throw error;
 }
 await mkdir(stateRoot, { recursive: true });
-await rm(manifestPath, { force: true });
+await removeIfPresent(rm, manifestPath);
 await mkdir(output, { recursive: true });
 if ((await readdir(output)).length)
   throw new Error(`Output directory must be empty before capture: ${output}`);
@@ -105,7 +106,6 @@ async function stopServer() {
 }
 
 async function settled(page) {
-  await page.waitForLoadState("networkidle", { timeout: 30_000 });
   await page.waitForFunction(() => {
     const visible = element => {
       const style = getComputedStyle(element);
@@ -133,7 +133,7 @@ async function settled(page) {
   });
   const broken = await page.evaluate(() => Array.from(document.images).filter(image => !image.complete || image.naturalWidth === 0).map(image => image.currentSrc || image.src));
   if (broken.length) throw new Error(`Images failed to decode at ${page.url()}: ${broken.join(", ")}`);
-  await page.waitForTimeout(350);
+  await quiet(page);
 }
 
 async function login(context, account, base) {
@@ -311,7 +311,7 @@ async function newContext(seed, { width, theme }) {
 async function captureTryResult({ theme, width }) {
   await stopServer();
   if (stopping) throw new Error("Household capture was interrupted");
-  await rm(manifestPath, { force: true });
+  await removeIfPresent(rm, manifestPath);
   server = startServer();
   const seed = await readySeed();
   const context = await newContext(seed, { width, theme });

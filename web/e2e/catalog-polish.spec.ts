@@ -1,5 +1,7 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { type Locator, type Page } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const aliases = [
   ["fast", "chat.completions", "Chat", "chat", "Fast"],
@@ -51,7 +53,77 @@ const plans = ["Family", "Creative", "Builders"].map((name, index) => ({
   },
 }));
 
-test("polished model grouping fills width before and after filtering", async ({
+// Copy, grouping, price/provider text and plan summaries are asserted in
+// web/src/app/models/models-client.spec.tsx and web/tests/people-plans-list.spec.tsx.
+// The browser keeps what needs real layout: full-width rows, no page overflow,
+// the phone row height and the below-640 px heading, plus axe in both themes.
+
+async function prepare(page: Page, width: number, theme: "light" | "dark") {
+  await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+  await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+  await page.addInitScript(
+    (value) => localStorage.setItem("theme", value),
+    theme,
+  );
+}
+
+async function expectNoHorizontalOverflow(page: Page) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth - window.innerWidth,
+      ),
+    )
+    .toBeLessThanOrEqual(0);
+}
+
+async function verifyModelLayout(page: Page, cards: Locator, count: number) {
+  await expect(cards).toHaveCount(count);
+  await expect
+    .poll(() =>
+      cards.evaluateAll((elements) =>
+        Math.min(...elements.map((element) => element.getBoundingClientRect().width)),
+      ),
+    )
+    .toBeGreaterThan(280);
+  await expectNoHorizontalOverflow(page);
+  const a11y = await new AxeBuilder({ page }).analyze();
+  expect(
+    a11y.violations
+      .filter((violation) =>
+        ["serious", "critical"].includes(violation.impact ?? ""),
+      )
+      .map((violation) => violation.id),
+  ).toEqual([]);
+}
+
+async function stubCatalog(page: Page, rows: unknown[]) {
+  await page.route("**/me/api/models/catalog", (route) =>
+    fulfilJson(route, {
+        schema_version: 1,
+        object: "models.catalog",
+        aliases: rows,
+        models: [],
+      }),
+  );
+}
+
+const modelCards = (page: Page) =>
+  page.locator('table[aria-label="Available model names"] tbody tr');
+
+test("polished models: three aliases light 1440 fill the width and pass axe", async ({
+  page,
+}) => {
+  await prepare(page, 1440, "light");
+  await stubCatalog(page, aliases);
+  await page.goto("/models/");
+  await expect(
+    page.getByRole("heading", { name: "Fast", exact: true }),
+  ).toBeVisible();
+  await verifyModelLayout(page, modelCards(page), 3);
+});
+
+test("polished model grouping keeps its width and passes axe after a search", async ({
   page,
 }) => {
   await prepare(page, 1440, "light");
@@ -63,263 +135,111 @@ test("polished model grouping fills width before and after filtering", async ({
     use_names: [id],
     use: { model: id },
   }));
-  await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({
-      json: {
-        schema_version: 1,
-        object: "models.catalog",
-        aliases: chatAliases,
-        models: [],
-      },
-    }),
-  );
+  await stubCatalog(page, chatAliases);
   await page.goto("/models/");
   await expect(
     page.getByRole("heading", { name: "Fast", exact: true }),
   ).toBeVisible();
-  const cards = page.locator('table[aria-label="Available model names"] tbody tr');
-  await verifyModelLayout(page, cards, 1);
-  await expect(page.getByText("2 more", { exact: true })).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Audio", exact: true }),
-  ).toHaveCount(0);
+  await verifyModelLayout(page, modelCards(page), 1);
   await page.getByRole("textbox", { name: "Search models" }).fill("fast");
-  await verifyModelLayout(page, cards, 1);
   await expect(page.getByText(/\d+ more/)).toHaveCount(0);
+  await verifyModelLayout(page, modelCards(page), 1);
 });
 
-for (const width of [390, 1440]) {
-  test(`paid model metadata preserves price, unknown timing and readable providers ${width}`, async ({
-    page,
-  }) => {
-    await prepare(page, width, "light");
-    const provider =
-      "Example remote provider with a long configured display name";
-    const price =
-      "$0.80 per million input tokens / $2.40 per million output tokens";
-    const paid = ["image", "portrait", "illustration"].map((id) => ({
-      ...aliases[1],
-      id,
-      display_name: id[0].toUpperCase() + id.slice(1),
-      title: id[0].toUpperCase() + id.slice(1),
-      use_names: [id],
-      provider,
-      engine_label: provider,
-      locality: "remote",
-      cost: { kind: "paid", price },
-      timing: { typical_seconds: null, source: null },
-      use: { model: id },
-    }));
-    await page.route("**/me/api/models/catalog", (route) =>
-      route.fulfill({
-        json: {
-          schema_version: 1,
-          object: "models.catalog",
-          aliases: paid,
-          models: [],
-        },
-      }),
+test("polished models: two aliases dark 390 name the task, fill the width and pass axe", async ({
+  page,
+}) => {
+  await prepare(page, 390, "dark");
+  await stubCatalog(page, aliases.slice(0, 2));
+  await page.goto("/models/");
+  // Below 640 px a row is two lines: the task name, then the alias. The
+  // model's friendly title is a desktop column.
+  await expect(
+    page.getByRole("heading", { name: "Chat", exact: true }),
+  ).toBeVisible();
+  await verifyModelLayout(page, modelCards(page), 2);
+});
+
+test("paid model rows with a long provider name keep the 390 px page inside the viewport", async ({
+  page,
+}) => {
+  await prepare(page, 390, "light");
+  const provider =
+    "Example remote provider with a long configured display name";
+  const price =
+    "$0.80 per million input tokens / $2.40 per million output tokens";
+  const paid = ["image", "portrait", "illustration"].map((id) => ({
+    ...aliases[1],
+    id,
+    display_name: id[0].toUpperCase() + id.slice(1),
+    title: id[0].toUpperCase() + id.slice(1),
+    use_names: [id],
+    provider,
+    engine_label: provider,
+    locality: "remote",
+    cost: { kind: "paid", price },
+    timing: { typical_seconds: null, source: null },
+    use: { model: id },
+  }));
+  await stubCatalog(page, paid);
+  await page.goto("/models/");
+  await verifyModelLayout(page, modelCards(page), 1);
+});
+
+async function checkPlanRows(page: Page, width: number) {
+  await page.route("**/admin/api/people", (route) =>
+    fulfilJson(route, { people: [], profiles: plans }),
+  );
+  await page.route("**/admin/api/invites", (route) =>
+    fulfilJson(route, { invites: [], profiles: plans }),
+  );
+  await page.route("**/admin/api/profiles", (route) =>
+    fulfilJson(route, { profiles: plans }),
+  );
+  await page.goto("/people/");
+  await page.getByRole("tab", { name: "Access plans" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Family", exact: true }),
+  ).toBeVisible();
+  // Craft PR 3: plans are one ListCard of full-width rows, 60 tall (64 on
+  // a phone), each with its summary and counts on the second line.
+  const rows = page.getByRole("tabpanel").getByRole("listitem");
+  await expect(rows).toHaveCount(3);
+  const geometry = async () => {
+    const boxes = await rows.evaluateAll((elements) =>
+      elements.map((element) => element.getBoundingClientRect().toJSON()),
     );
-    await page.goto("/models/");
-    const cards = page.locator(
-      'table[aria-label="Available model names"] tbody tr',
-    );
-    await verifyModelLayout(page, cards, 1);
-    await expect(page.getByText("2 more", { exact: true })).toBeVisible();
-    await expect(
-      cards.first().getByText(`Paid · ${price}`, { exact: true }),
-    ).toBeVisible();
-    await expect(
-      cards.first().getByText("Not measured yet", { exact: true }),
-    ).toHaveCount(0);
-    await expect(
-      cards.first().getByText(provider, { exact: true }),
-    ).toHaveCount(0);
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= innerWidth,
+    const panelWidth = await page
+      .getByRole("tabpanel")
+      .evaluate((element) => element.getBoundingClientRect().width);
+    return {
+      alignedLeft: boxes.every(
+        (box) => Math.round(box.x) === Math.round(boxes[0].x),
       ),
-    ).toBe(true);
-    await page.screenshot({
-      path: `test-results/screens/polish-paid-${width}.png`,
-      fullPage: true,
-    });
-    await cards.first().getByRole("button", { name: "Details" }).click();
-    await expect(
-      page.getByRole("dialog").getByText(`Paid · ${price}`, { exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("dialog").getByText(provider, { exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("dialog").getByText("Not measured yet", { exact: true }),
-    ).toHaveCount(0);
+      fullWidth: boxes.every((box) => box.width > panelWidth - 4),
+      heights: boxes.map((box) => Math.round(box.height)),
+      stacked: boxes.every((box, index) => !index || box.y > boxes[index - 1].y),
+    };
+  };
+  await expect.poll(geometry).toEqual({
+    alignedLeft: true,
+    fullWidth: true,
+    heights: Array(3).fill(width < 640 ? 64 : 60),
+    stacked: true,
   });
+  await expectNoHorizontalOverflow(page);
 }
 
-async function prepare(page: Page, width: number, theme: "light" | "dark") {
-  await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-  await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-  await page.addInitScript(
-    (value) => localStorage.setItem("theme", value),
-    theme,
-  );
-}
+test("polished access plans light 1440 are full-width 60 px rows", async ({
+  page,
+}) => {
+  await prepare(page, 1440, "light");
+  await checkPlanRows(page, 1440);
+});
 
-async function verifyModelLayout(page: Page, cards: Locator, count: number) {
-  await expect(cards).toHaveCount(count);
-  const boxes = await cards.evaluateAll((elements) =>
-    elements.map((element) => {
-      const rect = element.getBoundingClientRect();
-      return { width: rect.width };
-    }),
-  );
-  expect(Math.min(...boxes.map((box) => box.width))).toBeGreaterThan(280);
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
-  const a11y = await new AxeBuilder({ page }).analyze();
-  expect(
-    a11y.violations
-      .filter((violation) =>
-        ["serious", "critical"].includes(violation.impact ?? ""),
-      )
-      .map((violation) => violation.id),
-  ).toEqual([]);
-}
-
-async function verifyGrid(
-  page: Page,
-  cards: Locator,
-  width: number,
-  count: number,
-) {
-  await expect(cards).toHaveCount(count);
-  const boxes = await cards.evaluateAll((elements) =>
-    elements.map((element) => {
-      const rect = element.getBoundingClientRect();
-      return { x: rect.x, y: rect.y, width: rect.width };
-    }),
-  );
-  const columns = width < 640 ? 1 : width < 1024 ? 2 : Math.min(count, 3);
-  const row = boxes.slice(0, columns);
-  expect(new Set(row.map((box) => Math.round(box.x))).size).toBe(columns);
-  if (columns > 1) expect(Math.abs(row[0].y - row[1].y)).toBeLessThan(2);
-  if (count > columns) expect(boxes[columns].y).toBeGreaterThan(boxes[0].y);
-  const contentWidth = await page.locator("main").evaluate((element) => {
-    const style = getComputedStyle(element);
-    return (
-      element.getBoundingClientRect().width -
-      parseFloat(style.paddingLeft) -
-      parseFloat(style.paddingRight)
-    );
-  });
-  // Cards share the content width, rather than leaving singleton capability
-  // sections as isolated narrow columns.
-  expect(boxes[0].width).toBeGreaterThan(contentWidth / columns - 32);
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
-  const a11y = await new AxeBuilder({ page }).analyze();
-  expect(
-    a11y.violations
-      .filter((violation) =>
-        ["serious", "critical"].includes(violation.impact ?? ""),
-      )
-      .map((violation) => violation.id),
-  ).toEqual([]);
-}
-
-for (const theme of ["light", "dark"] as const) {
-  for (const width of [390, 768, 1440]) {
-    for (const count of [2, 3]) {
-      test(`polished models ${count} aliases ${theme} ${width}`, async ({
-        page,
-      }) => {
-        await prepare(page, width, theme);
-        await page.route("**/me/api/models/catalog", (route) =>
-          route.fulfill({
-            json: {
-              schema_version: 1,
-              object: "models.catalog",
-              aliases: aliases.slice(0, count),
-              models: [],
-            },
-          }),
-        );
-        await page.goto("/models/");
-        // Below 640 px a row is two lines: the task name, then the alias. The
-        // model's friendly title is a desktop column.
-        await expect(
-          page.getByRole("heading", {
-            name: width < 640 ? "Chat" : "Fast",
-            exact: true,
-          }),
-        ).toBeVisible();
-        const cards = page.locator(
-          'table[aria-label="Available model names"] tbody tr',
-        );
-        await verifyModelLayout(page, cards, count);
-        await expect(
-          page
-            .getByRole("group", { name: "Price filters (choose any)" })
-            .getByRole("button", { name: "No provider charge" }),
-        ).toHaveAttribute("aria-pressed", "true");
-        await page.screenshot({
-          path: `test-results/screens/polish-models-${count}-${theme}-${width}.png`,
-          fullPage: true,
-        });
-      });
-    }
-    test(`polished access plans ${theme} ${width}`, async ({ page }) => {
-      await prepare(page, width, theme);
-      await page.route("**/admin/api/people", (route) =>
-        route.fulfill({ json: { people: [], profiles: plans } }),
-      );
-      await page.route("**/admin/api/invites", (route) =>
-        route.fulfill({ json: { invites: [], profiles: plans } }),
-      );
-      await page.route("**/admin/api/profiles", (route) =>
-        route.fulfill({ json: { profiles: plans } }),
-      );
-      await page.goto("/people/");
-      await page.getByRole("tab", { name: "Access plans" }).click();
-      await expect(
-        page.getByRole("heading", { name: "Family", exact: true }),
-      ).toBeVisible();
-      // Craft PR 3: plans are one ListCard of full-width rows, 60 tall (64 on
-      // a phone), each with its summary and counts on the second line.
-      const rows = page.getByRole("tabpanel").getByRole("listitem");
-      await expect(rows).toHaveCount(3);
-      const boxes = await rows.evaluateAll((elements) =>
-        elements.map((element) => element.getBoundingClientRect().toJSON()),
-      );
-      const contentWidth = await page
-        .getByRole("tabpanel")
-        .evaluate((element) => element.getBoundingClientRect().width);
-      for (const [index, box] of boxes.entries()) {
-        expect(Math.round(box.x)).toBe(Math.round(boxes[0].x));
-        expect(box.width).toBeGreaterThan(contentWidth - 4);
-        expect(Math.round(box.height)).toBe(width < 640 ? 64 : 60);
-        if (index) expect(box.y).toBeGreaterThan(boxes[index - 1].y);
-      }
-      await expect(rows.first()).toContainText(
-        "Chat and images. Local models only. No paid providers. Selected models only.",
-      );
-      await expect(rows.first()).toContainText("1 selected model");
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= innerWidth,
-        ),
-      ).toBe(true);
-      await page.screenshot({
-        path: `test-results/screens/polish-plans-${theme}-${width}.png`,
-        fullPage: true,
-      });
-    });
-  }
-}
+test("polished access plans dark 390 are full-width 64 px rows", async ({
+  page,
+}) => {
+  await prepare(page, 390, "dark");
+  await checkPlanRows(page, 390);
+});

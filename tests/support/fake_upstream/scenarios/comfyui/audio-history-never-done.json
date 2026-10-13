@@ -1,0 +1,34 @@
+{
+  "protocol": "comfyui",
+  "name": "audio-history-never-done",
+  "description": "The job is submitted and every history check has no record of it.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /prompt, GET /history/{prompt_id}, GET /view (ComfyUI server.py); the gateway's audio route polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "json": {
+          "prompt_id": "p1"
+        }
+      }
+    },
+    {
+      "id": "history",
+      "match": {
+        "method": "GET",
+        "path": "/history/p1"
+      },
+      "response": {
+        "json": {}
+      },
+      "repeat": true
+    }
+  ]
+}

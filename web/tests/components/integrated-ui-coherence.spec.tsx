@@ -241,7 +241,7 @@ describe("integrated UI coherence", () => {
             creations: null,
           });
         }
-        if (url === "/me/api/media?limit=50") {
+        if (url === "/me/api/media?limit=12") {
           return Response.json({
             assets: [
               {
@@ -269,7 +269,7 @@ describe("integrated UI coherence", () => {
     expect(
       screen.getByRole("link", { name: /A quiet gateway/ }),
     ).toHaveAttribute("href", "/library?asset=img_recent");
-    expect(requested).toContain("/me/api/media?limit=50");
+    expect(requested).toContain("/me/api/media?limit=12");
     expect(requested.some((url) => url.includes("scope=everyone"))).toBe(false);
   });
 
@@ -302,7 +302,7 @@ describe("integrated UI coherence", () => {
             creations: null,
           });
         }
-        if (url === "/me/api/media?limit=50") {
+        if (url === "/me/api/media?limit=12") {
           return Response.json(
             { error: { message: "Library unavailable" } },
             { status: 503 },
@@ -318,7 +318,7 @@ describe("integrated UI coherence", () => {
       ),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
-    expect(requested).toContain("/me/api/media?limit=50");
+    expect(requested).toContain("/me/api/media?limit=12");
     expect(requested.some((url) => url.includes("scope=everyone"))).toBe(false);
   });
 });

@@ -1,6 +1,7 @@
-import { test, expect } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
+import { fulfilJson } from "./fixtures/intercept";
 
-test("create, rotate and revoke an app key, then inspect its audit receipt", async ({
+test("create, rotate and revoke an app key, then inspect its audit receipt", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   request,
 }) => {
@@ -114,7 +115,7 @@ test("apps explain an empty account and recover after an API error", async ({
   await page.route("**/me/api/session", async (route) => {
     const response = await route.fetch();
     const actual = await response.json();
-    await route.fulfill({ response, json: { ...actual, apps: [] } });
+    await fulfilJson(route, { ...actual, apps: [] }, { response });
   });
   await page.goto("/apps/");
   await expect(
@@ -126,10 +127,7 @@ test("apps explain an empty account and recover after an API error", async ({
     // Keep the shell's viewer request real; fail the Apps request that follows.
     sessionCalls += 1;
     if (sessionCalls === 1) return route.continue();
-    return route.fulfill({
-      status: 503,
-      json: { error: { message: "Unavailable for this test" } },
-    });
+    return fulfilJson(route, { error: { message: "Unavailable for this test" } }, { status: 503 });
   });
   await page.reload();
   await expect(
@@ -157,10 +155,7 @@ test("audit has a useful empty filter state and recovers after an API error", as
     page.getByText("No matching changes", { exact: true }),
   ).toBeVisible();
   await page.route("**/admin/api/audit?**", (route) =>
-    route.fulfill({
-      status: 503,
-      json: { error: { message: "Unavailable for this test" } },
-    }),
+    fulfilJson(route, { error: { message: "Unavailable for this test" } }, { status: 503 }),
   );
   await page.reload();
   await page.getByRole("tab", { name: "Changes", exact: true }).click();

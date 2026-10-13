@@ -176,55 +176,53 @@ class VoiceDesignDifferentialTests(unittest.TestCase):
 class SpeechVoiceDifferentialTests(unittest.TestCase):
     """Every request matches, except where a voice was silently replaced; the listing is what is accepted."""
 
-    def test_owner_configuration_speaks_byte_identical_requests(self) -> None:
-        observed = observe(load_fixture("owner_config.migrated.json"), ("speech",))["speech"]
-        golden = _GOLDEN["speech"]
-        self.assertEqual(set(observed), set(golden))
-        identical = {case for case in golden if observed[case] == golden[case]}
-        changed = sorted(set(golden) - identical - {"GET /v1/audio/voices"})
-        refused, now_listed, rerouted = [], [], {}
-        for case in changed:
-            old, new = golden[case], observed[case]
-            old_body = json.loads(old["upstream"][0]["body"])
-            # The old gateway sent the engine's default in place of a voice the engine did not know.
-            self.assertEqual(old_body["voice"], _ENGINE_DEFAULTS[old_body["model"]], case)
-            model, voice = case.split(" voice=")
-            if new["response"]["status"] == 400:
-                self.assertEqual(new["response"]["json"]["error"]["code"], "voice_not_available", case)
-                self.assertEqual(new["upstream"], [], case)
-                refused.append(case)
-            elif new == observed.get(f"{_REROUTED.get(model)} voice={voice}"):
-                # A tier sends the voice to its first engine that lists it, exactly as naming that engine does.
-                rerouted.setdefault(_REROUTED[model], []).append(case)
-            else:
-                new_body = json.loads(new["upstream"][0]["body"])
-                self.assertEqual({**new_body, "voice": None}, {**old_body, "voice": None}, case)
-                now_listed.append((case, new_body["voice"]))
-        # Intended changes: an unknown voice is refused; a voice that only a later engine of a tier
-        # lists reaches that engine; a listed Kokoro voice that was not an OpenAI-name mapping reaches
-        # the engine instead of becoming af_heart.
-        self.assertEqual(len(identical), 713)
-        self.assertEqual(len(refused), 146)
-        presets = [f'"{v}"' for v in (*_PRESET_VOICES, "DE_Female")]
-        self.assertEqual(sorted(rerouted["omnivoice"]), sorted(
-            f"{model} voice={voice}" for model in ("tts-1", "gpt-4o-mini-tts", "tts", "tts-fast") for voice in presets))
-        self.assertEqual(sorted(rerouted["kokoro"]), sorted(
-            f"{model} voice={voice}" for model in ("tts-1-hd", "tts-quality")
-            for voice in ('"af_heart"', '"AF_Bella"', '"bm_george"', '"am_onyx"')))
-        self.assertEqual(now_listed, [('kokoro voice="bm_george"', "bm_george")])
-        # An unknown voice is still refused on the default model.
-        self.assertEqual(observed['tts-1 voice="nope"']["response"]["json"]["error"]["code"], "voice_not_available")
-
-    def _check_voice_listing(self, model: str) -> None:
-        """The listing is exactly the voices ``model`` accepts. One model per test keeps each sweep short."""
+    def _check_model(self, model: str) -> None:
+        """One model: every request matches the golden except where a voice was silently replaced,
+        and the listing is exactly the voices the model accepts.  One model per test keeps each sweep
+        short; both checks read the same observed requests, so the sweep runs once."""
         from tests.engine_p2_differential import _observe_speech
 
         with running_gateway(load_fixture("owner_config.migrated.json")) as (proxy, client, upstream, _root):
             observed = asyncio.run(_observe_speech(proxy, client, upstream, (model,)))
+            golden = {case: value for case, value in _GOLDEN["speech"].items() if case.split(" voice=")[0] == model}
+            self.assertEqual(set(observed), set(golden))
+            identical = {case for case in golden if observed[case] == golden[case]}
+            refused, now_listed, rerouted = [], [], []
+            for case in sorted(set(golden) - identical):
+                old, new = golden[case], observed[case]
+                old_body = json.loads(old["upstream"][0]["body"])
+                # The old gateway sent the engine's default in place of a voice the engine did not know.
+                self.assertEqual(old_body["voice"], _ENGINE_DEFAULTS[old_body["model"]], case)
+                voice = json.loads(case.split(" voice=")[1])
+                if new["response"]["status"] == 400:
+                    self.assertEqual(new["response"]["json"]["error"]["code"], "voice_not_available", case)
+                    self.assertEqual(new["upstream"], [], case)
+                    refused.append(case)
+                elif model in _REROUTED and new == _golden_engine_request(_REROUTED[model], voice):
+                    # A tier sends the voice to its first engine that lists it, exactly as naming that engine did
+                    # in the golden run.  The reference is the recorded golden, not a request made in this context,
+                    # so a runtime-configuration change (a wrong upstream host) cannot move both sides together.
+                    rerouted.append(case)
+                else:
+                    new_body = json.loads(new["upstream"][0]["body"])
+                    self.assertEqual({**new_body, "voice": None}, {**old_body, "voice": None}, case)
+                    now_listed.append((case, new_body["voice"]))
+            # Intended changes: an unknown voice is refused; a voice that only a later engine of a tier
+            # lists reaches that engine; a listed Kokoro voice that was not an OpenAI-name mapping reaches
+            # the engine instead of becoming af_heart.
+            presets = [f'"{v}"' for v in (*_PRESET_VOICES, "DE_Female")]
+            tier_voices = {"omnivoice": presets, "kokoro": ['"af_heart"', '"AF_Bella"', '"bm_george"', '"am_onyx"']}
+            self.assertEqual(rerouted, sorted(f"{model} voice={voice}" for voice in tier_voices.get(_REROUTED.get(model), ())))
+            self.assertEqual(now_listed, [('kokoro voice="bm_george"', "bm_george")] if model == "kokoro" else [])
+            self.assertEqual((len(identical), len(refused)), _MODEL_COUNTS[model], model)
+            if model == "tts-1":
+                # An unknown voice is still refused on the default model.
+                self.assertEqual(observed['tts-1 voice="nope"']["response"]["json"]["error"]["code"], "voice_not_available")
+
             resp = client.get("/v1/audio/voices", params={"model": model})
-            refused = observed[f'{model} voice="alloy"']["response"]
-            if refused["status"] != 200:  # no such model, or not deployed in the owner's registry
-                self.assertEqual((resp.status_code, resp.json()), (refused["status"], refused["json"]), model)
+            refused_alloy = observed[f'{model} voice="alloy"']["response"]
+            if refused_alloy["status"] != 200:  # no such model, or not deployed in the owner's registry
+                self.assertEqual((resp.status_code, resp.json()), (refused_alloy["status"], refused_alloy["json"]), model)
                 return
             listing = resp.json()
             listed = {entry["id"].lower() for entry in listing["voices"]}
@@ -246,6 +244,13 @@ class SpeechVoiceDifferentialTests(unittest.TestCase):
                 self.assertEqual([c["id"] for c in choices["voices"]],
                                  [e["id"] for e in listing["voices"] if not e["alias"]], model)
                 self.assertEqual(choices["default_voice"], listing["default_voice"], model)
+
+    def test_the_per_model_counts_add_up_to_the_whole_sweep(self) -> None:
+        self.assertEqual(set(_MODEL_COUNTS), set(_SPEECH_MODELS))
+        self.assertEqual(sum(count[0] for count in _MODEL_COUNTS.values()), 713)
+        self.assertEqual(sum(count[1] for count in _MODEL_COUNTS.values()), 146)
+        # 713 identical + 146 refused + 76 rerouted + 1 newly listed + the changed overall listing = 937 requests
+        self.assertEqual(len(_SPEECH_MODELS) * 78 + 1, 713 + 146 + 76 + 1 + 1)
 
     def test_the_overall_voice_listing_is_the_default_model_listing(self) -> None:
         with running_gateway(load_fixture("owner_config.migrated.json")) as (_proxy, client, _upstream, _root):
@@ -280,18 +285,40 @@ class SpeechVoiceDifferentialTests(unittest.TestCase):
         self.assertNotIn("kokoro", listing["engines"])
 
 
-def _listing_test(model: str):
-    return lambda self: self._check_voice_listing(model)
+def _model_test(model: str):
+    return lambda self: self._check_model(model)
 
 
 for _model in _SPEECH_MODELS:
     setattr(SpeechVoiceDifferentialTests,
-            "test_the_voice_listing_is_exactly_the_voices_" + re.sub(r"\W", "_", _model) + "_accepts", _listing_test(_model))
+            "test_the_model_speaks_byte_identical_requests_and_its_listing_is_what_it_accepts_" + re.sub(r"\W", "_", _model),
+            _model_test(_model))
 
+# (identical, refused) per model; the tiers' other changed requests are the rerouted ones
+_MODEL_COUNTS = {
+    "tts-1": (49, 12), "tts-1-hd": (62, 12), "gpt-4o-mini-tts": (49, 12), "tts": (49, 12), "tts-fast": (49, 12),
+    "tts-quality": (62, 12), "omnivoice": (62, 16), "supertonic": (49, 29), "kokoro": (48, 29),
+    "chatterbox": (78, 0), "k2-fsa/OmniVoice": (78, 0), "no-such-model": (78, 0),
+}
 _ENGINE_DEFAULTS = {"supertonic": "F1", "kokoro": "af_heart", "k2-fsa/OmniVoice": "alloy"}
 # The engine a tier's later-listed voices reach in the owner's configuration.
 _REROUTED = {"tts-1": "omnivoice", "gpt-4o-mini-tts": "omnivoice", "tts": "omnivoice", "tts-fast": "omnivoice",
              "tts-1-hd": "kokoro", "tts-quality": "kokoro"}
+
+
+def _golden_engine_request(engine: str, voice: Any) -> dict[str, Any] | None:
+    """The golden observation of naming `engine` with `voice`.  Where the golden gateway had replaced the
+    voice by the engine's default (a voice the engine lists but the golden gateway mapped away), the same
+    recorded request with the voice put back is the expectation."""
+    recorded = _GOLDEN["speech"].get(f"{engine} voice={json.dumps(voice)}")
+    if recorded is None or not recorded["upstream"]:
+        return recorded
+    expected = copy.deepcopy(recorded)
+    body = json.loads(expected["upstream"][0]["body"])
+    if body["voice"] == _ENGINE_DEFAULTS.get(body["model"]) and voice != body["voice"]:
+        body["voice"] = voice
+        expected["upstream"][0]["body"] = json.dumps(body)
+    return expected
 
 
 def _prompt_index(prompt: str) -> int:

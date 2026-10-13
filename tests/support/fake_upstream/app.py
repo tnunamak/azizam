@@ -16,7 +16,7 @@ from typing import Any, Mapping
 from urllib.parse import parse_qsl
 
 from .clock import ClockClosed, VirtualClock
-from .scenario import Exchange, Scenario, matches
+from .scenario import Exchange, Scenario, matches, matches_transcript
 
 VIOLATION_STATUS = 599
 
@@ -56,6 +56,8 @@ class FakeUpstream:
     base_url: str = ""
     requests: list[RecordedRequest] = field(default_factory=list)
     violations: list[str] = field(default_factory=list)
+    # Exchange ids whose client closed the connection before the response ended.
+    client_closed: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
@@ -64,6 +66,8 @@ class FakeUpstream:
         self._background = [e for e in self.scenario.exchanges if e.repeat]
         self._pointer = 0
         self._waived: set[str] = set()
+        # A transcript is a recording of what the real client sent: match it exactly.
+        self._match = matches_transcript if self.scenario.provenance.get("source") == "transcript" else matches
 
     def calls(self, exchange_id: str) -> list[RecordedRequest]:
         if exchange_id not in self._counts:
@@ -94,7 +98,7 @@ class FakeUpstream:
             index = self._pointer
             while index < len(self._ordered):
                 exchange = self._ordered[index]
-                if matches(exchange.match, actual):
+                if self._match(exchange.match, actual):
                     self._counts[exchange.id] += 1
                     self._pointer = index + 1 if self._counts[exchange.id] == exchange.times else index
                     return exchange, None
@@ -102,11 +106,11 @@ class FakeUpstream:
                     break
                 index += 1
             for exchange in self._background:
-                if matches(exchange.match, actual):
+                if self._match(exchange.match, actual):
                     self._counts[exchange.id] += 1
                     return exchange, None
             for exchange in self._ordered:
-                if matches(exchange.match, actual):
+                if self._match(exchange.match, actual):
                     if self._counts[exchange.id] >= exchange.times:
                         return None, f"exchange {exchange.id!r} called more than {exchange.times} time(s)"
                     return None, f"exchange {exchange.id!r} called out of order"
@@ -155,7 +159,11 @@ class FakeUpstream:
         watcher = asyncio.create_task(watch())
         try:
             await self._respond(exchange.response, send, disconnected)
-        except (ClockClosed, _ClientGone):
+        except _ClientGone:
+            with self._lock:
+                self.client_closed.append(exchange.id)
+            return
+        except ClockClosed:
             return
         finally:
             watcher.cancel()

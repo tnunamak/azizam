@@ -95,7 +95,7 @@ describe("Home and Library polish", () => {
         switch (String(input)) {
           case "/me/api/home":
             return Response.json(home);
-          case "/me/api/media?limit=50":
+          case "/me/api/media?limit=12":
             return Response.json({ assets: [assets[0]] });
           default:
             throw new Error(`Unexpected request: ${input}`);
@@ -178,7 +178,7 @@ describe("Home and Library polish", () => {
                 },
               ],
             });
-          case "/me/api/media?limit=50":
+          case "/me/api/media?limit=12":
             return Response.json({ assets: [assets[0]] });
           default:
             throw new Error(`Unexpected request: ${input}`);
@@ -248,7 +248,7 @@ describe("Home and Library polish", () => {
                 },
               ],
             });
-          case "/me/api/media?limit=50":
+          case "/me/api/media?limit=12":
             return Response.json({ assets: [] });
           default:
             throw new Error(`Unexpected request: ${input}`);

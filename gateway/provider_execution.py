@@ -686,6 +686,8 @@ async def execute_paid_litellm(
                 merged_usage: dict[str, Any] = {}
                 assembled_chunks: list[dict[str, Any]] = []
                 finished = False
+                saw_done = False
+                done_event_complete = False
                 assembly_failed = False
                 assembled_bytes = 0
                 generation_id = None
@@ -695,9 +697,12 @@ async def execute_paid_litellm(
                         pending += chunk
                         while b"\n" in pending:
                             line, pending = pending.split(b"\n", 1)
+                            if saw_done and not line.strip():
+                                done_event_complete = True
                             if line.startswith(b"data:"):
                                 data = line[5:].strip()
                                 if data == b"[DONE]":
+                                    saw_done = True
                                     continue
                                 try:
                                     event = json.loads(data)
@@ -727,6 +732,9 @@ async def execute_paid_litellm(
                             assembly_failed = True
                             pending = b""
                         yield chunk
+                        if done_event_complete:
+                            # The [DONE] event is whole on the wire; do not wait for the upstream to close.
+                            break
                     if pending.strip():
                         assembly_failed = True
                     if not assembly_failed:

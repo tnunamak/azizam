@@ -29,7 +29,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from gateway import category_policy as kernel
+from gateway import category_policy as kernel, request_connections
 from gateway.category_store import (
     CategoryStore, CorruptSnapshotError, NoActiveSnapshotError,
 )
@@ -64,7 +64,17 @@ class CategoryGate:
         self._failed = False
 
     def _active(self) -> tuple[kernel.PolicyVersion | None, bool]:
-        """Return (snapshot or None, unavailable)."""
+        """Return (snapshot or None, unavailable), read once per read request.
+
+        A listing checks one request per model, capability and workflow, so
+        the store was asked for its version hundreds of times in a request.
+        A read request now sees one snapshot; an activation applies on the
+        next request. Outside a read request (inference, tests) every check
+        asks the store, as before.
+        """
+        return request_connections.memo(("category-gate", id(self)), self._active_now)
+
+    def _active_now(self) -> tuple[kernel.PolicyVersion | None, bool]:
         if not self._path.exists():
             if self._store is None:
                 return None, False

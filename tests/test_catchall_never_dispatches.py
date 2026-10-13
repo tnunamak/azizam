@@ -147,7 +147,6 @@ def _case(seeded, monkeypatch, case_dir):
     # proceeds all the way to the backend send.
     monkeypatch.setattr(proxy, "_service_availability_response", lambda *_a, **_k: None)
     monkeypatch.setattr(proxy, "check_service_health", tripwire("check_service_health", True))
-    monkeypatch.setattr(proxy, "is_model_loaded", tripwire("is_model_loaded", False))
     monkeypatch.setattr(
         proxy, "send_llm_execution_request",
         tripwire("send_llm_execution_request", RuntimeError("backend reached")),
@@ -224,7 +223,7 @@ def test_each_case_gets_fresh_stores_and_tripwires(seeded_stores, tmp_path):
     with pytest.MonkeyPatch.context() as patch:
         (tmp_path / "first").mkdir()
         first = _case(seeded_stores, patch, tmp_path / "first")
-        response = _send(first, "POST", "/gateway/v1/providers/tabby/v1/model/load",
+        response = _send(first, "POST", "/gateway/v1/providers/kobold/v1/model/load",
                          headers=first.headers["member"])
         assert response.status_code == 403, response.text
         assert _receipt_count(first) == 1
@@ -244,7 +243,7 @@ def test_restricted_plan_is_denied_on_the_canonical_native_route(gateway):
     """Control: the plan the bypass skipped really denies native passthrough."""
     before = _receipt_count(gateway)
     response = _send(
-        gateway, "POST", "/gateway/v1/providers/tabby/v1/model/load",
+        gateway, "POST", "/gateway/v1/providers/kobold/v1/model/load",
         headers=gateway.headers["member"],
     )
     assert response.status_code == 403, response.text

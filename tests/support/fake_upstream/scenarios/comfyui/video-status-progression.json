@@ -1,0 +1,75 @@
+{
+  "protocol": "comfyui",
+  "name": "video-status-progression",
+  "description": "Three status polls for one job: unknown to history and queue-less, then queued-running in /queue, then finished with an execution_error in history.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes GET /history/{prompt_id} (absent job: empty object), GET /queue ({queue_running, queue_pending}) (ComfyUI server.py); a failed run records an execution_error message in its history status"
+  },
+  "exchanges": [
+    {
+      "id": "history-unknown",
+      "match": {
+        "method": "GET",
+        "path": "/history/p"
+      },
+      "response": {
+        "json": {}
+      }
+    },
+    {
+      "id": "history-still-unknown",
+      "match": {
+        "method": "GET",
+        "path": "/history/p"
+      },
+      "response": {
+        "json": {}
+      }
+    },
+    {
+      "id": "queue-running",
+      "match": {
+        "method": "GET",
+        "path": "/queue"
+      },
+      "response": {
+        "json": {
+          "queue_running": [
+            [
+              0,
+              "p"
+            ]
+          ],
+          "queue_pending": []
+        }
+      }
+    },
+    {
+      "id": "history-failed",
+      "match": {
+        "method": "GET",
+        "path": "/history/p"
+      },
+      "response": {
+        "json": {
+          "p": {
+            "status": {
+              "completed": true,
+              "messages": [
+                [
+                  "execution_error",
+                  {
+                    "node_id": "12",
+                    "node_type": "Sampler",
+                    "exception_message": "private upstream sentinel"
+                  }
+                ]
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

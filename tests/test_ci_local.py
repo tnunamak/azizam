@@ -1,6 +1,6 @@
 """scripts/ci-local's signoff, host lock and run-directory lifecycle.
 
-Each test runs the real ci-local, merge_cases.py, policy.py and plan_shards.py
+Each test runs the real ci-local, merge_cases.py and policy.py
 in a throwaway repository whose test runners, installers, `node`, `gh` and
 fresh-instance journey are stubs that finish in milliseconds. The origin is a
 local bare repository, so `git ls-remote` is real; `gh` only records what it
@@ -21,8 +21,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-COPIED = ("scripts/ci-local", "scripts/low-priority", "scripts/ci/merge_cases.py", "scripts/ci/policy.py", "scripts/ci/pi-unit",
-          "scripts/e2e/plan_shards.py")
+COPIED = ("scripts/ci-local", "scripts/low-priority", "scripts/ci/merge_cases.py", "scripts/ci/policy.py", "scripts/ci/prune_receipts.py", "scripts/ci/replay_scan.py", "scripts/ci/pi-unit")
 
 STUBS = {
     # Tools on PATH.
@@ -50,7 +49,7 @@ exit 0""",
     # Copied into web/node_modules/.bin by the npm stub.
     "playwright": """
 [[ $1 == test ]] || exit 0
-if [[ $2 == --list ]]; then echo "  [chromium] › e2e/a.spec.ts:3:1 › a"; exit 0; fi
+if [[ -n ${FAKE_TREE_WRITE:-} ]]; then touch "$PWD/$FAKE_TREE_WRITE"; fi
 case $3 in
   playwright.config.ts) file=e2e/a.spec.ts ;;
   playwright.live-data.config.ts) file=e2e/live-data-scoping.spec.ts ;;
@@ -64,12 +63,13 @@ REPO_FILES = {
     "scripts/run-hermetic-pytest.sh": """#!/usr/bin/env bash
 printf '<testsuites><testsuite name="pytest"><testcase classname="tests.test_ok" name="test_ok" time="0.1"/></testsuite></testsuites>\\n' > "$2"
 """,
+    "scripts/ci/mcp-conformance": "#!/usr/bin/env bash\n",
     "scripts/e2e/fresh_instance.sh": """#!/usr/bin/env bash
 if [[ ${1:-} != --compose && -n ${FAKE_DURING_RUN:-} ]]; then eval "$FAKE_DURING_RUN"; fi
 """,
     "tests/test_ok.py": "def test_ok():\n    pass\n",
     "tests/suites.toml": "",
-    "tests/budgets.toml": "[ceilings]\npytest = 10\nvitest = 10\nplaywright = 10\nnode = 10\n",
+    "tests/budgets.toml": "[ceilings]\npytest = 10\nvitest = 10\nplaywright = 10\nnode = 10\n[hygiene]\nwaitForTimeout = 0\nnetworkidle = 0\nforce_true = 0\none_shot_expect = 0\nbare_isVisible = 0\nabsolute_home_path = 0\nraw_fulfil = 0\nmalformed_stub = 0\n",
     "tests/requirements-hermetic.lock": "",
     "tests/compat/node/probe-gates.test.mjs": "",
     "integrations/pi/test/a.test.ts": "",
@@ -110,7 +110,7 @@ class World:
         for relative in COPIED:
             (self.repo / relative).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, self.repo / relative)
-        for script in ("scripts/run-hermetic-pytest.sh", "scripts/e2e/fresh_instance.sh"):
+        for script in ("scripts/run-hermetic-pytest.sh", "scripts/e2e/fresh_instance.sh", "scripts/ci/mcp-conformance"):
             (self.repo / script).chmod(0o755)
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], check=True)
         subprocess.run(["git", "init", "-q", "-b", "main", str(self.repo)], check=True)
@@ -133,7 +133,7 @@ class World:
                 "FAKE_BIN": str(self.bin), "FAKE_GH_LOG": str(self.gh_log), **extra}
 
     def args(self, *extra: str) -> list[str]:
-        return [str(self.repo / "scripts/ci-local"), "--force", "--shards", "1", "--order-seed", "5", *extra]
+        return [str(self.repo / "scripts/ci-local"), "--force", "--browser-workers", "1", "--order-seed", "5", *extra]
 
     def run(self, *extra: str, **env: str) -> subprocess.CompletedProcess[str]:
         # Files, not pipes: jobs a killed controller leaves behind keep its
@@ -193,9 +193,9 @@ def test_signoff_posts_to_the_tested_sha_then_writes_the_receipt(world: World) -
     assert receipt["seed"] == "5"
     assert receipt["status_url"] == f"https://api.github.test/repos/o/r/statuses/{sha}"
     assert receipt["steps"].split(",") == sorted([
-        "cases", "compat-node", "e2e-browser", "e2e-copy-18650", "e2e-copy-18660", "e2e-copy-18670", "e2e-household",
-        "e2e-live-data", "e2e-plan", "e2e-shard-1-of-1", "e2e-venv", "fresh-compose", "fresh-native",
-        "fresh-venv", "pi-unit", "policy", "python-hermetic", "showcase-core", "web-check", "web-npm-ci", "web-unit"])
+        "cases", "compat-node", "e2e-browser", "e2e-household", "e2e-live-data", "e2e-main", "e2e-tree-unchanged", "e2e-venv",
+        "fresh-compose", "fresh-native", "fresh-venv", "mcp-conformance", "pi-unit", "policy", "python-hermetic",
+        "showcase-core", "web-check", "web-npm-ci", "web-unit"])
     assert receipt["policy"].startswith("policy: ok:")
     assert world.run_dirs() == []  # a passed run removes its directory
 
@@ -250,6 +250,36 @@ def test_only_the_latest_failed_run_directory_is_kept(world: World) -> None:
     assert (world.receipts / "cases.jsonl").is_file()  # receipts live outside the run directory
 
 
+def test_a_killed_runs_directory_goes_at_the_next_start_and_the_kept_failure_stays(world: World) -> None:
+    failed = world.run(FAKE_VITEST_STATUS="failed")
+    [kept] = world.run_dirs()
+    assert f"kept the failed run's directory for debugging: {kept}" in failed.stdout
+    killed = world.home / ".tmp" / "azizam-ci-local.SIGKILLED"
+    (killed / "python").mkdir(parents=True)
+    (killed / ".ci-local-run").touch()
+    (killed / "python" / "copy").write_text("x")
+    assert world.run().returncode == 0
+    assert world.run_dirs() == [kept]
+
+
+def test_the_gate_compacts_old_receipts_at_start(world: World) -> None:
+    root = world.home / ".tmp" / "azizam-ci-receipts"
+    old = []
+    for index in range(25):
+        run = root / f"{index:040x}"
+        (run / "logs").mkdir(parents=True)
+        (run / "logs" / "a.log").write_text("log")
+        (run / "run.tsv").write_text("sha\tx\n")
+        (run / "PASS").write_text("x")
+        stamp = time.time() - (100 + index) * 3600
+        os.utime(run / "run.tsv", (stamp, stamp))
+        old.append(run)
+    assert world.run().returncode == 0
+    assert (old[0] / "logs" / "a.log").is_file() and (old[18] / "logs" / "a.log").is_file()
+    assert not (old[24] / "logs").exists() and (old[24] / "PASS").is_file() and (old[24] / "run.tsv").is_file()
+    assert (world.receipts / "cases.jsonl").is_file()
+
+
 # ci-local writes "pid <pid> sha ..." into the lock file it holds.
 SIGNAL_CONTROLLER = 'kill -{} "$(cut -d" " -f2 "$HOME/.tmp/azizam-ci.lock")"'
 
@@ -292,3 +322,14 @@ def test_a_killed_controller_keeps_the_lock_until_its_jobs_end(world: World) -> 
     assert world.run().returncode == 0
     assert world.run_dirs() == []  # the next run removed the killed run's directory
     assert not os.path.exists(orphaned)
+
+
+def test_a_browser_write_into_the_shared_build_fails_the_run(world: World) -> None:
+    """Browser tests share one build tree: runner output goes to the linked
+    test-results directory, and any other write into web/ fails the gate."""
+    result = world.run(FAKE_TREE_WRITE="test-results/report.html")
+    assert result.returncode == 0, result.stdout + result.stderr
+    result = world.run(FAKE_TREE_WRITE="stray-output.json")
+    assert result.returncode == 1, result.stdout + result.stderr
+    log = (world.receipts / "logs" / "e2e-tree-unchanged.log").read_text()
+    assert "browser tests wrote into the shared build tree:" in log and "web/stray-output.json" in log

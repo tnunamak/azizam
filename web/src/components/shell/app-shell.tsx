@@ -22,6 +22,7 @@ import {
   Menu,
   Moon,
   Play,
+  Plug,
   ReceiptText,
   Tags,
   CornerDownRight,
@@ -40,6 +41,7 @@ import {
   uiPages,
 } from "@/lib/product";
 import { useCapabilityViews } from "@/lib/use-capability-views";
+import { SHELL_CHECKS_DELAY_MS, useAfterFirstLoad } from "./use-after-first-load";
 import {
   STATE_WORDS,
   type CapabilityView,
@@ -106,6 +108,7 @@ const icons: Record<string, LucideIcon> = {
   Library: Images,
   Try: Play,
   "Apps & keys": KeyRound,
+  Connect: Plug,
   Models: Box,
   Workflows: GitBranch,
   Usage: ChartColumn,
@@ -327,9 +330,12 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
   });
   // The same capability model as Home and Status: the dot cannot say
   // "fine" while something the viewer depends on is failing.
-  const model = useCapabilityViews(viewer.admin && viewer.authenticated);
+  const checksReady = useAfterFirstLoad(SHELL_CHECKS_DELAY_MS);
+  const model = useCapabilityViews(viewer.admin && viewer.authenticated, {
+    deferOwnerChecks: !checksReady,
+  });
   // Owners also see the engine or provider at fault, in the banner's words.
-  const ownerAlert = useOwnerAlertTarget(viewer.admin);
+  const ownerAlert = useOwnerAlertTarget(viewer.admin && checksReady);
   const signedIn = viewer.authenticated && !viewer.serviceAdmin;
   // One rule (problemPill): faults are issues; Unknown (no fresh check) is
   // listed after them in the popover but never counted; Busy is neither.
@@ -520,7 +526,8 @@ function AlertSlot() {
   const viewer = useViewer();
   const pathname = usePathname();
   const onStatus = canonicalDestinationPath(pathname) === "/status";
-  const alert = useOwnerAlertTarget(viewer.admin && !onStatus);
+  const checksReady = useAfterFirstLoad(SHELL_CHECKS_DELAY_MS);
+  const alert = useOwnerAlertTarget(viewer.admin && !onStatus && checksReady);
   // Status owns its section markup. Resolve its visible heading after route
   // loading so the banner can hand keyboard focus to the affected section.
   useEffect(() => {

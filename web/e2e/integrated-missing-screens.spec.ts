@@ -1,9 +1,10 @@
-import { test, expect, type Page, type Route } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const themes = ["light", "dark"] as const;
 const widths = [1440, 390] as const;
-const states = ["seeded", "empty", "error"] as const;
 
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
@@ -25,18 +26,20 @@ async function setViewport(
 async function waitSettled(page: Page) {
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
-  await page.waitForLoadState("networkidle");
   await expect(page.getByLabel(/Loading/i)).toHaveCount(0);
 }
 
 async function inspect(page: Page, file: string) {
   await waitSettled(page);
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= window.innerWidth,
-    ),
-    "Page must fit the viewport",
-  ).toBe(true);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth - window.innerWidth,
+        ),
+      { message: "Page must fit the viewport" },
+    )
+    .toBeLessThanOrEqual(0);
   await page.screenshot({
     path: `test-results/screens/${file}.png`,
     fullPage: true,
@@ -57,103 +60,107 @@ async function inspect(page: Page, file: string) {
   expect(violations).toEqual([]);
 }
 
-async function mockApps(page: Page, state: "empty" | "error") {
+async function mockAppsSessionFailure(page: Page) {
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      status: state === "error" ? 503 : 200,
-      json:
-        state === "error"
-          ? { error: { message: "Unavailable for this test" } }
-          : {
-              authenticated: true,
-              user: {
-                id: "user_apps_empty",
-                name: "Empty apps user",
-                email: "apps@example.test",
-                role: "member",
+    fulfilJson(
+      route,
+      { error: { message: "Unavailable for this test" } },
+      { status: 503 },
+    ),
+  );
+}
+
+async function mockProviders(page: Page, state: "seeded" | "empty") {
+  await page.route("**/admin/api/providers", (route) =>
+    fulfilJson(route, {
+      providers:
+        state === "empty"
+          ? []
+          : [
+              {
+                id: "openrouter",
+                name: "OpenRouter",
+                enabled: true,
+                reachable: true,
+                key_status: { state: "set" },
+                spend: { daily_usd: 1.25, monthly_usd: 1.25, status: "known" },
+                caps: { daily_usd: 10 },
               },
-              csrf_token: "csrf",
-              apps: [],
-            },
+            ],
     }),
   );
 }
 
-async function mockProviders(page: Page, state: "seeded" | "empty" | "error") {
-  await page.route("**/admin/api/providers", (route) => {
-    if (state === "error") {
-      return route.fulfill({
-        status: 503,
-        json: { error: { message: "Provider API unavailable" } },
-      });
-    }
-    return route.fulfill({
-      json: {
-        providers:
-          state === "empty"
-            ? []
-            : [
-                {
-                  id: "openrouter",
-                  name: "OpenRouter",
-                  enabled: true,
-                  reachable: true,
-                  key_set: true,
-                  spend_usd: 1.25,
-                  cap_usd: 10,
-                },
-              ],
-      },
-    });
-  });
-}
+// Which text each state shows is asserted in vitest: apps empty and session
+// failure (src/app/apps/page.spec.tsx, src/components/shell/app-shell.regression.spec.tsx),
+// providers seeded, empty and failed (web/tests/providers-load-retry.spec.tsx).
+// The browser keeps one overflow + axe + screenshot representative per route
+// and state, spread over both themes and both widths.
 
-for (const theme of themes) {
-  for (const width of widths) {
-    for (const state of states) {
-      test(`apps screenshot matrix ${state}: ${theme} ${width}`, async ({
-        page,
-      }) => {
-        await setViewport(page, theme, width);
-        if (state !== "seeded") await mockApps(page, state);
-        await page.goto("/apps/");
-        if (state === "seeded") {
-          await expect(
-            page.getByRole("heading", { name: "Browser test app" }),
-          ).toBeVisible();
-        } else if (state === "empty") {
-          await expect(
-            page.getByText("Connect your first app", { exact: true }),
-          ).toBeVisible();
-        } else {
-          await expect(
-            page.getByText("We couldn't tell why your account didn't load. Try again."),
-          ).toBeVisible();
-        }
-        await inspect(page, `apps-${state}-${theme}-${width}`);
-      });
-
-      test(`providers screenshot matrix ${state}: ${theme} ${width}`, async ({
-        page,
-      }) => {
-        await setViewport(page, theme, width);
-        await mockProviders(page, state);
-        await page.goto("/providers/");
-        if (state === "seeded") {
-          await expect(
-            page.getByRole("heading", { name: "OpenRouter" }),
-          ).toBeVisible();
-        } else if (state === "empty") {
-          await expect(
-            page.getByText("No providers yet", { exact: true }),
-          ).toBeVisible();
-        } else {
-          await expect(
-            page.getByRole("button", { name: "Retry providers" }),
-          ).toBeVisible();
-        }
-        await inspect(page, `providers-${state}-${theme}-${width}`);
-      });
-    }
+async function openApps(
+  page: Page,
+  state: "seeded" | "error",
+  theme: (typeof themes)[number],
+  width: (typeof widths)[number],
+) {
+  await setViewport(page, theme, width);
+  if (state === "error") await mockAppsSessionFailure(page);
+  await page.goto("/apps/");
+  if (state === "seeded") {
+    await expect(
+      page.getByRole("heading", { name: "Browser test app" }),
+    ).toBeVisible();
+  } else {
+    await expect(
+      page.getByText(
+        "We couldn't tell why your account didn't load. Try again.",
+      ),
+    ).toBeVisible();
   }
+  await inspect(page, `apps-${state}-${theme}-${width}`);
 }
+
+async function openProviders(
+  page: Page,
+  state: "seeded" | "empty",
+  theme: (typeof themes)[number],
+  width: (typeof widths)[number],
+) {
+  await setViewport(page, theme, width);
+  await mockProviders(page, state);
+  await page.goto("/providers/");
+  if (state === "seeded") {
+    await expect(
+      page.getByRole("heading", { name: "OpenRouter" }),
+    ).toBeVisible();
+  } else {
+    await expect(
+      page.getByText("No providers yet", { exact: true }),
+    ).toBeVisible();
+  }
+  await inspect(page, `providers-${state}-${theme}-${width}`);
+}
+
+test("apps seeded: light 1440", async ({ page }) => {
+  await openApps(page, "seeded", "light", 1440);
+});
+
+test("apps seeded: dark 390", async ({ page }) => {
+  await openApps(page, "seeded", "dark", 390);
+});
+
+test("apps session failure: dark 390", async ({ page }) => {
+  await openApps(page, "error", "dark", 390);
+});
+
+test("providers seeded: light 1440", async ({ page }) => {
+  await openProviders(page, "seeded", "light", 1440);
+});
+
+test("providers seeded: dark 390", async ({ page }) => {
+  await openProviders(page, "seeded", "dark", 390);
+});
+
+test("providers empty: dark 390", async ({ page }) => {
+  await openProviders(page, "empty", "dark", 390);
+});

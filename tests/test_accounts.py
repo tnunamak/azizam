@@ -527,9 +527,16 @@ def test_proxy_http_full_member_lifecycle_from_owner_invitation_through_reset_an
     member.cookies.set(cookie.name, pre_reset_cookie, domain="testserver.local", path="/")
     assert member.get("/me/api/session").json()["authenticated"] is False
     assert member.post("/auth/api/login", json={"email": "member@example.test", "password": new_password}).status_code == 200
+    mcp_store = proxy.MCP_OAUTH.deps.store
+    mcp_client = mcp_store.put_client(client_id="azm_client_t", kind="registered", name="Agent",
+                                      redirect_uris=["https://agent.example/cb"], grant_types=["authorization_code"],
+                                      auth_method="none", secret_hash=None, metadata={})
+    connection = mcp_store.create_grant(person_id=user_id, client=mcp_client, redirect_uri="https://agent.example/cb",
+                                        resource="https://gw.example/mcp", scope="mcp")
     assert admin.delete(f"/admin/api/people/{user_id}", headers=owner_csrf).status_code == 200
     assert member.get("/me/api/session").json()["authenticated"] is False
     assert user_id not in {person["id"] for person in admin.get("/admin/api/people").json()["people"]}
+    assert mcp_store.active_grant(connection.id) is None  # removal ends their MCP connections
 
 
 def test_oidc_users_with_same_email_in_different_issuers_do_not_share_account_plans(account_db):

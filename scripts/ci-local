@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 # Run every CI job on an exact commit and retain per-step receipts.
-# Usage: scripts/ci-local [--force] [--order-seed N] [--port N] [--shards N] [--py-workers N] [--skip-compose]
+# Usage: scripts/ci-local [--force] [--order-seed N] [--port N] [--browser-workers N] [--browser-servers N] [--py-workers N] [--skip-compose]
 #        scripts/ci-local --force --signoff --target BRANCH [--closes-nightly-red N] [...]
-# Independent jobs and browser fixtures run in isolated detached worktrees.
+# Independent jobs run in isolated detached worktrees; browser tests share one build.
 # Test order follows a seed, random unless given and always printed.
 # A passed tree is not rerun unless --force is given. See docs/ops/CI.md.
 set -euo pipefail
 [[ -n ${AZIZAM_PRIORITY_SET:-} ]] || exec "${BASH_SOURCE[0]%/*}/low-priority" "${BASH_SOURCE[0]}" "$@"
 
-signoff=0 force=0 port=18640 shards=10 py_workers=12 skip_compose=0
+signoff=0 force=0 port=18640 browser_workers=10 browser_servers=2 py_workers=12 skip_compose=0
 seed=$(((RANDOM * 32768 + RANDOM) % 1000000000)) target= closes_nightly_red=
 while (($#)); do
   case $1 in
     --signoff) signoff=1 ;;
     --force) force=1 ;;
-    --port|--shards|--py-workers|--order-seed|--target|--closes-nightly-red)
+    --port|--browser-workers|--browser-servers|--py-workers|--order-seed|--target|--closes-nightly-red)
       (($# >= 2)) || { echo "$1 requires a value" >&2; exit 2; }
       case $1 in
-        --port) port=$2 ;; --shards) shards=$2 ;; --py-workers) py_workers=$2 ;;
+        --port) port=$2 ;; --browser-workers) browser_workers=$2 ;; --browser-servers) browser_servers=$2 ;; --py-workers) py_workers=$2 ;;
         --order-seed) seed=$2 ;; --target) target=$2 ;; *) closes_nightly_red=$2 ;;
       esac
       shift ;;
@@ -27,14 +27,15 @@ while (($#)); do
   esac
   shift
 done
-# Each ten-port lane owns gateway +0, engine +1, strict probes +2..+9.
-# Bound inputs before arithmetic, including the two additional fixture lanes.
-if [[ ! $port =~ ^18[0-9]{3}$ || ! $shards =~ ^[1-9][0-9]?$ || ! $py_workers =~ ^[1-9][0-9]?$ ]]; then
-  echo "--port must be 18000-18998 and --shards and --py-workers positive integers <= 99" >&2
+# Each fixture gateway owns ten ports: gateway +0, engine +1, strict probes
+# +2..+9. Up to seven gateways: the parallel pool (1-3 servers), the two global-state
+# servers, live-data and household. Bound inputs before arithmetic.
+if [[ ! $port =~ ^18[0-9]{3}$ || ! $browser_workers =~ ^([1-9]|1[0-6])$ || ! $browser_servers =~ ^[1-3]$ || ! $py_workers =~ ^[1-9][0-9]?$ ]]; then
+  echo "--port must be 18000-18998, --browser-workers 1-16, --browser-servers 1-3 and --py-workers a positive integer <= 99" >&2
   exit 2
 fi
-if ((port + 10 * (shards + 2) + 9 > 18998)); then
-  echo "shards, live-data and household lanes must fit within 18000-18998" >&2
+if ((port + 79 > 18998)); then
+  echo "the browser fixture gateways must fit within 18000-18998" >&2
   exit 2
 fi
 if [[ ! $seed =~ ^[0-9]{1,9}$ ]]; then
@@ -126,6 +127,8 @@ receipts=$(cd "$receipts" && pwd)
 rm -f "$receipts/PASS" "$receipts/steps.tsv" "$receipts/cases.jsonl" "$receipts/signoff-$sha.tsv"
 rm -rf "$receipts/steps" "$receipts/test-results" "$receipts/raw"
 mkdir -p "$receipts/steps" "$receipts/raw"
+# Receipts: old runs keep only their verdicts (scripts/ci/prune_receipts.py).
+python3 "$repo/scripts/ci/prune_receipts.py" "$receipts_root" --keep "$receipts" || true
 # A run directory holds worktrees and dependency copies (about 7 GB). Exit
 # removes it, except that the latest failed run's directory is kept for
 # debugging, named in $kept. With the lock held, no other run is live, so any
@@ -145,7 +148,6 @@ keep_run=0
 work=$run/web-build
 worktrees=()
 pids=()
-lane_pids=()
 cleanup() {
   local pid directory deadline=$((SECONDS + 20))
   trap '' INT TERM
@@ -186,7 +188,7 @@ add_worktree "$work"
 add_worktree "$run/python"
 add_worktree "$run/fresh"
 started=$(date -u +%FT%TZ)
-printf 'sha\t%s\ntree\t%s\nstarted\t%s\nseed\t%s\nshards\t%s\npy_workers\t%s\nbase_port\t%s\n' "$sha" "$tree" "$started" "$seed" "$shards" "$py_workers" "$port" > "$receipts/run.tsv"
+printf 'sha\t%s\ntree\t%s\nstarted\t%s\nseed\t%s\nbrowser_workers\t%s\npy_workers\t%s\nbase_port\t%s\n' "$sha" "$tree" "$started" "$seed" "$browser_workers" "$py_workers" "$port" > "$receipts/run.tsv"
 
 failed=0
 step() {
@@ -202,7 +204,7 @@ step() {
   if ((rc)); then failed=1; echo "   FAILED (exit $rc): $receipts/logs/$name.log"; fi
   return 0
 }
-export receipts work skip_compose py_workers run shards seed
+export receipts work skip_compose py_workers run seed
 export -f step
 start_job() {
   local directory=$1; shift
@@ -235,9 +237,9 @@ start_job "$run/python" bash -c '
 '
 # The Compose journey creates and removes a Docker bridge network. Chromium
 # aborts in-flight requests on any host network change (ERR_NETWORK_CHANGED),
-# so Compose must never overlap the browser lanes: it runs here, alongside web
-# preparation, and the lanes start only after it finishes. The native journey
-# runs later, beside the lanes: it needs no Docker network, and running it
+# so Compose must never overlap the browser tests: it runs here, alongside web
+# preparation, and the browser tests start only after it finishes. The native journey
+# runs later, beside the browser tests: it needs no Docker network, and running it
 # after Compose keeps the two from racing for the same free ports.
 start_job "$run/fresh" bash -c '
   failed=0
@@ -255,18 +257,15 @@ fresh_pid=$last_pid
 start_job "$work" bash -c '
   failed=0
   step web-npm-ci bash -c "cd web && npm ci --no-audit --no-fund"
-  # Unit tests run beside the build, not beside the browser lanes: there, CPU
+  # Unit tests run beside the build, not beside the browser tests: there, CPU
   # contention pushed tests past the 5 s vitest limit. They finish before the
-  # lanes copy this tree.
+  # browser tests start.
   ( step web-unit env CASE_RECEIPTS_FILE="$receipts/raw/vitest.cases.jsonl" bash -c "cd web && npx vitest run --sequence.shuffle --sequence.seed \"\$1\" --reporter=default --reporter=./tests/case-receipts.ts" _ "$seed"; exit "$failed" ) &
   unit_pid=$!
   step web-check bash -c "cd web && npm run check"
   wait "$unit_pid" || failed=1
   step e2e-venv bash -c "uv venv -q --python 3.12 venv && uv pip sync -q --python venv/bin/python --require-hashes tests/requirements-hermetic.lock"
   step e2e-browser bash -c "cd web && npx playwright install chromium"
-  # Split spec files by measured time; --shard splits by test count, which
-  # left one of 12 lanes running 414 s and another 18 s.
-  step e2e-plan bash -c "cd web && ./node_modules/.bin/playwright test --list > \"\$1/e2e-list.txt\" && ../scripts/e2e/plan_shards.py plan \"\$1/e2e-list.txt\" e2e/shard-weights.tsv \"\$2\" \"\$1/shards\"" _ "$run" "$shards"
   exit "$failed"
 '
 web_pid=$last_pid
@@ -280,6 +279,9 @@ start_job "$work" bash -c '
   step compat-node env CASE_RECEIPTS_FILE="$receipts/raw/compat-node.cases.jsonl" bash -c "cd tests/compat/node && npm ci --no-audit --no-fund && node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=\"\$1\" --test-reporter-destination=stderr probe-gates.test.mjs" _ "$PWD/scripts/ci/node-case-receipts.mjs"
   step pi-unit env CASE_RECEIPTS_FILE="$receipts/raw/compat-node.cases.jsonl" scripts/ci/pi-unit "$PWD/scripts/ci/node-case-receipts.mjs"
   step showcase-core env CASE_RECEIPTS_FILE="$receipts/raw/compat-node.cases.jsonl" node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter="$PWD/scripts/ci/node-case-receipts.mjs" --test-reporter-destination=stderr tests/showcase/core.test.mjs
+  # The official MCP conformance suite (pinned in tests/conformance) against
+  # the production MCP router and authorization server on a loopback port.
+  step mcp-conformance scripts/ci/mcp-conformance "$receipts/raw/mcp-conformance"
   exit "$failed"
 '
 compat_pid=$last_pid
@@ -287,62 +289,58 @@ wait_job "$web_pid"
 wait_job "$fresh_pid"
 wait_job "$compat_pid"
 
-# Browser lanes test the built export with the e2e venv and browser. Without
-# them every journey fails with misleading 401/404s, so skip the lanes and
+# The browser tests use the built export with the e2e venv and browser.
+# Without them every journey fails with misleading 401/404s, so skip them and
 # let the failed prerequisite be the reported cause.
-lanes=$((shards + 2))  # browser shards, live-data and household
+browser_steps=4  # e2e-main, e2e-live-data, e2e-household, e2e-tree-unchanged
 browser_ready=1
-for prerequisite in web-npm-ci web-check e2e-venv e2e-browser e2e-plan; do
+for prerequisite in web-npm-ci web-check e2e-venv e2e-browser; do
   rc=$(cut -f2 "$receipts/steps/$prerequisite.tsv" 2>/dev/null || echo missing)
   if [[ $rc != 0 ]]; then browser_ready=0; fi
 done
 if ((!browser_ready)); then
   failed=1
-  echo "== browser lanes skipped: a web build prerequisite failed (see above)"
-  lanes=0
+  echo "== browser tests skipped: a web build prerequisite failed (see above)"
+  browser_steps=0
 fi
 
-# Copy the completed web tree, including dependencies and build output, only
-# after all writers stop. Reflinks save space where supported; ordinary copies
-# still isolate writable caches and legacy fixed screenshot/auth filenames.
-for ((i=1; i<=lanes; i++)); do
-  lane_port=$((port + 10 * i))
-  lane=$run/browser-$lane_port
-  add_worktree "$lane"
-  # node_modules is read-only during the journeys: hard-link it (no disk cost)
-  # and copy everything else so writable caches and results stay per lane.
-  step "e2e-copy-$lane_port" bash -c 'shopt -s dotglob; for entry in "$1"/web/*; do
-    if [[ $(basename "$entry") == node_modules ]]; then cp -al "$entry" "$2/web/"; else cp -a --reflink=auto "$entry" "$2/web/"; fi
-  done' _ "$work" "$lane"
-  ln -s "$work/venv" "$lane/venv"
-done
-for ((i=1; i<=lanes; i++)); do
-  lane_port=$((port + 10 * i))
-  lane=$run/browser-$lane_port
-  config=playwright.config.ts
-  args=()
-  name=e2e-shard-$i-of-$shards
-  if ((i <= shards)); then
-    args+=(--test-list "$run/shards/lane-$i.txt")
-  elif ((i == shards + 1)); then
-    config=playwright.live-data.config.ts; name=e2e-live-data
-  else
-    config=playwright.household.config.ts; name=e2e-household
-  fi
-  start_job "$lane/web" bash -c '
-    failed=0
-    name=$1; shift
-    step "$name" "$@"
-    exit "$failed"
-  ' _ "$name" env UI_E2E_PORT="$lane_port" UI_E2E_STATE_ROOT="$lane/.ui-e2e-state" UI_E2E_PYTHON="$work/venv/bin/python" CASE_RECEIPTS_FILE="$receipts/raw/$name.cases.jsonl" ./node_modules/.bin/playwright test --config "$config" "${args[@]}"
-  lane_pids+=("$last_pid")
-done
+# Isolation comes from data, not copies (TEST_STRATEGY.md 3.4.7): every
+# Playwright invocation runs from the one build tree, which no test writes.
+# Runner and spec output goes to web/test-results, a link to a directory
+# outside the tree; e2e-tree-unchanged fails if anything else in web/ changes.
+# Ports: the main pool +10 and its global-state server +20 (one invocation
+# with --browser-workers workers over --browser-servers servers; extra pool
+# servers at +50 and +60), live-data +30, household +40.
+browser_names=(e2e-main e2e-live-data e2e-household)
+browser_configs=(playwright.config.ts playwright.live-data.config.ts playwright.household.config.ts)
+browser_ports=($((port + 10)) $((port + 30)) $((port + 40)))
+if ((browser_ready)); then
+  mkdir -p "$run/browser-results" "$run/state"
+  rm -rf "$work/web/test-results"  # nothing before this point writes there
+  ln -s "$run/browser-results" "$work/web/test-results"
+  touch "$run/browser-start"
+  for i in 0 1 2; do
+    start_job "$work/web" bash -c '
+      failed=0
+      name=$1; shift
+      step "$name" "$@"
+      exit "$failed"
+    ' _ "${browser_names[i]}" env UI_E2E_PORT="${browser_ports[i]}" UI_E2E_WORKERS="$browser_workers" UI_E2E_POOL="$browser_servers" \
+      UI_E2E_STATE_ROOT="$run/state/${browser_names[i]}" UI_E2E_RUN_ID="$seed" UI_E2E_PYTHON="$work/venv/bin/python" \
+      CASE_RECEIPTS_FILE="$receipts/raw/${browser_names[i]}.cases.jsonl" \
+      ./node_modules/.bin/playwright test --config "${browser_configs[i]}"
+  done
+fi
 start_job "$run/fresh" bash -c '
   failed=0
   step fresh-native env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh
   exit "$failed"
 '
 for pid in "${pids[@]}"; do wait_job "$pid"; done
+if ((browser_ready)); then
+  step e2e-tree-unchanged bash -c 'changed=$(find "$1/web" -path "$1/web/test-results" -prune -o -newer "$2" -print)
+    [[ -z $changed ]] || { echo "browser tests wrote into the shared build tree:"; echo "$changed"; exit 1; }' _ "$work" "$run/browser-start"
+fi
 
 # Case receipts: one cases.jsonl from every framework's report, then the
 # test policy over it and the clean tree (docs/design/TEST_STRATEGY.md 3, 6).
@@ -350,13 +348,10 @@ merge_args=(--pytest "$receipts/raw/pytest.xml" "$run/python" --receipts "$recei
 if [[ -f $receipts/raw/compat-node.cases.jsonl ]]; then
   merge_args+=(--receipts "$receipts/raw/compat-node.cases.jsonl" "$work")
 fi
-for ((i=1; i<=lanes; i++)); do
-  lane_port=$((port + 10 * i))
-  name=e2e-shard-$i-of-$shards
-  if ((i == shards + 1)); then name=e2e-live-data; elif ((i == shards + 2)); then name=e2e-household; fi
-  # A lane that wrote no receipts leaves its files unrun, which policy reports.
+for name in "${browser_names[@]}"; do
+  # An invocation that wrote no receipts leaves its files unrun, which policy reports.
   if [[ -f $receipts/raw/$name.cases.jsonl ]]; then
-    merge_args+=(--receipts "$receipts/raw/$name.cases.jsonl" "$run/browser-$lane_port")
+    merge_args+=(--receipts "$receipts/raw/$name.cases.jsonl" "$work")
   fi
 done
 step cases "$run/python/scripts/ci/merge_cases.py" --sha "$sha" --seed "$seed" --out "$receipts/cases.jsonl" "${merge_args[@]}"
@@ -370,19 +365,16 @@ step policy "$run/python/scripts/ci/policy.py" --root "$run/python" --cases "$re
 
 cat "$receipts"/steps/*.tsv > "$receipts/steps.tsv"
 # Missing/truncated receipts or skipped/nonzero steps can never produce PASS.
-if ! awk -F '\t' -v expected="$((2 * lanes + 15))" '
+if ! awk -F '\t' -v expected="$((browser_steps + 15))" '
   NF != 3 || $2 != "0" || $3 !~ /^[0-9]+$/ { bad=1 }
   END { exit (bad || NR != expected) }
 ' "$receipts/steps.tsv"; then failed=1; fi
 if ((failed)); then
-  # Keep each lane's complete evidence, including legacy fixed filenames.
-  for ((i=1; i<=lanes; i++)); do
-    lane_port=$((port + 10 * i))
-    if [[ -d $run/browser-$lane_port/web/test-results ]]; then
-      mkdir -p "$receipts/test-results/$lane_port"
-      cp -a "$run/browser-$lane_port/web/test-results/." "$receipts/test-results/$lane_port/"
-    fi
-  done
+  # Keep the browser evidence: traces, screenshots, reports and auth files.
+  if [[ -d $run/browser-results ]]; then
+    mkdir -p "$receipts/test-results"
+    cp -a "$run/browser-results/." "$receipts/test-results/"
+  fi
 fi
 printf 'finished\t%s\n' "$(date -u +%FT%TZ)" >> "$receipts/run.tsv"
 column -t "$receipts/steps.tsv"

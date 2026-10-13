@@ -37,12 +37,17 @@ import httpx
 import yaml
 
 from gateway import lifecycle_drivers
+from gateway import http_tls
+from gateway.http_tls import tls_context
 from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload
 from gateway.model_presentation import declared_health_success, service_health_endpoint, starts_on_demand
 
 # Loop-owned cache and shared rebuild; all callers use the gateway's event loop.
 _CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
 _CACHE_TTL_S = 12.0
+# Past the TTL, a status that is at most this old is served at once while one
+# background rebuild refreshes it, so no request pays for the rebuild.
+_CACHE_STALE_S = 60.0
 _BUILD_TASK: asyncio.Task | None = None
 
 
@@ -70,14 +75,12 @@ _HTTP_TIMEOUT = httpx.Timeout(2.0, connect=3.0)
 
 # httpx builds an SSL context (reads the CA bundle) for every client it creates.
 # That is seconds of CPU on a loaded host, so build it once, off the event loop.
-_probe_ssl_context: ssl.SSLContext | None = None
 
 
 async def _shared_probe_ssl_context() -> ssl.SSLContext:
-    global _probe_ssl_context
-    if _probe_ssl_context is None:
-        _probe_ssl_context = await asyncio.to_thread(ssl.create_default_context)
-    return _probe_ssl_context
+    if http_tls.is_built():
+        return tls_context()
+    return await asyncio.to_thread(tls_context)  # the first build, if nothing built it yet, stays off the loop
 
 
 _SUBPROC_TIMEOUT = 1.5  # seconds per shell probe
@@ -445,7 +448,7 @@ async def _llama_props_and_slots() -> tuple[Optional[dict], Optional[list[dict]]
             return None
 
     try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
             props = await _get(client, "http://127.0.0.1:5051/props")
             return props, None
     except Exception:
@@ -805,7 +808,7 @@ async def _comfy_queue_and_stats() -> tuple[Optional[dict], Optional[dict]]:
             return None
 
     try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
             queue, stats = await asyncio.gather(
                 _get(client, "http://127.0.0.1:7890/queue"),
                 _get(client, "http://127.0.0.1:7890/system_stats"),
@@ -2356,7 +2359,7 @@ def _cpu_usage_quick() -> dict:
     # which Brave window is on top.
     SERVICE_PATTERNS = (
         "proxy.py", "llama-server", "comfyui", "comfy_server",
-        "voxtral", "parakeet", "daisy", "claude", "tabby",
+        "voxtral", "parakeet", "daisy", "claude",
         "main.py", "uvicorn",
     )
 
@@ -2569,7 +2572,7 @@ async def _enriched_aux_health() -> dict:
             return None
 
     try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
             voxtral, parakeet = await asyncio.gather(
                 _get(client, "http://127.0.0.1:8001/health"),
                 _get(client, "http://127.0.0.1:5092/health"),
@@ -2962,11 +2965,6 @@ def _workflow_drift_status() -> Optional[dict]:
 def _swap_state(proxy_module) -> dict:
     """Model-swap lock state and swap-drain leases from proxy module globals."""
     out: dict[str, Any] = {}
-    try:
-        tabby_lock = getattr(proxy_module, "tabby_swap_lock", None)
-        out["tabby_swap_in_progress"] = tabby_lock.locked() if tabby_lock else None
-    except Exception:
-        out["tabby_swap_in_progress"] = None
     try:
         kobold_lock = getattr(proxy_module, "kobold_swap_lock", None)
         out["kobold_swap_in_progress"] = kobold_lock.locked() if kobold_lock else None
@@ -3865,7 +3863,7 @@ async def build_status_payload(config: dict) -> dict:
             api_health_reasons.append(("warn", reason))
 
     # Model swap in progress → transient unavailability for one provider.
-    if swap_state and (swap_state.get("tabby_swap_in_progress") or swap_state.get("kobold_swap_in_progress")):
+    if swap_state and swap_state.get("kobold_swap_in_progress"):
         banner = _bump(banner, "warn")
         reason = "model swap in progress"
         api_reasons.append(("warn", reason))
@@ -4164,5 +4162,9 @@ async def get_cached_status(config: dict) -> dict:
     if _BUILD_TASK is None:
         _BUILD_TASK = asyncio.create_task(_rebuild_cached_status(config))
         _BUILD_TASK.add_done_callback(_consume_build_exception)
+    if _CACHE["data"] is not None and (now - _CACHE["ts"]) < _CACHE_STALE_S:
+        data = dict(_CACHE["data"])
+        data["cache_age_s"] = round(now - _CACHE["ts"], 2)
+        return data
     # One cancelled HTTP request must not cancel every other waiter.
     return await asyncio.shield(_BUILD_TASK)

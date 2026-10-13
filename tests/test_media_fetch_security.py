@@ -221,7 +221,7 @@ def test_jpeg_base64_starting_with_slash_remains_accepted():
 
 @pytest.mark.parametrize("route", ["images", "assets", "gateway/assets"])
 @pytest.mark.parametrize("host", [
-    "ai.vivid.fish", "openai.vivid.fish", "gateway.lan",
+    "gateway.example", "api.gateway.example", "gateway.lan",
     "localhost", "192.168.100.10", "unconfigured.example",
 ])
 def test_gateway_signed_image_url_resolves_without_network_with_ownership(monkeypatch, tmp_path, route, host):
@@ -249,12 +249,14 @@ def test_gateway_signed_image_url_resolves_without_network_with_ownership(monkey
 
 
 def test_gateway_video_asset_signed_url_resolves_internally(monkeypatch, tmp_path):
+    # Own content is recognised by the configured public URL, not a built-in host.
+    monkeypatch.setenv("AZIZAM_PUBLIC_URL", "https://gateway.example")
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path)
     monkeypatch.setattr(proxy, "_image_url_signing_secret", b"test-media-url-secret")
     owner = SimpleNamespace(identity=SimpleNamespace(key_hash="owner"))
     asset_id = proxy.store_asset_bytes(mp4_bytes(), kind="vid", suffix=".mp4", owner_key_hash="owner")
     clean = proxy.asset_cache_path(asset_id).read_bytes()
-    request = SimpleNamespace(headers={"host": "ai.vivid.fish"}, url=SimpleNamespace(scheme="https", netloc="ai.vivid.fish"))
+    request = SimpleNamespace(headers={"host": "gateway.example"}, url=SimpleNamespace(scheme="https", netloc="gateway.example"))
     url = proxy.build_signed_asset_url(request, asset_id, "none")
     with patch.object(media_fetch, "_resolve_addresses", side_effect=AssertionError("no network for own media")):
         data, filename, mime = asyncio.run(proxy._resolve_video_workflow_asset(url, kind="video", param="source_video", auth_context=owner))
@@ -279,12 +281,14 @@ def test_forwarded_host_minted_signed_asset_resolves_internally(monkeypatch, tmp
 
 
 def test_redirect_into_gateway_signed_asset_uses_internal_resolver(monkeypatch, tmp_path):
+    # Own content is recognised by the configured public URL, not a built-in host.
+    monkeypatch.setenv("AZIZAM_PUBLIC_URL", "https://gateway.example")
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path)
     monkeypatch.setattr(proxy, "_image_url_signing_secret", b"test-media-url-secret")
     owner = SimpleNamespace(identity=SimpleNamespace(key_hash="owner"))
     asset_id = proxy.store_asset_bytes(mp4_bytes(), kind="vid", suffix=".mp4", owner_key_hash="owner")
     clean = proxy.asset_cache_path(asset_id).read_bytes()
-    request = SimpleNamespace(headers={"host": "ai.vivid.fish"}, url=SimpleNamespace(scheme="https", netloc="ai.vivid.fish"))
+    request = SimpleNamespace(headers={"host": "gateway.example"}, url=SimpleNamespace(scheme="https", netloc="gateway.example"))
     signed_url = proxy.build_signed_asset_url(request, asset_id, "none")
     resolver = AsyncMock(return_value=["93.184.216.34"])
     with patch.object(media_fetch, "_resolve_addresses", resolver):
@@ -312,6 +316,8 @@ def test_saved_instance_base_url_identifies_internal_signed_assets(monkeypatch, 
 
 
 def test_legacy_gateway_video_url_checks_ownership_and_streams_under_cap(monkeypatch):
+    # Own content is recognised by the configured public URL, not a built-in host.
+    monkeypatch.setenv("AZIZAM_PUBLIC_URL", "https://gateway.example")
     from _fake_comfy_video import FakeComfy, SOURCE_BYTES, SOURCE_PROMPT_ID
 
     owner = SimpleNamespace(identity=SimpleNamespace(key_hash="owner"))
@@ -320,7 +326,7 @@ def test_legacy_gateway_video_url_checks_ownership_and_streams_under_cap(monkeyp
     comfy = FakeComfy()
     monkeypatch.setattr(proxy.httpx, "AsyncClient", comfy.client_class())
     monkeypatch.setattr(proxy, "configured_downstream_headers", lambda *args: {})
-    url = f"https://ai.vivid.fish/v1/videos/video_{SOURCE_PROMPT_ID}/content"
+    url = f"https://gateway.example/v1/videos/video_{SOURCE_PROMPT_ID}/content"
     with patch.object(media_fetch, "_resolve_addresses", side_effect=AssertionError("no public URL network")):
         fetched = asyncio.run(proxy._fetch_media_url(url, owner))
         assert fetched.data == SOURCE_BYTES

@@ -73,14 +73,30 @@ def _credential_not_found() -> UserPortalError:
     )
 
 
-def _plan_summary(app: Mapping[str, Any], *, path: Path) -> dict[str, Any] | None:
-    """The plan an App runs under, as the portal shows it: its name and summary, no rules."""
+def _plan_summary(
+    app: Mapping[str, Any], *, path: Path, listing: tuple[str | None, Mapping[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """The plan an App runs under, as the portal shows it: its name and summary, no rules.
+
+    ``listing`` holds the person's plan id and every plan, read once for a listing
+    of one person's Apps.
+    """
     from gateway.access_plans import PlanError, plan_from_document, plan_summary
 
     assignment = app.get("access_plan")
     same_as_person = assignment == admin_store.PERSON_ASSIGNMENT
-    plan_id = admin_store.person_plan_id(str(app.get("owner_user_id") or ""), path=path) if same_as_person else assignment
-    record = admin_store.get_access_plan(str(plan_id), path=path) if plan_id else None
+    if not same_as_person:
+        plan_id = assignment
+    elif listing is not None:
+        plan_id = listing[0]
+    else:
+        plan_id = admin_store.person_plan_id(str(app.get("owner_user_id") or ""), path=path)
+    if not plan_id:
+        record = None
+    elif listing is not None:
+        record = listing[1].get(str(plan_id))
+    else:
+        record = admin_store.get_access_plan(str(plan_id), path=path)
     if record is None:
         return None
     try:
@@ -90,13 +106,13 @@ def _plan_summary(app: Mapping[str, Any], *, path: Path) -> dict[str, Any] | Non
     return {"id": record["id"], "name": record["name"], "summary": summary, "same_as_person": same_as_person}
 
 
-def _credentials_for_app(app_id: str, *, path: Path) -> list[dict[str, Any]]:
+def _credentials_for_app(
+    app_id: str, *, path: Path, active: Mapping[str, list[dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """``active`` holds every listed app's credentials, read in one query."""
     credentials = []
-    for record in admin_store.list_active_credentials(
-        subject_kind="app",
-        app_id=app_id,
-        path=path,
-    ):
+    for record in (admin_store.list_active_credentials(subject_kind="app", app_id=app_id, path=path)
+                   if active is None else active.get(app_id, ())):
         item = _sanitize_credential(record)
         item["active"] = True
         credentials.append(item)
@@ -152,9 +168,11 @@ def _app_payload(
     app: Mapping[str, Any],
     *,
     path: Path,
+    credentials_by_app: Mapping[str, list[dict[str, Any]]] | None = None,
+    plan_listing: tuple[str | None, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    credentials = _credentials_for_app(str(app["id"]), path=path)
-    plan = _plan_summary(app, path=path)
+    credentials = _credentials_for_app(str(app["id"]), path=path, active=credentials_by_app)
+    plan = _plan_summary(app, path=path, listing=plan_listing)
     return {
         "id": app.get("id"),
         "kind": app.get("kind"),
@@ -199,11 +217,20 @@ def build_user_portal_snapshot(
             path=path,
         )
 
-    apps: list[dict[str, Any]] = []
-    for app in admin_store.list_apps_for_user(user["id"], path=path):
-        if app.get("disabled_at") or admin_store.is_session_app(str(app["id"]), path=path):
-            continue
-        apps.append(_app_payload(app, path=path))
+    # Session apps, keys and plans for every listed app are read in one query each,
+    # so the number of statements does not grow with the number of apps.
+    owned = admin_store.list_apps_for_user(user["id"], path=path)
+    sessions = admin_store.session_app_ids([str(app["id"]) for app in owned], path=path)
+    listed = [app for app in owned if not app.get("disabled_at") and str(app["id"]) not in sessions]
+    credentials_by_app = admin_store.list_active_credentials_for_apps([str(app["id"]) for app in listed], path=path)
+    plan_listing = (
+        admin_store.person_plan_id(str(user["id"]), path=path),
+        {str(plan["id"]): plan for plan in admin_store.list_access_plans(path=path)},
+    ) if listed else None
+    apps: list[dict[str, Any]] = [
+        _app_payload(app, path=path, credentials_by_app=credentials_by_app, plan_listing=plan_listing)
+        for app in listed
+    ]
 
     return {
         "authenticated": True,

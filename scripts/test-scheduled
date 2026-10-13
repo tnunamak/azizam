@@ -4,11 +4,16 @@
 Usage: scripts/test-scheduled nightly [--only TASK] [--ref REF] [--base-port N] [--receipts-dir DIR]
        scripts/test-scheduled --list
 
-nightly runs two tasks over a throwaway worktree of REF (default HEAD):
+nightly runs three tasks over a throwaway worktree of REF (default HEAD):
   sdk-probes  the Node SDK probes (tests/compat/node) against a disposable
               gateway whose upstream is the scenario-driven fake upstream
               (tests/support/fake_upstream, run as a loopback process);
-  sweep       the quality sweep (web/playwright.sweep.config.ts).
+  sweep       the quality sweep (web/playwright.sweep.config.ts);
+  perf        the real-data performance harness (scripts/perf/run.py): every GET
+              route and every page against a copy of the live databases, judged by
+              scripts/perf/budgets.toml. Over budget is FAIL and opens or updates
+              the GitHub issue labelled `perf-red`. It lists no test files: its
+              verdict is the harness's exit code.
 Which test files belong to which task is data: the [[scheduled]] entries of
 tests/suites.toml. A listed file with no passed case, a skipped case or a
 failed case keeps the night from passing.
@@ -23,7 +28,7 @@ A run that is killed leaves an INCOMPLETE receipt, never a missing or green one.
 The receipt directory is ~/.tmp/azizam-ci-receipts/scheduled/nightly-<UTC time>/.
 Each task takes the host CI lock (~/.tmp/azizam-ci.lock) alone and yields to a
 waiting gate (~/.tmp/azizam-ci.gate-waiting), as TEST_STRATEGY.md 1.2 says.
-Ports: the gateway uses BASE_PORT..+1 (default 18500), the sweep 18510..+3.
+Ports: the gateway uses BASE_PORT..+1 (default 18500), the sweep 18510..+3, perf 18520..+1.
 The process runs at nice 19 and idle I/O class (scripts/low-priority).
 """
 
@@ -47,17 +52,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "scripts"))
+import scratch_owner  # noqa: E402
+
 HOME = Path.home()
 EXIT = {"PASS": 0, "FAIL": 1, "SKIPPED": 3, "INCOMPLETE": 4}
 # tests/suites.toml `task` values this script runs; scripts/ci/policy.py SCHEDULED_TASKS equals this.
-TASKS = ("sdk-probes", "sweep")
+TASKS = ("sdk-probes", "sweep", "perf")
 MAX_LOAD = float(os.environ.get("SCHEDULED_MAX_LOAD", "24"))
 LOCK = Path(os.environ.get("AZIZAM_CI_LOCK", HOME / ".tmp" / "azizam-ci.lock"))
 GATE_WAITING = Path(os.environ.get("AZIZAM_CI_GATE_WAITING", HOME / ".tmp" / "azizam-ci.gate-waiting"))
 POLL_S = 2.0
 LOCK_TIMEOUT_S = int(os.environ.get("SCHEDULED_LOCK_TIMEOUT_S", str(30 * 60)))
 # Wall-clock allocation per task, seconds (TEST_STRATEGY.md 1.3; the sweep includes its web build).
-ALLOCATION_S = {"sdk-probes": 10 * 60, "sweep": 26 * 60}
+ALLOCATION_S = {"sdk-probes": 10 * 60, "sweep": 26 * 60, "perf": 20 * 60}
 
 
 class LockTimeout(Exception):
@@ -258,8 +266,11 @@ class Night:
     def prepare_tree(self) -> None:
         assert self.sha, f"{self.args.ref} is not a commit"
         scratch = Path(os.environ.get("AZIZAM_CI_SCRATCH", HOME / ".tmp"))
+        # A SIGKILLed run leaves its tree and worktree registration; remove dead owners' trees first.
+        if scratch_owner.sweep(scratch, "azizam-scheduled."):
+            subprocess.run(["git", "-C", str(REPO), "worktree", "prune"], capture_output=True)
         self.tree = Path(tempfile.mkdtemp(prefix="azizam-scheduled.", dir=scratch))
-        (self.tree / ".scheduled-run").touch()
+        scratch_owner.mark(self.tree)
         subprocess.run(["git", "-C", str(REPO), "worktree", "add", "--quiet", "--detach", "--force",
                         str(self.tree / "repo"), self.sha], check=True)
 
@@ -377,6 +388,37 @@ class Night:
         result.status, result.reason, result.files = judge_files(read_rows(rows_file), files, repo)
         if result.status == "PASS" and code:
             result.status, result.reason = "FAIL", f"the sweep exited {code}: new findings against e2e/sweep/baseline.fixtures.json"
+        return result
+
+    def task_perf(self, files: list[str], log: Path) -> TaskResult:
+        repo = self.tree / "repo"
+        result = TaskResult("perf")
+        env = self.environment({})
+        python = self.venv(repo, log, env)
+        if python is None:
+            result.reason = "could not build the test venv"
+            return result
+        web = repo / "web"
+        started = time.monotonic()
+        budget = ALLOCATION_S["perf"]
+        if not (web / "out" / "index.html").is_file():  # the sweep, run first, already built it
+            for step in (["npm", "ci", "--no-audit", "--no-fund"], ["npm", "run", "build"],
+                         ["npx", "playwright", "install", "chromium"]):
+                if run(step, cwd=web, env=env, log=log, timeout=budget - (time.monotonic() - started)):
+                    result.reason = f"{' '.join(step)} failed or ran out of time"
+                    return result
+        out = self.dir / "perf"
+        code = run([str(python), "scripts/perf/run.py", "--port", str(self.args.base_port + 20), "--python", str(python),
+                    "--open-issue", "--out", str(out)], cwd=repo, env=env, log=log,
+                   timeout=budget - (time.monotonic() - started))
+        if code == 124:
+            result.reason = f"timed out after {budget} s"
+        elif code == 0:
+            result.status, result.reason = "PASS", ""
+        elif code == 1:
+            result.status, result.reason = "FAIL", f"over budget (scripts/perf/budgets.toml); see {out}/report.md"
+        else:
+            result.reason = f"the harness could not run (exit {code}); see {log}"
         return result
 
     def execute(self) -> int:

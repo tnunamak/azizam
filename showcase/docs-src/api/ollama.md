@@ -14,13 +14,10 @@ Send your app key as a bearer token or as `x-api-key`. The gateway needs a key, 
 This example turns streaming off, so the response is one JSON object.
 
 ```sh
-curl --fail-with-body -sS "$AZIZAM_BASE_URL/ollama/api/chat" \
-  -H "Authorization: Bearer $AZIZAM_API_KEY" \
-  -H 'Content-Type: application/json' \
-  --data @- <<EOF
-{"model": "$AZIZAM_MODEL", "stream": false,
- "messages": [{"role": "user", "content": "Say hello in one sentence."}]}
-EOF
+python3 - <<'PY' | curl --fail-with-body -sS "$AZIZAM_BASE_URL/ollama/api/chat" -H "Authorization: Bearer $AZIZAM_API_KEY" -H 'Content-Type: application/json' --data-binary @-
+import json, os
+print(json.dumps({"model": os.environ["AZIZAM_MODEL"], "stream": False, "messages": [{"role": "user", "content": "Say hello in one sentence."}]}))
+PY
 ```
 
 ## Chat with Python

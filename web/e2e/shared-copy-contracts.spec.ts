@@ -1,8 +1,10 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { mkdir } from "node:fs/promises";
+import { fulfilJson } from "./fixtures/intercept";
 
-const screenshots = "/home/tnunamak/.tmp/gw-product/ui-review/gw-copy-shared";
+const screenshots = "test-results/screens/gw-copy-shared";
 
 async function checkAccessibility(page: Page) {
   const violations = (await new AxeBuilder({ page }).analyze()).violations
@@ -14,11 +16,11 @@ async function checkAccessibility(page: Page) {
       targets: violation.nodes.map((node) => node.target),
     }));
   expect(violations).toEqual([]);
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    )
+    .toBe(true);
 }
 
 for (const theme of ["light", "dark"] as const) {
@@ -38,15 +40,12 @@ for (const theme of ["light", "dark"] as const) {
       });
       await page.route("**/me/api/session", async (route) => {
         await pending;
-        await route.fulfill({
-          status: 503,
-          json: {
+        await fulfilJson(route, {
             error: {
               code: "service_unavailable",
               message: "Fixture account outage",
             },
-          },
-        });
+          }, { status: 503 });
       });
       await page.goto("/models/");
       const loading = page.getByRole("status", {
@@ -146,9 +145,12 @@ for (const theme of ["light", "dark"] as const) {
       });
       if (width === 390) {
         for (const control of [copy, keyCopy, confirmation]) {
-          const bounds = await control.boundingBox();
-          expect(bounds?.height).toBeGreaterThanOrEqual(44);
-          expect(bounds?.width).toBeGreaterThanOrEqual(44);
+          await expect
+            .poll(async () => (await control.boundingBox())?.height)
+            .toBeGreaterThanOrEqual(44);
+          await expect
+            .poll(async () => (await control.boundingBox())?.width)
+            .toBeGreaterThanOrEqual(44);
         }
       }
       await confirmation.click();
@@ -222,23 +224,28 @@ test("denied clipboard announces recovery and preserves the exact selectable add
   });
   await expect(field).toHaveValue("https://gateway.example/v1");
   await expect(field).toBeEnabled();
-  const selected = await field.evaluate((element: HTMLInputElement) => {
-    element.focus();
-    element.select();
-    return element.value.slice(element.selectionStart!, element.selectionEnd!);
-  });
-  expect(selected).toBe("https://gateway.example/v1");
+  await expect
+    .poll(() =>
+      field.evaluate((element: HTMLInputElement) => {
+        element.focus();
+        element.select();
+        return element.value.slice(
+          element.selectionStart!,
+          element.selectionEnd!,
+        );
+      }),
+    )
+    .toBe("https://gateway.example/v1");
 });
 
 test("global connection status describes reachability while engine diagnostics stay separate", async ({
   page,
 }) => {
   await page.route("**/health", (route) =>
-    route.fulfill({ json: { status: "ok" } }),
+    fulfilJson(route, { status: "ok" }),
   );
   await page.route("**/admin/api/status", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         status: {
           current_health: {
             state: "warn",
@@ -262,8 +269,7 @@ test("global connection status describes reachability while engine diagnostics s
             ],
           },
         },
-      },
-    }),
+      }),
   );
   await page.goto("/design/");
   const connection = page.getByRole("button", { name: /Gateway status:/ });

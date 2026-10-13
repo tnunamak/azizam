@@ -1,6 +1,7 @@
 """Owner-only category snapshots, previews and compare-and-swap activation."""
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import sqlite3
@@ -23,6 +24,30 @@ from gateway.category_store import (
 class _AmbiguousProvenanceError(ValueError):
     """Distinct stored records are equally eligible to supply provenance."""
 
+
+
+_VERIFIED_STORES: dict[tuple[str, int, int], CategoryStore] = {}
+
+
+def _verified_store(path: str | Path) -> CategoryStore:
+    """The store for ``path``, opened (and integrity-checked) once per file.
+
+    Opening a store runs ``PRAGMA integrity_check``, which reads the whole file; doing it
+    on every request made each categories call cost as much as the store is large. A store
+    keeps no connection open, so one instance serves every request. A file that was
+    replaced (new inode) or created later is opened and checked again.
+    """
+    try:
+        status = Path(path).stat()
+    except OSError:
+        store = CategoryStore(path)  # absent: the constructor creates it (or fails, as before)
+        status = Path(path).stat()
+        return _VERIFIED_STORES.setdefault((str(path), status.st_dev, status.st_ino), store)
+    key = (str(path), status.st_dev, status.st_ino)
+    store = _VERIFIED_STORES.get(key)
+    if store is None:
+        store = _VERIFIED_STORES[key] = CategoryStore(path)
+    return store
 
 def _object(value, required, optional=()):
     if type(value) is not dict or not all(type(k) is str for k in value):
@@ -285,7 +310,7 @@ def create_category_router(*, auth: AdminAuth, store_path: Path,
                     raise ValueError("A service revision ID cannot be reused for a different closure")
 
     def install(path, method, operation):
-        async def endpoint(request: Request):
+        def handle(request: Request, raw: bytes):
             ctx = _require_admin(auth, request)
             if isinstance(ctx, JSONResponse):
                 return ctx
@@ -296,14 +321,14 @@ def create_category_router(*, auth: AdminAuth, store_path: Path,
                     return {"services": service_catalog()}
                 body = {}
                 if method == "POST":
-                    body = json.loads(await request.body(), object_pairs_hook=_pairs,
+                    body = json.loads(raw, object_pairs_hook=_pairs,
                                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
                 revision = request.path_params.get("revision")
                 if revision is not None:
                     if not revision.isascii() or not revision.isdigit():
                         raise ValueError("Invalid revision")
                     revision = _revision(int(revision))
-                store = CategoryStore(store_path)
+                store = _verified_store(store_path)
                 if operation == "active":
                     row = store.get_active()
                     result = record(row)
@@ -381,6 +406,11 @@ def create_category_router(*, auth: AdminAuth, store_path: Path,
                 return _error(400, "invalid_request", "Ambiguous stored assertion provenance.")
             except (ValueError, TypeError, KeyError, RecursionError, UnicodeError):
                 return _error(400, "invalid_request", "Invalid category policy request.")
+        async def endpoint(request: Request):
+            # Auth and the policy store use blocking SQLite: keep them off the event loop.
+            raw = await request.body() if method == "POST" else b""
+            return await asyncio.to_thread(handle, request, raw)
+
         # The endpoint reads path params itself; declare them for the OpenAPI schema.
         params = [{"name": "revision", "in": "path", "required": True, "schema": {"type": "integer"}}]
         router.add_api_route(path, endpoint, methods=[method], name="categories_" + operation,

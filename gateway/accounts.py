@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
-from gateway import admin_store, sqlite_startup
+from gateway import admin_store, request_connections, sqlite_startup
 from gateway.admin_runtime import generate_app_api_key, is_human_user_record
 from gateway.local_owner import verify_password as verify_legacy_password
 from gateway.runtime_auth import hash_api_key
@@ -36,6 +36,11 @@ class AccountError(ValueError):
 
 @contextmanager
 def connection(path: Path):
+    if request_connections.active():
+        # Share the request's admin-store connection: this is the same database.
+        with admin_store._conn(path) as conn, conn:
+            yield conn
+        return
     conn = sqlite_startup.connect(path, timeout=10)
     try:
         conn.row_factory = sqlite3.Row

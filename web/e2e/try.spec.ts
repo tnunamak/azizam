@@ -1,6 +1,13 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
+import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
+
+
+// Try mints one key per sign-in and revokes the session's older Try keys
+// (gateway/user_runtime.py ensure_try_session_key). Cases that open Try share the
+// lane's sign-in, so the cases of this file stay in one worker, one after another.
+test.describe.configure({ mode: "default" });
 
 async function prepareTryKey(page: import("@playwright/test").Page) {
   await page.goto("/try/");
@@ -16,31 +23,31 @@ const TINY_PNG =
 
 async function routeImageJob(page: import("@playwright/test").Page) {
   await page.route("**/gateway/v1/media/jobs/image-generations", (route) =>
-    route.fulfill({
-      status: 202,
-      json: {
+    fulfilJson(
+      route,
+      {
         object: "media.job",
         id: "job_image_try",
         status: "queued",
         request_id: "req_image_try",
       },
-    }),
+      { status: 202 },
+    ),
   );
   await page.route("**/gateway/v1/media/jobs/job_image_try", (route) =>
-    route.fulfill({
-      json: {
-        object: "media.job",
-        id: "job_image_try",
-        status: "succeeded",
-        request_id: "req_image_try",
-      },
+    fulfilJson(route, {
+      object: "media.job",
+      id: "job_image_try",
+      status: "succeeded",
+      request_id: "req_image_try",
     }),
   );
   await page.route("**/gateway/v1/media/jobs/job_image_try/content", (route) =>
-    route.fulfill({
-      headers: { "x-azizam-request-id": "req_image_try" },
-      json: { id: "req_image_try", data: [{ url: TINY_PNG }] },
-    }),
+    fulfilJson(
+      route,
+      { id: "req_image_try", data: [{ url: TINY_PNG }] },
+      { headers: { "x-azizam-request-id": "req_image_try" } },
+    ),
   );
 }
 
@@ -57,12 +64,17 @@ async function routeAudioCatalog(page: import("@playwright/test").Page) {
       id,
       name: id,
       capability,
-      capabilities: [{ intent, input_modalities: [capability === "transcribe" ? "audio" : "text"] }],
+      capabilities: [
+        {
+          intent,
+          input_modalities: [capability === "transcribe" ? "audio" : "text"],
+        },
+      ],
       locality: "local",
     });
-    await route.fulfill({
-      response,
-      json: {
+    await fulfilJson(
+      route,
+      {
         ...body,
         models: [
           ...(body.models ?? []),
@@ -72,7 +84,8 @@ async function routeAudioCatalog(page: import("@playwright/test").Page) {
           row("demo-embed", "embed", "text.embeddings"),
         ],
       },
-    });
+      { response },
+    );
   });
 }
 
@@ -126,31 +139,37 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await waitForCatalog(page);
 
   await page.route("**/openai/v1/chat/completions", (route) =>
-    route.fulfill({
-      status: 403,
-      json: { error: { message: "This key cannot use demo-chat." } },
-    }),
+    fulfilJson(
+      route,
+      { error: { message: "This key cannot use demo-chat." } },
+      { status: 403 },
+    ),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("This key cannot use demo-chat.", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("This key cannot use demo-chat.", { exact: true }),
+  ).toBeVisible();
   await page.unroute("**/openai/v1/chat/completions");
 
   await page.route("**/me/api/receipts/receipt_preferred", (route) =>
-    route.fulfill({ json: { id: "receipt_preferred" } }),
+    fulfilJson(route, { id: "receipt_preferred" }),
   );
   await page.route("**/me/api/receipts/generic_request", (route) =>
-    route.fulfill({ status: 404, json: { error: "not found" } }),
+    fulfilJson(route, { error: "not found" }, { status: 404 }),
   );
   await page.route("**/openai/v1/chat/completions", (route) =>
-    route.fulfill({
-      headers: {
-        "x-azizam-receipt-id": "receipt_preferred",
-        "x-request-id": "generic_request",
-      },
-      json: {
+    fulfilJson(
+      route,
+      {
         choices: [{ message: { content: "Receipt header priority works." } }],
       },
-    }),
+      {
+        headers: {
+          "x-azizam-receipt-id": "receipt_preferred",
+          "x-request-id": "generic_request",
+        },
+      },
+    ),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Receipt header priority works.")).toBeVisible();
@@ -173,7 +192,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
 
   await page.getByRole("tab", { name: "Read text aloud" }).click();
   await page.route("**/openai/v1/audio/speech", (route) =>
-    route.fulfill({
+    fulfilBytes(route, {
       headers: {
         "content-type": "audio/mpeg",
         "x-azizam-request-id": "req_speech_try",
@@ -191,10 +210,11 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
     buffer: Buffer.from("RIFF....WAVEfmt "),
   });
   await page.route("**/openai/v1/audio/transcriptions", (route) =>
-    route.fulfill({
-      headers: { "x-azizam-request-id": "req_transcribe_try" },
-      json: { text: "The gateway is ready.", request_id: "req_transcribe_try" },
-    }),
+    fulfilJson(
+      route,
+      { text: "The gateway is ready.", request_id: "req_transcribe_try" },
+      { headers: { "x-azizam-request-id": "req_transcribe_try" } },
+    ),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("The gateway is ready.")).toBeVisible();
@@ -208,10 +228,11 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
       "Take a taxi": "Take a taxi",
       "Wait for the bus": "Wait for the bus",
     });
-    await route.fulfill({
-      status: 404,
-      json: { error: { message: "not found" } },
-    });
+    await fulfilJson(
+      route,
+      { error: { message: "not found" } },
+      { status: 404 },
+    );
   });
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(
@@ -220,23 +241,26 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.unroute("**/v1/systemone");
   // A 403 is a refusal with its own reason, not a missing feature.
   await page.route("**/v1/systemone", (route) =>
-    route.fulfill({
-      status: 403,
-      json: { error: { message: "Your access plan does not allow decisions." } },
-    }),
+    fulfilJson(
+      route,
+      { error: { message: "Your access plan does not allow decisions." } },
+      { status: 403 },
+    ),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(
-    page.getByText("Your access plan does not allow decisions.", { exact: true }),
+    page.getByText("Your access plan does not allow decisions.", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
     page.getByText("Decisions not enabled on this gateway", { exact: true }),
   ).toHaveCount(0);
   await page.unroute("**/v1/systemone");
   await page.route("**/v1/systemone", (route) =>
-    route.fulfill({
-      headers: { "x-azizam-request-id": "req_decide_try" },
-      json: {
+    fulfilJson(
+      route,
+      {
         answers: {
           route: {
             type: "choice",
@@ -246,7 +270,8 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
           },
         },
       },
-    }),
+      { headers: { "x-azizam-request-id": "req_decide_try" } },
+    ),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("70%")).toBeVisible();
@@ -257,22 +282,29 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   // The decision result table passes axe and fits the viewport.
   expect(
     (await new AxeBuilder({ page }).analyze()).violations
-      .filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""))
+      .filter((violation) =>
+        ["serious", "critical"].includes(violation.impact ?? ""),
+      )
       .map((violation) => violation.id),
   ).toEqual([]);
   expect(
-    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
   ).toBe(true);
 
   await page.getByRole("tab", { name: "Turn text into numbers" }).click();
   await page.route("**/openai/v1/embeddings", (route) =>
-    route.fulfill({
-      headers: {
-        "x-azizam-request-id": "req_embed_try",
-        "x-litellm-response-cost": "0.0025",
+    fulfilJson(
+      route,
+      { data: [{ embedding: [0.1, -0.2, 0.4] }] },
+      {
+        headers: {
+          "x-azizam-request-id": "req_embed_try",
+          "x-litellm-response-cost": "0.0025",
+        },
       },
-      json: { data: [{ embedding: [0.1, -0.2, 0.4] }] },
-    }),
+    ),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Dimensions")).toBeVisible();
@@ -287,27 +319,25 @@ test("try catalog maps exact capability intents to the right tabs", async ({
   page,
 }) => {
   await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({
-      json: {
-        schema_version: 1,
-        object: "models.catalog",
-        aliases: [
-          catalogRow("completion-only", "text.completions"),
-          catalogRow("edit-only", "image.edit"),
-          catalogRow("music-only", "audio.generate"),
-          catalogRow("chat", "chat.completions", {
-            locality: "remote",
-            provider: "OpenRouter",
-            cost: { kind: "paid", price: "$0.01/request" },
-          }),
-          catalogRow("image", "image.generate"),
-          catalogRow("tts", "speech.synthesis"),
-          catalogRow("stt", "speech.transcription"),
-          catalogRow("decide", "decision.systemone"),
-          catalogRow("embeddings", "text.embeddings"),
-        ],
-        models: [],
-      },
+    fulfilJson(route, {
+      schema_version: 1,
+      object: "models.catalog",
+      aliases: [
+        catalogRow("completion-only", "text.completions"),
+        catalogRow("edit-only", "image.edit"),
+        catalogRow("music-only", "audio.generate"),
+        catalogRow("chat", "chat.completions", {
+          locality: "remote",
+          provider: "OpenRouter",
+          cost: { kind: "paid", price: "$0.01/request" },
+        }),
+        catalogRow("image", "image.generate"),
+        catalogRow("tts", "speech.synthesis"),
+        catalogRow("stt", "speech.transcription"),
+        catalogRow("decide", "decision.systemone"),
+        catalogRow("embeddings", "text.embeddings"),
+      ],
+      models: [],
     }),
   );
   await prepareTryKey(page);
@@ -346,18 +376,16 @@ test("try query params select capability and preserve requested model", async ({
   page,
 }) => {
   await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({
-      json: {
-        schema_version: 1,
-        object: "models.catalog",
-        aliases: [
-          catalogRow("coder", "chat.completions"),
-          catalogRow("chat", "chat.completions"),
-          catalogRow("fast", "chat.completions"),
-          catalogRow("decide", "decision.systemone"),
-        ],
-        models: [],
-      },
+    fulfilJson(route, {
+      schema_version: 1,
+      object: "models.catalog",
+      aliases: [
+        catalogRow("coder", "chat.completions"),
+        catalogRow("chat", "chat.completions"),
+        catalogRow("fast", "chat.completions"),
+        catalogRow("decide", "decision.systemone"),
+      ],
+      models: [],
     }),
   );
   await page.goto("/try/?capability=decide");
@@ -465,9 +493,7 @@ test("try records audio, uploads it, and stops microphone tracks", async ({
     const requestBody = await route.request().postDataBuffer();
     expect(requestBody).not.toBeNull();
     uploadedBody = requestBody!.toString("utf8");
-    await route.fulfill({
-      json: { text: "Recorded text." },
-    });
+    await fulfilJson(route, { text: "Recorded text." });
   });
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Recorded text.")).toBeVisible();
@@ -517,13 +543,16 @@ for (const theme of ["light", "dark"] as const) {
       await checkState(page, `try-result-${theme}-${width}.png`);
 
       await page.route("**/openai/v1/chat/completions", (route) =>
-        route.fulfill({
-          status: 403,
-          json: { error: { message: "This key cannot use chat." } },
-        }),
+        fulfilJson(
+          route,
+          { error: { message: "This key cannot use chat." } },
+          { status: 403 },
+        ),
       );
       await page.getByRole("button", { name: "Run", exact: true }).click();
-      await expect(page.getByText("This key cannot use chat.", { exact: true })).toBeVisible();
+      await expect(
+        page.getByText("This key cannot use chat.", { exact: true }),
+      ).toBeVisible();
       await checkState(page, `try-error-${theme}-${width}.png`);
       await page.unroute("**/openai/v1/chat/completions");
     });
@@ -581,7 +610,9 @@ test("a phone picks every task from one labelled select", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/try/");
   // The strip of tabs is gone on a phone; nothing hides past an edge.
-  await expect(page.getByRole("tablist", { name: "Try capability" })).toBeHidden();
+  await expect(
+    page.getByRole("tablist", { name: "Try capability" }),
+  ).toBeHidden();
   const task = page.getByRole("combobox", { name: "Task", exact: true });
   await expect(task).toBeVisible();
   await expect(task.locator("option")).toHaveText([
@@ -597,19 +628,38 @@ test("a phone picks every task from one labelled select", async ({ page }) => {
   expect(box!.height).toBeGreaterThanOrEqual(44);
   expect(box!.x + box!.width).toBeLessThanOrEqual(390);
   await task.selectOption({ label: "Choose an option" });
-  await expect(page.getByText("What is happening?", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("What is happening?", { exact: true }),
+  ).toBeVisible();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
-  await page.screenshot({ path: "test-results/screens/try-task-select-390.png" });
+  await page.screenshot({
+    path: "test-results/screens/try-task-select-390.png",
+  });
 });
 
 const kindCatalog = {
   workflows: [
-    { id: "wf-song", title: "Song maker", capability: "music", aliases: ["song"], inputs: [], outputs: [{ kind: "audio" }], availability: { runnable: true } },
-    { id: "wf-boom", title: "Boom maker", capability: "sfx", inputs: [], outputs: [{ kind: "audio" }], availability: { runnable: true } },
+    {
+      id: "wf-song",
+      title: "Song maker",
+      capability: "music",
+      aliases: ["song"],
+      inputs: [],
+      outputs: [{ kind: "audio" }],
+      availability: { available: true, status: "ready" },
+    },
+    {
+      id: "wf-boom",
+      title: "Boom maker",
+      capability: "sfx",
+      inputs: [],
+      outputs: [{ kind: "audio" }],
+      availability: { available: true, status: "ready" },
+    },
   ],
 };
 
@@ -618,7 +668,7 @@ test("a link to a kind of work opens it, or says why it cannot, never Chat", asy
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route("**/me/api/workflows", (route) =>
-    route.fulfill({ json: kindCatalog }),
+    fulfilJson(route, kindCatalog),
   );
   const task = page.getByRole("combobox", { name: "Task", exact: true });
   const model = page.getByRole("combobox", { name: "Model", exact: true });
@@ -643,20 +693,33 @@ test("a link to a kind of work opens it, or says why it cannot, never Chat", asy
   await expect(task).toHaveValue("workflow");
   // The e2e viewer is the owner: the next step is in Engines.
   await expect(page.getByText("No video engine is set up.")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Add one in Engines" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
-  await page.screenshot({ path: "test-results/screens/try-video-unavailable-390.png" });
+  await expect(
+    page.getByRole("link", { name: "Add one in Engines" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Run", exact: true }),
+  ).toBeDisabled();
+  await page.screenshot({
+    path: "test-results/screens/try-video-unavailable-390.png",
+  });
 
   await page.goto("/try/?capability=rerank");
-  await expect(page.getByText("Try can’t run reranking. Choose another task.")).toBeVisible();
+  await expect(
+    page.getByText("Try can’t run reranking. Choose another task."),
+  ).toBeVisible();
 });
 
 test("Run waits for the model list", async ({ page }) => {
   let release!: () => void;
-  const ready = new Promise<void>((resolve) => { release = resolve; });
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   await page.route("**/me/api/models/catalog", async (route) => {
     await ready;
-    await route.fulfill({ json: { aliases: [catalogRow("chat", "chat.completions")], models: [] } });
+    await fulfilJson(route, {
+      aliases: [catalogRow("chat", "chat.completions")],
+      models: [],
+    });
   });
   await page.goto("/try/", { waitUntil: "domcontentloaded" });
   const run = page.getByRole("button", { name: "Run", exact: true });
@@ -670,20 +733,23 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({
-      json: { schema_version: 1, aliases: [], models: [], counts: {} },
+    fulfilJson(route, {
+      schema_version: 1,
+      aliases: [],
+      models: [],
+      counts: {},
     }),
   );
   await page.route("**/me/api/workflows", (route) =>
-    route.fulfill({ json: ltxCatalog }),
+    fulfilJson(route, ltxCatalog),
   );
   await page.goto("/try/?workflow=video.generate.ltx-2.5-i2v");
   await expect(
     page.getByRole("combobox", { name: "Task", exact: true }),
   ).toHaveValue("workflow");
-  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toContainText(
-    "LTX 2.5 Distilled I2V",
-  );
+  await expect(
+    page.getByRole("combobox", { name: "Model", exact: true }),
+  ).toContainText("LTX 2.5 Distilled I2V");
 
   // One name for the task: the phone's Task select, not it and a card title.
   await expect(page.getByRole("heading", { name: "Workflow" })).toHaveCount(0);
@@ -696,7 +762,9 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
 
   // A picture picker, in plain words; nothing reads as developer output.
   const group = page.getByRole("group", { name: /Starting picture/ });
-  await expect(group.getByRole("button", { name: "Choose a file" })).toBeVisible();
+  await expect(
+    group.getByRole("button", { name: "Choose a file" }),
+  ).toBeVisible();
   await expect(
     group.getByRole("button", { name: "Choose from Library" }),
   ).toBeVisible();
@@ -706,7 +774,9 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
   await expect(prompt).toHaveAttribute("placeholder", /boat|camera/i);
   // An example must not read as typed text: it is set apart in style.
   expect(
-    await prompt.evaluate((el) => getComputedStyle(el, "::placeholder").fontStyle),
+    await prompt.evaluate(
+      (el) => getComputedStyle(el, "::placeholder").fontStyle,
+    ),
   ).toBe("italic");
   const visible = (await page.locator("main").innerText()).replace(/\s+/g, " ");
   for (const jargon of [
@@ -722,23 +792,28 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
   // Optional inputs wait under More options, after what the workflow needs.
   await expect(page.getByRole("textbox", { name: /Avoid/ })).toBeHidden();
   await page.locator("summary").filter({ hasText: "More options" }).click();
-  expect(await page.getByRole("textbox", { name: /Avoid/ }).inputValue()).toBe("");
+  await expect(page.getByRole("textbox", { name: /Avoid/ })).toHaveValue("");
 
-  await page.screenshot({ path: "test-results/screens/try-workflow-media-top-390.png" });
+  await page.screenshot({
+    path: "test-results/screens/try-workflow-media-top-390.png",
+  });
 
   // Run is enabled, but nothing is sent: the missing parts are named.
   let posted = 0;
   await page.route("**/v1/videos", async (route) => {
     posted += 1;
-    await route.fulfill({
-      status: 400,
-      json: { error: { message: "The gateway could not start this video." } },
-    });
+    await fulfilJson(
+      route,
+      { error: { message: "The gateway could not start this video." } },
+      { status: 400 },
+    );
   });
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Choose a picture to start from")).toBeVisible();
   await expect(page.getByText("Describe the video first")).toBeVisible();
-  await page.screenshot({ path: "test-results/screens/try-workflow-media-missing-390.png" });
+  await page.screenshot({
+    path: "test-results/screens/try-workflow-media-missing-390.png",
+  });
   expect(posted).toBe(0);
   await expect(prompt).toBeFocused();
 
@@ -751,8 +826,12 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
   await expect(page.getByRole("img", { name: "Chosen picture" })).toBeVisible();
   await prompt.fill("A paper boat drifts across a pond.");
   await expect(page.getByText("Choose a picture to start from")).toHaveCount(0);
-  await page.screenshot({ path: "test-results/screens/try-workflow-media-chosen-390.png" });
-  await group.screenshot({ path: "test-results/screens/try-workflow-media-picker-390.png" });
+  await page.screenshot({
+    path: "test-results/screens/try-workflow-media-chosen-390.png",
+  });
+  await group.screenshot({
+    path: "test-results/screens/try-workflow-media-picker-390.png",
+  });
 
   const request = page.waitForRequest("**/v1/videos");
   await page.getByRole("button", { name: "Run", exact: true }).click();
@@ -782,22 +861,25 @@ test("a picture survives a dropped connection and never reports the browser's er
   await waitForCatalog(page);
   await page.getByRole("tab", { name: "Make a picture" }).click();
   await page.route("**/gateway/v1/media/jobs/image-generations", (route) =>
-    route.fulfill({
-      status: 202,
-      json: { object: "media.job", id: "job_phone", status: "queued" },
-    }),
+    fulfilJson(
+      route,
+      { object: "media.job", id: "job_phone", status: "queued" },
+      { status: 202 },
+    ),
   );
   let polls = 0;
   await page.route("**/gateway/v1/media/jobs/job_phone", (route) => {
     polls += 1;
     // The phone switched apps: the first check gets no answer at all.
     if (polls === 1) return route.abort("connectionfailed");
-    return route.fulfill({
-      json: { object: "media.job", id: "job_phone", status: "succeeded" },
+    return fulfilJson(route, {
+      object: "media.job",
+      id: "job_phone",
+      status: "succeeded",
     });
   });
   await page.route("**/gateway/v1/media/jobs/job_phone/content", (route) =>
-    route.fulfill({ json: { data: [{ url: TINY_PNG }] } }),
+    fulfilJson(route, { data: [{ url: TINY_PNG }] }),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Image result", { exact: true })).toBeVisible({
@@ -822,10 +904,9 @@ test("a picture whose connection never returns says it may still be finishing", 
   await expect(
     page.getByText("Your picture may still be finishing"),
   ).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole("link", { name: "Open Library" })).toHaveAttribute(
-    "href",
-    "/library/",
-  );
+  await expect(
+    page.getByRole("link", { name: "Open Library" }),
+  ).toHaveAttribute("href", "/library/");
   await expect(page.getByText(/Failed to fetch/i)).toHaveCount(0);
   await expect(page.getByText("Make a picture request failed")).toHaveCount(0);
 });
@@ -836,21 +917,50 @@ for (const width of [390, 1440]) {
     await page.emulateMedia({ colorScheme: "light" });
     await page.addInitScript(() => localStorage.setItem("theme", "light"));
     let release!: () => void;
-    const ready = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const speechModel = (id: string, title: string, defaultVoice: string) => ({
-      id, title, capability: "speech", locality: "local",
+      id,
+      title,
+      capability: "speech",
+      locality: "local",
       capabilities: [{ intent: "speech.synthesis" }],
-      speech_voices: { voices: [{ id: defaultVoice, name: `${title} default` }, { id: `${id}-warm`, name: `${title} warm` }], default_voice: defaultVoice, allow_other: false },
+      speech_voices: {
+        voices: [
+          { id: defaultVoice, name: `${title} default` },
+          { id: `${id}-warm`, name: `${title} warm` },
+        ],
+        default_voice: defaultVoice,
+        allow_other: false,
+      },
     });
     await page.route("**/me/api/models/catalog", async (route) => {
       await ready;
-      await route.fulfill({ json: { aliases: [], models: [speechModel("speech-a", "Voice studio", "a-default"), speechModel("speech-b", "Second studio", "b-default")] } });
+      await fulfilJson(route, {
+        aliases: [],
+        models: [
+          speechModel("speech-a", "Voice studio", "a-default"),
+          speechModel("speech-b", "Second studio", "b-default"),
+        ],
+      });
     });
-    await page.goto("/try/?capability=speech", { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("status", { name: "Loading models" })).toHaveAttribute("aria-busy", "true");
-    await expect(page.getByRole("combobox", { name: "Model", exact: true })).toBeDisabled();
-    await expect(page.getByRole("combobox", { name: "Voice", exact: true })).toBeDisabled();
-    await page.screenshot({ path: `/home/tnunamak/.tmp/uxfb-shots/try-speech-loading-light-${width}.png`, fullPage: true });
+    await page.goto("/try/?capability=speech", {
+      waitUntil: "domcontentloaded",
+    });
+    await expect(
+      page.getByRole("status", { name: "Loading models" }),
+    ).toHaveAttribute("aria-busy", "true");
+    await expect(
+      page.getByRole("combobox", { name: "Model", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("combobox", { name: "Voice", exact: true }),
+    ).toBeDisabled();
+    await page.screenshot({
+      path: `test-results/screens/uxfb/try-speech-loading-light-${width}.png`,
+      fullPage: true,
+    });
     release();
     const voice = page.getByRole("combobox", { name: "Voice", exact: true });
     await expect(voice).toHaveValue("a-default");
@@ -859,14 +969,32 @@ for (const width of [390, 1440]) {
     await page.keyboard.press("Enter");
     await expect(voice).toHaveValue("speech-a-warm");
     await page.getByRole("combobox", { name: "Model", exact: true }).click();
-    await page.getByRole("option", { name: "Second studio", exact: true }).click();
+    await page
+      .getByRole("option", { name: "Second studio", exact: true })
+      .click();
     await expect(voice).toHaveValue("b-default");
-    await expect(voice.locator("option")).toHaveText(["Second studio default", "Second studio warm"]);
-    await page.screenshot({ path: `/home/tnunamak/.tmp/uxfb-shots/try-speech-voices-light-${width}.png`, fullPage: true });
-    expect((await new AxeBuilder({ page }).analyze()).violations.filter((item) => ["serious", "critical"].includes(item.impact ?? ""))).toEqual([]);
+    await expect(voice.locator("option")).toHaveText([
+      "Second studio default",
+      "Second studio warm",
+    ]);
+    await page.screenshot({
+      path: `test-results/screens/uxfb/try-speech-voices-light-${width}.png`,
+      fullPage: true,
+    });
+    expect(
+      (await new AxeBuilder({ page }).analyze()).violations.filter((item) =>
+        ["serious", "critical"].includes(item.impact ?? ""),
+      ),
+    ).toEqual([]);
     await page.route("**/openai/v1/audio/speech", async (route) => {
-      expect(route.request().postDataJSON()).toMatchObject({ model: "speech-b", voice: "b-default" });
-      await route.fulfill({ contentType: "audio/wav", body: Buffer.from("RIFF") });
+      expect(route.request().postDataJSON()).toMatchObject({
+        model: "speech-b",
+        voice: "b-default",
+      });
+      await fulfilBytes(route, {
+        contentType: "audio/wav",
+        body: Buffer.from("RIFF"),
+      });
     });
     const request = page.waitForRequest("**/openai/v1/audio/speech");
     await page.getByRole("button", { name: "Run", exact: true }).click();

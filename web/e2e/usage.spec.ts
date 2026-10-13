@@ -1,5 +1,6 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const seededSummary = {
   requests: 4,
@@ -50,175 +51,86 @@ async function expectNoSeriousAxeViolations(
 async function expectNoHorizontalOverflow(
   page: import("@playwright/test").Page,
 ) {
-  const widths = await page.evaluate(() => ({
-    scroll: (document.scrollingElement ?? document.documentElement).scrollWidth,
-    inner: window.innerWidth,
-    wide: [...document.querySelectorAll<HTMLElement>("body *")]
-      .filter((node) => node.getBoundingClientRect().right > window.innerWidth + 1)
-      .slice(0, 6)
-      .map((node) => `${node.tagName.toLowerCase()}.${String(node.className).slice(0, 70)}`),
-  }));
-  expect(
-    widths.scroll,
-    `Page must fit the viewport; wide: ${widths.wide.join(" | ")}`,
-  ).toBeLessThanOrEqual(widths.inner);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            (document.scrollingElement ?? document.documentElement).scrollWidth -
+            window.innerWidth,
+        ),
+      { message: "Page must fit the viewport" },
+    )
+    .toBeLessThanOrEqual(0);
 }
 
-test("usage lists a receipt and opens technical details", async ({ page }) => {
+// Display states (copy, empty, error, spend labels, model names, source ranking,
+// partial totals) are asserted in web/src/app/usage/page.spec.tsx. The browser
+// keeps what jsdom cannot judge: layout at a real width, contrast under both
+// themes (axe) and the Source popover's geometry.
+
+test("usage light at 1440px has no serious axe violation", async ({ page }) => {
+  await prepareUsageViewport(page, "light", 1440);
   await page.route("**/me/api/usage/summary?**", (route) =>
-    route.fulfill({ json: seededSummary }),
+    fulfilJson(route, seededSummary),
   );
   await page.goto("/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
-  await page.getByText("Receipt coverage", { exact: true }).click();
-  await expect(page.getByText("Receipts are kept until you delete them.")).toBeVisible();
-  await expect(page.getByText("Coverage starts Oct 1, 2026.")).toBeVisible();
-  await expect(
-    page.getByText("Provider spend is available for matched receipts."),
-  ).toBeVisible();
-  await expect(page.getByText("Demo Chat").first()).toBeVisible();
-  await expect(
-    page.getByRole("columnheader", { name: "Typical time" }),
-  ).toHaveCount(0);
+  await expect(page.getByText("Spend", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "View recent requests" }).click();
-  const receipt = page.getByRole("button", {
-    name: /Receipt details for Chat request/,
-  });
-  await expect(receipt).toContainText("104 ms");
-  await expect(receipt.locator("p.font-medium")).toHaveText("Chat request");
-  // The row and its tooltip show the model's display name (5524a85f).
-  await expect(receipt.getByText("Demo Chat")).toHaveAttribute(
-    "title",
-    "Demo Chat",
-  );
-  await receipt.first().click();
-  const sheet = page.getByRole("dialog", { name: "Request receipt" });
-  await expect(sheet).toBeVisible();
-  await expect(sheet).toContainText("Demo Chat");
-  await expect(sheet).toContainText("104 ms");
-  await sheet.getByText("Technical details", { exact: true }).click();
-  // The raw model id an app sends stays in Technical details for debugging.
-  const technical = sheet.locator("details").filter({
-    hasText: "Technical details",
-  });
-  await expect(technical).toContainText("request_id");
-  await expect(technical).toContainText("requested_model");
-  await expect(technical).toContainText('"demo-chat"', { useInnerText: true });
+  await expect(page.getByText("Receipts", { exact: true })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await expectNoSeriousAxeViolations(page);
 });
 
-test("usage omits the model line when only the capability is known", async ({
-  page,
-}) => {
+test("usage dark at 390px fits the phone and has no serious axe violation", async ({ page }) => {
+  await prepareUsageViewport(page, "dark", 390);
   await page.route("**/me/api/usage/summary?**", (route) =>
-    route.fulfill({
-      json: {
-        ...seededSummary,
-        by_model: [
-          {
-            model: null,
-            capability: "transcribe",
-            requests: 6,
-            remote_spend: null,
-          },
-        ],
-      },
-    }),
+    fulfilJson(route, seededSummary),
   );
-
   await page.goto("/usage/");
-  const transcriptionRow = page
-    .getByRole("table", { name: "Models" })
-    .getByRole("row")
-    .filter({ hasText: "Transcribe a recording" });
-  await expect(transcriptionRow).toBeVisible();
-  await expect(transcriptionRow.locator("code")).toHaveCount(0);
-  await expect(transcriptionRow).not.toContainText("Unknown model");
+  await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
+  await expect(page.getByText("Spend", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "View recent requests" }).click();
+  await expect(page.getByText("Receipts", { exact: true })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await expectNoSeriousAxeViolations(page);
 });
 
-for (const theme of ["light", "dark"] as const) {
-  for (const width of [1440, 390] as const) {
-    test(`usage empty ${theme} at ${width}px`, async ({ page }) => {
-      await prepareUsageViewport(page, theme, width);
-      await page.route("**/me/api/usage/summary?**", (route) =>
-        route.fulfill({
-          json: {
-            requests: 0,
-            media_count: 0,
-            remote_spend: 0,
-            remote_spend_available: false,
-            retention_days: null,
-            by_day: [],
-            by_model: [],
-            receipts: [],
-          },
-        }),
-      );
-      await page.goto("/usage/");
-      await expect(
-        page.getByText("No requests in this period", { exact: true }),
-      ).toBeVisible();
-      await expectNoHorizontalOverflow(page);
-      await expectNoSeriousAxeViolations(page);
-      await page.screenshot({
-        path: `test-results/screens/usage-empty-${theme}-${width}.png`,
-        fullPage: true,
-      });
-    });
+test("usage empty dark at 390px fits the phone and has no serious axe violation", async ({ page }) => {
+  await prepareUsageViewport(page, "dark", 390);
+  await page.route("**/me/api/usage/summary?**", (route) =>
+    fulfilJson(route, {
+        requests: 0,
+        media_count: 0,
+        remote_spend: 0,
+        remote_spend_available: false,
+        retention_days: null,
+        by_day: [],
+        by_model: [],
+        receipts: [],
+      }),
+  );
+  await page.goto("/usage/");
+  await expect(
+    page.getByText("No requests in this period", { exact: true }),
+  ).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await expectNoSeriousAxeViolations(page);
+});
 
-    test(`usage error ${theme} at ${width}px`, async ({ page }) => {
-      await prepareUsageViewport(page, theme, width);
-      let failed = true;
-      await page.route("**/me/api/usage/summary?**", (route) => {
-        if (failed) {
-          failed = false;
-          return route.fulfill({
-            status: 503,
-            json: { error: { message: "Unavailable for this test" } },
-          });
-        }
-        return route.fulfill({ json: seededSummary });
-      });
-      await page.goto("/usage/");
-      await expect(
-        page.getByText("Usage could not be loaded", { exact: true }),
-      ).toBeVisible();
-      await expect(
-        page.getByText("Unknown · Usage unavailable", { exact: true }),
-      ).toHaveCount(0);
-      await expectNoHorizontalOverflow(page);
-      await expectNoSeriousAxeViolations(page);
-      await page.screenshot({
-        path: `test-results/screens/usage-error-${theme}-${width}.png`,
-        fullPage: true,
-      });
-      await page
-        .getByRole("button", { name: "Retry usage", exact: true })
-        .click();
-      await expect(page.getByText("Demo Chat").first()).toBeVisible();
-    });
-
-    test(`usage ${theme} at ${width}px`, async ({ page }) => {
-      await prepareUsageViewport(page, theme, width);
-      await page.route("**/me/api/usage/summary?**", (route) =>
-        route.fulfill({ json: seededSummary }),
-      );
-      await page.goto("/usage/");
-      await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
-      await expect(
-        page.locator('[aria-label="Loading your account"]'),
-      ).toHaveCount(0);
-      await expect(page.getByText("Spend", { exact: true }).first()).toBeVisible();
-      await page.getByRole("button", { name: "View recent requests" }).click();
-      await expect(page.getByText("Receipts", { exact: true })).toBeVisible();
-      await expectNoHorizontalOverflow(page);
-      await expectNoSeriousAxeViolations(page);
-      await page.screenshot({
-        path: `test-results/screens/usage-lane-${theme}-${width}.png`,
-        fullPage: true,
-      });
-    });
-  }
-}
+test("usage error light at 1440px has no serious axe violation", async ({ page }) => {
+  await prepareUsageViewport(page, "light", 1440);
+  await page.route("**/me/api/usage/summary?**", (route) =>
+    fulfilJson(route, { error: { message: "Unavailable for this test" } }, { status: 503 }),
+  );
+  await page.goto("/usage/");
+  await expect(
+    page.getByText("Usage could not be loaded", { exact: true }),
+  ).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await expectNoSeriousAxeViolations(page);
+});
 
 async function prepareUsageViewport(
   page: import("@playwright/test").Page,
@@ -237,28 +149,6 @@ async function prepareUsageViewport(
     localStorage.setItem("theme", value);
   }, theme);
 }
-
-test("usage labels unavailable remote spend honestly", async ({ page }) => {
-  await page.route("**/me/api/usage/summary?**", (route) =>
-    route.fulfill({
-      json: {
-        ...seededSummary,
-        remote_spend: 0,
-        remote_spend_available: false,
-        paid_requests: 0,
-        spend_measured_requests: 0,
-        spend_total_requests: 4,
-      },
-    }),
-  );
-  await page.goto("/usage/");
-  const remoteSpendCard = page
-    .getByLabel("This month")
-    .getByText("Spend", { exact: true })
-    .locator("..");
-  await expect(remoteSpendCard).toContainText("Cost not recorded");
-  await expect(remoteSpendCard).not.toContainText("$0");
-});
 
 test("usage reads the real account summary and seeded receipt", async ({
   page,
@@ -299,38 +189,6 @@ test("usage reads the real account summary and seeded receipt", async ({
   ).toContainText("succeeded");
 });
 
-test("Usage person filter does not promote an email address to a person name", async ({
-  page,
-}) => {
-  await page.route("**/me/api/usage/summary?**", (route) =>
-    route.fulfill({
-      json: {
-        ...seededSummary,
-        people: [
-          { id: "person-email", name: "person@example.test" },
-          { id: "person-second", label: "second@example.test" },
-        ],
-      },
-    }),
-  );
-  await page.goto("/usage/");
-
-  await page.getByRole("combobox", { name: "Person" }).click();
-  const people = page.getByRole("option", { name: /^Person name not recorded/ });
-  await expect(people).toHaveCount(2);
-  const labels = await people.allTextContents();
-  expect(new Set(labels).size).toBe(2);
-  expect(labels.join(" ")).not.toContain("@example.test");
-  await expect(
-    page.getByRole("option", { name: "person@example.test", exact: true }),
-  ).toHaveCount(0);
-  const summaryRequest = page.waitForRequest((request) =>
-    request.url().includes("person=person-second"),
-  );
-  await people.nth(1).click();
-  await summaryRequest;
-});
-
 const GGUF =
   "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf";
 
@@ -354,80 +212,41 @@ const phoneSummary = {
   ],
 };
 
-for (const theme of ["dark", "light"] as const) {
-  test(`usage fits a 390 px phone with long model names (${theme})`, async ({ page }) => {
-    await prepareUsageViewport(page, theme, 390);
-    await page.route("**/me/api/usage/summary?**", (route) =>
-      route.fulfill({ json: phoneSummary }),
-    );
-    await page.goto("/usage/");
-    await expect(page.getByText("Top models by requests")).toBeVisible();
-    await expectNoHorizontalOverflow(page);
-
-    // The tab bar is not cut off: its right edge is inside the viewport.
-    const tabs = page.getByRole("navigation", { name: "Phone navigation" });
-    const box = await tabs.boundingBox();
-    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
-
-    // Every row sits inside the viewport, with no clipped left edge.
-    const rows = page
-      .getByRole("table")
-      .filter({ hasText: "Task and model" })
-      .getByRole("row");
-    for (let index = 0; index < (await rows.count()); index += 1) {
-      const rowBox = await rows.nth(index).boundingBox();
-      expect(rowBox?.x ?? 0).toBeGreaterThanOrEqual(0);
-      expect((rowBox?.x ?? 0) + (rowBox?.width ?? 0)).toBeLessThanOrEqual(390);
-    }
-  });
-}
-
-test("usage model table shows names, never a path, and a consistent Cost", async ({ page }) => {
+test("usage fits a 390 px phone with long model names", async ({ page }) => {
   await prepareUsageViewport(page, "dark", 390);
   await page.route("**/me/api/usage/summary?**", (route) =>
-    route.fulfill({ json: phoneSummary }),
-  );
-  await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({
-      json: {
-        schema_version: 1,
-        object: "models.catalog",
-        aliases: [{ id: "decide-quality", title: "Careful choices" }],
-        models: [],
-        counts: { aliases: 1, models: 0, capabilities: 0 },
-      },
-    }),
+    fulfilJson(route, phoneSummary),
   );
   await page.goto("/usage/");
-  const table = page.getByRole("table").filter({ hasText: "Task and model" });
-  await expect(table).toBeVisible();
-  const text = await table.innerText();
-  expect(text).not.toMatch(/\/media\/|AI Models|\/GGUF\/|\.gguf/);
-  // A weight file reads as its model's name: no path, extension or packing
-  // tag, not even in the tooltip (5524a85f).
-  expect(text).not.toMatch(/Q4 K M|Q4_K_M/);
-  await expect(table).toContainText("Qwen3.8 27B Uncensored");
-  await expect(table).toContainText("Careful choices");
-  await expect(table).toContainText("Transcribe a recording");
-  await expect(table.getByTitle("Qwen3.8 27B Uncensored", { exact: true })).toBeVisible();
-  await expect(table.locator('[title*="gguf" i], [title*="Q4_K_M"]')).toHaveCount(0);
+  await expect(page.getByText("Top models by requests")).toBeVisible();
+  await expectNoHorizontalOverflow(page);
 
-  // Cost is never blank: Local, Unavailable or an amount.
-  const rows = table.getByRole("row");
-  for (let index = 1; index < (await rows.count()); index += 1) {
-    const cost = (await rows.nth(index).getByRole("cell").last().innerText()).trim();
-    expect(cost, `row ${index}`).toMatch(/^(Cost not recorded|\$[\d.]+)/);
-  }
-  await expect(table).toContainText("$0.00");
-  await expect(page.getByText("Local: no provider charge.")).toHaveCount(0);
+  // The tab bar is not cut off: its right edge is inside the viewport.
+  const tabs = page.getByRole("navigation", { name: "Phone navigation" });
+  await expect
+    .poll(async () => {
+      const box = await tabs.boundingBox();
+      return (box?.x ?? 0) + (box?.width ?? 0);
+    })
+    .toBeLessThanOrEqual(390);
 
-  // The legend uses the names Home and Try use; the daily table is now a
-  // visible disclosure rather than screen-reader-only text (PF-047).
-  await page.getByText("View daily totals", { exact: true }).click();
-  await expect(page.getByText("Make a picture").first()).toBeVisible();
-  await expect(page.getByText("Choose an option").first()).toBeVisible();
-  await expect(page.getByText("Decisions", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Embeddings", { exact: true })).toHaveCount(0);
+  // Every row sits inside the viewport, with no clipped left edge: the header
+  // and the five busiest models.
+  const rows = page
+    .getByRole("table")
+    .filter({ hasText: "Task and model" })
+    .getByRole("row");
+  await expect(rows).toHaveCount(6);
+  const edges = () =>
+    rows.evaluateAll((elements) => {
+      const rects = elements.map((element) => element.getBoundingClientRect());
+      return {
+        left: Math.min(...rects.map((rect) => rect.left)),
+        right: Math.max(...rects.map((rect) => rect.right)),
+      };
+    });
+  await expect.poll(async () => (await edges()).left).toBeGreaterThanOrEqual(0);
+  await expect.poll(async () => (await edges()).right).toBeLessThanOrEqual(390);
 });
 
 const manySources = [
@@ -451,10 +270,13 @@ const manySources = [
   })),
 ];
 
-test("usage Source list stays on screen, scrolls inside itself and ranks apps", async ({ page }) => {
+// Source ranking and numbering are asserted in the vitest page spec. The
+// browser checks what needs a real viewport: the open list is fully on screen,
+// scrolls inside itself and never widens the page.
+test("usage Source list stays on screen, scrolls inside itself and never widens the phone page", async ({ page }) => {
   await prepareUsageViewport(page, "dark", 390);
   await page.route("**/me/api/usage/summary?**", (route) =>
-    route.fulfill({ json: { ...phoneSummary, sources: manySources } }),
+    fulfilJson(route, { ...phoneSummary, sources: manySources }),
   );
   await page.goto("/usage/");
   await expect(page.getByText("Top models by requests")).toBeVisible();
@@ -466,59 +288,17 @@ test("usage Source list stays on screen, scrolls inside itself and ranks apps", 
   // sit fully inside the 390 x 844 viewport instead of reading its box once.
   await expect(list).toBeInViewport({ ratio: 1 });
   // It has a maximum height and scrolls inside itself.
-  const scroll = await list.evaluate((node) => {
-    const holder = node.querySelector("[data-radix-select-viewport]") as HTMLElement;
-    return { client: holder.clientHeight, scroll: holder.scrollHeight };
-  });
-  expect(scroll.scroll).toBeGreaterThan(scroll.client);
+  await expect
+    .poll(() =>
+      list.evaluate((node) => {
+        const holder = node.querySelector("[data-radix-select-viewport]") as HTMLElement;
+        return holder.scrollHeight - holder.clientHeight;
+      }),
+    )
+    .toBeGreaterThan(0);
   await expectNoHorizontalOverflow(page);
-
-  const labels = await page.getByRole("option").allTextContents();
-  expect(labels.slice(0, 4)).toEqual([
-    "All sources",
-    "tim.nunamaker@gmail.com personal access with a rather long name",
-    "Local network · no key",
-    "Household app 0",
-  ]);
-  // Same-named apps are numbered, and turned-off apps come after live ones.
-  expect(labels.filter((label) => label.startsWith("Temporary empathy"))).toEqual([
-    "Temporary empathy Jev triage (1)",
-    "Temporary empathy Jev triage (2)",
-    "Temporary empathy Jev triage (3)",
-  ]);
-  expect(labels.indexOf("Household app 5")).toBeLessThan(
-    labels.indexOf("Temporary empathy Jev triage (1)"),
-  );
-  await expect(page.getByText("Turned off or no requests")).toBeVisible();
-});
-
-test("usage Source list does not push the page wider on a phone", async ({ page }) => {
-  await prepareUsageViewport(page, "dark", 390);
-  await page.route("**/me/api/usage/summary?**", (route) =>
-    route.fulfill({ json: { ...phoneSummary, sources: manySources } }),
-  );
-  await page.goto("/usage/");
-  await page.getByRole("combobox", { name: "Source" }).click();
   await page.keyboard.press("End");
   await expectNoHorizontalOverflow(page);
   await page.keyboard.press("Escape");
   await expectNoHorizontalOverflow(page);
-});
-
-test("usage distinguishes partial totals, missing breakdowns and genuine zero", async ({ page }) => {
-  let partial = true;
-  await page.route("**/me/api/usage/summary?**", (route) => route.fulfill({ json: partial
-    ? { requests: null, media_count: 0 }
-    : { requests: 2, media_count: 0, by_day: [], by_model: [], receipts: [] }
-  }));
-  await page.goto("/usage/");
-  await expect(page.getByText("Usage totals weren’t included in the response. Try again.")).toBeVisible();
-  await expect(page.getByText("No requests in this period")).toHaveCount(0);
-  partial = false;
-  await page.getByRole("button", { name: "Retry usage" }).click();
-  await expect(page.getByText("Daily totals weren’t recorded for these requests.")).toBeVisible();
-  await expect(page.getByText("Model totals weren’t recorded.")).toBeVisible();
-  await page.getByRole("button", { name: "View recent requests" }).click();
-  await expect(page.getByText("No receipts are available for this view.")).toBeVisible();
-  await expect(page.getByText("$0.00")).toHaveCount(0);
 });

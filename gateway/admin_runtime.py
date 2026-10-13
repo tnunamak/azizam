@@ -280,36 +280,63 @@ class AdminSQLiteStore:
             user.setdefault("name", user.get("display_name"))
         return users
 
-    def _enrich_app(self, record: dict[str, Any]) -> dict[str, Any]:
-        """Annotate an App with its assignment and accountable person."""
+    def _enrich_app(self, record: dict[str, Any], listing: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, Any]:
+        """Annotate an App with its assignment and accountable person.
+
+        ``listing`` holds the owners, person plans and plans of a whole
+        listing, read in one query each.
+        """
         assignment = record.get("access_plan")
         owner_id = str(record.get("owner_user_id") or "")
-        owner = admin_store.get_user(owner_id, path=self.path) if owner_id else None
+        if listing is None:
+            owner = admin_store.get_user(owner_id, path=self.path) if owner_id else None
+        else:
+            owner = listing["users"].get(owner_id)
         record["accountable_person"] = (
             {"id": owner_id, "name": owner.get("display_name") or owner.get("email")} if owner else None
         )
-        plan_id = admin_store.person_plan_id(owner_id, path=self.path) if assignment == PERSON else assignment
-        plan = admin_store.get_access_plan(str(plan_id), path=self.path) if plan_id else None
+        if assignment != PERSON:
+            plan_id = assignment
+        elif listing is None:
+            plan_id = admin_store.person_plan_id(owner_id, path=self.path)
+        else:
+            plan_id = listing["person_plans"].get(owner_id)
+        if not plan_id:
+            plan = None
+        elif listing is None:
+            plan = admin_store.get_access_plan(str(plan_id), path=self.path)
+        else:
+            plan = listing["plans"].get(str(plan_id))
         record["same_as_person"] = assignment == PERSON
         record["access_plan_name"] = plan.get("name") if plan else None
         record["effective_access_plan_id"] = plan.get("id") if plan else None
         return record
 
-    def _visible_admin_app(self, record: Mapping[str, Any]) -> bool:
-        """True when an App belongs on the operator-facing Apps surface."""
+    def _visible_admin_app(self, record: Mapping[str, Any], owners: Mapping[str, Any] | None = None) -> bool:
+        """True when an App belongs on the operator-facing Apps surface.
+
+        ``owners`` holds the owners of a whole listing, read in one query.
+        """
         if record.get("kind") != "personal":
             return True
         owner_user_id = str(record.get("owner_user_id") or "")
         if not owner_user_id:
             return True
-        owner = admin_store.get_user(owner_user_id, path=self.path)
+        owner = admin_store.get_user(owner_user_id, path=self.path) if owners is None else owners.get(owner_user_id)
         return owner is None or is_human_user_record(owner)
 
     def list_apps(self) -> list[dict[str, Any]]:
+        records = admin_store.list_apps(path=self.path)
+        owner_ids = [str(r["owner_user_id"]) for r in records if r.get("owner_user_id")]
+        listing = {
+            "users": admin_store.get_users(owner_ids, path=self.path),
+            "person_plans": admin_store.person_plan_ids(owner_ids, path=self.path),
+            "plans": {str(plan["id"]): plan for plan in admin_store.list_access_plans(path=self.path)},
+        }
         return [
-            self._enrich_app(r)
-            for r in admin_store.list_apps(path=self.path)
-            if self._visible_admin_app(r)
+            self._enrich_app(r, listing)
+            for r in records
+            if self._visible_admin_app(r, listing["users"])
         ]
 
     def get_app(self, app_id: str) -> dict[str, Any] | None:

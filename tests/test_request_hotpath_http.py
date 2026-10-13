@@ -50,6 +50,9 @@ def test_chat_opens_one_connection_per_identity_lookup_and_revocation_is_immedia
         with real_scope(path) as connection:
             yield connection
 
+    # The process stamps a key's last use once a minute (admin_store._LAST_TOUCH); start from a key
+    # not yet stamped so both requests are measured the same way.
+    admin_store._LAST_TOUCH.clear()
     with patch.object(admin_store, "runtime_auth_connection", counted):
         first = client.post("/v1/chat/completions", json=body, headers=headers)
         first_count = len(lookups)

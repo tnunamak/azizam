@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
+import { fulfilJson } from "./fixtures/intercept";
 
 // The app lives at the origin root (gateway/ui_pages.json). Old /ui URLs are
 // gone: no redirect, no alias.
@@ -120,14 +121,12 @@ test("OIDC sign-in carries one return destination", async ({ page }) => {
   await page.route("**/auth/api/options?*", async (route) => {
     const url = new URL(route.request().url());
     const returnTo = url.searchParams.get("return_to");
-    await route.fulfill({
-      json: {
+    await fulfilJson(route, {
         built_in: false,
         oidc: true,
         oidc_label: "Test identity provider",
         oidc_url: `/login?return_to=${encodeURIComponent(returnTo || "/")}`,
-      },
-    });
+      });
   });
   await page.goto(`/sign-in/?return_to=${encodeURIComponent(destination)}`);
   const link = page.getByRole("link", {

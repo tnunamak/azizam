@@ -357,7 +357,7 @@ describe("Library media recovery", () => {
     await screen.findByRole("button", { name: "Play Saved image" });
     expect(container.querySelector("audio")).toHaveAttribute("preload", "none");
   });
-  it("HL-06 observes the same card after a pending poster fails offscreen", async () => {
+  it("HL-06 requests no poster link until the card is near the screen, then recovers from a failed poster", async () => {
     let enter!: IntersectionObserverCallback;
     let observed!: Element;
     vi.stubGlobal(
@@ -372,25 +372,21 @@ describe("Library media recovery", () => {
         disconnect() {}
       },
     );
-    let rejectPoster!: (error: Error) => void;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) =>
-        String(input).includes("/poster/download")
-          ? new Promise<Response>((_resolve, reject) => {
-              rejectPoster = reject;
-            })
-          : Response.json({ assets: [video], next_cursor: null }),
-      ),
+    let rejectPoster: ((error: Error) => void) | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).includes("/poster/download")
+        ? new Promise<Response>((_resolve, reject) => {
+            rejectPoster = reject;
+          })
+        : Response.json({ assets: [video], next_cursor: null }),
     );
+    vi.stubGlobal("fetch", fetchMock);
     const { container } = mount();
     await screen.findByRole("status", { name: "Loading video poster" });
     const cardWrapper = observed;
-    await act(async () => rejectPoster(new Error("Poster unavailable")));
-    await waitFor(() =>
-      expect(container.querySelector("video")).not.toHaveAttribute("src"),
-    );
-    expect(cardWrapper.isConnected).toBe(true);
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).includes("/poster/download")),
+    ).toHaveLength(0);
     act(() =>
       enter(
         [
@@ -402,6 +398,9 @@ describe("Library media recovery", () => {
         {} as IntersectionObserver,
       ),
     );
+    await waitFor(() => expect(rejectPoster).toBeDefined());
+    await act(async () => rejectPoster!(new Error("Poster unavailable")));
+    expect(cardWrapper.isConnected).toBe(true);
     await waitFor(() =>
       expect(container.querySelector("video")).toHaveAttribute(
         "src",

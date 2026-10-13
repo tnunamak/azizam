@@ -1,11 +1,7 @@
-import {
-  expect,
-  test,
-  type Locator,
-  type Page,
-  type Route,
-} from "@playwright/test";
+import { type Locator, type Page, type Route } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const serviceRegistry = {
   schema_version: 1,
@@ -105,33 +101,26 @@ const status = {
 
 async function mockEngineApis(page: Page) {
   await page.route("**/admin/api/status", (route) =>
-    route.fulfill({ json: { status } }),
+    fulfilJson(route, { status }),
   );
   await page.route("**/admin/api/operator/service-presets", (route) =>
-    route.fulfill({ json: { presets: [] } }),
+    fulfilJson(route, { presets: [] }),
   );
   await page.route("**/admin/api/operator/service-registry", (route) =>
-    route.fulfill({
-      json: { service_registry: serviceRegistry },
-      headers: { etag: "test-etag" },
-    }),
+    fulfilJson(route, { service_registry: serviceRegistry }, { headers: { etag: "test-etag" } }),
   );
   await page.route("**/admin/api/operator/services/test", (route: Route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         probe: {
           ok: true,
           status: 200,
           error: "",
           url: "http://127.0.0.1:18081/v1/health",
         },
-      },
-    }),
+      }),
   );
   await page.route("**/admin/api/operator/services/detect-models", (route) =>
-    route.fulfill({
-      json: { detected: { ok: true, models: ["demo-chat"], error: "" } },
-    }),
+    fulfilJson(route, { detected: { ok: true, models: ["demo-chat"], error: "" } }),
   );
 }
 
@@ -154,11 +143,11 @@ async function expectNoSeriousAxeOrOverflow(page: Page) {
     ["serious", "critical"].includes(violation.impact ?? ""),
   );
   expect(violations).toEqual([]);
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    )
+    .toBe(true);
 }
 
 async function expectMinBox(target: Locator, width: number, height: number) {
@@ -212,8 +201,15 @@ function engineSummaryButton(card: Locator, serviceName: string) {
 }
 
 test.describe("phone target primitives", () => {
-  for (const theme of ["light", "dark"] as const) {
-    for (const width of [1440, 390] as const) {
+  // Geometry is theme-independent; axe contrast is not. 390 runs in both
+  // themes (axe on the dialog), 1440 once in dark.
+  const engineCases = [
+    { theme: "dark", width: 390 },
+    { theme: "light", width: 390 },
+    { theme: "dark", width: 1440 },
+  ] as const;
+  {
+    for (const { theme, width } of engineCases) {
       test(`engines controls meet geometry in ${theme} at ${width}`, async ({
         page,
       }) => {
@@ -368,7 +364,7 @@ test.describe("phone target primitives", () => {
     });
   }
 
-  for (const theme of ["light", "dark"] as const) {
+  for (const theme of ["dark"] as const) {
     test(`design desktop keeps compact modern switch geometry in ${theme}`, async ({
       page,
     }) => {

@@ -42,13 +42,10 @@
 <details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#chat-with-curl">Chat with curl</a></li><li class="toc-l2"><a href="#chat-with-python">Chat with Python</a></li><li class="toc-l2"><a href="#what-works">What works</a></li><li class="toc-l2"><a href="#limits">Limits</a></li></ul></nav></details><p>Send your app key as a bearer token or as <code>x-api-key</code>. The gateway needs a key, unless the owner allows anonymous model discovery for <code>tags</code> and <code>version</code>. Set the environment variables in the <a href="/showcase/docs/api/#set-up-your-environment">API overview</a> first.</p>
 <h2 id="chat-with-curl">Chat with curl <a class="anchor" href="#chat-with-curl" aria-label="Link to Chat with curl">#</a></h2>
 <p>This example turns streaming off, so the response is one JSON object.</p>
-<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>-sS<span class="w"> </span><span class="s2">"</span><span class="nv">$AZIZAM_BASE_URL</span><span class="s2">/ollama/api/chat"</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$AZIZAM_API_KEY</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--data<span class="w"> </span>@-<span class="w"> </span><span class="s">&lt;&lt;EOF</span>
-<span class="s">{"model": "$AZIZAM_MODEL", "stream": false,</span>
-<span class="s"> "messages": [{"role": "user", "content": "Say hello in one sentence."}]}</span>
-<span class="s">EOF</span>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>python3<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;'PY' | curl --fail-with-body -sS "$AZIZAM_BASE_URL/ollama/api/chat" -H "Authorization: Bearer $AZIZAM_API_KEY" -H 'Content-Type: application/json' --data-binary @-</span>
+<span class="s">import json, os</span>
+<span class="s">print(json.dumps({"model": os.environ["AZIZAM_MODEL"], "stream": False, "messages": [{"role": "user", "content": "Say hello in one sentence."}]}))</span>
+<span class="s">PY</span>
 </code></pre></div>
 <h2 id="chat-with-python">Chat with Python <a class="anchor" href="#chat-with-python" aria-label="Link to Chat with Python">#</a></h2>
 <p>Install the <code>ollama</code> package first.</p>

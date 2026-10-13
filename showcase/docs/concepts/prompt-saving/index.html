@@ -82,7 +82,7 @@
 <h2 id="limits">Limits <a class="anchor" href="#limits" aria-label="Link to Limits">#</a></h2>
 <ul>
 <li>Not keeping a prompt does not delete the creation, and does not hide the request from Usage.</li>
-<li>A normal job keeps its input privately until it finishes, so it can resume after a restart. A job whose prompt is not kept cannot resume.</li>
+<li>Keeping a job's input does not guarantee that it will resume after a restart. An interrupted job can fail without being rerun. Check Library before making the item again.</li>
 <li>The choice does not control what an engine or a provider keeps.</li>
 <li>Service keys never save prompts for a person. See <a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a>.</li>
 </ul>

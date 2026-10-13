@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import random
 import socket
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -117,9 +118,47 @@ def _no_comfy_object_info(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(comfy_object_info, "lookup", lambda _host, _class_type: None)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_media_delivery_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`media_delivery.begin` sets a ContextVar on the calling thread. A test that
+    begins a delivery without a request scope would otherwise leak that context
+    into every later test run on the same thread."""
+    import contextvars
+
+    from gateway import media_delivery
+
+    monkeypatch.setattr(
+        media_delivery, "_CONTEXT", contextvars.ContextVar("test_media_delivery", default=None)
+    )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_read_caches() -> None:
+    """The gateway keeps health answers and composed-service rows for a few seconds
+    (proxy._HEALTH_EVIDENCE_CACHE, _SERVICE_ROW_CACHE, _RESOURCE_FACT_CACHE). A test starts with neither."""
+    import sys
+
+    module = sys.modules.get("proxy")
+    if module is not None:
+        module._HEALTH_EVIDENCE_CACHE.clear()
+        module._SERVICE_ROW_CACHE.clear()
+        module._RESOURCE_FACT_CACHE.clear()
+
+
 @pytest.fixture(scope="session")
 def gateway_test_state_dir() -> Path:
     return _STATE_DIR
+
+
+@pytest.fixture
+def host_disk_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A private directory on the host disk, for the few tests whose subject is
+    a real-disk property (fsync, free space, a device boundary).  `tmp_path` is
+    RAM under the hermetic runner (docs/design/TEST_STRATEGY.md 4.4)."""
+    root = os.environ.get("HERMETIC_HOST_DISK_DIR")
+    if not root:
+        pytest.fail("host_disk_dir needs the hermetic runner: HERMETIC_HOST_DISK_DIR is unset")
+    return Path(tempfile.mkdtemp(prefix="case-", dir=root))
 
 
 @pytest.fixture

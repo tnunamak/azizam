@@ -1,8 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fulfilJson } from "./fixtures/intercept";
 
 const options = {
   built_in: true,
@@ -55,12 +56,10 @@ for (const theme of ["light", "dark"] as const) {
         await expect(page).toHaveURL(/\/sign-in\//);
         await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
         await expect(page.getByRole("navigation")).toHaveCount(0);
-        expect(
-          await page.evaluate(
+        await expect.poll(() => page.evaluate(
             () =>
               (window as unknown as { shellFlashes: string[] }).shellFlashes,
-          ),
-        ).toEqual([]);
+          )).toEqual([]);
         await page.evaluate(() => document.fonts.ready);
         await mkdir(screenshotDir, { recursive: true });
         await page.screenshot({
@@ -82,11 +81,9 @@ for (const theme of ["light", "dark"] as const) {
         await page.evaluate(() => {
           document.documentElement.style.fontSize = "200%";
         });
-        expect(
-          await page.evaluate(
+        await expect.poll(() => page.evaluate(
             () => document.documentElement.scrollWidth <= innerWidth,
-          ),
-        ).toBe(true);
+          )).toBe(true);
         await expect(
           page.getByRole("button", { name: "Sign in", exact: true }),
         ).toBeVisible();
@@ -161,7 +158,7 @@ test("named provider is first, keyboard focus is visible, and provider text wrap
   page,
 }) => {
   await page.route("**/auth/api/options*", (route) =>
-    route.fulfill({ json: options }),
+    fulfilJson(route, options),
   );
   await page.goto("/sign-in/");
   const provider = page.getByRole("link", {
@@ -169,11 +166,9 @@ test("named provider is first, keyboard focus is visible, and provider text wrap
   });
   await expect(provider).toBeVisible();
   await provider.focus();
-  expect(
-    await provider.evaluate(
+  await expect.poll(() => provider.evaluate(
       (element) => getComputedStyle(element).outlineStyle,
-    ),
-  ).not.toBe("none");
+    )).not.toBe("none");
   await page.keyboard.press("Tab");
   await expect(page.getByLabel("Email", { exact: true })).toBeFocused();
   await page.keyboard.press("Tab");
@@ -194,11 +189,9 @@ test("named provider is first, keyboard focus is visible, and provider text wrap
   await page.evaluate(() => {
     document.documentElement.style.fontSize = "200%";
   });
-  expect(
-    await page.evaluate(
+  await expect.poll(() => page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
+    )).toBe(true);
   await expect(provider).toHaveCSS("white-space", "normal");
   await page.screenshot({
     path: path.join(screenshotDir, "provider-dark-390-text-200.png"),
@@ -232,7 +225,7 @@ for (const [state, code, status, message, expected] of [
     page,
   }) => {
     await page.route("**/auth/api/login", (route) =>
-      route.fulfill({ status, json: { error: { code, message } } }),
+      fulfilJson(route, { error: { code, message } }, { status }),
     );
     await page.goto("/sign-in/");
     await page.getByLabel("Email", { exact: true }).fill("member@example.test");
@@ -251,10 +244,7 @@ test("expired reset and provider failure each explain the next step", async ({
   page,
 }) => {
   await page.route("**/auth/api/password-reset", (route) =>
-    route.fulfill({
-      status: 404,
-      json: { error: { code: "link_unavailable", message: "Expired" } },
-    }),
+    fulfilJson(route, { error: { code: "link_unavailable", message: "Expired" } }, { status: 404 }),
   );
   await page.goto("/sign-in/#reset=expired-fixture");
   await page
@@ -274,7 +264,7 @@ test("a new gateway offers setup before asking for a password", async ({
   page,
 }) => {
   await page.route("**/setup/api/state", (route) =>
-    route.fulfill({ json: { owner_exists: false } }),
+    fulfilJson(route, { owner_exists: false }),
   );
   await page.goto("/sign-in/");
   await expect(

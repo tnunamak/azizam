@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Azizam - Unified OpenAI-compatible API for multiple backends.
-Served externally at ai.vivid.fish (Traefik on 192.168.1.4 → 192.168.1.180:5000).
+Served behind whatever reverse proxy the operator runs; see README.md.
 
 Routes requests to:
-- TabbyAPI (Qwen3-VL) for chat/completions/vision
+- Local LLM backends declared in the service registry for chat/completions/vision
 - TTS backend (Voxtral-4B via vLLM) for /v1/audio/speech
 - Future: llama.cpp for tool calling
 
@@ -84,9 +84,10 @@ from gateway import (
     video_media_jobs,
     voice_design,
 )
-from gateway import loop_watchdog, video_extend
+from gateway import directory_index, loop_watchdog, request_connections, video_extend
+from gateway.http_tls import tls_context
 from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
-from gateway import video_subject
+from gateway import video_subject, thumbnails
 from gateway import video_job_records, prompt_metadata_migration
 from gateway.showcase import build_showcase_router, is_public_showcase_path
 from gateway import realtime_proxy
@@ -101,7 +102,7 @@ from gateway import custom_voices
 from gateway import voice_audio
 from gateway import voices_api
 from gateway import a1111_api
-from gateway import mcp_server
+from gateway import mcp_oauth, mcp_oauth_store, mcp_server
 from gateway import identity_api, identity_scene
 from gateway import likeness as likeness_module
 from gateway import stt_chunking
@@ -180,7 +181,6 @@ from gateway.workflows_catalog import (
     build_workflows_catalog,
     create_workflows_catalog_router,
 )
-from gateway import engine_quarantine
 from gateway.user_runtime import (
     UserPortalError,
     build_user_activity_snapshot,
@@ -318,6 +318,7 @@ from gateway.openai_media_schemas import (
     IMAGES_GENERATIONS_OPENAPI,
     IMAGES_VARIATIONS_OPENAPI,
     SIGNED_IMAGE_CONTENT_OPENAPI,
+    SIGNED_THUMBNAIL_OPENAPI,
     VIDEOS_CONTENT_OPENAPI,
     VIDEOS_CREATE_OPENAPI,
     VIDEOS_DELETE_OPENAPI,
@@ -438,20 +439,6 @@ def bool_from_config(value, default: bool) -> bool:
 PROXY_HOST = config.get("proxy", {}).get("host", "127.0.0.1")
 PROXY_PORT = int(get_env("AZIZAM_PORT", config.get("proxy", {}).get("port", 5000)))
 
-# TabbyAPI backend
-tabby_cfg = config.get("backends", {}).get("tabby", {})
-TABBY_HOST = f"http://{tabby_cfg.get('host', '127.0.0.1')}:{tabby_cfg.get('port', 5050)}"
-TABBY_HEALTH_ENDPOINT = tabby_cfg.get("health_endpoint", "/health")
-TABBY_IDLE_TIMEOUT = int(os.environ.get("TABBY_IDLE_TIMEOUT", tabby_cfg.get("idle_timeout", 300)))
-# The gateway never owns an engine's process existence (the binding principle:
-# it manages running and routing, never existence). Tabby's lifecycle —
-# start/stop/crash-restart — belongs to the operator's supervisor: a systemd
-# unit, a docker container, or a `command` LifecycleDriver. There is no
-# gateway-spawns-tabby mode anymore; `managed` is retained only as a
-# read-back-compatible no-op so an old config with `managed: true` still loads
-# (it simply has no effect — the gateway will not spawn a subprocess).
-TABBY_MANAGED = False  # process ownership removed; see CommandDriver / systemd
-
 # KoboldCpp backend
 kobold_cfg = config.get("backends", {}).get("kobold", {})
 KOBOLD_HOST = f"http://{kobold_cfg.get('host', '127.0.0.1')}:{kobold_cfg.get('port', 5051)}"
@@ -494,8 +481,7 @@ def _build_llm_backend_hosts() -> dict[str, str]:
 
     Reads config["backends"] (a boot-time projection of the DB registry) so that
     any service added via the admin UI and marked chat-capable is automatically
-    included after a restart. The tabby/kobold entries come out identical to the
-    previous hard-coded dict for the current deployment.
+    included after a restart.
     """
     result: dict[str, str] = {}
     for bid, bcfg in (config.get("backends") or {}).items():
@@ -665,9 +651,7 @@ def host_for_capability(capability: str) -> str | None:
 
 # Model routing - auto-detect backend from filesystem
 routing_cfg = config.get("model_routing", {})
-MODEL_DIR = routing_cfg.get("model_dir", "/media/windows/AI Models/LLMs")
 GGUF_DIR = routing_cfg.get("gguf_dir", "/media/windows/AI Models/LLMs/GGUF")
-TABBY_SERVICE = routing_cfg.get("tabby_service", "tabbyapi.service")
 KOBOLD_SERVICE_NAME = routing_cfg.get("kobold_service", "koboldcpp.service")
 SWITCH_TIMEOUT = routing_cfg.get("switch_timeout", 60)
 # Idle (inter-chunk) timeout when forwarding /v1/chat/completions and /v1/completions
@@ -683,33 +667,35 @@ SWITCH_TIMEOUT = routing_cfg.get("switch_timeout", 60)
 # legitimate work and tight enough that a hung backend frees the socket promptly.
 UPSTREAM_READ_TIMEOUT = float(os.environ.get("UPSTREAM_READ_TIMEOUT", routing_cfg.get("upstream_read_timeout", 600)))
 # Roles: logical aliases for backends. Lets clients send `model: "default"` instead of
-# hardcoding a filename. Roles map to a backend type ("kobold", "tabby", or any enabled
+# hardcoding a filename. Roles map to a backend type (any enabled
 # registry backend) — never to a specific model file for unmanaged backends.
 ROLES = config.get("roles", {})
 
-# Local-swap backends require a GGUF file path to hot-swap the model on disk.
-# The engine literals live in the quarantine (gateway/engine_quarantine.py) —
-# this is an alias so existing call sites keep working. Any backend whose role
-# entry carries a "path" key is also treated as local-swap.
-_LOCAL_SWAP_BACKENDS: frozenset[str] = engine_quarantine.LOCAL_SWAP_BACKENDS
+# A local-swap backend is one whose lifecycle driver swaps models (driver data on
+# the service record). Any backend whose role entry carries a "path" key is also
+# treated as local-swap.
+def _is_local_swap_backend(backend: str | None) -> bool:
+    from gateway.lifecycle_drivers import driver_for_service, supports_swap
+
+    if not backend:
+        return False
+    return supports_swap(driver_for_service(backend, config.get("backends")))
+
 
 # Optional catalog of additional GGUF aliases (parallel to ROLES). Each entry has
 # id/backend/path[/description] and is treated like a role with a pinned model:
 # clients send `model: "<id>"` and the proxy resolves it via ensure_target().
 # This lets us surface arbitrary GGUFs on /v1/models without inventing roles.
 # All MODELS_CATALOG entries require a local file path (this is a GGUF catalog).
-# Any enabled registry backend may appear here; kobold/tabby behavior is unchanged.
+# Any enabled registry backend may appear here.
 def _normalize_models_catalog(raw) -> dict:
     """Normalize config['models'] (list of dicts) into {normalized_id: entry}.
 
-    Accepts any backend that is known in config["backends"] (or is a legacy
-    local-swap backend).  All entries in this catalog MUST supply a local file
+    Accepts any backend that is known in config["backends"].  All entries in this catalog MUST supply a local file
     path — it is a GGUF-alias catalog by design.  Entries without a path are
-    skipped, matching the previous kobold/tabby-only behaviour exactly.
+    skipped.
     """
-    known_backends: frozenset[str] = frozenset(
-        (config.get("backends") or {}).keys()
-    ) | _LOCAL_SWAP_BACKENDS
+    known_backends: frozenset[str] = frozenset((config.get("backends") or {}).keys())
     out: dict = {}
     if not isinstance(raw, list):
         return out
@@ -865,10 +851,6 @@ _OPENAI_VIDEO_STATUS_BY_INTERNAL = {
     "canceled": "failed",
 }
 
-# Routing
-routing_cfg = config.get("routing", {})
-CHECK_INTERVAL = routing_cfg.get("check_interval", 30)
-
 # LLM behavior (model pinning to avoid kobold restarts on every role change).
 # When pin_loaded_model is true (default), ensure_target() will NOT restart
 # llama-turbo to swap models — it serves with whatever's loaded and logs a
@@ -909,7 +891,7 @@ VISION_MODEL_PATTERNS = [
 # =============================================================================
 # Live runtime registry — hot-reload without process restart
 # =============================================================================
-# Module-level names (TABBY_HOST, KOBOLD_HOST, LLM_BACKEND_HOSTS, …) are
+# Module-level names (KOBOLD_HOST, LLM_BACKEND_HOSTS, …) are
 # Python globals: every function that references them looks up the current
 # value at call time, not at import time.  reload_runtime_config() re-derives
 # all of them from the DB and reassigns the module names atomically (one
@@ -928,14 +910,12 @@ def _derive_backend_constants(effective_cfg: dict) -> dict:
     reload_runtime_config() will reassign.  Factored out so tests can call
     it directly without touching global state.
     """
-    t_cfg = effective_cfg.get("backends", {}).get("tabby", {})
     k_cfg = effective_cfg.get("backends", {}).get("kobold", {})
     tts_c = effective_cfg.get("backends", {}).get("tts", {})
     stt_c = effective_cfg.get("backends", {}).get("stt", {})
     emb_c = effective_cfg.get("backends", {}).get("embeddings", {})
     cfy_c = effective_cfg.get("backends", {}).get("comfyui", {})
 
-    new_tabby_host = f"http://{t_cfg.get('host', '127.0.0.1')}:{t_cfg.get('port', 5050)}"
     new_kobold_host = f"http://{k_cfg.get('host', '127.0.0.1')}:{k_cfg.get('port', 5051)}"
     new_tts_host = f"http://{tts_c.get('host', '127.0.0.1')}:{tts_c.get('port', 8880)}"
     new_stt_host = f"http://{stt_c.get('host', '127.0.0.1')}:{stt_c.get('port', 5092)}"
@@ -962,7 +942,6 @@ def _derive_backend_constants(effective_cfg: dict) -> dict:
         new_llm_hosts[bid] = f"http://{host}:{port}"
 
     return {
-        "TABBY_HOST": new_tabby_host,
         "KOBOLD_HOST": new_kobold_host,
         "TTS_HOST": new_tts_host,
         "STT_HOST": new_stt_host,
@@ -1011,7 +990,7 @@ def reload_runtime_config() -> dict:
     print(
         f"[proxy] runtime config reloaded — "
         f"LLM backends: {list(updates['LLM_BACKEND_HOSTS'].keys())} "
-        f"TABBY={updates['TABBY_HOST']} KOBOLD={updates['KOBOLD_HOST']}",
+        f"KOBOLD={updates['KOBOLD_HOST']}",
         flush=True,
     )
     return updates
@@ -1034,14 +1013,6 @@ def is_vision_model(model_name: str) -> bool:
             return True
     return False
 
-# Endpoints that should NOT reset idle timer
-NO_ACTIVITY_PATHS = [
-    "/health",
-    "/v1/model",
-    "/v1/models",
-    "/v1/audio",  # TTS doesn't affect LLM idle
-]
-
 # TTS endpoints - route to TTS backend
 TTS_PATHS = [
     "/v1/audio/speech",
@@ -1056,7 +1027,7 @@ async def get_active_backend() -> Optional[str]:
 
     Probes all backends in LLM_BACKEND_HOSTS (registry-derived) in priority
     order and returns the id of the first one that answers healthy.  For the
-    current deployment this resolves to 'tabby' or 'kobold' exactly as before.
+    current deployment this resolves to 'kobold' exactly as before.
     """
     backends = config.get("backends") or {}
     # Sort by priority (lower = higher priority) so the preferred backend wins.
@@ -1074,8 +1045,8 @@ async def get_active_backend() -> Optional[str]:
 # Numbered higher than 10-qwen27b.conf so systemd's last-wins semantics apply.
 KOBOLD_MODEL_DROPIN = Path.home() / f".config/systemd/user/{KOBOLD_SERVICE_NAME}.d/20-model.conf"
 
-# Generic per-service swap-lock registry.  Keyed by service id (e.g. "kobold",
-# "tabby", or any future backend id).  A lock is created lazily on first access.
+# Generic per-service swap-lock registry.  Keyed by service id (e.g. "kobold"
+# or any future backend id).  A lock is created lazily on first access.
 # Concurrency safety: dict reads/writes are GIL-atomic in CPython, so two
 # coroutines racing to create the lock for the same key will at worst both
 # evaluate asyncio.Lock() and one will overwrite the other — but both callers
@@ -1105,11 +1076,12 @@ def _swap_drain_settings() -> SwapDrainSettings:
     """`llm.swap_drain`, read per call so a config reload applies."""
     return SwapDrainSettings.from_llm_config(config.get("llm"))
 
-# Kobold loaded-state cache. Seeded from the backend's state endpoint on first read
-# after startup, then updated authoritatively after every swap. TTL guards against
-# the server being restarted out-of-band (e.g. manual systemctl restart).
-_kobold_state: dict = {"model": None, "mmproj": None, "ts": 0.0}
-_KOBOLD_STATE_TTL = 5.0
+# Loaded-state cache, one entry per swap-managed backend. Seeded from the
+# backend's state endpoint on first read after startup, then reset after every
+# swap. TTL guards against the server being restarted out-of-band (e.g. manual
+# systemctl restart).
+_loaded_state: dict[str, dict] = {}
+_LOADED_STATE_TTL = 5.0
 
 # Per-state_type seed strategies.  Each entry describes how to ask a live backend
 # what model it has loaded.  Add a new entry here when wiring up a new backend type
@@ -1118,38 +1090,25 @@ _KOBOLD_STATE_TTL = 5.0
 # Keys:
 #   endpoint     – path to GET; response must be JSON
 #   model_key    – dot-path into the JSON to the loaded model identifier
-#   mmproj_key   – dot-path to the mmproj path, or None if the backend has no mmproj
-#   mmproj_pgrep – if True, fall back to pgrep --mmproj parsing when mmproj_key is None
-#                  (llama.cpp exposes mmproj only in the process cmdline, not in /props)
+#
+# The aux (vision projector) file is not probed here: a service that has one
+# declares it in its `aux` field (see _aux_from_process).
 #
 # Dot-path format: "a.b" means data["a"]["b"].  A bare key "x" means data["x"].
 _BACKEND_STATE_STRATEGIES: dict = {
     "llama_cpp": {
         "endpoint": "/props",
         "model_key": "model_path",
-        "mmproj_key": None,
-        "mmproj_pgrep": True,
-    },
-    "tabbyapi": {
-        "endpoint": "/v1/model",
-        "model_key": "id",
-        "mmproj_key": None,
-        "mmproj_pgrep": False,
     },
     # vllm exposes /v1/models (list); take the first model id.
-    # Set mmproj_pgrep: False — vllm has no mmproj concept.
     "vllm": {
         "endpoint": "/v1/models",
         "model_key": "data.0.id",
-        "mmproj_key": None,
-        "mmproj_pgrep": False,
     },
     # Generic OpenAI-compatible backend (Ollama, LM Studio, etc.)
     "openai_compatible": {
         "endpoint": "/v1/models",
         "model_key": "data.0.id",
-        "mmproj_key": None,
-        "mmproj_pgrep": False,
     },
 }
 
@@ -1169,119 +1128,151 @@ def _resolve_dot_path(data: dict, path: str) -> Optional[str]:
     return str(cur) if cur is not None else None
 
 
-def _kobold_mmproj_from_pgrep() -> Optional[str]:
-    """Read --mmproj from the llama-server process on the kobold port.
+def _backend_base_url(backend: str) -> str:
+    """The service's own base URL: the registry-derived host, else its record's host and port."""
+    if backend in LLM_BACKEND_HOSTS:
+        return LLM_BACKEND_HOSTS[backend]
+    cfg = (config.get("backends") or {}).get(backend) or {}
+    return f"http://{cfg.get('host', '127.0.0.1')}:{cfg.get('port')}"
 
-    /props does not expose the mmproj path, so pgrep is the fallback source.
-    Scoped to the kobold port to avoid matching other llama-server instances.
+
+def _backend_reports_loaded_model_as_path(backend: str) -> bool:
+    """True if the service record declares ``loaded_model_identity: path``.
+
+    Such a service reports its loaded model as a filesystem path, compared with
+    the path being activated, via the cached local probe instead of an HTTP
+    model-id read.
     """
-    kobold_port = str(kobold_cfg.get("port", 5051))
+    cfg = (config.get("backends") or {}).get(backend)
+    return isinstance(cfg, Mapping) and cfg.get("loaded_model_identity") == "path"
+
+
+def _path_identity_backends() -> list[str]:
+    return [
+        backend for backend in (config.get("backends") or {})
+        if _backend_reports_loaded_model_as_path(backend)
+    ]
+
+
+def _aux_probe_config(backend: str) -> Mapping[str, Any] | None:
+    """The service's ``aux`` field (how to read its loaded aux file), or None."""
+    cfg = (config.get("backends") or {}).get(backend)
+    aux = cfg.get("aux") if isinstance(cfg, Mapping) else None
+    return aux if isinstance(aux, Mapping) and aux.get("probe") == "process-cmdline" else None
+
+
+def _aux_grants_vision(backend: str) -> bool:
+    """True if the service's ``aux`` field says a loaded aux file adds image input.
+
+    The caller still checks that an aux file is loaded right now.
+    """
+    cfg = (config.get("backends") or {}).get(backend)
+    aux = cfg.get("aux") if isinstance(cfg, Mapping) else None
+    grants = aux.get("grants_input_modalities") if isinstance(aux, Mapping) else None
+    return isinstance(grants, (list, tuple)) and "image" in grants
+
+
+def _aux_from_process(backend: str, aux: Mapping[str, Any]) -> Optional[str]:
+    """Read the aux file path from the command line of the backend's server process.
+
+    The server does not report its aux file over HTTP, so the process command
+    line is the source: the process named by ``aux.process``, scoped to the
+    service's port, with the file following ``aux.flag``.
+    """
+    port = str(((config.get("backends") or {}).get(backend) or {}).get("port"))
+    process, flag = str(aux.get("process") or ""), str(aux.get("flag") or "")
+    if not process or not flag:
+        return None
     try:
         result = subprocess.run(
-            ["pgrep", "-af", "llama-server"],
+            ["pgrep", "-af", process],
             capture_output=True,
             text=True,
             timeout=2,
         )
         for line in result.stdout.splitlines():
-            if f"--port {kobold_port}" not in line:
+            if f"--port {port}" not in line:
                 continue
-            idx = line.find("--mmproj ")
+            idx = line.find(f"{flag} ")
             if idx == -1:
                 return None
-            tail = line[idx + len("--mmproj "):]
+            tail = line[idx + len(flag) + 1:]
             end = tail.find(" --")
             if end != -1:
                 tail = tail[:end]
             return tail.strip() or None
     except Exception as e:
-        print(f"[proxy] _kobold_mmproj_from_pgrep: pgrep failed: {e}", flush=True)
+        print(f"[proxy] _aux_from_process: pgrep failed: {e}", flush=True)
     return None
 
 
-def _seed_kobold_state() -> None:
-    """Populate _kobold_state by querying the live backend.
+def _seed_loaded_state(backend: str) -> None:
+    """Populate the backend's loaded-state entry by querying the live backend.
 
-    Strategy is selected by `state_type` in the kobold backend config
-    (proxy_config.yml).  Falls back to pgrep-only if the HTTP query fails or
-    the state_type is unrecognised.  Called when the cache is cold (startup or
-    TTL expiry) — synchronous but cheap relative to a model swap.
+    The model strategy is selected by `state_type` in the service config; the
+    aux file is read as the service's `aux` field says. Called when the cache
+    is cold (startup or TTL expiry) — synchronous but cheap relative to a model
+    swap.
     """
     import urllib.request as _urlreq
 
-    state_type = kobold_cfg.get("state_type", "llama_cpp")
+    state_type = ((config.get("backends") or {}).get(backend) or {}).get("state_type", "llama_cpp")
     strategy = _BACKEND_STATE_STRATEGIES.get(state_type)
 
     model: Optional[str] = None
-    mmproj: Optional[str] = None
+    aux_file: Optional[str] = None
 
     if strategy:
         try:
-            url = f"{KOBOLD_HOST}{strategy['endpoint']}"
+            url = f"{_backend_base_url(backend)}{strategy['endpoint']}"
             with _urlreq.urlopen(url, timeout=2) as resp:
                 data = json.loads(resp.read())
                 model = _resolve_dot_path(data, strategy["model_key"])
         except Exception:
             pass  # server not up yet, or wrong endpoint — state stays None
-
-        if strategy.get("mmproj_key"):
-            try:
-                url = f"{KOBOLD_HOST}{strategy['endpoint']}"
-                with _urlreq.urlopen(url, timeout=2) as resp:
-                    data = json.loads(resp.read())
-                    mmproj = _resolve_dot_path(data, strategy["mmproj_key"])
-            except Exception:
-                pass
-        elif strategy.get("mmproj_pgrep"):
-            mmproj = _kobold_mmproj_from_pgrep()
     else:
-        # Unknown state_type — best-effort pgrep only.
         print(
-            f"[proxy] _seed_kobold_state: unknown state_type={state_type!r}; "
-            "falling back to pgrep (add an entry to _BACKEND_STATE_STRATEGIES to fix this)",
+            f"[proxy] _seed_loaded_state: unknown state_type={state_type!r}; "
+            "add an entry to _BACKEND_STATE_STRATEGIES to fix this",
             flush=True,
         )
-        mmproj = _kobold_mmproj_from_pgrep()
 
-    _kobold_state["model"] = model
-    _kobold_state["mmproj"] = mmproj
-    _kobold_state["ts"] = time.time()
+    aux = _aux_probe_config(backend)
+    if aux is not None:
+        aux_file = _aux_from_process(backend, aux)
 
-
-def _kobold_state_fresh() -> bool:
-    return (time.time() - _kobold_state["ts"]) < _KOBOLD_STATE_TTL
+    _loaded_state[backend] = {"model": model, "aux": aux_file, "ts": time.time()}
 
 
-def kobold_has_mmproj() -> Optional[bool]:
-    """Return True iff the running kobold llama-server has an mmproj loaded.
+def _loaded_state_for(backend: str) -> dict:
+    entry = _loaded_state.get(backend)
+    if entry is None or (time.time() - entry["ts"]) >= _LOADED_STATE_TTL:
+        _seed_loaded_state(backend)
+        entry = _loaded_state[backend]
+    return entry
 
-    Used by Fix 3 (vision routing): if mmproj is loaded, the kobold backend is
-    natively vision-capable and we don't need to switch to tabby. Returns None
-    if we couldn't determine (server not running, seed failed).
+
+def loaded_aux_present(backend: str) -> Optional[bool]:
+    """Return True iff the backend's running server has an aux file loaded.
+
+    Used by vision routing: if an aux is loaded, the backend is natively
+    vision-capable and we don't need to switch backends. Returns None if we
+    couldn't determine (server not running, seed failed).
     """
-    if not _kobold_state_fresh():
-        _seed_kobold_state()
-    model = _kobold_state["model"]
-    if model is None:
+    entry = _loaded_state_for(backend)
+    if entry["model"] is None:
         return None
-    return _kobold_state["mmproj"] is not None
+    return entry["aux"] is not None
 
 
-def currently_loaded_kobold_mmproj() -> Optional[str]:
-    """Return the mmproj path the kobold llama-server has loaded, or None."""
-    if not _kobold_state_fresh():
-        _seed_kobold_state()
-    return _kobold_state["mmproj"]
+def currently_loaded_aux(backend: str) -> Optional[str]:
+    """Return the aux file path the backend's server has loaded, or None."""
+    return _loaded_state_for(backend)["aux"]
 
 
-def currently_loaded_kobold_model() -> Optional[str]:
-    """Return the model path the kobold llama-server is currently serving, or None."""
-    if not _kobold_state_fresh():
-        _seed_kobold_state()
-    return _kobold_state["model"]
-
-
-# (tabby swap lock is managed by the generic swap_lock_for("tabby") registry above.)
+def currently_loaded_model(backend: str) -> Optional[str]:
+    """Return the model path the backend's server is currently serving, or None."""
+    return _loaded_state_for(backend)["model"]
 
 
 def is_literal_gguf_path(value: str) -> bool:
@@ -1294,23 +1285,6 @@ def is_literal_gguf_path(value: str) -> bool:
         return False
 
 
-async def currently_loaded_tabby_model() -> Optional[str]:
-    """Return the model id TabbyAPI is currently serving, or None if nothing is loaded
-    or the backend is unreachable. Uses the same `/v1/model` endpoint as `is_model_loaded`."""
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5)) as client:
-            resp = await client.get(
-                f"{TABBY_HOST}/v1/model",
-                headers={"x-api-key": API_KEY},
-            )
-            if resp.status_code == 200:
-                model_id = resp.json().get("id")
-                return model_id or None
-    except Exception:
-        pass
-    return None
-
-
 async def _currently_loaded_model_for(backend: str) -> Optional[str]:
     """Return the model a swap-managed backend currently has loaded.
 
@@ -1319,22 +1293,19 @@ async def _currently_loaded_model_for(backend: str) -> Optional[str]:
     themselves are engine-shaped state introspection; this keeps that knowledge
     in one lookup rather than scattered through the swap logic.)
     """
-    if engine_quarantine.loaded_model_is_path(backend):
-        return currently_loaded_kobold_model()
-    if engine_quarantine.loaded_model_is_http_id(backend):
-        return await currently_loaded_tabby_model()
+    if _backend_reports_loaded_model_as_path(backend):
+        return currently_loaded_model(backend)
     return None
 
 
 def _currently_loaded_aux_for(backend: str) -> Optional[str]:
-    """Return the aux (mmproj) file a swap-managed backend currently has loaded.
+    """Return the aux file a swap-managed backend currently has loaded.
 
-    Contained dispatch from backend id to the aux-probe; used by the
-    driver-swap path to populate SwapContext.loaded_aux. Only backends with an
-    aux/mmproj concept (per the quarantine) probe it; all others return None.
+    Used by the driver-swap path to populate SwapContext.loaded_aux. Only a
+    service whose record declares an ``aux`` probe reads it; all others return None.
     """
-    if engine_quarantine.has_aux_mmproj(backend):
-        return currently_loaded_kobold_mmproj()
+    if _aux_probe_config(backend) is not None:
+        return currently_loaded_aux(backend)
     return None
 
 
@@ -1346,7 +1317,7 @@ async def ensure_target(
 ) -> bool:
     """Make a (backend, model, mmproj, profile) target real before forwarding.
 
-    Every backend goes through its LifecycleDriver — there is no kobold/tabby
+    Every backend goes through its LifecycleDriver — there is no per-engine
     special-case anymore. The driver is resolved from the service's
     `lifecycle.driver` (DATA); engine-shaped knowledge (env key names, load body,
     prechecks) lives in the driver + driver_config, never here.
@@ -1453,7 +1424,7 @@ async def _ensure_target(
         finally:
             if swapping:
                 # The loaded-state cache predates the swap; re-probe on next read.
-                _kobold_state["ts"] = 0.0
+                _loaded_state.pop(backend, None)
         return ready, (_swap_drain.lease(backend) if ready and take_lease else None)
 
 
@@ -1506,36 +1477,6 @@ def _swap_recovery_failed_response(requested_model: str, failed: SwapRecoveryFai
         error_type="service_unavailable",
         code="backend_recovery_failed",
     )
-
-
-# =============================================================================
-# Load credentials
-# =============================================================================
-
-TABBY_ADMIN_KEY_ENV = auth_cfg.get("admin_key_env", "TABBY_ADMIN_KEY")
-TABBY_API_KEY_ENV = auth_cfg.get("api_key_env", "TABBY_API_KEY")
-ADMIN_KEY = get_env(TABBY_ADMIN_KEY_ENV, "") or os.environ.get("TABBY_ADMIN_KEY", "")
-API_KEY = get_env(TABBY_API_KEY_ENV, "") or os.environ.get("TABBY_API_KEY", "")
-
-# Try loading from tabbyapi's api_tokens.yml (disabled when env var not set)
-_tabbyapi_dir_env = os.environ.get("AZIZAM_TABBYAPI_DIR", "")
-tokens_file = Path(_tabbyapi_dir_env) / "api_tokens.yml" if _tabbyapi_dir_env else None
-if tokens_file and tokens_file.exists():
-    for line in tokens_file.read_text().splitlines():
-        if line.startswith("admin_key:") and not ADMIN_KEY:
-            ADMIN_KEY = line.split(":", 1)[1].strip()
-        elif line.startswith("api_key:") and not API_KEY:
-            API_KEY = line.split(":", 1)[1].strip()
-
-# Publish the resolved keys under their configured env names so the generic,
-# data-driven downstream auth path (auth_inject's `secret_env`) can resolve
-# them — including this api_tokens.yml fallback. Without this, a deployment that
-# supplies the keys ONLY via api_tokens.yml (env vars unset) would inject no
-# downstream auth. setdefault: never clobber an explicitly-set env var.
-if ADMIN_KEY:
-    os.environ.setdefault(TABBY_ADMIN_KEY_ENV, ADMIN_KEY)
-if API_KEY:
-    os.environ.setdefault(TABBY_API_KEY_ENV, API_KEY)
 
 
 # =============================================================================
@@ -2012,6 +1953,12 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
     """
     if is_public_path(request_path):
         return NO_AUTH_CONTEXT
+
+    # An MCP OAuth access token is never treated as an App key.
+    bearer = _authorization_bearer(request)
+    if bearer.startswith(mcp_oauth.ACCESS_TOKEN_PREFIX):
+        return _authenticate_mcp_access_token(request, request_path, bearer)
+
     api_key = _resolve_client_api_key(request)
     if not api_key:
         return access_error("key_required")
@@ -2021,6 +1968,40 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
     if identity.denial:
         return access_error(identity.denial)
     return AuthContext(identity=identity)
+
+
+def _authorization_bearer(request: Request) -> str:
+    header = request.headers.get("authorization", "")
+    parts = header.split(None, 1)
+    return parts[1].strip() if len(parts) == 2 and parts[0].lower() == "bearer" else ""
+
+
+def _authenticate_mcp_access_token(request: Request, request_path: str, token: str) -> AuthContext | Response:
+    """An OAuth access token acts as the person who approved the client.
+
+    It is valid on the MCP endpoint and on the core routes the MCP adapter
+    calls in process (marked by a per-process secret header), nowhere else:
+    the token's audience is the MCP endpoint (RFC 8707). The person's current
+    plan applies through their signed-in identity, so plan changes and
+    removal take effect on the next call. A person with no plan is denied
+    by the evaluator like any other identity (deny by default).
+    """
+    if not MCP_OAUTH_ENABLED:
+        return auth_error("Invalid API key.")
+    dispatched = hmac.compare_digest(request.headers.get(_MCP_DISPATCH_HEADER, ""), _MCP_DISPATCH_SECRET)
+    if request_path != MCP_PATH and not dispatched:
+        return auth_error("This access token is only valid at the MCP endpoint.")
+    # The outer /mcp request already matched the token's resource; an
+    # in-process call has the internal host, so it is not compared again.
+    connection = MCP_OAUTH.verify_access_token(token, None if dispatched else MCP_OAUTH.resource(request))
+    if connection is None:
+        return auth_error("The access token is invalid, expired or revoked.")
+    identity = _mcp_identity_for_person(connection.person_id)
+    if identity is None:
+        return access_error("person_disabled")
+    if identity.denial:
+        return access_error(identity.denial)
+    return AuthContext(identity=replace(identity, name=f"{connection.client_name} (MCP)"))
 
 
 def authenticate_runtime_request(request: Request, request_path: str) -> RuntimeRouteAuth | Response:
@@ -2110,9 +2091,8 @@ def _resolve_inject_secret(service_cfg: dict, rule: Mapping) -> str:
       1. `secret`: a downstream_secret name — looks up `service_cfg[name]` then
          `service_cfg[name_env]` (the per-identity downstream config).
       2. `secret_env`: an environment variable name to read directly. This is
-         the deployment-wide fallback (e.g. the gateway's own TABBY_ADMIN_KEY),
-         used when the identity carries no per-user key — exactly what the old
-         hardcoded tabby auth did, now expressed as config.
+         the deployment-wide fallback, used when the identity carries no per-user
+         key.
     """
     secret_name = rule.get("secret")
     if secret_name:
@@ -2134,10 +2114,10 @@ def apply_auth_inject(headers: dict, service_cfg: dict, request_path: str):
           - paths: ["/v1/models", "/v1/model/list"]   # omit = matches all paths
             header: x-admin-key
             secret: admin_key            # per-identity downstream secret name…
-            secret_env: TABBY_ADMIN_KEY  # …falling back to this env var
+            secret_env: BACKEND_ADMIN_KEY  # …falling back to this env var
           - header: x-api-key
             secret: api_key
-            secret_env: TABBY_API_KEY
+            secret_env: BACKEND_API_KEY
 
     For each request, the first rule whose `paths` match (and whose resolved
     secret is non-empty) sets its header, then injection stops. This expresses
@@ -2179,8 +2159,7 @@ def prepare_downstream_headers(
     # auth_inject is a property of the BACKEND (e.g. "this engine needs an admin
     # key for model-list endpoints"), not of each identity — so fall back to the
     # backend's declared auth_inject when the identity doesn't set its own. This
-    # is what makes downstream auth work for every caller (incl. anonymous), as
-    # the old hardcoded tabby auth did, but now from DATA.
+    # is what makes downstream auth work for every caller (incl. anonymous).
     inject_cfg = service_cfg
     if not service_cfg.get("auth_inject"):
         # A multi-attempt operation can supply the immutable service record it
@@ -2247,51 +2226,6 @@ def handle_cli_command() -> bool:
         return True
 
     return False
-
-
-# TabbyAPI config path (optional; feature disabled when AZIZAM_TABBYAPI_DIR is not set)
-TABBY_CONFIG_FILE = Path(_tabbyapi_dir_env) / "config.yml" if _tabbyapi_dir_env else None
-
-def get_tabby_model_config() -> tuple[str, str, dict]:
-    """Read TabbyAPI config live. Returns (default_model, model_dir, model_params)."""
-    default_model = os.environ.get("TABBY_DEFAULT_MODEL", "")
-    model_dir = ""
-    model_params = {}
-
-    if TABBY_CONFIG_FILE and TABBY_CONFIG_FILE.exists():
-        try:
-            with open(TABBY_CONFIG_FILE) as f:
-                tabby_config = yaml.safe_load(f)
-            model_cfg = tabby_config.get("model", {})
-            model_dir = model_cfg.get("model_dir", "")
-            if not default_model:
-                default_model = model_cfg.get("model_name", "")
-            for key in ["max_seq_len", "cache_size", "cache_mode", "gpu_split_auto",
-                        "autosplit_reserve", "max_batch_size", "chunk_size"]:
-                if key in model_cfg:
-                    model_params[key] = model_cfg[key]
-        except Exception as e:
-            print(f"[proxy] Warning: Failed to load tabby config: {e}", flush=True)
-
-    return default_model, model_dir, model_params
-
-# Initial load for startup values
-DEFAULT_MODEL, MODEL_DIR, _ = get_tabby_model_config()
-
-# Register the tabby params-provider so HttpLoadUnloadDriver can call
-# get_tabby_model_config() live at swap time (option A from
-# LIFECYCLE_DRIVER_PORT.md §3.2).  The key "tabby-config" lives in
-# driver_config.load_body_params — purely data; no engine literal in driver code.
-try:
-    from gateway.lifecycle_drivers import register_params_provider as _reg_pp
-
-    def _tabby_params_provider(svc: object) -> dict:  # type: ignore[type-arg]
-        _, _, params = get_tabby_model_config()
-        return params
-
-    _reg_pp("tabby-config", _tabby_params_provider)
-except Exception:
-    pass
 
 
 # =============================================================================
@@ -2462,7 +2396,7 @@ def default_model_for_operation(operation: str, requested_model: str = "") -> st
         return configured_default
 
     if operation in ("chat", "completions"):
-        return DEFAULT_MODEL or requested_model
+        return requested_model
     if operation == "speech":
         return TTS_BACKEND_MODEL
     if operation == "transcriptions":
@@ -2659,10 +2593,17 @@ class LocalModelActivation:
     backend_model: Optional[str] = None
 
 
+def _lifecycle_driver_config(service_cfg: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    """The service's lifecycle ``driver_config`` (service data), or an empty mapping."""
+    lifecycle = service_cfg.get("lifecycle") if isinstance(service_cfg, Mapping) else None
+    driver_config = lifecycle.get("driver_config") if isinstance(lifecycle, Mapping) else None
+    return driver_config if isinstance(driver_config, Mapping) else {}
+
+
 def _backend_default_model_to_load(backend: str) -> Optional[str]:
     backend_cfg = (config.get("backends") or {}).get(backend, {})
     if not isinstance(backend_cfg, Mapping):
-        return DEFAULT_MODEL if engine_quarantine.has_default_model_fallback(backend) else None
+        return None
     configured = str(
         backend_cfg.get("activation_model")
         or backend_cfg.get("model_id")
@@ -2671,7 +2612,7 @@ def _backend_default_model_to_load(backend: str) -> Optional[str]:
     ).strip()
     if configured:
         return configured
-    return DEFAULT_MODEL if engine_quarantine.has_default_model_fallback(backend) else None
+    return None
 
 
 def _configured_litellm_local_model_target(
@@ -2730,9 +2671,11 @@ def _configured_litellm_local_model_target(
                 or ""
             ).strip()
             activation_profile = str(item.get("activation_profile") or "").strip()
-            if engine_quarantine.activation_from_upstream_id(backend) and not activation_model:
-                activation_model = str(item.get("upstream_model") or item.get("id") or "").strip()
-            if engine_quarantine.activation_requires_abs_path(backend) and activation_model and not os.path.isabs(activation_model):
+            if (
+                _lifecycle_driver_config(service_cfg).get("activation_requires_absolute_path") is True
+                and activation_model
+                and not os.path.isabs(activation_model)
+            ):
                 activation_model = ""
             return LocalModelActivation(
                 backend=backend,
@@ -2780,7 +2723,7 @@ async def _ensure_litellm_local_backend_target(
 ) -> Response | None:
     if not backend:
         return None
-    availability = _service_availability_response(backend, service_label=backend)
+    availability = (await asyncio.to_thread(_service_availability_response, backend, service_label=backend))
     if availability is not None:
         return availability
     try:
@@ -2859,15 +2802,14 @@ async def _prepare_litellm_local_llm_request(
         active = await get_active_backend()
         # vision_capable_llm_backends() answers the membership question: which
         # backends in LLM_BACKEND_HOSTS carry the "vision" capability?  For
-        # today's config this resolves to ["tabby"] when tabby has vision=True,
-        # [] otherwise — exactly as the previous literal check.  The kobold
-        # mmproj check is orchestration-level logic that stays unchanged.
+        # a backend declaring vision=True, [] otherwise.  The kobold mmproj
+        # check is orchestration-level logic that stays unchanged.
         _vision_members = vision_capable_llm_backends()
         active_can_serve_vision = (
             active in _vision_members
         ) or (
-            engine_quarantine.vision_via_aux(active)
-            and kobold_has_mmproj() is True
+            _aux_grants_vision(active)
+            and loaded_aux_present(active) is True
         )
         if active_can_serve_vision:
             return None, body
@@ -2877,7 +2819,7 @@ async def _prepare_litellm_local_llm_request(
         target_can_serve_vision = (
             target_backend in _vision_members
         ) or (
-            engine_quarantine.vision_via_aux(target_backend)
+            _aux_grants_vision(target_backend)
             and bool(target_mmproj)
         )
         if not target_can_serve_vision:
@@ -2966,25 +2908,11 @@ async def _activate_prepared_litellm_local_target(
     )
 
 
-async def get_tabby_loaded_model_id() -> str:
+async def get_served_model_id(base_url: str) -> str:
+    """The first model id an OpenAI-compatible server lists at ``base_url``."""
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{TABBY_HOST}/v1/model",
-                headers={"x-api-key": API_KEY},
-                timeout=HEALTH_CHECK_TIMEOUT,
-            )
-            if resp.status_code == 200:
-                return resp.json().get("id") or ""
-    except Exception:
-        pass
-    return ""
-
-
-async def get_kobold_model_id() -> str:
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{KOBOLD_HOST}/v1/models", timeout=HEALTH_CHECK_TIMEOUT)
+        async with httpx.AsyncClient(verify=tls_context()) as client:
+            resp = await client.get(f"{base_url}/v1/models", timeout=HEALTH_CHECK_TIMEOUT)
             if resp.status_code != 200:
                 return ""
             data = resp.json().get("data", [])
@@ -2996,10 +2924,8 @@ async def get_kobold_model_id() -> str:
 
 
 async def effective_llm_model_for_host(target_host: str) -> str:
-    if target_host == KOBOLD_HOST:
-        return await get_kobold_model_id()
-    if target_host == TABBY_HOST:
-        return await get_tabby_loaded_model_id() or DEFAULT_MODEL
+    if any(_backend_base_url(backend) == target_host for backend in _path_identity_backends()):
+        return await get_served_model_id(target_host)
     return ""
 
 
@@ -3020,14 +2946,12 @@ def _is_use_loaded_model_alias(value: Any) -> bool:
 async def current_llm_model_for_backend(backend: str) -> str:
     """Return the model actually loaded on a backend, never a configured fallback."""
     backend = str(backend or "").strip()
-    if engine_quarantine.loaded_model_is_path(backend):
-        loaded_path = currently_loaded_kobold_model()
+    if _backend_reports_loaded_model_as_path(backend):
+        loaded_path = currently_loaded_model(backend)
         if not loaded_path:
             return ""
-        loaded_id = await get_kobold_model_id()
+        loaded_id = await get_served_model_id(_backend_base_url(backend))
         return loaded_id or os.path.basename(loaded_path) or loaded_path
-    if engine_quarantine.loaded_model_is_http_id(backend):
-        return await currently_loaded_tabby_model() or ""
 
     host = LLM_BACKEND_HOSTS.get(backend)
     backend_cfg = (config.get("backends") or {}).get(backend, {})
@@ -3038,7 +2962,7 @@ async def current_llm_model_for_backend(backend: str) -> str:
     if not strategy:
         return ""
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0), verify=tls_context()) as client:
             resp = await client.get(f"{host}{strategy['endpoint']}")
         if resp.status_code != 200:
             return ""
@@ -3079,7 +3003,7 @@ async def _current_loaded_llm_target(
             error_type="service_unavailable",
             code="current_model_unavailable",
         )
-    availability = _service_availability_response(active, service_label=active)
+    availability = (await asyncio.to_thread(_service_availability_response, active, service_label=active))
     if availability is not None:
         return None, availability
 
@@ -3144,37 +3068,12 @@ async def refresh_openai_model_aliases() -> int:
 
 class ProxyState:
     def __init__(self):
-        self.last_activity = time.time()
-        self.activity_lock = threading.Lock()
-
-        self.model_unloading = False
-        self.load_lock = asyncio.Lock()
-        # NOTE: no tabby_process field — the gateway does not own engine
-        # processes (see the TABBY_MANAGED removal). Existence is the operator's
-        # supervisor's job (systemd / docker / CommandDriver).
+        # The gateway does not own engine processes. Existence is the
+        # operator's supervisor's job (systemd / docker / CommandDriver).
         self.shutdown_requested = False
-
-    def update_activity(self):
-        with self.activity_lock:
-            self.last_activity = time.time()
-
-    def get_idle_seconds(self) -> float:
-        with self.activity_lock:
-            return time.time() - self.last_activity
 
 
 state = ProxyState()
-
-
-# =============================================================================
-# TabbyAPI subprocess management
-# =============================================================================
-
-# Tabby process spawn/stop/log/wait-for-ready removed. The gateway no longer
-# owns tabby's existence — an operator who wants the gateway to *start* tabby
-# declares a `command` (or systemd/docker) LifecycleDriver on the tabby service;
-# crash-restart belongs to that supervisor. Readiness is observed via
-# check_tabby_health() / the driver's ensure_ready(), never by spawning here.
 
 
 async def probe_backend(
@@ -3196,7 +3095,7 @@ async def probe_backend(
     authority = f"{host}:{port}" if port else str(host)
     url = f"{scheme}://{authority}{safe_path}"
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=tls_context()) as client:
             resp = await client.get(url, timeout=HEALTH_CHECK_TIMEOUT)
         body: Any = None
         try:
@@ -3216,6 +3115,10 @@ async def probe_backend(
         return {"ok": False, "status": None, "error": str(exc) or type(exc).__name__, "url": url, "body": None}
 
 
+# What a service answered to its resource check, kept for the same few seconds as health answers.
+_RESOURCE_FACT_CACHE: dict[str, tuple[float, str, dict[str, Any]]] = {}
+
+
 async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
     """Return a generic runtime status fact for a configured service.
 
@@ -3223,10 +3126,24 @@ async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
     transport fields. That keeps the gateway from learning engine-specific
     health semantics in code; richer queue/admission facts can be added as
     data on the service record.
+
+    An answer is kept for ``_HEALTH_EVIDENCE_TTL_S`` and used only while the service's
+    probe settings are unchanged, so a read of the resource list does not open a
+    connection to every service each time.
     """
     bcfg = _service_resource_probe_config(service_id)
     if not isinstance(bcfg, Mapping):
         return {"status": "unknown"}
+    fingerprint = json.dumps(bcfg, sort_keys=True, default=str)
+    hit = _RESOURCE_FACT_CACHE.get(service_id)
+    if hit is not None and time.monotonic() - hit[0] < _HEALTH_EVIDENCE_TTL_S and hit[1] == fingerprint:
+        return dict(hit[2])
+    fact = await _probe_service_resource_fact(bcfg)
+    _RESOURCE_FACT_CACHE[service_id] = (time.monotonic(), fingerprint, dict(fact))
+    return fact
+
+
+async def _probe_service_resource_fact(bcfg: Mapping[str, Any]) -> dict[str, Any]:
     url = _service_resource_probe_url(bcfg)
     if not url:
         return {"status": "unknown"}
@@ -3238,7 +3155,7 @@ async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
     # accidentally inherit very long service timeouts (e.g. TTS: 86400 s).
     timeout = min(timeout, HEALTH_CHECK_TIMEOUT)
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=tls_context()) as client:
             resp = await client.get(url, timeout=timeout)
             if 200 <= resp.status_code < 300:
                 return {"status": "available"}
@@ -3306,11 +3223,6 @@ async def check_service_health(service_id: str) -> bool:
     Returns False when the service has no probeable transport fields.
     """
     return (await _service_resource_runtime_fact(service_id)).get("status") == "available"
-
-
-async def check_tabby_health() -> bool:
-    """Check if TabbyAPI is healthy."""
-    return await check_service_health("tabby")
 
 
 async def check_embeddings_health() -> bool:
@@ -3863,7 +3775,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     )
     if admission is not None:
         return admission
-    service_response = _service_availability_response("tts", service_label="TTS")
+    service_response = (await asyncio.to_thread(_service_availability_response, "tts", service_label="TTS"))
     if service_response is not None:
         return service_response
 
@@ -3947,7 +3859,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
                 )
                 if admission is not None:
                     return admission
-                service_response = _service_availability_response(tts_service_id, service_label=tts_service_id)
+                service_response = (await asyncio.to_thread(_service_availability_response, tts_service_id, service_label=tts_service_id))
                 if service_response is not None:
                     return service_response
                 headers = prepare_downstream_headers(request.headers, auth_context, tts_service_id)
@@ -4340,7 +4252,7 @@ async def _dispatch_selected_stt_route(
     if execution is None:
         # No service can be dispatched. Preserve the generic route gate for
         # this no-target case; once a target exists, policy always uses its id.
-        denied = _enforce_runtime_route_policy(auth_context, f"/v1/audio/{operation}")
+        denied = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, f"/v1/audio/{operation}"))
         if denied is not None:
             return denied
         return await proxy_stt_request(request, auth_context, operation=operation)
@@ -4513,7 +4425,7 @@ async def proxy_stt_request(
         decision = _apply_selected_stt_policy(receipt, auth_context, operation=operation)
         if decision is not None and decision.denied:
             return _policy_denied_response(decision)
-    unavailable = None if model_unpeeked else _service_availability_response(execution.service_id, service_label=execution.service_id)
+    unavailable = None if model_unpeeked else (await asyncio.to_thread(_service_availability_response, execution.service_id, service_label=execution.service_id))
     if unavailable is not None:
         return unavailable
 
@@ -4599,7 +4511,7 @@ async def proxy_stt_request(
                 )
                 if not_ready is not None:
                     return not_ready
-                unavailable = _service_availability_response(execution.service_id, service_label=execution.service_id)
+                unavailable = (await asyncio.to_thread(_service_availability_response, execution.service_id, service_label=execution.service_id))
                 if unavailable is not None:
                     return unavailable
                 if service_changed:
@@ -6209,7 +6121,7 @@ async def decide_image_background_removal(
     active = await get_active_backend()
     # Generic: any local-swap LLM backend resolves its host from LLM_BACKEND_HOSTS.
     target_host = LLM_BACKEND_HOSTS.get(active) if active else None
-    if active and engine_quarantine.is_local_swap_backend(active) and target_host:
+    if active and _is_local_swap_backend(active) and target_host:
         service = active
     else:
         return _background_removal_fallback("llm_unavailable", "no active LLM backend")
@@ -6347,16 +6259,21 @@ def verify_asset_signature(asset_id: str, expires: int, sig: str, metadata_mode:
 
 def _asset_owner_key(auth_context: AuthContext | None) -> str | None:
     from gateway.ownership import owner_key
-    return owner_key(auth_context, path=ADMIN_STORE.path)
+    # A list route asks once per row; in a read request the answer is read once.
+    # The entry holds the context itself, so its id cannot be reused by another object.
+    return request_connections.memo(
+        ("asset-owner-key", id(auth_context)),
+        lambda: (auth_context, owner_key(auth_context, path=ADMIN_STORE.path)))[1]
 
 
 def _asset_read_owner_keys(auth_context: AuthContext | None) -> tuple[str, ...]:
     from gateway.ownership import credential_owner_keys
     identity = getattr(auth_context, "identity", None)
-    return credential_owner_keys(
-        _asset_owner_key(auth_context), path=ADMIN_STORE.path,
-        current_key_hash=getattr(identity, "key_hash", None),
-    )
+    return request_connections.memo(
+        ("asset-read-owner-keys", id(auth_context)),
+        lambda: (auth_context, credential_owner_keys(
+            _asset_owner_key(auth_context), path=ADMIN_STORE.path,
+            current_key_hash=getattr(identity, "key_hash", None))))[1]
 
 
 def _asset_metadata_path(asset_id: str) -> Path | None:
@@ -6604,6 +6521,9 @@ def asset_cache_path(asset_id: str) -> Optional[Path]:
         return None
     kind, digest = parsed
     candidates = [IMAGE_CACHE_DIR / f"{digest}{suffix}" for suffix in _ASSET_SUFFIXES_BY_KIND[kind]]
+    listed = directory_index.names(IMAGE_CACHE_DIR)  # one listing for every asset, not five probes each
+    if listed is not None:
+        return next((candidate for candidate in candidates if candidate.name in listed), candidates[0])
     for candidate in candidates:
         if candidate.exists():
             return candidate
@@ -6660,10 +6580,16 @@ def build_signed_asset_url(request: Request, asset_id: str, metadata_mode: str |
     transferable bearer URL cannot establish the maker's identity.
     """
     mode = metadata_mode or provenance.METADATA_NONE
-    expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
-    sig = _sign_asset_token(asset_id, expires, mode)
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    if mode == thumbnails.THUMB_MODE:
+        # The expiry steps once per TTL, so the URL is the same all window long
+        # and the browser can keep the preview between visits.
+        expires = (int(time.time()) // IMAGE_SIGNED_URL_TTL + 2) * IMAGE_SIGNED_URL_TTL
+        sig = _sign_asset_token(asset_id, expires, mode)
+        return f"{proto}://{host}/v1/assets/{asset_id}/thumbnail?expires={expires}&sig={sig}"
+    expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
+    sig = _sign_asset_token(asset_id, expires, mode)
     return f"{proto}://{host}/v1/assets/{asset_id}/content?expires={expires}&md={mode}&sig={sig}"
 
 
@@ -6937,6 +6863,13 @@ async def _comfy_run_round(
                 status_code=502,
                 media_type="application/json",
             ), []
+        except httpx.TransportError:
+            # The peer dropped the connection mid-exchange (e.g. RemoteProtocolError).
+            return Response(
+                content=json.dumps({"error": {"message": f"Image backend connection dropped", "type": "api_error"}}),
+                status_code=502,
+                media_type="application/json",
+            ), []
 
         if resp.status_code != 200:
             return Response(
@@ -6975,7 +6908,7 @@ async def _comfy_run_round(
             )
             try:
                 history_resp = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers)
-            except (httpx.TimeoutException, httpx.ConnectError):
+            except httpx.TransportError:
                 continue
             if history_resp.status_code != 200:
                 continue
@@ -7018,7 +6951,7 @@ async def _comfy_run_round(
                     params["subfolder"] = subfolder
                 try:
                     img_resp = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
-                except (httpx.TimeoutException, httpx.ConnectError):
+                except httpx.TransportError:
                     continue
                 if img_resp.status_code == 200 and img_resp.content:
                     images.append(img_resp.content)
@@ -7545,10 +7478,8 @@ async def proxy_comfy_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response(
-        "comfyui",
-        service_label="ComfyUI",
-    )
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
+        service_label="ComfyUI",))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -7982,10 +7913,8 @@ async def proxy_comfy_edit_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response(
-        "comfyui",
-        service_label="ComfyUI",
-    )
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
+        service_label="ComfyUI",))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -8621,10 +8550,8 @@ async def proxy_comfy_variations_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response(
-        "comfyui",
-        service_label="ComfyUI",
-    )
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
+        service_label="ComfyUI",))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -9231,7 +9158,7 @@ async def _fetch_comfy_state() -> tuple[Optional[set[str]], Optional[dict]]:
     Returns (None, None) on any error. Uses 2s timeouts per the spec.
     """
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=2.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=2.0), verify=tls_context()) as client:
             q_resp = await client.get(f"{COMFY_HOST}/queue")
             h_resp = await client.get(f"{COMFY_HOST}/history?max_items={_VIDEO_RECONCILE_HISTORY_LIMIT}")
     except Exception as e:
@@ -9641,7 +9568,6 @@ async def _resolve_gateway_media_url(
     """Resolve our own content URLs with signatures and caller ownership."""
     parsed = urlsplit(url)
     public_urls = [
-        "https://ai.vivid.fish", "https://openai.vivid.fish",
         str(get_env("AZIZAM_PUBLIC_URL") or ""),
         str((config.get("proxy") or {}).get("public_url") or ""),
         str(instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()).get("base_url") or ""),
@@ -10359,10 +10285,8 @@ async def proxy_comfy_video_create(
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response(
-        "comfyui",
-        service_label="ComfyUI",
-    )
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
+        service_label="ComfyUI",))
     if service_response is not None:
         return service_response
 
@@ -11342,7 +11266,7 @@ async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) 
 
     if not COMFY_ENABLED:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
-    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
     if service_response is not None:
         return service_response
     if not VIDEO_EXTEND_WORKFLOW:
@@ -11750,7 +11674,7 @@ async def proxy_comfy_video_list(request: Request, auth_context: AuthContext) ->
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
     if service_response is not None:
         return service_response
 
@@ -11912,7 +11836,7 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
     if service_response is not None:
         return service_response
 
@@ -12160,7 +12084,7 @@ async def proxy_comfy_video_remix(
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
     if service_response is not None:
         return service_response
 
@@ -12214,7 +12138,7 @@ async def proxy_comfy_video_edit(request: Request, auth_context: AuthContext) ->
 
     if not COMFY_ENABLED:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
-    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
     if service_response is not None:
         return service_response
     try:
@@ -12244,93 +12168,6 @@ async def proxy_comfy_video_edit(request: Request, auth_context: AuthContext) ->
         source=source,
         remixed_from_video_id=source_id,
     )
-
-
-# =============================================================================
-# Model management
-# =============================================================================
-
-async def is_model_loaded() -> bool:
-    """Check if a model is currently loaded."""
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{TABBY_HOST}/v1/model",
-                headers={"x-api-key": API_KEY},
-                timeout=HEALTH_CHECK_TIMEOUT
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                return data.get("id") is not None
-    except:
-        pass
-    return False
-
-
-async def unload_model() -> bool:
-    """Unload the current model."""
-    async with state.load_lock:
-        if state.model_unloading:
-            return False
-        state.model_unloading = True
-
-    success = False
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{TABBY_HOST}/v1/model/unload",
-                headers={"x-admin-key": ADMIN_KEY},
-                timeout=60
-            )
-            if resp.status_code == 200:
-                print(f"[proxy] Model unloaded (idle {int(state.get_idle_seconds())}s)", flush=True)
-                success = True
-            else:
-                print(f"[proxy] Unload failed: {resp.status_code}", flush=True)
-    except Exception as e:
-        print(f"[proxy] Unload error: {e}", flush=True)
-    finally:
-        state.model_unloading = False
-
-    return success
-
-
-# =============================================================================
-# Background tasks
-# =============================================================================
-
-async def maintenance_loop():
-    """Background task for idle checking and health monitoring.
-
-    Backends are activated lazily by request handlers (see ensure_target). This
-    loop intentionally does NOT poll-and-revive backends — the Conflicts= rule
-    between tabbyapi.service and llama-turbo.service means only one LLM backend
-    is up at a time, so trying to "ensure tabby is healthy" while llama-turbo
-    is the active LLM is wrong and produces log spam.
-
-    Responsibilities kept:
-      - Idle-timeout unload of an in-process loaded tabby model.
-
-    The gateway never revives backends here: it does not own engine existence
-    (crash-restart belongs to the operator's supervisor — systemd / docker /
-    CommandDriver), and backend selection is request-driven via ensure_target.
-    """
-    while not state.shutdown_requested:
-        await asyncio.sleep(CHECK_INTERVAL)
-
-        if state.shutdown_requested:
-            break
-
-        # Check idle timeout (only meaningful when something is loaded on tabby)
-        if state.model_unloading:
-            continue
-
-        idle = state.get_idle_seconds()
-        if TABBY_IDLE_TIMEOUT > 0 and idle >= TABBY_IDLE_TIMEOUT:
-            # Probe tabby cheaply; if it's not even up, nothing to unload.
-            if await check_tabby_health() and await is_model_loaded():
-                print(f"[proxy] Idle timeout ({int(idle)}s), unloading...", flush=True)
-                await unload_model()
 
 
 # =============================================================================
@@ -12428,18 +12265,29 @@ async def _workflow_drift_loop(stop_event: asyncio.Event) -> None:
             continue
 
 
+async def _initialize_stores() -> None:
+    """Initialize the independent store files side by side on worker threads.
+
+    Startup waits for the slowest store, and the event loop stays free. Provider
+    spend recovery writes through the stores, so it starts only after all of them
+    are ready: a store that fails aborts startup before it runs.
+    """
+    await asyncio.gather(
+        asyncio.to_thread(ADMIN_STORE.init_db),
+        asyncio.to_thread(responses_store.init_db),
+        asyncio.to_thread(receipt_store.init_db),
+        asyncio.to_thread(media_jobs.init_db),
+    )
+    await asyncio.to_thread(providers.recover_provider_spend, path=ADMIN_DB_PATH.parent / "provider_spend.db")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
-    ADMIN_STORE.init_db()
-    responses_store.init_db()
-    receipt_store.init_db()
-    media_jobs.init_db()
-    providers.recover_provider_spend(path=ADMIN_DB_PATH.parent / "provider_spend.db")
+    await _initialize_stores()
     print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
-    print(f"[proxy] TabbyAPI backend: {TABBY_HOST}", flush=True)
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
     print(f"[proxy] STT backend: {STT_HOST} (enabled: {STT_ENABLED})", flush=True)
     print(f"[proxy] ComfyUI backend: {COMFY_HOST} (enabled: {COMFY_ENABLED})", flush=True)
@@ -12452,7 +12300,7 @@ async def lifespan(app: FastAPI):
     # timeline survive proxy restarts. The window stays bounded at 24h; older
     # records are filtered out at replay time.
     try:
-        replay_stats = firehose_metrics.replay_persisted()
+        replay_stats = await asyncio.to_thread(firehose_metrics.replay_persisted)
         print(
             f"[proxy] firehose replay: requests={replay_stats.get('requests_replayed')} "
             f"events={replay_stats.get('events_replayed')} skipped={replay_stats.get('skipped')}",
@@ -12461,16 +12309,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] firehose replay failed: {e}", flush=True)
 
-    # The gateway does not start engines. Tabby is brought up by the operator's
+    # The gateway does not start engines. They are brought up by the operator's
     # supervisor (systemd / docker / a `command` LifecycleDriver) and reached
-    # lazily via ensure_target on the first request that needs it.
-    print(f"[proxy] Idle timeout: {TABBY_IDLE_TIMEOUT}s", flush=True)
-    print(f"[proxy] Default model: {DEFAULT_MODEL}", flush=True)
+    # lazily via ensure_target on the first request that needs them.
 
     # Log the loop thread's stack whenever the event loop stops answering.
     watchdog = loop_watchdog.start(float(get_env("AZIZAM_LOOP_WATCHDOG_THRESHOLD_S", "1.0")))
 
-    maintenance_task = asyncio.create_task(maintenance_loop())
 
     # ComfyUI websocket listener for real-time video progress. Optional —
     # /v1/videos/{id} falls back to /history polling if this can't connect.
@@ -12596,11 +12441,6 @@ async def lifespan(app: FastAPI):
         task.cancel()
     if _image_media_job_tasks:
         await asyncio.gather(*list(_image_media_job_tasks), return_exceptions=True)
-    maintenance_task.cancel()
-    try:
-        await maintenance_task
-    except asyncio.CancelledError:
-        pass
     if comfy_ws_task is not None:
         comfy_ws_stop.set()
         comfy_ws_task.cancel()
@@ -12646,8 +12486,11 @@ async def lifespan(app: FastAPI):
             await receipts_maintenance_task
         except asyncio.CancelledError:
             pass
-    # No engine processes to stop — the gateway never owned tabby's existence.
+    # No engine processes to stop — the gateway never owned an engine's existence.
 
+
+# Build the shared TLS context now, at import, so no request builds it on the event loop.
+tls_context()
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
 
@@ -12920,11 +12763,6 @@ def _role_catalog_ids_for_loaded_path(
             if role_model:
                 if matches_path(role_model):
                     ids.add(str(role_name))
-            elif engine_quarantine.roles_may_be_unpinned(backend) and loaded_model_id:
-                # Some backends' roles name a backend without pinning a specific
-                # model path. When that backend is hot, the role is a valid
-                # handle for the current loaded model.
-                ids.add(str(role_name))
 
     for model_id, spec in MODELS_CATALOG.items():
         if not isinstance(spec, Mapping) or spec.get("backend") != backend:
@@ -12968,24 +12806,12 @@ async def _current_loaded_llm_model_ids(
         active = None
 
     ids: set[str] = set()
-    if active and engine_quarantine.loaded_model_is_http_id(active):
-        loaded = await get_tabby_loaded_model_id()
-        if loaded:
-            ids.update(USE_LOADED_MODEL_ALIASES)
-            ids.add(loaded)
-            ids.update(
-                _role_catalog_ids_for_loaded_path(
-                    backend=active,
-                    loaded_path=None,
-                    loaded_model_id=loaded,
-                )
-            )
-        if loaded and metadata_ids is not None:
-            metadata_ids.update(_declarations_for_loaded_model(active, loaded))
-        return {item for item in ids if item}
-
-    loaded_path = currently_loaded_kobold_model()
-    if loaded_path:
+    loaded_paths: dict[str, str] = {}
+    for backend in _path_identity_backends():
+        loaded_path = currently_loaded_model(backend)
+        if not loaded_path:
+            continue
+        loaded_paths[backend] = loaded_path
         ids.update(USE_LOADED_MODEL_ALIASES)
         ids.add(loaded_path)
         basename = os.path.basename(loaded_path)
@@ -12993,14 +12819,13 @@ async def _current_loaded_llm_model_ids(
             ids.add(basename)
         ids.update(
             _role_catalog_ids_for_loaded_path(
-                backend="kobold",
+                backend=backend,
                 loaded_path=loaded_path,
                 loaded_model_id=basename,
             )
         )
-    if (loaded_path and active and engine_quarantine.loaded_model_is_path(active)
-            and metadata_ids is not None):
-        metadata_ids.update(_declarations_for_loaded_model(active, loaded_path))
+    if active in loaded_paths and metadata_ids is not None:
+        metadata_ids.update(_declarations_for_loaded_model(active, loaded_paths[active]))
     return {item for item in ids if item}
 
 
@@ -13103,7 +12928,7 @@ async def _filter_model_list_for_profile(
 ) -> tuple[list[Any], dict[str, Any]]:
     metadata: dict[str, Any] = {}
     filtered = [item for item in data if isinstance(item, dict)]
-    registry = ADMIN_STORE.get_service_registry()
+    registry = await asyncio.to_thread(ADMIN_STORE.get_service_registry)
     remote_models = provider_execution.litellm_provider_model_lookup(registry)
     access = _access_for_auth_context(auth_context)
     provider_refs = providers.provider_refs(registry)
@@ -13125,21 +12950,26 @@ async def _filter_model_list_for_profile(
         for capability in registered_model_capabilities(registry):
             if capability.model:
                 declared_intents.setdefault(capability.model, []).append(capability.intent)
-    filtered = []
-    for item in visible:
-        intents = None
-        if category_protocols is None and not any(item.get(key) for key in (
-            "azizam_intent", "intent", "azizam_workflow_id", "azizam_resolves_to",
-        )):
-            intents = declared_intents.get(str(item.get("id") or ""))
-        if category_protocols is not None:
-            category_entries = [{**item, "azizam_intent": intent, "azizam_protocol": protocol}
-                                for intent, protocol in category_protocols.items()]
-        else:
-            category_entries = ([{**item, "azizam_intent": intent} for intent in intents]
-                                if intents is not None else [item])
-        if any(_category_entry_visible(auth_context, entry) for entry in category_entries):
-            filtered.append(item)
+    def category_filter() -> list[Any]:
+        kept = []
+        for item in visible:
+            intents = None
+            if category_protocols is None and not any(item.get(key) for key in (
+                "azizam_intent", "intent", "azizam_workflow_id", "azizam_resolves_to",
+            )):
+                intents = declared_intents.get(str(item.get("id") or ""))
+            if category_protocols is not None:
+                category_entries = [{**item, "azizam_intent": intent, "azizam_protocol": protocol}
+                                    for intent, protocol in category_protocols.items()]
+            else:
+                category_entries = ([{**item, "azizam_intent": intent} for intent in intents]
+                                    if intents is not None else [item])
+            if any(_category_entry_visible(auth_context, entry) for entry in category_entries):
+                kept.append(item)
+        return kept
+
+    # The category gate reads SQLite: keep it off the event loop.
+    filtered = await asyncio.to_thread(category_filter)
 
     return filtered, metadata
 
@@ -13163,12 +12993,18 @@ def _capability_for_access(
     auth_context: AuthContext,
     *,
     protocol: str | None = None,
+    registry: Mapping[str, Any] | None = None,
 ) -> Capability:
+    """Evaluate one capability for this identity's access plans.
+
+    Batch callers pass ``registry`` so a request reads it once instead of
+    once per capability.
+    """
     access = _access_for_auth_context(auth_context)
     if "alias" in capability.tags and capability.backend == "gateway":
         return replace(capability, policy_available=False)
     remote_provider_id = None
-    provider = provider_lookup(ADMIN_STORE.get_service_registry(), capability.backend)
+    provider = provider_lookup(registry if registry is not None else ADMIN_STORE.get_service_registry(), capability.backend)
     if "remote" in capability.tags or (provider is not None and service_registry.is_remote_provider_config(provider.config)):
         if provider is None:
             return replace(capability, policy_available=False, policy_reasons=("Provider configuration is unavailable.",))
@@ -13193,6 +13029,30 @@ def _capability_for_access(
 
 
 def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Capability]:
+    """Every capability, with this identity's policy view.
+
+    The catalog before the policy view depends only on the identity's remote
+    decision models, not on the identity itself. One request therefore builds
+    each distinct catalog once, however many keys and plans Home evaluates.
+    """
+    live_registry, base = request_connections.memo(("capability-catalog-base",), _gateway_catalog_base)
+    remote = [
+        decision_provider_execution.capability_for(provider, model.id)
+        for model in _remote_decision_models(auth_context, live_registry)
+        for provider in [decision_provider_execution.systemone_provider_for_model(live_registry, model.id)]
+        if provider
+    ]
+    capabilities = request_connections.memo(
+        ("capability-catalog", tuple((c.backend, c.model) for c in remote)),
+        lambda: _gateway_catalog_finish(live_registry, base, remote),
+    )
+    return [
+        _capability_for_access(capability, auth_context, registry=live_registry)
+        for capability in capabilities
+    ]
+
+
+def _gateway_catalog_base() -> tuple[Mapping[str, Any], list[Capability]]:
     try:
         live_registry = ADMIN_STORE.get_service_registry()
         _live_backends: Mapping[str, Any] | None = service_registry.runtime_backends(
@@ -13204,7 +13064,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
     capabilities = list(build_local_capabilities(
         config,
         enabled_flags={
-            "llm": bool(kobold_cfg) or bool(tabby_cfg),
+            "llm": bool(kobold_cfg),
             "embeddings": EMBEDDINGS_ENABLED and bool(embeddings_cfg),
             "tts": TTS_ENABLED,
             "stt": STT_ENABLED,
@@ -13218,11 +13078,13 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
 
     capabilities.extend(build_alias_capabilities(_gateway_aliases_provider()))
     capabilities.extend(DECISION_RUNTIME.capabilities())
+    return live_registry, capabilities
 
-    for model in _remote_decision_models(auth_context):
-        provider = decision_provider_execution.systemone_provider_for_model(ADMIN_STORE.get_service_registry(), model.id)
-        if provider:
-            capabilities.append(decision_provider_execution.capability_for(provider, model.id))
+
+def _gateway_catalog_finish(
+    live_registry: Mapping[str, Any], base: list[Capability], remote: list[Capability],
+) -> list[Capability]:
+    capabilities = [*base, *remote]
 
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
         for backend in record.supported_backends:
@@ -13253,10 +13115,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
         )
     ]
 
-    return [
-        _capability_for_access(capability, auth_context)
-        for capability in capabilities
-    ]
+    return capabilities
 
 
 def _workflow_availability_services(registry: Mapping[str, Any]) -> dict[str, Any]:
@@ -13287,6 +13146,9 @@ def _composed_dependency_service_ids(capabilities: Iterable[Capability]) -> set[
     return out
 
 
+_SERVICE_ROW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
 async def _status_payload_with_service_rows(
     status_payload: Mapping[str, Any], service_records: Mapping[str, Any], service_ids: Iterable[str],
 ) -> Mapping[str, Any]:
@@ -13306,15 +13168,27 @@ async def _status_payload_with_service_rows(
     missing = {key: value for key, value in backends.items() if key in wanted}
     if not missing:
         return status_payload
-    extra = await status_endpoint._backend_grid({"backends": missing})
-    checked_at = int(time.time())
-    for row in extra:
-        row.setdefault("observed_at_s", checked_at)
+    # Every capabilities and overview read asks about the same few services. Their
+    # rows are kept as long as the status grid keeps its own, so a read costs no
+    # HTTP probe or `systemctl` process unless a row has expired.
+    now = time.monotonic()
+    ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
+    kept = [dict(hit[1]) for key in missing if (hit := _SERVICE_ROW_CACHE.get(key)) and now - hit[0] < ttl]
+    kept_ids = {str(row.get("service_id") or row.get("key") or "") for row in kept}
+    unchecked = {key: value for key, value in missing.items() if key not in kept_ids}
+    probed: list[dict[str, Any]] = []
+    if unchecked:
+        probed = await status_endpoint._backend_grid({"backends": unchecked})
+        checked_at = int(time.time())
+        for row in probed:
+            row.setdefault("observed_at_s", checked_at)
+            _SERVICE_ROW_CACHE[str(row.get("service_id") or row.get("key") or "")] = (now, dict(row))
+    extra = status_endpoint._merge_backend_observations([*kept, *probed])
     return {**status_payload, "backends": [*rows, *extra]}
 
 
 async def _gateway_capabilities_provider(request: Request) -> list[Capability]:
-    capabilities = _gateway_capabilities_for_auth_context(_auth_context_from_scope(request))
+    capabilities = (await asyncio.to_thread(_gateway_capabilities_for_auth_context, _auth_context_from_scope(request)))
     try:
         service_records = _workflow_availability_services(ADMIN_STORE.get_service_registry())
         return project_capabilities(
@@ -13378,15 +13252,26 @@ def _runtime_availability_evidence(
 async def _status_payload_with_availability() -> Mapping[str, Any]:
     payload = await status_endpoint.get_cached_status(config)
     try:
-        service_records = ADMIN_STORE.get_service_registry()
+        # Registry and capability resolution read SQLite; keep them off the loop.
+        service_records, no_auth_capabilities = await asyncio.to_thread(
+            lambda: (ADMIN_STORE.get_service_registry(), _gateway_capabilities_for_auth_context(NO_AUTH_CONTEXT)))
         execution_runtime = litellm_runtime_from_registry(service_records, env=os.environ)
         health_evidence = await _models_catalog_health_evidence(service_records, service_ids=(service_records.get("services") or {}).keys())
+        # Composed workflow engines (the face sidecar) are checked read-only
+        # for evidence; the engine grid itself is unchanged.
+        service_rows = await _status_payload_with_service_rows(
+            payload, _workflow_availability_services(service_records),
+            _composed_dependency_service_ids(no_auth_capabilities),
+        )
+        availability_evidence = await asyncio.to_thread(
+            _runtime_availability_evidence, service_records,
+            status_payload=service_rows, health_evidence=health_evidence)
         return {
             **payload,
             "_relied_on_service_ids": relied_on_service_ids(
                 registry=service_records,
                 runtime_config=config,
-                capabilities=_gateway_capabilities_for_auth_context(NO_AUTH_CONTEXT),
+                capabilities=no_auth_capabilities,
                 selected_execution_dependencies=[execution_runtime.service_id]
                 if execution_runtime.enabled and execution_runtime.service_id else [],
                 selected_defaults=[
@@ -13398,16 +13283,7 @@ async def _status_payload_with_availability() -> Mapping[str, Any]:
                    for route in provider_execution.litellm_provider_model_lookup(service_records).values()
                    if route.get("service_id")],
             ),
-            "_availability_evidence": _runtime_availability_evidence(
-                service_records,
-                # Composed workflow engines (the face sidecar) are checked
-                # read-only for evidence; the engine grid itself is unchanged.
-                status_payload=await _status_payload_with_service_rows(
-                    payload, _workflow_availability_services(service_records),
-                    _composed_dependency_service_ids(_gateway_capabilities_for_auth_context(NO_AUTH_CONTEXT)),
-                ),
-                health_evidence=health_evidence,
-            ),
+            "_availability_evidence": availability_evidence,
         }
     except Exception:  # noqa: BLE001
         return payload
@@ -13536,7 +13412,7 @@ async def _security_headers_middleware(request: Request, call_next):
 async def _gateway_auth_middleware(request: Request, call_next):
     """Gate gateway-native discovery/receipt APIs behind the proxy key layer."""
     if request.url.path.startswith("/gateway/v1"):
-        auth_context = authenticate_request(request, request.url.path)
+        auth_context = (await asyncio.to_thread(authenticate_request, request, request.url.path))
         if isinstance(auth_context, Response):
             return auth_context
         request.scope["auth_context"] = auth_context
@@ -13589,7 +13465,7 @@ async def _showcase_status() -> dict[str, Any]:
     """
     async def _probe(url: str) -> Any:
         try:
-            async with httpx.AsyncClient(timeout=1.5) as client:
+            async with httpx.AsyncClient(timeout=1.5, verify=tls_context()) as client:
                 resp = await client.get(url)
             return resp.json() if resp.status_code == 200 else None
         except Exception:  # noqa: BLE001
@@ -13931,9 +13807,11 @@ voices_api.register_voice_routes(
 # --- MCP server (gateway/mcp_server.py) ---------------------------------------
 # Thin adapter: every tool action is dispatched in process to the core routes
 # with the caller's own credentials, so auth, profile policy and receipts apply.
+_MCP_DISPATCH_HEADER = "x-azizam-mcp-dispatch"
 _MCP_SKIP_FORWARD_HEADERS = {
     "content-length", "content-type", "accept", "accept-encoding", "connection", "transfer-encoding",
     "mcp-protocol-version", "mcp-method", "mcp-name", "mcp-session-id", "origin", "idempotency-key",
+    _MCP_DISPATCH_HEADER,
 }
 
 
@@ -13944,6 +13822,18 @@ async def _mcp_internal_call(request: Request, method: str, path: str, **kwargs:
     transport = httpx.ASGITransport(app=app, client=(client.host, client.port) if client else ("127.0.0.1", 0))
     async with httpx.AsyncClient(transport=transport, base_url="http://gateway.internal", timeout=None) as http:
         return await http.request(method, path, headers=headers, **kwargs)
+
+
+async def _mcp_dispatch_call(request: Request, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    """The MCP adapter's in-process call. The marker lets a core route accept
+    the caller's MCP access token, which is valid only at /mcp otherwise."""
+    headers = {**(kwargs.pop("headers", None) or {}), _MCP_DISPATCH_HEADER: _MCP_DISPATCH_SECRET}
+    client = request.client
+    transport = httpx.ASGITransport(app=app, client=(client.host, client.port) if client else ("127.0.0.1", 0))
+    forwarded = {k: v for k, v in request.headers.items()
+                 if k.lower() not in _MCP_SKIP_FORWARD_HEADERS and not k.lower().startswith("mcp-param-")}
+    async with httpx.AsyncClient(transport=transport, base_url="http://gateway.internal", timeout=None) as http:
+        return await http.request(method, path, headers={**forwarded, **headers}, **kwargs)
 
 
 def _mcp_catalog() -> list[dict[str, Any]]:
@@ -13973,19 +13863,99 @@ def _mcp_read_asset(request: Request, auth: Any, asset_id: str) -> bytes | None:
     return media_delivery.deliver_bytes(path.read_bytes(), path.suffix, "none")
 
 
+def _mcp_allowed_origins(_request: Request) -> list[str]:
+    """Browser origins allowed to call /mcp: the configured list plus the
+    saved public address. A request's own Host header is not evidence."""
+    listed = [str(o) for o in ((config.get("mcp") or {}).get("allowed_origins") or [])]
+    pinned = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["base_url"]
+    return [*listed, pinned] if pinned else listed
+
+
+def _mcp_identity_for_person(person_id: str) -> AuthIdentity | None:
+    """The identity a person's signed-in work runs as (their session App,
+    with their current plan), or None if they may not use the gateway now."""
+    session_app = admin_store.get_session_app_for_user(person_id, path=ADMIN_STORE.path)
+    if session_app is None:
+        return None
+    return runtime_identity_for_session_app(str(session_app["id"]), person_id, path=ADMIN_STORE.path)
+
+
+def _mcp_person_can_connect(person_id: str) -> bool:
+    """Only an enabled person who holds an access plan may connect a client
+    (deny by default); the plan still decides every call afterwards."""
+    if admin_store.get_user(person_id, path=ADMIN_STORE.path) is None:
+        return False
+    admin_store.ensure_session_app_for_user(person_id, name=me_make.APP_NAME, path=ADMIN_STORE.path)
+    identity = _mcp_identity_for_person(person_id)
+    return identity is not None and not identity.denial and identity.access.complete
+
+
+def _mcp_plan(person_id: str) -> dict[str, Any]:
+    plan_id = admin_store.person_plan_id(person_id, path=ADMIN_STORE.path)
+    record = admin_store.get_access_plan(plan_id, path=ADMIN_STORE.path) if plan_id else None
+    if record is None:
+        return {"name": "No access plan", "description": ""}
+    return {"name": str(record.get("name") or plan_id), "description": str((record.get("plan") or {}).get("description") or "")}
+
+
+def _mcp_oauth_person(session: Any) -> Mapping[str, Any] | None:
+    return admin_store.get_user(str(getattr(session, "subject", "") or ""), path=ADMIN_STORE.path)
+
+
+async def _fetch_mcp_client_document(url: str) -> tuple[bytes, Mapping[str, str]]:
+    fetched = await media_fetch.safe_fetch_media(
+        url, limit=mcp_oauth.CLIENT_DOCUMENT_MAX_BYTES, max_redirects=0, schemes=frozenset({"https"}),
+        timeout=mcp_oauth.CLIENT_DOCUMENT_TIMEOUT_SECONDS, accept="application/json",
+    )
+    return fetched.data, fetched.headers
+
+
+def _mcp_oauth_audit(action: str, *, person_id: str, **details: Any) -> None:
+    try:
+        admin_store.record_audit(action, actor_kind="user", actor_id=person_id, target_kind="mcp_connection",
+                                 target_id=str(details.get("grant_id") or details.get("client_id") or ""),
+                                 metadata={k: v for k, v in details.items() if v is not None}, path=ADMIN_STORE.path)
+    except Exception as exc:  # noqa: BLE001 - an audit write must not undo the action
+        print(f"[mcp-oauth] audit {action} failed: {type(exc).__name__}", flush=True)
+
+
+MCP_PATH = "/mcp"
+MCP_OAUTH_ENABLED = bool_from_config(((config.get("mcp") or {}).get("oauth") or {}).get("enabled"), True)
+_MCP_DISPATCH_SECRET = secrets.token_urlsafe(32)
+MCP_OAUTH = mcp_oauth.McpOAuth(mcp_oauth.McpOAuthDeps(
+    public_base_url=lambda request: _public_base_url(request),
+    session=lambda request: _oidc_session_from_request(request),
+    person=_mcp_oauth_person,
+    check_action=lambda request, session: _require_user_action_header(request, session),
+    person_can_connect=_mcp_person_can_connect,
+    plan=_mcp_plan,
+    client_ip=lambda request: str(resolve_real_client_ip(request) or ""),
+    fetch_client_document=_fetch_mcp_client_document,
+    store=mcp_oauth_store.Store(lambda: ADMIN_STORE.path),
+    settings=lambda: mcp_oauth.Settings.from_config((config.get("mcp") or {}).get("oauth")),
+    audit=_mcp_oauth_audit,
+    mcp_path=MCP_PATH,
+))
+if MCP_OAUTH_ENABLED:
+    MCP_OAUTH.register(app)
+
 mcp_server.register_mcp_routes(
     app,
     mcp_server.McpDeps(
         authenticate=lambda request, path: authenticate_request(request, path),
-        call=_mcp_internal_call,
+        call=_mcp_dispatch_call,
         catalog=_mcp_catalog,
         aliases=lambda: _gateway_aliases_provider(),
         store_asset=_mcp_store_asset,
         read_asset=_mcp_read_asset,
         public_base_url=lambda request: _public_base_url(request),
         server_version=str((config.get("proxy") or {}).get("version") or "1"),
-        allowed_origins=lambda: [str(o) for o in ((config.get("mcp") or {}).get("allowed_origins") or [])],
+        allowed_origins=_mcp_allowed_origins,
+        authorization_servers=lambda request: (
+            [MCP_OAUTH.issuer(request)] if MCP_OAUTH_ENABLED and MCP_OAUTH.available(request) else []),
+        scopes=(mcp_oauth.SCOPE,) if MCP_OAUTH_ENABLED else (),
     ),
+    path=MCP_PATH,
 )
 
 # System One facades use the existing registry lifecycle and profile evaluator.
@@ -14076,10 +14046,13 @@ async def _openai_decisions(request: Request, auth: AuthContext, profile: Any) -
     return await decision_provider_execution.openai(request, auth, profile, **_decision_provider_context())
 
 
-def _remote_decision_models(auth: AuthContext) -> list[decisions_api.DecisionModel]:
+def _remote_decision_models(
+    auth: AuthContext, registry: Mapping[str, Any] | None = None,
+) -> list[decisions_api.DecisionModel]:
     if not auth.identity or not auth.identity.app_id:
         return []
-    registry = ADMIN_STORE.get_service_registry()
+    if registry is None:
+        registry = ADMIN_STORE.get_service_registry()
     rows: list[decisions_api.DecisionModel] = []
     for provider in decision_provider_execution.systemone_providers(registry):
         try:
@@ -14088,7 +14061,7 @@ def _remote_decision_models(auth: AuthContext) -> list[decisions_api.DecisionMod
             continue
         for model in decision_provider_execution.catalog_models(provider):
             cap = decision_provider_execution.capability_for(provider, model)
-            if _capability_for_access(cap, auth).policy_available is False:
+            if _capability_for_access(cap, auth, registry=registry).policy_available is False:
                 continue
             rows.append(decisions_api.DecisionModel(
                 id=model, root=model.partition("/")[2], backend=provider.id,
@@ -14758,16 +14731,16 @@ class _LiveLiteLLMKeyClient:
         return LiteLLMKeyAdminClient(_litellm_runtime_config()).enabled
 
     async def list_keys(self, **kwargs):
-        return await LiteLLMKeyAdminClient(_litellm_runtime_config()).list_keys(**kwargs)
+        return await LiteLLMKeyAdminClient((await asyncio.to_thread(_litellm_runtime_config))).list_keys(**kwargs)
 
     async def generate_key(self, spec):
-        return await LiteLLMKeyAdminClient(_litellm_runtime_config()).generate_key(spec)
+        return await LiteLLMKeyAdminClient((await asyncio.to_thread(_litellm_runtime_config))).generate_key(spec)
 
     async def key_info(self, key):
-        return await LiteLLMKeyAdminClient(_litellm_runtime_config()).key_info(key)
+        return await LiteLLMKeyAdminClient((await asyncio.to_thread(_litellm_runtime_config))).key_info(key)
 
     async def delete_keys(self, **kwargs):
-        return await LiteLLMKeyAdminClient(_litellm_runtime_config()).delete_keys(**kwargs)
+        return await LiteLLMKeyAdminClient((await asyncio.to_thread(_litellm_runtime_config))).delete_keys(**kwargs)
 
 
 _LITELLM_KEY_CLIENT = _LiveLiteLLMKeyClient()
@@ -14922,6 +14895,8 @@ app.include_router(create_account_router(
     instance_provider=lambda: instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()),
     client_ip_resolver=resolve_real_client_ip,
     on_person_prompt_purge=lambda person_id: _purge_person_prompt_memory(person_id),
+    # A removed person's MCP connections end; re-adding them does not revive any.
+    on_person_removed=lambda person_id: MCP_OAUTH.deps.store.revoke_person_grants(person_id, "person_removed"),
 ))
 
 
@@ -14946,7 +14921,7 @@ async def _account_session_revocation(request: Request, call_next):
     except SessionError:
         # Another gateway on the same host may own it; cookies are not port-scoped.
         return response
-    if accounts.session_allowed(session.subject, session.session_id, path=ADMIN_STORE.path):
+    if await asyncio.to_thread(accounts.session_allowed, session.subject, session.session_id, path=ADMIN_STORE.path):
         return response
     # A sign-in response sets the new session; deleting after it would undo it.
     if any(value.startswith(f"{cookie.name}=") for value in response.headers.getlist("set-cookie")):
@@ -14976,8 +14951,8 @@ app.include_router(create_home_router(
 
 @app.get("/me/api/session", include_in_schema=False)
 async def user_portal_session(request: Request):
-    session = _oidc_session_from_request(request)
-    snapshot = build_user_portal_snapshot(session, path=ADMIN_STORE.path)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
+    snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
     # Members cannot use the admin session endpoint. Supply their CSRF token
     # with the same owner-scoped account snapshot used by the browser UI.
     snapshot["csrf_token"] = (
@@ -15014,61 +14989,91 @@ def _session_catalog_auth_contexts(session: Any, snapshot: Mapping[str, Any]) ->
     )
 
 
+# Health answers kept this long, as the status grid keeps its own. Each service's
+# answer is dated by its check time, so a kept answer is not passed off as new.
+_HEALTH_EVIDENCE_TTL_S = 10.0
+_HEALTH_EVIDENCE_CACHE: dict[str, tuple[float, str, dict[str, Any]]] = {}
+
+
 async def _models_catalog_health_evidence(
     service_records: Mapping[str, Any],
     *,
     service_ids: Iterable[str],
 ) -> dict[str, dict[str, Any]]:
+    context = tls_context()  # building one costs tens of milliseconds; one serves every probe
+
     async def get_json(url: str) -> Mapping[str, Any] | None:
         if not url.startswith(("http://", "https://")):
             return None
-        async with httpx.AsyncClient(timeout=0.75) as client:
+        async with httpx.AsyncClient(timeout=0.75, verify=context) as client:
             response = await client.get(url)
         if response.status_code >= 400:
             raise HealthProbeNoResponse(status_code=response.status_code)
         payload = response.json()
         return payload if isinstance(payload, Mapping) else {}
 
-    return await probe_service_health(
-        service_records,
-        get_json=get_json,
-        service_ids=service_ids,
-    )
+    services = service_records.get("services") if isinstance(service_records, Mapping) else None
+    services = services if isinstance(services, Mapping) else {}
+    wanted = list(dict.fromkeys(str(service_id) for service_id in service_ids))
+    now = time.monotonic()
+
+    def fingerprint(service_id: str) -> str:
+        # An edited service must not be answered from its old record.
+        return json.dumps(services.get(service_id), sort_keys=True, default=str)
+
+    kept: dict[str, dict[str, Any]] = {}
+    for service_id in wanted:
+        hit = _HEALTH_EVIDENCE_CACHE.get(service_id)
+        if hit is not None and now - hit[0] < _HEALTH_EVIDENCE_TTL_S and hit[1] == fingerprint(service_id):
+            kept[service_id] = dict(hit[2])
+    stale = [service_id for service_id in wanted if service_id not in kept]
+    if stale:
+        probed = await probe_service_health(service_records, get_json=get_json, service_ids=stale)
+        for service_id, evidence in probed.items():
+            _HEALTH_EVIDENCE_CACHE[service_id] = (now, fingerprint(service_id), dict(evidence))
+        kept.update(probed)
+    return kept
 
 
 async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     if session is None:
         raise UserPortalError(
             "not_authenticated",
             "Sign in to view the models catalog",
             status_code=401,
         )
-    user_snapshot = build_user_portal_snapshot(session, path=ADMIN_STORE.path)
+    user_snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
     if not user_snapshot.get("authenticated"):
         raise UserPortalError(
             "not_authenticated",
             "Sign in to view the models catalog",
             status_code=401,
         )
-    auth_contexts = _session_catalog_auth_contexts(session, user_snapshot)
+    # Blocking SQLite and file work runs on a worker thread so a slow disk
+    # cannot stall every other request on the event loop.
+    auth_contexts = await asyncio.to_thread(_session_catalog_auth_contexts, session, user_snapshot)
     if not auth_contexts:
         return build_models_catalog(alias_views={}, capabilities=[])
-    activity = build_user_activity_snapshot(
-        session,
-        limit=50,
-        path=ADMIN_STORE.path,
-        receipts_path=receipt_store.DB_PATH,
-    )
-    try:
-        service_records: Mapping[str, Any] = ADMIN_STORE.get_service_registry()
-    except Exception:  # noqa: BLE001
-        service_records = {}
-    service_records = _workflow_availability_services(service_records)
-    capability_sets = [
-        _gateway_capabilities_for_auth_context(auth_context)
-        for auth_context in auth_contexts
-    ]
+
+    def load_catalog_inputs() -> tuple[dict[str, Any], Mapping[str, Any], list[list[Any]]]:
+        activity = build_user_activity_snapshot(
+            session,
+            limit=50,
+            path=ADMIN_STORE.path,
+            receipts_path=receipt_store.DB_PATH,
+        )
+        try:
+            records: Mapping[str, Any] = ADMIN_STORE.get_service_registry()
+        except Exception:  # noqa: BLE001
+            records = {}
+        records = _workflow_availability_services(records)
+        return activity, records, [
+            _gateway_capabilities_for_auth_context(auth_context)
+            for auth_context in auth_contexts
+        ]
+
+    activity, service_records, capability_sets = await asyncio.to_thread(load_catalog_inputs)
     visible_service_ids = {
         str(capability.backend)
         for capabilities in capability_sets
@@ -15093,35 +15098,38 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         )
     except Exception:  # noqa: BLE001
         pass
-    availability_evidence = _runtime_availability_evidence(
-        service_records,
-        status_payload=status_payload,
-        health_evidence=health_evidence,
-    )
-    capability_sets = [
-        project_capabilities(group, service_records=service_records,
-                             evidence=availability_evidence,
-                             workflow_records=GATEWAY_WORKFLOW_REGISTRY.records())
-        for group in capability_sets
-    ]
-    model_entries = [
-        *_stable_alias_model_entries(),
-        *_build_workflow_model_entries(),
-        *_current_loaded_model_entries(),
-    ]
-    catalog = build_models_catalog(
-        model_metadata=_catalog_model_metadata(model_entries, service_records, capability_sets),
-        alias_views=_gateway_aliases_provider(),
-        capability_sets=capability_sets,
-        model_entries=model_entries,
-        service_records=service_records,
-        recent_receipts=activity.get("receipts") or (),
-        health_evidence=availability_evidence,
-        workflow_records=[
-            {"id": record.id, "manifest": record.manifest}
-            for record in GATEWAY_WORKFLOW_REGISTRY.records()
-        ],
-    )
+    def assemble_catalog() -> dict[str, Any]:
+        availability_evidence = _runtime_availability_evidence(
+            service_records,
+            status_payload=status_payload,
+            health_evidence=health_evidence,
+        )
+        projected_sets = [
+            project_capabilities(group, service_records=service_records,
+                                 evidence=availability_evidence,
+                                 workflow_records=GATEWAY_WORKFLOW_REGISTRY.records())
+            for group in capability_sets
+        ]
+        model_entries = [
+            *_stable_alias_model_entries(),
+            *_build_workflow_model_entries(),
+            *_current_loaded_model_entries(),
+        ]
+        return build_models_catalog(
+            model_metadata=_catalog_model_metadata(model_entries, service_records, projected_sets),
+            alias_views=_gateway_aliases_provider(),
+            capability_sets=projected_sets,
+            model_entries=model_entries,
+            service_records=service_records,
+            recent_receipts=activity.get("receipts") or (),
+            health_evidence=availability_evidence,
+            workflow_records=[
+                {"id": record.id, "manifest": record.manifest}
+                for record in GATEWAY_WORKFLOW_REGISTRY.records()
+            ],
+        )
+
+    catalog = await asyncio.to_thread(assemble_catalog)
     # The browser has a session, not a public API key. Carry the configured
     # voice contract on each already-authorized speech row so it can choose
     # a voice before creating its temporary Try key.
@@ -15167,23 +15175,23 @@ app.include_router(create_models_catalog_router(_user_models_catalog_payload))
 
 
 async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     if session is None:
         raise UserPortalError(
             "not_authenticated",
             "Sign in to view the workflows catalog",
             status_code=401,
         )
-    user_snapshot = build_user_portal_snapshot(session, path=ADMIN_STORE.path)
+    user_snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
     if not user_snapshot.get("authenticated"):
         raise UserPortalError(
             "not_authenticated",
             "Sign in to view the workflows catalog",
             status_code=401,
         )
-    auth_contexts = _session_catalog_auth_contexts(session, user_snapshot)
+    auth_contexts = await asyncio.to_thread(_session_catalog_auth_contexts, session, user_snapshot)
     capability_sets = [
-        _gateway_capabilities_for_auth_context(auth_context)
+        (await asyncio.to_thread(_gateway_capabilities_for_auth_context, auth_context))
         for auth_context in auth_contexts
     ]
     capabilities = [
@@ -15191,41 +15199,50 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
         for capability_set in capability_sets
         for capability in capability_set
     ]
-    activity = build_user_activity_snapshot(
-        session,
-        limit=50,
-        path=ADMIN_STORE.path,
-        receipts_path=receipt_store.DB_PATH,
-    )
-    scope = {
-        "app_ids": None
-        if activity.get("scope") == "instance"
-        else [
-            str(app["id"])
-            for app in user_snapshot.get("apps") or []
-            if isinstance(app, Mapping) and app.get("id")
-        ]
-    }
-    jobs = media_jobs.recent(
-        limit=50,
-        audience="internal",
-        path=media_jobs.DB_PATH,
-        **scope,
-    )
-    service_records = _workflow_availability_services(ADMIN_STORE.get_service_registry())
-    capabilities = project_capabilities(
-        capabilities, service_records=service_records,
-        evidence=await _capabilities_availability_evidence(capabilities, service_records),
-        workflow_records=GATEWAY_WORKFLOW_REGISTRY.records(),
-    )
-    return build_workflows_catalog(
-        records=GATEWAY_WORKFLOW_REGISTRY.records(),
-        capabilities=capabilities,
-        aliases=_gateway_aliases_provider(),
-        recent_receipts=activity.get("receipts") or (),
-        recent_jobs=jobs,
-        base_url=_public_base_url(request),
-    )
+    def read_activity_and_jobs():
+        activity = build_user_activity_snapshot(
+            session,
+            limit=50,
+            path=ADMIN_STORE.path,
+            receipts_path=receipt_store.DB_PATH,
+        )
+        scope = {
+            "app_ids": None
+            if activity.get("scope") == "instance"
+            else [
+                str(app["id"])
+                for app in user_snapshot.get("apps") or []
+                if isinstance(app, Mapping) and app.get("id")
+            ]
+        }
+        jobs = media_jobs.recent(
+            limit=50,
+            audience="internal",
+            path=media_jobs.DB_PATH,
+            **scope,
+        )
+        service_records = _workflow_availability_services(ADMIN_STORE.get_service_registry())
+        return activity, jobs, service_records
+
+    activity, jobs, service_records = await asyncio.to_thread(read_activity_and_jobs)
+    evidence = await _capabilities_availability_evidence(capabilities, service_records)
+
+    def build_catalog() -> dict[str, Any]:
+        projected = project_capabilities(
+            capabilities, service_records=service_records,
+            evidence=evidence,
+            workflow_records=GATEWAY_WORKFLOW_REGISTRY.records(),
+        )
+        return build_workflows_catalog(
+            records=GATEWAY_WORKFLOW_REGISTRY.records(),
+            capabilities=projected,
+            aliases=_gateway_aliases_provider(),
+            recent_receipts=activity.get("receipts") or (),
+            recent_jobs=jobs,
+            base_url=_public_base_url(request),
+        )
+
+    return await asyncio.to_thread(build_catalog)
 
 
 app.include_router(create_workflows_catalog_router(_user_workflows_catalog_payload))
@@ -15240,12 +15257,13 @@ async def user_portal_activity(request: Request):
     unauthenticated request returns an empty (unauthenticated) snapshot rather
     than leaking anyone's activity.
     """
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     try:
         limit = int(request.query_params.get("limit") or 0) or None
     except (TypeError, ValueError):
         limit = None
-    snapshot = build_user_activity_snapshot(
+    snapshot = await asyncio.to_thread(
+        build_user_activity_snapshot,
         session,
         limit=limit if limit else 20,
         path=ADMIN_STORE.path,
@@ -15266,9 +15284,10 @@ async def user_portal_receipt_detail(request_id: str, request: Request):
     "why did this call fail" URL. Ownership is verified server-side; a receipt
     the caller doesn't own is reported as not found, never 403.
     """
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     try:
-        receipt = get_user_receipt(
+        receipt = await asyncio.to_thread(
+            get_user_receipt,
             session,
             request_id,
             path=ADMIN_STORE.path,
@@ -15286,7 +15305,7 @@ async def user_portal_receipt_detail(request_id: str, request: Request):
 @app.post("/me/api/apps", include_in_schema=False)
 async def user_portal_create_app(request: Request):
     try:
-        session = _require_user_session(request)
+        session = (await asyncio.to_thread(_require_user_session, request))
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     header_error = _require_user_action_header(request, session)
@@ -15315,7 +15334,7 @@ async def user_portal_create_app(request: Request):
 @app.delete("/me/api/apps/{app_id}", include_in_schema=False)
 async def user_portal_delete_app(app_id: str, request: Request):
     try:
-        session = _require_user_session(request)
+        session = (await asyncio.to_thread(_require_user_session, request))
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     header_error = _require_user_action_header(request, session)
@@ -15339,7 +15358,7 @@ async def user_portal_delete_app(app_id: str, request: Request):
 @app.post("/me/api/apps/{app_id}/keys", include_in_schema=False)
 async def user_portal_mint_key(app_id: str, request: Request):
     try:
-        session = _require_user_session(request)
+        session = (await asyncio.to_thread(_require_user_session, request))
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     header_error = _require_user_action_header(request, session)
@@ -15370,7 +15389,7 @@ async def user_portal_mint_key(app_id: str, request: Request):
 async def user_portal_try_key(request: Request):
     """Reuse or mint the Try page's key for this sign-in session."""
     try:
-        session = _require_user_session(request)
+        session = (await asyncio.to_thread(_require_user_session, request))
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     header_error = _require_user_action_header(request, session)
@@ -15399,7 +15418,7 @@ async def user_portal_try_key(request: Request):
 @app.post("/me/api/access-request", include_in_schema=False)
 async def user_portal_request_access(request: Request):
     try:
-        session = _require_user_session(request)
+        session = (await asyncio.to_thread(_require_user_session, request))
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     header_error = _require_user_action_header(request, session)
@@ -15422,15 +15441,13 @@ async def user_portal_request_access(request: Request):
 @app.get("/me/api/credentials/{credential_id}/access", include_in_schema=False)
 async def user_portal_credential_access(credential_id: str, request: Request):
     try:
-        session = _require_user_session(request)
-        credential = get_user_app_credential(
-            session,
-            credential_id,
-            path=ADMIN_STORE.path,
-        )
+        session = (await asyncio.to_thread(_require_user_session, request))
+        credential = await asyncio.to_thread(
+            get_user_app_credential, session, credential_id, path=ADMIN_STORE.path)
     except UserPortalError as exc:
         return _user_action_response_error(exc)
-    identity = runtime_identity_for_app_credential_hash(
+    identity = await asyncio.to_thread(
+        runtime_identity_for_app_credential_hash,
         str(credential.get("hash") or ""),
         path=ADMIN_STORE.path,
     )
@@ -15442,7 +15459,7 @@ async def user_portal_credential_access(credential_id: str, request: Request):
                 status_code=404,
             )
         )
-    catalog = _user_access_catalog_for_auth_context(AuthContext(identity=identity))
+    catalog = (await asyncio.to_thread(_user_access_catalog_for_auth_context, AuthContext(identity=identity)))
     return JSONResponse(
         status_code=200,
         content={
@@ -15462,7 +15479,7 @@ async def user_portal_credential_access(credential_id: str, request: Request):
 @app.post("/me/api/credentials/{credential_id}/revoke", include_in_schema=False)
 async def user_portal_revoke_key(credential_id: str, request: Request):
     try:
-        session = _require_user_session(request)
+        session = (await asyncio.to_thread(_require_user_session, request))
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     header_error = _require_user_action_header(request, session)
@@ -15836,7 +15853,7 @@ async def _setup_page_response(
     one_time_key: Mapping[str, Any] | None = None,
     status_code: int = 200,
 ) -> Response:
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     is_admin_signed_in = False
     actor_label: str | None = None
     if session is not None and session.role in {"owner", "admin", "superadmin"}:
@@ -16354,7 +16371,7 @@ async def setup_local_login(request: Request):
 @app.post("/setup/first-app", include_in_schema=False)
 async def setup_create_first_app(request: Request):
     actor = _setup_admin_context(request)
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     if actor is None or actor.auth_method != "session":
         return await _setup_page_response(
             request,
@@ -16608,7 +16625,7 @@ async def admin_oidc_callback(request: Request):
 
 @app.get("/auth/logout-confirm", include_in_schema=False)
 async def logout_confirmation(request: Request):
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     if session is None:
         return RedirectResponse("/sign-in/", status_code=303)
     csrf = _csrf_token_for_oidc_session(session)
@@ -16623,7 +16640,7 @@ async def logout_confirmation(request: Request):
 
 @app.post("/logout", include_in_schema=False)
 async def admin_logout(request: Request):
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     if session is None:
         return JSONResponse({"error": {"code": "login_required", "message": "Sign in first."}}, status_code=401)
     supplied = request.headers.get("x-azizam-csrf") or ""
@@ -16649,7 +16666,7 @@ async def admin_logout(request: Request):
 async def admin_config_reload(request: Request):
     """Hot-reload the runtime config from the DB service registry.
 
-    Re-derives all backend host constants (TABBY_HOST, KOBOLD_HOST,
+    Re-derives all backend host constants (KOBOLD_HOST,
     LLM_BACKEND_HOSTS, TTS_HOST, STT_HOST, EMBEDDINGS_HOST, COMFY_HOST …)
     without a process restart.  Requests that arrive after this returns will
     see the new values.
@@ -16668,7 +16685,6 @@ async def admin_config_reload(request: Request):
                 "reloaded": True,
                 "backends": {
                     "llm_hosts": updates["LLM_BACKEND_HOSTS"],
-                    "tabby": updates["TABBY_HOST"],
                     "kobold": updates["KOBOLD_HOST"],
                     "tts": updates["TTS_HOST"],
                     "stt": updates["STT_HOST"],
@@ -16778,7 +16794,7 @@ def _drain_authorize(request: Request, *, write: bool) -> Response | None:
 
 @app.get("/admin/api/drain", include_in_schema=False)
 async def admin_drain_status(request: Request):
-    denied = _drain_authorize(request, write=False)
+    denied = await asyncio.to_thread(_drain_authorize, request, write=False)
     if denied is not None:
         return denied
     return JSONResponse(DRAIN_STATE.snapshot())
@@ -16787,7 +16803,7 @@ async def admin_drain_status(request: Request):
 @app.post("/admin/api/drain", include_in_schema=False)
 async def admin_drain_set(request: Request):
     """Set or clear the draining flag. Body: {"draining": bool, "ttl_s": num, "reason": str}."""
-    denied = _drain_authorize(request, write=True)
+    denied = await asyncio.to_thread(_drain_authorize, request, write=True)
     if denied is not None:
         return denied
     try:
@@ -16920,7 +16936,7 @@ async def admin_config_export(request: Request):
     Admin-auth required (same guard as all /admin/api/* routes).
     """
     try:
-        ADMIN_AUTH(request)
+        (await asyncio.to_thread(ADMIN_AUTH, request))
     except AdminAuthError as exc:
         return Response(
             content=json.dumps({"error": {"code": exc.code, "message": exc.message}}),
@@ -16929,7 +16945,7 @@ async def admin_config_export(request: Request):
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
-        yaml_text = _build_config_export_yaml()
+        yaml_text = await asyncio.to_thread(_build_config_export_yaml)
         return Response(
             content=yaml_text,
             media_type="text/plain; charset=utf-8",
@@ -17007,7 +17023,8 @@ async def _firehose_request_counter(request: Request, call_next):
                 key_name: Optional[str] = None
                 raw = get_client_api_key_from_headers(request.headers)
                 if raw:
-                    ident = runtime_identity_for_app_credential_hash(hash_api_key(raw), path=ADMIN_STORE.path)
+                    ident = await asyncio.to_thread(
+                        runtime_identity_for_app_credential_hash, hash_api_key(raw), path=ADMIN_STORE.path)
                     if ident:
                         key_name = ident.name
                 latency_ms = (time.monotonic() - t0) * 1000.0
@@ -17093,10 +17110,10 @@ def _brand_settings() -> tuple[str, tuple[str, str] | None]:
       admin:
         brand:
           product: "Azizam"      # neutral product label (default)
-          wordmark: "vivid.fish"     # optional deployment mark, "name.tld"
+          wordmark: "example.org"    # optional deployment mark, "name.tld"
 
     A generic install with no wordmark shows only the neutral product mark, so
-    nothing says "vivid.fish" unless this deployment opts in.
+    nothing carries a deployment name unless this deployment opts in.
     """
     brand_cfg = admin_cfg.get("brand") if isinstance(admin_cfg, Mapping) else {}
     brand_cfg = brand_cfg if isinstance(brand_cfg, Mapping) else {}
@@ -17122,6 +17139,8 @@ async def well_known_azizam(request: Request):
     metadata = build_gateway_discovery_metadata(
         base_url=_public_base_url(request),
         registry=ADMIN_STORE.get_service_registry(),
+        mcp_tools=mcp_server.TOOLS,
+        mcp_sign_in=MCP_OAUTH_ENABLED and MCP_OAUTH.available(request),
     )
     metadata["service"]["name"] = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["name"]
     metadata["presentation"] = {
@@ -17203,51 +17222,55 @@ def _speech_engine_voices() -> dict[str, Any]:
 async def list_voices(request: Request):
     """Return available TTS voices (OpenAI-compatible names)."""
     canonical_path = "/v1/audio/voices" if request.url.path.endswith("/audio/voices") else "/v1/voices"
-    auth_context = authenticate_request(request, canonical_path)
+    auth_context = (await asyncio.to_thread(authenticate_request, request, canonical_path))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, canonical_path)
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, canonical_path))
     if policy_response is not None:
         return policy_response
 
-    # Every voice that ?model= (by default the model a request without one uses) accepts: the
-    # voices its engines list, in engine order, then the other spellings that resolve to them.
-    model = request.query_params.get("model") or "tts-1"
-    try:
-        specs = [spec for _engine, spec in _speech_model_engines(resolve_model_for_operation("speech", model))]
-    except ModelCompatibilityError as exc:
-        if "model" in request.query_params:
-            return model_compatibility_error(exc)
-        specs = []
-    voices = speech_voices.voice_listing(specs, _speech_voice_aliases())
-    # The caller's own custom voices, in OpenAI's list shape (object, data, first_id, last_id, has_more).
-    try:
-        after, limit = voices_api.parse_page_args(request)
-        mine, has_more = _voice_store().list_voices(_asset_owner_key(auth_context), after=after, limit=limit)
-    except custom_voices.VoiceError as exc:
-        return openai_error_response(exc.message, status_code=exc.status, param=exc.param, code=exc.code)
-    engines = _custom_voice_engines()
-    engines = [engine for engine in engines if _category_entry_visible(
-        auth_context, {"id": engine, "operation": "speech"},
-    )]
-    if not engines and not discovery_allows(auth_context.identity, make_policy_request()):
-        mine, has_more = [], False
-    page = voices_api.list_page(mine, has_more, lambda meta: voices_api.voice_view(meta, engines))
-    if not _category_entry_visible(auth_context, {"id": model, "operation": "speech"}):
-        voices = []
-    engine_voices = {engine: view for engine, view in _speech_engine_voices().items()
-                     if _category_entry_visible(auth_context, {"id": engine, "operation": "speech"})}
-    return {"default_voice": specs[0].get("default_voice") if specs else None, "voices": voices, "engines": engine_voices, **page}
+    def build_listing():
+        # Every voice that ?model= (by default the model a request without one uses) accepts: the
+        # voices its engines list, in engine order, then the other spellings that resolve to them.
+        model = request.query_params.get("model") or "tts-1"
+        try:
+            specs = [spec for _engine, spec in _speech_model_engines(resolve_model_for_operation("speech", model))]
+        except ModelCompatibilityError as exc:
+            if "model" in request.query_params:
+                return model_compatibility_error(exc)
+            specs = []
+        voices = speech_voices.voice_listing(specs, _speech_voice_aliases())
+        # The caller's own custom voices, in OpenAI's list shape (object, data, first_id, last_id, has_more).
+        try:
+            after, limit = voices_api.parse_page_args(request)
+            mine, has_more = _voice_store().list_voices(_asset_owner_key(auth_context), after=after, limit=limit)
+        except custom_voices.VoiceError as exc:
+            return openai_error_response(exc.message, status_code=exc.status, param=exc.param, code=exc.code)
+        engines = _custom_voice_engines()
+        engines = [engine for engine in engines if _category_entry_visible(
+            auth_context, {"id": engine, "operation": "speech"},
+        )]
+        if not engines and not discovery_allows(auth_context.identity, make_policy_request()):
+            mine, has_more = [], False
+        page = voices_api.list_page(mine, has_more, lambda meta: voices_api.voice_view(meta, engines))
+        if not _category_entry_visible(auth_context, {"id": model, "operation": "speech"}):
+            voices = []
+        engine_voices = {engine: view for engine, view in _speech_engine_voices().items()
+                         if _category_entry_visible(auth_context, {"id": engine, "operation": "speech"})}
+        return {"default_voice": specs[0].get("default_voice") if specs else None, "voices": voices, "engines": engine_voices, **page}
+
+    # Voice stores and category checks read SQLite and files: keep them off the event loop.
+    return await asyncio.to_thread(build_listing)
 
 
 @app.post("/openai/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)
 @app.post("/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)
 async def audio_speech(request: Request):
     """OpenAI-compatible TTS endpoint - routes to TTS backend with voice mapping."""
-    auth_context = authenticate_request(request, "/v1/audio/speech")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/speech"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/audio/speech")
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/audio/speech"))
     if policy_response is not None:
         return policy_response
     from gateway import media_ingestion
@@ -17264,7 +17287,7 @@ async def audio_speech(request: Request):
 @app.post("/v1/audio/transcriptions", openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI)
 async def audio_transcriptions(request: Request):
     """OpenAI-compatible STT endpoint - routes to STT backend."""
-    auth_context = authenticate_request(request, "/v1/audio/transcriptions")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/transcriptions"))
     if isinstance(auth_context, Response):
         return auth_context
     return await _dispatch_selected_stt_route(request, auth_context, operation="transcriptions")
@@ -17274,7 +17297,7 @@ async def audio_transcriptions(request: Request):
 @app.post("/v1/audio/translations", openapi_extra=AUDIO_TRANSLATIONS_OPENAPI)
 async def audio_translations(request: Request):
     """OpenAI-compatible audio translation endpoint, if the STT backend supports it."""
-    auth_context = authenticate_request(request, "/v1/audio/translations")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/translations"))
     if isinstance(auth_context, Response):
         return auth_context
     return await _dispatch_selected_stt_route(request, auth_context, operation="translations")
@@ -17317,14 +17340,12 @@ def _rerank_error(
 
 
 async def _handle_rerank(request: Request, path: str) -> Response:
-    auth_context = authenticate_request(request, path)
+    auth_context = (await asyncio.to_thread(authenticate_request, request, path))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(
-        auth_context,
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context,
         _RERANK_POLICY_PATH,
-        policy=_RUNTIME_ROUTE_POLICY.get(_RERANK_POLICY_PATH) or _RERANK_DEFAULT_POLICY,
-    )
+        policy=_RUNTIME_ROUTE_POLICY.get(_RERANK_POLICY_PATH) or _RERANK_DEFAULT_POLICY,))
     if policy_response is not None:
         return policy_response
     try:
@@ -17452,7 +17473,7 @@ async def _handle_realtime(websocket: WebSocket) -> None:
         headers = [(name, value) for name, value in websocket.scope["headers"] if name.lower() != b"authorization"]
         headers.append((b"authorization", f"Bearer {subprotocol_key}".encode()))
         caller = HTTPConnection({**websocket.scope, "headers": headers})
-    auth_context = authenticate_request(caller, "/v1/realtime")
+    auth_context = (await asyncio.to_thread(authenticate_request, caller, "/v1/realtime"))
     if isinstance(auth_context, Response):
         return await _deny_realtime(websocket, auth_context)
     denied = _realtime_policy_denial(auth_context)
@@ -20900,11 +20921,9 @@ async def _submit_audio_media_job(
     if isinstance(auth_context, Response):
         return auth_context
 
-    policy_response = _enforce_runtime_route_policy(
-        auth_context,
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context,
         "/gateway/v1/media/jobs",
-        policy=_audio_media_job_policy(),
-    )
+        policy=_audio_media_job_policy(),))
     if policy_response is not None:
         return policy_response
 
@@ -21475,11 +21494,9 @@ async def _submit_video_media_job(
     if isinstance(auth_context, Response):
         return auth_context
 
-    policy_response = _enforce_runtime_route_policy(
-        auth_context,
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context,
         "/gateway/v1/media/jobs",
-        policy=_video_media_job_policy(),
-    )
+        policy=_video_media_job_policy(),))
     if policy_response is not None:
         return policy_response
 
@@ -21861,11 +21878,9 @@ async def gateway_media_job_content(job_id: str, request: Request):
         )
     route_policy = _media_job_content_route_policy(job)
     if route_policy is not None:
-        policy_response = _enforce_runtime_route_policy(
-            auth_context,
+        policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context,
             "/gateway/v1/media/jobs/{job_id}/content",
-            policy=route_policy,
-        )
+            policy=route_policy,))
         if policy_response is not None:
             return policy_response
     status_value = str(job.get("status") or "")
@@ -21930,7 +21945,7 @@ async def gateway_media_job_content(job_id: str, request: Request):
 @app.post("/v1/images/generations", openapi_extra=IMAGES_GENERATIONS_OPENAPI)
 async def images_generations(request: Request):
     """OpenAI-compatible image generation endpoint - routes to ComfyUI backend."""
-    auth_context = authenticate_request(request, "/v1/images/generations")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/generations"))
     if isinstance(auth_context, Response):
         return auth_context
     receipt = start_image_route_receipt("/v1/images/generations", auth_context)
@@ -21953,7 +21968,7 @@ async def images_variations(request: Request):
     in proxy_config.yml) with a fixed generic prompt -- see
     proxy_comfy_variations_request for why.
     """
-    auth_context = authenticate_request(request, "/v1/images/variations")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/variations"))
     if isinstance(auth_context, Response):
         return auth_context
     receipt = start_image_route_receipt("/v1/images/variations", auth_context)
@@ -21971,7 +21986,7 @@ async def images_variations(request: Request):
 @app.post("/v1/images/edits", openapi_extra=IMAGES_EDITS_OPENAPI)
 async def images_edits(request: Request):
     """OpenAI-compatible image edit endpoint - routes to ComfyUI backend."""
-    auth_context = authenticate_request(request, "/v1/images/edits")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/edits"))
     if isinstance(auth_context, Response):
         return auth_context
     receipt = start_image_route_receipt("/v1/images/edits", auth_context)
@@ -22037,11 +22052,9 @@ async def gateway_asset_metadata(asset_id: str, request: Request):
         )
     route_policy = _asset_content_route_policy(asset_id)
     if route_policy is not None:
-        policy_response = _enforce_runtime_route_policy(
-            auth_context,
+        policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context,
             "/gateway/v1/assets/{asset_id}",
-            policy=route_policy,
-        )
+            policy=route_policy,))
         if policy_response is not None:
             return policy_response
     cache_path = asset_cache_path(asset_id)
@@ -22067,6 +22080,40 @@ async def gateway_asset_metadata(asset_id: str, request: Request):
         status_code=200,
         media_type="application/json",
     )
+
+
+@app.get("/v1/assets/{asset_id}/thumbnail", openapi_extra=SIGNED_THUMBNAIL_OPENAPI, response_class=Response)
+async def assets_thumbnail(asset_id: str, request: Request):
+    """Serve a small WebP preview of an asset named by a signed thumbnail URL."""
+    return await asyncio.to_thread(_signed_asset_thumbnail_response, asset_id, request)
+
+
+def _signed_asset_thumbnail_response(asset_id: str, request: Request) -> Response:
+    def refuse(status: int, message: str) -> Response:
+        return Response(
+            content=json.dumps({"error": {"message": message, "type": "invalid_request_error"}}),
+            status_code=status, media_type="application/json",
+        )
+
+    try:
+        expires = int(request.query_params.get("expires", ""))
+    except ValueError:
+        return refuse(400, "expires must be an integer")
+    # Only a thumbnail-signed URL passes: a content URL's signature covers md=none|full.
+    if not verify_asset_signature(asset_id, expires, request.query_params.get("sig", ""), thumbnails.THUMB_MODE):
+        return refuse(403, "Invalid or expired signature")
+    source = asset_cache_path(asset_id)
+    if source is None:
+        return refuse(400, "Invalid asset id")
+    made = thumbnails.thumbnail_for(source)
+    if made is None:
+        return refuse(404, "No preview for this asset")
+    stat = made.stat()
+    etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+    headers = {"Cache-Control": "private, max-age=3600", "ETag": etag}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return Response(content=made.read_bytes(), media_type=thumbnails.THUMB_MEDIA_TYPE, headers=headers)
 
 
 @app.get("/gateway/v1/assets/{asset_id}/content")
@@ -22408,7 +22455,7 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
         return auth_context
     if not COMFY_ENABLED:
         return Response(status_code=503, content=json.dumps({"error": {"message": "ComfyUI media backend is disabled", "type": "service_unavailable"}}), media_type="application/json")
-    policy_response = _enforce_runtime_route_policy(auth_context, "/gateway/v1/workflows/{workflow_id}/run")
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/gateway/v1/workflows/{workflow_id}/run"))
     if policy_response is not None:
         return policy_response
     record = GATEWAY_WORKFLOW_REGISTRY.get(workflow_id)
@@ -22435,10 +22482,10 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
 @app.post("/v1/videos", openapi_extra=VIDEOS_CREATE_OPENAPI)
 async def videos_create(request: Request):
     """Sora-shaped video generation submit. Returns {id, status: queued}."""
-    auth_context = authenticate_request(request, "/v1/videos")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/videos")
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos"))
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_create(request, auth_context)
@@ -22448,12 +22495,10 @@ async def videos_create(request: Request):
 @app.get("/v1/videos/{video_id}", openapi_extra=VIDEOS_STATUS_OPENAPI)
 async def videos_status(video_id: str, request: Request):
     """Poll a previously-submitted video job."""
-    auth_context = authenticate_request(request, "/v1/videos/{video_id}")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(
-        auth_context, "/v1/videos/{video_id}"
-    )
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}"))
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_status(video_id, auth_context)
@@ -22463,12 +22508,10 @@ async def videos_status(video_id: str, request: Request):
 @app.get("/v1/videos/{video_id}/content", openapi_extra=VIDEOS_CONTENT_OPENAPI, response_class=Response)
 async def videos_content(video_id: str, request: Request):
     """Download the rendered mp4 once status=succeeded."""
-    auth_context = authenticate_request(request, "/v1/videos/{video_id}/content")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}/content"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(
-        auth_context, "/v1/videos/{video_id}/content"
-    )
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}/content"))
     if policy_response is not None:
         return policy_response
     _begin_media_delivery(auth_context)
@@ -22489,15 +22532,13 @@ async def videos_content(video_id: str, request: Request):
 @app.get("/v1/videos", openapi_extra=VIDEOS_LIST_OPENAPI)
 async def videos_list(request: Request):
     """List video jobs submitted via this route (limit/after/order)."""
-    auth_context = authenticate_request(request, "/v1/videos")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos"))
     if isinstance(auth_context, Response):
         return auth_context
     # In-handler policy enforcement, not a registry entry -- see
     # _video_route_policy's own docstring for why (this path already carries
     # POST's registry-keyed policy).
-    policy_response = _enforce_runtime_route_policy(
-        auth_context, "/v1/videos", policy=_video_route_policy()
-    )
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos", policy=_video_route_policy()))
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_list(request, auth_context)
@@ -22507,15 +22548,13 @@ async def videos_list(request: Request):
 @app.delete("/v1/videos/{video_id}", openapi_extra=VIDEOS_DELETE_OPENAPI)
 async def videos_delete(video_id: str, request: Request):
     """Delete a previously-submitted video job."""
-    auth_context = authenticate_request(request, "/v1/videos/{video_id}")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}"))
     if isinstance(auth_context, Response):
         return auth_context
     # In-handler policy enforcement, not a registry entry -- same reason as
     # the list route above (this path already carries GET's registry-keyed
     # policy).
-    policy_response = _enforce_runtime_route_policy(
-        auth_context, "/v1/videos/{video_id}", policy=_video_route_policy()
-    )
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}", policy=_video_route_policy()))
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_delete(video_id, auth_context)
@@ -22525,12 +22564,10 @@ async def videos_delete(video_id: str, request: Request):
 @app.post("/v1/videos/{video_id}/remix", openapi_extra=VIDEOS_REMIX_OPENAPI)
 async def videos_remix(video_id: str, request: Request):
     """Remix a completed video with a new prompt (Bernini-R); 501 unless videos.remix_workflow is set."""
-    auth_context = authenticate_request(request, "/v1/videos/{video_id}/remix")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}/remix"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(
-        auth_context, "/v1/videos/{video_id}/remix"
-    )
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}/remix"))
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_remix(video_id, auth_context, request)
@@ -22540,10 +22577,10 @@ async def videos_remix(video_id: str, request: Request):
 @app.post("/v1/videos/edits", openapi_extra=VIDEOS_EDIT_OPENAPI)
 async def videos_edit(request: Request):
     """OpenAI video edit: prompt + uploaded or existing video -> new video job."""
-    auth_context = authenticate_request(request, "/v1/videos/edits")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/edits"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/videos/edits")
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/edits"))
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_edit(request, auth_context)
@@ -22553,10 +22590,10 @@ async def videos_edit(request: Request):
 @app.post("/v1/videos/extensions", openapi_extra=VIDEOS_EXTEND_OPENAPI)
 async def videos_extend(request: Request):
     """Sora-shaped video extension: source video + prompt -> source plus new footage."""
-    auth_context = authenticate_request(request, "/v1/videos/extensions")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/extensions"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/videos/extensions")
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/extensions"))
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_extend(request, auth_context)
@@ -22732,10 +22769,8 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response(
-        "comfyui",
-        service_label="ComfyUI",
-    )
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
+        service_label="ComfyUI",))
     if service_response is not None:
         return service_response
     try:
@@ -23098,10 +23133,10 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
 @app.post("/v1/audio/generate", openapi_extra=AUDIO_GENERATE_OPENAPI)
 async def audio_generate(request: Request):
     """OpenAI-compatible audio generation endpoint."""
-    auth_context = authenticate_request(request, "/v1/audio/generate")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/generate"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/audio/generate")
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/audio/generate"))
     if policy_response is not None:
         return policy_response
     from gateway import media_ingestion
@@ -23114,16 +23149,8 @@ async def audio_generate(request: Request):
     return media_ingestion.finish_response(receipt, response)
 
 
-@app.get("/openai/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
-@app.get("/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
-async def audio_models(request: Request):
-    """List available audio generation models."""
-    auth_context = authenticate_request(request, "/v1/audio/models")
-    if isinstance(auth_context, Response):
-        return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/audio/models")
-    if policy_response is not None:
-        return policy_response
+def _audio_models_visible_to(auth_context: AuthContext) -> list[dict[str, Any]]:
+    """Audio workflows this caller may see; runs category reads, so call it off the loop."""
     models = []
     for name, cfg in AUDIO_WORKFLOWS_CFG.items():
         if not discovery_allows(auth_context.identity, make_policy_request(
@@ -23138,6 +23165,20 @@ async def audio_models(request: Request):
             "max_seconds": cfg.get("max_seconds", 300),
             "min_seconds": cfg.get("min_seconds", 1),
         })
+    return models
+
+
+@app.get("/openai/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
+@app.get("/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
+async def audio_models(request: Request):
+    """List available audio generation models."""
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/models"))
+    if isinstance(auth_context, Response):
+        return auth_context
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/audio/models"))
+    if policy_response is not None:
+        return policy_response
+    models = await asyncio.to_thread(_audio_models_visible_to, auth_context)
     payload = {"data": models}
     return Response(
         content=json.dumps(payload),
@@ -23219,9 +23260,6 @@ def _context_window_from_mapping(data: Mapping[str, Any] | None) -> int | None:
 def _configured_context_window_for_backend(backend: str | None) -> int | None:
     if not backend:
         return None
-    if engine_quarantine.context_window_from_model_params(backend):
-        _, _, params = get_tabby_model_config()
-        return _context_window_from_mapping(params)
     backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
     raw = backends.get(backend) if isinstance(backends, Mapping) else None
     if isinstance(raw, Mapping):
@@ -23229,16 +23267,28 @@ def _configured_context_window_for_backend(backend: str | None) -> int | None:
     return None
 
 
-async def _kobold_context_window() -> int | None:
-    cached = _MODEL_CONTEXT_CACHE.get("kobold")
+def _context_window_probe_endpoint(backend: str | None) -> str | None:
+    """The service's ``context_window_probe.endpoint``, or None when it declares no probe."""
+    cfg = (config.get("backends") or {}).get(backend) if backend else None
+    probe = cfg.get("context_window_probe") if isinstance(cfg, Mapping) else None
+    endpoint = probe.get("endpoint") if isinstance(probe, Mapping) else None
+    return endpoint if isinstance(endpoint, str) and endpoint.startswith("/") else None
+
+
+async def _probed_context_window(backend: str) -> int | None:
+    """The context window the service itself reports at its declared probe endpoint."""
+    endpoint = _context_window_probe_endpoint(backend)
+    if endpoint is None:
+        return None
+    cached = _MODEL_CONTEXT_CACHE.get(backend)
     now = time.time()
     if cached and now - cached[0] < _MODEL_CONTEXT_CACHE_TTL_S:
         return cached[1]
 
     value: int | None = None
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0)) as client:
-            resp = await client.get(f"{KOBOLD_HOST}/v1/models")
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0), verify=tls_context()) as client:
+            resp = await client.get(f"{_backend_base_url(backend)}{endpoint}")
         if resp.status_code == 200:
             payload = resp.json()
             data = payload.get("data") if isinstance(payload, Mapping) else None
@@ -23252,9 +23302,9 @@ async def _kobold_context_window() -> int | None:
             if value is None and isinstance(payload, Mapping):
                 value = _context_window_from_mapping(payload)
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] /v1/models: could not read kobold context window: {e}", flush=True)
+        print(f"[proxy] {endpoint}: could not read the context window of {backend!r}: {e}", flush=True)
 
-    _MODEL_CONTEXT_CACHE["kobold"] = (now, value)
+    _MODEL_CONTEXT_CACHE[backend] = (now, value)
     return value
 
 
@@ -23316,8 +23366,8 @@ async def _context_window_for_model_id(
     found = _configured_context_window_for_backend(backend)
     if found is not None:
         return found
-    if engine_quarantine.context_window_from_live_probe(backend):
-        found = await _kobold_context_window()
+    if _context_window_probe_endpoint(backend):
+        found = await _probed_context_window(backend)
         if found is not None and observed_windows is not None:
             observed_windows[model_id] = found
         return found
@@ -23508,19 +23558,16 @@ def _with_loaded_model_inheritance(
 def _build_role_catalog_entries() -> list[dict]:
     """Return configured LLM role handles for admin inventory and policy checks.
 
-    Accepts any backend that is known in config["backends"] (or is a legacy
-    local-swap backend such as kobold/tabby).  Unknown backends are silently
-    skipped so that a typo in the config does not crash the listing.
+    Accepts any backend that is known in config["backends"].  Unknown backends
+    are silently skipped so that a typo in the config does not crash the listing.
 
-    For local-swap backends (kobold/tabby or any role entry with a ``path``
+    For local-swap backends (or any role entry with a ``path``
     key), ``model`` is a GGUF file path and is surfaced as
     ``azizam_model_path``.  For remote/routed backends the ``model`` field
     is the upstream model name and is surfaced as ``azizam_model``.  Remote
     role entries that omit ``model`` entirely are skipped (malformed).
     """
-    known_backends: frozenset[str] = frozenset(
-        (config.get("backends") or {}).keys()
-    ) | _LOCAL_SWAP_BACKENDS
+    known_backends: frozenset[str] = frozenset((config.get("backends") or {}).keys())
     entries: list[dict] = []
 
     if isinstance(ROLES, dict):
@@ -23531,10 +23578,10 @@ def _build_role_catalog_entries() -> list[dict]:
             # Skip entries whose backend is not known in the registry.
             if not backend or backend not in known_backends:
                 continue
-            is_local_swap = backend in _LOCAL_SWAP_BACKENDS or bool(role_def.get("path"))
+            is_local_swap = _is_local_swap_backend(backend) or bool(role_def.get("path"))
             model_value = role_def.get("model")
             if is_local_swap:
-                # Local-swap: model is a GGUF path (may be absent for unpinned tabby roles).
+                # Local-swap: model is a GGUF path.
                 model_path = model_value if isinstance(model_value, str) else None
                 entry = {
                     "id": str(role_name),
@@ -23692,7 +23739,7 @@ async def _anthropic_model_info_list(
     auth_context: AuthContext,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     entries: list[dict[str, Any]] = []
-    litellm_runtime = _litellm_runtime_config()
+    litellm_runtime = (await asyncio.to_thread(_litellm_runtime_config))
     if litellm_runtime.enabled:
         payload = await _litellm_models_payload(
             request,
@@ -23875,15 +23922,13 @@ async def anthropic_model_retrieve(model_id: str, request: Request):
 @app.get("/anthropic/v1/models")
 async def anthropic_models(request: Request):
     """Anthropic-compatible model list projected from the gateway catalog."""
-    auth_context = authenticate_request(request, "/anthropic/v1/models")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/anthropic/v1/models"))
     if isinstance(auth_context, Response):
         return _anthropic_auth_error(auth_context)
 
-    policy_response = _enforce_runtime_route_policy(
-        auth_context,
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context,
         "/anthropic/v1/models",
-        policy={"protocol": "anthropic.messages", "intent": "models.list"},
-    )
+        policy={"protocol": "anthropic.messages", "intent": "models.list"},))
     if policy_response is not None:
         return _anthropic_error_response(
             _response_error_message(policy_response, "This isn't in your access plan."),
@@ -23917,20 +23962,18 @@ async def list_models(request: Request):
     """
     if _is_anthropic_sdk_request(request):
         return await anthropic_models(request)
-    auth_context = authenticate_request(request, "/v1/models")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/models"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/models")
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/models"))
     if policy_response is not None:
         return policy_response
 
     upstream_payload: dict = {"object": "list", "data": []}
-    litellm_runtime = _litellm_runtime_config()
+    litellm_runtime = (await asyncio.to_thread(_litellm_runtime_config))
     if litellm_runtime.enabled:
-        service_response = _service_availability_response(
-            litellm_runtime.service_id or "litellm",
-            service_label="LiteLLM",
-        )
+        service_response = (await asyncio.to_thread(_service_availability_response, litellm_runtime.service_id or "litellm",
+            service_label="LiteLLM",))
         if service_response is not None:
             return service_response
         payload = await _litellm_models_payload(
@@ -24030,12 +24073,17 @@ async def list_models(request: Request):
         if desc:
             item["description"] = desc
 
+    def visible_decision_entries() -> list[dict[str, Any]]:
+        entries = []
+        for decision_model in _decision_models_for(auth_context, _access_for_auth_context(auth_context)):
+            entry = {"id": decision_model.id, "object": "model", "owned_by": "azizam",
+                     "created": 0, "capabilities": decision_model.view()["capabilities"]}
+            if _category_entry_visible(auth_context, {**entry, "azizam_intent": "decision.systemone"}):
+                entries.append(entry)
+        return entries
+
     decision_ids: set[str] = set()
-    for decision_model in await asyncio.to_thread(_decision_models_for, auth_context, _access_for_auth_context(auth_context)):
-        entry = {"id": decision_model.id, "object": "model", "owned_by": "azizam",
-                 "created": 0, "capabilities": decision_model.view()["capabilities"]}
-        if not _category_entry_visible(auth_context, {**entry, "azizam_intent": "decision.systemone"}):
-            continue
+    for entry in await asyncio.to_thread(visible_decision_entries):
         decision_ids.add(entry["id"])
         if entry["id"] not in {item.get("id") for item in data if isinstance(item, dict)}:
             data.append(entry)
@@ -24052,7 +24100,7 @@ async def list_models(request: Request):
         **{model_id: model_metadata.ORIGIN_LLM_CATALOG for model_id in llm_catalog_ids},
         **{model_id: model_metadata.ORIGIN_DECISION for model_id in decision_ids},
     }
-    sources, inherited_windows = _with_loaded_model_inheritance(_model_metadata_sources(origins), metadata_ids)
+    sources, inherited_windows = _with_loaded_model_inheritance((await asyncio.to_thread(_model_metadata_sources, origins)), metadata_ids)
     # A live-observed context window is more exact than a declared one.
     for item in data:
         if isinstance(item, dict) and item.get("id") in inherited_windows:
@@ -24062,19 +24110,24 @@ async def list_models(request: Request):
     # Resolve metadata against the full catalog, then hide target IDs that the
     # caller cannot see. This does not change which alias entries are listed.
     visible_ids = {normalize_model_id(str(item.get("id") or "")) for item in data if isinstance(item, dict)}
-    for item in data:
-        if isinstance(item.get("azizam_engine_candidates"), Mapping):
-            item["azizam_engine_candidates"] = {
-                operation: [target for target in targets
-                            if _category_entry_visible(auth_context, {"id": target, "operation": operation})]
-                for operation, targets in item["azizam_engine_candidates"].items()
-            }
-        if isinstance(item, dict) and isinstance(item.get("azizam_resolves_to"), Mapping):
-            item["azizam_resolves_to"] = {
-                operation: target for operation, target in item["azizam_resolves_to"].items()
-                if target and normalize_model_id(str(target)) in visible_ids
-                and _category_entry_visible(auth_context, {"id": item["id"], "operation": operation})
-            }
+
+    def hide_unseen_targets() -> None:
+        for item in data:
+            if isinstance(item.get("azizam_engine_candidates"), Mapping):
+                item["azizam_engine_candidates"] = {
+                    operation: [target for target in targets
+                                if _category_entry_visible(auth_context, {"id": target, "operation": operation})]
+                    for operation, targets in item["azizam_engine_candidates"].items()
+                }
+            if isinstance(item, dict) and isinstance(item.get("azizam_resolves_to"), Mapping):
+                item["azizam_resolves_to"] = {
+                    operation: target for operation, target in item["azizam_resolves_to"].items()
+                    if target and normalize_model_id(str(target)) in visible_ids
+                    and _category_entry_visible(auth_context, {"id": item["id"], "operation": operation})
+                }
+
+    # Per-target category checks read SQLite: keep them off the event loop.
+    await asyncio.to_thread(hide_unseen_targets)
 
     upstream_payload.update(policy_metadata)
     upstream_payload["data"] = data
@@ -24090,7 +24143,7 @@ async def list_models(request: Request):
 async def v1_status(request: Request):
     """Consolidated admin-only status JSON for the dashboard."""
     try:
-        ADMIN_AUTH(request)
+        (await asyncio.to_thread(ADMIN_AUTH, request))
     except AdminAuthError as exc:
         return Response(
             content=json.dumps({
@@ -24144,7 +24197,7 @@ async def v1_status(request: Request):
 async def _render_status_html(request: Request) -> Response:
     """Build a payload from /v1/status and render the dashboard HTML."""
     try:
-        actor = ADMIN_AUTH(request)
+        actor = (await asyncio.to_thread(ADMIN_AUTH, request))
     except AdminAuthError as exc:
         if (
             exc.status_code == 401
@@ -24171,7 +24224,7 @@ async def _render_status_html(request: Request) -> Response:
     try:
         from firehose_render import render_html
         # Use the request's Host header so the page header reflects the
-        # address bar (loopback dev vs. external ai.vivid.fish).
+        # address bar (loopback dev vs. the public hostname).
         host_hdr = request.headers.get("host") or ""
         actor_label = actor.email or actor.subject
         logout_url = "/auth/logout-confirm" if actor.auth_method == "session" else None
@@ -24462,9 +24515,22 @@ async def _drain_streaming_upstream_error(
     return text[:1000] or fallback
 
 
+class UpstreamStreamError(Exception):
+    """The chat stream carried an in-band error event after its headers."""
+
+
+def _raise_on_stream_error_event(event: Mapping[str, Any]) -> None:
+    """An ``{"error": ...}`` event ends the stream as a failure, not a finish."""
+    error = event.get("error")
+    if isinstance(error, Mapping):
+        raise UpstreamStreamError(str(error.get("message") or "Upstream chat stream failed."))
+    if isinstance(error, str) and error:
+        raise UpstreamStreamError(error)
+
+
 async def _iter_openai_sse_json(upstream: httpx.Response):
     """Yield decoded JSON payloads from OpenAI-style ``data:`` SSE lines."""
-    buffer = ""
+    buffer = b""
 
     async def parse_line(line: str):
         line = line.strip()
@@ -24482,17 +24548,20 @@ async def _iter_openai_sse_json(upstream: httpx.Response):
     async for chunk in upstream.aiter_bytes():
         if not chunk:
             continue
-        buffer += chunk.decode("utf-8", errors="replace")
-        while "\n" in buffer:
-            line, buffer = buffer.split("\n", 1)
-            parsed = await parse_line(line)
+        # Split on bytes and decode whole lines: a wire chunk can end inside
+        # a UTF-8 character.
+        buffer += chunk
+        while b"\n" in buffer:
+            line, buffer = buffer.split(b"\n", 1)
+            parsed = await parse_line(line.decode("utf-8", errors="replace"))
             if parsed is StopAsyncIteration:
                 return
             if parsed is not None:
+                _raise_on_stream_error_event(parsed)
                 yield parsed
 
     if buffer.strip():
-        parsed = await parse_line(buffer)
+        parsed = await parse_line(buffer.decode("utf-8", errors="replace"))
         if parsed is not None and parsed is not StopAsyncIteration:
             yield parsed
 
@@ -24583,6 +24652,12 @@ def _upstream_admission_response(upstream: httpx.Response, protocol: str) -> Res
                     media_type="application/json", headers=headers)
 
 
+def _upstream_retry_after(upstream: Any) -> dict[str, str]:
+    """Keep the upstream's Retry-After when a frontend re-shapes its error."""
+    value = getattr(upstream, "headers", {}).get("retry-after")
+    return {"Retry-After": value} if value else {}
+
+
 def _response_error_message(response: Any, fallback: str) -> str:
     payload = _response_json_payload(response)
     error = payload.get("error")
@@ -24661,6 +24736,7 @@ def _anthropic_error_response(
     *,
     status_code: int = 400,
     error_type: str | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> Response:
     """Anthropic-shaped error. The type follows the status unless given."""
     match = _UNKNOWN_MODEL_ERROR_RE.search(message or "")
@@ -24679,7 +24755,7 @@ def _anthropic_error_response(
             },
         },
         status_code=status_code,
-        headers={"request-id": f"req_{uuid.uuid4().hex}"},
+        headers={"request-id": f"req_{uuid.uuid4().hex}", **(headers or {})},
     )
 
 
@@ -24695,7 +24771,9 @@ def _ollama_model_not_found(model: str) -> str:
     return f'model "{model}" not found, try pulling it first'
 
 
-def _ollama_error_response(message: str, *, status_code: int = 400) -> Response:
+def _ollama_error_response(
+    message: str, *, status_code: int = 400, headers: Mapping[str, str] | None = None,
+) -> Response:
     match = _UNKNOWN_MODEL_ERROR_RE.search(message or "")
     if match and status_code in (400, 404):
         # Ollama answers an unknown model with 404 and this wording.
@@ -24703,7 +24781,7 @@ def _ollama_error_response(message: str, *, status_code: int = 400) -> Response:
         message = _ollama_model_not_found(
             match.group("model") or match.group("model2")
         )
-    return _json_error_response({"error": message}, status_code=status_code)
+    return _json_error_response({"error": message}, status_code=status_code, headers=headers)
 
 
 def _ollama_auth_error(response: Response) -> Response:
@@ -24759,7 +24837,7 @@ async def _read_json_object(request: Request) -> dict[str, Any] | Response:
 @app.post("/v1/messages/count_tokens")
 async def anthropic_count_tokens(request: Request):
     """Anthropic Messages count_tokens-compatible estimator."""
-    auth_context = authenticate_request(request, "/anthropic/v1/messages/count_tokens")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/anthropic/v1/messages/count_tokens"))
     if isinstance(auth_context, Response):
         return _anthropic_auth_error(auth_context)
 
@@ -24798,7 +24876,7 @@ async def anthropic_count_tokens(request: Request):
 @app.post("/v1/messages")
 async def anthropic_messages(request: Request):
     """Anthropic Messages-compatible frontend over chat completions."""
-    route_auth = authenticate_runtime_request(request, "/v1/messages")
+    route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/v1/messages"))
     if isinstance(route_auth, Response):
         return _anthropic_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -24835,7 +24913,6 @@ async def anthropic_messages(request: Request):
     if admission is not None:
         return admission
 
-    state.update_activity()
     if canonical.get("stream"):
         client, upstream = await _forward_chat_completions(
             request,
@@ -24853,6 +24930,7 @@ async def anthropic_messages(request: Request):
             return _anthropic_error_response(
                 message,
                 status_code=upstream.status_code,
+                headers=_upstream_retry_after(upstream),
             )
 
         translator = anthropic_protocol.MessagesStreamTranslator(
@@ -24903,6 +24981,7 @@ async def anthropic_messages(request: Request):
         return _anthropic_error_response(
             _response_error_message(upstream, "Upstream chat-completions error."),
             status_code=int(getattr(upstream, "status_code", 502) or 502),
+            headers=_upstream_retry_after(upstream),
         )
 
     try:
@@ -24985,7 +25064,6 @@ async def _ollama_forward_non_streaming(
     if admission is not None:
         return admission
 
-    state.update_activity()
     upstream = await _forward_chat_completions(
         request,
         auth_context,
@@ -24999,6 +25077,7 @@ async def _ollama_forward_non_streaming(
         return _ollama_error_response(
             _response_error_message(upstream, "upstream chat-completions error"),
             status_code=int(getattr(upstream, "status_code", 502) or 502),
+            headers=_upstream_retry_after(upstream),
         )
     return _response_json_payload(upstream)
 
@@ -25028,7 +25107,6 @@ async def _ollama_forward_streaming(
     if admission is not None:
         return admission
 
-    state.update_activity()
     client, upstream = await _forward_chat_completions(
         request,
         auth_context,
@@ -25045,6 +25123,7 @@ async def _ollama_forward_streaming(
         return _ollama_error_response(
             message,
             status_code=upstream.status_code,
+            headers=_upstream_retry_after(upstream),
         )
 
     def ndjson_line(payload: Mapping[str, Any]) -> str:
@@ -25097,7 +25176,6 @@ async def _ollama_forward_embeddings(
     if admission is not None:
         return admission
 
-    state.update_activity()
     upstream = await _forward_embeddings(request, auth_context, canonical)
     if getattr(upstream, "status_code", 500) >= 400:
         refusal = _upstream_admission_response(upstream, 'ollama')
@@ -25115,7 +25193,7 @@ async def _ollama_model_catalog_summaries(
     auth_context: AuthContext,
 ) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
-    litellm_runtime = _litellm_runtime_config()
+    litellm_runtime = (await asyncio.to_thread(_litellm_runtime_config))
     if litellm_runtime.enabled and request is not None:
         payload = await _litellm_models_payload(
             request,
@@ -25157,7 +25235,7 @@ def _ollama_summary_matches_model(summary: Mapping[str, Any], model: str) -> boo
 async def _ollama_loaded_model_summaries(
     auth_context: AuthContext,
 ) -> list[dict[str, Any]]:
-    if _litellm_runtime_config().enabled:
+    if (await asyncio.to_thread(_litellm_runtime_config)).enabled:
         return []
 
     try:
@@ -25241,7 +25319,7 @@ async def _ollama_load_response(
 @app.post("/api/chat")
 async def ollama_chat(request: Request):
     """Ollama `/api/chat` frontend over chat completions."""
-    route_auth = authenticate_runtime_request(request, "/api/chat")
+    route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/chat"))
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -25297,7 +25375,7 @@ async def ollama_chat(request: Request):
 @app.post("/api/generate")
 async def ollama_generate(request: Request):
     """Ollama `/api/generate` frontend over chat completions."""
-    route_auth = authenticate_runtime_request(request, "/api/generate")
+    route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/generate"))
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -25355,7 +25433,7 @@ async def ollama_generate(request: Request):
 @app.post("/api/embed")
 async def ollama_embed(request: Request):
     """Ollama current `/api/embed` frontend over OpenAI embeddings."""
-    route_auth = authenticate_runtime_request(request, "/api/embed")
+    route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/embed"))
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -25390,7 +25468,7 @@ async def ollama_embed(request: Request):
 @app.post("/api/embeddings")
 async def ollama_embeddings(request: Request):
     """Ollama legacy `/api/embeddings` frontend over OpenAI embeddings."""
-    route_auth = authenticate_runtime_request(request, "/api/embeddings")
+    route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/embeddings"))
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -25425,7 +25503,7 @@ async def ollama_embeddings(request: Request):
 @app.get("/api/tags")
 async def ollama_tags(request: Request):
     """Ollama model-list frontend over the proxy's configured model catalog."""
-    route_auth = authenticate_runtime_request(request, "/api/tags")
+    route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/tags"))
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -25454,7 +25532,7 @@ async def ollama_tags(request: Request):
 @app.post("/api/show")
 async def ollama_show(request: Request):
     """Ollama `/api/show` projected from the gateway's visible LLM catalog."""
-    auth_context = authenticate_request(request, "/api/show")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/api/show"))
     if isinstance(auth_context, Response):
         return _ollama_auth_error(auth_context)
 
@@ -25486,7 +25564,7 @@ async def ollama_show(request: Request):
 @app.get("/api/ps")
 async def ollama_ps(request: Request):
     """Ollama `/api/ps` projected from the gateway's currently loaded LLM."""
-    auth_context = authenticate_request(request, "/api/ps")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/api/ps"))
     if isinstance(auth_context, Response):
         return _ollama_auth_error(auth_context)
     policy_error = _ollama_model_policy_response(
@@ -25511,7 +25589,7 @@ async def ollama_ps(request: Request):
 @app.get("/api/version")
 async def ollama_version(request: Request):
     """Ollama `/api/version` compatibility response."""
-    auth_context = authenticate_request(request, "/api/version")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/api/version"))
     if isinstance(auth_context, Response):
         return _ollama_auth_error(auth_context)
     policy_error = _ollama_model_policy_response(
@@ -25532,7 +25610,7 @@ async def _ollama_unsupported_model_mutation(
     canonical_path: str,
     intent: str,
 ) -> Response:
-    auth_context = authenticate_request(request, canonical_path)
+    auth_context = (await asyncio.to_thread(authenticate_request, request, canonical_path))
     if isinstance(auth_context, Response):
         return _ollama_auth_error(auth_context)
     policy_error = _ollama_model_policy_response(auth_context, intent=intent)
@@ -25618,11 +25696,10 @@ async def ollama_delete(request: Request):
 @app.post("/v1/responses")
 async def create_response(request: Request):
     """Create a Response. Translates to Chat Completions and forwards."""
-    route_auth = authenticate_runtime_request(request, "/v1/responses")
+    route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/v1/responses"))
     if isinstance(route_auth, Response):
         return route_auth
     auth_context = route_auth.auth_context
-    state.update_activity()
 
     raw = await request.body()
     try:
@@ -25907,10 +25984,11 @@ async def create_response(request: Request):
 @app.get("/openai/v1/responses/{response_id}")
 @app.get("/v1/responses/{response_id}")
 async def retrieve_response(response_id: str, request: Request):
-    auth_context = authenticate_request(request, "/v1/responses")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
         return auth_context
-    decision = _protocol_policy_decision(
+    decision = await asyncio.to_thread(
+        _protocol_policy_decision,
         auth_context,
         protocol="openai.chat",
         intent="chat.responses",
@@ -25918,7 +25996,7 @@ async def retrieve_response(response_id: str, request: Request):
     if decision.denied:
         return _policy_denied_response(decision)
     try:
-        row = responses_store.get(response_id)
+        row = await asyncio.to_thread(responses_store.get, response_id)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] responses_store.get failed: {e}", flush=True)
         return _responses_error(f"Internal error: {e}", code="internal_error", status=500)
@@ -25939,17 +26017,18 @@ async def retrieve_response(response_id: str, request: Request):
 @app.get("/openai/v1/responses/{response_id}/input_items")
 @app.get("/v1/responses/{response_id}/input_items")
 async def list_response_input_items(response_id: str, request: Request):
-    auth_context = authenticate_request(request, "/v1/responses")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
         return auth_context
-    decision = _protocol_policy_decision(
+    decision = await asyncio.to_thread(
+        _protocol_policy_decision,
         auth_context,
         protocol="openai.chat",
         intent="chat.responses",
     )
     if decision.denied:
         return _policy_denied_response(decision)
-    row = responses_store.get(response_id)
+    row = await asyncio.to_thread(responses_store.get, response_id)
     if not _responses_row_visible(row, auth_context):
         return _responses_error(
             f"Response with id '{response_id}' not found.",
@@ -25993,7 +26072,7 @@ async def list_response_input_items(response_id: str, request: Request):
 @app.post("/openai/v1/responses/input_tokens")
 @app.post("/v1/responses/input_tokens")
 async def count_response_input_tokens(request: Request):
-    auth_context = authenticate_request(request, "/v1/responses")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
         return auth_context
     return _responses_error(
@@ -26006,7 +26085,7 @@ async def count_response_input_tokens(request: Request):
 @app.post("/openai/v1/responses/{response_id}/cancel")
 @app.post("/v1/responses/{response_id}/cancel")
 async def cancel_response(response_id: str, request: Request):
-    auth_context = authenticate_request(request, "/v1/responses")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
         return auth_context
     decision = _protocol_policy_decision(
@@ -26026,7 +26105,7 @@ async def cancel_response(response_id: str, request: Request):
 @app.delete("/openai/v1/responses/{response_id}")
 @app.delete("/v1/responses/{response_id}")
 async def delete_response(response_id: str, request: Request):
-    auth_context = authenticate_request(request, "/v1/responses")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
         return auth_context
     decision = _protocol_policy_decision(
@@ -26240,9 +26319,8 @@ def _toolcall_backend_hint(service_id: str) -> str:
     """Derive the backend hint string used for advisory messages.
 
     Prefers the stored ``preset`` field in config["backends"][service_id] when
-    present (e.g. "vllm", "ollama", "tabbyapi").  Falls back to the service_id
-    itself — many operators name their service after the backend (e.g. "vllm",
-    "tabby").  The detection module does case-insensitive substring matching so
+    present.  Falls back to the service_id itself — many operators name their
+    service after the backend.  The detection module does case-insensitive substring matching so
     either form works.
     """
     if not service_id:
@@ -26893,6 +26971,8 @@ async def _forward_current_loaded_openai_request(
                 # concurrently with StreamingResponse's receive loop.
                 await cancellation_span.stop_watcher_for_streaming_handoff()
 
+                sse_repair = _ChatCompletionSseRepair() if request_path == "/v1/chat/completions" else None
+
                 async def stream_response():
                     try:
                         async for chunk in _tc_detector.wrap(
@@ -26903,9 +26983,12 @@ async def _forward_current_loaded_openai_request(
                                 on_signal=cancellation_span._signal,
                             )
                         ):
-                            if request_path == "/v1/chat/completions":
-                                chunk = _normalize_chat_completion_sse_chunk(chunk)
-                            yield chunk
+                            if sse_repair is not None:
+                                chunk = sse_repair.feed(chunk)
+                            if chunk:
+                                yield chunk
+                        if sse_repair is not None and (rest := sse_repair.flush()):
+                            yield rest
                     except asyncio.CancelledError:
                         cancellation_span.mark_stream_cancelled()
                         raise
@@ -27204,10 +27287,11 @@ async def _forward_litellm_proxy_request(
             await cancellation_span.aclose()
             receipt.add_warning("LiteLLM execution timed out")
             owner.report(status="failed", reason="idle_timeout")
-            return Response(
-                content=json.dumps({"detail": "Request timeout"}),
+            return openai_error_response(
+                "Upstream chat request timed out.",
                 status_code=504,
-                media_type="application/json",
+                error_type="api_error",
+                code="timeout",
             )
         except httpx.ConnectError:
             await cancellation_span.aclose()
@@ -27260,6 +27344,8 @@ async def _forward_litellm_proxy_request(
             # concurrently with StreamingResponse's receive loop.
             await cancellation_span.stop_watcher_for_streaming_handoff()
 
+            sse_repair = _ChatCompletionSseRepair() if request_path == "/v1/chat/completions" else None
+
             async def stream_response():
                 try:
                     async for chunk in _tc_detector.wrap(
@@ -27270,12 +27356,22 @@ async def _forward_litellm_proxy_request(
                             on_signal=cancellation_span._signal,
                         )
                     ):
-                        if request_path == "/v1/chat/completions":
-                            chunk = _normalize_chat_completion_sse_chunk(chunk)
-                        yield chunk
+                        if sse_repair is not None:
+                            chunk = sse_repair.feed(chunk)
+                        if chunk:
+                            yield chunk
+                    if sse_repair is not None and (rest := sse_repair.flush()):
+                        yield rest
                 except asyncio.CancelledError:
                     cancellation_span.mark_stream_cancelled()
                     raise
+                except httpx.TransportError:
+                    # The upstream dropped mid-stream. The headers already went
+                    # out, so say it in-band: ending the body cleanly would make
+                    # a truncated answer look complete. Bytes of a cut event
+                    # stay unsent.
+                    owner.report(status="failed", reason="read_error")
+                    yield _CHAT_STREAM_INTERRUPTED_EVENT
                 else:
                     owner.report(
                         status="succeeded" if 200 <= resp.status_code < 400 else "failed",
@@ -27309,10 +27405,11 @@ async def _forward_litellm_proxy_request(
             await cancellation_span.aclose()
             receipt.add_warning("LiteLLM execution timed out")
             owner.report(status="failed", reason="idle_timeout")
-            return Response(
-                content=json.dumps({"detail": "Request timeout"}),
+            return openai_error_response(
+                "Upstream chat request timed out.",
                 status_code=504,
-                media_type="application/json",
+                error_type="api_error",
+                code="timeout",
             )
         except httpx.ConnectError:
             await cancellation_span.aclose()
@@ -27405,7 +27502,7 @@ async def _handle_openai_litellm_request(
     request_path: str,
 ) -> Response:
     """Try only fallback targets explicitly listed in the requested alias."""
-    route_auth = authenticate_runtime_request(request, request_path)
+    route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, request_path))
     if isinstance(route_auth, Response):
         return route_auth
     body, parse_error = parse_openai_json_body(await request.body())
@@ -27468,7 +27565,7 @@ async def _handle_openai_litellm_request_once(
     route_auth: RuntimeRouteAuth | None = None,
 ) -> Response:
     if route_auth is None:
-        route_auth = authenticate_runtime_request(request, request_path)
+        route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, request_path))
     if isinstance(route_auth, Response):
         return route_auth
     auth_context = route_auth.auth_context
@@ -27476,9 +27573,6 @@ async def _handle_openai_litellm_request_once(
     trusted_parent_request_id = (
         _internal_request_id_from_headers(request.headers) if is_trusted_loopback else ""
     )
-
-    if not any(request_path.startswith(p) for p in NO_ACTIVITY_PATHS):
-        state.update_activity()
 
     body_peek = await request.body()
     parsed_body, parse_error = parse_openai_json_body(body_peek)
@@ -27536,15 +27630,13 @@ async def _handle_openai_litellm_request_once(
             request_id=trusted_parent_request_id,
         )
 
-    litellm_runtime = _litellm_runtime_config()
+    litellm_runtime = (await asyncio.to_thread(_litellm_runtime_config))
     litellm_body: Mapping[str, Any] = parsed_body
     prepared_local_llm = False
     remote_provider = provider_execution.provider_for_model(ADMIN_STORE.get_service_registry(), parsed_body.get("model"))
     if litellm_runtime.enabled and remote_provider is None:
-        litellm_service_response = _service_availability_response(
-            litellm_runtime.service_id or "litellm",
-            service_label="LiteLLM",
-        )
+        litellm_service_response = (await asyncio.to_thread(_service_availability_response, litellm_runtime.service_id or "litellm",
+            service_label="LiteLLM",))
         if litellm_service_response is None and request_path in {
             "/v1/chat/completions",
             "/v1/completions",
@@ -27612,7 +27704,7 @@ async def _forward_internal_litellm_local_chat_completions(
         target_model,
     )
 
-    availability = _service_availability_response(backend, service_label=backend)
+    availability = (await asyncio.to_thread(_service_availability_response, backend, service_label=backend))
     if availability is not None:
         return availability
     # This hop forwards to the engine, so it (not the outer route) holds the
@@ -27933,7 +28025,7 @@ def _openai_unsupported_api_response(api_name: str) -> Response:
 
 
 async def _openai_unsupported_api(request: Request, canonical_path: str, api_name: str) -> Response:
-    auth_context = authenticate_request(request, canonical_path)
+    auth_context = (await asyncio.to_thread(authenticate_request, request, canonical_path))
     if isinstance(auth_context, Response):
         return auth_context
     return _openai_unsupported_api_response(api_name)
@@ -28012,6 +28104,43 @@ async def openai_fine_tuning_unsupported(request: Request, rest: str = "") -> Re
 async def openai_realtime_unsupported(request: Request, rest: str = "") -> Response:
     """OpenAI Realtime compatibility surface - explicitly unsupported."""
     return await _openai_unsupported_api(request, "/v1/realtime", "Realtime API")
+
+
+_SSE_EVENT_BOUNDARY = re.compile(rb"\r\n\r\n|\n\n|\r\r")
+
+
+_CHAT_STREAM_INTERRUPTED_EVENT = b"data: " + json.dumps({
+    "error": {
+        "message": "The LLM execution stream ended before the response was complete.",
+        "type": "api_error",
+        "param": None,
+        "code": "upstream_stream_interrupted",
+    },
+}).encode() + b"\n\n"
+
+
+class _ChatCompletionSseRepair:
+    """Run the chat spec repair on whole SSE events.
+
+    A wire chunk can end anywhere, also inside an event or a UTF-8 character.
+    Bytes after the last complete event wait for the next chunk, so the repair
+    never sees a cut event. ``flush`` returns what is left at the end.
+    """
+
+    def __init__(self) -> None:
+        self._pending = b""
+
+    def feed(self, chunk: bytes) -> bytes:
+        data = self._pending + chunk
+        end = 0
+        for match in _SSE_EVENT_BOUNDARY.finditer(data):
+            end = match.end()
+        self._pending = data[end:]
+        return _normalize_chat_completion_sse_chunk(data[:end]) if end else b""
+
+    def flush(self) -> bytes:
+        rest, self._pending = self._pending, b""
+        return rest
 
 
 def _normalize_chat_completion_sse_chunk(chunk: bytes) -> bytes:
@@ -28471,7 +28600,7 @@ async def _ui_admin_page_guard(request: Request, name: str) -> Response | None:
     """Admin pages and their payloads need an admin-control role."""
     return_to = _path_with_query(request) if ui_routes.is_page_path(request.url.path) else f"/{name}/"
     try:
-        actor = ADMIN_AUTH(request)
+        actor = (await asyncio.to_thread(ADMIN_AUTH, request))
     except AdminAuthError as exc:
         return _admin_auth_failure_response(request, exc, return_to=return_to)
     if not ADMIN_CONTROL_ROLES & set(actor.roles):
@@ -28507,7 +28636,7 @@ async def unmatched_route(request: Request, path: str):
     request_path = f"/{path}"
 
     # Authenticate first, so unauthenticated callers get 401.
-    auth_context = authenticate_request(request, request_path)
+    auth_context = (await asyncio.to_thread(authenticate_request, request, request_path))
     if isinstance(auth_context, Response):
         return auth_context
 
@@ -28532,6 +28661,10 @@ from gateway.request_source import RequestSourceMiddleware
 app.add_middleware(RequestSourceMiddleware)
 from gateway.request_body_limits import RequestBodyLimitMiddleware, RequestBodyLimits
 app.add_middleware(RequestBodyLimitMiddleware, limits=RequestBodyLimits.from_config(config))
+from gateway.request_connections import RequestConnectionsMiddleware
+app.add_middleware(RequestConnectionsMiddleware)
+from gateway.server_timing import ServerTimingMiddleware
+app.add_middleware(ServerTimingMiddleware)
 
 
 # =============================================================================

@@ -48,7 +48,6 @@ an empty name clears it even when the environment variable is set.
 
 | Env var | What it controls | Default |
 |---|---|---|
-| `AZIZAM_TABBYAPI_DIR` | Root directory of a [TabbyAPI](https://github.com/theroyallab/tabbyAPI) installation. Used for credential auto-load and config reads; these are disabled when unset. The proxy does not spawn or manage the Tabby process. | unset (feature off) |
 | `AZIZAM_COMFY_DIR` | Root directory of a [ComfyUI](https://github.com/comfyanonymous/ComfyUI) installation. Sets the default for `AZIZAM_COMFY_OUTPUT_DIR` and `AZIZAM_COMFY_CUSTOM_NODES_DIR`. | unset (feature off) |
 | `AZIZAM_COMFY_OUTPUT_DIR` | ComfyUI output directory (overrides `AZIZAM_COMFY_DIR/output`). Used for recent-renders and disk hot-spot reporting. | `$AZIZAM_COMFY_DIR/output` if `AZIZAM_COMFY_DIR` is set, else disabled |
 | `AZIZAM_COMFY_CUSTOM_NODES_DIR` | ComfyUI custom_nodes directory (overrides `AZIZAM_COMFY_DIR/custom_nodes`). Used by the status endpoint custom-nodes list. | `$AZIZAM_COMFY_DIR/custom_nodes` if `AZIZAM_COMFY_DIR` is set, else disabled |

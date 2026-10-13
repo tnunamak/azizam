@@ -29,8 +29,9 @@ the requested audience.
 
 from __future__ import annotations
 
+from gateway import request_connections
 from gateway.compat import get_env
-from gateway.sqlite_startup import connect, store_startup
+from gateway.sqlite_startup import connect, connect_readonly, store_startup
 
 import json
 import os
@@ -38,7 +39,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from gateway.receipts import PHASE_FIELDS, RouteReceipt, serialize_receipt_for_audience
 from gateway.redaction import assert_safe_mapping, assert_safe_top_level
@@ -165,13 +166,32 @@ def init_db(path: Path = DB_PATH) -> None:
 
 
 @contextmanager
+def reader(path: Path = DB_PATH):
+    """Read-only receipt access; inside a request it shares the request's receipt connection."""
+    if request_connections.active() and Path(path).exists():
+        with _conn(Path(path)) as conn:
+            yield conn
+    else:
+        conn = connect_readonly(path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+
+@contextmanager
 def _conn(path: Path = DB_PATH):
-    conn = connect(path, timeout=5.0)
-    try:
-        _apply_pragmas(conn)
+    def open_connection() -> sqlite3.Connection:
+        conn = connect(path, timeout=5.0, check_same_thread=not request_connections.active())
+        try:
+            _apply_pragmas(conn)
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
+    with request_connections.scoped("receipts", path, open_connection) as conn:
         yield conn
-    finally:
-        conn.close()
 
 
 def _coerce_to_internal_dict(receipt_or_dict: Any) -> dict[str, Any]:
@@ -485,6 +505,37 @@ def _with_cost(data: Mapping[str, Any], cost: Mapping[str, Any]) -> dict[str, An
     return updated
 
 
+def get_many(
+    request_ids: Iterable[str],
+    *,
+    audience: str = "internal",
+    now_ms: int | None = None,
+    stale_after_ms: int = STALE_AFTER_MS,
+    path: Path = DB_PATH,
+) -> dict[str, dict[str, Any]]:
+    """Return ``{request_id: receipt}`` as ``get`` would, in one query per 500 ids."""
+    ids = sorted({value for value in request_ids if value})
+    out: dict[str, dict[str, Any]] = {}
+    with _conn(path) as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            rows = conn.execute(
+                "SELECT request_id, receipt_json, created_at FROM receipts "
+                f"WHERE request_id IN ({','.join('?' for _ in chunk)})",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                data = _safe_loads(row[1])
+                if not isinstance(data, Mapping):
+                    continue
+                receipt = _filter_for_audience(
+                    _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience
+                )
+                receipt.setdefault("_stored_at", int(row[2]))
+                out[row[0]] = receipt
+    return out
+
+
 def get(
     request_id: str,
     *,
@@ -564,16 +615,25 @@ def recent(
         clauses.append("created_at >= ?")
         params.append(int(time.time()) - int(since_s))
     if outer_only:
-        clauses.append("parent_request_id IS NULL")
+        # The unary plus keeps SQLite on the created_at index. Without it the planner takes the
+        # parent_request_id index and sorts every top-level receipt to return a handful.
+        clauses.append("+parent_request_id IS NULL")
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(int(limit))
+    # Newest first with no owner filter: walk the created_at index and stop after `limit` rows.
+    # Left to itself the planner flips between that and a full scan with a full sort on the
+    # value of LIMIT (3 and 5 plan differently), so the index is named.
+    ordered = " INDEXED BY receipts_created_at" if app_ids is None and owner_key_hashes is None else ""
 
     with _conn(path) as conn:
-        rows = conn.execute(
-            f"SELECT receipt_json, created_at FROM receipts{where} "
-            "ORDER BY created_at DESC, request_id DESC LIMIT ?",
-            params,
-        ).fetchall()
+        query = (f"SELECT receipt_json, created_at FROM receipts{ordered}{where} "
+                 "ORDER BY created_at DESC, request_id DESC LIMIT ?")
+        try:
+            rows = conn.execute(query, params).fetchall()
+        except sqlite3.OperationalError:
+            if not ordered:
+                raise
+            rows = conn.execute(query.replace(ordered, "", 1), params).fetchall()  # a database without the index
 
     out: list[dict[str, Any]] = []
     for receipt_json, created_at in rows:
@@ -742,6 +802,7 @@ __all__ = [
     "STALE_AFTER_MS",
     "SCHEMA_VERSION",
     "init_db",
+    "get_many",
     "begin",
     "finalize",
     "record",

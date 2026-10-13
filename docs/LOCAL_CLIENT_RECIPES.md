@@ -925,7 +925,7 @@ Provider-native discovery lives at `/gateway/v1/providers` and
 `/gateway/v1/providers/{provider}`; results are projected through the caller's
 App profile policy. Raw provider-native passthrough, when enabled for a key, is
 reserved for `/gateway/v1/providers/{provider}/{path...}`. It is not exposed by
-root paths, and there is no legacy root Tabby shim. Passthrough preserves
+root paths. Passthrough preserves
 streamed response bodies such as SSE, NDJSON, and generated media rather than
 buffering the whole upstream response first.
 
@@ -1487,7 +1487,7 @@ Expected unsupported features:
   Realtime HTTP routes such as `/v1/realtime/calls`, `client_secrets`, SIP and WebRTC are not supported;
   registered HTTP compatibility routes return `unsupported_operation`.
 
-## Recipe: MCP clients (Claude Code, Pi, Cursor, Codex)
+## Recipe: MCP clients (ChatGPT, Claude.ai, Claude Code, Cursor, Pi, Codex)
 
 The gateway is an MCP server at `/mcp` (Streamable HTTP). It has three tools, so an
 agent pays about 600 tokens once and gets every workflow:
@@ -1507,9 +1507,15 @@ new workflow appears with no code change. Every action is dispatched to the same
 core route a plain HTTP client would call, with your key, so profile policy and
 receipts apply. A policy denial comes back as a tool error that carries the HTTP status.
 
-Auth is the same bearer key. A request without a key gets `401` with
-`WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/mcp"`.
-The gateway has no OAuth server, so give the client the key as a header.
+Auth is a bearer key or a sign-in. A request without credentials gets `401` with
+`WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/mcp", scope="mcp"`.
+A client that follows the MCP authorization spec then signs the person in to the
+gateway: they approve it once on the gateway's consent page, and it acts as them
+within their plan until they disconnect it on the Connect page. ChatGPT and
+Claude.ai work only this way: paste `https://ai.example.com/mcp`, choose OAuth (or
+just add the connector) and leave the client ID and secret empty. Sign-in needs the
+gateway's public https address to be set. Clients that send headers can still use
+an app key, as below. The Connect page has per-client notes.
 
 Protocol: revision 2026-07-28 (stateless, `server/discover`) and the handshake
 revisions 2025-03-26 to 2025-11-25. The server never issues `Mcp-Session-Id`;

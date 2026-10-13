@@ -1,15 +1,11 @@
-import {
-  test,
-  expect,
-  request,
-  type APIRequestContext,
-  type Page,
-} from "@playwright/test";
+import { request, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { createServer } from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { fulfilJson } from "./fixtures/intercept";
 
 // Axe must inspect settled toast colours, not their entrance/exit opacity.
 test.use({ contextOptions: { reducedMotion: "reduce" } });
@@ -170,7 +166,7 @@ async function checkVisuals(page: Page, name: string) {
 
 for (const theme of ["light", "dark"]) {
   for (const width of [1440, 390]) {
-    test(`detected model applies and routes with explicit access ${theme} ${width}`, async ({
+    test(`detected model applies and routes with explicit access ${theme} ${width}`, { tag: GLOBAL_STATE_TAG }, async ({
       page,
     }) => {
       const suffix = `${theme}-${width}`;
@@ -431,7 +427,7 @@ for (const theme of ["light", "dark"]) {
       await checkVisuals(page, `engines-applied-${suffix}`);
     });
 
-    test(`failed engine check identifies target and recovers ${theme} ${width}`, async ({
+    test(`failed engine check identifies target and recovers ${theme} ${width}`, { tag: GLOBAL_STATE_TAG }, async ({
       page,
     }) => {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 960 });
@@ -441,16 +437,14 @@ for (const theme of ["light", "dark"]) {
       );
       let failing = true;
       await page.route("**/admin/api/operator/services/test", (route) =>
-        route.fulfill({
-          json: {
+        fulfilJson(route, {
             probe: {
               ok: !failing,
               url: "http://127.0.0.1:18498/health",
               status: failing ? 503 : 200,
               error: failing ? "Engine unavailable" : "",
             },
-          },
-        }),
+          }),
       );
       await page.goto("/engines/?service=capture-engine");
       const card = page.locator('tr[data-engine-id="capture-engine"]');
@@ -485,21 +479,18 @@ for (const theme of ["light", "dark"]) {
   }
 }
 
-test("a registry conflict preserves the detected-model preview for retry", async ({
+test("a registry conflict preserves the detected-model preview for retry", { tag: GLOBAL_STATE_TAG }, async ({
   page,
 }) => {
   await page.route("**/admin/api/operator/services/capture-engine", (route) => {
     expect(route.request().method()).toBe("PATCH");
     expect(route.request().headers()["if-match"]).toBeTruthy();
-    return route.fulfill({
-      status: 412,
-      json: {
+    return fulfilJson(route, {
         error: {
           code: "generation_mismatch",
           message: "The registry changed. Review your preview and try again.",
         },
-      },
-    });
+      }, { status: 412 });
   });
   await page.goto("/engines/?service=capture-engine");
   const card = page.locator('tr[data-engine-id="capture-engine"]');

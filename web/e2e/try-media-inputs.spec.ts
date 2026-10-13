@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 
 // Every workflow manifest that takes a picture or video, through the
 // gateway's real catalog (no mocks): each media input gets exactly one picker
@@ -44,6 +44,14 @@ test("every picture and video input on Try is one picker, in plain words", async
       ).toContainText(workflow.title);
       const form = page.getByRole("tabpanel", { name: "Workflow" });
       const media = workflow.inputs.filter(isMedia);
+      // The form fills in after the model list loads. Read it only once it
+      // shows a picker or the More options fold that holds the optional ones.
+      await expect(
+        form
+          .getByRole("button", { name: "Choose a file" })
+          .or(form.locator("summary").filter({ hasText: "More options" }))
+          .first(),
+      ).toBeVisible();
       // Optional inputs wait under More options; open it to see them all.
       const more = form.locator("summary").filter({ hasText: "More options" });
       if (await more.count()) await more.click();

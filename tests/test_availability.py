@@ -11,6 +11,15 @@ from gateway.capabilities import Capability
 from gateway.receipts import RouteReceipt
 
 
+@pytest.fixture(autouse=True)
+def _isolated_health_success(monkeypatch):
+    """A successful probe records its time per service id in a module-level map;
+    tests that reuse an id ("svc") would otherwise inherit each other's success."""
+    from gateway import models_catalog
+
+    monkeypatch.setattr(models_catalog, "_HEALTH_LAST_SUCCESS_S", {})
+
+
 @pytest.fixture
 def evidence_now():
     """A fixed epoch passed through production's explicit now_s/now_ms seams."""

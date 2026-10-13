@@ -21,6 +21,8 @@ export default class CaseReceipts implements Reporter {
       id: test.id, file: test.location.file,
       // titlePath() starts with the root, project and file suites.
       titles: test.titlePath().slice(3), status: result.status, duration_ms: result.duration,
+      // Data namespace from fixtures/isolation.ts, to reproduce a collision.
+      namespace: result.annotations.find((note) => note.type === "namespace")?.description,
     }) + "\n");
   }
 }

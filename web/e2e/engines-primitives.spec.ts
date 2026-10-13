@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 
 // Measure settled controls, not the dialog's 95%-to-100% entrance zoom.
 test.use({ contextOptions: { reducedMotion: "reduce" } });
@@ -43,9 +43,8 @@ for (const scale of [1, 2]) {
     const name = dialog.getByLabel(/^Name/);
     await expect(name).toBeVisible();
     for (const control of await dialog
-      .locator('button, input:not([aria-hidden="true"])')
+      .locator('button:visible, input:not([aria-hidden="true"]):visible')
       .all()) {
-      if (!(await control.isVisible())) continue;
       const box = await control.boundingBox();
       expect(box!.height).toBeGreaterThanOrEqual(44);
       expect(box!.width).toBeGreaterThanOrEqual(44);
@@ -123,7 +122,7 @@ for (const scale of [1, 2]) {
   });
 }
 
-test("a stale apply ETag is rejected by the fixture registry and retry preserves mappings", async ({
+test("a stale apply ETag is rejected by the fixture registry and retry preserves mappings", { tag: GLOBAL_STATE_TAG }, async ({
   page,
 }) => {
   await page.goto("/engines/?service=capture-engine");

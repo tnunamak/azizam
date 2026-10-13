@@ -14,13 +14,10 @@ Set the environment variables in the [API overview](index.md#set-up-your-environ
 ## Chat with curl
 
 ```sh
-curl --fail-with-body -sS "$AZIZAM_BASE_URL/openai/v1/chat/completions" \
-  -H "Authorization: Bearer $AZIZAM_API_KEY" \
-  -H 'Content-Type: application/json' \
-  --data @- <<EOF
-{"model": "$AZIZAM_MODEL",
- "messages": [{"role": "user", "content": "Say hello in one sentence."}]}
-EOF
+python3 - <<'PY' | curl --fail-with-body -sS "$AZIZAM_BASE_URL/openai/v1/chat/completions" -H "Authorization: Bearer $AZIZAM_API_KEY" -H 'Content-Type: application/json' --data-binary @-
+import json, os
+print(json.dumps({"model": os.environ["AZIZAM_MODEL"], "messages": [{"role": "user", "content": "Say hello in one sentence."}]}))
+PY
 ```
 
 Add `"stream": true` to get the reply as a stream of events.

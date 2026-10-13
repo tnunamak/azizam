@@ -28,51 +28,6 @@ backends:
     health_endpoint: /health
     role: required
     managed: false
-  tabby:
-    display_name: Vision chat
-    description: Ask questions about text and images.
-    transforms: [reasoning-effort-final-chat]
-    name: TabbyAPI (Qwen3-VL)
-    native_passthrough: true
-    protocol: openai-compatible
-    base_path: /v1
-    api_key_env: TABBY_API_KEY
-    host: 127.0.0.1
-    port: 5050
-    model_id: qwen3-vl-30b
-    health_endpoint: /v1/models
-    # Downstream auth injection (DATA — replaces the old hardcoded apply_tabby_auth):
-    # TabbyAPI wants the admin key for model-list endpoints, the api key otherwise.
-    # First matching rule wins; secret resolves per-identity, falling back to env.
-    auth_inject:
-      - paths: ["/v1/models", "/v1/model/list"]
-        header: x-admin-key
-        secret: admin_key
-        secret_env: TABBY_ADMIN_KEY
-      - header: x-api-key
-        secret: api_key
-        secret_env: TABBY_API_KEY
-    load_timeout: 300
-    idle_timeout: 0
-    role: standby
-    note: "On-demand vision backend; cold-started by ensure_target() when a vision-capable role is invoked. Down at idle is expected."
-    capabilities:
-      - vision
-      - chat
-      - completions
-    managed: false
-    lifecycle:
-      driver: http-load-unload
-      driver_config:
-        load_url: /v1/model/load
-        unload_url: /v1/model/unload
-        admin_header: x-admin-key
-        admin_key_env: TABBY_ADMIN_KEY
-        load_body_params: tabby-config
-        load_timeout_s: 300
-        success_marker: '"status":"finished"'
-        verify_endpoint: /v1/model
-        # activation_model_key defaults to "model_name" (omitted = use default).
   kobold:
     display_name: Local chat
     description: Chat, write, reason, and work with code.
@@ -88,6 +43,20 @@ backends:
     host: 127.0.0.1
     port: 5051
     state_type: llama_cpp
+    # The server reports its loaded model as a filesystem path, which is
+    # compared with the path being activated (instead of an HTTP model id).
+    loaded_model_identity: path
+    # When no model record declares a window, read it from the server itself.
+    context_window_probe:
+      endpoint: /v1/models
+    # The vision projector file is not reported over HTTP; read it from the
+    # server's command line (the process on this service's port).
+    aux:
+      probe: process-cmdline
+      process: llama-server
+      flag: --mmproj
+      # A loaded aux file lets this service take image input.
+      grants_input_modalities: [image]
     health_endpoint: /v1/models
     # Version the logical-policy collection independently of the registry as a
     # whole. Existing DB-owned collections must be explicitly migrated.
@@ -253,6 +222,8 @@ backends:
         # activation cannot change the selected engine.
         dropin: 95-activation.conf
         swap_strategy: dropin-env-restart
+        # A relative activation model path is cleared before activation.
+        activation_requires_absolute_path: true
         health_endpoint: /v1/models
         health_timeout_s: 180
         # LLAMA_BEE_* is the retained compatibility API for the local service.
@@ -780,9 +751,7 @@ images:
     # edit workflow. Explicit model choices remain pinned to that workflow.
     multiref_default_workflow: qwen-image-2.1-edit-multiref
 model_routing:
-  model_dir: /media/windows/AI Models/LLMs
   gguf_dir: /media/windows/AI Models/LLMs/GGUF
-  tabby_service: tabbyapi.service
   kobold_service: llama-bee.service
   switch_timeout: 60
   # Per-chunk (idle) read timeout for /v1/chat/completions and /v1/completions
@@ -798,7 +767,6 @@ model_routing:
 routing:
   default_backend: kobold
   audio_backend: tts
-  check_interval: 30
 
 identity:
   # CPU face sidecar (services/face-service) used by the likeness check and image-identity.
@@ -864,10 +832,6 @@ roles:
       min_p: 0.0
       presence_penalty: 0.0
       repetition_penalty: 1.0
-  vision:
-    display_name: Vision assistant
-    backend: tabby
-    description: Vision-capable EXL3 model (when tabbyapi.service is active on :5050)
   rp:
     display_name: Roleplay
     backend: kobold
@@ -1593,8 +1557,6 @@ auth:
   # switch and no public Ollama discovery. Startup refuses those settings.
   public_paths:
     - /health
-  api_key_env: TABBY_API_KEY
-  admin_key_env: TABBY_ADMIN_KEY
   # The real client IP defaults to the raw TCP socket peer. X-Forwarded-For is
   # honored ONLY from proxies you list here (rightmost-first, spoof-resistant).
   # It decides throttling and first-run setup, never access.
@@ -1616,7 +1578,7 @@ auth:
 admin:
   db_path: data/admin.db
   # Deployment brand (data, not product code). A generic install shows only the
-  # neutral product label; this deployment opts into the vivid.fish wordmark.
+  # neutral product label; this deployment opts into a wordmark.
   brand:
     product: Azizam
     wordmark: vivid.fish

@@ -27,6 +27,7 @@ see the workstream note for suggested integration points.
 
 from __future__ import annotations
 
+from gateway import request_connections
 from gateway.compat import get_env
 from gateway.sqlite_startup import connect, store_startup
 
@@ -417,12 +418,20 @@ def init_db(path: Path = DB_PATH) -> None:
 
 @contextmanager
 def _conn(path: Path = DB_PATH):
-    conn = connect(path, timeout=5.0)
-    try:
-        _apply_pragmas(conn)
+    def open_connection() -> sqlite3.Connection:
+        scoped = request_connections.active()
+        conn = connect(path, timeout=5.0, check_same_thread=not scoped)
+        if scoped:
+            conn.row_factory = sqlite3.Row  # prompt memory reads by column name; index access is unchanged
+        try:
+            _apply_pragmas(conn)
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
+    with request_connections.scoped("media_jobs", path, open_connection) as conn:
         yield conn
-    finally:
-        conn.close()
 
 
 def _coerce_to_job(job_or_dict: Any) -> MediaJob:
@@ -771,6 +780,31 @@ def get(
     if not isinstance(data, Mapping):
         return None
     return _filter_for_audience(data, audience)
+
+
+def get_many(
+    job_ids: Iterable[str],
+    *,
+    audience: str = "internal",
+    path: Path = DB_PATH,
+) -> dict[str, dict[str, Any]]:
+    """Return ``{job_id: job}`` as ``get`` would, in one query per 500 ids."""
+    if audience not in _AUDIENCES:
+        raise ValueError(f"audience must be one of {_AUDIENCES}")
+    ids = sorted({value for value in job_ids if value})
+    out: dict[str, dict[str, Any]] = {}
+    with _conn(path) as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            rows = conn.execute(
+                f"SELECT job_id, job_json FROM media_jobs WHERE job_id IN ({','.join('?' for _ in chunk)})",
+                chunk,
+            ).fetchall()
+            for job_id, raw in rows:
+                data = _safe_loads(raw)
+                if isinstance(data, Mapping):
+                    out[job_id] = _filter_for_audience(data, audience)
+    return out
 
 
 def get_by_request_id(

@@ -31,6 +31,7 @@ of scope here — this module is the durable substrate those routes call into.
 
 from __future__ import annotations
 
+from gateway import request_connections
 from gateway.compat import get_env
 from gateway.sqlite_startup import check_quarantine_pending, connect, store_startup
 
@@ -573,6 +574,12 @@ def _drop_identity_profile_grants(conn: sqlite3.Connection) -> None:
     conn.execute(f"DROP TABLE {table}")
 
 
+# Paths ``_conn`` already secured. Every connection used to repeat the
+# mkdir/chmod/open syscalls, some on the event loop. Callers that must
+# re-tighten modes (startup, recovery) call ``secure_state_path`` directly.
+_SECURED_STATE_PATHS: set[Path] = set()
+
+
 def secure_state_path(path: Path) -> None:
     """Create private SQLite state and tighten existing database sidecars.
 
@@ -593,6 +600,7 @@ def secure_state_path(path: Path) -> None:
             state_file.chmod(0o600)
         except FileNotFoundError:
             pass
+    _SECURED_STATE_PATHS.add(path)
 
 
 def init_db(path: Path = DB_PATH) -> None:
@@ -668,14 +676,20 @@ def _move_oidc_client_secret_to_store(conn: sqlite3.Connection, path: Path) -> N
 
 @contextmanager
 def _conn(path: Path = DB_PATH):
-    secure_state_path(path)
-    conn = connect(path, timeout=5.0)
-    conn.row_factory = sqlite3.Row
-    try:
-        _apply_pragmas(conn)
+    if path not in _SECURED_STATE_PATHS:
+        secure_state_path(path)
+    def open_connection() -> sqlite3.Connection:
+        conn = connect(path, timeout=5.0, check_same_thread=not request_connections.active())
+        conn.row_factory = sqlite3.Row
+        try:
+            _apply_pragmas(conn)
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
+    with request_connections.scoped("admin", path, open_connection) as conn:
         yield conn
-    finally:
-        conn.close()
 
 
 @contextmanager
@@ -777,6 +791,20 @@ def get_user(user_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
             "SELECT * FROM users WHERE id = ?", (user_id,)
         ).fetchone()
     return _row_to_dict(row)
+
+
+def get_users(user_ids: Iterable[str], *, path: Path = DB_PATH) -> dict[str, dict[str, Any]]:
+    """``{id: user}`` for the users that exist, in one query per 500 ids."""
+    ids = sorted({str(value) for value in user_ids if value})
+    out: dict[str, dict[str, Any]] = {}
+    with _conn(path) as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            for row in conn.execute(
+                f"SELECT * FROM users WHERE id IN ({','.join('?' for _ in chunk)})", chunk
+            ).fetchall():
+                out[row["id"]] = _row_to_dict(row)  # type: ignore[assignment]
+    return out
 
 
 def list_users(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
@@ -1273,6 +1301,21 @@ def person_plan_id(user_id: str, *, path: Path = DB_PATH) -> str | None:
     return row[0] if row else None
 
 
+def person_plan_ids(user_ids: Iterable[str], *, path: Path = DB_PATH) -> dict[str, str | None]:
+    """``{user_id: plan_id}`` for people with an access row, in one query per 500 ids."""
+    ids = sorted({str(value) for value in user_ids if value})
+    out: dict[str, str | None] = {}
+    with _conn(path) as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            for row in conn.execute(
+                f"SELECT user_id, plan_id FROM account_access WHERE removed_at IS NULL"
+                f" AND user_id IN ({','.join('?' for _ in chunk)})", chunk,
+            ).fetchall():
+                out[row[0]] = row[1]
+    return out
+
+
 STARTER_PLAN_NAME = "Local only"
 
 
@@ -1488,6 +1531,18 @@ def is_session_app(
         return conn.execute(
             "SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)
         ).fetchone() is not None
+
+
+def session_app_ids(app_ids: Iterable[str], *, path: Path = DB_PATH) -> set[str]:
+    """The given app ids that are keyless session apps, in one query per 500 ids."""
+    ids = sorted({str(value) for value in app_ids if value})
+    found: set[str] = set()
+    with _conn(path) as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            found.update(row[0] for row in conn.execute(
+                f"SELECT app_id FROM session_apps WHERE app_id IN ({','.join('?' for _ in chunk)})", chunk))
+    return found
 
 
 def get_app(
@@ -1732,6 +1787,11 @@ def revoke_older_session_credentials(
 # relative "used N ago", which doesn't need second-level precision, and this
 # keeps the write rate to at most one UPDATE per key per minute under load.
 TOUCH_LAST_USED_INTERVAL_SECONDS = 60
+# (database, credential) -> when this process last asked to record a use. An UPDATE that
+# matches no row still takes the database write lock, and every request paid for it, so
+# a key already recorded inside the interval does not reach the database at all.
+_LAST_TOUCH: dict[tuple[str, str], int] = {}
+_LAST_TOUCH_MAX = 4096
 
 
 def touch_credential_last_used(
@@ -1751,6 +1811,9 @@ def touch_credential_last_used(
     """
     ts = _now() if now is None else int(now)
     cutoff = ts - max(0, int(min_interval))
+    key = (str(path), cred_id)
+    if _LAST_TOUCH.get(key, 0) > cutoff:
+        return False
     with _conn(path) if connection is None else nullcontext(connection) as conn:
         cur = conn.execute(
             "UPDATE credentials SET last_used_at = ? "
@@ -1758,6 +1821,9 @@ def touch_credential_last_used(
             (ts, cred_id, cutoff),
         )
         conn.commit()
+        if len(_LAST_TOUCH) >= _LAST_TOUCH_MAX:
+            _LAST_TOUCH.clear()
+        _LAST_TOUCH[key] = ts
         return cur.rowcount > 0
 
 
@@ -1879,6 +1945,25 @@ def list_active_credentials(
             params,
         ).fetchall()
     return [_credential_row_to_dict(r) for r in rows]
+
+
+def list_active_credentials_for_apps(
+    app_ids: Iterable[str], *, now: int | None = None, path: Path = DB_PATH,
+) -> dict[str, list[dict[str, Any]]]:
+    """``{app_id: active app credentials}``, as ``list_active_credentials`` returns them per app."""
+    ids = sorted({str(value) for value in app_ids if value})
+    ts = _now() if now is None else int(now)
+    out: dict[str, list[dict[str, Any]]] = {}
+    with _conn(path) as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            rows = conn.execute(
+                "SELECT * FROM credentials WHERE subject_kind = 'app' AND revoked_at IS NULL "
+                f"AND (expires_at IS NULL OR expires_at > ?) AND app_id IN ({','.join('?' for _ in chunk)}) "
+                "ORDER BY created_at ASC", [ts, *chunk]).fetchall()
+            for row in rows:
+                out.setdefault(row["app_id"], []).append(_credential_row_to_dict(row))
+    return out
 
 
 def list_credentials(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
