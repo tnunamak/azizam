@@ -24502,6 +24502,21 @@ def _responses_upstream_error(message: str, status_code: int) -> Response:
     )
 
 
+def _upstream_error_message(payload: Any) -> str:
+    """The message of an upstream error body; valid JSON need not be an error object."""
+    error = payload.get("error") if isinstance(payload, Mapping) else None
+    message = error.get("message") if isinstance(error, Mapping) else error
+    return message if isinstance(message, str) else ""
+
+
+async def _close_upstream_stream(client: httpx.AsyncClient, upstream: httpx.Response) -> None:
+    """Close a streamed response and its client; the client closes even if the response cannot."""
+    try:
+        await upstream.aclose()
+    finally:
+        await client.aclose()
+
+
 def _api_key_name(auth_context) -> Optional[str]:
     try:
         ident = getattr(auth_context, "identity", None)
@@ -24561,13 +24576,18 @@ async def _forward_chat_completions(
     )
     client = httpx.AsyncClient(timeout=loopback_request.timeout)
     if stream:
-        req = client.build_request(
-            "POST",
-            loopback_request.url,
-            headers=loopback_request.headers,
-            content=loopback_request.body,
-        )
-        resp = await client.send(req, stream=True)
+        # The caller owns the client only once it is returned.
+        try:
+            req = client.build_request(
+                "POST",
+                loopback_request.url,
+                headers=loopback_request.headers,
+                content=loopback_request.body,
+            )
+            resp = await client.send(req, stream=True)
+        except BaseException:
+            await client.aclose()
+            raise
         return client, resp
     try:
         resp = await client.post(
@@ -25956,8 +25976,7 @@ async def create_response(request: Request):
                             if len(body_bytes) > 8192:
                                 break
                     finally:
-                        await upstream.aclose()
-                        await client.aclose()
+                        await _close_upstream_stream(client, upstream)
                     owner.report(status="failed", reason="failed")
                     try:
                         upstream_json = json.loads(body_bytes.decode("utf-8", errors="replace") or "{}")
@@ -25968,7 +25987,7 @@ async def create_response(request: Request):
                     if refusal is not None:
                         return refusal
                     return _responses_upstream_error(
-                        (upstream_json.get("error") or {}).get("message") or "",
+                        _upstream_error_message(upstream_json),
                         upstream.status_code,
                     )
 
@@ -26028,8 +26047,7 @@ async def create_response(request: Request):
                         for ev in translator.terminal_event():
                             yield ev
                     finally:
-                        await upstream.aclose()
-                        await client.aclose()
+                        await _close_upstream_stream(client, upstream)
 
                 return StreamingResponse(
                     owner.handoff_stream(event_stream()),
@@ -26051,7 +26069,7 @@ async def create_response(request: Request):
                 if refusal is not None:
                     return refusal
                 return _responses_upstream_error(
-                    (upstream_json.get("error") or {}).get("message") or "",
+                    _upstream_error_message(upstream_json),
                     upstream.status_code,
                 )
 
