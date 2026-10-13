@@ -177,3 +177,32 @@ def test_provider_catalog_is_parsed_once_until_a_file_changes(tmp_path: Path) ->
         victim.write_text(victim.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")
         provider_catalog.load_provider_catalog(tmp_path)
         assert parse.call_count == parsed * 2
+
+
+# -- categories API: the store is integrity-checked once per file ------------------
+
+def test_categories_api_checks_the_store_file_once(tmp_path: Path) -> None:
+    import sqlite3
+    from unittest.mock import patch
+
+    from gateway import category_api
+
+    path = tmp_path / "categories.db"
+    category_api._VERIFIED_STORES.clear()
+    seen: list[str] = []
+    real = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        connection = real(*args, **kwargs)
+        connection.set_trace_callback(seen.append)
+        return connection
+
+    with patch.object(sqlite3, "connect", connect):
+        for _ in range(5):
+            category_api._verified_store(path)
+    assert sum("integrity_check" in statement for statement in seen) == 1, seen
+    path.unlink()  # a replaced file is a new file and is checked again
+    with patch.object(sqlite3, "connect", connect):
+        category_api._verified_store(path)
+        category_api._verified_store(path)
+    assert sum("integrity_check" in statement for statement in seen) == 2
