@@ -3,6 +3,7 @@
 import { createContext, useContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { fetchEarly } from "@/lib/early-fetch";
 import { formatPersonName } from "@/lib/format";
 
 export interface Viewer {
@@ -25,7 +26,7 @@ export const ViewerContext = createContext<Viewer>({
 export const useViewer = () => useContext(ViewerContext);
 
 export async function fetchViewer(): Promise<Viewer> {
-  const response = await fetch("/me/api/session", {
+  const response = await fetchEarly("/me/api/session", {
     credentials: "same-origin",
     cache: "no-store",
   });

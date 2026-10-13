@@ -11,7 +11,7 @@ export default function NotFound() {
         description="Use the navigation to explore your gateway."
         action={
           <Button asChild>
-            <Link href="/">Go home</Link>
+            <Link prefetch={false} href="/">Go home</Link>
           </Button>
         }
       />

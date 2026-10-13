@@ -397,7 +397,7 @@ export default function ActivityPage() {
                   </Button>
                 ) : (
                   <Button asChild variant="outline">
-                    <Link href="/apps/?action=create-key">Create an app</Link>
+                    <Link prefetch={false} href="/apps/?action=create-key">Create an app</Link>
                   </Button>
                 )
               }

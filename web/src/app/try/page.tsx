@@ -2631,7 +2631,7 @@ export default function TryPage() {
                       {workflowAvailability.fix && (
                         <>
                           {" "}
-                          <Link
+                          <Link prefetch={false}
                             className="underline underline-offset-4"
                             href={workflowAvailability.fix.href}
                           >
@@ -3035,7 +3035,7 @@ function PromptKeepControl({
     state === "member-off" ? (
       <>
         You turned off prompt keeping.{" "}
-        <Link
+        <Link prefetch={false}
           href="/account"
           className="text-foreground underline underline-offset-4"
         >
@@ -3045,7 +3045,7 @@ function PromptKeepControl({
     ) : owner ? (
       <>
         You turned off prompt keeping for everyone.{" "}
-        <Link
+        <Link prefetch={false}
           href="/settings#prompts"
           className="text-foreground underline underline-offset-4"
         >
@@ -3276,7 +3276,7 @@ function CatalogNotice({
       {owner ? (
         <>
           .{" "}
-          <Link className="text-foreground underline underline-offset-4" href="/engines/">
+          <Link prefetch={false} className="text-foreground underline underline-offset-4" href="/engines/">
             Add one in Engines
           </Link>
           .
@@ -3331,7 +3331,7 @@ function KindNotice({
           {owner ? (
             <>
               No {kind.noun} engine is set up.{" "}
-              <Link className="text-foreground underline underline-offset-4" href="/engines/">
+              <Link prefetch={false} className="text-foreground underline underline-offset-4" href="/engines/">
                 Add one in Engines
               </Link>
               .

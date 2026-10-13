@@ -2732,7 +2732,7 @@ export default function LibraryPage() {
                 </Button>
               ) : (
                 <Button asChild>
-                  <Link href="/try/?capability=image">Make an image</Link>
+                  <Link prefetch={false} href="/try/?capability=image">Make an image</Link>
                 </Button>
               )
             }

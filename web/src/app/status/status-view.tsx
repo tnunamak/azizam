@@ -184,7 +184,7 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
             description="Your session has ended. Sign in to view the models available to your account."
             action={
               <Button asChild>
-                <Link href="/sign-in/?return_to=%2Fstatus%2F">
+                <Link prefetch={false} href="/sign-in/?return_to=%2Fstatus%2F">
                   Sign in
                 </Link>
               </Button>
@@ -363,7 +363,7 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
                 ) : (
                   <>
                     App still not working?{" "}
-                    <Link
+                    <Link prefetch={false}
                       href="/"
                       className="text-link font-medium underline-offset-4 hover:underline"
                     >

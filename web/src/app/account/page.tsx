@@ -175,7 +175,7 @@ function PromptsSection() {
                 />
               ) : (
                 <Button asChild variant="outline">
-                  <Link href="/settings#prompts">Open Settings</Link>
+                  <Link prefetch={false} href="/settings#prompts">Open Settings</Link>
                 </Button>
               )
             }

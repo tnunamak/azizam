@@ -328,7 +328,7 @@ function Tasks({
         {statusExplains ? null : owner ? (
           <>
             {" "}
-            <Link href="/engines/" className="text-link font-medium underline-offset-4 hover:underline">
+            <Link prefetch={false} href="/engines/" className="text-link font-medium underline-offset-4 hover:underline">
               Add an engine
             </Link>
           </>
@@ -409,7 +409,7 @@ function YourApps({ home }: { home: HomeSnapshot }) {
           const name = formatAppName(app.name, home.user.email);
           return (
             <li key={app.id}>
-              <Link
+              <Link prefetch={false}
                 href={`/apps/?app=${encodeURIComponent(app.id)}`}
                 className="group flex min-h-10 items-center gap-3 max-sm:min-h-12"
               >
@@ -434,7 +434,7 @@ function YourApps({ home }: { home: HomeSnapshot }) {
         })}
       </ul>
       {apps.length > 4 ? (
-        <Link
+        <Link prefetch={false}
           href="/apps/"
           className="text-link text-meta inline-flex min-h-10 items-center font-medium underline-offset-4 hover:underline max-sm:min-h-11"
         >
@@ -1160,7 +1160,7 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
           icon={AudioLines}
           className="absolute bottom-2 left-2 z-10"
         />
-        <Link
+        <Link prefetch={false}
           href={`/library/?asset=${encodeURIComponent(creation.asset_id)}`}
           aria-label={linkLabel}
           className="rounded-media absolute inset-0"
@@ -1170,7 +1170,7 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
   }
   return (
     <li className="min-w-0">
-      <Link
+      <Link prefetch={false}
         href={`/library/?asset=${encodeURIComponent(creation.asset_id)}`}
         aria-label={linkLabel}
         className={tile}
@@ -1243,7 +1243,7 @@ function Recent({
         id="recent-heading"
         title="Recent"
         action={
-          <Link
+          <Link prefetch={false}
             className="text-link text-meta inline-flex items-center gap-0.5 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
             href="/library/"
           >
@@ -1418,7 +1418,7 @@ export default function HomePage() {
               {verdict.problems.length ? (
                 // Members too: on a phone Status is under More, so the
                 // warning itself leads to its explanation (red team round 2).
-                <Link
+                <Link prefetch={false}
                   href="/status/"
                   className="text-link inline-flex items-center gap-0.5 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
                 >
@@ -1434,7 +1434,7 @@ export default function HomePage() {
                 </span>
               ) : verdict.tone === "off" && isOwner ? (
                 // Nothing turned on: the owner's next step is an engine.
-                <Link
+                <Link prefetch={false}
                   href="/engines/"
                   className="text-link inline-flex items-center gap-0.5 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
                 >

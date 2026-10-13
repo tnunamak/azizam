@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AppShell } from "@/components/shell/app-shell";
+import { EARLY_SCRIPT } from "@/lib/early-fetch";
 import { PRODUCT_NAME } from "@/lib/product";
 import "./globals.css";
 
@@ -15,6 +16,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Starts the viewer and Home requests before the JavaScript has loaded (lib/early-fetch.ts). */}
+        <script dangerouslySetInnerHTML={{ __html: EARLY_SCRIPT }} />
+      </head>
       <body>
         <AppShell>{children}</AppShell>
       </body>

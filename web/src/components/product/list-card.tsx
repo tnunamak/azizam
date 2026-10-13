@@ -122,7 +122,7 @@ export function ListRow({
       ? "min-h-(--row-1-dense) max-sm:min-h-(--row-phone-1)"
       : "min-h-(--row-1) max-sm:min-h-(--row-phone-1)";
   const titleNode = href ? (
-    <Link
+    <Link prefetch={false}
       href={href}
       className="rounded-control after:absolute after:inset-0 after:content-[''] hover:underline"
     >

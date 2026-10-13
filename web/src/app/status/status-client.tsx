@@ -250,7 +250,7 @@ function EngineSheet({
             ))}
           </dl>
           <Button variant="outline" asChild>
-            <Link
+            <Link prefetch={false}
               href={`/engines?service=${encodeURIComponent(engine.service.id)}`}
             >
               Configure engine
@@ -822,7 +822,7 @@ function ProblemCard({
                     : "outline"
                 }
               >
-                <Link href={problem.href}>
+                <Link prefetch={false} href={problem.href}>
                   {problem.action ?? "Open"}
                   <ChevronRight aria-hidden="true" />
                 </Link>
@@ -974,7 +974,7 @@ function ProviderRow({ provider }: { provider: ProviderStatusView }) {
                     ] as Array<[string, ReactNode]>)),
                 ["Last check", provider.checkedAt ? <RelativeTime ts={provider.checkedAt} /> : "Not checked yet"],
               ]} />
-              <Button asChild variant="outline"><Link href="/providers">{provider.keyState === "missing" ? "Add provider key" : "Open providers"}</Link></Button>
+              <Button asChild variant="outline"><Link prefetch={false} href="/providers">{provider.keyState === "missing" ? "Add provider key" : "Open providers"}</Link></Button>
             </div>
           </SheetContent>
         </Sheet>
@@ -1679,7 +1679,7 @@ export function StatusClient() {
                     title="No engines yet"
                     actions={
                       <Button asChild size="sm">
-                        <Link href="/engines">Add an engine</Link>
+                        <Link prefetch={false} href="/engines">Add an engine</Link>
                       </Button>
                     }
                   >
@@ -1735,7 +1735,7 @@ export function StatusClient() {
                       // The provider layer's empty state, with its next action.
                       <p className="text-muted-foreground flex flex-wrap items-center gap-x-3 border-t py-3 text-meta">
                         <span>No remote providers are configured.</span>
-                        <Link
+                        <Link prefetch={false}
                           href="/engines"
                           className="text-link font-medium underline-offset-4 hover:underline max-sm:inline-block max-sm:py-3"
                         >

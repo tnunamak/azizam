@@ -986,7 +986,7 @@ function DefaultsForm({
             ? "A new person can use local models and workflows through the built-in local access plan. Remote providers are not included. Choosing none does not block AI access."
             : "A new person can use the models and capabilities allowed by this plan, within its limits. Remote providers are available only if the plan allows them."}
         </p>
-        <Link
+        <Link prefetch={false}
           href="/people?tab=plans"
           className="text-link inline-flex min-h-11 max-w-full items-center underline underline-offset-4"
         >

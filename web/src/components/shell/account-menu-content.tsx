@@ -102,7 +102,7 @@ export function AccountMenuContent({
         <DropdownMenuGroup>
           {!viewer.serviceAdmin && (
             <DropdownMenuItem asChild>
-              <Link href="/apps">
+              <Link prefetch={false} href="/apps">
                 <KeyRound />
                 Apps & keys
               </Link>
@@ -110,7 +110,7 @@ export function AccountMenuContent({
           )}
           {viewer.authenticated && !viewer.serviceAdmin && (
             <DropdownMenuItem asChild>
-              <Link href="/account">
+              <Link prefetch={false} href="/account">
                 <UserRoundCog />
                 Your settings
               </Link>
