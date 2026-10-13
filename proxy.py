@@ -7309,7 +7309,7 @@ async def _comfy_run_round(
         except httpx.TransportError:
             # The peer dropped the connection mid-exchange (e.g. RemoteProtocolError).
             return Response(
-                content=json.dumps({"error": {"message": f"ComfyUI connection dropped at {COMFY_HOST}", "type": "api_error"}}),
+                content=json.dumps({"error": {"message": f"Image backend connection dropped at {COMFY_HOST}", "type": "api_error"}}),
                 status_code=502,
                 media_type="application/json",
             ), []
@@ -27879,7 +27879,7 @@ async def _forward_litellm_proxy_request(
             receipt.add_warning("LiteLLM execution timed out")
             owner.report(status="failed", reason="idle_timeout")
             return openai_error_response(
-                "LiteLLM execution timed out.",
+                "Upstream chat request timed out.",
                 status_code=504,
                 error_type="api_error",
                 code="timeout",
@@ -27997,7 +27997,7 @@ async def _forward_litellm_proxy_request(
             receipt.add_warning("LiteLLM execution timed out")
             owner.report(status="failed", reason="idle_timeout")
             return openai_error_response(
-                "LiteLLM execution timed out.",
+                "Upstream chat request timed out.",
                 status_code=504,
                 error_type="api_error",
                 code="timeout",

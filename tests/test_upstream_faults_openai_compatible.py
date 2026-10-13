@@ -196,7 +196,7 @@ def _slow_first_byte_call(stream: bool):
     return asyncio.run(call())
 
 
-_B3_ENVELOPE = {"error": {"message": "LiteLLM execution timed out.", "type": "api_error", "param": None, "code": "timeout"}}
+_B3_ENVELOPE = {"error": {"message": "Upstream chat request timed out.", "type": "api_error", "param": None, "code": "timeout"}}
 
 
 @pytest.mark.parametrize("stream", [False, True], ids=["text", "stream"])

@@ -256,8 +256,8 @@ def test_first_byte_past_the_read_budget_gives_a_504(frontend_gateway, fake_upst
     [forwarded] = fake.calls("chat")
     assert forwarded.json["model"] == MODEL and forwarded.json["messages"] == MESSAGES and forwarded.json["stream"] is stream
     expected = (
-        {"type": "error", "error": {"type": "api_error", "message": "LiteLLM execution timed out."}}
-        if frontend == "anthropic" else {"error": "LiteLLM execution timed out."}
+        {"type": "error", "error": {"type": "api_error", "message": "Upstream chat request timed out."}}
+        if frontend == "anthropic" else {"error": "Upstream chat request timed out."}
     )
     expect_fixed("FK-B3", json.loads(raw), expected)
 
