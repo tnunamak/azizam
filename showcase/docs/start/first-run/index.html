@@ -40,6 +40,7 @@
       <h1 id="first-run">First run</h1>
 <p>This tutorial takes a new gateway to its first reply. You create the owner account, connect one chat engine, create an app key and send a message.</p>
 <details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#1-create-the-owner-account">1. Create the owner account</a></li><li class="toc-l2"><a href="#2-connect-your-engine">2. Connect your engine</a></li><li class="toc-l2"><a href="#3-create-an-app-key">3. Create an app key</a></li><li class="toc-l2"><a href="#4-get-a-first-reply">4. Get a first reply</a></li><li class="toc-l3"><a href="#send-the-same-request-with-curl">Send the same request with curl</a></li><li class="toc-l3"><a href="#if-there-is-no-reply">If there is no reply</a></li><li class="toc-l2"><a href="#next-steps">Next steps</a></li></ul></nav></details><p>Before you start, <a href="/showcase/docs/start/install/">install Azizam</a> and make sure your chat engine is running with a model loaded.</p>
+<p>The examples below use the default port, 5000. If you changed AZIZAM_PORT during installation, replace 5000 in every URL on this page with that port. Run curl on the gateway computer. The app URL also assumes the app runs directly on that computer. For an app on another device or in another container, first configure a reachable gateway address using the Security guide.</p>
 <h2 id="1-create-the-owner-account">1. Create the owner account <a class="anchor" href="#1-create-the-owner-account" aria-label="Link to 1. Create the owner account">#</a></h2>
 <p>On the computer that runs the gateway, open:</p>
 <div class="codeblock"><div class="code-bar"><span class="code-lang">Text</span><button class="copy js-only" type="button">Copy</button></div><pre><code>http://127.0.0.1:5000/setup
@@ -49,7 +50,7 @@
 <ol>
 <li>Open <strong>Engines</strong>, in the <strong>Gateway</strong> group of the menu, and select <strong>Add engine</strong>.</li>
 <li>Enter a name and your engine's OpenAI-compatible base URL. Use an <code>http://</code> address that the gateway can reach. For an engine on the same computer, see <a href="/showcase/docs/start/install/#connect-to-an-engine-on-the-same-computer">Connect to an engine on the same computer</a>.</li>
-<li>If the engine needs a key, enter the name of the environment variable that holds it in <strong>Key environment variable</strong>. Do not paste the key itself.</li>
+<li>If the engine needs a key, first make sure its credential environment variable is available to the process that connects to the engine. Enter that variable's name in Key environment variable. Do not paste the key itself. If the variable has not been configured, stop here and complete credential setup before testing the connection.</li>
 <li>Select <strong>Test connection</strong>, then add the engine.</li>
 <li>On the engine, select <strong>Detect models</strong> to read the engine's models, and give the chat model a model name.</li>
 </ol>
@@ -68,8 +69,8 @@
 </ul>
 <p>On <strong>Home</strong>, select <strong>Check connection</strong> to check the key against the gateway. Then send a short message from your app. A reply in your app means that the app, the key, the gateway and the engine all work.</p>
 <h3 id="send-the-same-request-with-curl">Send the same request with curl <a class="anchor" href="#send-the-same-request-with-curl" aria-label="Link to Send the same request with curl">#</a></h3>
-<p>This example reads the key without showing it on screen. It asks for a streamed reply.</p>
-<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nb">read</span><span class="w"> </span>-r<span class="w"> </span>-s<span class="w"> </span>-p<span class="w"> </span><span class="s1">'App key: '</span><span class="w"> </span>AZIZAM_API_KEY<span class="p">;</span><span class="w"> </span><span class="nb">printf</span><span class="w"> </span><span class="s1">'\n'</span>
+<p>Run this example in Bash on the gateway computer. If your terminal uses another shell, run bash first. It reads the key without echoing it and asks for a streamed reply. Your curl must support --fail-with-body.</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang"></span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nb">read</span><span class="w"> </span>-r<span class="w"> </span>-s<span class="w"> </span>-p<span class="w"> </span><span class="s1">'App key: '</span><span class="w"> </span>AZIZAM_API_KEY<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">printf</span><span class="w"> </span><span class="s1">'\n'</span><span class="w"> </span><span class="o">&amp;&amp;</span>
 curl<span class="w"> </span>--no-buffer<span class="w"> </span>--fail-with-body<span class="w"> </span>--silent<span class="w"> </span>--show-error<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>http://127.0.0.1:5000/openai/v1/chat/completions<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$AZIZAM_API_KEY</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>

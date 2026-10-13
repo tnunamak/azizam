@@ -40,20 +40,14 @@
       <h1 id="media-jobs">Media jobs</h1>
 <p>A job keeps working when your connection drops. Save its <code>job_id</code> and check the job. Do not start a new job only because a connection closed.</p>
 <details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#submit-a-job">Submit a job</a></li><li class="toc-l2"><a href="#check-the-job">Check the job</a></li><li class="toc-l2"><a href="#read-progress-events">Read progress events</a></li><li class="toc-l2"><a href="#retry-safely">Retry safely</a></li><li class="toc-l2"><a href="#download-the-result">Download the result</a></li></ul></nav></details><p><code>POST /gateway/v1/media/jobs</code> takes an <code>intent</code> and a <code>request</code>. This page uses <code>image.generate</code>, whose <code>request</code> is an OpenAI image request. The route also accepts <code>image.edit</code>, <code>audio.generate</code>, <code>music.generate</code>, <code>sfx.generate</code> and <code>video.generate</code>. Other intents return <code>unsupported_media_job</code>.</p>
-<p>Set the environment variables in the <a href="/showcase/docs/api/#set-up-your-environment">API overview</a> first, and set <code>AZIZAM_IMAGE_MODEL</code> to an image model your key can use.</p>
+<p>Set the environment variables in the <a href="/showcase/docs/api/#set-up-your-environment">API overview</a> first, and export <code>AZIZAM_IMAGE_MODEL</code> with an image model your key can use.</p>
 <h2 id="submit-a-job">Submit a job <a class="anchor" href="#submit-a-job" aria-label="Link to Submit a job">#</a></h2>
-<p>Choose an idempotency key for this request. Use the same key if you retry this exact request, and a new key for new work.</p>
-<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nb">export</span><span class="w"> </span><span class="nv">AZIZAM_IDEMPOTENCY_KEY</span><span class="o">=</span><span class="s1">'blue-bowl-001'</span>
-curl<span class="w"> </span>--fail-with-body<span class="w"> </span>-sS<span class="w"> </span><span class="s2">"</span><span class="nv">$AZIZAM_BASE_URL</span><span class="s2">/gateway/v1/media/jobs"</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$AZIZAM_API_KEY</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Idempotency-Key: </span><span class="nv">$AZIZAM_IDEMPOTENCY_KEY</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--output<span class="w"> </span>job.json<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--data<span class="w"> </span>@-<span class="w"> </span><span class="s">&lt;&lt;EOF</span>
-<span class="s">{"intent": "image.generate",</span>
-<span class="s"> "request": {"model": "$AZIZAM_IMAGE_MODEL",</span>
-<span class="s">             "prompt": "A blue ceramic bowl on a plain table.", "n": 1}}</span>
-<span class="s">EOF</span>
+<p>Generate an idempotency key once for new work. If the submission response is lost, rerun only the submission pipeline with the same key and unchanged request. Do not rerun the key-generation line for a retry.</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nb">export</span><span class="w"> </span><span class="nv">AZIZAM_IDEMPOTENCY_KEY</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>python3<span class="w"> </span>-c<span class="w"> </span><span class="s1">'import uuid; print(uuid.uuid4())'</span><span class="k">)</span><span class="s2">"</span>
+python3<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;'PY' | curl --fail-with-body -sS "$AZIZAM_BASE_URL/gateway/v1/media/jobs" -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Idempotency-Key: $AZIZAM_IDEMPOTENCY_KEY" -H 'Content-Type: application/json' --output job.json --data-binary @-</span>
+<span class="s">import json, os</span>
+<span class="s">print(json.dumps({"intent": "image.generate", "request": {"model": os.environ["AZIZAM_IMAGE_MODEL"], "prompt": "A blue ceramic bowl on a plain table.", "n": 1}}))</span>
+<span class="s">PY</span>
 </code></pre></div>
 <h2 id="check-the-job">Check the job <a class="anchor" href="#check-the-job" aria-label="Link to Check the job">#</a></h2>
 <div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nv">JOB_ID</span><span class="o">=</span><span class="k">$(</span>python3<span class="w"> </span>-c<span class="w"> </span><span class="s1">'import json; print(json.load(open("job.json"))["job_id"])'</span><span class="k">)</span>
@@ -110,9 +104,7 @@ curl<span class="w"> </span>--fail-with-body<span class="w"> </span>-sS<span cla
 </div>
 <p>To read only new events, pass the highest <code>sequence</code> you have as <code>after_sequence</code>.</p>
 <h2 id="retry-safely">Retry safely <a class="anchor" href="#retry-safely" aria-label="Link to Retry safely">#</a></h2>
-<p>If you lose the response, send the same request again with the same idempotency key. The gateway returns the job it already has and does not start new work.</p>
-<p>Use a new idempotency key for new work. A request that reuses an idempotency key gets the original job back, even if its body is different.</p>
-<p>The gateway remembers idempotency keys for active jobs, and for 14 days after a job's last update. After that, a repeat can start new work.</p>
+<p>Retry a lost submission response with the same idempotency key and unchanged request. Use a new key for new work. Do not rely on a changed request replaying the old job: the media-job store rejects mismatched or unverifiable owner, operation or input with <code>idempotency_conflict</code>. The store retains replay eligibility while a job is active, or while its last update is within 14 days. After that, a repeated submission can start new work.</p>
 <h2 id="download-the-result">Download the result <a class="anchor" href="#download-the-result" aria-label="Link to Download the result">#</a></h2>
 <p>When the job has succeeded, read its content. Before that, this route returns HTTP 409 with <code>media_job_not_ready</code>.</p>
 <div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>-sS<span class="w"> </span><span class="s2">"</span><span class="nv">$AZIZAM_BASE_URL</span><span class="s2">/gateway/v1/media/jobs/</span><span class="nv">$JOB_ID</span><span class="s2">/content"</span><span class="w"> </span><span class="se">\</span>

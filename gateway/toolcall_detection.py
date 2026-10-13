@@ -8,7 +8,7 @@ Implements the SLVP design from docs/design/TOOLCALL_SLVP_DESIGN.md §5–6:
     2. ADVISORY   — maps (backend-id, detected-family) → exact remediation
                     string, surfaced via response header + WARN log.
     3. NORMALIZATION — two structural repairs on already-lifted tool_calls:
-                    a. toolcall-args-stringify  (TabbyAPI dict→JSON string)
+                    a. toolcall-args-stringify  (dict→JSON string)
                     b. toolcall-finish-reason-repair (Ollama stop→tool_calls)
 
 Detection gates strictly on ``request_had_tools`` (tools array present and
@@ -283,7 +283,7 @@ class ToolcallStreamDetector:
 # ---------------------------------------------------------------------------
 
 def normalize_toolcall_args(payload: dict[str, Any]) -> bool:
-    """toolcall-args-stringify: convert dict arguments to JSON string (TabbyAPI).
+    """toolcall-args-stringify: convert dict arguments to JSON string.
 
     §6.1: If tool_calls[].function.arguments is a dict (or any non-string),
     JSON-encode it to the spec-required string.  If it is already a string,

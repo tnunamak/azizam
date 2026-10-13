@@ -49,13 +49,14 @@
 <li>The built-in default plan.</li>
 </ol>
 <p>If the selected plan is missing or invalid, the request is refused. A turned-off app cannot run requests.</p>
-<p>You can change an app's plan at any time. The app does not need a new key.</p>
+<p>You can change an app's default plan without issuing new keys. A key with its own plan keeps using that plan instead.</p>
 <h2 id="how-a-request-is-checked">How a request is checked <a class="anchor" href="#how-a-request-is-checked" aria-label="Link to How a request is checked">#</a></h2>
 <p>The gateway checks the rules in order. The first refusal wins.</p>
 <ul>
-<li>A list that is not set does not restrict anything.</li>
-<li>An empty list refuses everything.</li>
-<li>Protocol, workflow, model and engine lists apply when the request names that value.</li>
+<li>For protocol, workflow, model and engine allow-lists, an unset list adds no restriction. An empty list refuses requests that supply that value.</li>
+<li>Capability selectors apply only when the request supplies the corresponding metadata.</li>
+<li>Remote providers must be explicitly allowed.</li>
+<li>Native passthrough must be enabled separately. Its empty engine and operation lists add no restriction.</li>
 </ul>
 <p>Capability rules use the labels that describe each model. A label is not proof of what a model or its output contains.</p>
 <p>Cloud fallback and paid fallback are separate permissions. Allowing a provider does not, by itself, allow paid fallback.</p>

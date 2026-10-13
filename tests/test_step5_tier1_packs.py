@@ -1,7 +1,7 @@
 """Step 5 tests — Tier-1 per-backend transform packs.
 
 GATE: Each named transform (ollama-unsupported-params, drop-null-params,
-llamacpp-cache-prompt, mistral-penalty-clamp, tabby-penalty-floor) must:
+llamacpp-cache-prompt, mistral-penalty-clamp) must:
   1. Apply correctly when its condition is met.
   2. Be a no-op when the `when:` condition is unmet (or when the target param
      is already in range / absent).
@@ -223,56 +223,6 @@ class TestMistralPenaltyClamp:
 
 
 # ---------------------------------------------------------------------------
-# tabby-penalty-floor
-# ---------------------------------------------------------------------------
-
-
-class TestTabbyPenaltyFloor:
-    NAME = "tabby-penalty-floor"
-
-    def test_registered(self) -> None:
-        primitives = REGISTRY.resolve(self.NAME)
-        # Two primitives: one for frequency_penalty, one for presence_penalty
-        assert len(primitives) == 2
-
-    def test_frequency_penalty_below_zero_clamped(self) -> None:
-        body = {"model": "tabby", "frequency_penalty": -0.5}
-        result = _req(self.NAME, body)
-        assert result["frequency_penalty"] == 0.0
-
-    def test_frequency_penalty_at_zero_unchanged(self) -> None:
-        body = {"model": "tabby", "frequency_penalty": 0.0}
-        result = _req(self.NAME, body)
-        assert result["frequency_penalty"] == 0.0
-
-    def test_frequency_penalty_positive_unchanged(self) -> None:
-        body = {"model": "tabby", "frequency_penalty": 1.5}
-        result = _req(self.NAME, body)
-        assert result["frequency_penalty"] == 1.5
-
-    def test_presence_penalty_below_zero_clamped(self) -> None:
-        body = {"model": "tabby", "presence_penalty": -1.0}
-        result = _req(self.NAME, body)
-        assert result["presence_penalty"] == 0.0
-
-    def test_presence_penalty_positive_unchanged(self) -> None:
-        body = {"model": "tabby", "presence_penalty": 0.5}
-        result = _req(self.NAME, body)
-        assert result["presence_penalty"] == 0.5
-
-    def test_absent_params_are_noop(self) -> None:
-        body = {"model": "tabby", "temperature": 0.7}
-        result = _req(self.NAME, body)
-        assert result == body
-
-    def test_no_max_cap(self) -> None:
-        """tabby-penalty-floor only has a floor (min=0), no upper cap."""
-        body = {"model": "tabby", "frequency_penalty": 100.0}
-        result = _req(self.NAME, body)
-        assert result["frequency_penalty"] == 100.0
-
-
-# ---------------------------------------------------------------------------
 # Non-alteration guard — none of these attach to the current config
 # ---------------------------------------------------------------------------
 
@@ -314,14 +264,4 @@ class TestTier1PacksNonAlteration:
         }
         result = run_request_pipeline(["mistral-penalty-clamp"], copy.deepcopy(body))
         # Both in [-2, 2] — unchanged
-        assert result == body
-
-    def test_baseline_request_penalty_in_range_for_tabby(self) -> None:
-        body = {
-            "model": "tabby",
-            "frequency_penalty": 0.5,
-            "presence_penalty": 1.0,
-        }
-        result = run_request_pipeline(["tabby-penalty-floor"], copy.deepcopy(body))
-        # Both >= 0 — unchanged
         assert result == body

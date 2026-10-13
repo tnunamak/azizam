@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Azizam - Unified OpenAI-compatible API for multiple backends.
-Served externally at ai.vivid.fish (Traefik on 192.168.1.4 → 192.168.1.180:5000).
+Served behind whatever reverse proxy the operator runs; see README.md.
 
 Routes requests to:
-- TabbyAPI (Qwen3-VL) for chat/completions/vision
+- Local LLM backends declared in the service registry for chat/completions/vision
 - TTS backend (Voxtral-4B via vLLM) for /v1/audio/speech
 - Future: llama.cpp for tool calling
 
@@ -181,7 +181,6 @@ from gateway.workflows_catalog import (
     build_workflows_catalog,
     create_workflows_catalog_router,
 )
-from gateway import engine_quarantine
 from gateway.user_runtime import (
     UserPortalError,
     build_user_activity_snapshot,
@@ -443,20 +442,6 @@ def bool_from_config(value, default: bool) -> bool:
 PROXY_HOST = config.get("proxy", {}).get("host", "127.0.0.1")
 PROXY_PORT = int(get_env("AZIZAM_PORT", config.get("proxy", {}).get("port", 5000)))
 
-# TabbyAPI backend
-tabby_cfg = config.get("backends", {}).get("tabby", {})
-TABBY_HOST = f"http://{tabby_cfg.get('host', '127.0.0.1')}:{tabby_cfg.get('port', 5050)}"
-TABBY_HEALTH_ENDPOINT = tabby_cfg.get("health_endpoint", "/health")
-TABBY_IDLE_TIMEOUT = int(os.environ.get("TABBY_IDLE_TIMEOUT", tabby_cfg.get("idle_timeout", 300)))
-# The gateway never owns an engine's process existence (the binding principle:
-# it manages running and routing, never existence). Tabby's lifecycle —
-# start/stop/crash-restart — belongs to the operator's supervisor: a systemd
-# unit, a docker container, or a `command` LifecycleDriver. There is no
-# gateway-spawns-tabby mode anymore; `managed` is retained only as a
-# read-back-compatible no-op so an old config with `managed: true` still loads
-# (it simply has no effect — the gateway will not spawn a subprocess).
-TABBY_MANAGED = False  # process ownership removed; see CommandDriver / systemd
-
 # KoboldCpp backend
 kobold_cfg = config.get("backends", {}).get("kobold", {})
 KOBOLD_HOST = f"http://{kobold_cfg.get('host', '127.0.0.1')}:{kobold_cfg.get('port', 5051)}"
@@ -499,8 +484,7 @@ def _build_llm_backend_hosts() -> dict[str, str]:
 
     Reads config["backends"] (a boot-time projection of the DB registry) so that
     any service added via the admin UI and marked chat-capable is automatically
-    included after a restart. The tabby/kobold entries come out identical to the
-    previous hard-coded dict for the current deployment.
+    included after a restart.
     """
     result: dict[str, str] = {}
     for bid, bcfg in (config.get("backends") or {}).items():
@@ -676,9 +660,7 @@ def host_for_capability(capability: str) -> str | None:
 
 # Model routing - auto-detect backend from filesystem
 routing_cfg = config.get("model_routing", {})
-MODEL_DIR = routing_cfg.get("model_dir", "/media/windows/AI Models/LLMs")
 GGUF_DIR = routing_cfg.get("gguf_dir", "/media/windows/AI Models/LLMs/GGUF")
-TABBY_SERVICE = routing_cfg.get("tabby_service", "tabbyapi.service")
 KOBOLD_SERVICE_NAME = routing_cfg.get("kobold_service", "koboldcpp.service")
 SWITCH_TIMEOUT = routing_cfg.get("switch_timeout", 60)
 # Idle (inter-chunk) timeout when forwarding /v1/chat/completions and /v1/completions
@@ -694,33 +676,35 @@ SWITCH_TIMEOUT = routing_cfg.get("switch_timeout", 60)
 # legitimate work and tight enough that a hung backend frees the socket promptly.
 UPSTREAM_READ_TIMEOUT = float(os.environ.get("UPSTREAM_READ_TIMEOUT", routing_cfg.get("upstream_read_timeout", 600)))
 # Roles: logical aliases for backends. Lets clients send `model: "default"` instead of
-# hardcoding a filename. Roles map to a backend type ("kobold", "tabby", or any enabled
+# hardcoding a filename. Roles map to a backend type (any enabled
 # registry backend) — never to a specific model file for unmanaged backends.
 ROLES = config.get("roles", {})
 
-# Local-swap backends require a GGUF file path to hot-swap the model on disk.
-# The engine literals live in the quarantine (gateway/engine_quarantine.py) —
-# this is an alias so existing call sites keep working. Any backend whose role
-# entry carries a "path" key is also treated as local-swap.
-_LOCAL_SWAP_BACKENDS: frozenset[str] = engine_quarantine.LOCAL_SWAP_BACKENDS
+# A local-swap backend is one whose lifecycle driver swaps models (driver data on
+# the service record). Any backend whose role entry carries a "path" key is also
+# treated as local-swap.
+def _is_local_swap_backend(backend: str | None) -> bool:
+    from gateway.lifecycle_drivers import driver_for_service, supports_swap
+
+    if not backend:
+        return False
+    return supports_swap(driver_for_service(backend, config.get("backends")))
+
 
 # Optional catalog of additional GGUF aliases (parallel to ROLES). Each entry has
 # id/backend/path[/description] and is treated like a role with a pinned model:
 # clients send `model: "<id>"` and the proxy resolves it via ensure_target().
 # This lets us surface arbitrary GGUFs on /v1/models without inventing roles.
 # All MODELS_CATALOG entries require a local file path (this is a GGUF catalog).
-# Any enabled registry backend may appear here; kobold/tabby behavior is unchanged.
+# Any enabled registry backend may appear here.
 def _normalize_models_catalog(raw) -> dict:
     """Normalize config['models'] (list of dicts) into {normalized_id: entry}.
 
-    Accepts any backend that is known in config["backends"] (or is a legacy
-    local-swap backend).  All entries in this catalog MUST supply a local file
+    Accepts any backend that is known in config["backends"].  All entries in this catalog MUST supply a local file
     path — it is a GGUF-alias catalog by design.  Entries without a path are
-    skipped, matching the previous kobold/tabby-only behaviour exactly.
+    skipped.
     """
-    known_backends: frozenset[str] = frozenset(
-        (config.get("backends") or {}).keys()
-    ) | _LOCAL_SWAP_BACKENDS
+    known_backends: frozenset[str] = frozenset((config.get("backends") or {}).keys())
     out: dict = {}
     if not isinstance(raw, list):
         return out
@@ -876,10 +860,6 @@ _OPENAI_VIDEO_STATUS_BY_INTERNAL = {
     "canceled": "failed",
 }
 
-# Routing
-routing_cfg = config.get("routing", {})
-CHECK_INTERVAL = routing_cfg.get("check_interval", 30)
-
 # LLM behavior (model pinning to avoid kobold restarts on every role change).
 # When pin_loaded_model is true (default), ensure_target() will NOT restart
 # llama-turbo to swap models — it serves with whatever's loaded and logs a
@@ -923,7 +903,7 @@ VISION_MODEL_PATTERNS = [
 # =============================================================================
 # Live runtime registry — hot-reload without process restart
 # =============================================================================
-# Module-level names (TABBY_HOST, KOBOLD_HOST, LLM_BACKEND_HOSTS, …) are
+# Module-level names (KOBOLD_HOST, LLM_BACKEND_HOSTS, …) are
 # Python globals: every function that references them looks up the current
 # value at call time, not at import time.  reload_runtime_config() re-derives
 # all of them from the DB and reassigns the module names atomically (one
@@ -942,14 +922,12 @@ def _derive_backend_constants(effective_cfg: dict) -> dict:
     reload_runtime_config() will reassign.  Factored out so tests can call
     it directly without touching global state.
     """
-    t_cfg = effective_cfg.get("backends", {}).get("tabby", {})
     k_cfg = effective_cfg.get("backends", {}).get("kobold", {})
     tts_c = effective_cfg.get("backends", {}).get("tts", {})
     stt_c = effective_cfg.get("backends", {}).get("stt", {})
     emb_c = effective_cfg.get("backends", {}).get("embeddings", {})
     cfy_c = effective_cfg.get("backends", {}).get("comfyui", {})
 
-    new_tabby_host = f"http://{t_cfg.get('host', '127.0.0.1')}:{t_cfg.get('port', 5050)}"
     new_kobold_host = f"http://{k_cfg.get('host', '127.0.0.1')}:{k_cfg.get('port', 5051)}"
     new_tts_host = f"http://{tts_c.get('host', '127.0.0.1')}:{tts_c.get('port', 8880)}"
     new_stt_host = f"http://{stt_c.get('host', '127.0.0.1')}:{stt_c.get('port', 5092)}"
@@ -976,7 +954,6 @@ def _derive_backend_constants(effective_cfg: dict) -> dict:
         new_llm_hosts[bid] = f"http://{host}:{port}"
 
     return {
-        "TABBY_HOST": new_tabby_host,
         "KOBOLD_HOST": new_kobold_host,
         "TTS_HOST": new_tts_host,
         "STT_HOST": new_stt_host,
@@ -1025,7 +1002,7 @@ def reload_runtime_config() -> dict:
     print(
         f"[proxy] runtime config reloaded — "
         f"LLM backends: {list(updates['LLM_BACKEND_HOSTS'].keys())} "
-        f"TABBY={updates['TABBY_HOST']} KOBOLD={updates['KOBOLD_HOST']}",
+        f"KOBOLD={updates['KOBOLD_HOST']}",
         flush=True,
     )
     return updates
@@ -1048,14 +1025,6 @@ def is_vision_model(model_name: str) -> bool:
             return True
     return False
 
-# Endpoints that should NOT reset idle timer
-NO_ACTIVITY_PATHS = [
-    "/health",
-    "/v1/model",
-    "/v1/models",
-    "/v1/audio",  # TTS doesn't affect LLM idle
-]
-
 # TTS endpoints - route to TTS backend
 TTS_PATHS = [
     "/v1/audio/speech",
@@ -1070,7 +1039,7 @@ async def get_active_backend() -> Optional[str]:
 
     Probes all backends in LLM_BACKEND_HOSTS (registry-derived) in priority
     order and returns the id of the first one that answers healthy.  For the
-    current deployment this resolves to 'tabby' or 'kobold' exactly as before.
+    current deployment this resolves to 'kobold' exactly as before.
     """
     backends = config.get("backends") or {}
     # Sort by priority (lower = higher priority) so the preferred backend wins.
@@ -1088,8 +1057,8 @@ async def get_active_backend() -> Optional[str]:
 # Numbered higher than 10-qwen27b.conf so systemd's last-wins semantics apply.
 KOBOLD_MODEL_DROPIN = Path.home() / f".config/systemd/user/{KOBOLD_SERVICE_NAME}.d/20-model.conf"
 
-# Generic per-service swap-lock registry.  Keyed by service id (e.g. "kobold",
-# "tabby", or any future backend id).  A lock is created lazily on first access.
+# Generic per-service swap-lock registry.  Keyed by service id (e.g. "kobold"
+# or any future backend id).  A lock is created lazily on first access.
 # Concurrency safety: dict reads/writes are GIL-atomic in CPython, so two
 # coroutines racing to create the lock for the same key will at worst both
 # evaluate asyncio.Lock() and one will overwrite the other — but both callers
@@ -1119,11 +1088,12 @@ def _swap_drain_settings() -> SwapDrainSettings:
     """`llm.swap_drain`, read per call so a config reload applies."""
     return SwapDrainSettings.from_llm_config(config.get("llm"))
 
-# Kobold loaded-state cache. Seeded from the backend's state endpoint on first read
-# after startup, then updated authoritatively after every swap. TTL guards against
-# the server being restarted out-of-band (e.g. manual systemctl restart).
-_kobold_state: dict = {"model": None, "mmproj": None, "ts": 0.0}
-_KOBOLD_STATE_TTL = 5.0
+# Loaded-state cache, one entry per swap-managed backend. Seeded from the
+# backend's state endpoint on first read after startup, then reset after every
+# swap. TTL guards against the server being restarted out-of-band (e.g. manual
+# systemctl restart).
+_loaded_state: dict[str, dict] = {}
+_LOADED_STATE_TTL = 5.0
 
 # Per-state_type seed strategies.  Each entry describes how to ask a live backend
 # what model it has loaded.  Add a new entry here when wiring up a new backend type
@@ -1132,38 +1102,25 @@ _KOBOLD_STATE_TTL = 5.0
 # Keys:
 #   endpoint     – path to GET; response must be JSON
 #   model_key    – dot-path into the JSON to the loaded model identifier
-#   mmproj_key   – dot-path to the mmproj path, or None if the backend has no mmproj
-#   mmproj_pgrep – if True, fall back to pgrep --mmproj parsing when mmproj_key is None
-#                  (llama.cpp exposes mmproj only in the process cmdline, not in /props)
+#
+# The aux (vision projector) file is not probed here: a service that has one
+# declares it in its `aux` field (see _aux_from_process).
 #
 # Dot-path format: "a.b" means data["a"]["b"].  A bare key "x" means data["x"].
 _BACKEND_STATE_STRATEGIES: dict = {
     "llama_cpp": {
         "endpoint": "/props",
         "model_key": "model_path",
-        "mmproj_key": None,
-        "mmproj_pgrep": True,
-    },
-    "tabbyapi": {
-        "endpoint": "/v1/model",
-        "model_key": "id",
-        "mmproj_key": None,
-        "mmproj_pgrep": False,
     },
     # vllm exposes /v1/models (list); take the first model id.
-    # Set mmproj_pgrep: False — vllm has no mmproj concept.
     "vllm": {
         "endpoint": "/v1/models",
         "model_key": "data.0.id",
-        "mmproj_key": None,
-        "mmproj_pgrep": False,
     },
     # Generic OpenAI-compatible backend (Ollama, LM Studio, etc.)
     "openai_compatible": {
         "endpoint": "/v1/models",
         "model_key": "data.0.id",
-        "mmproj_key": None,
-        "mmproj_pgrep": False,
     },
 }
 
@@ -1183,119 +1140,151 @@ def _resolve_dot_path(data: dict, path: str) -> Optional[str]:
     return str(cur) if cur is not None else None
 
 
-def _kobold_mmproj_from_pgrep() -> Optional[str]:
-    """Read --mmproj from the llama-server process on the kobold port.
+def _backend_base_url(backend: str) -> str:
+    """The service's own base URL: the registry-derived host, else its record's host and port."""
+    if backend in LLM_BACKEND_HOSTS:
+        return LLM_BACKEND_HOSTS[backend]
+    cfg = (config.get("backends") or {}).get(backend) or {}
+    return f"http://{cfg.get('host', '127.0.0.1')}:{cfg.get('port')}"
 
-    /props does not expose the mmproj path, so pgrep is the fallback source.
-    Scoped to the kobold port to avoid matching other llama-server instances.
+
+def _backend_reports_loaded_model_as_path(backend: str) -> bool:
+    """True if the service record declares ``loaded_model_identity: path``.
+
+    Such a service reports its loaded model as a filesystem path, compared with
+    the path being activated, via the cached local probe instead of an HTTP
+    model-id read.
     """
-    kobold_port = str(kobold_cfg.get("port", 5051))
+    cfg = (config.get("backends") or {}).get(backend)
+    return isinstance(cfg, Mapping) and cfg.get("loaded_model_identity") == "path"
+
+
+def _path_identity_backends() -> list[str]:
+    return [
+        backend for backend in (config.get("backends") or {})
+        if _backend_reports_loaded_model_as_path(backend)
+    ]
+
+
+def _aux_probe_config(backend: str) -> Mapping[str, Any] | None:
+    """The service's ``aux`` field (how to read its loaded aux file), or None."""
+    cfg = (config.get("backends") or {}).get(backend)
+    aux = cfg.get("aux") if isinstance(cfg, Mapping) else None
+    return aux if isinstance(aux, Mapping) and aux.get("probe") == "process-cmdline" else None
+
+
+def _aux_grants_vision(backend: str) -> bool:
+    """True if the service's ``aux`` field says a loaded aux file adds image input.
+
+    The caller still checks that an aux file is loaded right now.
+    """
+    cfg = (config.get("backends") or {}).get(backend)
+    aux = cfg.get("aux") if isinstance(cfg, Mapping) else None
+    grants = aux.get("grants_input_modalities") if isinstance(aux, Mapping) else None
+    return isinstance(grants, (list, tuple)) and "image" in grants
+
+
+def _aux_from_process(backend: str, aux: Mapping[str, Any]) -> Optional[str]:
+    """Read the aux file path from the command line of the backend's server process.
+
+    The server does not report its aux file over HTTP, so the process command
+    line is the source: the process named by ``aux.process``, scoped to the
+    service's port, with the file following ``aux.flag``.
+    """
+    port = str(((config.get("backends") or {}).get(backend) or {}).get("port"))
+    process, flag = str(aux.get("process") or ""), str(aux.get("flag") or "")
+    if not process or not flag:
+        return None
     try:
         result = subprocess.run(
-            ["pgrep", "-af", "llama-server"],
+            ["pgrep", "-af", process],
             capture_output=True,
             text=True,
             timeout=2,
         )
         for line in result.stdout.splitlines():
-            if f"--port {kobold_port}" not in line:
+            if f"--port {port}" not in line:
                 continue
-            idx = line.find("--mmproj ")
+            idx = line.find(f"{flag} ")
             if idx == -1:
                 return None
-            tail = line[idx + len("--mmproj "):]
+            tail = line[idx + len(flag) + 1:]
             end = tail.find(" --")
             if end != -1:
                 tail = tail[:end]
             return tail.strip() or None
     except Exception as e:
-        print(f"[proxy] _kobold_mmproj_from_pgrep: pgrep failed: {e}", flush=True)
+        print(f"[proxy] _aux_from_process: pgrep failed: {e}", flush=True)
     return None
 
 
-def _seed_kobold_state() -> None:
-    """Populate _kobold_state by querying the live backend.
+def _seed_loaded_state(backend: str) -> None:
+    """Populate the backend's loaded-state entry by querying the live backend.
 
-    Strategy is selected by `state_type` in the kobold backend config
-    (proxy_config.yml).  Falls back to pgrep-only if the HTTP query fails or
-    the state_type is unrecognised.  Called when the cache is cold (startup or
-    TTL expiry) — synchronous but cheap relative to a model swap.
+    The model strategy is selected by `state_type` in the service config; the
+    aux file is read as the service's `aux` field says. Called when the cache
+    is cold (startup or TTL expiry) — synchronous but cheap relative to a model
+    swap.
     """
     import urllib.request as _urlreq
 
-    state_type = kobold_cfg.get("state_type", "llama_cpp")
+    state_type = ((config.get("backends") or {}).get(backend) or {}).get("state_type", "llama_cpp")
     strategy = _BACKEND_STATE_STRATEGIES.get(state_type)
 
     model: Optional[str] = None
-    mmproj: Optional[str] = None
+    aux_file: Optional[str] = None
 
     if strategy:
         try:
-            url = f"{KOBOLD_HOST}{strategy['endpoint']}"
+            url = f"{_backend_base_url(backend)}{strategy['endpoint']}"
             with _urlreq.urlopen(url, timeout=2) as resp:
                 data = json.loads(resp.read())
                 model = _resolve_dot_path(data, strategy["model_key"])
         except Exception:
             pass  # server not up yet, or wrong endpoint — state stays None
-
-        if strategy.get("mmproj_key"):
-            try:
-                url = f"{KOBOLD_HOST}{strategy['endpoint']}"
-                with _urlreq.urlopen(url, timeout=2) as resp:
-                    data = json.loads(resp.read())
-                    mmproj = _resolve_dot_path(data, strategy["mmproj_key"])
-            except Exception:
-                pass
-        elif strategy.get("mmproj_pgrep"):
-            mmproj = _kobold_mmproj_from_pgrep()
     else:
-        # Unknown state_type — best-effort pgrep only.
         print(
-            f"[proxy] _seed_kobold_state: unknown state_type={state_type!r}; "
-            "falling back to pgrep (add an entry to _BACKEND_STATE_STRATEGIES to fix this)",
+            f"[proxy] _seed_loaded_state: unknown state_type={state_type!r}; "
+            "add an entry to _BACKEND_STATE_STRATEGIES to fix this",
             flush=True,
         )
-        mmproj = _kobold_mmproj_from_pgrep()
 
-    _kobold_state["model"] = model
-    _kobold_state["mmproj"] = mmproj
-    _kobold_state["ts"] = time.time()
+    aux = _aux_probe_config(backend)
+    if aux is not None:
+        aux_file = _aux_from_process(backend, aux)
 
-
-def _kobold_state_fresh() -> bool:
-    return (time.time() - _kobold_state["ts"]) < _KOBOLD_STATE_TTL
+    _loaded_state[backend] = {"model": model, "aux": aux_file, "ts": time.time()}
 
 
-def kobold_has_mmproj() -> Optional[bool]:
-    """Return True iff the running kobold llama-server has an mmproj loaded.
+def _loaded_state_for(backend: str) -> dict:
+    entry = _loaded_state.get(backend)
+    if entry is None or (time.time() - entry["ts"]) >= _LOADED_STATE_TTL:
+        _seed_loaded_state(backend)
+        entry = _loaded_state[backend]
+    return entry
 
-    Used by Fix 3 (vision routing): if mmproj is loaded, the kobold backend is
-    natively vision-capable and we don't need to switch to tabby. Returns None
-    if we couldn't determine (server not running, seed failed).
+
+def loaded_aux_present(backend: str) -> Optional[bool]:
+    """Return True iff the backend's running server has an aux file loaded.
+
+    Used by vision routing: if an aux is loaded, the backend is natively
+    vision-capable and we don't need to switch backends. Returns None if we
+    couldn't determine (server not running, seed failed).
     """
-    if not _kobold_state_fresh():
-        _seed_kobold_state()
-    model = _kobold_state["model"]
-    if model is None:
+    entry = _loaded_state_for(backend)
+    if entry["model"] is None:
         return None
-    return _kobold_state["mmproj"] is not None
+    return entry["aux"] is not None
 
 
-def currently_loaded_kobold_mmproj() -> Optional[str]:
-    """Return the mmproj path the kobold llama-server has loaded, or None."""
-    if not _kobold_state_fresh():
-        _seed_kobold_state()
-    return _kobold_state["mmproj"]
+def currently_loaded_aux(backend: str) -> Optional[str]:
+    """Return the aux file path the backend's server has loaded, or None."""
+    return _loaded_state_for(backend)["aux"]
 
 
-def currently_loaded_kobold_model() -> Optional[str]:
-    """Return the model path the kobold llama-server is currently serving, or None."""
-    if not _kobold_state_fresh():
-        _seed_kobold_state()
-    return _kobold_state["model"]
-
-
-# (tabby swap lock is managed by the generic swap_lock_for("tabby") registry above.)
+def currently_loaded_model(backend: str) -> Optional[str]:
+    """Return the model path the backend's server is currently serving, or None."""
+    return _loaded_state_for(backend)["model"]
 
 
 def is_literal_gguf_path(value: str) -> bool:
@@ -1308,23 +1297,6 @@ def is_literal_gguf_path(value: str) -> bool:
         return False
 
 
-async def currently_loaded_tabby_model() -> Optional[str]:
-    """Return the model id TabbyAPI is currently serving, or None if nothing is loaded
-    or the backend is unreachable. Uses the same `/v1/model` endpoint as `is_model_loaded`."""
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5)) as client:
-            resp = await client.get(
-                f"{TABBY_HOST}/v1/model",
-                headers={"x-api-key": API_KEY},
-            )
-            if resp.status_code == 200:
-                model_id = resp.json().get("id")
-                return model_id or None
-    except Exception:
-        pass
-    return None
-
-
 async def _currently_loaded_model_for(backend: str) -> Optional[str]:
     """Return the model a swap-managed backend currently has loaded.
 
@@ -1333,22 +1305,19 @@ async def _currently_loaded_model_for(backend: str) -> Optional[str]:
     themselves are engine-shaped state introspection; this keeps that knowledge
     in one lookup rather than scattered through the swap logic.)
     """
-    if engine_quarantine.loaded_model_is_path(backend):
-        return currently_loaded_kobold_model()
-    if engine_quarantine.loaded_model_is_http_id(backend):
-        return await currently_loaded_tabby_model()
+    if _backend_reports_loaded_model_as_path(backend):
+        return currently_loaded_model(backend)
     return None
 
 
 def _currently_loaded_aux_for(backend: str) -> Optional[str]:
-    """Return the aux (mmproj) file a swap-managed backend currently has loaded.
+    """Return the aux file a swap-managed backend currently has loaded.
 
-    Contained dispatch from backend id to the aux-probe; used by the
-    driver-swap path to populate SwapContext.loaded_aux. Only backends with an
-    aux/mmproj concept (per the quarantine) probe it; all others return None.
+    Used by the driver-swap path to populate SwapContext.loaded_aux. Only a
+    service whose record declares an ``aux`` probe reads it; all others return None.
     """
-    if engine_quarantine.has_aux_mmproj(backend):
-        return currently_loaded_kobold_mmproj()
+    if _aux_probe_config(backend) is not None:
+        return currently_loaded_aux(backend)
     return None
 
 
@@ -1360,7 +1329,7 @@ async def ensure_target(
 ) -> bool:
     """Make a (backend, model, mmproj, profile) target real before forwarding.
 
-    Every backend goes through its LifecycleDriver — there is no kobold/tabby
+    Every backend goes through its LifecycleDriver — there is no per-engine
     special-case anymore. The driver is resolved from the service's
     `lifecycle.driver` (DATA); engine-shaped knowledge (env key names, load body,
     prechecks) lives in the driver + driver_config, never here.
@@ -1467,7 +1436,7 @@ async def _ensure_target(
         finally:
             if swapping:
                 # The loaded-state cache predates the swap; re-probe on next read.
-                _kobold_state["ts"] = 0.0
+                _loaded_state.pop(backend, None)
         return ready, (_swap_drain.lease(backend) if ready and take_lease else None)
 
 
@@ -1520,36 +1489,6 @@ def _swap_recovery_failed_response(requested_model: str, failed: SwapRecoveryFai
         error_type="service_unavailable",
         code="backend_recovery_failed",
     )
-
-
-# =============================================================================
-# Load credentials
-# =============================================================================
-
-TABBY_ADMIN_KEY_ENV = auth_cfg.get("admin_key_env", "TABBY_ADMIN_KEY")
-TABBY_API_KEY_ENV = auth_cfg.get("api_key_env", "TABBY_API_KEY")
-ADMIN_KEY = get_env(TABBY_ADMIN_KEY_ENV, "") or os.environ.get("TABBY_ADMIN_KEY", "")
-API_KEY = get_env(TABBY_API_KEY_ENV, "") or os.environ.get("TABBY_API_KEY", "")
-
-# Try loading from tabbyapi's api_tokens.yml (disabled when env var not set)
-_tabbyapi_dir_env = os.environ.get("AZIZAM_TABBYAPI_DIR", "")
-tokens_file = Path(_tabbyapi_dir_env) / "api_tokens.yml" if _tabbyapi_dir_env else None
-if tokens_file and tokens_file.exists():
-    for line in tokens_file.read_text().splitlines():
-        if line.startswith("admin_key:") and not ADMIN_KEY:
-            ADMIN_KEY = line.split(":", 1)[1].strip()
-        elif line.startswith("api_key:") and not API_KEY:
-            API_KEY = line.split(":", 1)[1].strip()
-
-# Publish the resolved keys under their configured env names so the generic,
-# data-driven downstream auth path (auth_inject's `secret_env`) can resolve
-# them — including this api_tokens.yml fallback. Without this, a deployment that
-# supplies the keys ONLY via api_tokens.yml (env vars unset) would inject no
-# downstream auth. setdefault: never clobber an explicitly-set env var.
-if ADMIN_KEY:
-    os.environ.setdefault(TABBY_ADMIN_KEY_ENV, ADMIN_KEY)
-if API_KEY:
-    os.environ.setdefault(TABBY_API_KEY_ENV, API_KEY)
 
 
 # =============================================================================
@@ -2608,9 +2547,8 @@ def _resolve_inject_secret(service_cfg: dict, rule: Mapping) -> str:
       1. `secret`: a downstream_secret name — looks up `service_cfg[name]` then
          `service_cfg[name_env]` (the per-identity downstream config).
       2. `secret_env`: an environment variable name to read directly. This is
-         the deployment-wide fallback (e.g. the gateway's own TABBY_ADMIN_KEY),
-         used when the identity carries no per-user key — exactly what the old
-         hardcoded tabby auth did, now expressed as config.
+         the deployment-wide fallback, used when the identity carries no per-user
+         key.
     """
     secret_name = rule.get("secret")
     if secret_name:
@@ -2632,10 +2570,10 @@ def apply_auth_inject(headers: dict, service_cfg: dict, request_path: str):
           - paths: ["/v1/models", "/v1/model/list"]   # omit = matches all paths
             header: x-admin-key
             secret: admin_key            # per-identity downstream secret name…
-            secret_env: TABBY_ADMIN_KEY  # …falling back to this env var
+            secret_env: BACKEND_ADMIN_KEY  # …falling back to this env var
           - header: x-api-key
             secret: api_key
-            secret_env: TABBY_API_KEY
+            secret_env: BACKEND_API_KEY
 
     For each request, the first rule whose `paths` match (and whose resolved
     secret is non-empty) sets its header, then injection stops. This expresses
@@ -2677,8 +2615,7 @@ def prepare_downstream_headers(
     # auth_inject is a property of the BACKEND (e.g. "this engine needs an admin
     # key for model-list endpoints"), not of each identity — so fall back to the
     # backend's declared auth_inject when the identity doesn't set its own. This
-    # is what makes downstream auth work for every caller (incl. anonymous), as
-    # the old hardcoded tabby auth did, but now from DATA.
+    # is what makes downstream auth work for every caller (incl. anonymous).
     inject_cfg = service_cfg
     if not service_cfg.get("auth_inject"):
         # A multi-attempt operation can supply the immutable service record it
@@ -2745,51 +2682,6 @@ def handle_cli_command() -> bool:
         return True
 
     return False
-
-
-# TabbyAPI config path (optional; feature disabled when AZIZAM_TABBYAPI_DIR is not set)
-TABBY_CONFIG_FILE = Path(_tabbyapi_dir_env) / "config.yml" if _tabbyapi_dir_env else None
-
-def get_tabby_model_config() -> tuple[str, str, dict]:
-    """Read TabbyAPI config live. Returns (default_model, model_dir, model_params)."""
-    default_model = os.environ.get("TABBY_DEFAULT_MODEL", "")
-    model_dir = ""
-    model_params = {}
-
-    if TABBY_CONFIG_FILE and TABBY_CONFIG_FILE.exists():
-        try:
-            with open(TABBY_CONFIG_FILE) as f:
-                tabby_config = yaml.safe_load(f)
-            model_cfg = tabby_config.get("model", {})
-            model_dir = model_cfg.get("model_dir", "")
-            if not default_model:
-                default_model = model_cfg.get("model_name", "")
-            for key in ["max_seq_len", "cache_size", "cache_mode", "gpu_split_auto",
-                        "autosplit_reserve", "max_batch_size", "chunk_size"]:
-                if key in model_cfg:
-                    model_params[key] = model_cfg[key]
-        except Exception as e:
-            print(f"[proxy] Warning: Failed to load tabby config: {e}", flush=True)
-
-    return default_model, model_dir, model_params
-
-# Initial load for startup values
-DEFAULT_MODEL, MODEL_DIR, _ = get_tabby_model_config()
-
-# Register the tabby params-provider so HttpLoadUnloadDriver can call
-# get_tabby_model_config() live at swap time (option A from
-# LIFECYCLE_DRIVER_PORT.md §3.2).  The key "tabby-config" lives in
-# driver_config.load_body_params — purely data; no engine literal in driver code.
-try:
-    from gateway.lifecycle_drivers import register_params_provider as _reg_pp
-
-    def _tabby_params_provider(svc: object) -> dict:  # type: ignore[type-arg]
-        _, _, params = get_tabby_model_config()
-        return params
-
-    _reg_pp("tabby-config", _tabby_params_provider)
-except Exception:
-    pass
 
 
 # =============================================================================
@@ -2960,7 +2852,7 @@ def default_model_for_operation(operation: str, requested_model: str = "") -> st
         return configured_default
 
     if operation in ("chat", "completions"):
-        return DEFAULT_MODEL or requested_model
+        return requested_model
     if operation == "speech":
         return TTS_BACKEND_MODEL
     if operation == "transcriptions":
@@ -3157,10 +3049,17 @@ class LocalModelActivation:
     backend_model: Optional[str] = None
 
 
+def _lifecycle_driver_config(service_cfg: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    """The service's lifecycle ``driver_config`` (service data), or an empty mapping."""
+    lifecycle = service_cfg.get("lifecycle") if isinstance(service_cfg, Mapping) else None
+    driver_config = lifecycle.get("driver_config") if isinstance(lifecycle, Mapping) else None
+    return driver_config if isinstance(driver_config, Mapping) else {}
+
+
 def _backend_default_model_to_load(backend: str) -> Optional[str]:
     backend_cfg = (config.get("backends") or {}).get(backend, {})
     if not isinstance(backend_cfg, Mapping):
-        return DEFAULT_MODEL if engine_quarantine.has_default_model_fallback(backend) else None
+        return None
     configured = str(
         backend_cfg.get("activation_model")
         or backend_cfg.get("model_id")
@@ -3169,7 +3068,7 @@ def _backend_default_model_to_load(backend: str) -> Optional[str]:
     ).strip()
     if configured:
         return configured
-    return DEFAULT_MODEL if engine_quarantine.has_default_model_fallback(backend) else None
+    return None
 
 
 def _configured_litellm_local_model_target(
@@ -3228,9 +3127,11 @@ def _configured_litellm_local_model_target(
                 or ""
             ).strip()
             activation_profile = str(item.get("activation_profile") or "").strip()
-            if engine_quarantine.activation_from_upstream_id(backend) and not activation_model:
-                activation_model = str(item.get("upstream_model") or item.get("id") or "").strip()
-            if engine_quarantine.activation_requires_abs_path(backend) and activation_model and not os.path.isabs(activation_model):
+            if (
+                _lifecycle_driver_config(service_cfg).get("activation_requires_absolute_path") is True
+                and activation_model
+                and not os.path.isabs(activation_model)
+            ):
                 activation_model = ""
             return LocalModelActivation(
                 backend=backend,
@@ -3362,17 +3263,16 @@ async def _prepare_litellm_local_llm_request(
         active = await get_active_backend()
         # vision_capable_llm_backends() answers the membership question: which
         # backends in LLM_BACKEND_HOSTS carry the "vision" capability?  For
-        # today's config this resolves to ["tabby"] when tabby has vision=True,
-        # [] otherwise — exactly as the previous literal check.  The kobold
-        # mmproj check is orchestration-level logic that stays unchanged.
+        # a backend declaring vision=True, [] otherwise.  The kobold mmproj
+        # check is orchestration-level logic that stays unchanged.
         _vision_members = vision_capable_llm_backends()
         active_can_serve_vision = (
             active in _vision_members
             and profile_allows_backend(auth_context, active)
         ) or (
-            engine_quarantine.vision_via_aux(active)
+            _aux_grants_vision(active)
             and profile_allows_backend(auth_context, active)
-            and kobold_has_mmproj() is True
+            and loaded_aux_present(active) is True
         )
         if active_can_serve_vision:
             return None, body
@@ -3382,7 +3282,7 @@ async def _prepare_litellm_local_llm_request(
         target_can_serve_vision = (
             target_backend in _vision_members
         ) or (
-            engine_quarantine.vision_via_aux(target_backend)
+            _aux_grants_vision(target_backend)
             and bool(target_mmproj)
         )
         if not target_can_serve_vision:
@@ -3471,25 +3371,11 @@ async def _activate_prepared_litellm_local_target(
     )
 
 
-async def get_tabby_loaded_model_id() -> str:
+async def get_served_model_id(base_url: str) -> str:
+    """The first model id an OpenAI-compatible server lists at ``base_url``."""
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{TABBY_HOST}/v1/model",
-                headers={"x-api-key": API_KEY},
-                timeout=HEALTH_CHECK_TIMEOUT,
-            )
-            if resp.status_code == 200:
-                return resp.json().get("id") or ""
-    except Exception:
-        pass
-    return ""
-
-
-async def get_kobold_model_id() -> str:
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{KOBOLD_HOST}/v1/models", timeout=HEALTH_CHECK_TIMEOUT)
+            resp = await client.get(f"{base_url}/v1/models", timeout=HEALTH_CHECK_TIMEOUT)
             if resp.status_code != 200:
                 return ""
             data = resp.json().get("data", [])
@@ -3501,10 +3387,8 @@ async def get_kobold_model_id() -> str:
 
 
 async def effective_llm_model_for_host(target_host: str) -> str:
-    if target_host == KOBOLD_HOST:
-        return await get_kobold_model_id()
-    if target_host == TABBY_HOST:
-        return await get_tabby_loaded_model_id() or DEFAULT_MODEL
+    if any(_backend_base_url(backend) == target_host for backend in _path_identity_backends()):
+        return await get_served_model_id(target_host)
     return ""
 
 
@@ -3525,14 +3409,12 @@ def _is_use_loaded_model_alias(value: Any) -> bool:
 async def current_llm_model_for_backend(backend: str) -> str:
     """Return the model actually loaded on a backend, never a configured fallback."""
     backend = str(backend or "").strip()
-    if engine_quarantine.loaded_model_is_path(backend):
-        loaded_path = currently_loaded_kobold_model()
+    if _backend_reports_loaded_model_as_path(backend):
+        loaded_path = currently_loaded_model(backend)
         if not loaded_path:
             return ""
-        loaded_id = await get_kobold_model_id()
+        loaded_id = await get_served_model_id(_backend_base_url(backend))
         return loaded_id or os.path.basename(loaded_path) or loaded_path
-    if engine_quarantine.loaded_model_is_http_id(backend):
-        return await currently_loaded_tabby_model() or ""
 
     host = LLM_BACKEND_HOSTS.get(backend)
     backend_cfg = (config.get("backends") or {}).get(backend, {})
@@ -3654,37 +3536,12 @@ async def refresh_openai_model_aliases() -> int:
 
 class ProxyState:
     def __init__(self):
-        self.last_activity = time.time()
-        self.activity_lock = threading.Lock()
-
-        self.model_unloading = False
-        self.load_lock = asyncio.Lock()
-        # NOTE: no tabby_process field — the gateway does not own engine
-        # processes (see the TABBY_MANAGED removal). Existence is the operator's
-        # supervisor's job (systemd / docker / CommandDriver).
+        # The gateway does not own engine processes. Existence is the
+        # operator's supervisor's job (systemd / docker / CommandDriver).
         self.shutdown_requested = False
-
-    def update_activity(self):
-        with self.activity_lock:
-            self.last_activity = time.time()
-
-    def get_idle_seconds(self) -> float:
-        with self.activity_lock:
-            return time.time() - self.last_activity
 
 
 state = ProxyState()
-
-
-# =============================================================================
-# TabbyAPI subprocess management
-# =============================================================================
-
-# Tabby process spawn/stop/log/wait-for-ready removed. The gateway no longer
-# owns tabby's existence — an operator who wants the gateway to *start* tabby
-# declares a `command` (or systemd/docker) LifecycleDriver on the tabby service;
-# crash-restart belongs to that supervisor. Readiness is observed via
-# check_tabby_health() / the driver's ensure_ready(), never by spawning here.
 
 
 async def probe_backend(
@@ -3816,11 +3673,6 @@ async def check_service_health(service_id: str) -> bool:
     Returns False when the service has no probeable transport fields.
     """
     return (await _service_resource_runtime_fact(service_id)).get("status") == "available"
-
-
-async def check_tabby_health() -> bool:
-    """Check if TabbyAPI is healthy."""
-    return await check_service_health("tabby")
 
 
 async def check_embeddings_health() -> bool:
@@ -6719,7 +6571,7 @@ async def decide_image_background_removal(
     active = await get_active_backend()
     # Generic: any local-swap LLM backend resolves its host from LLM_BACKEND_HOSTS.
     target_host = LLM_BACKEND_HOSTS.get(active) if active else None
-    if active and engine_quarantine.is_local_swap_backend(active) and target_host:
+    if active and _is_local_swap_backend(active) and target_host:
         service = active
     else:
         return _background_removal_fallback("llm_unavailable", "no active LLM backend")
@@ -10145,7 +9997,6 @@ async def _resolve_gateway_media_url(
     """Resolve our own content URLs with signatures and caller ownership."""
     parsed = urlsplit(url)
     public_urls = [
-        "https://ai.vivid.fish", "https://openai.vivid.fish",
         str(get_env("AZIZAM_PUBLIC_URL") or ""),
         str((config.get("proxy") or {}).get("public_url") or ""),
         str(instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()).get("base_url") or ""),
@@ -12749,93 +12600,6 @@ async def proxy_comfy_video_edit(request: Request, auth_context: AuthContext) ->
 
 
 # =============================================================================
-# Model management
-# =============================================================================
-
-async def is_model_loaded() -> bool:
-    """Check if a model is currently loaded."""
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{TABBY_HOST}/v1/model",
-                headers={"x-api-key": API_KEY},
-                timeout=HEALTH_CHECK_TIMEOUT
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                return data.get("id") is not None
-    except:
-        pass
-    return False
-
-
-async def unload_model() -> bool:
-    """Unload the current model."""
-    async with state.load_lock:
-        if state.model_unloading:
-            return False
-        state.model_unloading = True
-
-    success = False
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{TABBY_HOST}/v1/model/unload",
-                headers={"x-admin-key": ADMIN_KEY},
-                timeout=60
-            )
-            if resp.status_code == 200:
-                print(f"[proxy] Model unloaded (idle {int(state.get_idle_seconds())}s)", flush=True)
-                success = True
-            else:
-                print(f"[proxy] Unload failed: {resp.status_code}", flush=True)
-    except Exception as e:
-        print(f"[proxy] Unload error: {e}", flush=True)
-    finally:
-        state.model_unloading = False
-
-    return success
-
-
-# =============================================================================
-# Background tasks
-# =============================================================================
-
-async def maintenance_loop():
-    """Background task for idle checking and health monitoring.
-
-    Backends are activated lazily by request handlers (see ensure_target). This
-    loop intentionally does NOT poll-and-revive backends — the Conflicts= rule
-    between tabbyapi.service and llama-turbo.service means only one LLM backend
-    is up at a time, so trying to "ensure tabby is healthy" while llama-turbo
-    is the active LLM is wrong and produces log spam.
-
-    Responsibilities kept:
-      - Idle-timeout unload of an in-process loaded tabby model.
-
-    The gateway never revives backends here: it does not own engine existence
-    (crash-restart belongs to the operator's supervisor — systemd / docker /
-    CommandDriver), and backend selection is request-driven via ensure_target.
-    """
-    while not state.shutdown_requested:
-        await asyncio.sleep(CHECK_INTERVAL)
-
-        if state.shutdown_requested:
-            break
-
-        # Check idle timeout (only meaningful when something is loaded on tabby)
-        if state.model_unloading:
-            continue
-
-        idle = state.get_idle_seconds()
-        if TABBY_IDLE_TIMEOUT > 0 and idle >= TABBY_IDLE_TIMEOUT:
-            # Probe tabby cheaply; if it's not even up, nothing to unload.
-            if await check_tabby_health() and await is_model_loaded():
-                print(f"[proxy] Idle timeout ({int(idle)}s), unloading...", flush=True)
-                await unload_model()
-
-
-# =============================================================================
 # FastAPI app
 # =============================================================================
 
@@ -12941,7 +12705,6 @@ async def lifespan(app: FastAPI):
     media_jobs.init_db()
     providers.recover_provider_spend(path=ADMIN_DB_PATH.parent / "provider_spend.db")
     print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
-    print(f"[proxy] TabbyAPI backend: {TABBY_HOST}", flush=True)
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
     print(f"[proxy] STT backend: {STT_HOST} (enabled: {STT_ENABLED})", flush=True)
     print(f"[proxy] ComfyUI backend: {COMFY_HOST} (enabled: {COMFY_ENABLED})", flush=True)
@@ -12973,16 +12736,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] firehose replay failed: {e}", flush=True)
 
-    # The gateway does not start engines. Tabby is brought up by the operator's
+    # The gateway does not start engines. They are brought up by the operator's
     # supervisor (systemd / docker / a `command` LifecycleDriver) and reached
-    # lazily via ensure_target on the first request that needs it.
-    print(f"[proxy] Idle timeout: {TABBY_IDLE_TIMEOUT}s", flush=True)
-    print(f"[proxy] Default model: {DEFAULT_MODEL}", flush=True)
+    # lazily via ensure_target on the first request that needs them.
 
     # Log the loop thread's stack whenever the event loop stops answering.
     watchdog = loop_watchdog.start(float(get_env("AZIZAM_LOOP_WATCHDOG_THRESHOLD_S", "1.0")))
 
-    maintenance_task = asyncio.create_task(maintenance_loop())
 
     # ComfyUI websocket listener for real-time video progress. Optional —
     # /v1/videos/{id} falls back to /history polling if this can't connect.
@@ -13126,11 +12886,6 @@ async def lifespan(app: FastAPI):
         task.cancel()
     if _image_media_job_tasks:
         await asyncio.gather(*list(_image_media_job_tasks), return_exceptions=True)
-    maintenance_task.cancel()
-    try:
-        await maintenance_task
-    except asyncio.CancelledError:
-        pass
     if comfy_ws_task is not None:
         comfy_ws_stop.set()
         comfy_ws_task.cancel()
@@ -13176,7 +12931,7 @@ async def lifespan(app: FastAPI):
             await receipts_maintenance_task
         except asyncio.CancelledError:
             pass
-    # No engine processes to stop — the gateway never owned tabby's existence.
+    # No engine processes to stop — the gateway never owned an engine's existence.
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -13487,11 +13242,6 @@ def _role_catalog_ids_for_loaded_path(
             if role_model:
                 if matches_path(role_model):
                     ids.add(str(role_name))
-            elif engine_quarantine.roles_may_be_unpinned(backend) and loaded_model_id:
-                # Some backends' roles name a backend without pinning a specific
-                # model path. When that backend is hot, the role is a valid
-                # handle for the current loaded model.
-                ids.add(str(role_name))
 
     for model_id, spec in MODELS_CATALOG.items():
         if not isinstance(spec, Mapping) or spec.get("backend") != backend:
@@ -13535,24 +13285,12 @@ async def _current_loaded_llm_model_ids(
         active = None
 
     ids: set[str] = set()
-    if active and engine_quarantine.loaded_model_is_http_id(active):
-        loaded = await get_tabby_loaded_model_id()
-        if loaded:
-            ids.update(USE_LOADED_MODEL_ALIASES)
-            ids.add(loaded)
-            ids.update(
-                _role_catalog_ids_for_loaded_path(
-                    backend=active,
-                    loaded_path=None,
-                    loaded_model_id=loaded,
-                )
-            )
-        if loaded and metadata_ids is not None:
-            metadata_ids.update(_declarations_for_loaded_model(active, loaded))
-        return {item for item in ids if item}
-
-    loaded_path = currently_loaded_kobold_model()
-    if loaded_path:
+    loaded_paths: dict[str, str] = {}
+    for backend in _path_identity_backends():
+        loaded_path = currently_loaded_model(backend)
+        if not loaded_path:
+            continue
+        loaded_paths[backend] = loaded_path
         ids.update(USE_LOADED_MODEL_ALIASES)
         ids.add(loaded_path)
         basename = os.path.basename(loaded_path)
@@ -13560,14 +13298,13 @@ async def _current_loaded_llm_model_ids(
             ids.add(basename)
         ids.update(
             _role_catalog_ids_for_loaded_path(
-                backend="kobold",
+                backend=backend,
                 loaded_path=loaded_path,
                 loaded_model_id=basename,
             )
         )
-    if (loaded_path and active and engine_quarantine.loaded_model_is_path(active)
-            and metadata_ids is not None):
-        metadata_ids.update(_declarations_for_loaded_model(active, loaded_path))
+    if active in loaded_paths and metadata_ids is not None:
+        metadata_ids.update(_declarations_for_loaded_model(active, loaded_paths[active]))
     return {item for item in ids if item}
 
 
@@ -13822,7 +13559,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
     capabilities = list(build_local_capabilities(
         config,
         enabled_flags={
-            "llm": bool(kobold_cfg) or bool(tabby_cfg),
+            "llm": bool(kobold_cfg),
             "embeddings": EMBEDDINGS_ENABLED and bool(embeddings_cfg),
             "tts": TTS_ENABLED,
             "stt": STT_ENABLED,
@@ -17360,7 +17097,7 @@ async def admin_logout(request: Request):
 async def admin_config_reload(request: Request):
     """Hot-reload the runtime config from the DB service registry.
 
-    Re-derives all backend host constants (TABBY_HOST, KOBOLD_HOST,
+    Re-derives all backend host constants (KOBOLD_HOST,
     LLM_BACKEND_HOSTS, TTS_HOST, STT_HOST, EMBEDDINGS_HOST, COMFY_HOST …)
     without a process restart.  Requests that arrive after this returns will
     see the new values.
@@ -17379,7 +17116,6 @@ async def admin_config_reload(request: Request):
                 "reloaded": True,
                 "backends": {
                     "llm_hosts": updates["LLM_BACKEND_HOSTS"],
-                    "tabby": updates["TABBY_HOST"],
                     "kobold": updates["KOBOLD_HOST"],
                     "tts": updates["TTS_HOST"],
                     "stt": updates["STT_HOST"],
@@ -17811,10 +17547,10 @@ def _brand_settings() -> tuple[str, tuple[str, str] | None]:
       admin:
         brand:
           product: "Azizam"      # neutral product label (default)
-          wordmark: "vivid.fish"     # optional deployment mark, "name.tld"
+          wordmark: "example.org"    # optional deployment mark, "name.tld"
 
     A generic install with no wordmark shows only the neutral product mark, so
-    nothing says "vivid.fish" unless this deployment opts in.
+    nothing carries a deployment name unless this deployment opts in.
     """
     brand_cfg = admin_cfg.get("brand") if isinstance(admin_cfg, Mapping) else {}
     brand_cfg = brand_cfg if isinstance(brand_cfg, Mapping) else {}
@@ -23933,9 +23669,6 @@ def _context_window_from_mapping(data: Mapping[str, Any] | None) -> int | None:
 def _configured_context_window_for_backend(backend: str | None) -> int | None:
     if not backend:
         return None
-    if engine_quarantine.context_window_from_model_params(backend):
-        _, _, params = get_tabby_model_config()
-        return _context_window_from_mapping(params)
     backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
     raw = backends.get(backend) if isinstance(backends, Mapping) else None
     if isinstance(raw, Mapping):
@@ -23943,8 +23676,20 @@ def _configured_context_window_for_backend(backend: str | None) -> int | None:
     return None
 
 
-async def _kobold_context_window() -> int | None:
-    cached = _MODEL_CONTEXT_CACHE.get("kobold")
+def _context_window_probe_endpoint(backend: str | None) -> str | None:
+    """The service's ``context_window_probe.endpoint``, or None when it declares no probe."""
+    cfg = (config.get("backends") or {}).get(backend) if backend else None
+    probe = cfg.get("context_window_probe") if isinstance(cfg, Mapping) else None
+    endpoint = probe.get("endpoint") if isinstance(probe, Mapping) else None
+    return endpoint if isinstance(endpoint, str) and endpoint.startswith("/") else None
+
+
+async def _probed_context_window(backend: str) -> int | None:
+    """The context window the service itself reports at its declared probe endpoint."""
+    endpoint = _context_window_probe_endpoint(backend)
+    if endpoint is None:
+        return None
+    cached = _MODEL_CONTEXT_CACHE.get(backend)
     now = time.time()
     if cached and now - cached[0] < _MODEL_CONTEXT_CACHE_TTL_S:
         return cached[1]
@@ -23952,7 +23697,7 @@ async def _kobold_context_window() -> int | None:
     value: int | None = None
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(2.0)) as client:
-            resp = await client.get(f"{KOBOLD_HOST}/v1/models")
+            resp = await client.get(f"{_backend_base_url(backend)}{endpoint}")
         if resp.status_code == 200:
             payload = resp.json()
             data = payload.get("data") if isinstance(payload, Mapping) else None
@@ -23966,9 +23711,9 @@ async def _kobold_context_window() -> int | None:
             if value is None and isinstance(payload, Mapping):
                 value = _context_window_from_mapping(payload)
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] /v1/models: could not read kobold context window: {e}", flush=True)
+        print(f"[proxy] {endpoint}: could not read the context window of {backend!r}: {e}", flush=True)
 
-    _MODEL_CONTEXT_CACHE["kobold"] = (now, value)
+    _MODEL_CONTEXT_CACHE[backend] = (now, value)
     return value
 
 
@@ -24030,8 +23775,8 @@ async def _context_window_for_model_id(
     found = _configured_context_window_for_backend(backend)
     if found is not None:
         return found
-    if engine_quarantine.context_window_from_live_probe(backend):
-        found = await _kobold_context_window()
+    if _context_window_probe_endpoint(backend):
+        found = await _probed_context_window(backend)
         if found is not None and observed_windows is not None:
             observed_windows[model_id] = found
         return found
@@ -24222,19 +23967,16 @@ def _with_loaded_model_inheritance(
 def _build_role_catalog_entries() -> list[dict]:
     """Return configured LLM role handles for admin inventory and policy checks.
 
-    Accepts any backend that is known in config["backends"] (or is a legacy
-    local-swap backend such as kobold/tabby).  Unknown backends are silently
-    skipped so that a typo in the config does not crash the listing.
+    Accepts any backend that is known in config["backends"].  Unknown backends
+    are silently skipped so that a typo in the config does not crash the listing.
 
-    For local-swap backends (kobold/tabby or any role entry with a ``path``
+    For local-swap backends (or any role entry with a ``path``
     key), ``model`` is a GGUF file path and is surfaced as
     ``azizam_model_path``.  For remote/routed backends the ``model`` field
     is the upstream model name and is surfaced as ``azizam_model``.  Remote
     role entries that omit ``model`` entirely are skipped (malformed).
     """
-    known_backends: frozenset[str] = frozenset(
-        (config.get("backends") or {}).keys()
-    ) | _LOCAL_SWAP_BACKENDS
+    known_backends: frozenset[str] = frozenset((config.get("backends") or {}).keys())
     entries: list[dict] = []
 
     if isinstance(ROLES, dict):
@@ -24245,10 +23987,10 @@ def _build_role_catalog_entries() -> list[dict]:
             # Skip entries whose backend is not known in the registry.
             if not backend or backend not in known_backends:
                 continue
-            is_local_swap = backend in _LOCAL_SWAP_BACKENDS or bool(role_def.get("path"))
+            is_local_swap = _is_local_swap_backend(backend) or bool(role_def.get("path"))
             model_value = role_def.get("model")
             if is_local_swap:
-                # Local-swap: model is a GGUF path (may be absent for unpinned tabby roles).
+                # Local-swap: model is a GGUF path.
                 model_path = model_value if isinstance(model_value, str) else None
                 entry = {
                     "id": str(role_name),
@@ -24902,7 +24644,7 @@ async def _render_status_html(request: Request) -> Response:
     try:
         from firehose_render import render_html
         # Use the request's Host header so the page header reflects the
-        # address bar (loopback dev vs. external ai.vivid.fish).
+        # address bar (loopback dev vs. the public hostname).
         host_hdr = request.headers.get("host") or ""
         actor_label = actor.email or actor.subject
         logout_url = "/auth/logout-confirm" if actor.auth_method == "session" else None
@@ -25569,7 +25311,6 @@ async def anthropic_messages(request: Request):
     if admission is not None:
         return admission
 
-    state.update_activity()
     if canonical.get("stream"):
         client, upstream = await _forward_chat_completions(
             request,
@@ -25721,7 +25462,6 @@ async def _ollama_forward_non_streaming(
     if admission is not None:
         return admission
 
-    state.update_activity()
     upstream = await _forward_chat_completions(
         request,
         auth_context,
@@ -25766,7 +25506,6 @@ async def _ollama_forward_streaming(
     if admission is not None:
         return admission
 
-    state.update_activity()
     client, upstream = await _forward_chat_completions(
         request,
         auth_context,
@@ -25837,7 +25576,6 @@ async def _ollama_forward_embeddings(
     if admission is not None:
         return admission
 
-    state.update_activity()
     upstream = await _forward_embeddings(request, auth_context, canonical)
     if getattr(upstream, "status_code", 500) >= 400:
         refusal = _upstream_admission_response(upstream, 'ollama')
@@ -26376,7 +26114,6 @@ async def create_response(request: Request):
     if isinstance(route_auth, Response):
         return route_auth
     auth_context = route_auth.auth_context
-    state.update_activity()
 
     raw = await request.body()
     try:
@@ -26995,9 +26732,8 @@ def _toolcall_backend_hint(service_id: str) -> str:
     """Derive the backend hint string used for advisory messages.
 
     Prefers the stored ``preset`` field in config["backends"][service_id] when
-    present (e.g. "vllm", "ollama", "tabbyapi").  Falls back to the service_id
-    itself — many operators name their service after the backend (e.g. "vllm",
-    "tabby").  The detection module does case-insensitive substring matching so
+    present.  Falls back to the service_id itself — many operators name their
+    service after the backend.  The detection module does case-insensitive substring matching so
     either form works.
     """
     if not service_id:
@@ -28269,9 +28005,6 @@ async def _handle_openai_litellm_request_once(
     trusted_parent_request_id = (
         _internal_request_id_from_headers(request.headers) if is_trusted_loopback else ""
     )
-
-    if not any(request_path.startswith(p) for p in NO_ACTIVITY_PATHS):
-        state.update_activity()
 
     body_peek = await request.body()
     parsed_body, parse_error = parse_openai_json_body(body_peek)

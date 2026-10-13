@@ -11,7 +11,7 @@ For most chat apps and editors, use the OpenAI-compatible base URL. Use the Anth
 
 ## Check the connection first
 
-Run this on the same computer, or in the same container, as the client:
+First follow [Set up your environment](index.md#set-up-your-environment). Run this check on the same computer, or in the same container, as the client.
 
 ```sh
 curl --fail-with-body -sS "$AZIZAM_BASE_URL/openai/v1/models" \
@@ -31,7 +31,7 @@ Refresh the model list. Model file management through Ollama panels does not wor
 
 ## LibreChat
 
-Add a custom endpoint to `librechat.yaml`. Replace `my-chat` with a model name from your gateway.
+Add a custom endpoint to `librechat.yaml`. Replace `my-chat` with a model name returned by your gateway. Replace `baseURL` with the gateway address reachable from the LibreChat server or container, followed by `/v1`. Keep the loopback example only if both services share that network namespace.
 
 ```yaml
 endpoints:

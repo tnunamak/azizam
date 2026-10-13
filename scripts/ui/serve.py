@@ -45,7 +45,7 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
     config = state / 'config.yml'
     # Backend definitions are seed data, not engine-specific implementation.
     disabled = '\n'.join(f'  {name}: {{enabled: false, host: 127.0.0.1, port: {ENGINE_PORT}}}'
-                         for name in ('tabby', 'kobold', 'comfyui', 'embeddings'))
+                         for name in ('kobold', 'comfyui', 'embeddings'))
     config.write_text(f'proxy:\n  host: 127.0.0.1\n  port: {PORT}\nbackends:\n{disabled}\n  litellm: {{enabled: true, base_url: "http://127.0.0.1:{ENGINE_PORT}", host: 127.0.0.1, port: {ENGINE_PORT}}}\n'
                       'admin:\n  oidc:\n    cookie:\n      secure: false\n'
                       'model_aliases:\n  chat:\n    stable:\n      fast: demo-chat\n'

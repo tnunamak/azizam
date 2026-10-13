@@ -1,4 +1,5 @@
-# Frozen main baseline (f18ef653ae3b7817e60b71f6148b2cdb5b78ce3d).
+# Frozen main baseline (f18ef653ae3b7817e60b71f6148b2cdb5b78ce3d), minus the removed Tabby loaded-model branch;
+# loaded-state readers are called by their per-service names.
 # Executed with test-owned proxy globals; no gateway import or state initialization.
 # Compare visible IDs and real probe calls, not the intentionally fixed ID leaks.
 from __future__ import annotations
@@ -11,21 +12,7 @@ async def _current_loaded_llm_model_ids(active_backend: str | None = None) -> se
         active = None
 
     ids: set[str] = set()
-    if active and engine_quarantine.loaded_model_is_http_id(active):
-        loaded = await get_tabby_loaded_model_id()
-        if loaded:
-            ids.update(USE_LOADED_MODEL_ALIASES)
-            ids.add(loaded)
-            ids.update(
-                _role_catalog_ids_for_loaded_path(
-                    backend=active,
-                    loaded_path=None,
-                    loaded_model_id=loaded,
-                )
-            )
-        return {item for item in ids if item}
-
-    loaded_path = currently_loaded_kobold_model()
+    loaded_path = currently_loaded_model("kobold")
     if loaded_path:
         ids.update(USE_LOADED_MODEL_ALIASES)
         ids.add(loaded_path)
@@ -130,8 +117,8 @@ async def _context_window_for_model_id(
     found = _configured_context_window_for_backend(backend)
     if found is not None:
         return found
-    if engine_quarantine.context_window_from_live_probe(backend):
-        return await _kobold_context_window()
+    if _context_window_probe_endpoint(backend):
+        return await _probed_context_window(backend)
     return None
 
 async def _annotate_model_context_windows(data: list[Any]) -> None:

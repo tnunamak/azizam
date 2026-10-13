@@ -37,7 +37,7 @@ Docker Compose starts two containers:
 
 `AZIZAM_LITELLM_BASE_URL` is the URL of that sidecar as seen by the
 gateway container. Compose sets it to `http://litellm:4000`. Do not use this
-variable for Ollama, llama.cpp, vLLM, TabbyAPI, or another user engine.
+variable for Ollama, llama.cpp, vLLM, or another user engine.
 Add user engines as Services records instead.
 
 Compose publishes the gateway as `127.0.0.1:${AZIZAM_PORT:-5000}:5000`

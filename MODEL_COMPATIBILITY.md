@@ -11,7 +11,7 @@ to local TTS, STT, or ComfyUI workflows.
 The endpoint defines the operation. For LLM-shaped OpenAI routes, `model` is a
 required LiteLLM model group or gateway-declared local role. The gateway may
 activate a configured local target before calling LiteLLM, but it does not
-forward these routes directly to Tabby, Kobold, or an embeddings server.
+forward these routes directly to Kobold or an embeddings server.
 
 Examples:
 
@@ -128,7 +128,7 @@ POST /v1/embeddings
 
 They do not depend on the generic backend-native catch-all. If LiteLLM is not
 configured, disabled, or unavailable, they return a protocol-shaped error rather
-than falling through to Tabby, Kobold, or the embedding server.
+than falling through to Kobold or the embedding server.
 
 `GET /v1/models` is intentionally stricter than secondary discovery projections:
 if the LiteLLM model catalog cannot be reached, `/v1/models` returns `503

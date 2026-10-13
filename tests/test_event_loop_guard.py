@@ -45,7 +45,7 @@ def gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
     monkeypatch.setattr(proxy.status_endpoint, "get_cached_status", _test_status_projection)
     monkeypatch.setattr(proxy.status_endpoint, "_backend_grid", _test_backend_grid)
-    monkeypatch.setattr(proxy, "currently_loaded_kobold_model", lambda *a, **k: None)
+    monkeypatch.setattr(proxy, "currently_loaded_model", lambda *a, **k: None)
     receipts = tmp_path / "receipts.db"
     receipt_store.init_db(receipts)
     monkeypatch.setattr(receipt_store, "DB_PATH", receipts)

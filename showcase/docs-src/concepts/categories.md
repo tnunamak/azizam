@@ -5,6 +5,8 @@ summary: How category rules add restrictions on top of access plans.
 
 # Categories
 
+Category enforcement has not been verified for this release. Do not rely on the coverage, revision-matching or failure behavior described below as a security guarantee.
+
 Categories let the owner describe policy in their own words, as data. For example, an owner could create a category for a group of people and say which models it may use. That is an example, not a built-in rule.
 
 The category check runs after the access plan allows a request. It can only make the decision stricter. It never allows a request that the plan refused.

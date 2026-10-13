@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_BASE_URL = "https://ai.vivid.fish"
+DEFAULT_BASE_URL = "http://127.0.0.1:5000"
 DEFAULT_PERSONAS = Path(__file__).with_name("reddit_simulation_personas.json")
 DEFAULT_CORPUS = Path("/tmp/azizam-reddit-corpus")
 DEFAULT_OUT = Path("/tmp/azizam-simulations/live")

@@ -71,7 +71,7 @@ def run():
         # JSON is valid YAML. Known fixture integrations are operator-authored
         # data, including the explicit JSON-path health assertion.
         backends = {name: {"enabled": False, "host": "127.0.0.1", "port": engine_port}
-                    for name in ("kobold", "tabby", "embeddings")}
+                    for name in ("kobold", "embeddings")}
         backends.update({
             "litellm": {"enabled": True, "host": "127.0.0.1", "port": engine_port,
                         "base_url": f"http://127.0.0.1:{engine_port}", "health_endpoint": "/health"},
