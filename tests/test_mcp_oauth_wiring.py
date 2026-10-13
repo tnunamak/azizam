@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 
 import proxy
 from gateway import accounts, admin_store, mcp_oauth, media_jobs
+from gateway.receipts import RouteReceipt
 from tests.support.access import store_plan
 
 BASE = "https://gw.test"
@@ -250,3 +251,29 @@ class McpAuthorizationWiringTests(unittest.TestCase):
                                    json={"model": "default", "messages": [{"role": "user", "content": "hi"}]})
         self.assertEqual(refused.status_code, 403, refused.text)
         self.assertEqual(refused.json()["error"]["code"], "no_access_plan")
+
+    def test_receipts_record_the_connection_that_made_the_request(self) -> None:
+        metadata = self.discover()
+        token = self.sign_in(metadata, self.register(metadata))["access_token"]
+        grant_id = self.client.get("/me/api/mcp/connections",
+                                   headers={"x-test-person": self.person["id"]}).json()["connections"][0]["id"]
+
+        async def who(request: Request):
+            auth = await asyncio.to_thread(proxy.authenticate_request, request, request.url.path)
+            if isinstance(auth, Response):
+                return auth
+            receipt = RouteReceipt(protocol="test", intent="test.who", app_id=auth.identity.app_id,
+                                   api_key_name=auth.identity.name)
+            # Another App's receipt in the same request is not the connection's.
+            other = RouteReceipt(protocol="test", intent="test.other", app_id="app_other")
+            return JSONResponse({"connection_id": receipt.to_dict()["connection_id"], "name": receipt.api_key_name,
+                                 "other": other.to_dict()["connection_id"]})
+
+        routes = [APIRoute("/gateway/v1/test/who", who, methods=["GET"])]
+        dispatched = {"authorization": f"Bearer {token}", "x-azizam-mcp-dispatch": proxy._MCP_DISPATCH_SECRET}
+        with patch.object(proxy.app.router, "routes", [*routes, *proxy.app.router.routes]):
+            signed_in = self.client.get("/gateway/v1/test/who", headers=dispatched)
+        self.assertEqual(signed_in.status_code, 200, signed_in.text)
+        self.assertEqual(signed_in.json()["connection_id"], grant_id)
+        self.assertEqual(signed_in.json()["name"], "Handshake (MCP)")
+        self.assertIsNone(signed_in.json()["other"])

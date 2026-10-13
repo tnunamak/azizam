@@ -31,6 +31,21 @@ def trusted_address_for(app_id: str | None) -> str | None:
     return None
 
 
+def note_connection(app_id: str, connection_id: str) -> None:
+    """Record that this request ran as ``app_id`` for one MCP sign-in connection."""
+    holder = _trusted_address.get()
+    if holder is not None:
+        holder.update(connection_app_id=app_id, connection_id=connection_id)
+
+
+def connection_for(app_id: str | None) -> str | None:
+    """The MCP connection (grant id) this request ran under, when it ran as ``app_id``."""
+    holder = _trusted_address.get()
+    if app_id and holder and holder.get("connection_app_id") == app_id:
+        return holder.get("connection_id")
+    return None
+
+
 def current_gateway_ui() -> bool:
     return _gateway_ui.get()
 
