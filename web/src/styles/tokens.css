@@ -33,14 +33,14 @@
   --destructive: #b3261e;
   --destructive-foreground: #ffffff;
 
-  /* Chrome: a quiet sidebar in the canvas family; the goldfish marks the brand
-     and the current place. */
+  /* Chrome: a quiet sidebar in the canvas family; the copper curl marks the
+     brand and the current place (DESIGN "Brand"). */
   --chrome: #eef2f3;
   --chrome-raised: #e1e8ea;
   --chrome-foreground: #10232a;
   --chrome-muted: #3d4f55;
   --chrome-border: #d7e0e2;
-  --chrome-accent: #d2702a;
+  --chrome-accent: #c4532b;
   --media-stage: #e6ecee;
   --media-stage-foreground: #10232a;
   /* The duration badge on media tiles: one dark scrim over any picture. */
@@ -188,7 +188,7 @@
   --chrome-foreground: #e3eef0;
   --chrome-muted: #b0c6cc;
   --chrome-border: #1a333a;
-  --chrome-accent: #f2a65a;
+  --chrome-accent: #f08a5d;
   --media-stage: #050f12;
   --media-stage-foreground: #e3eef0;
   --subtle-foreground: #9fb2b9;

@@ -34,7 +34,6 @@
   ["GET", "/api/tags", "proxy.ollama_tags"],
   ["GET", "/api/version", "proxy.ollama_version"],
   ["GET", "/docs", "gateway.api_reference.reference"],
-  ["GET", "/favicon.ico", "proxy.status_favicon"],
   ["GET", "/gateway/v1/aliases", "gateway.api.list_aliases"],
   ["GET", "/gateway/v1/aliases/resolve", "gateway.api.resolve_alias_dry_run"],
   ["GET", "/gateway/v1/assets/{asset_id}", "proxy.gateway_asset_metadata"],

@@ -1,12 +1,13 @@
 """Serve the exported web app at the root without touching any API route.
 
-The committed page registry (``ui_pages.json``) is the page set. ``classify``
-maps a request path to one of the export's exact shapes. ``UiRoute`` sits just
-before the catch-all and fully matches only those shapes, plus GET and HEAD
-with an explicit HTML ``Accept`` on a first segment that no route registers
-(the HTML 404 page). It never matches partially, so it never takes part in
-Starlette's 405 choice, and every registered route keeps its methods, statuses
-and ``Allow`` headers.
+The committed page registry (``ui_pages.json``) is the page set, plus the few
+root files the export ships (the favicon, app icons and the link-preview
+image). ``classify`` maps a request path to one of the export's exact shapes.
+``UiRoute`` sits just before the catch-all and fully matches only those shapes,
+plus GET and HEAD with an explicit HTML ``Accept`` on a first segment that no
+route registers (the HTML 404 page). It never matches partially, so it never
+takes part in Starlette's 405 choice, and every registered route keeps its
+methods, statuses and ``Allow`` headers.
 """
 from __future__ import annotations
 
@@ -25,7 +26,13 @@ from gateway.browser_routes import accepts_html
 from gateway.ui_static import UIStaticFiles
 
 REGISTRY_PATH = Path(__file__).with_name("ui_pages.json")
-PAGES: dict[str, str] = json.loads(REGISTRY_PATH.read_text())["pages"]
+_REGISTRY = json.loads(REGISTRY_PATH.read_text())
+PAGES: dict[str, str] = _REGISTRY["pages"]
+# Root files of the export, served to anyone: browsers fetch icons without
+# credentials, and link previews fetch the Open Graph image from outside.
+ROOT_FILES: frozenset[str] = frozenset(_REGISTRY["files"])
+if any("/" in name or name in PAGES for name in ROOT_FILES):
+    raise ValueError(f"{REGISTRY_PATH.name}: a root file must be a bare file name, not a page")
 ACCESS_CLASSES = frozenset({"public", "member", "admin"})
 if set(PAGES.values()) - ACCESS_CLASSES:
     raise ValueError(f"{REGISTRY_PATH.name}: unknown access class")
@@ -76,6 +83,8 @@ def classify(path: str) -> UiPath | None:
     if path.startswith(ASSET_PREFIX):
         relative = path[len("/"):]
         return Asset(relative) if not path.endswith("/") else None
+    if path[1:] in ROOT_FILES:
+        return Asset(path[1:])
     name, _, rest = path[1:].partition("/")
     if not name or PAGES.get(name) is None:
         return None

@@ -11,6 +11,8 @@ const registry = JSON.parse(
   await readFile(path.resolve(here, "../../gateway/ui_pages.json"), "utf8"),
 );
 const pages = Object.keys(registry.pages);
+// Root files (favicon, app icons, link-preview image) the gateway serves by name.
+const rootFiles = registry.files;
 
 const allowed = new Set([
   "index.html",
@@ -19,6 +21,7 @@ const allowed = new Set([
   "404/index.html",
   ".azizam-build-complete",
 ]);
+for (const name of rootFiles) allowed.add(name);
 for (const name of pages.filter(Boolean)) {
   allowed.add(`${name}/index.html`);
   allowed.add(`${name}/index.txt`);
@@ -40,11 +43,12 @@ const missing = pages
     `${name ? `${name}/` : ""}index.html`,
     `${name ? `${name}/` : ""}index.txt`,
   ])
+  .concat(rootFiles)
   .filter((file) => !files.includes(file));
 if (unexpected.length || missing.length) {
   for (const file of unexpected)
     console.error(`unexpected export file: ${file}`);
-  for (const file of missing) console.error(`missing page file: ${file}`);
+  for (const file of missing) console.error(`missing export file: ${file}`);
   process.exit(1);
 }
 console.log(`export shape: ${files.length} files, ${pages.length} pages`);

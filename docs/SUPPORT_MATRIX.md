@@ -44,7 +44,6 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `GET` | `/api/tags` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `ollama_tags` |
 | `GET` | `/api/version` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `ollama_version` |
 | `GET` | `/docs` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api_reference.py](../gateway/api_reference.py) `reference` |
-| `GET` | `/favicon.ico` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `status_favicon` |
 | `GET` | `/gateway/v1/aliases` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `list_aliases` |
 | `GET` | `/gateway/v1/aliases/resolve` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `resolve_alias_dry_run` |
 | `GET` | `/gateway/v1/assets/{asset_id}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `gateway_asset_metadata` |

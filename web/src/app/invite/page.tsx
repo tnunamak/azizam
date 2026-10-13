@@ -2,7 +2,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Fish, ArrowRight, ShieldCheck } from "lucide-react";
+import { ArrowRight, ShieldCheck } from "lucide-react";
+import { BrandMark } from "@/components/product/brand-mark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -110,7 +111,7 @@ export default function InvitePage() {
   return (
     <section className="mx-auto w-full max-w-md py-12 sm:py-16">
       <div className="bg-card rounded-xl border p-6 sm:p-8">
-        <Fish className="text-link mb-6 size-8" aria-hidden="true" />
+        <BrandMark className="mb-6 size-8" />
         <h1 className="text-2xl font-semibold tracking-tight">
           {accept.data ? "Your account is ready" : "Accept your invitation"}
         </h1>

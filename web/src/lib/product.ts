@@ -2,6 +2,11 @@ import identity from "../../../gateway/product_identity.json";
 import registry from "../../../gateway/ui_pages.json";
 
 export const PRODUCT_NAME = identity.name;
+export const PRODUCT_DESCRIPTION =
+  "Your own AI provider. Connect your apps and manage your gateway.";
+// The link preview's line (and the showcase headline).
+export const PRODUCT_TAGLINE =
+  "One AI gateway for your apps and the people you invite.";
 
 // gateway/ui_pages.json is the one list of pages. The gateway serves, guards
 // and sanitizes return paths from it; the shell takes public pages, owner
