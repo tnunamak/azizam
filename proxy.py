@@ -1663,6 +1663,11 @@ def _has_bootstrap_user_access_defaults() -> bool:
 
 
 def _runtime_user_access_defaults() -> dict[str, Any]:
+    # Asked once per app by a listing; a read request reads the setting once.
+    return dict(request_connections.memo(("user-access-defaults",), _read_runtime_user_access_defaults))
+
+
+def _read_runtime_user_access_defaults() -> dict[str, Any]:
     try:
         setting = admin_store.get_operator_setting(
             USER_ACCESS_DEFAULTS_SETTING_KEY,
@@ -1684,6 +1689,10 @@ def _runtime_user_access_defaults() -> dict[str, Any]:
 
 
 def _user_defaults_seeded_in_admin_db() -> bool:
+    return request_connections.memo(("user-defaults-seeded",), _read_user_defaults_seeded)
+
+
+def _read_user_defaults_seeded() -> bool:
     try:
         return (
             admin_store.get_operator_setting(
@@ -1897,6 +1906,11 @@ def _default_profile_id_for_user(**kwargs) -> str | None:
 
 
 def _effective_plan_for_person(person: Mapping[str, Any]) -> dict[str, Any]:
+    key = ("effective-plan", str(person["id"]), str(person.get("email") or ""))
+    return dict(request_connections.memo(key, lambda: _read_effective_plan_for_person(person)))
+
+
+def _read_effective_plan_for_person(person: Mapping[str, Any]) -> dict[str, Any]:
     user_id = str(person["id"])
     assigned = accounts.profile_for_user(user_id, path=ADMIN_STORE.path)
     if assigned:
@@ -1934,10 +1948,15 @@ def _inherited_profile_id_for_app(app: Mapping[str, Any]) -> str | None:
     owner_user_id = str(app.get("owner_user_id") or "")
     if not owner_user_id:
         return None
-    user = admin_store.get_user(owner_user_id, path=ADMIN_STORE.path)
-    if user is None or not is_human_user_record(user):
-        return None
-    return _effective_plan_for_person(user)["profile_id"]
+
+    def inherited() -> str | None:
+        user = admin_store.get_user(owner_user_id, path=ADMIN_STORE.path)
+        if user is None or not is_human_user_record(user):
+            return None
+        return _effective_plan_for_person(user)["profile_id"]
+
+    # Every app of one person inherits the same plan; a read request works it out once.
+    return request_connections.memo(("inherited-plan", owner_user_id), inherited)
 
 
 def _provision_existing_user_personal_apps() -> int:

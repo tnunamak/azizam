@@ -46,12 +46,16 @@ def _error(exc: UserPortalError | AdminAuthError) -> JSONResponse:
 
 
 def _identity(app: Mapping[str, Any], credential: Mapping[str, Any] | None,
-              default_profile_id: str | None, path: Path, *, person_id: str | None = None) -> RuntimeIdentity | None:
-    """Resolve access without marking a key used by a read-only Home request."""
+              default_profile_id: str | None, path: Path, *, person_id: str | None = None,
+              records: Mapping[str, Any] | None = None) -> RuntimeIdentity | None:
+    """Resolve access without marking a key used by a read-only Home request.
+
+    ``records`` holds the profiles a listing needs, read in one query.
+    """
     profile_id = (credential or {}).get("profile_id") or app.get("default_profile_id") or default_profile_id
     profile = DEFAULT_PROFILE
     if profile_id:
-        record = admin_store.get_profile(str(profile_id), path=path)
+        record = admin_store.get_profile(str(profile_id), path=path) if records is None else records.get(str(profile_id))
         if record is None:
             return None
         try:
@@ -353,14 +357,25 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             records = tuple(workflow_records())
             allowed: dict[tuple[str, str | None, str | None, str], Capability] = {}
             credential_aliases: dict[str, list[dict[str, Any]]] = {}
-            owned_apps = admin_store.list_apps_for_user(session.subject, path=store.path)
+            owned_apps = [app for app in admin_store.list_apps_for_user(session.subject, path=store.path)
+                          if not app.get("disabled_at")]
+            # Keys and profiles for every app are read in one query each, so the
+            # number of statements does not grow with the number of apps or keys.
+            credentials_by_app = admin_store.list_active_credentials_for_apps(
+                [str(app["id"]) for app in owned_apps], path=store.path)
+            inherited_by_app = {str(app["id"]): (inherited_profile_id_for_app(app) if inherited_profile_id_for_app else inherited)
+                                for app in owned_apps}
+            profile_records = admin_store.get_profiles(
+                {str(value) for value in (
+                    *(app.get("default_profile_id") for app in owned_apps), *inherited_by_app.values(), inherited,
+                    *(c.get("profile_id") for rows in credentials_by_app.values() for c in rows)) if value},
+                path=store.path)
             for app in owned_apps:
-                if app.get("disabled_at"):
-                    continue
-                credentials = admin_store.list_active_credentials(subject_kind="app", app_id=app["id"], path=store.path)
+                credentials = credentials_by_app.get(str(app["id"]), [])
                 for credential in credentials or [None]:
-                    app_inherited = inherited_profile_id_for_app(app) if inherited_profile_id_for_app else inherited
-                    identity = _identity(app, credential, app_inherited, store.path, person_id=session.subject)
+                    app_inherited = inherited_by_app[str(app["id"])]
+                    identity = _identity(app, credential, app_inherited, store.path, person_id=session.subject,
+                                         records=profile_records)
                     if identity is None:
                         continue
                     scoped = _resolved_capabilities(identity, capabilities, registry)
@@ -369,7 +384,8 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                     for cap in scoped:
                         if cap.policy_available:
                             allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
-            new_identity = _identity({}, None, inherited, store.path, person_id=session.subject) if self_service_enabled() else None
+            new_identity = (_identity({}, None, inherited, store.path, person_id=session.subject, records=profile_records)
+                            if self_service_enabled() else None)
             new_caps = _resolved_capabilities(new_identity, capabilities, registry) if new_identity else []
             new_app_aliases = _alias_rows(_capability_rows(new_caps, availability_evidence, rows_registry, alias_views, records), alias_views)
             for cap in new_caps:
@@ -384,7 +400,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             gateway = {"owner_name": admin_store.owner_display_name(path=store.path)}
             # The person's own plan: the access plan their keys inherit. Spend is
             # the plan's total across everyone on it, because the caps are shared.
-            plan_identity = _identity({}, None, inherited, store.path, person_id=session.subject)
+            plan_identity = _identity({}, None, inherited, store.path, person_id=session.subject, records=profile_records)
             plan_spend = (providers.plan_spend(plan_identity.profile, path=spend_ledger_path())
                           if plan_identity is not None else None)
             return _json({**account, "gateway": gateway, "plan_spend": plan_spend,
