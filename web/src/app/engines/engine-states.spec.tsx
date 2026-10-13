@@ -35,17 +35,16 @@ const registry = {
     chat: {
       id: "chat",
       name: "Local chat engine",
-      kind: "llama",
+      kind: "engine-a",
       source: "ui",
       enabled: true,
       editable: true,
       capabilities: ["chat"],
       role: "primary",
       config: {
-        host: "127.0.0.1",
-        port: 18081,
+        host: "engine-a.test",
         base_path: "/v1",
-        protocol: "openai-compatible",
+        protocol: "protocol-a",
         health_endpoint: "/health",
         custom_flag: "keep-me",
         models: { "existing-chat": { upstream_model: "existing-upstream" } },
@@ -54,26 +53,26 @@ const registry = {
     image: {
       id: "image",
       name: "Local image engine",
-      kind: "comfy",
+      kind: "engine-b",
       source: "ui",
       enabled: false,
       editable: true,
       capabilities: ["image", "video"],
       role: "optional",
-      config: { base_url: "http://127.0.0.1:18082" },
+      config: { base_url: "http://engine-b.test" },
     },
     managed: {
       id: "managed",
       name: "Gateway substrate",
-      kind: "litellm",
+      kind: "engine-c",
       source: "builtin",
       enabled: true,
       editable: false,
       capabilities: [],
       role: "required",
       config: {
-        base_url: "http://litellm:4000",
-        protocol: "openai-compatible",
+        base_url: "http://engine-c.test",
+        protocol: "protocol-a",
         note: "Managed by the gateway.",
       },
     },
@@ -117,11 +116,11 @@ const status = {
 const presets = {
   presets: [
     {
-      id: "openai-compatible",
-      label: "OpenAI compatible",
+      id: "protocol-a",
+      label: "Engine A",
       base_path: "/v1",
       default_port: null,
-      protocol: "openai-compatible",
+      protocol: "protocol-a",
       capabilities: ["chat"],
       native_passthrough: false,
     },
@@ -190,7 +189,7 @@ it("lists the in-use engine without its model names, hides unused engines, and o
     ok: true,
     status: 200,
     error: "",
-    url: "http://127.0.0.1:18081/v1/health",
+    url: "http://engine-a.test/v1/health",
   });
   vi.spyOn(api.services, "detectModels").mockResolvedValue({
     ok: true,
@@ -341,16 +340,16 @@ it("adds, edits, toggles and removes engines through the existing APIs with the 
   await user.click(screen.getAllByRole("button", { name: "Add engine" })[0]);
   const addDialog = await screen.findByRole("dialog", { name: "Add engine" });
   await user.click(within(addDialog).getByRole("combobox", { name: "Preset" }));
-  await user.click(await screen.findByRole("option", { name: /OpenAI.?compatible/i }));
+  await user.click(await screen.findByRole("option", { name: /Engine A/ }));
   await enter(user, within(addDialog).getByLabelText(/^Name/), "Added engine");
-  await enter(user, within(addDialog).getByLabelText(/^Base URL/), "http://127.0.0.1:18083/v1");
+  await enter(user, within(addDialog).getByLabelText(/^Base URL/), "http://engine-d.test/v1");
   await user.click(within(addDialog).getByRole("button", { name: "Add engine" }));
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Engine added"));
   expect(sent("POST")).toHaveLength(1);
   expect(sent("POST")[0]).toMatchObject({
     path: "/admin/api/operator/services",
     ifMatch: "test-etag",
-    body: { name: "Added engine", preset: "openai-compatible", base_url: "http://127.0.0.1:18083/v1" },
+    body: { name: "Added engine", preset: "protocol-a", base_url: "http://engine-d.test/v1" },
   });
 
   const dialog = await openEdit(user, "Local chat engine");
@@ -368,13 +367,13 @@ it("adds, edits, toggles and removes engines through the existing APIs with the 
   expect(await within(dialog).findByText("Advanced fields must be a JSON object.")).toBeVisible();
   expect(sent("PATCH")).toHaveLength(0);
   await enter(user, json, config);
-  await enter(user, endpoint, "http://127.0.0.1:19000/v1");
+  await enter(user, endpoint, "http://engine-a.test:19000/v1");
   await user.click(within(dialog).getByRole("button", { name: "Save engine" }));
   await waitFor(() => expect(sent("PATCH")).toHaveLength(1));
   expect(sent("PATCH")[0].path).toBe("/admin/api/operator/services/chat");
   expect(sent("PATCH")[0].body).toMatchObject({
     name: "Renamed chat engine",
-    host: "127.0.0.1",
+    host: "engine-a.test",
     port: 19000,
     base_path: "/v1",
     custom_flag: "keep-me",

@@ -707,7 +707,7 @@ describe("models catalog contract distinctions", () => {
           id: "fast",
           title: "Fast",
           description: "Answers quickly for everyday prompts.",
-          technical_description: "Served via local llama.cpp on :5051.",
+          technical_description: "Served via local engine-a.",
         }),
       ]),
     );
@@ -720,13 +720,13 @@ describe("models catalog contract distinctions", () => {
       card.queryByText("Answers quickly for everyday prompts."),
     ).toBeNull();
     expect(
-      card.queryByText("Served via local llama.cpp on :5051."),
+      card.queryByText("Served via local engine-a."),
     ).not.toBeInTheDocument();
     fireEvent.click(card.getByRole("button", { name: "Details" }));
     const dialog = within(screen.getByRole("dialog"));
     expect(dialog.queryByText("Technical description")).toBeNull();
     expect(
-      dialog.queryByText("Served via local llama.cpp on :5051."),
+      dialog.queryByText("Served via local engine-a."),
     ).toBeNull();
   });
 
@@ -736,7 +736,7 @@ describe("models catalog contract distinctions", () => {
         row({
           title: "Default",
           description: "Thinks through questions before answering.",
-          engine_label: "llama.cpp (chat)",
+          engine_label: "engine-a (chat)",
         }),
       ]),
     );
@@ -745,9 +745,9 @@ describe("models catalog contract distinctions", () => {
     });
     const card = within(copy.closest("tr")!);
     expect(card.getByRole("heading", { name: "Default" })).toBeVisible();
-    expect(card.queryByText("llama.cpp (chat)")).toBeNull();
+    expect(card.queryByText("engine-a (chat)")).toBeNull();
     fireEvent.click(card.getByRole("button", { name: /Details/ }));
-    expect(screen.getByText("llama.cpp (chat)")).toBeVisible();
+    expect(screen.getByText("engine-a (chat)")).toBeVisible();
     expect(card.queryByText(/rollback|official/i)).toBeNull();
   });
 
@@ -757,7 +757,7 @@ describe("models catalog contract distinctions", () => {
         row({
           locality: "remote",
           provider: "provider-internal-id",
-          engine_label: "OpenRouter",
+          engine_label: "provider-a",
         }),
       ]),
     );
@@ -767,9 +767,9 @@ describe("models catalog contract distinctions", () => {
     });
     const card = within(copy.closest("tr")!);
 
-    expect(card.queryByText("OpenRouter")).toBeNull();
+    expect(card.queryByText("provider-a")).toBeNull();
     fireEvent.click(card.getByRole("button", { name: /Details/ }));
-    expect(screen.getByText("OpenRouter")).toBeVisible();
+    expect(screen.getByText("provider-a")).toBeVisible();
   });
 
   it("groups explicit music and speech capabilities separately with server labels", async () => {
@@ -777,10 +777,10 @@ describe("models catalog contract distinctions", () => {
       catalog([
         row({
           id: "music",
-          display_name: "ACE-Step music",
-          name: "ace-step-xl",
+          display_name: "Model B music",
+          name: "model-b",
           description: "Generate music from a prompt.",
-          engine_label: "Music (ACE-Step XL Turbo)",
+          engine_label: "Music (engine-b)",
           capabilities: [
             {
               capability: "music",
@@ -795,10 +795,10 @@ describe("models catalog contract distinctions", () => {
         }),
         row({
           id: "speech",
-          display_name: "Chatterbox speech",
-          name: "chatterbox",
+          display_name: "Model C speech",
+          name: "model-c",
           description: "Read text aloud.",
-          engine_label: "Chatterbox (speech)",
+          engine_label: "engine-c (speech)",
           capabilities: [
             {
               capability: "speech",
@@ -816,8 +816,8 @@ describe("models catalog contract distinctions", () => {
 
     expect(await screen.findByRole("heading", { name: "Make music" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Read text aloud" })).toBeVisible();
-    expect(screen.queryByText("Music (ACE-Step XL Turbo)")).toBeNull();
-    expect(screen.queryByText("Chatterbox (speech)")).toBeNull();
+    expect(screen.queryByText("Music (engine-b)")).toBeNull();
+    expect(screen.queryByText("engine-c (speech)")).toBeNull();
   });
 
   it("uses the server audio taxonomy instead of the operation intent", async () => {
@@ -1190,7 +1190,7 @@ describe("models catalog contract distinctions", () => {
           title: "Music",
           icon_key: "music",
           capability_title: "Music",
-          use_names: ["music", "song", "ace-step"],
+          use_names: ["music", "song", "model-b"],
           capabilities: [
             {
               capability: "music",
@@ -1246,7 +1246,7 @@ describe("models catalog contract distinctions", () => {
     const dialog = within(screen.getByRole("dialog"));
     expect(dialog.getByText("Names you can use")).toBeVisible();
     expect(dialog.getByText("song")).toBeVisible();
-    expect(dialog.getByText("ace-step")).toBeVisible();
+    expect(dialog.getByText("model-b")).toBeVisible();
   });
 
   it("treats only explicit configured false as catalog-only and gives owners an engine action", async () => {
