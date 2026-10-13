@@ -620,13 +620,20 @@ def recent(
         clauses.append("+parent_request_id IS NULL")
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(int(limit))
+    # Newest first with no owner filter: walk the created_at index and stop after `limit` rows.
+    # Left to itself the planner flips between that and a full scan with a full sort on the
+    # value of LIMIT (3 and 5 plan differently), so the index is named.
+    ordered = " INDEXED BY receipts_created_at" if app_ids is None and owner_key_hashes is None else ""
 
     with _conn(path) as conn:
-        rows = conn.execute(
-            f"SELECT receipt_json, created_at FROM receipts{where} "
-            "ORDER BY created_at DESC, request_id DESC LIMIT ?",
-            params,
-        ).fetchall()
+        query = (f"SELECT receipt_json, created_at FROM receipts{ordered}{where} "
+                 "ORDER BY created_at DESC, request_id DESC LIMIT ?")
+        try:
+            rows = conn.execute(query, params).fetchall()
+        except sqlite3.OperationalError:
+            if not ordered:
+                raise
+            rows = conn.execute(query.replace(ordered, "", 1), params).fetchall()  # a database without the index
 
     out: list[dict[str, Any]] = []
     for receipt_json, created_at in rows:

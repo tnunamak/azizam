@@ -552,10 +552,11 @@ def test_receipt_queries_use_the_created_at_index_not_the_parent_index(tmp_path:
         return connection
 
     with patch.object(sqlite3, "connect", connect):
-        receipt_store.recent(limit=5, path=db)
+        for limit in (1, 3, 5, 50):  # the planner has chosen differently for different limits
+            receipt_store.recent(limit=limit, path=db)
         availability.evidence_from_receipt_store(db)
     queries = [statement for statement in seen if "FROM receipts" in statement and "parent_request_id" in statement]
-    assert len(queries) >= 2, queries
+    assert len(queries) >= 5, queries
     with sqlite3.connect(db) as conn:
         for statement in queries:
             plan = " ".join(row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + statement))
