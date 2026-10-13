@@ -17769,6 +17769,7 @@ async def well_known_azizam(request: Request):
         base_url=_public_base_url(request),
         registry=ADMIN_STORE.get_service_registry(),
         mcp_tools=mcp_server.TOOLS,
+        mcp_sign_in=MCP_OAUTH_ENABLED and MCP_OAUTH.available(request),
     )
     metadata["service"]["name"] = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["name"]
     metadata["presentation"] = {

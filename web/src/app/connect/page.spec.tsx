@@ -1,6 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { ViewerContext, type Viewer } from "@/components/shell/session";
 import { accountApi, type GatewayDiscovery } from "@/lib/account-api";
@@ -34,14 +41,20 @@ const discovery: GatewayDiscovery = {
     url: "https://gw.example/mcp",
     transport: "streamable-http",
     tools: [
-      { name: "tool_alpha", title: "Alpha", description: "Does the alpha thing." },
+      {
+        name: "tool_alpha",
+        title: "Alpha",
+        description: "Does the alpha thing.",
+      },
       { name: "tool_beta", title: "Beta", description: "Does the beta thing." },
     ],
   },
 };
 
 function renderPage(viewer: Viewer) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <ViewerContext.Provider value={viewer}>
@@ -51,16 +64,45 @@ function renderPage(viewer: Viewer) {
   );
 }
 
+beforeEach(() => {
+  vi.spyOn(accountApi, "mcpConnections").mockResolvedValue([]);
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
+const notes = {
+  checked: "2026-10-13",
+  clients: [
+    {
+      id: "hosted",
+      name: "Hosted Chat",
+      auth: "sign-in" as const,
+      status: "documented" as const,
+      steps: ["Add a connector with <server address>.", "Sign in when asked."],
+      note: "Takes no key.",
+      docs: "https://hosted.example/docs",
+    },
+    {
+      id: "editor",
+      name: "Some Editor",
+      auth: "sign-in-or-key" as const,
+      status: "unverified" as const,
+      steps: ["Set url to <server address>."],
+      docs: "https://editor.example/docs",
+    },
+  ],
+};
+
 describe("Connect", () => {
   test("shows a loading state while connection details load", () => {
     vi.spyOn(accountApi, "discovery").mockReturnValue(new Promise(() => {}));
     renderPage(member);
-    expect(screen.getByRole("status")).toHaveTextContent(/loading connection details/i);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      /loading connection details/i,
+    );
     expect(screen.queryByText("AI agents (MCP)")).toBeNull();
   });
 
@@ -87,9 +129,9 @@ describe("Connect", () => {
   test("shows a member the addresses, the MCP server and a key link", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
     renderPage(member);
-    expect(await screen.findByLabelText("OpenAI-compatible address")).toHaveValue(
-      "https://gw.example/openai/v1",
-    );
+    expect(
+      await screen.findByLabelText("OpenAI-compatible address"),
+    ).toHaveValue("https://gw.example/openai/v1");
     expect(screen.getByLabelText("Anthropic-compatible address")).toHaveValue(
       "https://gw.example/anthropic",
     );
@@ -136,7 +178,9 @@ describe("Connect", () => {
       ...discovery,
       mcp: {
         ...discovery.mcp!,
-        tools: [{ name: "only_one", title: "One", description: "The only tool." }],
+        tools: [
+          { name: "only_one", title: "One", description: "The only tool." },
+        ],
       },
     });
     renderPage(member);
@@ -156,5 +200,79 @@ describe("Connect", () => {
     expect(
       await screen.findByText("This gateway didn't list any MCP tools."),
     ).toBeTruthy();
+  });
+
+  test("tells people to paste the address and sign in, not to use a key, when sign-in works", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue({
+      ...discovery,
+      mcp: { ...discovery.mcp!, sign_in: true },
+    });
+    renderPage(member);
+    const steps = await screen.findByRole("list", { name: "How to connect" });
+    expect(steps.textContent).toMatch(/paste this address/);
+    expect(steps.textContent).toMatch(/sign in to .* and choose Allow/);
+    expect(steps.textContent).not.toMatch(/key/i);
+    expect(
+      screen.getByText(/ChatGPT and Claude.ai sign in instead/),
+    ).toBeTruthy();
+  });
+
+  test("explains that sign-in needs the public address when it is not set", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue({
+      ...discovery,
+      mcp: { ...discovery.mcp!, sign_in: false },
+    });
+    renderPage(owner);
+    expect(
+      await screen.findByText(/needs this gateway's public https/),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Set it in Settings" }),
+    ).toHaveAttribute("href", "/settings");
+    expect(screen.queryByRole("list", { name: "How to connect" })).toBeNull();
+  });
+
+  test("renders each client's notes from data, with the address filled in", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue({
+      ...discovery,
+      mcp: { ...discovery.mcp!, sign_in: true, clients: notes },
+    });
+    renderPage(member);
+    expect(await screen.findByText(/checked 2026-10-13/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Hosted Chat/ }));
+    expect(
+      await screen.findByText("Add a connector with https://gw.example/mcp."),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Hosted Chat documentation" }),
+    ).toHaveAttribute("href", "https://hosted.example/docs");
+    expect(
+      screen.getByRole("button", { name: /Some Editor/ }).textContent,
+    ).toMatch(/Partly unverified/);
+  });
+
+  test("lists connected apps and disconnects one", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+    vi.spyOn(accountApi, "mcpConnections").mockResolvedValue([
+      {
+        id: "mcg_1",
+        client_name: "Hosted Chat",
+        client_id: "https://hosted.example/client.json",
+        redirect_host: "hosted.example",
+        created_at: 1_800_000_000,
+        last_used_at: null,
+      },
+    ]);
+    const revoke = vi
+      .spyOn(accountApi, "revokeMcpConnection")
+      .mockResolvedValue({});
+    renderPage(member);
+    const list = await screen.findByRole("list", { name: "Connected AI apps" });
+    expect(within(list).getByText("Hosted Chat")).toBeTruthy();
+    expect(within(list).getByText(/Returns to hosted.example/)).toBeTruthy();
+    fireEvent.click(
+      within(list).getByRole("button", { name: "Disconnect Hosted Chat" }),
+    );
+    await waitFor(() => expect(revoke).toHaveBeenCalledWith("mcg_1"));
   });
 });

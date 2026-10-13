@@ -8,6 +8,7 @@ absolute links; tests and docs can use the same builder with a fixed base URL.
 from __future__ import annotations
 
 import copy
+import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -159,6 +160,11 @@ def _join(base_url: str | None, path: str) -> str:
     return f"{base_url.rstrip('/')}{path}"
 
 
+# Per-client MCP setup notes are data (gateway/mcp_client_notes.json), shown
+# on the Connect page. The gateway has no client-specific behaviour.
+MCP_CLIENT_NOTES: dict[str, Any] = json.loads((Path(__file__).with_name("mcp_client_notes.json")).read_text())
+
+
 def _base_url(base_url: str | None) -> str:
     return (base_url or "{base_url}").rstrip("/")
 
@@ -169,11 +175,14 @@ def build_gateway_discovery_metadata(
     service_name: str = "azizam",
     registry: Mapping[str, Any] | None = None,
     mcp_tools: Sequence[Mapping[str, Any]] | None = None,
+    mcp_sign_in: bool = False,
 ) -> dict[str, Any]:
     """Return unauthenticated public metadata for agent/client discovery.
 
     ``mcp_tools`` is the live tool list of the MCP server, so the Connect page
     shows what the server exposes instead of a copy that can drift.
+    ``mcp_sign_in`` says whether MCP clients can sign in with OAuth here (it
+    needs a public https address).
     """
     root = _base_url(base_url)
     protocol_frontends = None
@@ -266,7 +275,10 @@ def build_gateway_discovery_metadata(
         "mcp": {
             "url": _join(base_url, "/mcp"),
             "transport": "streamable-http",
-            "auth": "Authorization: Bearer <app key>",
+            "auth": ("OAuth sign-in (MCP authorization) or Authorization: Bearer <app key>"
+                     if mcp_sign_in else "Authorization: Bearer <app key>"),
+            "sign_in": mcp_sign_in,
+            "clients": copy.deepcopy(MCP_CLIENT_NOTES),
             "tools": [
                 {
                     "name": str(tool["name"]),
