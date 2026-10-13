@@ -122,6 +122,8 @@ interface MediaAsset {
   model: string;
   created_at: number | string | null;
   download_url?: string | null;
+  /** A small WebP preview (about 480 px). Tiles show it; the viewer uses the original. */
+  thumbnail_url?: string | null;
   workflow_download_url?: string | null;
   media_type?: string;
   width?: number | null;
@@ -302,7 +304,7 @@ function validAsset(value: unknown): boolean {
     (value.prompt == null || typeof value.prompt === "string") &&
     (value.model == null || typeof value.model === "string") &&
     (value.available == null || typeof value.available === "boolean") &&
-    ["download_url", "workflow_download_url", "poster_asset_id", "request_id", "unavailable_reason", "owner_name"]
+    ["download_url", "thumbnail_url", "workflow_download_url", "poster_asset_id", "request_id", "unavailable_reason", "owner_name"]
       .every((key) => value[key] == null || typeof value[key] === "string") &&
     (value.created_at == null || typeof value.created_at === "string" || typeof value.created_at === "number") &&
     (value.media_type == null || typeof value.media_type === "string") &&
@@ -931,6 +933,7 @@ function Preview({
   const queryClient = useQueryClient();
   const [mediaFailed, setMediaFailed] = useState(false);
   const [posterFailed, setPosterFailed] = useState(false);
+  const [thumbFailed, setThumbFailed] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [retrySrc, setRetrySrc] = useState<string | null>(null);
   const [recovered, setRecovered] = useState(false);
@@ -950,7 +953,7 @@ function Preview({
   } = useQuery({
     queryKey: ["library", "poster", asset.poster_asset_id, everyone],
     // Off-screen tiles wait: one poster link per video would flood a large Library.
-    enabled: asset.kind === "video" && !!asset.poster_asset_id && visible,
+    enabled: asset.kind === "video" && !!asset.poster_asset_id && visible && !asset.thumbnail_url,
     queryFn: () =>
       mediaRequest<{ download_url: string }>(
         `/me/api/media/${encodeURIComponent(asset.poster_asset_id!)}/download?scope=${everyone ? "everyone" : "me"}`,
@@ -958,11 +961,14 @@ function Preview({
     retry: false,
   });
 
-  const posterUrl = poster?.download_url;
+  // The server's small preview stands in as the video poster too: no
+  // per-tile poster link, and no video bytes until the person presses play.
+  const thumbUrl = asset.thumbnail_url && !thumbFailed && !retrySrc ? asset.thumbnail_url : undefined;
+  const posterUrl = thumbUrl ?? poster?.download_url;
   const effectivePosterUrl = posterFailed ? undefined : posterUrl;
   const currentSrc = retrySrc ?? src;
   const waitingForPoster =
-    asset.kind === "video" && !!asset.poster_asset_id && posterPending;
+    asset.kind === "video" && !!asset.poster_asset_id && !thumbUrl && posterPending;
   const posterUnavailable =
     asset.kind !== "video" ||
     !asset.poster_asset_id ||
@@ -1027,22 +1033,27 @@ function Preview({
         }}
       />
     );
-  if (asset.kind === "image" && currentSrc)
+  if (asset.kind === "image" && currentSrc) {
+    // Tiles load the small preview; the viewer and any retry load the original.
+    const imageSrc = !large && thumbUrl ? thumbUrl : currentSrc;
     return (
       <NextImage
-        key={`image-${asset.asset_id}-${retryKey}-${currentSrc}`}
+        key={`image-${asset.asset_id}-${retryKey}-${imageSrc}`}
         unoptimized
+        loading="lazy"
+        decoding="async"
         width={asset.width ?? 1024}
         height={asset.height ?? 768}
-        src={currentSrc}
+        src={imageSrc}
         alt={assetTitle(asset)}
-        onError={() => setMediaFailed(true)}
+        onError={() => (imageSrc === thumbUrl ? setThumbFailed(true) : setMediaFailed(true))}
         className={cn(
           "h-full w-full",
           large ? "object-contain" : "object-cover",
         )}
       />
     );
+  }
   if (
     asset.kind === "video" &&
     currentSrc &&
@@ -1063,7 +1074,7 @@ function Preview({
           key={`video-${asset.asset_id}-${retryKey}`}
           src={tileStarted || (visible && !effectivePosterUrl) ? `${currentSrc}#t=0.1` : undefined}
           poster={effectivePosterUrl}
-          preload="metadata"
+          preload="none"
           muted
           playsInline
           onWaiting={() => setTileBuffering(true)}
@@ -1097,11 +1108,13 @@ function Preview({
         {effectivePosterUrl && !tileStarted ? (
           <NextImage
             unoptimized
+            loading="lazy"
+            decoding="async"
             width={asset.width ?? 1024}
             height={asset.height ?? 768}
             src={effectivePosterUrl}
             alt={assetTitle(asset)}
-            onError={() => setPosterFailed(true)}
+            onError={() => (effectivePosterUrl === thumbUrl ? setThumbFailed(true) : setPosterFailed(true))}
             className="absolute inset-0 h-full w-full object-cover"
           />
         ) : null}
@@ -1162,11 +1175,13 @@ function Preview({
     return (
       <NextImage
         unoptimized
+        loading="lazy"
+        decoding="async"
         width={asset.width ?? 1024}
         height={asset.height ?? 768}
         src={effectivePosterUrl}
         alt={assetTitle(asset)}
-        onError={() => setPosterFailed(true)}
+        onError={() => (effectivePosterUrl === thumbUrl ? setThumbFailed(true) : setPosterFailed(true))}
         className="h-full w-full object-cover"
       />
     );

@@ -22,7 +22,7 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, request_connections, server_timing, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
+from gateway import admin_store, request_connections, server_timing, thumbnails, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
 from gateway.admin_oidc import AdminSession
 from gateway.model_ids import display_model_id
 from gateway.public_failure import PublicFailure
@@ -416,7 +416,9 @@ def conservative_asset_deleter(
             }
             if len(owners) > 1 or len(metadata.get("maker_person_ids") or []) > 1:
                 return False
-            for path in (asset_path_resolver(asset_id), metadata_path_resolver(asset_id)):
+            source = asset_path_resolver(asset_id)
+            thumbnails.remove_thumbnail(source)
+            for path in (source, metadata_path_resolver(asset_id)):
                 if path is not None and path.exists():
                     path.unlink()
                     removed = True
@@ -873,6 +875,7 @@ def _build_job_item(
         "poster_asset_id": asset.get("poster_asset_id"),
         "download_url": signed_url_builder(request, asset_id, "none") if available else None,
         "workflow_download_url": signed_url_builder(request, asset_id, "full") if available and prompt_record else None,
+        "thumbnail_url": signed_url_builder(request, asset_id, thumbnails.THUMB_MODE) if available and thumbnails.can_thumbnail(path) else None,
         "generation_ms": receipt.get("latency_ms") if receipt else None,
         "provenance": _provenance(asset, job, receipt, embedded, created_at=created_at, prompt=prompt),
         "source": source,
@@ -920,6 +923,7 @@ def _build_cache_item(
         "poster_asset_id": None,
         "download_url": signed_url_builder(request, asset_id, "none"),
         "workflow_download_url": signed_url_builder(request, asset_id, "full") if prompt_record else None,
+        "thumbnail_url": signed_url_builder(request, asset_id, thumbnails.THUMB_MODE) if thumbnails.can_thumbnail(path) else None,
         "generation_ms": None,
         "provenance": {
             "prompt": prompt,
