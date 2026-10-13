@@ -262,3 +262,91 @@ def test_which_get_paths_get_a_request_scope(path: str, scoped: bool) -> None:
     asyncio.run(request_connections.RequestConnectionsMiddleware(app)(
         {"type": "http", "method": "GET", "path": path}, None, None))
     assert seen == [scoped], path
+
+
+# -- PNG provenance: the text chunks are found without reading the picture -----------
+
+def _png_with(text_before: dict[str, str], text_after: dict[str, str], idat: int = 1000) -> bytes:  # idat: noise bytes
+    import struct
+    import zlib
+
+    from gateway import media_metadata
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    body = media_metadata._PNG_SIG + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+    for key, value in text_before.items():
+        body += media_metadata._make_png_text_chunk(key, value)
+    body += chunk(b"IDAT", zlib.compress(__import__("os").urandom(idat)))
+    for key, value in text_after.items():
+        body += media_metadata._make_png_text_chunk(key, value)
+    return body + chunk(b"IEND", b"")
+
+
+@pytest.mark.parametrize("before,after", [
+    ({}, {}), ({"azizam": "a"}, {}), ({}, {"azizam": "late"}), ({"a": "1", "b": "2"}, {"a": "3"}),
+    ({"é": "ü"}, {"long": "x" * 5000}),
+])
+def test_png_text_chunks_from_a_path_equal_those_of_the_bytes(tmp_path: Path, before, after) -> None:
+    from gateway import media_metadata
+
+    path = tmp_path / "x.png"
+    path.write_bytes(_png_with(before, after))
+    assert media_metadata.png_text_chunks_from_path(path) == media_metadata.png_text_chunks(path.read_bytes())
+
+
+def test_png_text_chunks_from_a_path_fail_like_the_bytes_on_a_truncated_file(tmp_path: Path) -> None:
+    from gateway import media_metadata
+
+    whole = _png_with({"azizam": "a"}, {})
+    for cut in (len(whole) - 5, len(whole) - 40, 20, 8):
+        path = tmp_path / f"cut{cut}.png"
+        path.write_bytes(whole[:cut])
+        try:
+            expected = media_metadata.png_text_chunks(whole[:cut])
+        except media_metadata.MediaMetadataError:
+            with pytest.raises(media_metadata.MediaMetadataError):
+                media_metadata.png_text_chunks_from_path(path)
+        else:
+            assert media_metadata.png_text_chunks_from_path(path) == expected
+    notpng = tmp_path / "n.png"
+    notpng.write_bytes(b"GIF89a....")
+    assert media_metadata.png_text_chunks_from_path(notpng) == {}
+
+
+def test_reading_provenance_does_not_read_the_picture(tmp_path: Path) -> None:
+    import builtins
+    from unittest.mock import patch
+
+    from gateway import media_metadata
+
+    path = tmp_path / "big.png"
+    path.write_bytes(_png_with({"azizam": "kept"}, {}, idat=2_000_000))
+    real_open, read = builtins.open, [0]
+
+    class Counting:
+        def __init__(self, handle):
+            self._handle = handle
+
+        def read(self, n=-1):
+            data = self._handle.read(n)
+            read[0] += len(data)
+            return data
+
+        def __getattr__(self, name):
+            return getattr(self._handle, name)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return self._handle.__exit__(*exc)
+
+    def opener(file, *args, **kwargs):
+        handle = real_open(file, *args, **kwargs)
+        return Counting(handle) if str(file) == str(path) else handle
+
+    with patch.object(builtins, "open", opener):
+        assert media_metadata.png_text_chunks_from_path(path) == {"azizam": "kept"}
+    assert read[0] < 300, f"read {read[0]} bytes of a {path.stat().st_size}-byte picture"

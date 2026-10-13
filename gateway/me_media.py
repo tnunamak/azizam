@@ -1042,7 +1042,7 @@ def _embedded_provenance(path: Path | None) -> dict[str, Any]:
         if path.suffix.lower() == ".png":
             if path.stat().st_size > 32 * 1024 * 1024:
                 return {}
-            chunks = media_metadata.png_text_chunks(path.read_bytes())
+            chunks = media_metadata.png_text_chunks_from_path(path)
             raw = provenance.read_provenance_value(chunks)
             workflow = chunks.get("workflow")
         elif path.suffix.lower() in {".jpg", ".jpeg", ".webp"}:
