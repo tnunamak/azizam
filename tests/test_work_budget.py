@@ -234,3 +234,31 @@ def test_a_busy_key_is_stamped_once_per_interval(tmp_path: Path) -> None:
     assert results.count(True) == 1 and later is True
     writes = [statement for statement in seen if statement.startswith("UPDATE credentials")]
     assert len(writes) == 2, f"{len(writes)} UPDATEs for 31 uses in two intervals"
+
+
+# -- request scope: which GET paths share one connection per store ------------------
+
+@pytest.mark.parametrize(("path", "scoped"), [
+    ("/me/api/home", True),
+    ("/me/api/media/aud_x/download", True),  # a JSON document with a signed link, not bytes
+    ("/openai/v1/models", True),
+    ("/anthropic/v1/models", True),
+    ("/gateway/v1/receipts", True),
+    ("/v1/assets/aud_x/content", False),  # streams a file: no connection is held for its length
+    ("/v1/audio/voices/v/sample", False),
+    ("/admin/api/status", True),
+    ("/health", False),
+])
+def test_which_get_paths_get_a_request_scope(path: str, scoped: bool) -> None:
+    from gateway import request_connections
+
+    seen: list[bool] = []
+
+    async def app(scope, receive, send):
+        seen.append(request_connections.active())
+
+    import asyncio
+
+    asyncio.run(request_connections.RequestConnectionsMiddleware(app)(
+        {"type": "http", "method": "GET", "path": path}, None, None))
+    assert seen == [scoped], path
