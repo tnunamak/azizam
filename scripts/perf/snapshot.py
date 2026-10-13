@@ -8,8 +8,8 @@ copied data before and after a change and compare the bytes.
     snapshot.py diff DIR_BEFORE DIR_AFTER
 
 A path file holds one `owner|member|anon  /path?query` per line. Volatile
-fields (signed URL signatures and expiries, "now"-based times) are replaced by
-a fixed token before saving, so a difference is a real difference.
+fields (signed URL signatures and expiries, "now"-based times, the port) are replaced
+by a fixed token and JSON keys are sorted before saving, so a difference is a real one.
 """
 from __future__ import annotations
 
@@ -50,13 +50,18 @@ anon /v1/videos
 """
 VOLATILE = [
     (re.compile(r"(sig|signature|expires|exp|token)=[^&\"\\]+"), r"\1=X"),
-    (re.compile(r'"(observed_at_s|last_success_at_s|last_attempt_at_s|checked_at|generated_at|server_time|latency_ms|age_s)":\s*[0-9.]+'), r'"\1": 0'),
+    (re.compile(r'"(observed_at_s|last_success_at_s|last_attempt_at_s|checked_at|generated_at|server_time|latency_ms|age_s|created)":\s*[0-9.]+'), r'"\1": 0'),
     (re.compile(r'"csrf_token":\s*"[^"]*"'), '"csrf_token": "X"'),
 ]
 
 
 def normalise(body: bytes) -> bytes:
     text = body.decode("utf-8", "replace")
+    text = re.sub(r"127\.0\.0\.1:\d+", "127.0.0.1:PORT", text)
+    try:  # key order follows set iteration order, which differs between processes
+        text = json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"))
+    except ValueError:
+        pass
     for pattern, repl in VOLATILE:
         text = pattern.sub(repl, text)
     return text.encode()
