@@ -439,6 +439,15 @@ def test_policy_fails_on_a_planted_value_without_echoing_it(tmp_path: Path, plan
         transcript.validate(json.loads(raw.read_text(encoding="utf-8")), TODAY)
 
 
+def test_categories_follow_the_bytes_not_their_length_or_an_earlier_caller(tmp_path: Path) -> None:
+    leak, clean = b'{"u": "/home/x/y"}', b'{"u": "/hxme/x/y"}'
+    assert len(leak) == len(clean)
+    first = replay_scan.categories(leak)
+    first.add("credential")  # a caller's edit must not reach the next scan
+    assert replay_scan.categories(clean) == set()
+    assert replay_scan.categories(leak) == {"home-path"}
+
+
 def test_policy_scans_every_fixtures_directory_and_passes_clean_text(tmp_path: Path) -> None:
     fixtures = tmp_path / "web/e2e/fixtures"
     fixtures.mkdir(parents=True)

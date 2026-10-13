@@ -167,6 +167,14 @@ def _inject_flaky_marker(tree: Tree) -> None:
     tree.append(_first(tree, "tests/test_")["file"], f"\n@pytest.{FLAKY}({RERUNS})\ndef test_injected(): pass\n")
 
 
+def _inject_flaky_decorator(tree: Tree) -> None:
+    tree.append(_first(tree, "tests/test_")["file"], "\n@fla" "ky\ndef test_injected(): pass\n")
+
+
+def _inject_reruns_keyword(tree: Tree) -> None:
+    tree.append(_first(tree, "tests/test_")["file"], f"\nSETTINGS = dict({RERUNS})\n")
+
+
 def _inject_retry_flag(tree: Tree) -> None:
     tree.append("scripts/ci-local", "\nnpx playwright test --retries=2\n")
 
@@ -291,6 +299,8 @@ def _inject_bare_test_import(tree: Tree) -> None:
     (_inject_bare_test_import, "fixture: web/e2e/invite-signin.spec.ts imports test from @playwright/test"),
     (_inject_rerun_plugin, "retries: rerun plugin pytest-rerunfailures"),
     (_inject_flaky_marker, f"uses {FLAKY}"),
+    (_inject_flaky_decorator, "uses @fla" "ky"),
+    (_inject_reruns_keyword, "uses " + RERUNS.split("=")[0] + "="),
     (_inject_retry_flag, "retries: scripts/ci-local passes --retries"),
     (_inject_playwright_retries, "retries: web/playwright.config.ts sets retries: 2"),
     (_inject_missing_vitest_retry, "web/vitest.config.ts must set retry: 0"),
