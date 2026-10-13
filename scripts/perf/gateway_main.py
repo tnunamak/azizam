@@ -14,6 +14,7 @@ from __future__ import annotations
 import collections
 import json
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -44,6 +45,10 @@ def _where(kind: str, detail: str) -> None:
     with _LOCK:
         WHERE[f"{kind} {detail[:70]!r} @ {chain}"] += 1
 
+
+PLANS = os.environ.get("PERF_PLANS") == "1"
+_STATEMENTS: dict[tuple[str, str], str] = {}  # (database, statement with literals removed) -> one real example
+_LITERALS = re.compile(r"'(?:[^']|'')*'|\b\d+(?:\.\d+)?\b")
 
 PROFILE = os.environ.get("PERF_PROFILE") == "1"
 _INCLUSIVE: collections.Counter = collections.Counter()
@@ -82,11 +87,15 @@ def install_counters() -> None:
     def connect(*args, **kwargs):
         _bump("connects")
         connection = real_connect(*args, **kwargs)
+        database = str(args[0]) if args else ""
         try:
             def trace(statement):
                 _bump("sql")
                 if ATTRIBUTE:
                     _where("sql", " ".join(str(statement).split()))
+                if PLANS and len(_STATEMENTS) < 4000:
+                    text = " ".join(str(statement).split())
+                    _STATEMENTS.setdefault((database, _LITERALS.sub("?", text)), text)
 
             connection.set_trace_callback(trace)
         except sqlite3.Error:
@@ -113,6 +122,12 @@ class PerfStamp:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
+            return
+        if PLANS and scope["path"] == "/__perf/statements":
+            with _LOCK:
+                body = json.dumps([[db, example] for (db, _key), example in _STATEMENTS.items()]).encode()
+            await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": body})
             return
         if PROFILE and scope["path"] == "/__perf/prof":
             with _LOCK:

@@ -63,7 +63,7 @@ def serve(state: Path, port: int, source: Path, reuse: bool = False) -> None:
         manifest = prepare(state, port, engine_port, source)
     env = live_data_copy.env_for(state, port, engine_port, Path(str(manifest["config"])))
     env["PERF_ROUTES_FILE"] = str(state / "routes.json")
-    for flag in ("PERF_ATTRIBUTE", "PERF_PROFILE"):  # slow modes: charge work to callers / sample stacks
+    for flag in ("PERF_ATTRIBUTE", "PERF_PROFILE", "PERF_PLANS"):  # slow modes: charge work to callers / sample stacks
         if os.environ.get(flag) == "1":
             env[flag] = "1"
     commands = [
