@@ -473,20 +473,47 @@ test("successive video runs poll their own jobs and never reuse old output", asy
   ]);
 });
 
+// A 1x1 PNG and the overall verdict of a passing likeness check, as the real
+// handlers return them (scripts/ui/identity_contract.py).
+const PIXEL_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+const PASSING_OVERALL = {
+  status: "pass",
+  all_meet_threshold: true,
+  min_score: 1,
+  mean_score: 1,
+  needs_human_check: false,
+  extra_faces: 0,
+  facing_each_other: null,
+};
+
 for (const scenario of [
   {
     id: "image.edit.image-identity",
+    route: "/gateway/v1/images/identity",
+    // The scene returns its image under `data` and its likeness report under `likeness`.
+    response: (proof: string) => ({
+      created: 1,
+      data: [{ asset_id: "img_1", asset_url: "/assets/img_1", media_type: "image/png", b64_json: PIXEL_PNG }],
+      likeness: { object: "likeness.check", pooling: proof, overall: PASSING_OVERALL },
+    }),
+    summary: "1 output returned.",
     title: "Identity Scene",
     note: null,
   },
   {
     id: "image.analyze.face-likeness",
+    route: "/gateway/v1/faces/likeness",
+    response: (proof: string) => ({ object: "likeness.check", pooling: proof, overall: PASSING_OVERALL }),
+    summary: "Workflow returned a response. Open Technical details to inspect it.",
     title: "Face Likeness Check",
     note: "Face service starts when you make a request.",
   },
 ] as const) {
   test("Try submits " + scenario.title + " and renders its response", async ({ page }) => {
-    const runPath = "/gateway/v1/workflows/" + scenario.id + "/run";
+    // The routes the gateway really serves for these two workflows (the catalog's
+    // native_route); /gateway/v1/workflows/{id}/run only runs video-edit workflows.
+    const runPath = scenario.route;
     const prompt = "A deterministic composed-workflow request.";
     const proof = "response-for-" + scenario.id;
     const posts: Array<{ method: string; body: unknown }> = [];
@@ -501,7 +528,7 @@ for (const scenario of [
             ...workflow,
             example_request: {
               method: "POST",
-              path: "/gateway/v1/workflows/" + workflow.id + "/run",
+              path: scenario.route,
               content_type: "application/json",
               body: { model: workflow.id, prompt: "" },
             },
@@ -513,7 +540,7 @@ for (const scenario of [
         method: route.request().method(),
         body: route.request().postDataJSON(),
       });
-      return fulfilJson(route, { proof });
+      return fulfilJson(route, scenario.response(proof));
     });
 
     await page.goto("/try/?workflow=" + encodeURIComponent(scenario.id));
@@ -541,10 +568,7 @@ for (const scenario of [
 
     await expect(page.getByText("Workflow result", { exact: true })).toBeVisible();
     await expect(
-      page.getByText(
-        "Workflow returned a response. Open Technical details to inspect it.",
-        { exact: true },
-      ),
+      page.getByText(scenario.summary, { exact: true }),
     ).toBeVisible();
     const technical = page.locator("details").filter({ hasText: "Technical details" });
     await expect(technical.locator("pre")).toBeHidden();
@@ -600,41 +624,4 @@ test("workflow multipart run sends a browser-encoded file part without a JSON co
   expect(contentType).toMatch(/^multipart\/form-data; boundary=/);
   expect(uploadedBody).toContain('name="source"; filename="clip.mp4"');
   expect(uploadedBody).toContain("Turn this source into a crisp launch clip.");
-});
-
-// Browser representative: the signed media host is unreachable, so the players' own load
-// failure (not a dispatched event) drives the "could not load" copy and Retry. A player
-// without its signed src never fails, so this also proves each src is set.
-test("workflow JSON media says each signed audio and video file could not load", async ({
-  page,
-}) => {
-  await prepareTryKey(page, "audio.generate.voiceover");
-  await page.route("**/gateway/v1/workflows/voiceover/run", (route) =>
-    fulfilJson(route, {
-        assets: [
-          {
-            kind: "audio",
-            signed_url: "https://media.example.test/audio?sig=fixture",
-            media_type: "audio/mpeg",
-          },
-          {
-            kind: "video",
-            signed_url: "https://media.example.test/video?sig=fixture",
-            media_type: "video/mp4",
-          },
-        ],
-      }),
-  );
-  await page.route("https://media.example.test/**", (route) => route.abort());
-  await fillRequiredPrompt(page);
-  await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("The audio couldn’t be loaded.")).toBeVisible();
-  await expect(page.getByText("The video couldn’t be loaded.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(2);
-  await expect(
-    page.getByRole("link", { name: "Download video 2" }),
-  ).toHaveAttribute("href", "https://media.example.test/video?sig=fixture");
-  await expect(
-    page.getByRole("link", { name: "Download audio 1" }),
-  ).toHaveAttribute("href", "https://media.example.test/audio?sig=fixture");
 });

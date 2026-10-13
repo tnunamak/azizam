@@ -23,6 +23,9 @@ from tests.test_event_loop_guard import gateway  # noqa: F401 - fixture
 
 MAX_OPENS = 3
 SAMPLES = 20
+# Per-open delay of the diagnostic run.  The run only shows in a failure note how a slow disk would add up (opens x delay);
+# nothing asserts on its time, so 1 ms shows the same shape as 100 ms at a hundredth of the wait.
+INJECTED_DELAY = 0.001
 ENDPOINTS = (
     ("/me/api/home", "cookie"),
     ("/me/api/status", "cookie"),
@@ -84,7 +87,7 @@ def test_endpoint_budget(gateway, path, auth):  # noqa: F811
     cookies = gateway["cookies"] if auth == "cookie" else {}
     fast, counts, opened = asyncio.run(_measure(path, headers, cookies, 0))
     warm = counts[2:]  # the first requests may fill caches
-    slow, _, _ = asyncio.run(_measure(path, headers, cookies, 0.1))
-    p50, p95, slow_p95 = _p(fast[2:], .5), _p(fast[2:], .95), max(slow[1:])
-    note = f"{path}: opens={max(warm)} {dict(opened)} p50={p50*1000:.0f}ms p95={p95*1000:.0f}ms slow_p95={slow_p95*1000:.0f}ms"
+    slow, _, _ = asyncio.run(_measure(path, headers, cookies, INJECTED_DELAY))
+    p50, p95, injected_p95 = _p(fast[2:], .5), _p(fast[2:], .95), max(slow[1:])
+    note = f"{path}: opens={max(warm)} {dict(opened)} p50={p50*1000:.0f}ms p95={p95*1000:.0f}ms injected_p95={injected_p95*1000:.0f}ms"
     assert max(warm) <= MAX_OPENS, f"PERF {note}"

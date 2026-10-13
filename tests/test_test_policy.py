@@ -6,18 +6,28 @@ skip was skipped, injects one violation and runs the policy as ci-local does.
 The clean inventory reuses the policy's own file discovery, so these tests
 prove each rule fires, not that discovery finds every test file; the gate's
 real cases.jsonl does that.
+
+The checkout is copied once per module and each case hard-links it; an edit
+replaces the link with its own copy first.  Cases call ``policy.main`` in this
+process (real argparse, discovery, checkers and ``SystemExit``); the clean tree
+and the receipt merger still run as the processes ci-local starts.
 """
 
 from __future__ import annotations
 
+import contextlib
+import copy
 import datetime
 import importlib.util
+import io
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -54,7 +64,9 @@ def _row(path: str, case: str, outcome: str = "passed", attempt: int = 0) -> dic
             "duration_s": 0.1, "seed": 1, "sha": "0" * 40}
 
 
-class Tree:
+class Template:
+    """The files the policy reads and the clean inventory, built once per module."""
+
     def __init__(self, root: Path) -> None:
         self.root = root
         files = policy.all_files(ROOT)
@@ -71,8 +83,29 @@ class Tree:
                 assert entry["framework"] == "pytest", "extend _row for browser entries"
                 self.cases.append(_row(entry["case"].split("::", 1)[0], entry["case"], outcome))
 
+
+class Tree:
+    def __init__(self, root: Path, template: Template) -> None:
+        self.root = root
+        self.orphans = template.orphans
+        self.cases = copy.deepcopy(template.cases)
+        for directory, _subdirectories, names in os.walk(template.root):
+            target = root / Path(directory).relative_to(template.root)
+            target.mkdir(parents=True, exist_ok=True)
+            for name in names:
+                os.link(Path(directory, name), target / name)
+
+    @staticmethod
+    def _own(path: Path) -> None:
+        """Replace a hard link by a private copy before the file changes."""
+        if path.exists() and path.stat().st_nlink > 1:
+            data = path.read_bytes()
+            path.unlink()
+            path.write_bytes(data)
+
     def edit(self, relative: str, old: str, new: str) -> None:
         path = self.root / relative
+        self._own(path)
         text = path.read_text(encoding="utf-8")
         assert old in text, f"{old!r} not in {relative}"
         path.write_text(text.replace(old, new, 1), encoding="utf-8")
@@ -80,10 +113,12 @@ class Tree:
     def append(self, relative: str, text: str) -> None:
         path = self.root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
+        self._own(path)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(text)
 
-    def run(self, today: datetime.date = TODAY, base_budgets: str | None = None) -> subprocess.CompletedProcess[str]:
+    def run(self, today: datetime.date = TODAY, base_budgets: str | None = None,
+            as_process: bool = False) -> subprocess.CompletedProcess[str]:
         cases = self.root / "cases.jsonl"
         cases.write_text("".join(json.dumps(row) + "\n" for row in self.cases), encoding="utf-8")
         extra: list[str] = []
@@ -91,17 +126,31 @@ class Tree:
             base = self.root / "base-budgets.toml"
             base.write_text(base_budgets, encoding="utf-8")
             extra = ["--base-budgets", str(base)]
-        return subprocess.run([sys.executable, str(POLICY), "--root", str(self.root), "--cases", str(cases),
-                               "--today", today.isoformat(), *extra], text=True, capture_output=True)
+        args = ["--root", str(self.root), "--cases", str(cases), "--today", today.isoformat(), *extra]
+        if as_process:
+            return subprocess.run([sys.executable, str(POLICY), *args], text=True, capture_output=True)
+        out, err = io.StringIO(), io.StringIO()
+        code = 0
+        with mock.patch.object(sys, "argv", [str(POLICY), *args]), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                policy.main()
+            except SystemExit as stop:
+                code = stop.code
+        return subprocess.CompletedProcess([str(POLICY), *args], code, out.getvalue(), err.getvalue())
+
+
+@pytest.fixture(scope="module")
+def template(tmp_path_factory: pytest.TempPathFactory) -> Template:
+    return Template(tmp_path_factory.mktemp("policy-template"))
 
 
 @pytest.fixture
-def tree(tmp_path: Path) -> Tree:
-    return Tree(tmp_path / "root")
+def tree(tmp_path: Path, template: Template) -> Tree:
+    return Tree(tmp_path / "root", template)
 
 
 def test_clean_tree_passes(tree: Tree) -> None:
-    result = tree.run()
+    result = tree.run(as_process=True)
     assert result.returncode == 0, result.stdout
     assert "policy: ok:" in result.stdout
 
@@ -230,6 +279,10 @@ def _inject_hygiene(snippet: str):
     return inject
 
 
+def _inject_unprobed_endpoint(tree: Tree) -> None:
+    tree.append("web/e2e/fixtures/intercept-registry.ts", '\nunprobed("POST", "/injected", "no oracle");\n')
+
+
 def _inject_bare_test_import(tree: Tree) -> None:
     tree.append("web/e2e/invite-signin.spec.ts", "\nimport { test as bare } from \"@playwright/test\";\n")
 
@@ -269,6 +322,7 @@ def _inject_bare_test_import(tree: Tree) -> None:
     (_inject_hygiene("await page.screenshot({ path: '/home/someone/.tmp/shot.png' });"), "hygiene: absolute_home_path occurs"),
     (_inject_hygiene("await route.fulfill({ json: { records: [] } });"), "hygiene: raw_fulfil occurs"),
     (_inject_hygiene("await fulfilJson(route, {}, { malformed: 'because' });"), "hygiene: malformed_stub occurs"),
+    (_inject_unprobed_endpoint, "hygiene: unprobed_endpoint occurs 1 times"),
     (_inject_hygiene("await page.waitForTimeout (500);"), "hygiene: waitForTimeout occurs"),
     (_inject_hygiene("await page.waitForLoadState ( 'networkidle' );"), "hygiene: networkidle occurs"),
     (_inject_hygiene("expect (await page.locator('a')?.isVisible ()).toBe(true);"), "hygiene: one_shot_expect occurs"),

@@ -56,7 +56,7 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
     return fulfilJson(route, { ...job(), id: "mj_long" }, { status: 202 });
   });
   await page.route("**/gateway/v1/media/jobs/mj_long", (route) =>
-    fulfilJson(route, { ...job(), id: "mj_long" }),
+    fulfilJson(route, job()),
   );
   await page.route("**/me/api/media?*", (route) =>
     fulfilJson(route, {

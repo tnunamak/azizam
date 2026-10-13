@@ -168,10 +168,10 @@ def test_household_consistency(tmp_path):
             load_profile_from_entry({"profile": teen}),
             PolicyRequest(remote_provider="household-remote"),
         ).denied
+    _check_default_household_edge_cases_and_realism(tmp_path, manifest)
 
 
-def test_default_household_edge_cases_and_realism(tmp_path):
-    manifest = _seed(tmp_path)
+def _check_default_household_edge_cases_and_realism(tmp_path, manifest):
     with sqlite3.connect(tmp_path / "admin.db") as conn:
         names = [row[0] for row in conn.execute("SELECT display_name FROM users")]
         app_names = [row[0] for row in conn.execute("SELECT name FROM apps")]
@@ -207,8 +207,7 @@ def test_default_household_edge_cases_and_realism(tmp_path):
     assert manifest["scenario_details"] == {}
 
 
-def test_running_scenario(tmp_path):
-    manifest = _seed(tmp_path, "running")
+def _check_running_scenario(tmp_path, manifest):
     receipts = dict((r["request_id"], r) for _, r in _receipts(tmp_path))
     live = {rid for rid, r in receipts.items() if r["status"] == "in_progress"}
     assert live == set(manifest["scenario_details"]["in_progress_receipts"])
@@ -233,6 +232,11 @@ def test_running_scenario(tmp_path):
 
 def test_budget_exhausted_scenario(tmp_path):
     manifest = _seed(tmp_path, "budget-exhausted")
+    _check_budget_scenario(tmp_path, manifest)
+    _check_budget_history_respects_every_applicable_cap(tmp_path)
+
+
+def _check_budget_scenario(tmp_path, manifest):
     details = manifest["scenario_details"]
     with sqlite3.connect(tmp_path / "admin.db") as conn:
         profile_id = conn.execute("SELECT id FROM profiles WHERE name='Everyone'").fetchone()[0]
@@ -264,6 +268,11 @@ def test_budget_exhausted_scenario(tmp_path):
 
 def test_provider_down_scenario(tmp_path):
     manifest = _seed(tmp_path, "provider-down")
+    _check_provider_down_scenario(tmp_path, manifest)
+    _check_provider_outage_has_no_paid_successes(tmp_path, manifest)
+
+
+def _check_provider_down_scenario(tmp_path, manifest):
     details = manifest["scenario_details"]
     assert details["last_success_at"] == FIXED_NOW - 4 * 3600
     assert "503" in details["error"] and set(details["affected_models"]) == {"claude-sonnet", "gpt-mini"}
@@ -416,8 +425,7 @@ def test_household_model_declarations_override_language_discovery():
         )
 
 
-def test_budget_history_respects_every_applicable_cap(tmp_path):
-    _seed(tmp_path, "budget-exhausted")
+def _check_budget_history_respects_every_applicable_cap(tmp_path):
     with sqlite3.connect(tmp_path / "admin.db") as conn:
         profiles = {
             ident: json.loads(document)["remote"]
@@ -469,8 +477,7 @@ def test_budget_history_respects_every_applicable_cap(tmp_path):
     assert ledger == {r["request_id"]: Decimal(r["cost"]["usd"]) for _, r in paid}
 
 
-def test_provider_outage_has_no_paid_successes(tmp_path):
-    manifest = _seed(tmp_path, "provider-down")
+def _check_provider_outage_has_no_paid_successes(tmp_path, manifest):
     details = manifest["scenario_details"]
     affected = [
         r for ts, r in _receipts(tmp_path)
@@ -498,7 +505,7 @@ def repeated_household_seeds(tmp_path):
     return paths
 
 
-def test_health_timings_are_varied_and_repeatable(repeated_household_seeds):
+def test_running_scenario_and_its_health_timings_are_varied_and_repeatable(repeated_household_seeds):
     def timings(path):
         with sqlite3.connect(path / "metrics.db") as conn:
             return conn.execute(
@@ -506,6 +513,8 @@ def test_health_timings_are_varied_and_repeatable(repeated_household_seeds):
                 "WHERE metric='service_latency_ms' ORDER BY ts,tags"
             ).fetchall()
 
+    first_dir = repeated_household_seeds[0]
+    _check_running_scenario(first_dir, json.loads((first_dir / "household-manifest.json").read_text()))
     first, second = map(timings, repeated_household_seeds)
     assert first == second
     for backend in {row[1] for row in first}:
