@@ -56,6 +56,14 @@
     "schema": true
   },
   {
+    "method": "POST",
+    "path": "/admin/api/access/preview",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.preview_access",
+    "schema": true
+  },
+  {
     "method": "GET",
     "path": "/admin/api/activity/requests",
     "auth": "owner-bearer",

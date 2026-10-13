@@ -403,6 +403,10 @@
     "tag": "people and plans",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   },
+  "POST /admin/api/access/preview": {
+    "tag": "people and plans",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
   "PUT /admin/api/access-plans/{plan_id}": {
     "tag": "people and plans",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"

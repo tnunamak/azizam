@@ -308,30 +308,32 @@ export interface PresetsResponse {
 // ---------------------------------------------------------------------------
 // Check access
 
-export interface CheckAccessRequest {
-  app?: string;
-  plan?: string;
-  request: {
-    intent?: string | null;
-    model?: string | null;
-    workflow?: string | null;
-    native_passthrough?: boolean;
-    native_operation?: string | null;
-    native_backend?: string | null;
-  };
+/** One kind of work (Chat, Images) an entry offers, and whether the plan allows it. */
+export interface AccessPreviewKind {
+  kind: string;
+  label: string;
+  allowed: boolean;
+  reason: string | null;
 }
 
-export interface CheckAccessResult {
+/** One Models page entry (a model, an alias or a workflow) and what the plan decides for it. */
+export interface AccessPreviewEntry {
+  id: string;
+  name: string;
+  alias: boolean;
+  group: string;
+  group_label: string;
+  state: "allowed" | "partial" | "blocked";
+  /** Plain-language reason from the decision; null when nothing is blocked. */
+  reason: string | null;
+  /** Set only when the entry is allowed for some kinds of work and not others. */
+  kinds: AccessPreviewKind[];
+}
+
+export interface AccessPreview {
   plan_ids: string[];
-  decision: {
-    decision: "allowed" | "denied";
-    allowed: boolean;
-    code: string | null;
-    side: "person" | "app" | null;
-    sources: string[];
-    reasons: string[];
-    visibility_level: string;
-  };
+  summary: { usable: number; total: number };
+  entries: AccessPreviewEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -791,10 +793,11 @@ export const api = {
       ).then((r) => r.access_plan),
     editor: () =>
       adminFetch<AccessPlanEditorContract>("/admin/api/access-plans/editor"),
-    check: (input: CheckAccessRequest) =>
-      adminFetch<CheckAccessResult>("/admin/api/access/check", {
+    /** Everything the plan can and cannot use. Makes no model request. */
+    preview: (planId: string) =>
+      adminFetch<AccessPreview>("/admin/api/access/preview", {
         method: "POST",
-        body: input,
+        body: { plan: planId },
       }),
   },
 
@@ -890,6 +893,7 @@ export const queryKeys = {
   litellmConfig: ["litellmConfig"] as const,
   operatorOverrides: ["operator", "overrides"] as const,
   accessPlanEditor: ["access-plan-editor"] as const,
+  accessPreview: (planId: string) => ["access-preview", planId] as const,
 };
 
 /** QueryClient with contract-aware retry: 4xx errors are deterministic

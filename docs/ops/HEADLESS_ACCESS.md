@@ -279,6 +279,7 @@ Selected successful workflows are exercised separately.
 | `GET /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.get_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/access-plans` | owner-bearer | denied | `gateway.admin_api.create_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/access/check` | owner-bearer | denied | `gateway.admin_api.check_access`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/access/preview` | owner-bearer | denied | `gateway.admin_api.preview_access`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PUT /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.update_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/oidc/callback` | browser/public | no owner authority | `proxy.admin_oidc_callback`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
 | `POST /auth/api/invite` | browser/public | no owner authority | `gateway.accounts_api.inspect`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |

@@ -2931,6 +2931,89 @@
         ]
       }
     },
+    "/admin/api/access/preview": {
+      "post": {
+        "description": "Everything one plan (or an App's two plans) can and cannot use.\n\n``{\"plan\": plan_id}`` or ``{\"app\": app_id}``. Returns ``plan_ids``,\n``summary`` (``usable`` of ``total`` entries) and ``entries``: one per\nModels page entry with ``state`` (allowed, partial, blocked), a plain\n``reason`` when something is blocked, and ``kinds`` when one entry is\nallowed for some kinds of work and not others. It makes no model\nrequest and costs nothing.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_post_admin_api_access_preview",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          }
+        ],
+        "summary": "Preview Access",
+        "tags": [
+          "people and plans"
+        ]
+      }
+    },
     "/admin/api/activity/requests": {
       "get": {
         "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
