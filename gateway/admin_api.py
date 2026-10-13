@@ -137,6 +137,16 @@ class AdminStore(Protocol):
         self, *, app_id: str, actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
+    def list_trusted_addresses(self, *, app_id: str) -> list[dict[str, Any]] | None: ...
+
+    def add_trusted_address(
+        self, *, app_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any] | None: ...
+
+    def delete_trusted_address(
+        self, *, app_id: str, entry_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None: ...
+
     def list_access_plans(self) -> list[dict[str, Any]]: ...
 
     def get_access_plan(self, plan_id: str) -> dict[str, Any] | None: ...
@@ -1925,6 +1935,56 @@ def create_admin_router(
         return JSONResponse(
             status_code=status.HTTP_200_OK, content={"app": record}
         )
+
+    def _app_not_found(app_id: str) -> JSONResponse:
+        return _RouteError(
+            status.HTTP_404_NOT_FOUND, "app_not_found", f"app {app_id!r} not found",
+        ).as_response()
+
+    @router.get("/apps/{app_id}/trusted-addresses")
+    def list_trusted_addresses(app_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        entries = store.list_trusted_addresses(app_id=app_id)
+        if entries is None:
+            return _app_not_found(app_id)
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"trusted_addresses": entries})
+
+    @router.post("/apps/{app_id}/trusted-addresses")
+    async def add_trusted_address(app_id: str, request: Request) -> JSONResponse:
+        ctx = (await asyncio.to_thread(_guard, request))
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+        except _RouteError as exc:
+            return exc.as_response()
+        if "owner" not in ctx.roles:  # Trusting an address lets a device in with no key.
+            return _RouteError(
+                status.HTTP_403_FORBIDDEN, "owner_required", "Only an owner can trust an address.",
+            ).as_response()
+        try:
+            record = store.add_trusted_address(app_id=app_id, data=body, actor=ctx)
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST, "invalid_trusted_address", str(exc),
+            ).as_response()
+        if record is None:
+            return _app_not_found(app_id)
+        return JSONResponse(status_code=status.HTTP_201_CREATED, content={"trusted_address": record})
+
+    @router.delete("/apps/{app_id}/trusted-addresses/{entry_id}")
+    def delete_trusted_address(app_id: str, entry_id: str, request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        record = store.delete_trusted_address(app_id=app_id, entry_id=entry_id, actor=ctx)
+        if record is None:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND, "trusted_address_not_found", "That trusted address was not found.",
+            ).as_response()
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"trusted_address": record})
 
     @router.get("/access-plans")
     def list_access_plans(request: Request) -> JSONResponse:

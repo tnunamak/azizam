@@ -23,7 +23,7 @@ from typing import Any, Mapping
 
 from fastapi import Request, status
 
-from gateway import admin_store, extension_packages, secret_store, service_registry
+from gateway import admin_store, extension_packages, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
 from gateway.admin_api import AdminAuthError, AdminContext, access_model_summary
 from gateway.admin_oidc import (
@@ -516,6 +516,56 @@ class AdminSQLiteStore:
             return None
         self._audit_plan("access_plan.delete", actor, plan_id, record.get("name"))
         return _plan_record(record)
+
+    def list_trusted_addresses(self, *, app_id: str) -> list[dict[str, Any]] | None:
+        if admin_store.get_app(app_id, path=self.path) is None:
+            return None
+        return admin_store.list_trusted_addresses(app_id, path=self.path)
+
+    def add_trusted_address(
+        self, *, app_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any] | None:
+        """Trust a client address or range for one App. ValueError carries a sentence for the owner."""
+        if admin_store.get_app(app_id, path=self.path) is None:
+            return None
+        try:
+            address = trusted_addresses.normalize_entry(data.get("address"))
+            record = admin_store.add_trusted_address(
+                app_id, address, note=str(data.get("note") or "")[:200],
+                created_by=actor.audit_actor_id, max_entries=trusted_addresses.MAX_ENTRIES_PER_APP,
+                path=self.path,
+            )
+        except LookupError:
+            return None
+        admin_store.record_audit(
+            "app.trusted_address.add",
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
+            target_kind="app",
+            target_id=app_id,
+            metadata={"address": address, "entry_id": record["id"]},
+            path=self.path,
+        )
+        return record
+
+    def delete_trusted_address(
+        self, *, app_id: str, entry_id: str, actor: AdminContext
+    ) -> dict[str, Any] | None:
+        record = admin_store.delete_trusted_address(app_id, entry_id, path=self.path)
+        if record is None:
+            return None
+        admin_store.record_audit(
+            "app.trusted_address.remove",
+            actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id,
+            actor_label=actor.actor_label,
+            target_kind="app",
+            target_id=app_id,
+            metadata={"address": record["address"], "entry_id": entry_id},
+            path=self.path,
+        )
+        return record
 
     def list_credentials(self) -> list[dict[str, Any]]:
         return [
@@ -1565,6 +1615,33 @@ def runtime_identity_for_session_app(
         return None
     return identity_from_access_row(
         row, key_hash=f"app:{app_id}", name=str(row.get("app_name") or app_id), person_id=person_id,
+    )
+
+
+def runtime_identity_for_trusted_address(
+    client: Any,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> RuntimeIdentity | None:
+    """Return the identity of the App an owner trusted this client address for.
+
+    ``client`` is the direct client address (never a forwarded one the caller
+    has not checked). The narrowest matching entry wins. The App passes the
+    same checks as with a key: a disabled App or person gives an identity
+    whose ``denial`` names the reason. The identity has no data person, so
+    saved prompts and the Library stay closed to it. Returns None when no
+    entry covers the address.
+    """
+    with admin_store.runtime_auth_connection(path) as connection:
+        entries = admin_store.list_trusted_addresses(connection=connection)
+        entry = trusted_addresses.best_match(client, entries) if entries else None
+        if entry is None:
+            return None
+        row = admin_store.runtime_access_row(connection, app_id=str(entry["app_id"]))
+    if row is None or row["on_session_app"]:
+        return None
+    return identity_from_access_row(
+        row, key_hash=f"app:{row['app_id']}", name=str(row.get("app_name") or row["app_id"]), person_id=None,
     )
 
 

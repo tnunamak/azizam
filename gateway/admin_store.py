@@ -272,6 +272,18 @@ CREATE TABLE IF NOT EXISTS account_login_limits (
 # Run after any migration to schema 7: these name columns only schema 7 has.
 _ACCESS_PLAN_DDL = """
 CREATE INDEX IF NOT EXISTS apps_owner_user ON apps(owner_user_id);
+-- Trusted addresses: a keyless request from this address or range runs as
+-- this App (gateway.trusted_addresses). Empty on a fresh install.
+CREATE TABLE IF NOT EXISTS app_trusted_addresses (
+  id TEXT PRIMARY KEY,
+  app_id TEXT NOT NULL,
+  address TEXT NOT NULL,
+  note TEXT,
+  created_at INTEGER NOT NULL,
+  created_by TEXT,
+  UNIQUE(app_id, address),
+  FOREIGN KEY(app_id) REFERENCES apps(id) ON DELETE CASCADE
+);
 CREATE TRIGGER IF NOT EXISTS apps_access_plan_exists_insert
 BEFORE INSERT ON apps
 WHEN NEW.access_plan IS NOT NULL AND NEW.access_plan <> 'person'
@@ -1617,6 +1629,64 @@ def disable_app(
     return _row_to_dict(row)
 
 
+def list_trusted_addresses(
+    app_id: str | None = None, *, path: Path = DB_PATH,
+    connection: sqlite3.Connection | None = None,
+) -> list[dict[str, Any]]:
+    """Trusted address entries, oldest first; one App's, or every App's."""
+    where, params = ("WHERE app_id = ? ", (app_id,)) if app_id is not None else ("", ())
+    with _conn(path) if connection is None else nullcontext(connection) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM app_trusted_addresses {where}ORDER BY created_at ASC, id ASC", params,
+        ).fetchall()
+    return [_row_to_dict(row) for row in rows]  # type: ignore[misc]
+
+
+def add_trusted_address(
+    app_id: str, address: str, *, note: str | None = None, created_by: str | None = None,
+    max_entries: int, now: int | None = None, path: Path = DB_PATH,
+) -> dict[str, Any]:
+    """Add one entry (``address`` is already normalized). A session App takes none:
+    a signed-in person acts through their session, never through an address."""
+    ts = _now() if now is None else int(now)
+    entry_id = _gen_id("tad")
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM apps WHERE id = ?", (app_id,)).fetchone() is None:
+            raise LookupError(f"app {app_id!r} not found")
+        if conn.execute("SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)).fetchone():
+            raise ValueError("A person's own signed-in app cannot be reached by address.")
+        if conn.execute("SELECT 1 FROM app_trusted_addresses WHERE app_id = ? AND address = ?",
+                        (app_id, address)).fetchone():
+            raise ValueError(f"{address} is already trusted for this app.")
+        count = conn.execute("SELECT COUNT(*) FROM app_trusted_addresses WHERE app_id = ?", (app_id,)).fetchone()[0]
+        if count >= max_entries:
+            raise ValueError(f"An app can have at most {max_entries} trusted addresses.")
+        conn.execute(
+            "INSERT INTO app_trusted_addresses(id, app_id, address, note, created_at, created_by) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (entry_id, app_id, address, (note or "").strip() or None, ts, created_by),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM app_trusted_addresses WHERE id = ?", (entry_id,)).fetchone()
+    return _row_to_dict(row)  # type: ignore[return-value]
+
+
+def delete_trusted_address(
+    app_id: str, entry_id: str, *, path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    """Remove one entry; the address stops being trusted at once. None if absent."""
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM app_trusted_addresses WHERE id = ? AND app_id = ?", (entry_id, app_id),
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute("DELETE FROM app_trusted_addresses WHERE id = ?", (entry_id,))
+        conn.commit()
+    return _row_to_dict(row)
+
+
 def enable_app(
     app_id: str, *, path: Path = DB_PATH
 ) -> dict[str, Any] | None:
@@ -2848,6 +2918,9 @@ __all__ = [
     "DB_PATH",
     "SCHEMA_VERSION",
     "SUBJECT_KINDS",
+    "list_trusted_addresses",
+    "add_trusted_address",
+    "delete_trusted_address",
     "APP_KINDS",
     "IDENTITY_CLAIM_KINDS",
     "init_db",

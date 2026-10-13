@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 
 # Post-deploy smoke for a live gateway: real requests that catch "healthy but broken" deploys.
-# Usage: scripts/post-deploy-smoke [BASE_URL]   (default http://127.0.0.1:5000; LAN needs no key,
-# otherwise set AZIZAM_SMOKE_KEY). Set AZIZAM_SMOKE_AUTH_MODE=required for a
-# verified non-bypass ingress; default bypass expects unauthenticated models.
+# Usage: scripts/post-deploy-smoke [BASE_URL]   (default http://127.0.0.1:5000).
+# Set AZIZAM_SMOKE_KEY to an App key: a request with no key is refused. The default
+# AZIZAM_SMOKE_AUTH_MODE=required expects 401 key_required without a key. Use
+# AZIZAM_SMOKE_AUTH_MODE=trusted only when a trusted address entry covers 127.0.0.1
+# (Apps & keys > app > Trusted addresses); then a keyless request must list models.
 set -uo pipefail
 BASE=${1:-http://127.0.0.1:5000}
-AUTH_MODE=${AZIZAM_SMOKE_AUTH_MODE:-bypass}
+AUTH_MODE=${AZIZAM_SMOKE_AUTH_MODE:-required}
 case "$AUTH_MODE" in
-  bypass) MODELS_STATUS=200 ;;
+  trusted) MODELS_STATUS=200 ;;
   required) MODELS_STATUS=401 ;;
-  *) echo "invalid AZIZAM_SMOKE_AUTH_MODE: expected bypass or required" >&2; exit 2 ;;
+  *) echo "invalid AZIZAM_SMOKE_AUTH_MODE: expected required or trusted" >&2; exit 2 ;;
 esac
 AUTH=(); [ -n "${AZIZAM_SMOKE_KEY:-}" ] && AUTH=(-H "Authorization: Bearer $AZIZAM_SMOKE_KEY")
 fail=0
@@ -66,7 +68,8 @@ try:
         if payload.get("object") != "list" or not isinstance(payload.get("data"), list): raise ValueError("not a model list")
         if not payload["data"] or not all(isinstance(m, dict) and isinstance(m.get("id"), str) for m in payload["data"]): raise ValueError("missing models")
     else:
-        if not isinstance(payload.get("error"), dict): raise ValueError("missing authentication error")
+        error = payload.get("error")
+        if not isinstance(error, dict) or error.get("code") != "key_required": raise ValueError("expected a key_required error")
     print("ok")
 except Exception as exc:
     print("invalid models response: " + str(exc))' "$MODELS_STATUS")

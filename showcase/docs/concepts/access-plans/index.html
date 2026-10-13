@@ -39,7 +39,7 @@
       <p class="eyebrow">Concepts</p>
       <h1 id="access-plans">Access plans</h1>
 <p>An access plan is a named set of rules that decides which requests an app may make. The API calls it a profile.</p>
-<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#which-plan-applies">Which plan applies</a></li><li class="toc-l2"><a href="#how-a-request-is-checked">How a request is checked</a></li><li class="toc-l2"><a href="#seeing-a-model-is-not-the-same-as-running-it">Seeing a model is not the same as running it</a></li></ul></nav></details><p>A plan can limit protocols, workflows, models, engines and capabilities. It also sets rules for remote providers, fallback, status visibility and whether a request may start a model that is not loaded.</p>
+<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#which-plan-applies">Which plan applies</a></li><li class="toc-l2"><a href="#how-a-request-is-checked">How a request is checked</a></li><li class="toc-l2"><a href="#seeing-a-model-is-not-the-same-as-running-it">Seeing a model is not the same as running it</a></li><li class="toc-l2"><a href="#trusting-an-address-instead-of-a-key">Trusting an address instead of a key</a></li></ul></nav></details><p>A plan can limit protocols, workflows, models, engines and capabilities. It also sets rules for remote providers, fallback, status visibility and whether a request may start a model that is not loaded.</p>
 <h2 id="which-plan-applies">Which plan applies <a class="anchor" href="#which-plan-applies" aria-label="Link to Which plan applies">#</a></h2>
 <p>For a request with an app key, the gateway uses the first of these that is set:</p>
 <ol>
@@ -63,11 +63,20 @@
 <h2 id="seeing-a-model-is-not-the-same-as-running-it">Seeing a model is not the same as running it <a class="anchor" href="#seeing-a-model-is-not-the-same-as-running-it" aria-label="Link to Seeing a model is not the same as running it">#</a></h2>
 <p>A plan can show every configured model, or only the models available now. It can also allow or refuse starting a model that is not loaded. Seeing a model in the list does not mean that it is loaded.</p>
 <p><a href="/showcase/docs/concepts/categories/">Categories</a> can add more restrictions to a request that a plan allows. They cannot allow a request that the plan refuses.</p>
+<h2 id="trusting-an-address-instead-of-a-key">Trusting an address instead of a key <a class="anchor" href="#trusting-an-address-instead-of-a-key" aria-label="Link to Trusting an address instead of a key">#</a></h2>
+<p>By default a request with no key is refused. An owner can change that for one device, or one network, without giving up the access plan.</p>
+<p>Open Apps &amp; keys, choose the app, and add a trusted address. Enter one IP address or a range such as <code>192.168.1.0/24</code>. A request with no key that comes straight from that address runs as that app. The app's access plan limits it, and each request shows the app and the address.</p>
+<ul>
+<li>No address is trusted until an owner adds one.</li>
+<li>A key that is sent always decides the request, even from a trusted address.</li>
+<li>Only the address of the direct connection counts. The gateway reads <code>X-Forwarded-For</code> only when the connection comes from a reverse proxy listed in <code>auth.trusted_proxies</code>. A request that shows signs of an unlisted proxy never matches.</li>
+<li>Turn the app off, or remove the address, and the address stops working at once.</li>
+</ul>
 
     </article>
     <nav class="pager" aria-label="Previous and next page"><a class="pager-prev" href="/showcase/docs/concepts/apps-and-keys/" rel="prev"><span>Previous</span>Apps and keys</a><a class="pager-next" href="/showcase/docs/concepts/categories/" rel="next"><span>Next</span>Categories</a></nav>
   </main>
-  <aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="toc-l2"><a href="#which-plan-applies">Which plan applies</a></li><li class="toc-l2"><a href="#how-a-request-is-checked">How a request is checked</a></li><li class="toc-l2"><a href="#seeing-a-model-is-not-the-same-as-running-it">Seeing a model is not the same as running it</a></li></ul></nav></aside>
+  <aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="toc-l2"><a href="#which-plan-applies">Which plan applies</a></li><li class="toc-l2"><a href="#how-a-request-is-checked">How a request is checked</a></li><li class="toc-l2"><a href="#seeing-a-model-is-not-the-same-as-running-it">Seeing a model is not the same as running it</a></li><li class="toc-l2"><a href="#trusting-an-address-instead-of-a-key">Trusting an address instead of a key</a></li></ul></nav></aside>
 </div>
 <dialog id="search" class="search" aria-labelledby="search-title">
   <form method="dialog" class="search-form" role="search">

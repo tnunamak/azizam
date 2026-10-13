@@ -164,10 +164,12 @@ from gateway.admin_runtime import (
     is_human_user_record,
     runtime_identity_for_app_credential_hash,
     runtime_identity_for_session_app,
+    runtime_identity_for_trusted_address,
     service_account_session_subject,
     session_admin_role_subject,
 )
 from gateway.api import create_gateway_router
+from gateway.request_source import note_trusted_address
 from gateway.availability import availability_evidence_snapshot, project_capabilities
 from gateway.models_catalog import (
     auth_contexts_from_user_snapshot,
@@ -1949,7 +1951,9 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
 
     Public paths (health, showcase) return an empty context that can run
     nothing. Every other request needs a key of an enabled App whose
-    accountable person exists and is enabled; there is no keyless access.
+    accountable person exists and is enabled. The one keyless way in is a
+    trusted address the owner mapped to an App (``trusted_address_candidate``);
+    a key, when sent, always decides.
     """
     if is_public_path(request_path):
         return NO_AUTH_CONTEXT
@@ -1961,13 +1965,59 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
 
     api_key = _resolve_client_api_key(request)
     if not api_key:
-        return access_error("key_required")
+        trusted = _identity_for_trusted_address(request)
+        if trusted is None:
+            return access_error("key_required")
+        if trusted.denial:
+            return access_error(trusted.denial)
+        return AuthContext(identity=trusted)
     identity = runtime_identity_for_app_credential_hash(hash_api_key(api_key), path=ADMIN_STORE.path)
     if identity is None:
         return access_error("key_invalid")
     if identity.denial:
         return access_error(identity.denial)
     return AuthContext(identity=identity)
+
+
+# Headers a reverse proxy adds. A request that carries one came through a hop.
+_FORWARDING_HEADERS = (
+    "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port", "x-forwarded-server",
+    "x-real-ip", "forwarded", "via", "cf-connecting-ip", "true-client-ip",
+)
+
+
+def trusted_address_candidate(request: Request):
+    """The client address a trusted-address entry may be matched against, or None.
+
+    Only the direct peer counts. A forwarded address counts only when the
+    direct peer is a configured trusted proxy (``resolve_real_client_ip``). A
+    request that shows signs of a reverse proxy (any forwarding header) from a
+    peer that is not a trusted proxy never matches: the peer is then the
+    proxy, and the public internet is behind it.
+    """
+    client = request.scope.get("client")
+    if not client:
+        return None
+    try:
+        peer = _normalize_ip(client[0])
+    except ValueError:
+        return None
+    vouched = _ip_in_any(peer, TRUSTED_PROXIES) or bool(
+        CLOUDFLARE_MODE and _CF_IP_NETWORKS and _ip_in_any(peer, _CF_IP_NETWORKS))
+    if not vouched and any(name in request.headers for name in _FORWARDING_HEADERS):
+        return None
+    return resolve_real_client_ip(request)
+
+
+def _identity_for_trusted_address(request: Request):
+    """The App an owner trusted this request's client address for, or None."""
+    client = trusted_address_candidate(request)
+    if client is None:
+        return None
+    identity = runtime_identity_for_trusted_address(client, path=ADMIN_STORE.path)
+    if identity is not None and identity.app_id:
+        note_trusted_address(identity.app_id, str(client))
+    return identity
 
 
 def _authorization_bearer(request: Request) -> str:

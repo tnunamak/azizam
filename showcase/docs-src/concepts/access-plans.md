@@ -40,3 +40,14 @@ Cloud fallback and paid fallback are separate permissions. Allowing a provider d
 A plan can show every configured model, or only the models available now. It can also allow or refuse starting a model that is not loaded. Seeing a model in the list does not mean that it is loaded.
 
 [Categories](categories.md) can add more restrictions to a request that a plan allows. They cannot allow a request that the plan refuses.
+
+## Trusting an address instead of a key
+
+By default a request with no key is refused. An owner can change that for one device, or one network, without giving up the access plan.
+
+Open Apps & keys, choose the app, and add a trusted address. Enter one IP address or a range such as `192.168.1.0/24`. A request with no key that comes straight from that address runs as that app. The app's access plan limits it, and each request shows the app and the address.
+
+- No address is trusted until an owner adds one.
+- A key that is sent always decides the request, even from a trusted address.
+- Only the address of the direct connection counts. The gateway reads `X-Forwarded-For` only when the connection comes from a reverse proxy listed in `auth.trusted_proxies`. A request that shows signs of an unlisted proxy never matches.
+- Turn the app off, or remove the address, and the address stops working at once.
