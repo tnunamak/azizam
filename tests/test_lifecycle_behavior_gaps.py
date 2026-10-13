@@ -115,26 +115,6 @@ def test_extra_params_cannot_replace_the_requested_model(fake_upstreams, monkeyp
 
 
 @pytest.mark.parametrize(
-    "running,healthy,expected",
-    [(None, False, "unknown"), (False, False, "stopped"), (True, True, "running"), (True, False, "starting")],
-)
-def test_docker_status_handles_every_inspection_outcome(monkeypatch, running, healthy, expected):
-    driver = ld.DockerDriver()
-    inspect = AsyncMock(return_value=running)
-    poll = AsyncMock(return_value=healthy)
-    monkeypatch.setattr(driver, "_is_running", inspect)
-    monkeypatch.setattr(ld, "_poll_health", poll)
-    service = {"lifecycle": {"driver": "docker", "driver_config": {"container": "fake-container"}}}
-
-    assert asyncio.run(driver.status(service)) == expected
-    inspect.assert_awaited_once_with(service["lifecycle"]["driver_config"])
-    if running is True:
-        poll.assert_awaited_once_with(service, driver._DOCKER_POLL_INTERVAL_S)
-    else:
-        poll.assert_not_awaited()
-
-
-@pytest.mark.parametrize(
     "content,verified_model,expected,expected_gets",
     [
         (b'{"status":"finished"}', "different", True, 0),
@@ -192,6 +172,7 @@ def test_a_load_that_never_answers_ends_at_the_read_budget(fake_upstreams, monke
 @pytest.mark.parametrize(
     "running,healthy,expected",
     [
+        (None, False, "unknown"),
         (False, False, "stopped"),
         (True, True, "running"),
         (True, False, "starting"),
