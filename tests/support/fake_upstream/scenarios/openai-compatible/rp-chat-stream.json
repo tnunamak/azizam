@@ -1,0 +1,240 @@
+{
+  "protocol": "openai-compatible",
+  "name": "rp-chat-stream",
+  "description": "Recorded request set 'chat-stream': stream.",
+  "provenance": {
+    "source": "transcript",
+    "reference": "scripts/record-upstream request set openai-compatible/chat-stream",
+    "protocol": "openai-compatible",
+    "engine": "UNVERIFIED",
+    "engine_version": "UNVERIFIED",
+    "identity_source": "UNVERIFIED",
+    "recorded_on": "2026-10-12",
+    "request_set_hash": "d8330fc3e009e2b74a746faa8a4b0cd7054d1e1473b63622d5f4969a29a58c8f",
+    "recorder_version": "rp1/1",
+    "owner": "tnunamak",
+    "review_by": "2027-04-10"
+  },
+  "exchanges": [
+    {
+      "id": "chat-stream-1",
+      "match": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "query": {},
+        "headers": {
+          "content-type": "application/json"
+        },
+        "json": {
+          "model": "local-chat",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Say hi."
+            }
+          ],
+          "max_tokens": 8,
+          "temperature": 0,
+          "stream": true,
+          "stream_options": {
+            "include_usage": true
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream"
+        },
+        "body": [
+          {
+            "event": {
+              "id": "rp-id-1",
+              "object": "chat.completion.chunk",
+              "created": 0,
+              "model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "delta": {
+                    "role": "assistant",
+                    "content": null
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "event": {
+              "id": "rp-id-1",
+              "object": "chat.completion.chunk",
+              "created": 0,
+              "model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "delta": {
+                    "reasoning_content": "The"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "event": {
+              "id": "rp-id-1",
+              "object": "chat.completion.chunk",
+              "created": 0,
+              "model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "delta": {
+                    "reasoning_content": " user"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "event": {
+              "id": "rp-id-1",
+              "object": "chat.completion.chunk",
+              "created": 0,
+              "model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "delta": {
+                    "reasoning_content": " simply"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "event": {
+              "id": "rp-id-1",
+              "object": "chat.completion.chunk",
+              "created": 0,
+              "model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "delta": {
+                    "reasoning_content": " wants"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "event": {
+              "id": "rp-id-1",
+              "object": "chat.completion.chunk",
+              "created": 0,
+              "model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "delta": {
+                    "reasoning_content": " me"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "event": {
+              "id": "rp-id-1",
+              "object": "chat.completion.chunk",
+              "created": 0,
+              "model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "delta": {
+                    "reasoning_content": " to"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "event": {
+              "id": "rp-id-1",
+              "object": "chat.completion.chunk",
+              "created": 0,
+              "model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "delta": {
+                    "reasoning_content": " say"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "event": {
+              "id": "rp-id-1",
+              "object": "chat.completion.chunk",
+              "created": 0,
+              "model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": null,
+                  "delta": {
+                    "reasoning_content": " \""
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "event": {
+              "id": "rp-id-1",
+              "object": "chat.completion.chunk",
+              "created": 0,
+              "model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+              "choices": [
+                {
+                  "index": 0,
+                  "finish_reason": "length",
+                  "delta": {}
+                }
+              ]
+            }
+          },
+          {
+            "event": {
+              "id": "rp-id-1",
+              "object": "chat.completion.chunk",
+              "created": 0,
+              "model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+              "choices": [],
+              "usage": {
+                "prompt_tokens": 13,
+                "completion_tokens": 8,
+                "total_tokens": 21
+              }
+            }
+          },
+          {
+            "done": true
+          }
+        ]
+      }
+    }
+  ]
+}

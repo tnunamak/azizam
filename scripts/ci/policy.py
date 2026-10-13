@@ -34,6 +34,13 @@ merge_cases.py. Rules, each failing the step with one line per violation:
   under web/src) each pattern of TEST_STRATEGY.md 3.4 rules 1-3 occurs no
   more often than its tests/budgets.toml [hygiene] ceiling. The ceilings only
   fall; S14 takes them to 0.
+- replay: no credential prefix (opk_, oak_, sk-), bearer token, home path or
+  private (LAN) address in a replay transcript, its media or any fixtures
+  directory; at most 256 KiB of metadata per transcript and 20 MiB for the whole
+  corpus (scripts/ci/replay_scan.py, TEST_STRATEGY.md 4.7). A line names the
+  file and the category, never the value. Every synthetic request set also has
+  one cell in tests/live/rp_cells.toml: recorded (its transcript exists) or
+  pending with owner, reason and an unexpired expires_on within 90 days.
 """
 
 from __future__ import annotations
@@ -47,6 +54,9 @@ import sys
 import tomllib
 from collections import defaultdict
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import replay_scan  # noqa: E402
 
 # Dependencies and tool output only: a pruned name hides any test file below it.
 PRUNED_DIRS = {".git", "node_modules", "__pycache__", "venv", ".venv", ".ci-fresh-venv",
@@ -305,7 +315,8 @@ def main() -> None:
     hygiene_problems, hygiene = check_hygiene(root, files, budgets)
     problems = (check_retries(root, code, cases) + check_discovery(tests, cases, suites, args.today)
                 + check_skips(cases, suites) + check_quarantine(root, files, code) + count_problems
-                + hygiene_problems + check_fixture_import(root, files))
+                + hygiene_problems + check_fixture_import(root, files) + replay_scan.check_root(root)
+                + replay_scan.check_cells(root, args.today))
     for problem in problems:
         print(f"policy: {problem}")
     summary = ", ".join(f"{framework} {count}" for framework, count in counts.items())

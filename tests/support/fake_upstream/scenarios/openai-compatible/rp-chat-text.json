@@ -1,0 +1,70 @@
+{
+  "protocol": "openai-compatible",
+  "name": "rp-chat-text",
+  "description": "Recorded request set 'chat-text': text.",
+  "provenance": {
+    "source": "transcript",
+    "reference": "scripts/record-upstream request set openai-compatible/chat-text",
+    "protocol": "openai-compatible",
+    "engine": "UNVERIFIED",
+    "engine_version": "UNVERIFIED",
+    "identity_source": "UNVERIFIED",
+    "recorded_on": "2026-10-12",
+    "request_set_hash": "332e404519eaa9306b21a1b127bd6fb71a5eecb06602eb3385853d98f1c60bd0",
+    "recorder_version": "rp1/1",
+    "owner": "tnunamak",
+    "review_by": "2027-04-10"
+  },
+  "exchanges": [
+    {
+      "id": "chat-text-1",
+      "match": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "query": {},
+        "headers": {
+          "content-type": "application/json"
+        },
+        "json": {
+          "model": "local-chat",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Say hi."
+            }
+          ],
+          "max_tokens": 8,
+          "temperature": 0
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "json": {
+          "id": "rp-id-1",
+          "object": "chat.completion",
+          "created": 0,
+          "model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+          "choices": [
+            {
+              "index": 0,
+              "finish_reason": "length",
+              "message": {
+                "role": "assistant",
+                "content": "",
+                "reasoning_content": "The user simply wants me to say \""
+              }
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 13,
+            "completion_tokens": 8,
+            "total_tokens": 21
+          }
+        }
+      }
+    }
+  ]
+}

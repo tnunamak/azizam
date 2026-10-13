@@ -159,3 +159,30 @@ def matches(expected: Any, actual: Any) -> bool:
             matches(e, a) for e, a in zip(expected, actual)
         )
     return expected == actual and type(expected) is type(actual)
+
+
+def matches_transcript(expected: Mapping[str, Any], actual: Mapping[str, Any]) -> bool:
+    """Strict match for recorded transcripts: nothing the recording kept may differ.
+
+    Method, path, query and the semantic body (model, parameters, job IDs) must
+    be equal, including JSON types and every key on both sides. Only headers
+    stay a subset test, because a client adds transport headers the recording
+    never kept; every header the transcript lists must still match exactly.
+    """
+    for key, item in expected.items():
+        if key == "headers":
+            if not matches(item, actual.get("headers", {})):
+                return False
+        elif not _same(item, actual.get(key)):
+            return False
+    return True
+
+
+def _same(expected: Any, actual: Any) -> bool:
+    if type(expected) is not type(actual):
+        return False
+    if isinstance(expected, dict):
+        return expected.keys() == actual.keys() and all(_same(v, actual[k]) for k, v in expected.items())
+    if isinstance(expected, list):
+        return len(expected) == len(actual) and all(_same(e, a) for e, a in zip(expected, actual))
+    return expected == actual

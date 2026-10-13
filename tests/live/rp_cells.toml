@@ -1,0 +1,71 @@
+# RP cells (TEST_STRATEGY 4.2.7, 4.7): one per synthetic request set in request_sets.json.
+# Checked by scripts/ci/policy.py. A recorded cell needs scenarios/<protocol>/rp-<set>.json;
+# a pending cell needs owner, reason and expires_on within 90 days.
+
+[[cell]]
+protocol = "openai-compatible"
+set = "chat-text"
+status = "recorded"
+
+[[cell]]
+protocol = "openai-compatible"
+set = "chat-stream"
+status = "recorded"
+
+[[cell]]
+protocol = "openai-compatible"
+set = "embeddings"
+status = "recorded"
+
+[[cell]]
+protocol = "anthropic"
+set = "messages-text"
+status = "pending"
+owner = "tnunamak"
+expires_on = 2027-01-10
+reason = "no local engine speaking this protocol is running on this host (listening ports checked 2026-10-12)"
+
+[[cell]]
+protocol = "anthropic"
+set = "messages-stream"
+status = "pending"
+owner = "tnunamak"
+expires_on = 2027-01-10
+reason = "no local engine speaking this protocol is running on this host (listening ports checked 2026-10-12)"
+
+[[cell]]
+protocol = "ollama"
+set = "chat-text"
+status = "pending"
+owner = "tnunamak"
+expires_on = 2027-01-10
+reason = "no local engine speaking this protocol is running on this host (listening ports checked 2026-10-12)"
+
+[[cell]]
+protocol = "ollama"
+set = "chat-stream"
+status = "pending"
+owner = "tnunamak"
+expires_on = 2027-01-10
+reason = "no local engine speaking this protocol is running on this host (listening ports checked 2026-10-12)"
+
+[[cell]]
+protocol = "ollama"
+set = "generate-text"
+status = "pending"
+owner = "tnunamak"
+expires_on = 2027-01-10
+reason = "no local engine speaking this protocol is running on this host (listening ports checked 2026-10-12)"
+
+[[cell]]
+protocol = "ollama"
+set = "embed"
+status = "pending"
+owner = "tnunamak"
+expires_on = 2027-01-10
+reason = "no local engine speaking this protocol is running on this host (listening ports checked 2026-10-12)"
+
+[[cell]]
+protocol = "comfyui"
+set = "observe"
+status = "recorded"
