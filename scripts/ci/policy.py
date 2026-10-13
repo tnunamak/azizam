@@ -155,8 +155,11 @@ def check_retries(root: Path, code: list[str], cases: list[dict]) -> list[str]:
     for relative in code:
         text = read(root, relative)
         if relative.endswith(".py"):
-            if match := PYTHON_RETRY_MARKER.search(text):
+            # Every marker alternative names "flaky" or "reruns"; the plain substring test skips the slow regex.
+            if ("flaky" in text or "reruns" in text) and (match := PYTHON_RETRY_MARKER.search(text)):
                 problems.append(f"retries: {relative} uses {match.group(0)}")
+            continue
+        if "retr" not in text and "repeats" not in text:  # RETRY_SETTING and RETRY_SHORTHAND name one of these words
             continue
         for match in RETRY_SETTING.finditer(text):
             if match.group(2).strip() not in ("0", "false"):
@@ -238,7 +241,8 @@ def check_quarantine(root: Path, files: list[str], code: list[str]) -> list[str]
         if QUARANTINE_MANIFEST.match(Path(relative).name):
             problems.append(f"quarantine: manifest {relative} exists; fix or revert the flake (TEST_STRATEGY.md 3.2)")
     for relative in code:
-        if match := QUARANTINE_MARKER.search(read(root, relative)):
+        text = read(root, relative)
+        if "quarantine" in text and (match := QUARANTINE_MARKER.search(text)):  # the substring test skips the slow regex
             problems.append(f"quarantine: {relative} uses {match.group(0)}")
     return problems
 
