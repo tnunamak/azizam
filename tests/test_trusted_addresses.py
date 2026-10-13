@@ -41,11 +41,18 @@ def store():
     path = proxy.ADMIN_STORE.path
     admin_store.init_db(path)
     accounts.initialize(path)
-    conn = admin_store.sqlite3.connect(path)
-    conn.execute("DELETE FROM app_trusted_addresses")  # the test database outlives each test
-    conn.commit()
-    conn.close()
-    return path
+
+    def clear_trusted_addresses():
+        conn = admin_store.sqlite3.connect(path)
+        conn.execute("DELETE FROM app_trusted_addresses")
+        conn.commit()
+        conn.close()
+
+    # The worker's admin.db outlives each test: a trusted address left behind makes
+    # a later keyless request in the same worker run as that App instead of 401.
+    clear_trusted_addresses()
+    yield path
+    clear_trusted_addresses()
 
 
 def _plan(store, **overrides):

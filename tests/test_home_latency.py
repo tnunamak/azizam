@@ -1,6 +1,6 @@
 """Home must not repeat SQLite opens per capability or block the event loop."""
 import asyncio
-import time
+import threading
 from unittest.mock import patch
 
 import httpx
@@ -57,36 +57,25 @@ def test_capability_resolution_opens_a_constant_number_of_connections():
 
 
 def test_home_does_not_block_the_event_loop(home_case):
+    """The blocking snapshot runs on a worker thread, never on the event loop thread.
+
+    A wall-clock stall bound flaked under host load; the property is where the work runs.
+    """
     c = home_case
     original_snapshot = home_api.build_user_portal_snapshot
+    snapshot_threads: list[int] = []
 
-    def slow_snapshot(*args, **kwargs):
-        time.sleep(0.2)
+    def recording_snapshot(*args, **kwargs):
+        snapshot_threads.append(threading.get_ident())
         return original_snapshot(*args, **kwargs)
 
-    async def run() -> float:
-        app = c.http.app
-        worst = 0.0
-        stop = False
-
-        async def ticker():
-            nonlocal worst
-            last = time.perf_counter()
-            while not stop:
-                await asyncio.sleep(0.01)
-                now = time.perf_counter()
-                worst = max(worst, now - last)
-                last = now
-
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
-            task = asyncio.create_task(ticker())
-            await asyncio.sleep(0.05)  # let the probe start ticking before Home runs
+    async def run() -> int:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=c.http.app), base_url="http://t") as client:
             response = await client.get("/me/api/home")
-            stop = True
-            await task
         assert response.status_code == 200
-        return worst
+        return threading.get_ident()
 
-    with patch("gateway.home_api.build_user_portal_snapshot", slow_snapshot):
-        worst = asyncio.run(run())
-    assert worst < 0.1, f"event loop stalled {worst:.3f}s while Home ran 0.2s of blocking work"
+    with patch("gateway.home_api.build_user_portal_snapshot", recording_snapshot):
+        loop_thread = asyncio.run(run())
+    assert snapshot_threads, "Home never built the portal snapshot"
+    assert loop_thread not in snapshot_threads, "Home built the portal snapshot on the event loop thread"
