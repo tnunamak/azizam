@@ -15405,13 +15405,9 @@ app.include_router(create_home_router(
 @app.get("/me/api/session", include_in_schema=False)
 async def user_portal_session(request: Request):
     session = (await asyncio.to_thread(_oidc_session_from_request, request))
-    snapshot = build_user_portal_snapshot(
-        session,
-        default_profile_id=(
-            (await asyncio.to_thread(_default_profile_id_for_session, session)) if session else None
-        ),
-        path=ADMIN_STORE.path,
-    )
+    default_profile_id = (await asyncio.to_thread(_default_profile_id_for_session, session)) if session else None
+    snapshot = await asyncio.to_thread(
+        build_user_portal_snapshot, session, default_profile_id=default_profile_id, path=ADMIN_STORE.path)
     # Members cannot use the admin session endpoint. Supply their CSRF token
     # with the same owner-scoped account snapshot used by the browser UI.
     snapshot["csrf_token"] = (
@@ -15897,14 +15893,12 @@ async def user_portal_request_access(request: Request):
 async def user_portal_credential_access(credential_id: str, request: Request):
     try:
         session = (await asyncio.to_thread(_require_user_session, request))
-        credential = get_user_app_credential(
-            session,
-            credential_id,
-            path=ADMIN_STORE.path,
-        )
+        credential = await asyncio.to_thread(
+            get_user_app_credential, session, credential_id, path=ADMIN_STORE.path)
     except UserPortalError as exc:
         return _user_action_response_error(exc)
-    identity = runtime_identity_for_app_credential_hash(
+    identity = await asyncio.to_thread(
+        runtime_identity_for_app_credential_hash,
         str(credential.get("hash") or ""),
         inherited_profile_id_for_app=_inherited_profile_id_for_app,
         path=ADMIN_STORE.path,
@@ -17430,7 +17424,7 @@ async def admin_config_export(request: Request):
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
-        yaml_text = _build_config_export_yaml()
+        yaml_text = await asyncio.to_thread(_build_config_export_yaml)
         return Response(
             content=yaml_text,
             media_type="text/plain; charset=utf-8",

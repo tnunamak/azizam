@@ -1807,15 +1807,15 @@ def create_admin_router(
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
-        users = store.list_users()
-        apps = store.list_apps()
-        profiles = store.list_profiles()
-        runtime_mappings = store.list_runtime_profile_mappings()
-        credentials = _scrub_credentials(store.list_credentials())
+        def read_overview_stores():
+            return (store.list_users(), store.list_apps(), store.list_profiles(),
+                    store.list_runtime_profile_mappings(), _scrub_credentials(store.list_credentials()),
+                    store.get_service_registry())
+
+        users, apps, profiles, runtime_mappings, credentials, registry = await asyncio.to_thread(read_overview_stores)
         active_credentials = [
             c for c in credentials if not c.get("revoked_at")
         ]
-        registry = store.get_service_registry()
         services_map = registry.get("services") or {}
         services_total = len(services_map)
         services_up = sum(
@@ -2824,7 +2824,7 @@ def create_admin_router(
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
-        client = _key_client_or_unavailable()
+        client = await asyncio.to_thread(_key_client_or_unavailable)
         if isinstance(client, JSONResponse):
             return client
         try:
@@ -2841,7 +2841,7 @@ def create_admin_router(
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
-        client = _key_client_or_unavailable()
+        client = await asyncio.to_thread(_key_client_or_unavailable)
         if isinstance(client, JSONResponse):
             return client
         try:
@@ -2869,7 +2869,7 @@ def create_admin_router(
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
-        client = _key_client_or_unavailable()
+        client = await asyncio.to_thread(_key_client_or_unavailable)
         if isinstance(client, JSONResponse):
             return client
         try:
