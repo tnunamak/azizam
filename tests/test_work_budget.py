@@ -400,3 +400,90 @@ def test_a_service_resource_check_is_kept_until_it_expires_or_its_settings_chang
     config["port"] = 10
     ask()
     assert len(probes) == 3, "an answer was reused after the service's settings changed"
+
+
+# -- asset files: listed once until the directory changes ------------------------------
+
+def _asset_dir(tmp_path: Path, count: int) -> Path:
+    import json
+    import os
+
+    cache = tmp_path / "assets"
+    cache.mkdir()
+    for n in range(count):
+        digest = f"{n:064x}"
+        (cache / f"{digest}.mp3").write_bytes(b"x")
+        (cache / f"{digest}.meta.json").write_text(json.dumps({"asset_id": f"aud_{digest}"}), encoding="utf-8")
+    old = 1_700_000_000
+    os.utime(cache, (old, old))  # a directory that settled long ago
+    return cache
+
+
+def test_the_asset_catalog_reads_each_sidecar_once_until_the_directory_changes(tmp_path: Path) -> None:
+    import os
+    from pathlib import Path as P
+    from unittest.mock import patch
+
+    from gateway import directory_index, me_media
+
+    directory_index.forget()
+    cache = _asset_dir(tmp_path, 40)
+    catalog = me_media.create_asset_catalog_provider(cache)
+    reads: list[str] = []
+    real = P.read_text
+
+    def counting(self, *args, **kwargs):
+        reads.append(self.name)
+        return real(self, *args, **kwargs)
+
+    with patch.object(P, "read_text", counting):
+        first = catalog()
+        after_first = len(reads)
+        for _ in range(5):
+            assert catalog() == first
+        assert len(reads) == after_first == 40, f"{len(reads)} sidecar reads for 6 catalog calls"
+        digest = f"{99:064x}"  # a new asset appears; the directory's time moves on
+        (cache / f"{digest}.mp3").write_bytes(b"x")
+        (cache / f"{digest}.meta.json").write_text('{"asset_id": "aud_%s"}' % digest, encoding="utf-8")
+        os.utime(cache, (1_700_000_100, 1_700_000_100))
+        assert f"aud_{digest}" in catalog() and len(catalog()) == 41
+
+
+def test_a_directory_that_just_changed_is_listed_again_not_trusted(tmp_path: Path) -> None:
+    from gateway import directory_index
+
+    directory_index.forget()
+    cache = tmp_path / "fresh"
+    cache.mkdir()
+    (cache / "a").write_bytes(b"x")
+    assert directory_index.names(cache) is None  # changed a moment ago: the caller checks the files itself
+    import os
+    os.utime(cache, (1_700_000_000, 1_700_000_000))
+    assert directory_index.names(cache) == frozenset({"a"})
+    assert directory_index.names(tmp_path / "missing") is None
+
+
+def test_finding_an_asset_file_costs_no_probe_once_the_directory_is_listed(tmp_path: Path, monkeypatch) -> None:
+    from pathlib import Path as P
+    from unittest.mock import patch
+
+    import proxy
+    from gateway import directory_index
+
+    directory_index.forget()
+    cache = _asset_dir(tmp_path, 30)
+    monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", cache)
+    probes: list[str] = []
+    real = P.exists
+
+    def counting(self, *args, **kwargs):
+        probes.append(self.name)
+        return real(self, *args, **kwargs)
+
+    with patch.object(P, "exists", counting):
+        found = [proxy.asset_cache_path(f"aud_{n:064x}") for n in range(30)]
+        found += [proxy.asset_cache_path(f"aud_{n:064x}") for n in range(30)]
+    assert [path.name for path in found[:30]] == [f"{n:064x}.mp3" for n in range(30)]
+    assert probes == [], f"{len(probes)} exists() probes for 60 lookups"
+    first_suffix = proxy._ASSET_SUFFIXES_BY_KIND["aud"][0]
+    assert proxy.asset_cache_path(f"aud_{12345:064x}").name == f"{12345:064x}{first_suffix}"  # absent: the first candidate

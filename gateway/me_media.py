@@ -22,7 +22,7 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, request_connections, server_timing, thumbnails, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
+from gateway import directory_index, admin_store, request_connections, server_timing, thumbnails, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
 from gateway.admin_oidc import AdminSession
 from gateway.model_ids import display_model_id
 from gateway.public_failure import PublicFailure
@@ -367,10 +367,10 @@ def _actor_from_session(session: AdminSession | None, admin_db_path: Path) -> _A
 
 
 def create_asset_catalog_provider(cache_dir: Path) -> AssetCatalogProvider:
-    def catalog() -> list[str]:
+    memo: dict[str, tuple[frozenset[str], list[str]]] = {}
+
+    def scan() -> list[str]:
         ids: set[str] = set()
-        if not cache_dir.exists():
-            return []
         for meta_path in cache_dir.glob("*.meta.json"):
             try:
                 data = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -391,6 +391,21 @@ def create_asset_catalog_provider(cache_dir: Path) -> AssetCatalogProvider:
                     ids.add(f"{kind}_{digest}")
                     break
         return sorted(ids)
+
+    def catalog() -> list[str]:
+        if not cache_dir.exists():
+            return []
+        # The ids follow from the file names (and the asset id each sidecar holds, which never
+        # changes), so while the names are unchanged the sidecars are not read again.
+        listed = directory_index.names(cache_dir)
+        if listed is None:
+            return scan()
+        hit = memo.get("ids")
+        if hit is not None and hit[0] is listed:  # the same listing object: nothing changed
+            return list(hit[1])
+        ids = scan()
+        memo["ids"] = (listed, ids)
+        return list(ids)
 
     return catalog
 

@@ -85,7 +85,7 @@ from gateway import (
     video_media_jobs,
     voice_design,
 )
-from gateway import loop_watchdog, request_connections, video_extend
+from gateway import directory_index, loop_watchdog, request_connections, video_extend
 from gateway.http_tls import tls_context
 from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails
@@ -7010,6 +7010,9 @@ def asset_cache_path(asset_id: str) -> Optional[Path]:
         return None
     kind, digest = parsed
     candidates = [IMAGE_CACHE_DIR / f"{digest}{suffix}" for suffix in _ASSET_SUFFIXES_BY_KIND[kind]]
+    listed = directory_index.names(IMAGE_CACHE_DIR)  # one listing for every asset, not five probes each
+    if listed is not None:
+        return next((candidate for candidate in candidates if candidate.name in listed), candidates[0])
     for candidate in candidates:
         if candidate.exists():
             return candidate
