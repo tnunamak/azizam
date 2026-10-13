@@ -1071,15 +1071,17 @@ if "-w" in args:
             return subprocess.run(["bash", str(ROOT / "scripts" / "post-deploy-smoke")],
                                   env=env, capture_output=True, text=True, timeout=10)
 
-    def test_default_lan_bypass_requires_json_model_list(self):
-        result = self.smoke()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("PASS models without key (bypass)", result.stdout)
+    KEY_REQUIRED = '{"error":{"type":"access_error","code":"key_required"}}'
 
-    def test_explicit_required_auth_checks_401_json_error(self):
-        result = self.smoke(mode="required", status=401, body='{"error":{"code":"auth_required"}}')
+    def test_default_expects_401_key_required_without_a_key(self):
+        result = self.smoke(status=401, body=self.KEY_REQUIRED)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("PASS models without key (required)", result.stdout)
+
+    def test_trusted_mode_requires_json_model_list(self):
+        result = self.smoke(mode="trusted")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS models without key (trusted)", result.stdout)
 
     def _assert_models_check_fails(self, **kwargs):
         result = self.smoke(**kwargs)
@@ -1087,23 +1089,26 @@ if "-w" in args:
         self.assertIn("FAIL models without key", result.stdout)
 
     # One method per case: each is a full smoke run, so they spread over workers.
-    def test_required_auth_rejects_success_response(self):
-        self._assert_models_check_fails(mode="required")
+    def test_default_rejects_an_untrusted_success_response(self):
+        self._assert_models_check_fails()
 
-    def test_bypass_rejects_unauthorized_response(self):
-        self._assert_models_check_fails(status=401, body='{"error":{}}')
+    def test_default_rejects_a_401_that_is_not_key_required(self):
+        self._assert_models_check_fails(status=401, body='{"error":{"code":"key_invalid"}}')
 
-    def test_bypass_rejects_malformed_json(self):
-        self._assert_models_check_fails(body="not json")
+    def test_default_rejects_a_401_without_a_json_error(self):
+        self._assert_models_check_fails(status=401, body="{}")
 
-    def test_bypass_rejects_empty_model_list(self):
-        self._assert_models_check_fails(body='{"object":"list","data":[]}')
+    def test_trusted_mode_rejects_unauthorized_response(self):
+        self._assert_models_check_fails(mode="trusted", status=401, body=self.KEY_REQUIRED)
 
-    def test_required_auth_rejects_missing_json_error(self):
-        self._assert_models_check_fails(mode="required", status=401, body="{}")
+    def test_trusted_mode_rejects_malformed_json(self):
+        self._assert_models_check_fails(mode="trusted", body="not json")
+
+    def test_trusted_mode_rejects_empty_model_list(self):
+        self._assert_models_check_fails(mode="trusted", body='{"object":"list","data":[]}')
 
     def test_unknown_auth_mode_is_usage_error(self):
-        result = self.smoke(mode="auto")
+        result = self.smoke(mode="bypass")
         self.assertEqual(result.returncode, 2)
 
 

@@ -56,6 +56,7 @@ import {
 import { cn } from "@/lib/cn";
 import { preferredTerms } from "@/lib/terms";
 import { keyPromptNote } from "@/lib/prompt-memory";
+import { TrustedAddressesDialog } from "./trusted-addresses";
 
 const accountKey = ["account", "session"];
 const CLIENTS = [
@@ -176,6 +177,7 @@ function AppsContents() {
   const [error, setError] = useState<string | null>(null);
   const [reveal, setReveal] = useState<Reveal | null>(null);
   const [action, setAction] = useState<KeyAction | null>(null);
+  const [trustingApp, setTrustingApp] = useState<AccountApp | null>(null);
   const [saved, setSaved] = useState(false);
   const refresh = () => queryClient.invalidateQueries({ queryKey: accountKey });
   const baseUrl =
@@ -219,9 +221,14 @@ function AppsContents() {
       return;
     }
     if (
-      !accountData || creating || action || reveal ||
-      dialogReturnFocus.current || focusedRequest.current === requestedApp
-    ) return;
+      !accountData ||
+      creating ||
+      action ||
+      reveal ||
+      dialogReturnFocus.current ||
+      focusedRequest.current === requestedApp
+    )
+      return;
     const target = document.getElementById(`app-${requestedApp}`);
     if (target) {
       focusedRequest.current = requestedApp;
@@ -239,9 +246,12 @@ function AppsContents() {
     event.preventDefault();
     // A create/rotate dialog may be handing focus to the key reveal.
     if (
-      creating || action || reveal ||
+      creating ||
+      action ||
+      reveal ||
       (!dialogReturnFocus.current && !dialogReturnApp.current)
-    ) return;
+    )
+      return;
     const requestedTarget =
       requestedApp && focusedRequest.current !== requestedApp
         ? document.getElementById(`app-${requestedApp}`)
@@ -250,9 +260,14 @@ function AppsContents() {
       ? document.getElementById(`app-actions-${dialogReturnApp.current}`)
       : null;
     const target = [
-      requestedTarget, dialogReturnFocus.current, appTarget, newAppButton.current,
-    ].find((element) =>
-      element?.isConnected && !element.matches(":disabled, [aria-disabled=true]"),
+      requestedTarget,
+      dialogReturnFocus.current,
+      appTarget,
+      newAppButton.current,
+    ].find(
+      (element) =>
+        element?.isConnected &&
+        !element.matches(":disabled, [aria-disabled=true]"),
     );
     dialogReturnFocus.current = null;
     dialogReturnApp.current = null;
@@ -518,7 +533,11 @@ function AppsContents() {
         title="Apps & keys"
         subtitle="Apps that use your gateway"
         primaryAction={
-          <Button ref={newAppButton} onClick={startNewApp} disabled={!accountData?.authenticated}>
+          <Button
+            ref={newAppButton}
+            onClick={startNewApp}
+            disabled={!accountData?.authenticated}
+          >
             <Plus aria-hidden="true" />
             New app
           </Button>
@@ -730,6 +749,16 @@ function AppsContents() {
                         >
                           Revoke keys
                         </DropdownMenuItem>
+                        {accountData?.user?.role === "owner" && (
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              rememberAppFocus(app.id);
+                              setTrustingApp(app);
+                            }}
+                          >
+                            Trusted addresses
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuItem
                           variant="destructive"
                           disabled={busy}
@@ -883,6 +912,15 @@ function AppsContents() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <TrustedAddressesDialog
+        app={trustingApp}
+        appName={
+          trustingApp
+            ? formatAppName(trustingApp.name, accountData?.user?.email)
+            : ""
+        }
+        onClose={() => setTrustingApp(null)}
+      />
       <Dialog open={reveal !== null} onOpenChange={() => {}}>
         <DialogContent
           showCloseButton={false}

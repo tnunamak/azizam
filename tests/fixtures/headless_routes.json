@@ -121,6 +121,30 @@
   },
   {
     "method": "GET",
+    "path": "/admin/api/apps/{app_id}/trusted-addresses",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.list_trusted_addresses",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/apps/{app_id}/trusted-addresses",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to trust an address",
+    "handler": "gateway.admin_api.add_trusted_address",
+    "schema": true
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/api/apps/{app_id}/trusted-addresses/{entry_id}",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.delete_trusted_address",
+    "schema": true
+  },
+  {
+    "method": "GET",
     "path": "/admin/api/audit",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
