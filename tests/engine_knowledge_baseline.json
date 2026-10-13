@@ -26,7 +26,7 @@
     "gateway/video_subject.py": 1,
     "gateway/workflows_catalog.py": 2,
     "metrics_sampler.py": 8,
-    "proxy.py": 630,
+    "proxy.py": 625,
     "status_endpoint.py": 143
   }
 }

@@ -31,7 +31,8 @@ class UsageFixture:
         media_jobs.init_db(self.jobs)
         receipt_store.init_db(self.receipts)
         self.alice = admin_store.upsert_oidc_user("iss", "alice", email="alice@example.test", path=self.admin)
-        self.apps = [admin_store.create_app(f"App {n}", kind="personal", owner_user_id=self.alice["id"], path=self.admin)
+        self.apps = [admin_store.create_app(f"App {n}", kind="personal", owner_user_id=self.alice["id"],
+                                             access_plan="person", path=self.admin)
                      for n in range(3)]
         self.count = 0
         self.assets: list[str] = []
@@ -217,7 +218,7 @@ def test_a_busy_key_is_stamped_once_per_interval(tmp_path: Path) -> None:
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
     user = admin_store.upsert_oidc_user("iss", "u", email="u@example.test", path=db)
-    app = admin_store.create_app("A", kind="personal", owner_user_id=user["id"], path=db)
+    app = admin_store.create_app("A", kind="personal", owner_user_id=user["id"], access_plan="person", path=db)
     key = admin_store.create_credential_hash(
         subject_kind="app", subject_id=app["id"], app_id=app["id"], hash="h" * 64, prefix="masked", path=db)
     seen: list[str] = []

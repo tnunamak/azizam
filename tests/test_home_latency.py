@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from gateway import admin_store, home_api
+from tests.support.access import access_context
 from tests.test_home_api import home_case  # noqa: F401 - fixture
 
 
@@ -33,7 +34,7 @@ def test_secure_state_path_still_retightens_on_demand(tmp_path):
 def _capability_connections(extra_models: int) -> int:
     import proxy
     registry = proxy.ADMIN_STORE.get_service_registry()
-    context = proxy._catalog_auth_context_for_profile(proxy.DEFAULT_PROFILE, "default-local")
+    context = access_context()
     opens = 0
     real = admin_store._conn
 
@@ -50,8 +51,8 @@ def _capability_connections(extra_models: int) -> int:
 
 def test_capability_resolution_opens_a_constant_number_of_connections():
     opens, count = _capability_connections(0)
-    # One registry read for the live view, one for registry capabilities, one
-    # provider-admin read: independent of how many capabilities are published.
+    # One registry read for the live view and one for registry capabilities:
+    # independent of how many capabilities are published.
     assert opens <= 4 < count, (opens, count)
 
 

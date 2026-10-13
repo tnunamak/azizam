@@ -64,7 +64,8 @@ class Household:
     def grow_to(self, apps: int) -> None:
         while self.apps < apps:
             n = self.apps
-            app = admin_store.create_app(f"App {n}", kind="personal", owner_user_id=self.owner["id"], path=self.db)
+            app = admin_store.create_app(f"App {n}", kind="personal", owner_user_id=self.owner["id"],
+                                         access_plan="person", path=self.db)
             for key in range(2):
                 admin_store.create_credential_hash(
                     subject_kind="app", subject_id=app["id"], app_id=app["id"],
