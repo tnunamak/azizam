@@ -164,6 +164,26 @@ def revoke_session(session_id: str, expires_at: int, *, path: Path) -> None:
                      (int(time.time()), session_id))
 
 
+def revoke_person_sessions(user_id: str, *, path: Path) -> None:
+    """End every signed-in session of a person, including ones never registered.
+
+    From now on only registered sessions count for this person, and none is
+    left, so each cookie they hold stops working. Signing in again registers a
+    new session. Keys bound to their sign-ins end with them.
+    """
+    with connection(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        ensure_access_row(conn, user_id)
+        conn.execute("UPDATE account_access SET require_registered_session=1 WHERE user_id=?", (user_id,))
+        session_ids = [row[0] for row in conn.execute(
+            "SELECT session_id FROM account_sessions WHERE user_id=?", (user_id,))]
+        conn.execute("DELETE FROM account_sessions WHERE user_id=?", (user_id,))
+        now = int(time.time())
+        for session_id in session_ids:
+            conn.execute("UPDATE credentials SET revoked_at=? WHERE session_id=? AND revoked_at IS NULL",
+                         (now, session_id))
+
+
 def register_session(user_id: str, session_id: str, expires_at: int, *, path: Path):
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")

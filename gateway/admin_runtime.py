@@ -343,6 +343,21 @@ class AdminSQLiteStore:
         record = admin_store.get_app(app_id, path=self.path)
         return self._enrich_app(record) if record is not None else None
 
+    @staticmethod
+    def _require_owner_or_accountable(actor: AdminContext, accountable_user_id: str) -> None:
+        """Only the owner may act for an App that someone else answers for.
+
+        An administrator is not the owner: an App accountable to another person
+        spends as that person, so an administrator may only create, re-plan or
+        key an App that answers to themselves. A key has no person of its own
+        and therefore gets no exception.
+        """
+        if "owner" in actor.roles:
+            return
+        if actor.actor_kind == "user" and accountable_user_id and actor.audit_actor_id == accountable_user_id:
+            return
+        raise PermissionError("Only the owner can do this for an App that someone else answers for.")
+
     def create_app(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
@@ -350,7 +365,9 @@ class AdminSQLiteStore:
 
         ``access_plan`` is required: a plan id, or ``"person"`` for "Same as
         its person". The accountable person defaults to the signed-in person,
-        or, for an admin key, to the gateway owner.
+        or, for an owner key, to the gateway owner. Only the owner may name
+        someone else; an administrator's App always answers to the
+        administrator, so its spend stays inside the administrator's own plan.
         """
         name = str(data.get("name") or "").strip()
         if not name:
@@ -365,6 +382,7 @@ class AdminSQLiteStore:
             raise ValueError(
                 "an app needs a person who answers for it: pass owner_user_id, or create the owner account first"
             )
+        self._require_owner_or_accountable(actor, owner_user_id)
         if admin_store.get_user(owner_user_id, path=self.path) is None:
             raise ValueError(f"user {owner_user_id!r} not found")
         access_plan = str(data.get("access_plan") or "").strip()
@@ -392,8 +410,11 @@ class AdminSQLiteStore:
     def update_app(
         self, *, app_id: str, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any] | None:
-        if admin_store.get_app(app_id, path=self.path) is None:
+        before = admin_store.get_app(app_id, path=self.path)
+        if before is None:
             return None
+        if "access_plan" in data or "owner_user_id" in data:
+            self._require_owner_or_accountable(actor, str(before.get("owner_user_id") or ""))
 
         name = None
         if "name" in data:
@@ -579,6 +600,7 @@ class AdminSQLiteStore:
         app = admin_store.get_app(app_id, path=self.path)
         if app is None:
             raise ValueError(f"app {app_id!r} not found")
+        self._require_owner_or_accountable(actor, str(app.get("owner_user_id") or ""))
         api_key = generate_app_api_key()
         record = admin_store.create_credential_hash(
             subject_kind="app",
@@ -1384,12 +1406,9 @@ class AdminAuthenticator:
                     subject_kind, subject_id = session_admin_role_subject(
                         session.subject
                     )
-                    roles = admin_store.list_admin_roles(
-                        subject_kind=subject_kind,
-                        subject_id=subject_id,
-                        path=self.store.path,
+                    role_names = admin_store.effective_admin_roles(
+                        subject_kind, subject_id, path=self.store.path,
                     )
-                    role_names = frozenset(str(role["role"]) for role in roles)
                     if ADMIN_CONTROL_ROLES & role_names:
                         return AdminContext(
                             subject=session.subject,
@@ -1428,12 +1447,12 @@ class AdminAuthenticator:
                 code="admin_forbidden",
             )
 
-        roles = admin_store.list_admin_roles(
-            subject_kind=str(credential["subject_kind"]),
-            subject_id=str(credential["subject_id"]),
+        # An admin key works only while the person who minted it still holds a
+        # role that permits it (see admin_store.effective_admin_roles).
+        role_names = admin_store.effective_admin_roles(
+            str(credential["subject_kind"]), str(credential["subject_id"]),
             path=self.store.path,
         )
-        role_names = frozenset(str(role["role"]) for role in roles)
         if not (ADMIN_CONTROL_ROLES & role_names):
             raise AdminAuthError(
                 "admin role required",

@@ -132,6 +132,7 @@ from gateway.admin_oidc import (
     OIDCConfigError,
     PKCEPair,
     SessionError,
+    SignInRefused,
     StateRecord,
     access_names_from_oidc_claims,
     admin_role_from_oidc_claims,
@@ -14656,6 +14657,22 @@ def _existing_admin_grants(*, include_revoked: bool = False) -> dict[str, str]:
             for row in admin_store.list_admin_roles(include_revoked=include_revoked, path=ADMIN_STORE.path)}
 
 
+def _end_provider_access_after_refusal(issuer: str, claims: Mapping[str, Any]) -> None:
+    """Revoke what the identity provider gave a person whose sign-in was refused.
+
+    Removing someone from the admin group makes their next sign-in fail the
+    email allow-list, and that check runs before roles are reconciled. Without
+    this, their grant and their sessions would last until they expire. Grants
+    the owner gave by hand stay; the provider's grants and every session end.
+    The person is found by (issuer, subject) and is never created here.
+    """
+    user = admin_store.find_oidc_user(issuer, str(claims.get("sub") or ""), path=ADMIN_STORE.path)
+    if user is None:
+        return
+    admin_store.reconcile_oidc_admin_roles(str(user["id"]), set(), path=ADMIN_STORE.path)
+    accounts.revoke_person_sessions(str(user["id"]), path=ADMIN_STORE.path)
+
+
 def _safe_admin_return_to(value: str | None, *, default: str = "/") -> str:
     return safe_browser_return_to(value, default=default)
 
@@ -16121,12 +16138,9 @@ async def setup_claim_admin_key(request: Request):
             claim_error="That key is not an admin key.",
             status_code=400,
         )
-    roles = admin_store.list_admin_roles(
-        subject_kind=subject_kind,
-        subject_id=subject_id,
-        path=ADMIN_STORE.path,
+    role_names = admin_store.effective_admin_roles(
+        subject_kind, subject_id, path=ADMIN_STORE.path,
     )
-    role_names = {str(role.get("role") or "") for role in roles}
     if "owner" in role_names:
         role = "owner"
     elif "admin" in role_names or "superadmin" in role_names:
@@ -16658,7 +16672,12 @@ async def admin_oidc_callback(request: Request):
         if not isinstance(id_token, str) or not id_token:
             raise ValueError("token endpoint did not return id_token")
         claims = await _oidc_verify_id_token(id_token, config=cfg)
-        validate_id_token_claims(claims, config=cfg, expected_nonce=state.nonce)
+        try:
+            validate_id_token_claims(claims, config=cfg, expected_nonce=state.nonce)
+        except SignInRefused:
+            # A refused person keeps nothing the identity provider gave them.
+            await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
+            raise
         user = admin_store.upsert_oidc_user(
             cfg.issuer,
             str(claims["sub"]),

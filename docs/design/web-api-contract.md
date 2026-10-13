@@ -561,7 +561,8 @@ refetchable. `404 app_not_found`, `400 invalid_credential`.
 ### POST /admin/api/admin-keys  (admin automation key)
 
 Request: `{ "name": "required", "role": "admin" | "owner" }`. Minting `owner`
-requires the caller to hold `owner` (else `403 admin_role_forbidden`).
+requires the caller to hold `owner` (else `403 admin_role_forbidden`). The key
+works only while the person who minted it still holds a role that permits it.
 
 `201` → `{ "credential": { …, "api_key": "oak_<full key>", "role": "admin", "service_account": "<name>" } }`
 

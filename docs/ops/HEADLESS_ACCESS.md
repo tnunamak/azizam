@@ -34,6 +34,23 @@ An `admin` role key cannot use owner-only operations. Neither role is a
 read-only scope. The key's role is enforced on each request. The helper does
 not configure a browser session or start a server.
 
+An administrator, not only the owner, may mint an `admin` key with
+`POST /admin/api/admin-keys`; only an owner may mint an `owner` key. A key made
+on the host with the helper above belongs to the operator and has no
+person behind it. Every other key belongs to the person (or key) that minted
+it, and it works only while that person still holds a role that permits it.
+When an administrator loses the role, their keys stop working at once. When an
+owner becomes an administrator, their `owner` keys work at administrator reach.
+If the person who minted a key cannot be found, the key has no authority.
+
+Only the owner may create an App that someone else answers for, change that
+App's access plan or accountable person, or mint a key on it. An administrator
+may do these only for an App that answers to themselves, so its spend stays
+inside the administrator's own access plan. An administrator without an access
+plan gets a key that authorizes nothing. A key has no person of its own, so an
+`admin` key cannot create Apps or App keys; the refusal is
+`403 owner_required`.
+
 Use a private working directory. Keep tracing off (`set +x`) while handling
 credentials. The key and header files must have mode 600. The examples read
 the secret from files; they do not put it in process arguments or environment
@@ -179,7 +196,7 @@ Selected successful workflows are exercised separately.
 | Method and path | Auth class | App key | Handler / auth call | Schema |
 | --- | --- | --- | --- | --- |
 | `GET /admin/api/activity/requests` | owner-bearer | denied | `gateway.activity_api.requests`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
-| `POST /admin/api/admin-keys` | owner-bearer | denied | `gateway.admin_api.create_admin_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to mint owner key | owner |
+| `POST /admin/api/admin-keys` | owner-bearer | denied | `gateway.admin_api.create_admin_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to mint owner key; a key works only while the person who minted it still holds a role that permits it | owner |
 | `GET /admin/api/apps` | owner-bearer | denied | `gateway.admin_api.list_apps`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/apps` | owner-bearer | denied | `gateway.admin_api.create_app`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `DELETE /admin/api/apps/{app_id}` | owner-bearer | denied | `gateway.admin_api.disable_app`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |

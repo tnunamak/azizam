@@ -1126,6 +1126,10 @@ def _auth_error_response(exc: AdminAuthError) -> JSONResponse:
     )
 
 
+def _owner_required(exc: Exception) -> JSONResponse:
+    return _RouteError(status.HTTP_403_FORBIDDEN, "owner_required", str(exc)).as_response()
+
+
 def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResponse:
     """Resolve admin context, returning a JSONResponse on failure."""
     try:
@@ -1857,6 +1861,8 @@ def create_admin_router(
             ).as_response()
         try:
             record = store.create_app(data=body, actor=ctx)
+        except PermissionError as exc:
+            return _owner_required(exc)
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
@@ -1886,6 +1892,8 @@ def create_admin_router(
                 ).as_response()
         try:
             record = store.update_app(app_id=app_id, data=body, actor=ctx)
+        except PermissionError as exc:
+            return _owner_required(exc)
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
@@ -2106,6 +2114,8 @@ def create_admin_router(
             ).as_response()
         try:
             record = store.create_credential(app_id=app_id, data=body, actor=ctx)
+        except PermissionError as exc:
+            return _owner_required(exc)
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,

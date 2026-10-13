@@ -815,6 +815,15 @@ def get_user(user_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
     return _row_to_dict(row)
 
 
+def find_oidc_user(issuer: str, subject: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """The person with this ``(issuer, subject)``, or None. Never creates one."""
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE issuer = ? AND subject = ?", (issuer, subject)
+        ).fetchone()
+    return _row_to_dict(row)
+
+
 def get_users(user_ids: Iterable[str], *, path: Path = DB_PATH) -> dict[str, dict[str, Any]]:
     """``{id: user}`` for the users that exist, in one query per 500 ids."""
     ids = sorted({str(value) for value in user_ids if value})
@@ -2270,6 +2279,52 @@ def list_admin_roles(
     return [_row_to_dict(r) for r in rows]  # type: ignore[misc]
 
 
+_MAX_GRANT_CHAIN = 8
+OPERATOR_GRANTOR = "cli"
+
+
+def effective_admin_roles(
+    subject_kind: str, subject_id: str, *, path: Path = DB_PATH, _depth: int = 0,
+) -> frozenset[str]:
+    """The control-plane roles this subject may use right now.
+
+    A person's roles are their active grants. A service account (an admin key)
+    holds its roles only as far as the grantor still holds them: a key made on
+    the command line (``granted_by`` = "cli") is the operator's and is not
+    capped, and every other key is capped by the person, or the key, that
+    granted it. A grantor that is named but cannot be found grants nothing. So an admin key
+    stops working when the administrator who minted it loses the role, and an
+    owner key made by someone who is no longer an owner works at admin reach.
+    """
+    rows = list_admin_roles(subject_kind=subject_kind, subject_id=subject_id, path=path)
+    if subject_kind != "service_account":
+        return frozenset(str(row["role"]) for row in rows)
+    kept: set[str] = set()
+    for row in rows:
+        role = str(row["role"])
+        grantor = row.get("granted_by")
+        if not grantor or grantor == OPERATOR_GRANTOR:
+            # No person granted it: the command line, or a direct database
+            # write by the operator. The dashboard always records its actor.
+            kept.add(role)
+            continue
+        if _depth >= _MAX_GRANT_CHAIN:
+            continue
+        if get_user(str(grantor), path=path) is not None:
+            held = {str(r["role"]) for r in list_admin_roles(
+                subject_kind="user", subject_id=str(grantor), path=path) if r.get("scope_app_id") is None}
+        elif get_service_account(str(grantor), path=path) is not None:
+            held = set(effective_admin_roles(
+                "service_account", str(grantor), path=path, _depth=_depth + 1))
+        else:
+            continue
+        if role in held or "owner" in held:
+            kept.add(role)
+        elif held & {"admin", "superadmin"}:
+            kept.add("admin")  # lowered to what the grantor still holds
+    return frozenset(kept)
+
+
 def owner_display_name(*, path: Path = DB_PATH) -> str | None:
     """Display name of the earliest active gateway owner that has a clean one.
 
@@ -2974,6 +3029,8 @@ __all__ = [
     "revoke_credential",
     "get_credential",
     "find_credential_by_hash",
+    "find_oidc_user",
+    "effective_admin_roles",
     "find_runtime_credential_by_hash",
     "list_credentials",
     "list_active_credentials",

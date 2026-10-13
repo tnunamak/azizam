@@ -530,13 +530,21 @@ class TestBootstrapRole(unittest.TestCase):
         )
         self.assertEqual(role, AdminRole.OWNER)
 
-    def test_email_cannot_recover_or_create_existing_grant(self) -> None:
+    def test_email_cannot_recover_or_create_an_owner_when_one_exists(self) -> None:
         cfg = make_config(admin_emails=frozenset({"alice@example.com"}))
-        for roles in ({"alice@example.com": "owner"}, {"other": "admin"}, {"other": "none"}):
+        for roles in ({"alice@example.com": "owner"}, {"other": "owner"}, {"other": "admin", "third": "owner"}):
             self.assertEqual(bootstrap_admin_role(
                 "alice@example.com", config=cfg, existing_roles=roles,
                 issuer=cfg.issuer, email_verified=True,
             ), AdminRole.NONE)
+
+    def test_a_group_administrator_does_not_block_the_listed_owner(self) -> None:
+        cfg = make_config(admin_emails=frozenset({"alice@example.com"}))
+        for roles in ({"other": "admin"}, {"other": "none"}):
+            self.assertEqual(bootstrap_admin_role(
+                "alice@example.com", config=cfg, existing_roles=roles,
+                issuer=cfg.issuer, email_verified=True,
+            ), AdminRole.OWNER)
 
     def test_bootstrap_requires_configured_email_verified_under_same_issuer(self) -> None:
         cfg = make_config(admin_emails=frozenset({"alice@example.com"}))
