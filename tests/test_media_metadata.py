@@ -543,8 +543,8 @@ class AnonymousBufferTests(unittest.TestCase):
     def test_buffers_fall_back_to_libc_when_python_omits_memfd_create(self):
         from unittest import mock
         import os
-        with mock.patch.object(os, "memfd_create", create=True) as patched:
-            del os.memfd_create
+        # patch.dict restores the module namespace whether or not this Python has the function.
+        with mock.patch.dict(os.__dict__):
+            os.__dict__.pop("memfd_create", None)
             self.assertFalse(hasattr(os, "memfd_create"))
             self._assert_anonymous()
-        patched.assert_not_called()
