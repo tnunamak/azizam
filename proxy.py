@@ -7343,6 +7343,13 @@ async def _comfy_run_round(
                 status_code=502,
                 media_type="application/json",
             ), []
+        except httpx.TransportError:
+            # The peer dropped the connection mid-exchange (e.g. RemoteProtocolError).
+            return Response(
+                content=json.dumps({"error": {"message": f"Image backend connection dropped", "type": "api_error"}}),
+                status_code=502,
+                media_type="application/json",
+            ), []
 
         if resp.status_code != 200:
             return Response(
@@ -7381,7 +7388,7 @@ async def _comfy_run_round(
             )
             try:
                 history_resp = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers)
-            except (httpx.TimeoutException, httpx.ConnectError):
+            except httpx.TransportError:
                 continue
             if history_resp.status_code != 200:
                 continue
@@ -7424,7 +7431,7 @@ async def _comfy_run_round(
                     params["subfolder"] = subfolder
                 try:
                     img_resp = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
-                except (httpx.TimeoutException, httpx.ConnectError):
+                except httpx.TransportError:
                     continue
                 if img_resp.status_code == 200 and img_resp.content:
                     images.append(img_resp.content)
@@ -25176,9 +25183,22 @@ async def _drain_streaming_upstream_error(
     return text[:1000] or fallback
 
 
+class UpstreamStreamError(Exception):
+    """The chat stream carried an in-band error event after its headers."""
+
+
+def _raise_on_stream_error_event(event: Mapping[str, Any]) -> None:
+    """An ``{"error": ...}`` event ends the stream as a failure, not a finish."""
+    error = event.get("error")
+    if isinstance(error, Mapping):
+        raise UpstreamStreamError(str(error.get("message") or "Upstream chat stream failed."))
+    if isinstance(error, str) and error:
+        raise UpstreamStreamError(error)
+
+
 async def _iter_openai_sse_json(upstream: httpx.Response):
     """Yield decoded JSON payloads from OpenAI-style ``data:`` SSE lines."""
-    buffer = ""
+    buffer = b""
 
     async def parse_line(line: str):
         line = line.strip()
@@ -25196,17 +25216,20 @@ async def _iter_openai_sse_json(upstream: httpx.Response):
     async for chunk in upstream.aiter_bytes():
         if not chunk:
             continue
-        buffer += chunk.decode("utf-8", errors="replace")
-        while "\n" in buffer:
-            line, buffer = buffer.split("\n", 1)
-            parsed = await parse_line(line)
+        # Split on bytes and decode whole lines: a wire chunk can end inside
+        # a UTF-8 character.
+        buffer += chunk
+        while b"\n" in buffer:
+            line, buffer = buffer.split(b"\n", 1)
+            parsed = await parse_line(line.decode("utf-8", errors="replace"))
             if parsed is StopAsyncIteration:
                 return
             if parsed is not None:
+                _raise_on_stream_error_event(parsed)
                 yield parsed
 
     if buffer.strip():
-        parsed = await parse_line(buffer)
+        parsed = await parse_line(buffer.decode("utf-8", errors="replace"))
         if parsed is not None and parsed is not StopAsyncIteration:
             yield parsed
 
@@ -25297,6 +25320,12 @@ def _upstream_admission_response(upstream: httpx.Response, protocol: str) -> Res
                     media_type="application/json", headers=headers)
 
 
+def _upstream_retry_after(upstream: Any) -> dict[str, str]:
+    """Keep the upstream's Retry-After when a frontend re-shapes its error."""
+    value = getattr(upstream, "headers", {}).get("retry-after")
+    return {"Retry-After": value} if value else {}
+
+
 def _response_error_message(response: Any, fallback: str) -> str:
     payload = _response_json_payload(response)
     error = payload.get("error")
@@ -25375,6 +25404,7 @@ def _anthropic_error_response(
     *,
     status_code: int = 400,
     error_type: str | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> Response:
     """Anthropic-shaped error. The type follows the status unless given."""
     match = _UNKNOWN_MODEL_ERROR_RE.search(message or "")
@@ -25393,7 +25423,7 @@ def _anthropic_error_response(
             },
         },
         status_code=status_code,
-        headers={"request-id": f"req_{uuid.uuid4().hex}"},
+        headers={"request-id": f"req_{uuid.uuid4().hex}", **(headers or {})},
     )
 
 
@@ -25409,7 +25439,9 @@ def _ollama_model_not_found(model: str) -> str:
     return f'model "{model}" not found, try pulling it first'
 
 
-def _ollama_error_response(message: str, *, status_code: int = 400) -> Response:
+def _ollama_error_response(
+    message: str, *, status_code: int = 400, headers: Mapping[str, str] | None = None,
+) -> Response:
     match = _UNKNOWN_MODEL_ERROR_RE.search(message or "")
     if match and status_code in (400, 404):
         # Ollama answers an unknown model with 404 and this wording.
@@ -25417,7 +25449,7 @@ def _ollama_error_response(message: str, *, status_code: int = 400) -> Response:
         message = _ollama_model_not_found(
             match.group("model") or match.group("model2")
         )
-    return _json_error_response({"error": message}, status_code=status_code)
+    return _json_error_response({"error": message}, status_code=status_code, headers=headers)
 
 
 def _ollama_auth_error(response: Response) -> Response:
@@ -25569,6 +25601,7 @@ async def anthropic_messages(request: Request):
             return _anthropic_error_response(
                 message,
                 status_code=upstream.status_code,
+                headers=_upstream_retry_after(upstream),
             )
 
         translator = anthropic_protocol.MessagesStreamTranslator(
@@ -25619,6 +25652,7 @@ async def anthropic_messages(request: Request):
         return _anthropic_error_response(
             _response_error_message(upstream, "Upstream chat-completions error."),
             status_code=int(getattr(upstream, "status_code", 502) or 502),
+            headers=_upstream_retry_after(upstream),
         )
 
     try:
@@ -25716,6 +25750,7 @@ async def _ollama_forward_non_streaming(
         return _ollama_error_response(
             _response_error_message(upstream, "upstream chat-completions error"),
             status_code=int(getattr(upstream, "status_code", 502) or 502),
+            headers=_upstream_retry_after(upstream),
         )
     return _response_json_payload(upstream)
 
@@ -25763,6 +25798,7 @@ async def _ollama_forward_streaming(
         return _ollama_error_response(
             message,
             status_code=upstream.status_code,
+            headers=_upstream_retry_after(upstream),
         )
 
     def ndjson_line(payload: Mapping[str, Any]) -> str:
@@ -27651,6 +27687,8 @@ async def _forward_current_loaded_openai_request(
                 # concurrently with StreamingResponse's receive loop.
                 await cancellation_span.stop_watcher_for_streaming_handoff()
 
+                sse_repair = _ChatCompletionSseRepair() if request_path == "/v1/chat/completions" else None
+
                 async def stream_response():
                     try:
                         async for chunk in _tc_detector.wrap(
@@ -27661,9 +27699,12 @@ async def _forward_current_loaded_openai_request(
                                 on_signal=cancellation_span._signal,
                             )
                         ):
-                            if request_path == "/v1/chat/completions":
-                                chunk = _normalize_chat_completion_sse_chunk(chunk)
-                            yield chunk
+                            if sse_repair is not None:
+                                chunk = sse_repair.feed(chunk)
+                            if chunk:
+                                yield chunk
+                        if sse_repair is not None and (rest := sse_repair.flush()):
+                            yield rest
                     except asyncio.CancelledError:
                         cancellation_span.mark_stream_cancelled()
                         raise
@@ -27970,10 +28011,11 @@ async def _forward_litellm_proxy_request(
             await cancellation_span.aclose()
             receipt.add_warning("LiteLLM execution timed out")
             owner.report(status="failed", reason="idle_timeout")
-            return Response(
-                content=json.dumps({"detail": "Request timeout"}),
+            return openai_error_response(
+                "Upstream chat request timed out.",
                 status_code=504,
-                media_type="application/json",
+                error_type="api_error",
+                code="timeout",
             )
         except httpx.ConnectError:
             await cancellation_span.aclose()
@@ -28026,6 +28068,8 @@ async def _forward_litellm_proxy_request(
             # concurrently with StreamingResponse's receive loop.
             await cancellation_span.stop_watcher_for_streaming_handoff()
 
+            sse_repair = _ChatCompletionSseRepair() if request_path == "/v1/chat/completions" else None
+
             async def stream_response():
                 try:
                     async for chunk in _tc_detector.wrap(
@@ -28036,12 +28080,22 @@ async def _forward_litellm_proxy_request(
                             on_signal=cancellation_span._signal,
                         )
                     ):
-                        if request_path == "/v1/chat/completions":
-                            chunk = _normalize_chat_completion_sse_chunk(chunk)
-                        yield chunk
+                        if sse_repair is not None:
+                            chunk = sse_repair.feed(chunk)
+                        if chunk:
+                            yield chunk
+                    if sse_repair is not None and (rest := sse_repair.flush()):
+                        yield rest
                 except asyncio.CancelledError:
                     cancellation_span.mark_stream_cancelled()
                     raise
+                except httpx.TransportError:
+                    # The upstream dropped mid-stream. The headers already went
+                    # out, so say it in-band: ending the body cleanly would make
+                    # a truncated answer look complete. Bytes of a cut event
+                    # stay unsent.
+                    owner.report(status="failed", reason="read_error")
+                    yield _CHAT_STREAM_INTERRUPTED_EVENT
                 else:
                     owner.report(
                         status="succeeded" if 200 <= resp.status_code < 400 else "failed",
@@ -28075,10 +28129,11 @@ async def _forward_litellm_proxy_request(
             await cancellation_span.aclose()
             receipt.add_warning("LiteLLM execution timed out")
             owner.report(status="failed", reason="idle_timeout")
-            return Response(
-                content=json.dumps({"detail": "Request timeout"}),
+            return openai_error_response(
+                "Upstream chat request timed out.",
                 status_code=504,
-                media_type="application/json",
+                error_type="api_error",
+                code="timeout",
             )
         except httpx.ConnectError:
             await cancellation_span.aclose()
@@ -28783,6 +28838,43 @@ async def openai_fine_tuning_unsupported(request: Request, rest: str = "") -> Re
 async def openai_realtime_unsupported(request: Request, rest: str = "") -> Response:
     """OpenAI Realtime compatibility surface - explicitly unsupported."""
     return await _openai_unsupported_api(request, "/v1/realtime", "Realtime API")
+
+
+_SSE_EVENT_BOUNDARY = re.compile(rb"\r\n\r\n|\n\n|\r\r")
+
+
+_CHAT_STREAM_INTERRUPTED_EVENT = b"data: " + json.dumps({
+    "error": {
+        "message": "The LLM execution stream ended before the response was complete.",
+        "type": "api_error",
+        "param": None,
+        "code": "upstream_stream_interrupted",
+    },
+}).encode() + b"\n\n"
+
+
+class _ChatCompletionSseRepair:
+    """Run the chat spec repair on whole SSE events.
+
+    A wire chunk can end anywhere, also inside an event or a UTF-8 character.
+    Bytes after the last complete event wait for the next chunk, so the repair
+    never sees a cut event. ``flush`` returns what is left at the end.
+    """
+
+    def __init__(self) -> None:
+        self._pending = b""
+
+    def feed(self, chunk: bytes) -> bytes:
+        data = self._pending + chunk
+        end = 0
+        for match in _SSE_EVENT_BOUNDARY.finditer(data):
+            end = match.end()
+        self._pending = data[end:]
+        return _normalize_chat_completion_sse_chunk(data[:end]) if end else b""
+
+    def flush(self) -> bytes:
+        rest, self._pending = self._pending, b""
+        return rest
 
 
 def _normalize_chat_completion_sse_chunk(chunk: bytes) -> bytes:
