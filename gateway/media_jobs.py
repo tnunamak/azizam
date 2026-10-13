@@ -159,6 +159,11 @@ def _now() -> int:
     return int(time.time())
 
 
+# The admin shape is an allowlist too: a new column stays out of every response
+# until someone adds it here on purpose.
+ADMIN_VISIBLE_FIELDS = CLIENT_VISIBLE_FIELDS | ADMIN_ONLY_FIELDS
+
+
 @dataclass
 class MediaJob:
     """Pure data record for one media job.
@@ -287,7 +292,7 @@ def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, An
     if audience == "internal":
         return dict(data)
     if audience == "admin":
-        return {k: v for k, v in data.items() if k not in INTERNAL_ONLY_FIELDS}
+        return {k: data[k] for k in ADMIN_VISIBLE_FIELDS if k in data}
     return {k: data[k] for k in CLIENT_VISIBLE_FIELDS if k in data}
 
 
