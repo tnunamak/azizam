@@ -54,9 +54,9 @@ PRUNED_DIRS = {".git", "node_modules", "__pycache__", "venv", ".venv", ".ci-fres
 PYTHON_TEST = re.compile(r"^(test_.*|.*_test)\.py$")
 WEB_TEST = re.compile(r"^.*\.(spec|test|e2e)\.[cm]?[jt]sx?$|^.*\.household\.ts$")
 TEST_CONFIG = re.compile(r"^(playwright|vitest)\b.*\.config\.[cm]?[jt]s$")
-# The tasks scripts/test-scheduled runs files for (tests/test_test_scheduled.py
-# keeps this set equal to the script's own).
-SCHEDULED_TASKS = {"sdk-probes", "sweep"}
+# The tasks scripts/test-scheduled runs (tests/test_test_scheduled.py keeps this set
+# equal to the script's own). "perf" lists no test files: its verdict is scripts/perf/run.py's.
+SCHEDULED_TASKS = {"sdk-probes", "sweep", "perf"}
 RERUN_PACKAGES = {"pytest-rerunfailures", "pytest-retry", "flaky", "pytest-flaky"}
 PYTHON_RETRY_MARKER = re.compile(r"\bmark\.flaky\b|@flaky\b|\breruns\s*=")
 RETRY_FLAG = re.compile(r"--(retries|retry|reruns)\b")
