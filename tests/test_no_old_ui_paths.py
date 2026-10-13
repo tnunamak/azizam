@@ -22,6 +22,7 @@ PATTERNS = {
 }
 # Historical records and tests that assert the old paths are gone.
 ALLOWED = (
+    "web/e2e/fixtures/intercept-registry.ts",  # JSON key paths such as "/services" in response shapes, not page paths
     "docs/design/craft-system/",  # measured captures of r18 screens; regenerated, never hand-edited
     "docs/design/vivid-fish-handoff/", "docs/design/comps/", "docs/design/references/",
     "docs/design/benchmarks/", "docs/research/",

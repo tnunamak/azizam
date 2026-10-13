@@ -1,6 +1,7 @@
 import { type Locator, type Page } from "@playwright/test";
 import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const aliases = [
   ["fast", "chat.completions", "Chat", "chat", "Fast"],
@@ -98,14 +99,12 @@ async function verifyModelLayout(page: Page, cards: Locator, count: number) {
 
 async function stubCatalog(page: Page, rows: unknown[]) {
   await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         schema_version: 1,
         object: "models.catalog",
         aliases: rows,
         models: [],
-      },
-    }),
+      }),
   );
 }
 
@@ -189,13 +188,13 @@ test("paid model rows with a long provider name keep the 390 px page inside the 
 
 async function checkPlanRows(page: Page, width: number) {
   await page.route("**/admin/api/people", (route) =>
-    route.fulfill({ json: { people: [], profiles: plans } }),
+    fulfilJson(route, { people: [], profiles: plans }),
   );
   await page.route("**/admin/api/invites", (route) =>
-    route.fulfill({ json: { invites: [], profiles: plans } }),
+    fulfilJson(route, { invites: [], profiles: plans }),
   );
   await page.route("**/admin/api/profiles", (route) =>
-    route.fulfill({ json: { profiles: plans } }),
+    fulfilJson(route, { profiles: plans }),
   );
   await page.goto("/people/");
   await page.getByRole("tab", { name: "Access plans" }).click();

@@ -45,8 +45,11 @@ describe("foundation product contracts", () => {
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith("https://gateway.example/v1"),
     );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Gateway address copied to clipboard.",
+    // The message renders after writeText resolves, so wait for it, not once.
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Gateway address copied to clipboard.",
+      ),
     );
   });
   it("keeps a failed copy recoverable instead of claiming success", async () => {

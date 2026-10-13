@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { fulfilJson } from "./fixtures/intercept";
 
 test("signed audio plays and seeks through the gateway delivery route", async ({
   page,
@@ -32,7 +33,7 @@ test("signed audio plays and seeks through the gateway delivery route", async ({
     const body = await response.json();
     await new Promise((resolve) => setTimeout(resolve, 500));
     for (const asset of body.assets) asset.download_url += "&refresh=1";
-    await route.fulfill({ response, json: body });
+    await fulfilJson(route, body, { response });
   });
   const firstList = page.waitForResponse((candidate) =>
     candidate.url().includes("/me/api/media?limit=40&scope=everyone"),

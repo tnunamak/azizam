@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 // /showcase/ is the gateway's static product page (showcase/ in the repo), not
 // a web app page. These tests drive it through the real gateway.
@@ -30,16 +31,13 @@ const recorded = (id: string, extra: Example): Example => ({
 /** Serve sections and the examples index; `data` returning null answers 503. */
 async function serveExamples(page: Page, data: () => Example[] | null) {
   await page.route("**/showcase/static/sections.json", (route) =>
-    route.fulfill({ json: sections }),
+    fulfilJson(route, sections),
   );
   await page.route("**/showcase/examples/index.json", (route) => {
     const list = data();
     return list
-      ? route.fulfill({ json: { object: "list", data: list } })
-      : route.fulfill({
-          status: 503,
-          json: { error: { code: "unavailable" } },
-        });
+      ? fulfilJson(route, { object: "list", data: list })
+      : fulfilJson(route, { error: { code: "unavailable" } }, { status: 503 });
   });
 }
 

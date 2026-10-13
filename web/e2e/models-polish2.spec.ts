@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const measured = {
   id: "chat",
@@ -75,14 +76,12 @@ const typical = {
 
 async function catalog(page: Page, aliases: unknown[]) {
   await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         schema_version: 1,
         object: "models.catalog",
         aliases,
         models: [],
-      },
-    }),
+      }),
   );
   await page.goto("/models/");
 }

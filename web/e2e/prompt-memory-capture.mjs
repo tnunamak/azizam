@@ -6,6 +6,7 @@
 import { chromium } from "@playwright/test";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { quiet } from "./capture-settle.mjs";
 
 const [manifestPath, outDir, only] = process.argv.slice(2);
 if (!manifestPath || !outDir) {
@@ -67,9 +68,7 @@ async function context(email, theme, size) {
 }
 
 async function settle(page) {
-  await page.waitForLoadState("networkidle").catch(() => {});
-  await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(400);
+  await quiet(page);
 }
 
 async function household(page, value) {

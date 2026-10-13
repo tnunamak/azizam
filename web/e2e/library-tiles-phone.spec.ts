@@ -1,5 +1,6 @@
 import { type Page } from "@playwright/test";
 import { expect, test } from "./fixtures/isolation";
+import { fulfilJson } from "./fixtures/intercept";
 
 // WP-7: on a phone, a running creation says what it is, a quiet audio tile
 // carries no invented decoration, a long household name is not clipped, and an
@@ -17,20 +18,17 @@ async function open(page: Page, width: 390 | 1440) {
   await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
   await page.addInitScript(() => localStorage.setItem("theme", "light"));
-  await page.route("**/me/api/media?**", (route) => route.fulfill({ json: { assets, models: ["image"], next_cursor: null } }));
+  await page.route("**/me/api/media?**", (route) => fulfilJson(route, { assets, models: ["image"], next_cursor: null }));
   await page.route("**/me/api/home", async (route) => {
     const response = await route.fetch();
     const body = await response.json();
-    await route.fulfill({
-      response,
-      json: {
+    await fulfilJson(route, {
         ...body,
         receipts: [
           { request_id: "run_pic", status: "running", intent: "image.generate", accepted_at_ms: Date.now() - 90_000 },
           { request_id: "run_vid", status: "queued", path: "/openai/v1/videos" },
         ],
-      },
-    });
+      }, { response });
   });
   await page.goto("/library/");
   await expect(page.getByRole("button", { name: "Open Tomatoes on a bench" })).toBeVisible();
@@ -88,20 +86,17 @@ for (const width of [390, 1440] as const) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await page.addInitScript(() => localStorage.setItem("theme", "light"));
-    await page.route("**/me/api/media?**", (route) => route.fulfill({ json: { assets: assets.slice(0, 2), models: [], next_cursor: null } }));
+    await page.route("**/me/api/media?**", (route) => fulfilJson(route, { assets: assets.slice(0, 2), models: [], next_cursor: null }));
     await page.route("**/me/api/home", async (route) => {
       const response = await route.fetch();
       const body = await response.json();
-      await route.fulfill({
-        response,
-        json: {
+      await fulfilJson(route, {
           ...body,
           capabilities: (body.capabilities ?? []).map((item: { capability: string }) =>
             item.capability === "image" ? { ...item, available: false, status: "unavailable", reason: "Images are paused." } : item,
           ),
           receipts: [{ request_id: "run_pic", status: "running", intent: "image.generate", accepted_at_ms: Date.now() - 90_000 }],
-        },
-      });
+        }, { response });
     });
     await page.goto("/");
     const tile = page.getByText("Making your picture", { exact: true });

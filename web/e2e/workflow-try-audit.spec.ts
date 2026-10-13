@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const emptyModelsCatalog = {
   schema_version: 1,
@@ -61,10 +62,10 @@ const workflowCatalog = {
 
 async function routeCatalogs(page: Page, workflows = workflowCatalog) {
   await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({ json: emptyModelsCatalog }),
+    fulfilJson(route, emptyModelsCatalog),
   );
   await page.route("**/me/api/workflows", (route) =>
-    route.fulfill({ json: workflows }),
+    fulfilJson(route, workflows),
   );
 }
 
@@ -115,16 +116,14 @@ for (const [theme, width] of [
     await checkState(page, `workflow-try-guided-${theme}-${width}.png`);
 
     await page.route("**/v1/images/generations", (route) =>
-      route.fulfill({
-        json: {
+      fulfilJson(route, {
           data: [
             {
               url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
               media_type: "image/png",
             },
           ],
-        },
-      }),
+        }),
     );
     await page
       .getByRole("textbox", { name: /^prompt Required$/i })
@@ -135,10 +134,7 @@ for (const [theme, width] of [
     await checkState(page, `workflow-try-result-${theme}-${width}.png`);
     await page.unroute("**/v1/images/generations");
     await page.route("**/v1/images/generations", (route) =>
-      route.fulfill({
-        status: 403,
-        json: { error: { message: "This key cannot use poster." } },
-      }),
+      fulfilJson(route, { error: { message: "This key cannot use poster." } }, { status: 403 }),
     );
     await page.getByRole("button", { name: "Run", exact: true }).click();
     await expect(page.getByText("This key cannot use poster.", { exact: true })).toBeVisible();

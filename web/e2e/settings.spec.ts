@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 async function seed(page: Page, state: "seeded" | "empty" | "error") {
   await page.route("**/admin/api/settings/**", (route) => {
@@ -8,42 +9,45 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
     const body = path.includes("receipts")
       ? { revision: "7", retention_days: null }
       : path.includes("instance")
-      ? {
-          revision: "7",
-          instance: {
-            name: "Our gateway",
-            base_url: "https://gateway.example.test",
-            theme_default: "system",
-          },
-        }
-      : path.includes("prompt-memory")
         ? {
             revision: "7",
-            prompt_memory: {
-              default_remember: true,
-              never_keep: false,
-              retention_cap: "never",
+            instance: {
+              name: "Our gateway",
+              base_url: "https://gateway.example.test",
+              theme_default: "system",
             },
           }
-        : path.includes("defaults")
+        : path.includes("prompt-memory")
           ? {
-              defaults: { profile_id: state === "empty" ? null : "local" },
-              aliases: state === "empty" ? {} : { chat: "local-chat" },
-            }
-          : {
-              config: {
-                proxy: { port: 18000 },
-                secret: "<redacted>",
-                example_endpoint: `https://gateway.example.test/${"recorded-path/".repeat(25)}`,
+              revision: "7",
+              prompt_memory: {
+                default_remember: true,
+                never_keep: false,
+                retention_cap: "never",
               },
-              export_url: "/admin/api/settings/effective/export",
-            };
-    return route.fulfill({ status: state === "error" ? 503 : 200, json: body });
+            }
+          : path.includes("defaults")
+            ? {
+                defaults: { profile_id: state === "empty" ? null : "local" },
+                aliases:
+                  state === "empty"
+                    ? {}
+                    : { chat: { stable: { fast: "local-chat" } } },
+              }
+            : {
+                config: {
+                  proxy: { port: 18000 },
+                  secret: "<redacted>",
+                  example_endpoint: `https://gateway.example.test/${"recorded-path/".repeat(25)}`,
+                },
+                export_url: "/admin/api/settings/effective/export",
+              };
+    return fulfilJson(route, body, { status: state === "error" ? 503 : 200 });
   });
   await page.route("**/admin/api/oidc-config", (route) =>
-    route.fulfill({
-      status: state === "error" ? 503 : 200,
-      json: {
+    fulfilJson(
+      route,
+      {
         revision: "7",
         oidc_config:
           state === "empty"
@@ -66,24 +70,26 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
                 clock_skew_seconds: 60,
               },
       },
-    }),
+      { status: state === "error" ? 503 : 200 },
+    ),
   );
   await page.route("**/admin/api/operator/sign-in", (route) =>
-    route.fulfill({
-      status: state === "error" ? 503 : 200,
-      json: {
+    fulfilJson(
+      route,
+      {
         revision: "7",
         mode: state === "empty" ? "built-in" : "both",
         built_in: true,
         oidc: state !== "empty",
         oidc_label: "Example identity",
       },
-    }),
+      { status: state === "error" ? 503 : 200 },
+    ),
   );
   await page.route("**/admin/api/operator/overrides", (route) =>
-    route.fulfill({
-      status: state === "error" ? 503 : 200,
-      json: {
+    fulfilJson(
+      route,
+      {
         overrides: {
           revisions: { media_job_admission_overrides: "7" },
           media_job_admission:
@@ -96,12 +102,13 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
           },
         },
       },
-    }),
+      { status: state === "error" ? 503 : 200 },
+    ),
   );
   await page.route("**/admin/api/extensions", (route) =>
-    route.fulfill({
-      status: state === "error" ? 503 : 200,
-      json: {
+    fulfilJson(
+      route,
+      {
         extension_packages: {
           packages:
             state === "empty"
@@ -116,20 +123,19 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
                 },
         },
       },
-    }),
+      { status: state === "error" ? 503 : 200 },
+    ),
   );
   await page.route("**/admin/api/profiles", (route) =>
-    route.fulfill({
-      json: {
-        profiles: [
-          {
-            id: "local",
-            name: "Local only",
-            description: "Fixture local access",
-            profile: {},
-          },
-        ],
-      },
+    fulfilJson(route, {
+      profiles: [
+        {
+          id: "local",
+          name: "Local only",
+          description: "Fixture local access",
+          profile: {},
+        },
+      ],
     }),
   );
 }
@@ -190,7 +196,8 @@ for (const [state, theme, width] of [
           .click();
         if (state === "error") {
           await expect(
-            page.getByRole("region", { name: "Receipts", exact: true })
+            page
+              .getByRole("region", { name: "Receipts", exact: true })
               .getByText("Couldn’t load receipt settings"),
           ).toBeVisible();
           await expect(
@@ -251,7 +258,11 @@ for (const [state, theme, width] of [
           }
         }
         await expect
-          .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+          .poll(() =>
+            page.evaluate(
+              () => document.documentElement.scrollWidth <= innerWidth,
+            ),
+          )
           .toBe(true);
         await page.evaluate(() => window.scrollTo(0, 0));
         await page.screenshot({
@@ -273,11 +284,13 @@ for (const [state, theme, width] of [
 // and sign-in choice. The fixture restores them after the test; the default
 // plan matters most, since the owner inherits it and a "Local chat" default
 // left behind hides every workflow from later specs.
-test("settings saves each section through its own API and keeps OIDC secret write-only", { tag: GLOBAL_STATE_TAG }, async ({
-  page,
-}) => {
-  await settingsJourney(page);
-});
+test(
+  "settings saves each section through its own API and keeps OIDC secret write-only",
+  { tag: GLOBAL_STATE_TAG },
+  async ({ page }) => {
+    await settingsJourney(page);
+  },
+);
 
 async function settingsJourney(page: Page) {
   await page.goto("/settings/");
@@ -447,52 +460,56 @@ async function settingsJourney(page: Page) {
   await expect(
     page.getByRole("link", { name: "Export redacted snapshot" }),
   ).toBeVisible();
-  await expect(page.locator("main")).not.toContainText("browser-fixture-secret");
+  await expect(page.locator("main")).not.toContainText(
+    "browser-fixture-secret",
+  );
   const download = page.waitForEvent("download");
   await page.getByRole("link", { name: "Export redacted snapshot" }).click();
   const file = await download;
   expect(file.suggestedFilename()).toBe("gateway-effective-config.json");
 }
 
-test("a provider draft saves after a real sign-in choice write", { tag: GLOBAL_STATE_TAG }, async ({
-  page,
-}) => {
-  await page.goto("/settings/");
-  await editSection(page, "Sign-in");
-  await page
-    .getByLabel("Client ID", { exact: true })
-    .fill("independent-provider-draft");
-  await page.getByLabel("Available sign-in methods").click();
-  await page
-    .getByRole("option", { name: "Built-in accounts only", exact: true })
-    .click();
-  const modeSaved = page.waitForResponse(
-    (response) =>
-      response.url().endsWith("/admin/api/operator/sign-in") &&
-      response.request().method() === "PUT",
-  );
-  await page
-    .getByRole("button", { name: "Save sign-in choice", exact: true })
-    .click();
-  expect((await modeSaved).status()).toBe(200);
-  await expect(page.getByLabel("Client ID", { exact: true })).toHaveValue(
-    "independent-provider-draft",
-  );
-  const providerSaved = page.waitForResponse(
-    (response) =>
-      response.url().endsWith("/admin/api/oidc-config") &&
-      response.request().method() === "PUT",
-  );
-  await page.getByRole("button", { name: "Save sign-in", exact: true }).click();
-  expect((await providerSaved).status()).toBe(200);
-  await page.reload();
-  await editSection(page, "Sign-in");
-  await expect(page.getByLabel("Client ID", { exact: true })).toHaveValue(
-    "independent-provider-draft",
-  );
-});
-
-
+test(
+  "a provider draft saves after a real sign-in choice write",
+  { tag: GLOBAL_STATE_TAG },
+  async ({ page }) => {
+    await page.goto("/settings/");
+    await editSection(page, "Sign-in");
+    await page
+      .getByLabel("Client ID", { exact: true })
+      .fill("independent-provider-draft");
+    await page.getByLabel("Available sign-in methods").click();
+    await page
+      .getByRole("option", { name: "Built-in accounts only", exact: true })
+      .click();
+    const modeSaved = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/admin/api/operator/sign-in") &&
+        response.request().method() === "PUT",
+    );
+    await page
+      .getByRole("button", { name: "Save sign-in choice", exact: true })
+      .click();
+    expect((await modeSaved).status()).toBe(200);
+    await expect(page.getByLabel("Client ID", { exact: true })).toHaveValue(
+      "independent-provider-draft",
+    );
+    const providerSaved = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/admin/api/oidc-config") &&
+        response.request().method() === "PUT",
+    );
+    await page
+      .getByRole("button", { name: "Save sign-in", exact: true })
+      .click();
+    expect((await providerSaved).status()).toBe(200);
+    await page.reload();
+    await editSection(page, "Sign-in");
+    await expect(page.getByLabel("Client ID", { exact: true })).toHaveValue(
+      "independent-provider-draft",
+    );
+  },
+);
 
 test("new visitors use the saved default theme and personal choices persist", async ({
   browser,
@@ -501,11 +518,9 @@ test("new visitors use the saved default theme and personal choices persist", as
   const context = await browser.newContext({ colorScheme: "light" });
   const page = await context.newPage();
   await page.route("**/.well-known/azizam", (route) =>
-    route.fulfill({
-      json: {
-        service: { name: "Our gateway" },
-        presentation: { theme_default: "dark" },
-      },
+    fulfilJson(route, {
+      service: { name: "Our gateway" },
+      presentation: { theme_default: "dark" },
     }),
   );
   await page.goto(`${baseURL}/sign-in/`);
@@ -516,10 +531,6 @@ test("new visitors use the saved default theme and personal choices persist", as
   await expect(page.locator("html")).not.toHaveClass(/dark/);
   await context.close();
 });
-
-
-
-
 
 // Craft PR 2: a setting row is one line of label and one of detail on a
 // phone (64 px), and its detail is one line everywhere. Long text never
@@ -534,8 +545,8 @@ for (const width of [390, 1440]) {
     const name = "n".repeat(300);
     const url = `https://example.test/${"path".repeat(100)}`;
     await page.route("**/admin/api/settings/instance", (route) =>
-      route.fulfill({
-        json: { instance: { name, base_url: url, theme_default: "system" } },
+      fulfilJson(route, {
+        instance: { name, base_url: url, theme_default: "system" },
       }),
     );
     await page.goto("/settings/");
@@ -543,7 +554,13 @@ for (const width of [390, 1440]) {
     for (const text of [name, url]) {
       const field = section.getByText(text, { exact: text === name });
       await expect(field).toBeVisible();
-      await expect.poll(() => field.evaluate((el) => el.getBoundingClientRect().right <= innerWidth)).toBe(true);
+      await expect
+        .poll(() =>
+          field.evaluate(
+            (el) => el.getBoundingClientRect().right <= innerWidth,
+          ),
+        )
+        .toBe(true);
       // Wrapped in full, or cut with an ellipsis that keeps the full text.
       const fits = await field.evaluate(
         (el) => el.scrollWidth <= el.clientWidth,
@@ -558,12 +575,12 @@ for (const width of [390, 1440]) {
     await expect(section.getByLabel("Instance name")).toHaveValue(name);
     await expect(section.getByLabel("Public base URL")).toHaveValue(url);
     await expect
-          .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
-          .toBe(true);
+      .poll(() =>
+        page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+      )
+      .toBe(true);
   });
 }
-
-
 
 for (const theme of ["dark"] as const) {
   for (const width of [390]) {
@@ -658,7 +675,13 @@ for (const theme of ["dark"] as const) {
             })),
         );
         await expect
-          .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), { message: JSON.stringify(overflow) })
+          .poll(
+            () =>
+              page.evaluate(
+                () => document.documentElement.scrollWidth <= innerWidth,
+              ),
+            { message: JSON.stringify(overflow) },
+          )
           .toBe(true);
         for (const section of [defaults, apps]) {
           for (const control of await section
