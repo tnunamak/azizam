@@ -126,8 +126,30 @@ def _loop_thread_work(loop_calls: list[str]):
             note(f"open({Path(str(file)).name})")
         return real_open(file, *args, **kwargs)
 
+    # A request shares the connections its worker-thread steps opened, so a
+    # loop-thread query on one of them makes no connect call; trace statements too.
+    class TracedCursor(sqlite3.Cursor):
+        def execute(self, *args, **kwargs):
+            note("sqlite3.execute")
+            return super().execute(*args, **kwargs)
+
+        def executemany(self, *args, **kwargs):
+            note("sqlite3.executemany")
+            return super().executemany(*args, **kwargs)
+
+    class TracedConnection(sqlite3.Connection):
+        def cursor(self, factory=TracedCursor):
+            return super().cursor(factory)
+
+        def execute(self, *args, **kwargs):
+            return self.cursor().execute(*args, **kwargs)
+
+        def executemany(self, *args, **kwargs):
+            return self.cursor().executemany(*args, **kwargs)
+
     def connect(*args, **kwargs):
         note("sqlite3.connect")
+        kwargs.setdefault("factory", TracedConnection)
         return real_connect(*args, **kwargs)
 
     class Popen(real_popen):
