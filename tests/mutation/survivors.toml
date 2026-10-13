@@ -49,12 +49,6 @@ class = "equivalent"
 reason = "An op \"missing\" row with no values already matched earlier, so the extra guard never decides."
 
 [[mutant]]
-id = "gateway/category_policy.py:470:stmt-delete:object.__setattr__(self, name, _FrozenMa...e4802a08->pass"
-class = "killable"
-reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
-killed_by = "tests/test_category_policy_decisions.py::test_a_policy_version_copies_and_freezes_its_catalogs_so_later_edits_to_"
-
-[[mutant]]
 id = "gateway/category_policy.py:483:bool:or->and"
 class = "equivalent"
 reason = "The identity check is repeated by the next line (person not in people), which returns the same decision."
@@ -78,36 +72,6 @@ reason = "The message is raised inside a try block whose handler returns POLICY_
 id = "gateway/category_policy.py:494:str-const:\"service key mismatch\"->\"XXservice key mismatchXX\""
 class = "equivalent"
 reason = "The message is raised inside a try block whose handler returns POLICY_UNAVAILABLE for every exception, so the text is never observable."
-
-[[mutant]]
-id = "gateway/category_policy.py:532:str-const:\"request\"->\"XXrequestXX\""
-class = "killable"
-reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
-killed_by = "tests/test_category_policy_decisions.py::test_a_reason_change_carries_a_copy_of_the_request_that_changed"
-
-[[mutant]]
-id = "gateway/category_policy.py:578:int-const:1->2"
-class = "killable"
-reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
-killed_by = "tests/test_category_policy_decisions.py::test_two_services_whose_ids_share_a_prefix_up_to_an_inner_at_sign_are_di"
-
-[[mutant]]
-id = "gateway/category_policy.py:677:str-const:\"release\"->\"XXreleaseXX\""
-class = "killable"
-reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
-killed_by = "tests/test_category_policy_decisions.py::test_preview_as_reads_the_retained_bundles_for_every_output_phase"
-
-[[mutant]]
-id = "gateway/category_policy.py:677:str-const:\"retrieval\"->\"XXretrievalXX\""
-class = "killable"
-reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
-killed_by = "tests/test_category_policy_decisions.py::test_preview_as_reads_the_retained_bundles_for_every_output_phase"
-
-[[mutant]]
-id = "gateway/category_policy.py:683:str-const:\"metadata_complete\"->\"XXmetadata_completeXX\""
-class = "killable"
-reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
-killed_by = "tests/test_category_policy_decisions.py::test_preview_as_passes_the_metadata_flag_to_the_decision"
 
 [[mutant]]
 id = "gateway/media_jobs.py:1156:cmp:<=-><"
@@ -175,12 +139,6 @@ class = "equivalent"
 reason = "No sentence uses these placeholders, and the diagnostics keep the raw values either way."
 
 [[mutant]]
-id = "gateway/public_failure.py:172:str-const:\"minimum\"->\"XXminimumXX\""
-class = "killable"
-reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
-killed_by = "tests/test_public_failure_copy.py::test_bounded_numbers_in_details_reach_the_api_sentence_for_a_code"
-
-[[mutant]]
 id = "gateway/public_failure.py:177:str-const:\"api\"->\"XXapiXX\""
 class = "equivalent"
 reason = "A legacy message recognised through the other audience or the bounded-fact regex gives the same copy key."
@@ -231,12 +189,6 @@ id = "gateway/public_failure.py:200:str-const:\"input_unknown\"->\"XXinput_unkno
 class = "killable"
 reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
 killed_by = "tests/test_public_failure_copy.py::test_legacy_error_text_is_reduced_to_its_bounded_fact"
-
-[[mutant]]
-id = "gateway/public_failure.py:223:str-const:\"message\"->\"XXmessageXX\""
-class = "killable"
-reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
-killed_by = "tests/test_public_failure_copy.py::test_the_original_message_is_recorded_only_when_the_sentence_changed"
 
 [[mutant]]
 id = "gateway/public_failure.py:240:str-const:\"ui\"->\"XXuiXX\""
