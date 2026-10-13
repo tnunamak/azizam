@@ -20,7 +20,8 @@ import httpx
 import pytest
 
 import proxy
-from gateway import admin_store, receipt_store
+from gateway import admin_store, category_enforcement, receipt_store
+from gateway.category_store import CategoryStore
 from gateway.runtime_auth import hash_api_key
 from gateway.admin_oidc import CookieConfig, encode_session_cookie, session_from_claims
 from tests.test_proxy_admin_integration import _test_backend_grid, _test_status_projection
@@ -46,6 +47,11 @@ def gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy.status_endpoint, "get_cached_status", _test_status_projection)
     monkeypatch.setattr(proxy.status_endpoint, "_backend_grid", _test_backend_grid)
     monkeypatch.setattr(proxy, "currently_loaded_model", lambda *a, **k: None)
+    # An existing category store makes every visibility check query SQLite, so the
+    # probes see that work whatever gate an earlier test left behind.
+    categories = tmp_path / "categories.db"
+    CategoryStore(categories)
+    monkeypatch.setattr(category_enforcement, "_GATE", category_enforcement.CategoryGate(categories))
     receipts = tmp_path / "receipts.db"
     receipt_store.init_db(receipts)
     monkeypatch.setattr(receipt_store, "DB_PATH", receipts)

@@ -13434,21 +13434,26 @@ async def _filter_model_list_for_profile(
         for capability in registered_model_capabilities(registry):
             if capability.model:
                 declared_intents.setdefault(capability.model, []).append(capability.intent)
-    filtered = []
-    for item in visible:
-        intents = None
-        if category_protocols is None and not any(item.get(key) for key in (
-            "azizam_intent", "intent", "azizam_workflow_id", "azizam_resolves_to",
-        )):
-            intents = declared_intents.get(str(item.get("id") or ""))
-        if category_protocols is not None:
-            category_entries = [{**item, "azizam_intent": intent, "azizam_protocol": protocol}
-                                for intent, protocol in category_protocols.items()]
-        else:
-            category_entries = ([{**item, "azizam_intent": intent} for intent in intents]
-                                if intents is not None else [item])
-        if any(_category_entry_visible(auth_context, entry) for entry in category_entries):
-            filtered.append(item)
+    def category_visible_items() -> list[dict[str, Any]]:
+        # The category gate asks SQLite for its data version on every check.
+        kept = []
+        for item in visible:
+            intents = None
+            if category_protocols is None and not any(item.get(key) for key in (
+                "azizam_intent", "intent", "azizam_workflow_id", "azizam_resolves_to",
+            )):
+                intents = declared_intents.get(str(item.get("id") or ""))
+            if category_protocols is not None:
+                category_entries = [{**item, "azizam_intent": intent, "azizam_protocol": protocol}
+                                    for intent, protocol in category_protocols.items()]
+            else:
+                category_entries = ([{**item, "azizam_intent": intent} for intent in intents]
+                                    if intents is not None else [item])
+            if any(_category_entry_visible(auth_context, entry) for entry in category_entries):
+                kept.append(item)
+        return kept
+
+    filtered = await asyncio.to_thread(category_visible_items)
 
     allowlist = _profile_model_allowlist(auth_context)
     if allowlist is not None:
@@ -23620,15 +23625,20 @@ async def audio_models(request: Request):
         _profile_target_visibility(auth_context) != "available"
         or _comfy_target_available()
     )
+    # The category gate reads SQLite, so it runs on a worker thread.
+    category_visible = await asyncio.to_thread(lambda: {
+        name for name in AUDIO_WORKFLOWS_CFG
+        if category_enforcement.visible(auth_context.identity, make_policy_request(
+            protocol="openai.audio", intent=INTENT_AUDIO_GENERATE,
+            model=name, workflow=f"audio.generate.{name}",
+        ))
+    })
     for name, cfg in AUDIO_WORKFLOWS_CFG.items():
         if not include_available:
             continue
         if allowlist is not None and name not in allowlist:
             continue
-        if not category_enforcement.visible(auth_context.identity, make_policy_request(
-            protocol="openai.audio", intent=INTENT_AUDIO_GENERATE,
-            model=name, workflow=f"audio.generate.{name}",
-        )):
+        if name not in category_visible:
             continue
         models.append({
             "id": name,
@@ -24556,10 +24566,15 @@ async def list_models(request: Request):
             item["description"] = desc
 
     decision_ids: set[str] = set()
-    for decision_model in await asyncio.to_thread(_decision_models_for, auth_context, _profile_for_auth_context(auth_context)):
-        entry = {"id": decision_model.id, "object": "model", "owned_by": "azizam",
-                 "created": 0, "capabilities": decision_model.view()["capabilities"]}
-        if not _category_entry_visible(auth_context, {**entry, "azizam_intent": "decision.systemone"}):
+    decision_entries = [
+        {"id": decision_model.id, "object": "model", "owned_by": "azizam",
+         "created": 0, "capabilities": decision_model.view()["capabilities"]}
+        for decision_model in await asyncio.to_thread(_decision_models_for, auth_context, _profile_for_auth_context(auth_context))]
+    decision_visible = await asyncio.to_thread(
+        lambda: [_category_entry_visible(auth_context, {**entry, "azizam_intent": "decision.systemone"})
+                 for entry in decision_entries])
+    for entry, shown in zip(decision_entries, decision_visible):
+        if not shown:
             continue
         decision_ids.add(entry["id"])
         if entry["id"] not in {item.get("id") for item in data if isinstance(item, dict)}:
@@ -24587,19 +24602,22 @@ async def list_models(request: Request):
     # Resolve metadata against the full catalog, then hide target IDs that the
     # caller cannot see. This does not change which alias entries are listed.
     visible_ids = {normalize_model_id(str(item.get("id") or "")) for item in data if isinstance(item, dict)}
-    for item in data:
-        if isinstance(item.get("azizam_engine_candidates"), Mapping):
-            item["azizam_engine_candidates"] = {
-                operation: [target for target in targets
-                            if _category_entry_visible(auth_context, {"id": target, "operation": operation})]
-                for operation, targets in item["azizam_engine_candidates"].items()
-            }
-        if isinstance(item, dict) and isinstance(item.get("azizam_resolves_to"), Mapping):
-            item["azizam_resolves_to"] = {
-                operation: target for operation, target in item["azizam_resolves_to"].items()
-                if target and normalize_model_id(str(target)) in visible_ids
-                and _category_entry_visible(auth_context, {"id": item["id"], "operation": operation})
-            }
+    def hide_invisible_targets() -> None:
+        for item in data:
+            if isinstance(item.get("azizam_engine_candidates"), Mapping):
+                item["azizam_engine_candidates"] = {
+                    operation: [target for target in targets
+                                if _category_entry_visible(auth_context, {"id": target, "operation": operation})]
+                    for operation, targets in item["azizam_engine_candidates"].items()
+                }
+            if isinstance(item, dict) and isinstance(item.get("azizam_resolves_to"), Mapping):
+                item["azizam_resolves_to"] = {
+                    operation: target for operation, target in item["azizam_resolves_to"].items()
+                    if target and normalize_model_id(str(target)) in visible_ids
+                    and _category_entry_visible(auth_context, {"id": item["id"], "operation": operation})
+                }
+
+    await asyncio.to_thread(hide_invisible_targets)
 
     upstream_payload.update(policy_metadata)
     upstream_payload["data"] = data
@@ -26454,7 +26472,8 @@ async def retrieve_response(response_id: str, request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
         return auth_context
-    decision = _protocol_policy_decision(
+    decision = await asyncio.to_thread(
+        _protocol_policy_decision,
         auth_context,
         protocol="openai.chat",
         intent="chat.responses",
@@ -26486,7 +26505,8 @@ async def list_response_input_items(response_id: str, request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
         return auth_context
-    decision = _protocol_policy_decision(
+    decision = await asyncio.to_thread(
+        _protocol_policy_decision,
         auth_context,
         protocol="openai.chat",
         intent="chat.responses",
