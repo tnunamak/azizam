@@ -58,5 +58,13 @@ for (const width of widths) {
     await page.getByRole("dialog", { name: `Edit ${name}` }).getByRole("button", { name: "Delete category" }).click();
     await page.getByRole("dialog", { name: `Delete ${name}?` }).getByRole("button", { name: "Delete category" }).click();
     await expect(page.getByRole("region", { name, exact: true })).toHaveCount(0);
+
+    // The bundled starter categories come from the gateway, not from the page.
+    await page.getByRole("button", { name: "Start from a preset" }).click();
+    const presets = page.getByRole("dialog", { name: "Start from a preset" });
+    await expect(presets.getByText("Content for adults only.")).toBeVisible();
+    await expect(presets.getByText("Still being built, so it may not work yet.")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(presets).toHaveCount(0);
   });
 }

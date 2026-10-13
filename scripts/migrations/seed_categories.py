@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""Create the starter categories and file workflows or models into them.
+"""Add the bundled starter categories and file workflows or models into them.
 
 A category is a named group of models and workflows with one rule: who may see
-what is in it. This script writes the same rows the Categories page writes, so
-the owner can edit or delete every one of them there afterwards:
-
-* "Adult": hidden from everyone except the owner, until the owner names the
-  access plans that may use it.
-* "Experimental": the same, for work that is still being built. The owner moves
-  an item out of Experimental to promote it.
+what is in it. The starter categories are bundled data in manifests/categories
+(the same list the Categories page offers under "Start from a preset"). This
+script writes the same rows the page writes, so the owner can edit or delete
+every one of them there afterwards.
 
 Categories that already exist are left exactly as they are, so a second run
 changes nothing and never undoes an edit the owner made on the page. An item
@@ -16,7 +13,7 @@ that is already in the category is skipped.
 
 Which workflow or model goes where is a command-line argument, never code:
 
-    seed_categories.py --put experimental=image.generate.some-workflow
+    seed_categories.py --put CATEGORY=WORKFLOW_ID
 
 Dry-run is the default and prints what would change. Add --apply to write. The
 gateway need not stop: the change is one compare-and-swap activation that the
@@ -36,40 +33,17 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from gateway import category_policy as policy  # noqa: E402
 from gateway.category_api import snapshot_from_json, snapshot_to_json  # noqa: E402
+from gateway.category_presets import MEMBER_VALUE, load_presets  # noqa: E402
 from gateway.category_store import CategoryStore, NoActiveSnapshotError  # noqa: E402
 
-AUTHOR_FALLBACK = "migration:seed-categories"
-MEMBER_VALUE = "included"  # The one value of a starter category: "this item is in it".
 SOURCE = "owner"
 MAPPING_VERSION = "owner-edit-1"
-
-# Category rows, as the Categories page would write them. Data, not behaviour:
-# the gateway reads ``visible_to`` and never looks at these ids or labels.
-STARTER_CATEGORIES: tuple[dict[str, Any], ...] = (
-    {
-        "id": "adult",
-        "label": "Adult",
-        "description": "Content for adults only.",
-    },
-    {
-        "id": "experimental",
-        "label": "Experimental",
-        "description": "Still being built, so it may not work yet.",
-    },
-)
 
 
 def _empty_snapshot() -> dict[str, Any]:
     return {"id": "owner-rules", "categories": {}, "people": {}, "apps": {},
             "services": {}, "completeness_gate": True, "retained": {}}
-
-
-def _category_row(seed: dict[str, Any]) -> dict[str, Any]:
-    return {"id": seed["id"], "label": seed["label"], "kind": "set",
-            "values": [MEMBER_VALUE], "applies_to": ["release", "workflow"],
-            "description": seed["description"], "visible_to": []}
 
 
 def _service_for(snapshot: dict[str, Any], stem: str) -> tuple[str, dict[str, Any]]:
@@ -84,13 +58,14 @@ def _service_for(snapshot: dict[str, Any], stem: str) -> tuple[str, dict[str, An
 
 
 def plan_changes(snapshot: dict[str, Any], puts: list[tuple[str, str]], owner: str,
-                 now: str) -> list[str]:
+                 now: str, presets: list[Any]) -> list[str]:
     """Edit ``snapshot`` in place and return one plain line per change."""
     lines: list[str] = []
-    for seed in STARTER_CATEGORIES:
-        if seed["id"] not in snapshot["categories"]:
-            snapshot["categories"][seed["id"]] = _category_row(seed)
-            lines.append(f"add category {seed['label']}: visible to the owner only")
+    for preset in presets:
+        if preset.id not in snapshot["categories"]:
+            snapshot["categories"][preset.id] = preset.category_row()
+            lines.append(f"add category {preset.label}: visible to " + (
+                "the owner only" if preset.visibility == "owner" else "everyone"))
     for category, stem in puts:
         if category not in snapshot["categories"]:
             raise SystemExit(f"error: no category {category!r}; known: {sorted(snapshot['categories'])}")
@@ -143,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="directory holding categories.db and admin.db (default: ./data)")
     parser.add_argument("--put", action="append", default=[], type=_parse_put, metavar="CATEGORY=ID",
                         help="file a workflow into a category (repeatable)")
+    parser.add_argument("--preset", action="append", default=[], metavar="ID",
+                        help="add only this bundled starter category (repeatable; default: all of manifests/categories)")
     parser.add_argument("--unchecked", action="store_true",
                         help="skip the check that each --put id is a known workflow")
     parser.add_argument("--apply", action="store_true", help="write the change (default: dry run)")
@@ -161,6 +138,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: not workflows in this catalog: {unknown} (use --unchecked for models)", file=sys.stderr)
             return 2
 
+    presets = [p for p in load_presets() if not args.preset or p.id in args.preset]
+    unknown_presets = sorted(set(args.preset) - {p.id for p in presets})
+    if unknown_presets:
+        print(f"error: no bundled preset {unknown_presets}", file=sys.stderr)
+        return 2
+
     store_path = data_dir / "categories.db"
     store = CategoryStore(store_path) if args.apply or store_path.exists() else None
     try:
@@ -169,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
         active = None
     snapshot = json.loads(json.dumps(active.body)) if active else _empty_snapshot()
     now = datetime.now(timezone.utc).isoformat()
-    lines = plan_changes(snapshot, args.put, owner, now)
+    lines = plan_changes(snapshot, args.put, owner, now, presets)
     if not lines:
         print("nothing to change")
         return 0

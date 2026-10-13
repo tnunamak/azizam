@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from gateway import admin_store, category_enforcement
+from gateway.category_presets import load_presets
 from gateway.category_store import CategoryStore
 from gateway.policy import PolicyRequest
 
@@ -44,12 +45,13 @@ def active(data_dir):
     return CategoryStore(data_dir / "categories.db").get_active()
 
 
-def test_creates_both_categories_as_owner_only_and_files_the_workflow(data_dir):
+def test_creates_every_bundled_preset_as_the_page_would_and_files_the_workflow(data_dir):
     assert run(data_dir, "--put", f"experimental={WORKFLOW}") == 0
     body = active(data_dir).body
-    assert sorted(body["categories"]) == ["adult", "experimental"]
-    for category in body["categories"].values():
-        assert category["visible_to"] == [] and category["description"]
+    presets = load_presets()
+    assert sorted(body["categories"]) == sorted(preset.id for preset in presets)
+    for preset in presets:
+        assert body["categories"][preset.id] == preset.category_row()
     service = body["services"][WORKFLOW + "@r1"]
     assertion = service["members"][0]["assertions"][0]
     assert (assertion["category"], assertion["accepted"], assertion["accepting_owner"]) == (
@@ -98,6 +100,17 @@ def test_an_owner_edit_survives_a_second_run(data_dir):
     after = active(data_dir).body["categories"]
     assert after["adult"]["visible_to"] == ["plan_a"]
     assert after["experimental"]["label"] == "Labs"
+
+
+def test_only_the_named_presets_are_added(data_dir):
+    run(data_dir, "--preset", "adult")
+    assert sorted(active(data_dir).body["categories"]) == ["adult"]
+
+
+def test_an_unknown_preset_is_refused(data_dir, capsys):
+    assert run(data_dir, "--preset", "no-such-preset") == 2
+    assert "no bundled preset" in capsys.readouterr().err
+    assert not (data_dir / "categories.db").exists()
 
 
 def test_dry_run_writes_nothing(data_dir, capsys):

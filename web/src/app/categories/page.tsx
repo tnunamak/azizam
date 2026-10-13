@@ -12,6 +12,7 @@ import { Callout, StatusLine } from "@/components/product/status-ui";
 import { AdvancedRules, loadActive } from "./advanced";
 import { CategoryList } from "./category-list";
 import type { CatalogService } from "./editor";
+import { plainCategories, type Preset } from "./simple";
 
 const root = "/admin/api/categories";
 
@@ -33,26 +34,30 @@ export default function CategoriesPage() {
 
 function OwnerCategories() {
   const [adding, setAdding] = useState(false);
+  const [picking, setPicking] = useState(false);
   const { data: catalogData, isFetching: catalogLoading, isError: catalogError, refetch: catalogRefetch } = useQuery({
-    queryKey: ["categories", "services"], queryFn: () => adminFetch<{ services: CatalogService[] }>(root + "/services"),
+    queryKey: ["categories", "services"], queryFn: () => adminFetch<{ services: CatalogService[]; presets?: Preset[] }>(root + "/services"),
     retry: false, refetchOnWindowFocus: false,
   });
   const { data: active, isError: activeError, isPending: activePending, refetch: activeRefetch } = useQuery({
     queryKey: ["categories", "active"], queryFn: loadActive, retry: false, refetchOnWindowFocus: false,
   });
   const ready = !activePending && !activeError && active !== undefined;
+  const hasCategories = ready && active !== null && plainCategories(active.snapshot).length > 0;
   return <div className="max-w-(--content-read) space-y-8">
     <PageHeader title="Categories" subtitle="Group models and workflows; choose who sees them."
-      primaryAction={ready && active?.snapshot && Object.keys(active.snapshot.categories).length
-        ? <Button onClick={() => setAdding(true)}><Plus aria-hidden="true" />Add category</Button> : undefined} />
+      primaryAction={hasCategories
+        ? <Button onClick={() => setAdding(true)}><Plus aria-hidden="true" />Add category</Button> : undefined}
+      actions={hasCategories && catalogData?.presets?.length
+        ? <Button variant="outline" onClick={() => setPicking(true)}>Start from a preset</Button> : undefined} />
     <details className="text-meta -mt-4">
       <summary className="flex min-h-8 w-fit cursor-pointer items-center max-sm:min-h-11">How categories work</summary>
       <div className="text-muted-foreground mt-2 max-w-2xl space-y-3">{HOW_IT_WORKS.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}</div>
     </details>
     {activePending && <div aria-busy="true" aria-label="Loading categories"><StatusLine tone="unknown" text="Loading categories" compact /></div>}
     {activeError && <Callout as="div" severity="critical" title="Couldn't load categories" headerAction={<Button variant="outline" onClick={() => void activeRefetch()}>Try again</Button>} />}
-    {ready && <CategoryList active={active ?? null} catalog={catalogData?.services ?? []} catalogLoading={catalogLoading} catalogError={catalogError}
-      onCatalogRetry={() => void catalogRefetch()} onSaved={activeRefetch} adding={adding} onAddingChange={setAdding} />}
+    {ready && <CategoryList active={active ?? null} catalog={catalogData?.services ?? []} presets={catalogData?.presets ?? []} catalogLoading={catalogLoading} catalogError={catalogError}
+      onCatalogRetry={() => void catalogRefetch()} onSaved={activeRefetch} adding={adding} onAddingChange={setAdding} picking={picking} onPickingChange={setPicking} />}
     <details>
       <summary className="text-meta flex min-h-8 w-fit cursor-pointer items-center max-sm:min-h-11">Advanced: rules for specific people and apps</summary>
       <div className="mt-4"><AdvancedRules /></div>

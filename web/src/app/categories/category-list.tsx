@@ -15,6 +15,7 @@ import { EmptyState } from "@/components/product/empty-state";
 import { Callout } from "@/components/product/status-ui";
 import type { CatalogService, Category, Snapshot } from "./editor";
 import {
+  addPreset, presetAdded, type Preset,
   categoryOf, deleteBlocker, deleteCategory, itemsIn, moveItem, plainCategories, saveCategory,
   type CategoryInput, type Item, type Visibility, emptySnapshot, visibilityOf, visibilityText,
 } from "./simple";
@@ -44,9 +45,9 @@ const failure = (error: unknown) =>
     ? "The categories changed while you were editing. Close this and try again."
     : "The change was not saved. Try again.";
 
-export function CategoryList({ active, catalog, catalogLoading, catalogError, onCatalogRetry, onSaved, adding, onAddingChange }: {
-  active: ActiveRules; catalog: CatalogService[]; catalogLoading: boolean; catalogError: boolean; onCatalogRetry: () => void;
-  onSaved: () => Promise<unknown> | void; adding: boolean; onAddingChange: (open: boolean) => void;
+export function CategoryList({ active, catalog, presets, catalogLoading, catalogError, onCatalogRetry, onSaved, adding, onAddingChange, picking, onPickingChange }: {
+  active: ActiveRules; catalog: CatalogService[]; presets: Preset[]; catalogLoading: boolean; catalogError: boolean; onCatalogRetry: () => void;
+  onSaved: () => Promise<unknown> | void; adding: boolean; onAddingChange: (open: boolean) => void; picking: boolean; onPickingChange: (open: boolean) => void;
 }) {
   const { data: plans, isError: plansError, refetch: plansRefetch } = useQuery({ queryKey: queryKeys.accessPlans, queryFn: api.accessPlans.list });
   const [dialog, setDialog] = useState<Dialogs>(null);
@@ -60,6 +61,7 @@ export function CategoryList({ active, catalog, catalogLoading, catalogError, on
   function close() {
     setDialog(null);
     onAddingChange(false);
+    onPickingChange(false);
     setError("");
   }
   async function commit(next: Snapshot, reason: string, then?: () => void) {
@@ -82,7 +84,10 @@ export function CategoryList({ active, catalog, catalogLoading, catalogError, on
     {catalogError && <Callout as="div" severity="critical" title="Models and workflows couldn't be loaded." headerAction={<Button variant="outline" onClick={onCatalogRetry}>Try again</Button>} />}
     {!categories.length && <EmptyState icon={Layers} title="No categories yet"
       description="A category groups models and workflows and decides who can see them. Start with one for work that is not ready, or for adult content."
-      action={<Button onClick={() => onAddingChange(true)}><Plus aria-hidden="true" />Add category</Button>} />}
+      action={<div className="flex flex-wrap gap-2">
+        <Button onClick={() => onAddingChange(true)}><Plus aria-hidden="true" />Add category</Button>
+        {presets.length > 0 && <Button variant="outline" onClick={() => onPickingChange(true)}>Start from a preset</Button>}
+      </div>} />}
     {categories.map((category) => {
       const items = itemsIn(snapshot, category.id, catalog);
       const headingId = "category-" + category.id;
@@ -111,6 +116,8 @@ export function CategoryList({ active, catalog, catalogLoading, catalogError, on
       </section>;
     })}
 
+    {picking && <PresetDialog presets={presets} snapshot={snapshot} busy={busy} error={error} onClose={close}
+      onAdd={(preset) => commit(addPreset(snapshot, preset), "Add category " + preset.label)} />}
     {categoryDialog?.kind === "category" && <CategoryDialog
       key={categoryDialog.id ?? "new"} category={categoryDialog.id ? snapshot.categories[categoryDialog.id] : undefined}
       plans={plans ?? []} plansUnavailable={plansError} onRetryPlans={() => void plansRefetch()}
@@ -267,6 +274,35 @@ function MoveDialog({ item, categories, current, busy, error, onClose, onSubmit 
           <Button type="submit" disabled={busy || to === (current ?? "none")}>Move</Button>
         </DialogFooter>
       </form>
+    </DialogContent>
+  </Dialog>;
+}
+
+function PresetDialog({ presets, snapshot, busy, error, onClose, onAdd }: {
+  presets: Preset[]; snapshot: Snapshot; busy: boolean; error: string; onClose: () => void; onAdd: (preset: Preset) => Promise<void>;
+}) {
+  return <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>Start from a preset</DialogTitle>
+        <DialogDescription>Add a ready-made category. It is an ordinary category: rename it, change who can see it or delete it afterwards.</DialogDescription>
+      </DialogHeader>
+      <ul className="divide-y rounded-control border">
+        {presets.map((preset) => {
+          const added = presetAdded(snapshot, preset);
+          return <li key={preset.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-3">
+            <div className="min-w-0">
+              <p className="text-body font-medium">{preset.label}</p>
+              <p className="text-meta text-muted-foreground">{preset.description}</p>
+              <p className="text-meta text-muted-foreground">{preset.visibility === "owner" ? "At first only you can see it." : "At first everyone can see it."}</p>
+            </div>
+            {added ? <span className="text-meta text-muted-foreground" aria-label={preset.label + " is already added"}>Added</span>
+              : <Button variant="outline" disabled={busy} aria-label={"Add " + preset.label} onClick={() => void onAdd(preset)}>Add</Button>}
+          </li>;
+        })}
+      </ul>
+      {error && <p role="alert" className="text-meta text-danger">{error}</p>}
+      <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={onClose}>Close</Button></DialogFooter>
     </DialogContent>
   </Dialog>;
 }
