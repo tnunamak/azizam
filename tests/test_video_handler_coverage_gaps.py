@@ -156,3 +156,88 @@ def test_status_fallback_never_regresses_and_terminal_error_wins(video_state, mo
     assert [(r.method, r.path) for r in fake.requests] == [
         ("GET", "/history/p"), ("GET", "/history/p"), ("GET", "/queue"), ("GET", "/history/p")]
     proxy._persist_video_record.assert_called_with("p")
+
+
+def test_cancel_during_content_fetch_does_not_store_unwanted_asset(worker, monkeypatch):
+    monkeypatch.setattr(proxy, "proxy_comfy_video_status",
+                        AsyncMock(return_value=response({"status": "completed", "progress": 100})))
+    async def content(*args, **kwargs):
+        pending = media_jobs.request_cancel(worker.job.job_id, path=worker.db)
+        assert pending["status"] == "running"
+        assert proxy._video_media_job_semaphore.locked()
+        return Response(b"fixture video", media_type="video/webm")
+    monkeypatch.setattr(proxy, "proxy_comfy_video_content", content)
+    asyncio.run(proxy._run_video_media_job(worker.job.job_id))
+    assert row(worker)["status"] == "canceled"
+    assert row(worker)["assets"] == []
+    assert not proxy._video_media_job_semaphore.locked()
+    worker.dropped.assert_called_with(worker.job.job_id)
+    worker.stored.assert_not_called()
+
+
+@pytest.mark.parametrize("bad_endpoint", ["queue", "history"])
+def test_malformed_provider_json_cannot_orphan_live_video(video_state, monkeypatch, bad_endpoint):
+    class FakeResponse:
+        status_code = 200
+        def __init__(self, bad, body):
+            self.bad, self.body = bad, body
+        def json(self):
+            if self.bad:
+                raise ValueError("malformed provider JSON")
+            return self.body
+    class Client:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+        async def get(self, url, **kwargs):
+            endpoint = "queue" if url.endswith("/queue") else "history"
+            body = {"queue_running": [], "queue_pending": []} if endpoint == "queue" else {}
+            return FakeResponse(endpoint == bad_endpoint, body)
+    monkeypatch.setattr(proxy.httpx, "AsyncClient", lambda **kw: Client())
+    monkeypatch.setattr(proxy, "time", SimpleNamespace(time=lambda: 100))
+    proxy._video_progress["p"] = {"status": "running", "percent": 37, "updated_at": 99}
+    async def scenario():
+        assert await proxy._fetch_comfy_state() == (None, None)
+        await proxy._reconcile_video_progress()
+    asyncio.run(scenario())
+    assert proxy._video_progress["p"] == {"status": "running", "percent": 37, "updated_at": 99}
+
+
+@pytest.mark.parametrize("prompt", [123, True, ["unexpected"], {"text": "unexpected"}])
+def test_direct_create_rejects_non_string_prompt_before_provider(video_state, monkeypatch, prompt):
+    monkeypatch.setattr(proxy, "_dispatch_admission_response", lambda *a, **kw: None)
+    monkeypatch.setattr(proxy, "_service_availability_response", lambda *a, **kw: None)
+    monkeypatch.setattr(proxy, "_begin_media_delivery", lambda *a: None)
+    monkeypatch.setattr(proxy, "_note_media_metadata_body", lambda *a: None)
+    transport = Mock(side_effect=AssertionError("invalid input contacted provider"))
+    monkeypatch.setattr(proxy.httpx, "AsyncClient", transport)
+    result = asyncio.run(proxy.proxy_comfy_video_create(
+        SimpleNamespace(headers={}), proxy.NO_AUTH_CONTEXT,
+        body_override={"prompt": prompt, "model": "sora-2"}))
+    assert result.status_code == 400
+    assert json.loads(result.body)["error"]["type"] == "invalid_request_error"
+    assert proxy._video_job_records == {}
+    transport.assert_not_called()
+
+
+@pytest.mark.parametrize("bad_endpoint", ["queue", "history"])
+@pytest.mark.parametrize("shape", [[], None, "text"])
+def test_wrong_shape_provider_json_is_unavailable(video_state, monkeypatch, bad_endpoint, shape):
+    class FakeResponse:
+        status_code = 200
+        def __init__(self, body):
+            self.body = body
+        def json(self):
+            return self.body
+    class Client:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+        async def get(self, url, **kwargs):
+            endpoint = "queue" if url.endswith("/queue") else "history"
+            good = {"queue_running": [], "queue_pending": []} if endpoint == "queue" else {}
+            return FakeResponse(shape if endpoint == bad_endpoint else good)
+    monkeypatch.setattr(proxy.httpx, "AsyncClient", lambda **kw: Client())
+    assert asyncio.run(proxy._fetch_comfy_state()) == (None, None)
