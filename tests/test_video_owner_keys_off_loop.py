@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 
 import proxy
 from gateway import ownership, request_connections
@@ -15,7 +18,22 @@ class _ListRequest:
     query_params: dict[str, str] = {}
 
 
-def test_video_list_resolves_owner_keys_off_the_loop():
+class _EmptyComfy:
+    """ComfyUI answering with an empty history and an idle queue."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def get(self, url, **_kwargs):
+        body = {"queue_running": [], "queue_pending": []} if url.endswith("/queue") else {}
+        return SimpleNamespace(status_code=200, json=lambda: body, text="{}")
+
+
+@pytest.mark.parametrize("call_route", ["list", "status"])
+def test_video_routes_resolve_owner_keys_off_the_loop(call_route):
     loop_thread = threading.get_ident()
     lookup_threads: list[int] = []
 
@@ -27,10 +45,13 @@ def test_video_list_resolves_owner_keys_off_the_loop():
 
     async def call():
         with request_connections.request_scope():
-            return await proxy.proxy_comfy_video_list(_ListRequest(), access_context())
+            if call_route == "list":
+                return await proxy.proxy_comfy_video_list(_ListRequest(), access_context())
+            return await proxy.proxy_comfy_video_status(proxy._video_id_from_prompt_id("p1"), access_context())
 
     with patch.object(proxy, "_video_job_records", records), \
             patch.object(proxy, "COMFY_ENABLED", True), \
+            patch.object(proxy.httpx, "AsyncClient", lambda **_k: _EmptyComfy()), \
             patch.object(proxy, "_asset_owner_key", lambda _ctx: "owner-a"), \
             patch.object(ownership, "credential_owner_keys", credential_owner_keys):
         response = asyncio.run(call())
