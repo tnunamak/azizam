@@ -6,7 +6,7 @@ import Link from "next/link";
  */
 export function ReceiptLink({ id }: { id: string }) {
   return (
-    <Link
+    <Link prefetch={false}
       className="inline-flex min-h-11 items-center underline underline-offset-4"
       href={`/usage/?receipt=${encodeURIComponent(id)}`}
     >

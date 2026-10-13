@@ -6,6 +6,7 @@
  * says nothing about whether the gateway finished the work, so it never
  * reaches the screen.
  */
+import { fetchEarly } from "@/lib/early-fetch";
 export const NETWORK_FAILURE_MESSAGE =
   "Can’t reach Azizam. Check your connection, then try again.";
 
@@ -33,9 +34,11 @@ export function isNetworkFailure(error: unknown): boolean {
 export async function networkFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
+  early = false,
 ): Promise<Response> {
   try {
-    return await fetch(input, init);
+    // `early`: a GET the document head may already have started (lib/early-fetch.ts).
+    return early && typeof input === "string" ? await fetchEarly(input, init) : await fetch(input, init);
   } catch (error) {
     if (isNetworkFailure(error)) throw new NetworkUnavailableError({ cause: error });
     throw error;

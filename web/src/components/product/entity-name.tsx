@@ -10,7 +10,7 @@ export function EntityName({ name, id, href, detail }: EntityNameProps) {
   return (
     <span className="flex min-w-0 flex-col gap-0.5">
       {href ? (
-        <Link
+        <Link prefetch={false}
           href={href}
           className="truncate font-medium underline-offset-4 hover:underline"
         >

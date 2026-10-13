@@ -107,7 +107,7 @@ export default function ConnectPage() {
         primaryAction={
           viewer.authenticated ? (
             <Button asChild>
-              <Link href="/apps?action=create-key">Create a key</Link>
+              <Link prefetch={false} href="/apps?action=create-key">Create a key</Link>
             </Button>
           ) : undefined
         }
@@ -119,7 +119,7 @@ export default function ConnectPage() {
             description="Each app gets a key with your account's access plan."
             action={
               <Button asChild>
-                <Link href="/sign-in/?return_to=%2Fconnect%2F">Sign in</Link>
+                <Link prefetch={false} href="/sign-in/?return_to=%2Fconnect%2F">Sign in</Link>
               </Button>
             }
           />
@@ -206,7 +206,7 @@ function ConnectDetails({
               Signing in from AI apps needs this gateway&apos;s public https
               address.{" "}
               {admin ? (
-                <Link href="/settings" className="underline">
+                <Link prefetch={false} href="/settings" className="underline">
                   Set it in Settings
                 </Link>
               ) : (
@@ -257,7 +257,7 @@ function ConnectDetails({
           <p className="text-muted-foreground text-meta">
             Send your app key as a bearer token. Replace {KEY_PLACEHOLDER} with
             a key you{" "}
-            <Link href="/apps?action=create-key" className="underline">
+            <Link prefetch={false} href="/apps?action=create-key" className="underline">
               create
             </Link>
             .
@@ -277,7 +277,7 @@ function ConnectDetails({
             <a href="/openapi.json" className="underline">
               OpenAPI document
             </a>
-            <Link href="/settings" className="underline">
+            <Link prefetch={false} href="/settings" className="underline">
               Set the gateway&apos;s public address
             </Link>
           </div>

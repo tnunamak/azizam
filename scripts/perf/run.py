@@ -122,7 +122,7 @@ def main() -> int:
         process, manifest = start_fixture(args.python, args.port, state, args.source, out / "fixture.log")
         api = api_bench.run(manifest)
         (out / "api.json").write_text(json.dumps(api, indent=1), encoding="utf-8")
-        ui = None
+        ui = home = None
         if not args.no_ui:
             ui_file = out / "ui.json"
             done = subprocess.run(
@@ -132,6 +132,14 @@ def main() -> int:
             if done.returncode:
                 raise RuntimeError(f"ui_bench failed; see {out}/ui.log")
             ui = json.loads(ui_file.read_text(encoding="utf-8"))
+            home_file = out / "home.json"
+            home_run = subprocess.run(
+                ["node", str(HERE / "home_bench.mjs"), "--manifest", str(state / "perf-manifest.json"), "--out", str(home_file)],
+                cwd=REPO / "web", capture_output=True, text=True)
+            (out / "home.log").write_text(home_run.stdout + home_run.stderr, encoding="utf-8")
+            if home_run.returncode:
+                raise RuntimeError(f"home_bench failed; see {out}/home.log")
+            home = json.loads(home_file.read_text(encoding="utf-8"))
     except Exception as error:  # noqa: BLE001 - a harness failure is not a verdict on the code
         print(f"perf harness could not run: {type(error).__name__}: {error}", file=sys.stderr)
         return 2
@@ -142,6 +150,8 @@ def main() -> int:
     violations = check.api_violations(api["rows"], budgets["api"], args.counts_only)
     if ui is not None:
         violations += check.ui_violations(ui["rows"], budgets["ui"], args.counts_only)
+    if home is not None and not args.counts_only:
+        violations += check.home_violations(home, budgets["home"])
     text = report(violations, sha, load)
     (out / "report.md").write_text(text, encoding="utf-8")
     (out / "result.json").write_text(json.dumps({"sha": sha, "load_1min": load, "violations": violations}, indent=1), encoding="utf-8")

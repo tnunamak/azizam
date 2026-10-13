@@ -443,7 +443,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
           ) : null}
         </dl>
         <Button variant="outline" size="sm" asChild>
-          <Link href="/status">
+          <Link prefetch={false} href="/status">
             {reasons.length ? "See why" : "View status"}
             <ChevronRight aria-hidden="true" />
           </Link>
@@ -498,7 +498,7 @@ function Nav({
                 return (
                   <Tooltip key={item.href}>
                     <TooltipTrigger asChild>
-                      <Link
+                      <Link prefetch={false}
                         href={item.href}
                         className="shell-nav-link"
                         aria-label={item.title}
@@ -757,7 +757,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         {showPublicShell ? (
           <div className="min-h-dvh">
             <header className="flex items-center justify-between px-5 py-4 sm:px-8">
-              <Link
+              <Link prefetch={false}
                 href="/"
                 className="flex min-h-11 items-center gap-2.5 text-lg font-semibold tracking-tight"
               >
@@ -775,7 +775,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         ) : (
           <div className="min-h-dvh">
             <aside className="shell-sidebar">
-              <Link
+              <Link prefetch={false}
                 href="/"
                 className="rounded-control mb-5 flex min-h-11 items-center gap-2.5 px-2.5"
                 aria-label={`${PRODUCT_NAME}${instanceSubtitle ? ` ${instanceSubtitle}` : ""} Home`}
@@ -839,7 +839,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             </aside>
             <div className="sm:ml-(--rail-width) lg:ml-(--sidebar-width)">
               <header className="bg-chrome text-chrome-foreground border-chrome-border sticky top-0 z-30 flex h-14 items-center justify-between border-b pr-2 pl-4 sm:hidden">
-                <Link
+                <Link prefetch={false}
                   href="/"
                   aria-label={`${PRODUCT_NAME}${instanceSubtitle ? ` ${instanceSubtitle}` : ""} Home`}
                   className="flex min-h-11 min-w-0 items-center gap-2.5"
@@ -884,7 +884,7 @@ function Shell({ children }: { children: React.ReactNode }) {
                 .map((d) => {
                   const Icon = icons[d.title];
                   return (
-                    <Link
+                    <Link prefetch={false}
                       key={d.href}
                       href={d.href}
                       className="mobile-tab"

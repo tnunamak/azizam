@@ -159,7 +159,7 @@ export default function InvitePage() {
               description="Ask the owner for a new invitation, then open the complete link."
               action={
                 <Button asChild variant="outline">
-                  <Link href="/">Return to gateway home</Link>
+                  <Link prefetch={false} href="/">Return to gateway home</Link>
                 </Button>
               }
             />
@@ -341,7 +341,7 @@ export default function InvitePage() {
                       description="Ask the gateway owner to enable accounts or an identity provider."
                       action={
                         <Button asChild variant="outline">
-                          <Link href="/">Return to gateway home</Link>
+                          <Link prefetch={false} href="/">Return to gateway home</Link>
                         </Button>
                       }
                     />

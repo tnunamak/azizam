@@ -117,7 +117,7 @@ export function HouseholdPromptsSection() {
         No Azizam screen shows anyone’s prompts to anyone else, you included.
         You run this gateway, so you could still read its files. Your own choice
         is in{" "}
-        <Link
+        <Link prefetch={false}
           href="/account"
           className="text-foreground underline underline-offset-4"
         >

@@ -54,6 +54,20 @@ def ui_violations(rows: list[dict], budget: dict, counts_only: bool) -> list[dic
     return found
 
 
+def home_violations(report: dict, budget: dict) -> list[dict]:
+    """Judge a home_bench.mjs report against [home]."""
+    profiles = report["profiles"]
+    checks = [
+        ("desktop_cold_ms", profiles["desktop"]["cold"]["content_ms"]), ("desktop_warm_ms", profiles["desktop"]["warm"]["content_ms"]),
+        ("mobile_cold_ms", profiles["mobile"]["cold"]["content_ms"]), ("mobile_warm_ms", profiles["mobile"]["warm"]["content_ms"]),
+        ("js_wire_kb", profiles["mobile"]["cold"]["js_wire_kb"]), ("js_requests", profiles["mobile"]["cold"]["js_requests"]),
+        ("uncompressed_js", profiles["mobile"]["cold"]["js_uncompressed"]),
+    ]
+    return [{"kind": "home", "what": "Home", "metric": name, "value": value if value is not None else "never", "limit": budget[name],
+             "over": 99 if value is None else value / max(budget[name], 1)}
+            for name, value in checks if value is None or value > budget[name]]
+
+
 def table(violations: list[dict]) -> str:
     lines = ["| kind | where | metric | value | limit |", "|---|---|---|--:|--:|"]
     for v in sorted(violations, key=lambda v: -v["over"]):
@@ -65,6 +79,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--api", type=Path, required=True)
     parser.add_argument("--ui", type=Path)
+    parser.add_argument("--home", type=Path, help="a home_bench.mjs report")
     parser.add_argument("--budgets", type=Path, default=HERE / "budgets.toml")
     parser.add_argument("--counts-only", action="store_true")
     args = parser.parse_args()
@@ -72,6 +87,8 @@ def main() -> None:
     bad = api_violations(json.loads(args.api.read_text())["rows"], budgets["api"], args.counts_only)
     if args.ui:
         bad += ui_violations(json.loads(args.ui.read_text())["rows"], budgets["ui"], args.counts_only)
+    if args.home and not args.counts_only:
+        bad += home_violations(json.loads(args.home.read_text()), budgets["home"])
     if bad:
         print(table(bad))
         print(f"\n{len(bad)} over budget", file=sys.stderr)

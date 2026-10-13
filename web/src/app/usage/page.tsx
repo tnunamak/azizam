@@ -324,7 +324,7 @@ export default function UsagePage() {
               </Button>
             ) : (
               <Button asChild variant="outline">
-                <Link href="/apps/">Connect an app</Link>
+                <Link prefetch={false} href="/apps/">Connect an app</Link>
               </Button>
             )
           }
