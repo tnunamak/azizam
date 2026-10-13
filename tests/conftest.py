@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import os
 import random
 import socket
@@ -198,3 +199,23 @@ _HYPOTHESIS_PROFILE = os.environ.get("HYPOTHESIS_PROFILE", "gate")
 if _HYPOTHESIS_PROFILE not in {"gate", "nightly"}:
     pytest.exit(f"unknown HYPOTHESIS_PROFILE {_HYPOTHESIS_PROFILE!r}; use gate or nightly", returncode=2)
 _hypothesis_settings.load_profile(_HYPOTHESIS_PROFILE)
+
+
+@pytest.fixture(autouse=True)
+def _restore_video_job_records() -> Iterator[None]:
+    """`proxy._video_job_records` is process-global; a record one test writes must
+    not reach the next test on the same worker (it changes which code paths a
+    route takes, e.g. owner-key lookups in /v1/videos)."""
+    import sys
+
+    module = sys.modules.get("proxy")
+    records = getattr(module, "_video_job_records", None)
+    snapshot = dict(records) if records is not None else None
+    yield
+    module = sys.modules.get("proxy")
+    records = getattr(module, "_video_job_records", None)
+    if snapshot is not None and records is not None:
+        records.clear()
+        records.update(snapshot)
+    elif records:
+        records.clear()
