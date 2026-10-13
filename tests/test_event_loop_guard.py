@@ -137,7 +137,7 @@ def _loop_thread_work(loop_calls: list[str]):
             note("sqlite3.executemany")
             return super().executemany(*args, **kwargs)
 
-    class TracedConnection(sqlite3.Connection):
+    class Tracing:
         def cursor(self, factory=TracedCursor):
             return super().cursor(factory)
 
@@ -149,7 +149,7 @@ def _loop_thread_work(loop_calls: list[str]):
 
     def connect(*args, **kwargs):
         note("sqlite3.connect")
-        kwargs.setdefault("factory", TracedConnection)
+        kwargs["factory"] = type("TracedConnection", (Tracing, kwargs.get("factory") or sqlite3.Connection), {})
         return real_connect(*args, **kwargs)
 
     class Popen(real_popen):
