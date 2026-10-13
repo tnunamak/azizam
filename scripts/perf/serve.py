@@ -75,6 +75,7 @@ def serve(state: Path, port: int, source: Path, reuse: bool = False) -> None:
     def stop(_signum=None, _frame=None):
         raise KeyboardInterrupt
 
+    (state / "serve.pid").write_text(str(os.getpid()), encoding="utf-8")  # stop with: kill $(cat STATE/serve.pid)
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
