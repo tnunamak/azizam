@@ -13,7 +13,7 @@ import httpx
 
 from gateway.capabilities import Capability
 from gateway.decisions_api import DecisionDispatchResult, DecisionModel, DecisionsError
-from gateway.stable_aliases import AliasResolution, AliasUnavailableError, resolve_alias
+from gateway.stable_aliases import AliasResolution, AliasUnavailableError, pattern_names, resolve_alias
 
 
 ROUTING_TIMEOUT_SECONDS = 15.0
@@ -87,13 +87,27 @@ class DecisionRuntime:
 
     def model_names(self) -> list[str]:
         section = self.config().get("model_aliases", {}).get("decisions", {})
-        names = list(dict.fromkeys(
+        # Names a wildcard pattern publishes (``names:``) are real aliases too.
+        published = [name for pattern in section.get("openai", []) for name in pattern_names(pattern)]
+        return list(dict.fromkeys(
             list(section.get("stable", {})) + list(section.get("engines", {}))
             + [spec["model"] for spec in section.get("engines", {}).values() if spec.get("model")]
+            + published
         ))
-        if any(pattern.get("match") == "jev-*" for pattern in section.get("openai", [])):
-            names += ["jev-latest", "jev-preview"]
-        return names
+
+    @staticmethod
+    def _slot(resolved: AliasResolution, service: str | None) -> str:
+        """The engine slot ``service`` fills for this request: the pick or one of its fallbacks."""
+        if service == resolved.service:
+            return resolved.target
+        return next((engine for engine, candidate in resolved.fallbacks if candidate == service), resolved.target)
+
+    def policy_model(self, model: str) -> str:
+        """The name access is decided on: the engine slot the caller's name reaches first."""
+        try:
+            return self.resolve(model).target
+        except DecisionsError:
+            return model  # Nothing serves it now; judge the name as given.
 
     def capability_for(self, model: str, service_id: str | None = None) -> Capability:
         """One metadata contract for discovery and each authorized routing target."""
@@ -103,14 +117,18 @@ class DecisionRuntime:
         if service not in candidates:
             raise DecisionsError(403, "permission_denied", "This backend is not a configured decision target.")
         section = self.config().get("model_aliases", {}).get("decisions", {})
-        spec = next((row for row in section.get("engines", {}).values()
-                     if row.get("service") == service), {})
+        engines = section.get("engines", {})
+        slot = self._slot(resolved, service)
+        spec = engines.get(slot) or next((row for row in engines.values() if row.get("service") == service), {})
         engine = self.observed_engine(str(service))
-        is_alias = model in section.get("stable", {}) or model.startswith("jev-")
+        # A name is an alias when it is neither an engine slot nor the model a slot serves.
+        is_alias = model not in engines and model not in {row.get("model") for row in engines.values()}
+        # Access is decided on the slot this service fills, however the caller spelled it.
         return Capability(
             intent="decision.systemone", backend=service, model=model,
             input_modalities=("text", "json"), output_modalities=("decision",),
-            tags=("alias" if is_alias else "model", "free-local", "local", f"engine:{engine or 'unknown'}"),
+            tags=("alias" if is_alias else "model", *([f"resolves_to:{slot}"] if slot != model else []),
+                  "free-local", "local", f"engine:{engine or 'unknown'}"),
             limits=tuple((key, spec[key]) for key in ("max_options", "max_levels", "max_state_tokens", "context_tokens", "calibrated") if key in spec),
             backend_kind="local", cost_class="free-local", engine=engine,
             calibrated=bool(spec.get("calibrated", False)),

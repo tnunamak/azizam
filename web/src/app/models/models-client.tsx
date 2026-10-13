@@ -643,16 +643,24 @@ function DetailSheet({
   row,
   onOpenChange,
   viewerAdmin,
+  knownNames,
 }: {
   row: CatalogRow | null;
   onOpenChange: (open: boolean) => void;
   viewerAdmin: boolean;
+  knownNames: ReadonlySet<string>;
 }) {
   const action = row ? availabilityAction(row, viewerAdmin) : null;
   const timing = row ? timingLabel(row) : undefined;
   const locality = row ? localityLabel(row) : undefined;
   const title = row ? modelTitle(row) : undefined;
-  const otherNames = row ? (row.use_names ?? []).filter((name) => name !== row.id) : [];
+  // An alias says what it points at, when that is a name the person can use too
+  // (owners see every target under Technical details); every row says which
+  // other names reach the same model.
+  const pointsTo = row?.alias
+    ? [...new Set(Object.values(row.resolves_to))].filter((target) => viewerAdmin || knownNames.has(target))
+    : [];
+  const sameModelAs = row ? (row.same_model_as ?? []) : [];
   return (
     <Sheet open={!!row} onOpenChange={onOpenChange}>
       <SheetContent className="w-[92vw] overflow-y-auto sm:max-w-xl">
@@ -667,8 +675,9 @@ function DetailSheet({
             <div className="space-y-6 p-4">
               <dl className="divide-y">
                 <Fact label="Task" value={taskLabel(row)} />
-                {otherNames.length > 0 && (
-                  <Fact label="Also answers to" value={otherNames.join(", ")} />
+                {pointsTo.length > 0 && <Fact label="Points to" value={pointsTo.join(", ")} />}
+                {sameModelAs.length > 0 && (
+                  <Fact label="Same model as" value={sameModelAs.join(", ")} />
                 )}
                 {locality && <Fact label="Runs on" value={locality} />}
                 <Fact label="Price" value={costLabel(row)} />
@@ -856,6 +865,7 @@ export default function ModelsClient() {
     }
     return rows;
   }, [catalogData]);
+  const knownNames = useMemo(() => new Set(allRows.map((row) => row.id)), [allRows]);
   const detail = allRows.find((row) => row.id === detailId) ?? null;
   useEffect(() => {
     if (detailId !== null && catalogData && !detail) {
@@ -1059,6 +1069,7 @@ export default function ModelsClient() {
         row={detail}
         onOpenChange={(open) => !open && setDetailId(null)}
         viewerAdmin={viewer.admin}
+        knownNames={knownNames}
       />
     </div>
   );

@@ -166,7 +166,7 @@ gateway also supports `/typesafe/v1/*`. `/v1/decisions` is reserved for OpenAI
 passthrough only until OpenAI publishes a schema.
 
 Local decision execution uses `decider-2b` v11 Q8_0 on CPU as an on-demand
-unit. `decider-4b` is an opt-in alias. Remote decision aliases may target
+unit. `decider-4b` is a second engine slot, reached by the `decide-quality` alias. Remote decision aliases may target
 `typesafe/jev-latest`, OpenRouter models, or other configured remote providers.
 
 Built-in accounts sit alongside OIDC so a home operator can invite people

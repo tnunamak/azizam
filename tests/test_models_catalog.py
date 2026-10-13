@@ -647,7 +647,10 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         )
 
         self.assertEqual([row["id"] for row in catalog["aliases"]], ["image"])
-        self.assertEqual(catalog["models"], [])
+        # The public name an alias points at stays a row of its own, linked both ways.
+        self.assertEqual([row["id"] for row in catalog["models"]], ["poster"])
+        self.assertEqual(catalog["models"][0]["same_model_as"], ["image"])
+        self.assertEqual(catalog["aliases"][0]["same_model_as"], ["poster"])
         self.assertEqual(catalog["aliases"][0]["resolves_to"], {"images": "poster"})
         self.assertEqual(catalog["aliases"][0]["description"], "Generate or edit images from your prompts.")
         self.assertEqual(catalog["aliases"][0]["technical_description"], "Public poster workflow")

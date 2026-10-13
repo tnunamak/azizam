@@ -396,8 +396,9 @@ test("Usage preserves exact path IDs for distinct catalog names and receipt look
   await user.click(screen.getByRole("button", { name: "View recent requests" }));
   await user.click(await screen.findByRole("button", { name: "Receipt details for Chat request" }));
   const sheet = screen.getByRole("dialog");
-  expect(within(sheet).getByText("Requested model").nextElementSibling).toHaveTextContent("Backup chat");
-  expect(within(sheet).getByText("Served model").nextElementSibling).toHaveTextContent("Main chat");
+  // No fallback was recorded: the name used points at the model that ran.
+  expect(within(sheet).getByText("Name used").nextElementSibling).toHaveTextContent("Backup chat");
+  expect(within(sheet).getByText("Model", { exact: true }).nextElementSibling).toHaveTextContent("Main chat");
 });
 
 test.each(["owner", "member"] as const)("Usage formats fallback names and protects technical paths for %s", async (role) => {

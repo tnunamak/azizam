@@ -58,10 +58,10 @@ def test_media_synonyms_preserve_recommended_alias_even_when_seen_last():
             {"alias": "music", "resolves_to": "actual"},
         ]}},
     )
-    row, = catalog["aliases"]
-    assert row["id"] == "music"
-    assert row["recommended"]
-    assert set(row["use_names"]) >= {"music", "song"}
+    rows = {row["id"]: row for row in catalog["aliases"]}
+    assert set(rows) == {"music", "song"}  # a row per name
+    assert rows["music"]["recommended"] and not rows["song"]["recommended"]
+    assert rows["music"]["same_model_as"] == ["actual", "song"]
 
 
 @pytest.mark.parametrize("kind,expected", [
@@ -467,12 +467,13 @@ def test_media_synonyms_and_target_share_one_catalog_card():
             {"alias": "song", "resolves_to": "instrument"},
         ]}},
     )
-    assert catalog["models"] == []
-    assert len(catalog["aliases"]) == 1
-    row = catalog["aliases"][0]
-    assert set(row["use_names"]) == {"music", "song", "instrument"}
-    assert row["icon_key"] == "music"
-    assert row["recommended_model"] == "Configured instrument"
+    # Each name is a row; each row says which other names reach the same model.
+    rows = {row["id"]: row for row in [*catalog["aliases"], *catalog["models"]]}
+    assert set(rows) == {"music", "song", "instrument"}
+    assert rows["music"]["same_model_as"] == ["instrument", "song"]
+    assert rows["instrument"]["same_model_as"] == ["music", "song"]
+    assert rows["music"]["icon_key"] == "music"
+    assert rows["music"]["recommended_model"] == "Configured instrument"
 
 
 def test_distinct_chat_profiles_keep_alias_titles_and_metadata_summary():

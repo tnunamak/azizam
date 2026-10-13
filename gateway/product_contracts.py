@@ -340,6 +340,9 @@ class CatalogRow(TypedDict):
     alias: bool
     operations: list[str]
     resolves_to: dict[str, str]
+    # Other listed names that reach the same model (an alias, the model it
+    # points at, a pinned spelling). Every name is its own row; this links them.
+    same_model_as: NotRequired[list[str]]
     description: str | None
     technical_description: NotRequired[str]
     capabilities: list[CatalogCapability]

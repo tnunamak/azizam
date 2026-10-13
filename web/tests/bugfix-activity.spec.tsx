@@ -114,7 +114,7 @@ describe("model names on Activity requests", () => {
     ).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /Request details:/ }));
     const dialog = screen.getByRole("dialog");
-    expect(dialog).toHaveTextContent("Served model");
+    expect(dialog).toHaveTextContent("Name used");
     expect(dialog).toHaveTextContent("Qwen3.8 27B Uncensored");
     // Outside the raw technical JSON, no weight file name anywhere.
     const page = document.body.cloneNode(true) as HTMLElement;

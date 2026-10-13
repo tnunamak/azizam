@@ -168,7 +168,7 @@ function ConnectDetails({
     queryKey: ["models", "catalog"],
     queryFn: productApi.models,
   });
-  const catalogRows = catalog?.aliases?.length ? catalog.aliases : (catalog?.models ?? []);
+  const catalogRows = [...(catalog?.aliases ?? []), ...(catalog?.models ?? [])];
   return (
     <>
       <SettingsSection

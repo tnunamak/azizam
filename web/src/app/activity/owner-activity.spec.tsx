@@ -548,7 +548,7 @@ it.each([
 });
 
 it.each([
-  ["a different model served", { requested_model: "safe-chat", resolved_model: "backup-chat" }, true],
+  ["a fallback model served", { requested_model: "safe-chat", resolved_model: "backup-chat", fallback_reasons: ["safe-chat->backup-chat (http_503)"] }, true],
   ["the requested model served", { requested_model: "safe-chat", resolved_model: "safe-chat" }, false],
 ])("shows requested and served models only when %s", async (_name, models, different) => {
   serveCopyReceipt({ intent: "chat", status: "success", ...models });
@@ -559,6 +559,17 @@ it.each([
   expect(sheet.queryByText("Requested model") !== null).toBe(different);
   expect(sheet.queryByText("Served model") !== null).toBe(different);
   expect(sheet.queryByText("Model", { exact: true }) !== null).toBe(!different);
+});
+
+it("shows a name that points at a model as the name used, not as a substitution", async () => {
+  serveCopyReceipt({ intent: "chat", status: "success", requested_model: "fast", resolved_model: "default-fast" });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Request details: Chat by Sam" }));
+  const sheet = within(screen.getByRole("dialog"));
+  expect(sheet.queryByText("A different model was used.")).toBeNull();
+  expect(sheet.getByText("Name used")).toBeVisible();
+  expect(sheet.getByText("Model", { exact: true })).toBeVisible();
+  expect(sheet.queryByText("Requested model")).toBeNull();
 });
 
 it.each(["timed_out", "disconnected"])("points a media %s receipt to Library before a retry", async (status) => {

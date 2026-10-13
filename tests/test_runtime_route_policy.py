@@ -758,7 +758,9 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         ids = [item["id"] for item in response.json()["data"]]
-        self.assertEqual(ids, ["default"])
+        # `vision` is another name for `default`, so a plan that lists `default`
+        # can use it, and the listing says so (a request for it is allowed too).
+        self.assertEqual(ids, ["default", "vision"])
 
     def test_plan_that_cannot_load_models_lists_them_but_denies_starting_one(self) -> None:
         """Discovery lists granted items with their state; starting one needs May load (design v4 §2.13)."""
