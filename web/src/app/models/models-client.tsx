@@ -130,10 +130,10 @@ const taskExplainers: Record<Task, string> = {
 };
 
 const tagLabels: Record<ModelTag, string> = {
-  reasoning: "Reasoning",
-  "tool-use": "Tool use",
-  vision: "Vision",
-  "file-input": "File input",
+  reasoning: "Thinks through questions",
+  "tool-use": "Uses tools",
+  vision: "Understands images",
+  "file-input": "Reads files",
 };
 
 // The server classifies each row from its /v1/models type and modalities.
@@ -211,8 +211,8 @@ function engineLabel(row: CatalogRow): string {
 }
 
 function localityLabel(row: CatalogRow): string | undefined {
-  if (row.locality === "local") return "This gateway's engines";
-  if (row.locality === "remote") return providerLabel(row) ?? "A provider";
+  if (row.locality === "local") return "On your equipment";
+  if (row.locality === "remote") return providerLabel(row) ?? "Online service";
   return undefined;
 }
 
@@ -337,7 +337,14 @@ function Availability({ row }: { row: CatalogRow }) {
   return (
     <StatusPill
       status={state}
-      reason={availabilityReason(state, row.availability.reason_code ?? state)}
+      reason={[
+        availabilityReason(state, row.availability.reason_code ?? state),
+        state === "unavailable" || state === "degraded"
+          ? "Choose another model, or check Status for help."
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" ")}
     />
   );
 }
@@ -617,6 +624,21 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
+const technicalTermHints = [
+  {
+    pattern: /\bcontext window\b/i,
+    hint: "Context window is how much text a model can handle in one request, including its reply.",
+  },
+  {
+    pattern: /\bquantization\b/i,
+    hint: "Quantization makes a model smaller and uses less memory. It can affect answer quality.",
+  },
+  {
+    pattern: /\btokens per second\b/i,
+    hint: "Tokens per second measures how fast text is produced. A token is a small piece of text.",
+  },
+];
+
 function DetailSheet({
   row,
   onOpenChange,
@@ -656,7 +678,7 @@ function DetailSheet({
                 )}
                 {(row.io.input.length > 0 || row.io.output.length > 0) && (
                   <Fact
-                    label="Takes and makes"
+                    label="What you send and receive"
                     value={`${row.io.input.join(", ") || "—"} to ${row.io.output.join(", ") || "—"}`}
                   />
                 )}
@@ -689,19 +711,33 @@ function DetailSheet({
                         />
                       )}
                       {row.technical_description && (
-                        <Fact label="Notes" value={row.technical_description} />
+                        <Fact
+                          label="How this model runs"
+                          value={[
+                            row.technical_description,
+                            ...technicalTermHints
+                              .filter(({ pattern }) => pattern.test(row.technical_description ?? ""))
+                              .map(({ hint }) => hint),
+                          ].join(" ")}
+                        />
                       )}
                     </dl>
                   </section>
                 )}
               <section className="space-y-3">
-                <h3 className="text-body font-medium">Example request</h3>
+                <h3 className="text-body font-medium">Example for app setup</h3>
                 <div className="[&_pre]:break-all [&_pre]:whitespace-pre-wrap">
-                  <CodeBlock snippets={snippetsFor(row, window.location.origin)} />
+                  {snippetsFor(row, window.location.origin).length > 0 ? (
+                    <CodeBlock snippets={snippetsFor(row, window.location.origin)} />
+                  ) : (
+                    <p className="text-muted-foreground text-meta">
+                      No example was provided. Use the model name above when connecting your app.
+                    </p>
+                  )}
                 </div>
               </section>
               <section>
-                <h3 className="text-body font-medium">Recent receipts</h3>
+                <h3 className="text-body font-medium">Recent activity</h3>
                 {row.recent_receipts.length ? (
                   <ul className="mt-3 space-y-2 text-meta">
                     {row.recent_receipts.slice(0, 5).map((receipt, index) => (
@@ -724,7 +760,7 @@ function DetailSheet({
                             className="mt-2 block min-h-8 content-center underline underline-offset-4 max-sm:min-h-11"
                             href={`/usage/?receipt=${encodeURIComponent(readString(receipt.request_id) ?? "")}`}
                           >
-                            View receipt
+                            View request details
                           </a>
                         )}
                       </li>
@@ -732,7 +768,7 @@ function DetailSheet({
                   </ul>
                 ) : (
                   <p className="text-muted-foreground mt-2 text-meta">
-                    No requests have used this model recently.
+                    No recent requests were reported. Use this model in an app, then check Usage for results.
                   </p>
                 )}
               </section>
@@ -881,7 +917,7 @@ export default function ModelsClient() {
         <LoadingCatalog />
       ) : catalogError ? (
         <ErrorState
-          message="The models list could not be loaded. Try again."
+          message="We couldn't load the models. Try again."
           onRetry={() => refetchCatalog()}
           retrying={catalogFetching}
         />
@@ -891,8 +927,8 @@ export default function ModelsClient() {
           title="No models are available yet"
           description={
             viewer.admin
-              ? "Connect an engine or a provider to add models."
-              : "Ask the owner to connect models your access plan allows."
+              ? "Connect an engine to run models on your equipment, or connect an online provider."
+              : "Ask the owner to connect an engine or online provider and give you access to a model."
           }
           action={
             <Button variant="outline" asChild>
@@ -1013,7 +1049,7 @@ export default function ModelsClient() {
       )}
       {detailNote && (
         <div role="status" className="text-meta flex items-center gap-2">
-          <p>This model is no longer in the list.</p>
+          <p>This model is no longer listed. Choose another model, or review setup if the list is empty.</p>
           <Button variant="ghost" size="sm" onClick={() => setDetailNote(null)}>
             Dismiss
           </Button>

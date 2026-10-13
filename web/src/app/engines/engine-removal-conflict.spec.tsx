@@ -33,7 +33,7 @@ const service = (id: string, role = "primary", enabled = true): Service => ({
   editable: true,
   capabilities: ["chat"],
   role,
-  config: { host: "localhost", port: 18090 },
+  config: { base_url: "http://engine-a.test" },
 });
 function mount() {
   const client = new QueryClient({

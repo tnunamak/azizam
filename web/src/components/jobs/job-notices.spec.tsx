@@ -343,15 +343,15 @@ test("a mounted job result owns its completion announcement instead of the shell
 test("dismissing a focused notice moves focus to the next notice then the persistent region", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ jobs: [
     { ...job, created_at: Date.now() / 1000, status: "failed" },
-    { ...job, job_id: "j2", created_at: Date.now() / 1000, status: "failed" },
+    { ...job, job_id: "j2", intent: "image.generate", created_at: Date.now() / 1000, status: "failed" },
   ] })));
   mount();
-  const buttons = await screen.findAllByRole("button", { name: "Dismiss video update" });
-  buttons[0].focus();
-  fireEvent.click(buttons[0]);
+  const first = await screen.findByRole("button", { name: "Dismiss video update" });
+  act(() => first.focus());
+  fireEvent.click(first);
   expect(screen.getByRole("link", { name: "See details" })).toHaveFocus();
-  const last = screen.getByRole("button", { name: "Dismiss video update" });
-  last.focus();
+  const last = screen.getByRole("button", { name: "Dismiss picture update" });
+  act(() => last.focus());
   fireEvent.click(last);
   expect(screen.getByRole("region", { name: "Job updates" })).toHaveFocus();
 });
@@ -373,4 +373,173 @@ test("job fetch retry stays outside the same polite status", async () => {
   fireEvent.click(retry);
   await waitFor(() => expect(status).toHaveTextContent("Video is being made"));
   expect(screen.getByRole("status")).toBe(status);
+});
+
+function useToastClock() {
+  // Replace the Date-only clock from beforeEach with a clock that also owns
+  // timers; calling useFakeTimers twice keeps Vitest's already-installed clock.
+  vi.useRealTimers();
+  vi.useFakeTimers();
+  vi.setSystemTime(FROZEN_NOW_MS);
+}
+
+function readyJob(id: string, intent = "video.generate"): LongJob {
+  return {
+    ...job,
+    job_id: id,
+    intent,
+    created_at: Date.now() / 1000,
+    updated_at: Date.now() / 1000,
+    status: "succeeded",
+    assets: [{ asset_id: `asset_${id}` }],
+  };
+}
+
+test("keeps at most three fixed job toasts and promotes queued groups", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ jobs: [
+    readyJob("picture", "image.generate"),
+    readyJob("video"),
+    readyJob("audio", "audio.generate"),
+    readyJob("music", "music.generate"),
+  ] })));
+  mount();
+  await screen.findByText("Picture is ready");
+  const region = screen.getByRole("region", { name: "Job updates" });
+  expect(screen.getAllByRole("region", { name: "Job updates" })).toHaveLength(1);
+  expect(region).toHaveClass("fixed", "inset-x-3", "sm:right-4", "sm:bottom-4");
+  expect(region).toHaveAttribute("aria-live", "polite");
+  expect(region).toHaveAttribute("aria-relevant", "additions text");
+  expect(region.children).toHaveLength(3);
+  expect(screen.queryByText("Music is ready")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss picture update" }));
+  expect(region.children).toHaveLength(3);
+  expect(screen.getByText("Music is ready")).toBeVisible();
+});
+
+test("collapses identical notices, retains every item link, and ignores repeated polls", async () => {
+  const jobs = [readyJob("one"), readyJob("two"), readyJob("three")];
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ jobs })));
+  const { client } = mount();
+  await screen.findByText("3 videos are ready");
+  const region = screen.getByRole("region", { name: "Job updates" });
+  expect(region.children).toHaveLength(1);
+  expect(screen.getByRole("link", { name: "Open result" })).toHaveAttribute("href", "/library?asset=asset_three");
+  fireEvent.click(screen.getByText("View all 3 results"));
+  for (const [index, item] of jobs.entries()) {
+    expect(screen.getByRole("link", { name: `Open result ${index + 1}` }))
+      .toHaveAttribute("href", `/library?asset=asset_${item.job_id}`);
+  }
+  await act(() => client.refetchQueries({ queryKey: ["person-jobs", "alice"] }));
+  expect(screen.getByText("3 videos are ready")).toBeVisible();
+  expect(region.children).toHaveLength(1);
+  fireEvent.click(screen.getByRole("link", { name: "Open result 1" }));
+  expect(screen.getByText("2 videos are ready")).toBeVisible();
+  expect(region.querySelector('a[href="/library?asset=asset_one"]')).toBeNull();
+  expect(region.querySelector('a[href="/library?asset=asset_two"]')).not.toBeNull();
+  expect(region.querySelector('a[href="/library?asset=asset_three"]')).not.toBeNull();
+});
+
+test("separates ready and failed groups and persists dismissal of every grouped job", async () => {
+  const jobs = [readyJob("one"), readyJob("two"), { ...readyJob("failed"), status: "failed" }];
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ jobs })));
+  const first = mount();
+  await screen.findByText("2 videos are ready");
+  expect(screen.getByText("Video couldn’t finish")).toBeVisible();
+  expect(screen.getByRole("link", { name: "See details" })).toHaveAttribute("href", "/library?job=failed");
+  const ready = screen.getByRole("region", { name: "2 videos are ready" });
+  fireEvent.click(ready.querySelector("button")!);
+  expect(screen.queryByText("2 videos are ready")).toBeNull();
+  expect(screen.getByText("Video couldn’t finish")).toBeVisible();
+  first.unmount();
+  const second = mount();
+  await waitFor(() => expect(second.client.getQueryData(["person-jobs", "alice"])).toBeDefined());
+  expect(screen.queryByText("2 videos are ready")).toBeNull();
+  expect(screen.queryByText("Video is ready")).toBeNull();
+});
+
+test("auto-dismisses at eight seconds without stealing focus and clears its timer on unmount", () => {
+  useToastClock();
+  const onDismiss = vi.fn();
+  const result = render(<><button>Elsewhere</button><JobNotice job={readyJob("one")} onDismiss={onDismiss} /></>);
+  act(() => screen.getByRole("button", { name: "Elsewhere" }).focus());
+  act(() => vi.advanceTimersByTime(7_999));
+  expect(onDismiss).not.toHaveBeenCalled();
+  act(() => vi.advanceTimersByTime(1));
+  expect(onDismiss).toHaveBeenCalledOnce();
+  expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
+  result.rerender(<JobNotice job={readyJob("two")} onDismiss={onDismiss} />);
+  act(() => vi.advanceTimersByTime(1_000));
+  result.unmount();
+  act(() => vi.advanceTimersByTime(8_000));
+  expect(onDismiss).toHaveBeenCalledOnce();
+});
+
+test("pauses the remaining lifetime while hovered or focused, including focus within the toast", () => {
+  useToastClock();
+  const onDismiss = vi.fn();
+  render(<><button>Elsewhere</button><JobNotice job={readyJob("one")} onDismiss={onDismiss} /></>);
+  const toast = screen.getByRole("region", { name: "Video ready" });
+  act(() => vi.advanceTimersByTime(3_000));
+  fireEvent.mouseEnter(toast);
+  act(() => vi.advanceTimersByTime(20_000));
+  expect(onDismiss).not.toHaveBeenCalled();
+  act(() => screen.getByRole("link", { name: "Open result" }).focus());
+  fireEvent.mouseLeave(toast);
+  act(() => vi.advanceTimersByTime(20_000));
+  expect(onDismiss).not.toHaveBeenCalled();
+  act(() => screen.getByRole("button", { name: "Dismiss video update" }).focus());
+  act(() => vi.advanceTimersByTime(20_000));
+  expect(onDismiss).not.toHaveBeenCalled();
+  act(() => screen.getByRole("button", { name: "Elsewhere" }).focus());
+  act(() => vi.advanceTimersByTime(4_999));
+  expect(onDismiss).not.toHaveBeenCalled();
+  act(() => vi.advanceTimersByTime(1));
+  expect(onDismiss).toHaveBeenCalledOnce();
+});
+
+test("refreshes the interval for a new grouped item but not an unchanged rerender", () => {
+  useToastClock();
+  const first = readyJob("one");
+  const second = readyJob("two");
+  const onDismiss = vi.fn();
+  const result = render(<JobNotice job={first} onDismiss={onDismiss} />);
+  act(() => vi.advanceTimersByTime(7_000));
+  result.rerender(<JobNotice job={second} jobs={[first, second]} onDismiss={onDismiss} />);
+  act(() => vi.advanceTimersByTime(7_000));
+  expect(onDismiss).not.toHaveBeenCalled();
+  result.rerender(<JobNotice job={second} jobs={[first, second]} onDismiss={() => onDismiss()} />);
+  act(() => vi.advanceTimersByTime(999));
+  expect(onDismiss).not.toHaveBeenCalled();
+  act(() => vi.advanceTimersByTime(1));
+  expect(onDismiss).toHaveBeenCalledOnce();
+});
+
+test("auto-dismissal is session scoped and queued notices receive a full lifetime", async () => {
+  useToastClock();
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ jobs: [
+    readyJob("picture", "image.generate"),
+    readyJob("video"),
+    readyJob("audio", "audio.generate"),
+    readyJob("music", "music.generate"),
+  ] })));
+  const first = mount();
+  await act(async () => {
+    await first.client.refetchQueries({ queryKey: ["person-jobs", "alice"] });
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByRole("region", { name: "Job updates" }).children).toHaveLength(3);
+  await act(() => vi.advanceTimersByTimeAsync(8_000));
+  expect(screen.queryByText("Video is ready")).toBeNull();
+  expect(screen.getByText("Music is ready")).toBeVisible();
+  await act(() => vi.advanceTimersByTimeAsync(7_999));
+  expect(screen.getByText("Music is ready")).toBeVisible();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(screen.getByRole("region", { name: "Job updates" })).toBeEmptyDOMElement();
+  first.unmount();
+  const second = mount();
+  await act(async () => {
+    await second.client.refetchQueries({ queryKey: ["person-jobs", "alice"] });
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByRole("region", { name: "Job updates" })).toBeEmptyDOMElement();
 });

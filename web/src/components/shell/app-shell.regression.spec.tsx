@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { axe } from "jest-axe";
 import userEvent from "@testing-library/user-event";
@@ -263,6 +263,97 @@ describe("AppShell accessible names", () => {
         (violation) => violation.id === "label-content-name-mismatch",
       ),
     ).toEqual([]);
+  });
+});
+
+describe("AppShell navigation tooltips", () => {
+  function mockSidebarViewport(wide: boolean) {
+    const original = vi.mocked(window.matchMedia).getMockImplementation()!;
+    const listeners = new Set<() => void>();
+    const sidebar = {
+      ...original("(min-width: 64rem)"),
+      matches: wide,
+      addEventListener: vi.fn((_event: string, listener: () => void) => {
+        listeners.add(listener);
+      }),
+      removeEventListener: vi.fn((_event: string, listener: () => void) => {
+        listeners.delete(listener);
+      }),
+    };
+    vi.mocked(window.matchMedia).mockImplementation((query) =>
+      query === sidebar.media ? sidebar : original(query),
+    );
+    return (nextWide: boolean) => {
+      sidebar.matches = nextWide;
+      act(() => listeners.forEach((listener) => listener()));
+    };
+  }
+
+  it("does not repeat visible desktop navigation labels on hover or focus", async () => {
+    mockSidebarViewport(true);
+    render(<AppShell><h1>Home</h1></AppShell>);
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
+    for (const link of within(nav).getAllByRole("link")) {
+      expect(link).not.toHaveAttribute("title");
+      expect(link).not.toHaveAttribute("data-slot", "tooltip-trigger");
+    }
+    const user = userEvent.setup();
+    await user.hover(within(nav).getByRole("link", { name: "Usage" }));
+    act(() => within(nav).getByRole("link", { name: "Workflows" }).focus());
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(within(nav).getByRole("link", { name: "Home" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Go to" }).querySelector("kbd")).toHaveTextContent(/Ctrl K|⌘K/);
+  });
+
+  it("keeps collapsed-rail tooltips and accessible names for hover and keyboard focus", async () => {
+    mockSidebarViewport(false);
+    render(<AppShell><h1>Home</h1></AppShell>);
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
+    const usage = within(nav).getByRole("link", { name: "Usage" });
+    expect(usage).toHaveAttribute("data-slot", "tooltip-trigger");
+    const user = userEvent.setup();
+    await user.hover(usage);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Usage");
+    await user.unhover(usage);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+    act(() => within(nav).getByRole("link", { name: "Workflows" }).focus());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Workflows");
+  });
+
+  it.each(["Expand navigation", "More"])("omits redundant tooltips in the labeled %s sheet", async (name) => {
+    mockSidebarViewport(false);
+    render(<AppShell><h1>Home</h1></AppShell>);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name }));
+    const dialog = await screen.findByRole("dialog");
+    const nav = within(dialog).getByRole("navigation", { name: "Main navigation" });
+    for (const link of within(nav).getAllByRole("link")) {
+      expect(link).not.toHaveAttribute("title");
+      expect(link).not.toHaveAttribute("data-slot", "tooltip-trigger");
+    }
+    await user.hover(within(nav).getByRole("link", { name: "Usage" }));
+    act(() => within(nav).getByRole("link", { name: "Workflows" }).focus());
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    await user.click(within(nav).getByRole("link", { name: "Home" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("updates tooltip availability when the sidebar changes width", async () => {
+    const resize = mockSidebarViewport(false);
+    render(<AppShell><h1>Home</h1></AppShell>);
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
+    const usage = () => within(nav).getByRole("link", { name: "Usage" });
+    act(() => usage().focus());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Usage");
+    resize(true);
+    expect(usage()).not.toHaveAttribute("data-slot", "tooltip-trigger");
+    expect(usage()).not.toHaveAttribute("aria-describedby");
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    resize(false);
+    expect(usage()).toHaveAttribute("data-slot", "tooltip-trigger");
+    act(() => usage().focus());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Usage");
   });
 });
 

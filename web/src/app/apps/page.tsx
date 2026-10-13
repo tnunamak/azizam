@@ -897,8 +897,9 @@ function AppsContents() {
           <DialogHeader>
             <DialogTitle>{createdApp ? "Create key" : "New app"}</DialogTitle>
             <DialogDescription>
-              Each app gets its own key, so you can see its requests and turn
-              it off without touching your other apps.
+              A key can use only what its app&apos;s access plan allows. Each
+              app gets its own key, so you can turn one off without touching
+              the others.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={create} className="space-y-5">

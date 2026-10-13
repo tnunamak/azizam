@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -19,6 +20,7 @@ import {
 } from "../../../e2e/fixtures/workflows-seeded";
 import { workflowsPolishCatalog } from "../../../e2e/fixtures/workflows-polish";
 import WorkflowsPage from "./page";
+import { isWorkflowCatalog, readJson, readRecentAssets } from "./workflow-api";
 
 const member: Viewer = {
   authenticated: true,
@@ -993,5 +995,1077 @@ describe("composed workflow availability names the engine it waits on (moved fro
     expect(card).toHaveTextContent("No health check has reported on it yet. See Status.");
     expect(card).not.toHaveTextContent(/Unavailable|Not available right now|text and text/);
     expect(within(card).getByRole("link", { name: "Open Status" })).toHaveAttribute("href", expect.stringMatching(/\/status/));
+  });
+});
+
+
+const gapClients: QueryClient[] = [];
+const gapCatalogError = "Workflows catalog could not be loaded. Try again.";
+const gapMediaError = "Recent creations could not be loaded. Try again.";
+const gapRow = (patch: Record<string, unknown> = {}) => ({ ...workflows[0], ...patch });
+// gateway/workflows_catalog.py:123-137: retain the real catalog envelope.
+// Invalid-shape tests explicitly replace individual values in this envelope.
+const gapCatalog = (rows: unknown[] = [gapRow()]) => ({
+  schema_version: 1,
+  object: "workflow.catalog",
+  discovery_url: "/gateway/v1/workflows",
+  workflows: rows,
+  groups: [],
+  counts: { workflows: rows.length, capabilities: 1 },
+  links: {
+    self: "/me/api/workflows",
+    gateway_discovery: "/gateway/v1/workflows",
+    openapi: "/openapi.json",
+  },
+});
+const gapAssetId = "img_" + "a".repeat(64);
+const gapAsset = (patch: Record<string, unknown> = {}) => ({
+  asset_id: gapAssetId,
+  kind: "image",
+  prompt: null,
+  model: null,
+  workflow: null,
+  created_at: null,
+  ...patch,
+});
+function gapDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+function gapMount(viewer: Viewer = member) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  });
+  gapClients.push(client);
+  const tree = (next: Viewer) => (
+    <QueryClientProvider client={client}>
+      <ViewerContext.Provider value={next}>
+        <WorkflowsPage />
+      </ViewerContext.Provider>
+    </QueryClientProvider>
+  );
+  const view = render(tree(viewer));
+  return { client, ...view, setViewer: (next: Viewer) => view.rerender(tree(next)) };
+}
+function gapServe(
+  catalog: () => Response | Promise<Response> = () => Response.json(gapCatalog()),
+  media: () => Response | Promise<Response> = () => Response.json({ assets: [] }),
+) {
+  // Only page-owned endpoints receive success payloads. Unrelated provider
+  // reads stay unavailable instead of being given a fictitious catalog shape.
+  const mock = vi.fn(async (url: string, _init?: RequestInit) =>
+    url.includes("/me/api/media") ? media()
+      : url === "/me/api/workflows" ? catalog() : new Response(null, { status: 404 }),
+  );
+  vi.stubGlobal("fetch", mock);
+  return mock;
+}
+const gapMediaCalls = (mock: ReturnType<typeof gapServe>) =>
+  mock.mock.calls.filter(([url]) => url.includes("/me/api/media"));
+const gapCatalogCalls = (mock: ReturnType<typeof gapServe>) =>
+  mock.mock.calls.filter(([url]) => url === "/me/api/workflows");
+async function gapOpen(user: ReturnType<typeof userEvent.setup>, title = workflows[0].title) {
+  await user.click(await screen.findByRole("button", { name: "Details for " + title }));
+  return within(screen.getByRole("dialog"));
+}
+function gapStartRefresh(client: QueryClient, queryKey: string[]) {
+  let done!: Promise<void>;
+  act(() => { done = client.refetchQueries({ queryKey, exact: true }); });
+  return done;
+}
+function gapHref(link: HTMLElement) {
+  return new URL(link.getAttribute("href")!, "https://example.test");
+}
+function gapFact(scope: HTMLElement, label: string) {
+  return within(scope).getByText(label, { exact: true }).parentElement!;
+}
+
+describe("Workflows catalog, detail and API branch regressions", () => {
+  afterEach(() => {
+    cleanup();
+    for (const client of gapClients.splice(0)) client.clear();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  // Protects page.tsx:889-890 at f1cac8a.
+  // Mutant: Change the initial catalog isPending branch to isError.
+  test("G01 initial loading resolves into the actual catalog response", async () => {
+    const pending = gapDeferred<Response>();
+    const fetcher = gapServe(() => pending.promise);
+    gapMount();
+    expect(screen.getByRole("status", { name: "Loading workflows" }))
+      .toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("listitem")).toBeNull();
+    expect(screen.queryByText("Refreshing")).toBeNull();
+    await act(async () => { pending.resolve(Response.json(gapCatalog())); });
+    expect(await screen.findByRole("listitem", { name: workflows[0].title })).toBeVisible();
+    expect(screen.queryByRole("status", { name: "Loading workflows" })).toBeNull();
+    expect(gapCatalogCalls(fetcher)).toEqual([
+      ["/me/api/workflows", { credentials: "same-origin" }],
+    ]);
+  });
+
+  // Protects page.tsx:893-895 at f1cac8a.
+  // Mutant: Replace the catalog onRetry callback with a no-op.
+  test.each([
+    ["HTTP 503", () => new Response(null, { status: 503 })],
+    ["network failure", () => Promise.reject(new TypeError("Network unavailable"))],
+    ["invalid JSON", () => new Response("{", { headers: { "content-type": "application/json" } })],
+    ["wrong schema version", () => Response.json({ schema_version: 2, workflows: [] })],
+    ["missing workflows", () => Response.json({ schema_version: 1 })],
+    ["array envelope", () => Response.json([])],
+  ] as Array<[string, () => Response | Promise<Response>]>)(
+    "G02 catalog %s recovers after one explicit retry",
+    async (_name, first) => {
+      const user = userEvent.setup();
+      let attempt = 0;
+      const pending = gapDeferred<Response>();
+      const fetcher = gapServe(() => ++attempt === 1 ? first() : pending.promise);
+      gapMount();
+      expect(await screen.findByText(gapCatalogError)).toBeVisible();
+      expect(screen.queryByRole("listitem")).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(gapCatalogCalls(fetcher)).toHaveLength(2));
+      await act(async () => { pending.resolve(Response.json(gapCatalog())); });
+      expect(await screen.findByRole("listitem", { name: workflows[0].title })).toBeVisible();
+      expect(screen.queryByText(gapCatalogError)).toBeNull();
+      expect(gapCatalogCalls(fetcher).every(([, init]) =>
+        init?.credentials === "same-origin",
+      )).toBe(true);
+    },
+  );
+
+  // Protects workflow-api.ts:116-117 at f1cac8a.
+  // Mutant: Replace value.workflows.every(workflow) with value.workflows.some(workflow).
+  test("G03 a mixed valid/invalid catalog is rejected as a whole", async () => {
+    gapServe(() => Response.json(gapCatalog([gapRow(), { ...gapRow(), inputs: [null] }])));
+    gapMount();
+    expect(await screen.findByText(gapCatalogError)).toBeVisible();
+    expect(screen.queryByRole("listitem")).toBeNull();
+  });
+
+  // Protects workflow-api.ts:120-125 at f1cac8a.
+  // Mutant: Replace value.assets.every(...) with value.assets.some(...).
+  test("G03 a mixed valid/invalid assets list is rejected, not partially rendered", async () => {
+    const user = userEvent.setup();
+    gapServe(undefined, () => Response.json({
+      assets: [gapAsset({ prompt: "A valid saved output" }), { asset_id: "broken", kind: 7 }],
+    }));
+    gapMount();
+    const sheet = await gapOpen(user);
+    expect(await sheet.findByText(gapMediaError)).toBeVisible();
+    expect(sheet.queryByText("A valid saved output")).toBeNull();
+    expect(sheet.queryByRole("link", { name: "Open in Library" })).toBeNull();
+    expect(sheet.getByRole("link", { name: "Open in Try" })).toBeVisible();
+  });
+
+  // Protects page.tsx:843-844 at f1cac8a.
+  // Mutant: Memoize detail from allRows using only [detailId] as dependencies.
+  test.each(["replace", "remove"] as const)(
+    "G04 background refresh keeps current detail until it can %s the selected row",
+    async (change) => {
+      const user = userEvent.setup();
+      const pending = gapDeferred<Response>();
+      let attempt = 0;
+      gapServe(() => ++attempt === 1 ? Response.json(gapCatalog()) : pending.promise);
+      const { client } = gapMount();
+      const sheet = await gapOpen(user);
+      await sheet.findByText("No creations yet. Open this workflow in Try.");
+      const done = gapStartRefresh(client, ["workflows", "catalog"]);
+      expect(await screen.findByText("Refreshing")).toBeInTheDocument();
+      expect(within(screen.getByRole("dialog")).getByRole("heading", {
+        name: workflows[0].title,
+      })).toBeVisible();
+      const next = change === "replace"
+        ? [gapRow({ title: "Updated workflow title", purpose: "Fresh server purpose" })]
+        : [];
+      await act(async () => {
+        pending.resolve(Response.json(gapCatalog(next)));
+        await done;
+      });
+      if (change === "replace") {
+        const current = within(screen.getByRole("dialog"));
+        expect(await current.findByRole("heading", { name: "Updated workflow title" })).toBeVisible();
+        expect(current.getByText("Fresh server purpose")).toBeVisible();
+        expect(current.queryByRole("heading", { name: workflows[0].title })).toBeNull();
+      } else {
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+        expect(await screen.findByText("No workflows are available to you.")).toBeVisible();
+      }
+      await waitFor(() => expect(screen.queryByText("Refreshing")).toBeNull());
+    },
+  );
+
+  // Protects page.tsx:891-895 at f1cac8a.
+  // Mutant: Guard the catalog error branch with isError && !data.
+  test("G05 a failed background catalog refresh hides stale rows and Retry recovers", async () => {
+    const user = userEvent.setup();
+    let attempt = 0;
+    gapServe(() => {
+      attempt += 1;
+      if (attempt === 2) return Response.json({}, { status: 503 });
+      return Response.json(gapCatalog([gapRow({
+        title: attempt === 1 ? workflows[0].title : "Recovered workflow",
+      })]));
+    });
+    const { client } = gapMount();
+    await screen.findByRole("listitem", { name: workflows[0].title });
+    await act(async () => { await client.refetchQueries({ queryKey: ["workflows", "catalog"], exact: true }); });
+    expect(await screen.findByText(gapCatalogError)).toBeVisible();
+    expect(screen.queryByRole("listitem")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("listitem", { name: "Recovered workflow" })).toBeVisible();
+    expect(screen.queryByText(gapCatalogError)).toBeNull();
+  });
+
+  // Protects page.tsx:907 at f1cac8a.
+  // Mutant: Change the Explore models href from /models to /engines.
+  test("G06 owner empty state retains its actual Explore models destination", async () => {
+    gapServe(() => Response.json(gapCatalog([])));
+    gapMount(owner);
+    expect(await screen.findByText("No workflows are available.")).toBeVisible();
+    expect(screen.queryByText("Ask the owner what you can use.")).toBeNull();
+    expect(screen.getByRole("link", { name: "Explore models" })).toHaveAttribute("href", "/models");
+  });
+
+  // Protects page.tsx:826 at f1cac8a.
+  // Mutant: Include admin in the owner/superadmin role list.
+  test("G07 current role controls privileged details, including superadmin and delegated admin", async () => {
+    const user = userEvent.setup();
+    gapServe(() => Response.json(gapCatalog([gapRow({
+      technical_notes: "Owner research notes",
+      license: "Example permissive licence",
+      engine_binding: "private-engine",
+      native_route: "/private-route",
+    })])));
+    const app = gapMount({ ...owner, role: "superadmin" });
+    const sheet = await gapOpen(user);
+    await user.click(sheet.getByText("Technical details", { exact: true }));
+    expect(sheet.getByText("Owner research notes")).toBeVisible();
+    expect(sheet.getByText("private-engine", { exact: true })).toBeVisible();
+    expect(sheet.getByRole("button", { name: "Copy workflow ID" })).toBeVisible();
+    expect(sheet.getByRole("link", { name: "Discovery list" })).toBeVisible();
+    expect(sheet.getByText("Licence: Example permissive licence")).toBeVisible();
+
+    app.setViewer({ ...member, role: "admin", admin: true });
+    const delegated = within(screen.getByRole("dialog"));
+    expect(delegated.getByText("Input details", { exact: true })).toBeVisible();
+    for (const text of [
+      "Owner research notes", "private-engine", "/private-route",
+      "Example request", "Licence: Example permissive licence",
+    ]) expect(delegated.queryByText(text, { exact: true })).toBeNull();
+    expect(delegated.queryByRole("button", { name: "Copy workflow ID" })).toBeNull();
+    expect(delegated.queryByRole("link", { name: "Discovery list" })).toBeNull();
+    expect(delegated.queryByRole("link", { name: "Machine-readable workflow" })).toBeNull();
+
+    app.setViewer(owner);
+    expect(within(screen.getByRole("dialog")).getByText("Owner research notes")).toBeVisible();
+  });
+
+  // Protects page.tsx:965-970 at f1cac8a.
+  // Mutant: Delete setCapability("all") from Clear filters.
+  test("G08 capability/search controls synchronize and Clear filters resets both", async () => {
+    const user = userEvent.setup();
+    gapServe(() => Response.json(gapCatalog([gapRow(), workflows[1]])));
+    gapMount();
+    const search = await screen.findByRole("textbox", { name: "Search workflows" });
+    const select = screen.getByRole("combobox", { name: "Task" });
+    await user.selectOptions(select, "image");
+    expect(select).toHaveValue("image");
+    expect(screen.queryByRole("listitem", { name: "Clean text" })).toBeNull();
+    await user.type(search, "Clean text");
+    expect(screen.getByText("No matching workflows")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(search).toHaveValue("");
+    expect(select).toHaveValue("all");
+    expect(screen.getByRole("listitem", { name: "Clean text" })).toBeVisible();
+    await user.click(within(screen.getByRole("group", { name: "Workflow task" }))
+      .getByRole("button", { name: "Images" }));
+    expect(select).toHaveValue("image");
+  });
+
+  // Protects page.tsx:197 at f1cac8a.
+  // Mutant: Return false for every nonempty search query.
+  test.each([
+    "WORKFLOW.IMAGE.UPSCALE", "UPSCALE IMAGE", "unique description token",
+    "unique optional noun", "opaque_parameter", "unique input label",
+    "output_token", "application/x-branch-report",
+  ])("G08 displayed/searchable metadata matches %s", async (query) => {
+    const user = userEvent.setup();
+    gapServe(() => Response.json(gapCatalog([gapRow({
+      purpose: "A simple purpose",
+      description: "Unique description token.",
+      inputs: [
+        { name: "opaque_parameter", type: "string", label: "unique input label", accepted: true, required: true },
+        { name: "optional_parameter", type: "string", label: "unique optional noun", accepted: true },
+      ],
+      outputs: [{ name: "output_token", media_type: "application/x-branch-report" }],
+    })])));
+    gapMount();
+    const search = await screen.findByRole("textbox", { name: "Search workflows" });
+    await user.type(search, query);
+    expect(screen.getByRole("listitem", { name: workflows[0].title })).toBeVisible();
+    await user.clear(search);
+    expect(screen.getByRole("listitem", { name: workflows[0].title })).toBeVisible();
+  });
+
+  // Protects page.tsx:350 at f1cac8a.
+  // Mutant: Remove disabled from the non-runnable Open in Try button.
+  test.each([
+    ["busy", "Busy with other requests. Try again soon."],
+    ["starting", "Try again in a moment."],
+  ])("G09 %s disables Try in both row and sheet", async (status, reason) => {
+    const user = userEvent.setup();
+    gapServe(() => Response.json(gapCatalog([gapRow({
+      availability: { status, reason_code: status, available: false },
+    })])));
+    gapMount();
+    const row = await screen.findByRole("listitem", { name: workflows[0].title });
+    expect(within(row).getByRole("button", { name: "Open in Try" })).toBeDisabled();
+    expect(within(row).queryByRole("link", { name: "Open in Try" })).toBeNull();
+    const sheet = await gapOpen(user);
+    expect(sheet.getByRole("button", { name: "Open in Try" })).toBeDisabled();
+    expect(sheet.getAllByText(reason, { exact: true })).toHaveLength(1);
+    expect(await sheet.findByText("No creations yet.")).toBeVisible();
+  });
+
+  // Protects page.tsx:349 at f1cac8a.
+  // Mutant: Render the disabled Open in Try button even when ownerSetup is true.
+  test("G09 owner setup omits a disabled Try and its disclosure can close and reopen", async () => {
+    const user = userEvent.setup();
+    gapServe(() => Response.json(gapCatalog([gapRow({
+      engine_binding: "comfyui",
+      availability: { status: "unavailable", reason_code: "unavailable_disabled", available: false },
+    })])));
+    gapMount(owner);
+    const summary = await screen.findByText("Not set up (1)");
+    const section = summary.closest("details")!;
+    expect(section).not.toHaveAttribute("open");
+    await user.click(summary);
+    expect(section).toHaveAttribute("open");
+    await user.click(summary);
+    expect(section).not.toHaveAttribute("open");
+    await user.click(summary);
+    const row = screen.getByRole("listitem", { name: workflows[0].title });
+    expect(within(row).queryByRole("button", { name: "Open in Try" })).toBeNull();
+    expect(within(row).queryByRole("link", { name: "Open in Try" })).toBeNull();
+    const sheet = await gapOpen(user);
+    expect(sheet.queryByRole("button", { name: "Open in Try" })).toBeNull();
+    expect(sheet.getByRole("link", { name: "Open Engines" }))
+      .toHaveAttribute("href", "/engines?service=comfyui");
+  });
+
+  // Protects page.tsx:335 at f1cac8a.
+  // Mutant: Interpolate workflow.id directly into the Try URL without encodeURIComponent.
+  test("G10 keyboard opens details, ID copies exactly, and navigation preserves real destinations", async () => {
+    const user = userEvent.setup();
+    const id = "workflow.image/upscale & detail";
+    const discovery = "/gateway/v1/workflows/" + id;
+    const fetcher = gapServe(() => Response.json(gapCatalog([gapRow({ id, discovery_url: discovery })])));
+    gapMount(owner);
+    const trigger = await screen.findByRole("button", { name: "Details for " + workflows[0].title });
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    let sheet = within(screen.getByRole("dialog"));
+    const tryLink = sheet.getByRole("link", { name: "Open in Try" });
+    expect(gapHref(tryLink).pathname.replace(/\/$/, "")).toBe("/try");
+    expect(gapHref(tryLink).searchParams.get("workflow")).toBe(id);
+    await user.click(sheet.getByText("Technical details", { exact: true }));
+    await user.click(sheet.getByRole("button", { name: "Copy workflow ID" }));
+    expect(await navigator.clipboard.readText()).toBe(id);
+    expect(sheet.getByRole("link", { name: "Machine-readable workflow" })).toHaveAttribute("href", discovery);
+    expect(sheet.getByRole("link", { name: "Discovery list" })).toHaveAttribute("href", "/me/api/workflows");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await user.click(trigger);
+    sheet = within(screen.getByRole("dialog"));
+    expect(sheet.getByRole("heading", { name: workflows[0].title })).toBeVisible();
+    expect(gapCatalogCalls(fetcher).every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  });
+
+  // Protects page.tsx:158-167 at f1cac8a.
+  // Mutant: Replace purposeLabel with an unconditional return of workflow.description.
+  test.each([
+    [{ purpose: "  A carefully trimmed purpose  ", description: "Fallback sentence." }, "A carefully trimmed purpose"],
+    [{ purpose: "  ", description: "First sentence. Second sentence." }, "First sentence."],
+    [{ purpose: "", description: "An engine binding is configured." }, null],
+    [{ purpose: "", description: "" }, null],
+  ] as Array<[Record<string, unknown>, string | null]>)(
+    "G11 purpose uses explicit copy, first sentence, or no heading (%#)",
+    async (patch, expected) => {
+      const user = userEvent.setup();
+      gapServe(() => Response.json(gapCatalog([gapRow(patch)])));
+      gapMount();
+      const sheet = await gapOpen(user);
+      if (expected) {
+        expect(sheet.getByRole("heading", { name: "Purpose" })).toBeVisible();
+        expect(sheet.getByText(expected, { exact: true })).toBeVisible();
+      } else {
+        expect(sheet.queryByRole("heading", { name: "Purpose" })).toBeNull();
+      }
+      expect(sheet.queryByText("Second sentence.", { exact: true })).toBeNull();
+      expect(sheet.queryByText("An engine binding is configured.", { exact: true })).toBeNull();
+    },
+  );
+
+  // Protects page.tsx:229-236 at f1cac8a.
+  // Mutant: Replace the type-switch result with the input's raw type string.
+  test.each([
+    ["boolean", "a yes-or-no choice"],
+    ["array", "a list"],
+    ["object", "structured information"],
+    ["custom", "an input"],
+  ])("G12 %s input has its declared-type noun and no optional summary", async (type, noun) => {
+    const user = userEvent.setup();
+    gapServe(() => Response.json(gapCatalog([gapRow({
+      inputs: [{ name: "opaque", type, accepted: true, required: true }],
+    })])));
+    gapMount();
+    const sheet = await gapOpen(user);
+    expect(sheet.getByText("Needs: " + noun, { exact: true })).toBeVisible();
+    expect(sheet.queryByText(/^Optional:/)).toBeNull();
+  });
+
+  // Protects page.tsx:272 at f1cac8a.
+  // Mutant: Remove Set deduplication from outputSummary.
+  test("G12 output names normalize and duplicate nouns are not repeated", async () => {
+    const user = userEvent.setup();
+    gapServe(() => Response.json(gapCatalog([gapRow({
+      outputs: [
+        { name: "first", label: "a result" },
+        { name: "second", label: "a result" },
+        { name: "STATUS_REPORT", media_type: "application/json" },
+        { name: "" },
+      ],
+    })])));
+    gapMount();
+    const sheet = await gapOpen(user);
+    expect(sheet.getByText("Makes: a result, a status report and an output")).toBeVisible();
+  });
+
+  // Protects page.tsx:264 at f1cac8a.
+  // Mutant: Use every input rather than filtering by input.accepted for Needs.
+  test("G12 summaries use accepted inputs while detail labels disambiguate all inputs", async () => {
+    const user = userEvent.setup();
+    gapServe(() => Response.json(gapCatalog([gapRow({
+      inputs: [
+        { name: "primary", type: "string", accepted: true, required: true },
+        { name: "ignored", type: "string", accepted: false, required: true },
+      ],
+    })])));
+    gapMount();
+    const sheet = await gapOpen(user);
+    expect(sheet.getByText("Needs: text", { exact: true })).toBeVisible();
+    expect(sheet.queryByText(/^Optional:/)).toBeNull();
+    await user.click(sheet.getByText("Input details", { exact: true }));
+    const summaries = within(sheet.getByRole("list", { name: "Input summaries" }));
+    expect(summaries.getByRole("heading", { name: "text for primary" })).toBeInTheDocument();
+    const ignored = summaries.getByRole("heading", { name: "text for ignored" }).closest("li")!;
+    expect(ignored).toHaveTextContent("Ignored");
+  });
+
+  // Protects page.tsx:115-120 at f1cac8a.
+  // Mutant: Return a fixed time string rather than the numeric/null-specific label.
+  test.each([
+    [0, "~0 ms"],
+    [0.125, "~125 ms"],
+    [1, "~1.0 s"],
+    [9, "~9.0 s"],
+    [12, "~12 s"],
+    [null, null],
+    [undefined, null],
+  ] as Array<[number | null | undefined, string | null]>)(
+    "G13 typical time %s has its actual displayed unit",
+    async (value, expected) => {
+      const user = userEvent.setup();
+      gapServe(() => Response.json(gapCatalog([gapRow({ typical_seconds: value })])));
+      gapMount(owner);
+      const sheet = await gapOpen(user);
+      await user.click(sheet.getByText("Technical details", { exact: true }));
+      if (expected) expect(sheet.getByText(expected, { exact: true })).toBeVisible();
+      else expect(sheet.queryByText("Typical time", { exact: true })).toBeNull();
+    },
+  );
+
+  // Protects page.tsx:492-500 at f1cac8a.
+  // Mutant: Replace both missing input/output fact fallbacks with an empty string.
+  test("G13 missing media and outputs have explicit detail fallbacks", async () => {
+    const user = userEvent.setup();
+    gapServe(() => Response.json(gapCatalog([gapRow({ inputs: [], outputs: null, aliases: [] })])));
+    gapMount(owner);
+    const sheet = await gapOpen(user);
+    await user.click(sheet.getByText("Technical details", { exact: true }));
+    const dialog = screen.getByRole("dialog");
+    expect(gapFact(dialog, "Input media types")).toHaveTextContent("Not listed");
+    expect(gapFact(dialog, "Output names and types")).toHaveTextContent("Not listed");
+    expect(sheet.getByText("No other model names")).toBeVisible();
+    expect(sheet.getByText("Makes: output not listed")).toBeVisible();
+    expect(within(sheet.getByRole("list", { name: "Input summaries" })).queryByRole("listitem")).toBeNull();
+  });
+
+  // Protects page.tsx:147-155 at f1cac8a.
+  // Mutant: Return declaredMediaTypes(input).join(", ") without plain format mapping or the empty fallback.
+  test.each([
+    [["image/png", "image/png", "image/jpeg"], "PNG or JPEG"],
+    [["image/webp"], "WebP"],
+    [["audio/wav"], "WAV"],
+    [["audio/mpeg"], "MP3"],
+    [["video/mp4"], "MP4"],
+    [["application/pdf"], "PDF"],
+    [["text/plain"], "plain text"],
+    [["application/x-example"], "a file"],
+    [[], "File formats not listed"],
+  ] as Array<[string[], string]>)(
+    "G13 member file formats %j have readable deduplicated labels",
+    async (types, expected) => {
+      const user = userEvent.setup();
+      gapServe(() => Response.json(gapCatalog([gapRow({
+        inputs: [{
+          name: "source", type: "string", asset: true, label: "a source file",
+          accepted: true, accepted_media_types: types,
+        }],
+      })])));
+      gapMount();
+      const sheet = await gapOpen(user);
+      await user.click(sheet.getByText("Input details", { exact: true }));
+      expect(gapFact(screen.getByRole("dialog"), "Accepted files"))
+        .toHaveTextContent("a source file: " + expected);
+    },
+  );
+
+  // Protects page.tsx:123-130 at f1cac8a.
+  // Mutant: Replace rangeLabel with an unconditional empty string.
+  test.each([
+    [{ minimum: 2 }, "At least 2"],
+    [{ maximum: 7 }, "At most 7"],
+    [{ minimum: 2, maximum: 7 }, "2 to 7"],
+    [{ enum: ["first", "second"], minimum: 2, maximum: 7 }, "first, second"],
+    [{ enum: [], minimum: 2 }, "At least 2"],
+  ] as Array<[Record<string, unknown>, string]>)(
+    "G14 range branches appear in both table and narrow summary (%#)",
+    async (range, expected) => {
+      const user = userEvent.setup();
+      gapServe(() => Response.json(gapCatalog([gapRow({
+        inputs: [{ name: "control", type: "number", accepted: true, description: "Tuning control", ...range }],
+      })])));
+      gapMount(owner);
+      const sheet = await gapOpen(user);
+      await user.click(sheet.getByText("Technical details", { exact: true }));
+      const table = within(sheet.getByLabelText("Scrollable inputs"));
+      expect(table.getByRole("cell", { name: expected })).toBeInTheDocument();
+      const summaries = within(sheet.getByRole("list", { name: "Input summaries" }));
+      expect(summaries.getByText(expected, { exact: true })).toBeInTheDocument();
+      expect(summaries.getByText("Tuning control")).toBeInTheDocument();
+      expect(summaries.queryByText("Default", { exact: true })).toBeNull();
+    },
+  );
+
+  // Protects page.tsx:140-142 at f1cac8a.
+  // Mutant: Prefix plainValue's returned value with String(value), including null/objects.
+  test.each([
+    [false, "No"],
+    [true, "Yes"],
+    [0, "0"],
+    ["plain", "plain"],
+    [{ nested: true }, null],
+    [[1, 2], null],
+    [null, null],
+  ] as Array<[unknown, string | null]>)(
+    "G14 member defaults show only plain values (%#)",
+    async (value, expected) => {
+      const user = userEvent.setup();
+      gapServe(() => Response.json(gapCatalog([gapRow({
+        inputs: [{ name: "choice", label: "Choice",
+          type: Array.isArray(value) ? "array" : value === null ? "string" : typeof value,
+          accepted: true, default: value }],
+      })])));
+      gapMount();
+      const sheet = await gapOpen(user);
+      await user.click(sheet.getByText("Input details", { exact: true }));
+      const summaries = within(sheet.getByRole("list", { name: "Input summaries" }));
+      const item = summaries.getByRole("heading", { name: "Choice" }).closest("li")!;
+      if (expected !== null) {
+        expect(within(item).getByText("Default", { exact: true }).nextElementSibling).toHaveTextContent(expected);
+      } else expect(within(item).queryByText("Default", { exact: true })).toBeNull();
+      expect(within(item).queryByText("Range", { exact: true })).toBeNull();
+      const table = within(sheet.getByLabelText("Scrollable inputs"));
+      const row = table.getAllByRole("row")[1];
+      expect(within(row).getAllByRole("cell")[2].textContent).toBe(expected ?? "");
+      expect(within(row).getAllByRole("cell")[3].textContent).toBe("");
+    },
+  );
+
+  // Protects page.tsx:145 at f1cac8a.
+  // Mutant: Replace enum.map(plainValue).filter(Boolean) with enum.map(String).
+  test("G14 member boolean enums use Yes/No and omit object entries", async () => {
+    const user = userEvent.setup();
+    gapServe(() => Response.json(gapCatalog([gapRow({
+      inputs: [{
+        name: "choice", label: "Choice", type: "boolean", accepted: true,
+        enum: [true, false, { opaque: true }],
+      }],
+    })])));
+    gapMount();
+    const sheet = await gapOpen(user);
+    await user.click(sheet.getByText("Input details", { exact: true }));
+    expect(within(sheet.getByLabelText("Scrollable inputs"))
+      .getByRole("cell", { name: "Yes, No" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("[object Object]");
+  });
+
+  // Protects page.tsx:716 at f1cac8a.
+  // Mutant: Remove limit: "5" from the recent-creations URL parameters.
+  test("G15 recent creations load independently with exact workflow, limit and credentials", async () => {
+    const user = userEvent.setup();
+    const pending = gapDeferred<Response>();
+    const fetcher = gapServe(undefined, () => pending.promise);
+    gapMount();
+    const sheet = await gapOpen(user);
+    expect(sheet.getByRole("status", { name: "Loading recent creations" })).toBeVisible();
+    expect(sheet.queryByText("No creations yet. Open this workflow in Try.")).toBeNull();
+    const requests = gapMediaCalls(fetcher);
+    expect(requests).toHaveLength(1);
+    const [path, init] = requests[0];
+    const url = new URL(path, "https://example.test");
+    expect(url.pathname).toBe("/me/api/media");
+    expect([...url.searchParams.entries()]).toEqual([
+      ["workflow", workflows[0].id],
+      ["limit", "5"],
+    ]);
+    expect(init).toEqual({ credentials: "same-origin" });
+    await act(async () => { pending.resolve(Response.json({ assets: [] })); });
+    expect(await sheet.findByText("No creations yet. Open this workflow in Try.")).toBeVisible();
+    expect(sheet.queryByRole("status", { name: "Loading recent creations" })).toBeNull();
+    expect(gapCatalogCalls(fetcher)).toHaveLength(1);
+  });
+
+  // Protects page.tsx:737 at f1cac8a.
+  // Mutant: Replace the recent-creations onRetry callback with a no-op.
+  test.each([
+    ["HTTP", () => new Response(null, { status: 503 })],
+    ["shape", () => Response.json({ assets: null })],
+    ["network", () => Promise.reject(new TypeError("Network unavailable"))],
+    ["JSON", () => new Response("{", { headers: { "content-type": "application/json" } })],
+  ] as Array<[string, () => Response | Promise<Response>]>)(
+    "G16 recent %s error retries only media and recovers",
+    async (_name, first) => {
+      const user = userEvent.setup();
+      let attempt = 0;
+      const pending = gapDeferred<Response>();
+      const fetcher = gapServe(undefined, () => ++attempt === 1 ? first() : pending.promise);
+      gapMount();
+      const sheet = await gapOpen(user);
+      expect(await sheet.findByText(gapMediaError)).toBeVisible();
+      expect(sheet.getByRole("link", { name: "Open in Try" })).toBeVisible();
+      await user.click(sheet.getByRole("button", { name: "Try again" }));
+      await waitFor(() => expect(gapMediaCalls(fetcher)).toHaveLength(2));
+      await act(async () => {
+        pending.resolve(Response.json({ assets: [gapAsset({ prompt: "Recovered creation" })] }));
+      });
+      expect(await sheet.findByText("Recovered creation")).toBeVisible();
+      expect(sheet.queryByText(gapMediaError)).toBeNull();
+      expect(gapCatalogCalls(fetcher)).toHaveLength(1);
+      expect(gapMediaCalls(fetcher)[1]).toEqual(gapMediaCalls(fetcher)[0]);
+    },
+  );
+
+  // Protects page.tsx:764 at f1cac8a.
+  // Mutant: Render the asset facts dl even when model, workflow and generation_ms are absent.
+  test("G17 nullable asset metadata renders the minimal real assets shape", async () => {
+    const user = userEvent.setup();
+    gapServe(undefined, () => Response.json({ assets: [gapAsset()] }));
+    gapMount();
+    const sheet = await gapOpen(user);
+    const recent = within(sheet.getByRole("region", { name: "Recent creations" }));
+    expect(await recent.findByText("Image output")).toBeVisible();
+    const library = recent.getByRole("link", { name: "Open in Library" });
+    expect(gapHref(library).pathname.replace(/\/$/, "")).toBe("/library");
+    expect(gapHref(library).searchParams.get("asset")).toBe(gapAssetId);
+    for (const label of ["Model", "Workflow", "Duration", "Technical details"]) {
+      expect(recent.queryByText(label, { exact: true })).toBeNull();
+    }
+    expect(recent.queryByRole("link", { name: "View receipt" })).toBeNull();
+    expect(recent.queryByRole("link", { name: "Download output" })).toBeNull();
+    expect(recent.getByRole("listitem").querySelector("dl")).toBeNull();
+    expect(recent.getByRole("listitem")).not.toHaveTextContent(/Invalid Date|NaN/);
+  });
+
+  // Protects page.tsx:778 at f1cac8a.
+  // Mutant: Check asset.generation_ms for truthiness instead of != null.
+  test.each([member, owner])("G17 populated assets keep exact links and role-gated raw model for $role", async (viewer) => {
+    const user = userEvent.setup();
+    const requestId = "request/example & 1";
+    const download = "/outputs/example.png?download=1";
+    gapServe(undefined, () => Response.json({
+      assets: [gapAsset({
+        kind: "audio",
+        prompt: "An example narration",
+        model: "example-model-raw",
+        workflow: workflows[0].id,
+        generation_ms: 0,
+        request_id: requestId,
+        download_url: download,
+      })],
+    }));
+    gapMount(viewer);
+    const sheet = await gapOpen(user);
+    const region = sheet.getByRole("region", { name: "Recent creations" });
+    const recent = within(region);
+    expect(await recent.findByText("Audio output")).toBeVisible();
+    expect(recent.getByText("An example narration")).toBeVisible();
+    expect(recent.getByText("0.0 s")).toBeVisible();
+    expect(recent.getByText("Model", { exact: true })).toBeVisible();
+    expect(recent.getByText("Workflow", { exact: true })).toBeVisible();
+    expect(recent.getByText(workflows[0].id, { exact: true })).toBeVisible();
+    const receipt = recent.getByRole("link", { name: "View receipt" });
+    expect(gapHref(receipt).pathname.replace(/\/$/, "")).toBe("/usage");
+    expect(gapHref(receipt).searchParams.get("receipt")).toBe(requestId);
+    expect(recent.getByRole("link", { name: "Download output" }))
+      .toHaveAttribute("href", download);
+    expect(recent.getByRole("link", { name: "Download output" }))
+      .toHaveAttribute("download");
+    if (viewer.role === "owner") {
+      const summary = recent.getByText("Technical details", { exact: true });
+      const disclosure = summary.closest("details")!;
+      expect(disclosure).not.toHaveAttribute("open");
+      await user.click(summary);
+      expect(within(disclosure).getByText("example-model-raw", { exact: true })).toBeVisible();
+    } else {
+      expect(recent.queryByText("Technical details", { exact: true })).toBeNull();
+      expect(region.querySelector("details")).toBeNull();
+    }
+  });
+
+  // Protects page.tsx:764 at f1cac8a.
+  // Mutant: Join the three metadata conditions with && instead of ||.
+  test.each([
+    [{ workflow: workflows[0].id }, "Workflow"],
+    [{ generation_ms: 1500 }, "Duration"],
+    [{ model: "example-model" }, "Model"],
+  ] as Array<[Record<string, unknown>, string]>)(
+    "G17 an isolated %s metadata field still creates the correct fact",
+    async (patch, label) => {
+      const user = userEvent.setup();
+      gapServe(undefined, () => Response.json({ assets: [gapAsset(patch)] }));
+      gapMount();
+      const sheet = await gapOpen(user);
+      const recent = within(sheet.getByRole("region", { name: "Recent creations" }));
+      expect(await recent.findByText(label, { exact: true })).toBeVisible();
+      for (const other of ["Model", "Workflow", "Duration"].filter((item) => item !== label)) {
+        expect(recent.queryByText(other, { exact: true })).toBeNull();
+      }
+    },
+  );
+
+  // Protects page.tsx:727 at f1cac8a.
+  // Mutant: Show the recent-creations loading skeleton for isFetching instead of isPending.
+  test("G18 media background refresh retains old data, then reports failure and retries", async () => {
+    const user = userEvent.setup();
+    const pending = gapDeferred<Response>();
+    let attempt = 0;
+    gapServe(undefined, () => {
+      attempt += 1;
+      if (attempt === 1) return Response.json({ assets: [gapAsset({ prompt: "Previous creation" })] });
+      if (attempt === 2) return pending.promise;
+      return Response.json({ assets: [gapAsset({ prompt: "Latest creation" })] });
+    });
+    const { client } = gapMount();
+    const sheet = await gapOpen(user);
+    expect(await sheet.findByText("Previous creation")).toBeVisible();
+    const done = gapStartRefresh(client, ["workflow-media", workflows[0].id]);
+    expect(sheet.getByText("Previous creation")).toBeVisible();
+    expect(sheet.queryByRole("status", { name: "Loading recent creations" })).toBeNull();
+    await act(async () => {
+      pending.resolve(Response.json({}, { status: 503 }));
+      await done;
+    });
+    expect(await sheet.findByText(gapMediaError)).toBeVisible();
+    expect(sheet.queryByText("Previous creation")).toBeNull();
+    await user.click(sheet.getByRole("button", { name: "Try again" }));
+    expect(await sheet.findByText("Latest creation")).toBeVisible();
+    expect(sheet.queryByText(gapMediaError)).toBeNull();
+  });
+
+  // Protects page.tsx:713 at f1cac8a.
+  // Mutant: Remove workflow.id from the workflow-media query key.
+  test("G19 a late response from a closed workflow cannot replace another workflow's creations", async () => {
+    const user = userEvent.setup();
+    const first = gapDeferred<Response>();
+    const second = gapDeferred<Response>();
+    const mediaPaths: string[] = [];
+    const fetcher = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url.includes("/me/api/media")) {
+        mediaPaths.push(url);
+        const id = new URL(url, "https://example.test").searchParams.get("workflow");
+        if (id === workflows[0].id) return first.promise;
+        if (id === workflows[1].id) return second.promise;
+        throw new Error("Unexpected workflow in media request");
+      }
+      return url === "/me/api/workflows"
+        ? Response.json(gapCatalog([gapRow(), workflows[1]]))
+        : new Response(null, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const { client } = gapMount();
+    let sheet = await gapOpen(user);
+    expect(sheet.getByRole("status", { name: "Loading recent creations" })).toBeVisible();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    sheet = await gapOpen(user, workflows[1].title);
+    expect(sheet.getByRole("status", { name: "Loading recent creations" })).toBeVisible();
+    await act(async () => {
+      second.resolve(Response.json({
+        assets: [gapAsset({ asset_id: "img_" + "b".repeat(64), prompt: "Second workflow creation" })],
+      }));
+    });
+    expect(await sheet.findByText("Second workflow creation")).toBeVisible();
+    await act(async () => {
+      first.resolve(Response.json({ assets: [gapAsset({ prompt: "Late first workflow creation" })] }));
+    });
+    await waitFor(() => expect(client.getQueryState(["workflow-media", workflows[0].id])?.status).toBe("success"));
+    expect(sheet.queryByText("Late first workflow creation")).toBeNull();
+    expect(sheet.getByText("Second workflow creation")).toBeVisible();
+    expect(sheet.getByRole("heading", { name: workflows[1].title })).toBeVisible();
+    expect(mediaPaths.map((path) => new URL(path, "https://example.test").searchParams.get("workflow")))
+      .toEqual([workflows[0].id, workflows[1].id]);
+  });
+
+  // Protects page.tsx:715-717 at f1cac8a.
+  // Mutant: Resolve RecentJobs from workflow.recent_jobs instead of readRecentAssets.
+  test.each(["queued", "running", "cancelled"])(
+    "G20 catalog recent_jobs status %s is metadata, not a fabricated runner state",
+    async (status) => {
+      const user = userEvent.setup();
+      const fetcher = gapServe(() => Response.json(gapCatalog([gapRow({
+        recent_jobs: [{
+          job_id: "example-job-id", status, created_at: 1700000000,
+          updated_at: 1700000001, latency_ms: 1000,
+        }],
+      })])));
+      gapMount();
+      const sheet = await gapOpen(user);
+      expect(await sheet.findByText("No creations yet. Open this workflow in Try.")).toBeVisible();
+      expect(sheet.queryByText("example-job-id", { exact: true })).toBeNull();
+      expect(sheet.queryByText(status, { exact: true })).toBeNull();
+      expect(sheet.queryByRole("button", { name: /^cancel/i })).toBeNull();
+      expect(sheet.queryByRole("textbox")).toBeNull();
+      const navigate = sheet.getByRole("link", { name: "Open in Try" });
+      navigate.addEventListener("click", (event) => event.preventDefault(), { once: true });
+      await user.click(navigate);
+      expect(gapHref(navigate).searchParams.get("workflow")).toBe(workflows[0].id);
+      expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+    },
+  );
+
+  const badCatalogs: Array<[string, unknown]> = [
+    ["null envelope", null],
+    ["array envelope", []],
+    ["boolean envelope", false],
+    ["wrong version", { schema_version: 2, workflows: [] }],
+    ["string version", { schema_version: "1", workflows: [] }],
+    ["missing version", { workflows: [] }],
+    ["missing workflow list", { schema_version: 1 }],
+    ["object workflow list", { schema_version: 1, workflows: {} }],
+    ["null workflow row", gapCatalog([null])],
+    ["array workflow row", gapCatalog([[]])],
+    ["missing inputs", gapCatalog([gapRow({ inputs: undefined })])],
+    ["object inputs", gapCatalog([gapRow({ inputs: {} })])],
+    ["null input", gapCatalog([gapRow({ inputs: [null] })])],
+    ["object outputs", gapCatalog([gapRow({ outputs: {} })])],
+    ["null output row", gapCatalog([gapRow({ outputs: [null] })])],
+    ["null aliases", gapCatalog([gapRow({ aliases: null })])],
+    ["non-string alias", gapCatalog([gapRow({ aliases: ["valid", 4] })])],
+    ["nonfinite typical time", gapCatalog([gapRow({ typical_seconds: Infinity })])],
+    ["null availability", gapCatalog([gapRow({ availability: null })])],
+    ["array availability", gapCatalog([gapRow({ availability: [] })])],
+    ["missing status", gapCatalog([gapRow({ availability: {} })])],
+    ["non-string reason", gapCatalog([gapRow({ availability: { status: "ready", reason_code: 7 } })])],
+    ["null examples", gapCatalog([gapRow({ examples: null })])],
+    ["array examples", gapCatalog([gapRow({ examples: [] })])],
+  ];
+  for (const key of ["id", "capability", "title", "description"]) {
+    badCatalogs.push(["required row string " + key, gapCatalog([gapRow({ [key]: null })])]);
+  }
+  for (const key of ["purpose", "technical_notes", "engine_binding", "native_route", "try_url", "discovery_url"]) {
+    badCatalogs.push(["optional row string " + key, gapCatalog([gapRow({ [key]: 7 })])]);
+  }
+  const validInput = { name: "text", type: "string", accepted: true };
+  for (const [key, value] of [
+    ["name", null], ["type", 7], ["accepted", undefined], ["accepted", "true"],
+    ["required", "true"], ["asset", 1], ["label", {}], ["description", []],
+    ["media_type", 4], ["accepted_media_types", "image/png"], ["accepted_media_types", ["image/png", null]],
+    ["minimum", "0"], ["maximum", "1"], ["minimum", Infinity], ["maximum", NaN], ["enum", {}],
+  ] as Array<[string, unknown]>) {
+    badCatalogs.push(["input " + key + " " + String(value), gapCatalog([
+      gapRow({ inputs: [{ ...validInput, [key]: value }] }),
+    ])]);
+  }
+  for (const key of ["name", "label", "media_type", "description"]) {
+    badCatalogs.push(["output " + key, gapCatalog([gapRow({ outputs: [{ name: "out", [key]: 4 }] })])]);
+  }
+  for (const key of ["available", "measured", "configured", "enabled", "up", "idle_startable"]) {
+    badCatalogs.push(["availability flag " + key, gapCatalog([
+      gapRow({ availability: { status: "ready", [key]: "true" } }),
+    ])]);
+  }
+  for (const key of ["curl", "python", "javascript"]) {
+    badCatalogs.push(["example " + key, gapCatalog([
+      gapRow({ examples: { ...workflows[0].examples, [key]: 7 } }),
+    ])]);
+  }
+
+  // Protects workflow-api.ts:115-117 at f1cac8a.
+  // Mutant: Return true from isWorkflowCatalog for the malformed payload named by the case.
+  test.each(badCatalogs)("G21 catalog guard rejects %s", (_name, payload) => {
+    // Infinity/NaN cases exercise the direct guard, not a fictitious JSON encoding.
+    expect(isWorkflowCatalog(payload)).toBe(false);
+  });
+
+  const optionalRowFields = [
+    "purpose", "technical_notes", "engine_binding", "native_route",
+    "try_url", "discovery_url", "typical_seconds", "outputs",
+  ];
+  const optionalInputFields = [
+    "required", "asset", "label", "description", "media_type",
+    "accepted_media_types", "minimum", "maximum", "enum",
+  ];
+  // Protects workflow-api.ts:84-86,109 at f1cac8a.
+  // Mutant: Require optional values to have their scalar/array type even when null or absent.
+  test.each([undefined, null])("G21 optional fields accept %s consistently", (empty) => {
+    const row: Record<string, unknown> = gapRow();
+    for (const key of optionalRowFields) row[key] = empty;
+    const input: Record<string, unknown> = { ...validInput };
+    for (const key of optionalInputFields) input[key] = empty;
+    row.inputs = [input];
+    row.availability = {
+      status: "ready", reason_code: empty, available: empty, measured: empty,
+      configured: empty, enabled: empty, up: empty, idle_startable: empty,
+    };
+    expect(isWorkflowCatalog(gapCatalog([row]))).toBe(true);
+  });
+
+  // Protects workflow-api.ts:108-109 at f1cac8a.
+  // Mutant: Require aliases.length > 0, rejecting the valid empty aliases array.
+  test("G21 guard accepts empty collections, boundary values and extra gateway catalog fields", () => {
+    expect(isWorkflowCatalog(gapCatalog([]))).toBe(true);
+    const payload = {
+      ...gapCatalog([gapRow({
+        aliases: [],
+        outputs: [{ name: "out", label: null, media_type: null, description: null }],
+        inputs: [{
+          name: "control", type: "number", accepted: false, required: false, asset: false,
+          minimum: 0, maximum: 1, enum: [], default: { preserved: true },
+          accepted_media_types: [],
+        }],
+        typical_seconds: 0,
+        availability: {
+          status: "configured", reason_code: "configured", available: false, measured: true,
+          configured: false, enabled: false, up: false, idle_startable: false,
+        },
+        recent_jobs: [{ job_id: "job-example", status: "running" }],
+      })]),
+      object: "workflow.catalog",
+      groups: [],
+      counts: { workflows: 1, capabilities: 1 },
+      links: { self: "/me/api/workflows" },
+    };
+    expect(isWorkflowCatalog(payload)).toBe(true);
+  });
+
+  // Protects workflow-api.ts:70 at f1cac8a.
+  // Mutant: Remove credentials: "same-origin" from readJson's fetch call.
+  test("G22 readJson preserves successful JSON and same-origin request options", async () => {
+    const payload = { arbitrary: ["a"], nested: { untouched: true } };
+    const fetcher = vi.fn(async () => Response.json(payload));
+    vi.stubGlobal("fetch", fetcher);
+    expect(await readJson<typeof payload>("/me/api/media?workflow=example&limit=5")).toEqual(payload);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith(
+      "/me/api/media?workflow=example&limit=5", { credentials: "same-origin" },
+    );
+  });
+
+  // Protects workflow-api.ts:71-72 at f1cac8a.
+  // Mutant: Delete the non-OK response check from readJson.
+  test("G22 readJson uses its own message for non-OK HTTP responses", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      error: { message: "Do not use the server message as this helper's oracle" },
+    }, { status: 403 })));
+    await expect(readJson("/me/api/media")).rejects.toThrow("Workflow data could not be loaded. Try again.");
+  });
+
+  // Protects workflow-api.ts:70-73 at f1cac8a.
+  // Mutant: Catch a network/JSON rejection and resolve {} instead.
+  test("G22 readJson preserves network rejection and rejects invalid JSON", async () => {
+    const networkError = new TypeError("offline");
+    vi.stubGlobal("fetch", vi.fn(async () => { throw networkError; }));
+    await expect(readJson("/me/api/media")).rejects.toBe(networkError);
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response("{", { headers: { "content-type": "application/json" } }),
+    ));
+    await expect(readJson("/me/api/media")).rejects.toThrow();
+  });
+
+  const badMedia: Array<[string, unknown]> = [
+    ["null envelope", null],
+    ["array envelope", []],
+    ["missing assets", {}],
+    ["jobs envelope is not assets", { jobs: [] }],
+    ["object assets", { assets: {} }],
+    ["null assets", { assets: null }],
+    ["null asset row", { assets: [null] }],
+    ["array asset row", { assets: [[]] }],
+    ["non-string id", { assets: [gapAsset({ asset_id: 2 })] }],
+    ["non-string kind", { assets: [gapAsset({ kind: 2 })] }],
+    ["non-number duration", { assets: [gapAsset({ generation_ms: "0" })] }],
+    ["boolean timestamp", { assets: [gapAsset({ created_at: false })] }],
+    ["object timestamp", { assets: [gapAsset({ created_at: {} })] }],
+  ];
+  for (const key of ["prompt", "model", "job_id", "workflow", "download_url", "request_id"]) {
+    badMedia.push(["optional string " + key, { assets: [gapAsset({ [key]: 4 })] }]);
+  }
+  // Protects workflow-api.ts:129 at f1cac8a.
+  // Mutant: Remove the isRecentAssets rejection from readRecentAssets.
+  test.each(badMedia)("G23 readRecentAssets rejects %s", async (_name, payload) => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(payload)));
+    await expect(readRecentAssets("/me/api/media")).rejects.toThrow(gapMediaError);
+  });
+
+  // Protects workflow-api.ts:130 at f1cac8a.
+  // Mutant: Return { assets: [] } instead of the accepted payload.
+  test.each([
+    { assets: [] },
+    { assets: [{ asset_id: gapAssetId, kind: "image" }] },
+    { assets: [gapAsset()] },
+    { assets: [gapAsset({ job_id: null, request_id: null, download_url: null, generation_ms: null })] },
+    { assets: [gapAsset({ created_at: 1700000000, generation_ms: 0 })] },
+    { assets: [gapAsset({ created_at: "2026-10-13T12:00:00Z" })] },
+    { assets: [gapAsset({ created_at: "unparsed timestamp", job_id: null })] },
+    {
+      assets: [gapAsset({
+        job_id: "job-example", request_id: "request-example", download_url: "/opaque-download",
+        workflow: workflows[0].id, model: "example-model", prompt: "Example output",
+        generation_ms: 1250,
+      })],
+      models: [],
+      next_cursor: null,
+    },
+  ])("G23 readRecentAssets returns accepted payload %# unchanged", async (payload) => {
+    // Timestamp strings are shape-checked, not parsed by this helper.
+    const fetcher = vi.fn(async () => Response.json(payload));
+    vi.stubGlobal("fetch", fetcher);
+    expect(await readRecentAssets("/me/api/media")).toEqual(payload);
+    expect(fetcher).toHaveBeenCalledWith("/me/api/media", { credentials: "same-origin" });
+  });
+
+  // Protects workflow-api.ts:71-72 at f1cac8a.
+  // Mutant: Replace readJson's HTTP error with the malformed recent-creations error.
+  test("G23 readRecentAssets preserves the HTTP failure distinct from malformed shape", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ assets: [] }, { status: 503 })));
+    await expect(readRecentAssets("/me/api/media")).rejects.toThrow(
+      "Workflow data could not be loaded. Try again.",
+    );
   });
 });

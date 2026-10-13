@@ -117,7 +117,7 @@ export function PlayDisc({ className }: { className?: string }) {
 export const playDiscButton = cn(
   scrim,
   disc,
-  "hover:bg-media-badge-hover focus-visible:ring-ring pointer-events-auto relative z-30 cursor-pointer transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none [&_svg]:fill-current",
+  "hover:bg-media-badge-hover focus-visible:ring-ring pointer-events-auto relative z-30 transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none [&_svg]:fill-current",
 );
 
 /**
@@ -127,7 +127,7 @@ export const playDiscButton = cn(
  */
 export const tilePlayButton = cn(
   scrim,
-  "hover:bg-media-badge-hover focus-visible:ring-ring pointer-events-auto absolute bottom-2 left-2 z-30 flex h-10 cursor-pointer items-center gap-1.5 rounded-badge px-2.5 transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none max-sm:min-h-11",
+  "hover:bg-media-badge-hover focus-visible:ring-ring pointer-events-auto absolute bottom-2 left-2 z-30 flex h-10 items-center gap-1.5 rounded-badge px-2.5 transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none max-sm:min-h-11",
 );
 
 /** The type glyph and length inside a tilePlayButton. */

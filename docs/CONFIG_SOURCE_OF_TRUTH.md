@@ -22,7 +22,7 @@ For the operator-facing first-run story this model implies, see
   provisioning input only — the things the gateway needs to start safely or
   import initial service records.
 - **`admin.db` and the dashboard** own runtime product state — owner/admin
-  roles, Apps, Profiles, App API keys, identity/Profile mappings, role/model
+  roles, Apps, Access plans, App API keys, identity/access-plan mappings, role/model
   bindings, admission caps, runtime routing toggles, OIDC provider settings,
   and the service/provider registry.
 - **A read-only service-registry export is shipped.** Authenticated
@@ -34,21 +34,20 @@ For the operator-facing first-run story this model implies, see
   `admin.db` operator settings table. Bootstrap branding and public URL values
   provide defaults until the first save. Saving does not change listener or
   TLS configuration. Default access-plan edits atomically replace only the
-  universal `all_users` runtime Profile mapping; specific identity mappings
+  universal `all_users` runtime Access plan mapping; specific identity mappings
   retain their existing priority and grants. Model aliases remain read-only
   bootstrap data.
 - **Advanced export is a redacted snapshot.** Owner-only
   `GET /admin/api/settings/effective/export` exports the current configuration,
   resolved OIDC provider, registry and runtime overrides. It is for inspection,
   does not restore a gateway, and cannot write bootstrap configuration.
-- **LAN placeholder keys are dashboard-owned runtime policy.** The
-  `lan_placeholder_keys` list lives in `admin.db` and is editable through
-  owner-only `GET/PUT /admin/api/settings/lan-placeholder-keys`. Its defaults
-  support clients that require a dummy key field; entries count as absent
-  only for resolved clients allowed by enabled LAN bypass. Edits are audited
-  and apply live; an empty list disables exemptions. Proxy trust and LAN
-  network eligibility remain bootstrap-owned. Real gateway key prefixes
-  cannot be configured as placeholders.
+- **Trusted addresses belong to Apps.** An owner adds them under
+  **Apps & keys → app menu → Trusted addresses**. A matching request without
+  a key uses that App and its access plan. Otherwise, a missing key returns
+  `401 key_required`. A sent key always wins. Placeholder keys such as
+  `loopback` return `401 key_invalid`; there is no placeholder-key list or
+  global LAN bypass. `X-Forwarded-For` counts only from proxies configured in
+  `auth.trusted_proxies`, which remains bootstrap-owned.
 - **OIDC uses the configured public origin.** When Settings has a public base
   URL, browser sign-in replaces the OIDC `redirect_uri` origin with that URL
   and keeps the callback path. For example, a login started on
@@ -69,13 +68,13 @@ For the operator-facing first-run story this model implies, see
   page there, including its query string. Local accounts use the requested
   relative page on the host where sign-in started. Invalid return paths fall
   back to `/`.
-- **Full provisioning / as-code reconciliation is deferred.** Default Profiles
+- **Full provisioning / as-code reconciliation is deferred.** Default Access plans
   and user-access defaults are seeded into `admin.db` on startup; once seeded,
   the dashboard is authoritative. No YAML "policy file" exists for those
   settings, and no full bundle restore or file-wins reconciliation exists.
 
 > **Implementation invariant.** The first-run access path is DB-backed:
-> `/setup/` and the web app create Apps, App keys, Profiles, identity/Profile
+> `/setup/` and the web app create Apps, App keys, Access plans, identity/access-plan
 > mappings, and user access defaults in `admin.db`. `admin.user_defaults` in
 > `proxy_config.yml` is a bootstrap seed only; after startup, dashboard/API
 > state is authoritative. The legacy `AZIZAM_USER_SELF_SERVICE` and
@@ -96,8 +95,8 @@ Concretely:
    Restart to apply. Provisioning bundles never carry secrets.
 2. **Dashboard plane** — `admin.db`, edited through the web app (and the
    `/admin/api/*` JSON surface). Runtime access policy: the admin user list,
-   role grants, Profiles, Apps, App API keys, user access defaults,
-   identity/Profile mappings, role→model bindings, admission caps, throttles,
+   role grants, Access plans, Apps, App API keys, user access defaults,
+   identity/access-plan mappings, role→model bindings, admission caps, throttles,
    runtime routing overrides, OIDC provider settings, and service/provider
    records — anything an operator should legitimately be able to change after
    boot without touching a file. Audited, applies live unless the apply_mode
@@ -140,7 +139,7 @@ pins the mapping; if you change one side you must change the other.
 | `resource admission` | dashboard   | caps, throttles, reserved tokens                | nothing                                          |
 | `workflow manifests` | provisioned | nothing                                         | the manifest files themselves                    |
 | `model compatibility`| bootstrap   | nothing                                         | the compatibility table file                     |
-| `auth/admin`         | dashboard   | instance presentation, OIDC provider settings, LAN placeholder key policy, admin user list, roles, Profiles, Apps, App keys, user access defaults, identity/Profile mappings | explicit session keys, trust roots, optional OIDC bootstrap fallback |
+| `auth/admin`         | dashboard   | instance presentation, OIDC provider settings, App trusted addresses, admin user list, roles, Access plans, Apps, App keys, user access defaults, identity/access-plan mappings | explicit session keys, trust roots, optional OIDC bootstrap fallback |
 
 Implications:
 
@@ -165,10 +164,10 @@ Implications:
   bootstrap fallback.
 - `admin.user_defaults` and the user-access env flags are bootstrap seeds, not
   ongoing runtime policy. On startup, the gateway imports self-service defaults
-  and identity Profile mappings into `admin.db` when they are not already
+  and identity Access plan mappings into `admin.db` when they are not already
   present. Disabled dashboard mappings are not re-enabled by the bootstrap
   seed.
-- Runtime Apps, Profiles, and keys live in `admin.db`. Bootstrap config stays
+- Runtime Apps, Access plans, and keys live in `admin.db`. Bootstrap config stays
   in YAML/env, but runtime authorization decisions do not read a key file.
 - Service/provider availability is read from the registry. `proxy_config.yml`
   can seed or provision registry records; it is not the normal live operator
@@ -211,7 +210,7 @@ the dashboard as the only edit surface for runtime policy.
   bootstrap plane exists for a reason (early-startup, secrets, deployment
   shape); collapsing it into `admin.db` would add a chicken-and-egg loader
   problem with no operator benefit.
-- A second policy editor inside Services or APIs. Policy stays on Profiles
+- A second policy editor inside Services or APIs. Policy stays on Access plans
   (see `docs/ADMIN_ACCESS_UX_RESEARCH.md`).
 - A second service-registry ownership mode. The dashboard makes provenance
   legible, but the DB/UI registry remains authoritative after its one-time

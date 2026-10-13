@@ -77,10 +77,10 @@ gateway-native namespace:
 ```
 
 The first two routes are discovery: they list provider lanes projected through
-the caller's App profile policy and return metadata for a single provider. Raw
+the caller's App access plan policy and return metadata for a single provider. Raw
 passthrough itself is reserved for the deeper
 `/gateway/v1/providers/{provider}/{path...}` route. Passthrough requests must
-use a key whose App profile allows the `provider-native` protocol, enables
+use a key whose App access plan allows the `provider-native` protocol, enables
 `native_passthrough`, and permits the requested provider and operation.
 
 ## Backend Adapter Targets

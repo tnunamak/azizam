@@ -1,0 +1,7 @@
+# A starter category the owner can add from the Categories page. Bundled data:
+# the gateway never reads the id or label, only the rows the owner saves.
+schema_version: 1
+id: adult
+label: Adult
+description: Content for adults only.
+visibility: owner

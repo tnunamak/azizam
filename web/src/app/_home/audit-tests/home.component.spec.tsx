@@ -242,6 +242,110 @@ describe("Home audit component behavior", () => {
     expect(requested).toContain("/me/api/home");
   });
 
+  it("keeps the loading header, Recent strip and task rows in the settled grid", async () => {
+    let finishHome!: (value: Response) => void;
+    let finishMedia!: (value: Response) => void;
+    const homeResponse = new Promise<Response>((resolve) => { finishHome = resolve; });
+    const mediaResponse = new Promise<Response>((resolve) => { finishMedia = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/me/api/home") return homeResponse;
+      if (path === "/me/api/media?limit=12") return mediaResponse;
+      return Response.json({});
+    }));
+    renderHome();
+
+    const loading = screen.getByRole("status", { name: "Loading Home" });
+    const recentPlaceholder = loading.querySelector('[data-slot="home-recent-loading"]')!;
+    const taskPlaceholder = loading.querySelector('[data-slot="home-tasks-loading"]')!;
+    expect(recentPlaceholder.nextElementSibling).toBe(taskPlaceholder);
+    expect(recentPlaceholder.parentElement).toHaveClass("flex", "flex-col", "gap-(--space-section)");
+    expect(recentPlaceholder.firstElementChild).toHaveClass("mb-3", "min-h-8", "max-sm:min-h-11");
+    const taskRows = taskPlaceholder.querySelectorAll('[data-slot="list-row"]');
+    expect(taskRows).toHaveLength(7);
+    for (const row of taskRows) {
+      expect(row).toHaveClass("min-h-(--row-1)", "max-sm:min-h-(--row-phone-1)");
+    }
+    const initialStrip = within(loading).getByRole("status", { name: "Loading recent creations" });
+    const stripClasses = initialStrip.className;
+    expect(initialStrip.children).toHaveLength(4);
+    for (const tile of initialStrip.children) {
+      expect(tile).toHaveClass("aspect-square", "rounded-media", "motion-reduce:animate-none");
+    }
+    const header = screen.getByRole("heading", { name: "Home", level: 1 }).closest("header")!;
+    expect(header.lastElementChild).toHaveClass("mt-1");
+    expect(Array.from(header.querySelectorAll("*")).some((element) => element.classList.contains("lg:hidden"))).toBe(true);
+
+    finishHome(Response.json(home));
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Loading Home" })).toBeNull());
+    const recent = screen.getByRole("region", { name: "Recent" });
+    const strip = within(recent).getByRole("status", { name: "Loading recent creations" });
+    expect(strip.className).toBe(stripClasses);
+    expect(recent.parentElement).toHaveClass("flex", "flex-col", "gap-(--space-section)");
+    expect(screen.getByRole("heading", { name: "Home", level: 1 }).closest("header")!.lastElementChild).toHaveClass("mt-1");
+
+    finishMedia(Response.json({ assets: [{
+      asset_id: "loaded-image",
+      kind: "image",
+      prompt: "A garden",
+      download_url: "/garden.png",
+    }] }));
+    const image = await within(recent).findByRole("link", { name: "Open Image in Library: A garden" });
+    expect(image).toHaveClass("aspect-square", "rounded-media");
+    expect(recent.querySelector("ul")!.className).toBe(stripClasses);
+    expect(within(recent).queryByRole("status", { name: "Loading recent creations" })).toBeNull();
+  });
+
+  it("reserves a square media row when Recent settles empty", async () => {
+    let finishMedia!: (value: Response) => void;
+    mockCraftHome(new Promise<Response>((resolve) => { finishMedia = resolve; }));
+    renderHome();
+    const recent = await screen.findByRole("region", { name: "Recent" });
+    await within(recent).findByRole("status", { name: "Loading recent creations" });
+    const body = recent.querySelector('[data-slot="recent-body"]')!;
+    const reserve = body.firstElementChild!;
+    expect(body).toHaveClass("grid", "grid-cols-4", ...mediaGridGap.split(" "));
+    expect(reserve).toHaveAttribute("aria-hidden", "true");
+    expect(reserve).toHaveClass("invisible", "aspect-square", "col-start-1", "row-start-1");
+    expect(body.lastElementChild).toHaveClass("col-span-4", "col-start-1", "row-start-1");
+
+    finishMedia(Response.json({ assets: [] }));
+    expect(await within(recent).findByText("Your creations will appear here.")).toBeVisible();
+    expect(body.firstElementChild).toBe(reserve);
+    expect(within(recent).queryByRole("status", { name: "Loading recent creations" })).toBeNull();
+  });
+
+  it("uses a reduced-motion-safe skeleton inside a pending video poster tile", async () => {
+    let finishPoster!: (value: Response) => void;
+    const posterResponse = new Promise<Response>((resolve) => { finishPoster = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/me/api/home") return Response.json(home);
+      if (path === "/me/api/media?limit=12") return Response.json({ assets: [{
+        asset_id: "delayed-video",
+        kind: "video",
+        prompt: "A fox",
+        download_url: "/fox.mp4",
+        poster_asset_id: "delayed-poster",
+      }] });
+      if (path === "/me/api/media/delayed-poster/download?scope=me") return posterResponse;
+      return Response.json({});
+    }));
+    renderHome();
+    const pending = await screen.findByRole("status", { name: "Loading video poster" });
+    expect(pending).toHaveAttribute("aria-busy", "true");
+    expect(pending).toHaveClass("size-full");
+    expect(pending.firstElementChild).toHaveClass("size-full", "rounded-none", "motion-reduce:animate-none");
+    expect(pending.querySelector("svg")).toBeNull();
+    const tile = screen.getByRole("link", { name: "Open Video in Library: A fox" });
+    expect(tile).toHaveClass("aspect-square", "rounded-media");
+
+    finishPoster(Response.json({ download_url: "/fox.jpg" }));
+    expect(await screen.findByRole("img", { name: "A fox" })).toHaveAttribute("src", "/fox.jpg");
+    expect(screen.getByRole("link", { name: "Open Video in Library: A fox" })).toBe(tile);
+    expect(screen.queryByRole("status", { name: "Loading video poster" })).toBeNull();
+  });
+
   it("stacks Recent and Make something with only the section gap", async () => {
     mockCraftHome();
     renderHome();

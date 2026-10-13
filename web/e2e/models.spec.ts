@@ -90,7 +90,7 @@ const seededCatalog = {
           available: true,
         },
       ],
-      provider: "OpenRouter",
+      provider: "provider-a",
       locality: "remote",
       cost: { kind: "paid", price: "$0.04 per image" },
       timing: { typical_seconds: null, source: null },
@@ -248,7 +248,7 @@ const seededCatalog = {
           available: true,
         },
       ],
-      provider: "OpenRouter",
+      provider: "provider-a",
       locality: "remote",
       cost: { kind: "paid", price: "$0.04 per image" },
       timing: { typical_seconds: null, source: null },
@@ -364,8 +364,8 @@ test("models seeded catalog: light at 1440px shows row facts and passes axe", as
   await preparePage(page, "light", 1440, seededCatalog);
   // The row's second line carries the chat tags in words.
   const chat = page.locator('li[data-model="chat"]');
-  await expect(chat.locator("p[title]")).toContainText("Reasoning");
-  await expect(chat.locator("p[title]")).toContainText("Vision");
+  await expect(chat.locator("p[title]")).toContainText("Thinks through questions");
+  await expect(chat.locator("p[title]")).toContainText("Understands images");
   await assertNoOverflow(page);
   await assertNoSeriousAxe(page);
   await page.screenshot({
@@ -392,7 +392,7 @@ test("models error catalog: light at 390px fits and passes axe", async ({
     503,
   );
   await expect(
-    page.getByText("The models list could not be loaded. Try again."),
+    page.getByText("We couldn't load the models. Try again."),
   ).toBeVisible();
   await assertNoOverflow(page);
   await assertNoSeriousAxe(page);

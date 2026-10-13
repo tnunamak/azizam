@@ -4,7 +4,7 @@ Status: implementation snapshot, 2026-10-03.
 
 This document describes the vendor-shaped front doors that exist in the gateway today. It is not a roadmap. Check `proxy.py` before changing it: most facades are registered there and delegate into pure translators under `gateway/`.
 
-The common rule is the same for all facades: they translate vendor protocol shapes into existing gateway routes. Auth, app profile policy, route receipts and backend selection stay in the core gateway path. When a vendor feature would require owning model files, hosted vendor tools, or a protocol engine the gateway does not have, the facade returns an explicit error.
+The common rule is the same for all facades: they translate vendor protocol shapes into existing gateway routes. Auth, app access plan policy, route receipts and backend selection stay in the core gateway path. When a vendor feature would require owning model files, hosted vendor tools, or a protocol engine the gateway does not have, the facade returns an explicit error.
 
 ## Anthropic Messages
 
@@ -66,7 +66,7 @@ DELETE /api/delete             DELETE /ollama/api/delete
 
 The read and inference routes translate Ollama request and response bodies in `gateway/protocols/ollama.py`. Chat and generate use the gateway chat path. Embed and embeddings use the gateway embeddings path. Streaming returns Ollama NDJSON. Empty chat or generate requests act as Ollama load or unload probes and do not call the chat backend.
 
-Auth uses the normal gateway API key handling. The discovery routes can be made bearer-free only when `auth.ollama_compat_discovery` or `OLLAMA_COMPAT_DISCOVERY` enables that behavior. Runtime policy is evaluated with Ollama-specific protocol names such as `ollama.chat`, `ollama.generate`, `ollama.embeddings` and `ollama.models`.
+Auth uses the normal gateway API key handling. Ollama discovery has no separate keyless mode. A missing key returns `401 key_required` unless an owner added the client address to an App under **Apps & keys → app menu → Trusted addresses**. A sent key always wins, so a placeholder such as `loopback` returns `401 key_invalid`. `X-Forwarded-For` counts only from `auth.trusted_proxies`. Runtime policy is evaluated with Ollama-specific protocol names such as `ollama.chat`, `ollama.generate`, `ollama.embeddings` and `ollama.models`.
 
 Known limits:
 
@@ -144,7 +144,7 @@ The last five POST routes return `501` with a reason.
 
 The A1111 facade is a thin subset for clients such as SillyTavern that expect Stable Diffusion WebUI routes at the host root. `txt2img` maps the active A1111 checkpoint to a synchronous `image.generate` workflow and calls `/v1/images/generations` in process. The response returns base64 images and an A1111-style `info` string. Per-key session state remembers the selected checkpoint.
 
-Auth accepts the normal gateway `Authorization: Bearer` and `x-api-key` forms. It also accepts SillyTavern-style Basic auth and treats the password, or the whole decoded string when no colon is present, as the gateway API key. The core image request is forwarded with that key as a bearer token, so normal app profile policy and receipts still apply.
+Auth accepts the normal gateway `Authorization: Bearer` and `x-api-key` forms. It also accepts SillyTavern-style Basic auth and treats the password, or the whole decoded string when no colon is present, as the gateway API key. The core image request is forwarded with that key as a bearer token, so normal app access plan policy and receipts still apply.
 
 Known limits:
 

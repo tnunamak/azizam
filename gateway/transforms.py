@@ -828,6 +828,20 @@ _ASCII_LOWER = {c: c + 32 for c in range(ord("A"), ord("Z") + 1)}
 _MAX_CARRY_BYTES = 1 << 20
 
 
+def _split_sse_lines(text: str, *, final: bool = True) -> list[tuple[str, str]]:
+    """Split only CRLF, LF and CR, optionally leaving a final CR unresolved."""
+    lines: list[tuple[str, str]] = []
+    start = 0
+    for match in re.finditer(r"\r\n|\r|\n", text):
+        if not final and match.group() == "\r" and match.end() == len(text):
+            break
+        lines.append((text[start:match.start()], match.group()))
+        start = match.end()
+    if start < len(text):
+        lines.append((text[start:], ""))
+    return lines
+
+
 class StreamingThinkSplitTransform:
     """Step 4b built-in: repair ``<think>`` / ``</think>`` tags split across SSE frames.
 
@@ -947,12 +961,18 @@ class StreamingThinkSplitTransform:
 
     def finish(self) -> bytes:
         """Release held text when the upstream closes without a finish frame or [DONE]."""
-        return self._flush_frame().encode("utf-8")
+        # Only a pending CR completes a carried line at EOF; unterminated data
+        # keeps the existing carry behavior.
+        pending = self.process_chunk(b"", _final=True) if self._raw_carry.endswith(b"\r") else b""
+        return pending + self._flush_frame().encode("utf-8")
 
-    def process_chunk(self, chunk: bytes) -> bytes:
+    def process_chunk(self, chunk: bytes, *, _final: bool = False) -> bytes:
         """Process one raw SSE read, repairing tags split across reads or frames."""
         data = self._raw_carry + chunk
-        cut = data.rfind(b"\n") + 1
+        # Latin-1 keeps character offsets equal to byte offsets, including
+        # partial UTF-8 sequences in an unfinished data line.
+        lines = _split_sse_lines(data.decode("latin-1"), final=_final)
+        cut = len(data) - (len(lines[-1][0]) if lines and not lines[-1][1] else 0)
         tail = data[cut:].lstrip()
         # Only an unfinished ``data:`` line is worth carrying; anything else passes through.
         if tail and (tail.startswith(b"data:") or b"data:".startswith(tail)):
@@ -962,32 +982,38 @@ class StreamingThinkSplitTransform:
                 data, self._raw_carry = data + self._raw_carry, b""
         else:
             self._raw_carry = b""
+        # Non-data text and oversized lines pass through immediately; only an
+        # ambiguous CR delimiter waits, not the non-data or oversized line.
+        if not _final and not self._raw_carry and data.endswith(b"\r"):
+            data, self._raw_carry = data[:-1], b"\r"
         if not data:
             return b""
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
-            self._raw_carry = b""
+            # An opaque prefix must not discard the held CR delimiter.
+            if self._raw_carry != b"\r":
+                self._raw_carry = b""
             return data
 
         out_lines: list[str] = []
-        for line in text.splitlines(keepends=True):
+        for line, newline in _split_sse_lines(text):
+            original = line + newline
             if not line.strip().startswith("data:"):
-                out_lines.append(line)
+                out_lines.append(original)
                 continue
             prefix, rest = line.split("data:", 1)
-            newline = "\r\n" if rest.endswith("\r\n") else "\n" if rest.endswith("\n") else ""
             rest = rest.strip()
             if rest == "[DONE]":
                 out_lines.append(self._flush_frame())
-                out_lines.append(line)
+                out_lines.append(original)
                 continue
             try:
                 payload = json.loads(rest) if rest else None
             except json.JSONDecodeError:
                 payload = None
             if not isinstance(payload, dict):
-                out_lines.append(line)
+                out_lines.append(original)
                 continue
             self._last_payload = payload
             changed = self._rewrite_payload(payload)
@@ -995,7 +1021,7 @@ class StreamingThinkSplitTransform:
             if changed:
                 out_lines.append(f"{prefix}data: {json.dumps(payload, separators=(',', ':'))}{newline}")
             else:
-                out_lines.append(line)
+                out_lines.append(original)
         return "".join(out_lines).encode("utf-8")
 
     # Protocol shims for registry compliance

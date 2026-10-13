@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import sqlite3
 from collections.abc import Callable, Mapping
@@ -15,10 +16,13 @@ from fastapi.responses import JSONResponse
 
 from gateway.admin_api import AdminAuth, _require_admin
 from gateway import category_policy as policy
+from gateway.category_presets import PresetError
 from gateway.category_store import (
     CategoryStore, CorruptSnapshotError, NoActiveSnapshotError,
     SnapshotNotFoundError, StaleBaseError,
 )
+
+log = logging.getLogger(__name__)
 
 
 class _AmbiguousProvenanceError(ValueError):
@@ -258,6 +262,15 @@ def _revision(value, optional=False):
     return value
 
 
+def _presets_or_none(presets: Callable[[], list[dict]]) -> list[dict]:
+    """The bundled starter categories; a malformed file costs the picker, not the page."""
+    try:
+        return presets()
+    except PresetError:
+        log.exception("bundled starter categories could not be read")
+        return []
+
+
 def _error(status, code, message):
     return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
 
@@ -272,7 +285,8 @@ def _pairs(pairs):
 
 
 def create_category_router(*, auth: AdminAuth, store_path: Path,
-                           service_catalog: Callable[[], list[dict]] = lambda: []) -> APIRouter:
+                           service_catalog: Callable[[], list[dict]] = lambda: [],
+                           presets: Callable[[], list[dict]] = lambda: []) -> APIRouter:
     router = APIRouter(prefix="/admin/api/categories", tags=["Categories"])
     # Delayed initialization means unauthorized calls never access the store.
 
@@ -322,7 +336,7 @@ def create_category_router(*, auth: AdminAuth, store_path: Path,
                 return _error(403, "owner_required", "Only the gateway owner can manage categories.")
             try:
                 if operation == "services":
-                    return {"services": service_catalog()}
+                    return {"services": service_catalog(), "presets": _presets_or_none(presets)}
                 body = {}
                 if method == "POST":
                     body = json.loads(raw, object_pairs_hook=_pairs,

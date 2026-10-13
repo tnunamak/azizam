@@ -95,7 +95,7 @@ it("keeps the engine out of the row and shows a measured speed only in Details",
   fireEvent.click(nameButton("chat"));
   expect(fact("Time per request")).toBe("About 151 ms, measured");
   // The engine label is for the owner; a member sees where it runs.
-  expect(fact("Runs on")).toBe("This gateway's engines");
+  expect(fact("Runs on")).toBe("On your equipment");
   expect(screen.queryByText("Household chat")).toBeNull();
 });
 

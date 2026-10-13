@@ -136,7 +136,7 @@ const seededCatalog = {
           available: true,
         },
       ],
-      provider: "OpenRouter",
+      provider: "provider-a",
       locality: "remote",
       cost: { kind: "paid", price: "$0.04 per image" },
       timing: { typical_seconds: null, source: null },
@@ -294,7 +294,7 @@ const seededCatalog = {
           available: true,
         },
       ],
-      provider: "OpenRouter",
+      provider: "provider-a",
       locality: "remote",
       cost: { kind: "paid", price: "$0.04 per image" },
       timing: { typical_seconds: null, source: null },
@@ -455,7 +455,7 @@ describe("seeded catalog", () => {
     expect(idsIn("Chat")).toEqual(["chat", "demo-chat"]);
     expect(idsIn("Images")).toEqual(["image", "provider/image-fast"]);
     // Row facts: tags in words, a local price, a remote price, quiet status.
-    expect(within(rowOf("chat")).getByTitle(/Tool use, Reasoning, Vision/)).toBeInTheDocument();
+    expect(within(rowOf("chat")).getByTitle(/Uses tools, Thinks through questions, Understands images/)).toBeInTheDocument();
     expect(rowHas("chat", "Local · no provider charge")).toBe(true);
     expect(rowHas("image", "$0.04 per image")).toBe(true);
     expect(rowHas("image", "Busy")).toBe(true);
@@ -490,9 +490,9 @@ describe("search, price and Details", () => {
     await user.click(screen.getByRole("combobox", { name: "Price" }));
     await user.click(screen.getByRole("option", { name: "Paid" }));
     const sheet = openDetails("image");
-    expect(sheet.getByText("Example request")).toBeVisible();
+    expect(sheet.getByText("Example for app setup")).toBeVisible();
     expect(sheet.getByText(/\/v1\/images\/generations/)).toBeVisible();
-    expect(sheet.getByText("Recent receipts")).toBeVisible();
+    expect(sheet.getByText("Recent activity")).toBeVisible();
   });
 
   it("omits time per request for a model with no timing data", async () => {
@@ -500,7 +500,7 @@ describe("search, price and Details", () => {
     await screen.findByRole("button", { name: "provider/image-fast" });
     openDetails("provider/image-fast");
     expect(fact("Time per request")).toBeUndefined();
-    expect(fact("Runs on")).toBe("OpenRouter");
+    expect(fact("Runs on")).toBe("provider-a");
     expect(screen.getByRole("dialog")).not.toHaveTextContent("Not measured yet");
   });
 });
@@ -520,7 +520,7 @@ describe("truthful metadata", () => {
 
     openDetails("chat");
     expect(fact("Time per request")).toBe("About 151 ms, measured");
-    expect(fact("Runs on")).toBe("This gateway's engines");
+    expect(fact("Runs on")).toBe("On your equipment");
     expect(fact("Engine or provider")).toBe("Household chat");
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     // A configured speed is "typical", not "measured".

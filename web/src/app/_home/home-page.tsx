@@ -26,7 +26,7 @@ import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { Skeleton, SkeletonRows } from "@/components/ui/skeleton";
+import { Skeleton } from "@/components/ui/skeleton";
 import { MakingTile } from "@/components/product/making-tile";
 import { RelativeTime } from "@/components/ui/relative-time";
 import {
@@ -136,22 +136,77 @@ function firstWords(value?: string | null): string | null {
   return words.slice(0, 12).join(" ");
 }
 
-/**
- * Home's skeleton is the page it becomes (DESIGN.md: skeletons in the final
- * layout): under the real header and a verdict placeholder, task rows at
- * 40 and the Connect card beside them on desktop.
- */
+const homeGrid = "grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,21rem)]";
+const homeSections = "flex min-w-0 flex-col gap-(--space-section) lg:col-start-1 lg:row-start-1";
+const homeConnect = "min-w-0 lg:col-start-2 lg:row-start-1 lg:mt-11";
+
+/** The same four square cells are used before Home and Recent settle. */
+function RecentLoading() {
+  return (
+    <div
+      role="status"
+      aria-label="Loading recent creations"
+      aria-busy="true"
+      className={cn("grid grid-cols-4", mediaGridGap)}
+    >
+      {[0, 1, 2, 3].map((item) => (
+        <Skeleton
+          key={item}
+          className="rounded-media aspect-square w-full motion-reduce:animate-none"
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Keep Recent, task rows and the Connect card in their settled positions. */
 function HomeLoading() {
   return (
     <div role="status" aria-label="Loading Home" aria-busy="true">
-      <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,21rem)]">
-        <div className="min-w-0">
-          <Skeleton className="mb-3 h-6 w-36" />
-          <div className="bg-card rounded-panel overflow-hidden border">
-            <SkeletonRows count={TASKS.length} />
+      <div className={homeGrid}>
+        <div className={homeSections}>
+          <div data-slot="home-recent-loading">
+            <div aria-hidden="true" className="mb-3 flex min-h-8 items-center justify-between gap-3 max-sm:min-h-11">
+              <Skeleton className="h-5 w-20 motion-reduce:animate-none" />
+              <Skeleton className="h-4 w-16 motion-reduce:animate-none" />
+            </div>
+            <RecentLoading />
+          </div>
+          <div data-slot="home-tasks-loading" aria-hidden="true">
+            <div className="mb-3 flex min-h-8 items-center">
+              <Skeleton className="h-5 w-36 motion-reduce:animate-none" />
+            </div>
+            <ListCard>
+              {TASKS.map((task) => (
+                <li
+                  key={task.key}
+                  data-slot="list-row"
+                  className="flex min-h-(--row-1) items-center gap-3 px-4 py-1.5 max-sm:min-h-(--row-phone-1)"
+                >
+                  <Skeleton className="size-4 shrink-0 motion-reduce:animate-none" />
+                  <Skeleton className="h-4 w-36 max-w-full motion-reduce:animate-none" />
+                </li>
+              ))}
+            </ListCard>
           </div>
         </div>
-        <Skeleton className="rounded-panel h-64 w-full lg:mt-11" />
+        <div className={homeConnect} aria-hidden="true">
+          <Card>
+            <div>
+              <Skeleton className="h-6 w-36 motion-reduce:animate-none" />
+              <Skeleton className="mt-1 h-10 w-full motion-reduce:animate-none" />
+            </div>
+            <div>
+              <Skeleton className="mb-2 h-5 w-20 motion-reduce:animate-none" />
+              <div className="grid grid-cols-2 gap-1.5">
+                {primaryAppChoices.map((name) => (
+                  <Skeleton key={name} className="rounded-control h-10 w-full motion-reduce:animate-none max-sm:h-11" />
+                ))}
+                <Skeleton className="rounded-control h-10 w-full motion-reduce:animate-none max-sm:h-11" />
+              </div>
+            </div>
+          </Card>
+        </div>
       </div>
     </div>
   );
@@ -813,7 +868,7 @@ function Connect({
           </div>
           {loadingKeyAccess ? (
             <div role="status" aria-label="Loading key access" aria-busy="true">
-              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full motion-reduce:animate-none" />
             </div>
           ) : !model ? (
             <div className="bg-muted rounded-control text-meta p-4">
@@ -990,9 +1045,10 @@ function CreationMedia({
       <div
         role="status"
         aria-label="Loading video poster"
-        className="bg-muted text-muted-foreground flex size-full items-center justify-center"
+        aria-busy="true"
+        className="size-full"
       >
-        <Loader2 aria-hidden="true" className="size-5 animate-spin" />
+        <Skeleton className="size-full rounded-none motion-reduce:animate-none" />
       </div>
     );
   }
@@ -1262,67 +1318,61 @@ function Recent({
           </Link>
         }
       />
-      {creationsPending ? (
-        <div
-          role="status"
-          aria-label="Loading recent creations"
-          aria-busy="true"
-          className={cn("grid grid-cols-4", mediaGridGap)}
-        >
-          {[0, 1, 2, 3].map((item) => (
-            <Skeleton
-              key={item}
-              className="rounded-media aspect-square w-full"
+      {/* Reserve one media row even for empty results, so tasks do not jump. */}
+      <div data-slot="recent-body" className={cn("grid grid-cols-4", mediaGridGap)}>
+        <div aria-hidden="true" className="pointer-events-none invisible col-start-1 row-start-1 aspect-square" />
+        <div className="col-span-4 col-start-1 row-start-1 min-w-0">
+          {creationsPending ? (
+            <RecentLoading />
+          ) : creationsError ? (
+            <ErrorState
+              message="We couldn't tell why your recent creations didn't load. Try again."
+              onRetry={() => void refetchCreations()}
+              retrying={creationsFetching}
             />
-          ))}
+          ) : (
+            <>
+              {!recentCreations.length && !making.length && !creations?.partial ? (
+                <p className="text-muted-foreground text-meta">Your creations will appear here.</p>
+              ) : null}
+              {creations?.partial ? (
+                <p role="status" className="text-muted-foreground text-meta mb-2">
+                  Recent results may be incomplete.
+                </p>
+              ) : null}
+              {/* Four across at every width: on a phone, a strip of the
+                  household's latest work right under the tasks (Apple Home's
+                  cameras sit on the first screen). */}
+              <ul className={cn("grid grid-cols-4", mediaGridGap)}>
+                {making.slice(0, 2).map((receipt) => {
+                  const kind = inFlightKind(receipt);
+                  if (!kind) return null;
+                  const at = receipt.accepted_at_ms
+                    ? receipt.accepted_at_ms / 1000
+                    : receipt._stored_at;
+                  return (
+                    <li key={receipt.request_id}>
+                      <MakingTile
+                        kind={kind}
+                        startedAt={at}
+                        risk={runningRisk(receipt, views)}
+                      />
+                    </li>
+                  );
+                })}
+                {recentCreations
+                  .slice(0, 4 - Math.min(making.length, 2))
+                  .map((creation) => (
+                    <CreationPreview
+                      key={`${creation.asset_id}:${creation.download_url ?? ""}:${creation.poster_asset_id ?? ""}`}
+                      creation={creation}
+                    />
+                  ))}
+              </ul>
+            </>
+          )}
         </div>
-      ) : creationsError ? (
-        <ErrorState
-          message="We couldn't tell why your recent creations didn't load. Try again."
-          onRetry={() => void refetchCreations()}
-          retrying={creationsFetching}
-        />
-      ) : (
-        <>
-          {!recentCreations.length && !making.length && !creations?.partial ? (
-            <p className="text-muted-foreground text-meta">Your creations will appear here.</p>
-          ) : null}
-          {creations?.partial ? (
-            <p role="status" className="text-muted-foreground text-meta mb-2">
-              Recent results may be incomplete.
-            </p>
-          ) : null}
-          {/* Four across at every width: on a phone, a strip of the
-              household's latest work right under the tasks (Apple Home's
-              cameras sit on the first screen). */}
-          <ul className={cn("grid grid-cols-4", mediaGridGap)}>
-            {making.slice(0, 2).map((receipt) => {
-              const kind = inFlightKind(receipt);
-              if (!kind) return null;
-              const at = receipt.accepted_at_ms
-                ? receipt.accepted_at_ms / 1000
-                : receipt._stored_at;
-              return (
-                <li key={receipt.request_id}>
-                  <MakingTile
-                    kind={kind}
-                    startedAt={at}
-                    risk={runningRisk(receipt, views)}
-                  />
-                </li>
-              );
-            })}
-            {recentCreations
-              .slice(0, 4 - Math.min(making.length, 2))
-              .map((creation) => (
-                <CreationPreview
-                  key={`${creation.asset_id}:${creation.download_url ?? ""}:${creation.poster_asset_id ?? ""}`}
-                  creation={creation}
-                />
-              ))}
-          </ul>
-        </>
-      )}
+      </div>
     </section>
   );
 }
@@ -1366,8 +1416,12 @@ export default function HomePage() {
     <div className="min-w-0">
       {homePending ? (
         <>
-          <PageHeader title="Home">
-            <Skeleton className="h-5 w-56" />
+          <PageHeader
+            title="Home"
+            tight
+            actions={<Skeleton aria-hidden="true" className="h-8 w-36 motion-reduce:animate-none max-sm:h-11 lg:hidden" />}
+          >
+            <Skeleton className="h-5 w-56 max-w-full motion-reduce:animate-none" />
           </PageHeader>
           <HomeLoading />
         </>
@@ -1471,8 +1525,8 @@ export default function HomePage() {
           </PageHeader>
           {/* Sections 32 apart (--space-section), the Connect card 32 to the
               side on desktop and 32 below on phones and tablets. */}
-          <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,21rem)]">
-            <div className="flex min-w-0 flex-col gap-(--space-section) lg:col-start-1 lg:row-start-1">
+          <div className={homeGrid}>
+            <div className={homeSections}>
               {refusal ? (
                 <CapNotice
                   warning={
@@ -1494,7 +1548,7 @@ export default function HomePage() {
               />
             </div>
             {/* Top aligned with the first list, under its section heading. */}
-            <div className="min-w-0 lg:col-start-2 lg:row-start-1 lg:mt-11">
+            <div className={homeConnect}>
               <Connect home={home} startOpen={newcomer} />
             </div>
           </div>

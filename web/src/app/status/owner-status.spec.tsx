@@ -8,7 +8,13 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ApiError, api, type ServiceRegistry, type StatusPayload } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  type CurrentHealthService,
+  type ServiceRegistry,
+  type StatusPayload,
+} from "@/lib/api";
 import { StatusClient } from "./status-client";
 
 vi.mock("next/navigation", () => ({
@@ -372,7 +378,7 @@ it("summarizes connection failures without putting raw transport text in the ans
     screen.getAllByRole("heading", { name: "Chat is unavailable right now" }),
   ).toHaveLength(1);
   expect(
-    screen.getAllByText("Local chat is not accepting connections.", {
+    screen.getAllByText("Local chat is not running.", {
       exact: true,
     }),
   ).toHaveLength(1);
@@ -388,7 +394,7 @@ it("summarizes connection failures without putting raw transport text in the ans
     within(header).queryByText("Connection refused", { exact: true }),
   ).not.toBeInTheDocument();
   expect(
-    within(header).queryByText("Local chat is not accepting connections", {
+    within(header).queryByText("Local chat is not running", {
       exact: true,
     }),
   ).not.toBeInTheDocument();
@@ -455,11 +461,11 @@ it("groups engines with the same problem into one action row", async () => {
     .closest("section")!;
   expect(within(attention).getAllByRole("article")).toHaveLength(1);
   expect(
-    within(attention).getAllByText(/(is|are) not accepting connections/),
+    within(attention).getAllByText(/(is|are) not running/),
   ).toHaveLength(1);
   expect(
     within(attention).getByRole("heading", {
-      name: "2 engines are not accepting connections",
+      name: "2 engines are not running",
     }),
   ).toBeVisible();
   expect(
@@ -766,4 +772,175 @@ it.each([new TypeError("Failed to fetch"), new ApiError("failed", "private excep
   expect(within(card).getByRole("button", { name: "Retry" })).toBeVisible();
   expect(screen.queryByText("private exception")).toBeNull();
   expect(screen.queryByText("No engines yet")).toBeNull();
+});
+
+function engineSnapshot(
+  health: Partial<CurrentHealthService> = {},
+  observedAt: number | null = Date.now() / 1000 - 120,
+): StatusPayload {
+  return {
+    generated_at: Date.now() / 1000,
+    current_health: {
+      state: "ok",
+      tone: "ok",
+      label: "Ready",
+      detail: "Ready",
+      observation_available: true,
+      services: [{
+        service_id: "chat",
+        name: "Local chat",
+        engine_label: "Local chat",
+        capability_title: "Chat",
+        capability_labels: ["Chat"],
+        icon_key: "chat",
+        configured: true,
+        enabled: true,
+        role: "primary",
+        routable: true,
+        observation: "up",
+        tone: "ok",
+        in_use: true,
+        last_error: null,
+        ...health,
+      }],
+    },
+    backends: [{
+      service_id: "chat",
+      observed_at_s: observedAt,
+      history: { status_series: [[Date.now() / 1000 - 60, 0]] },
+    }],
+  } as unknown as StatusPayload;
+}
+
+async function visibleChatRow() {
+  await waitFor(() => {
+    expect(
+      screen.queryByRole("button", { name: "Local chat" }) ??
+      screen.queryByRole("button", { name: /Show all/ }),
+    ).not.toBeNull();
+  });
+  const fold = screen.queryByRole("button", { name: /Show all/ });
+  if (fold) await userEvent.click(fold);
+  return (await screen.findByRole("button", { name: "Local chat" })).closest("tr")!;
+}
+
+it.each(["down", "stopped"])(
+  "shows a neutral idle row for a stopped standby engine (%s), even with an old refusal",
+  async (observation) => {
+    mount(engineSnapshot({
+      observation, tone: "neutral", in_use: false, last_error: "Connection refused",
+    }));
+    const row = await visibleChatRow();
+    const idle = within(row).getByText("Idle, starts when needed");
+    expect(idle).toBeVisible();
+    expect(row).not.toHaveTextContent(/Ready|Down|Not running|h up/);
+    expect(row.querySelector('[class*="danger"], [class*="warning"], [class*="destructive"]')).toBeNull();
+    expect(within(row).queryByRole("img")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Needs attention" })).toBeNull();
+    await userEvent.click(within(row).getByRole("button", { name: "Local chat" }));
+    expect(within(screen.getByRole("dialog", { name: "Local chat" })).getByText(/Idle, starts when needed/)).toBeVisible();
+  },
+);
+
+it("counts idle engines separately from ready engines in the folded summary", async () => {
+  const status = engineSnapshot({ observation: "down", tone: "neutral", in_use: false });
+  status.current_health!.signals = [{
+    source: "disk", tone: "warn", reasons: ["Disk needs attention."],
+  }];
+  mount(status);
+  expect(await screen.findByRole("button", {
+    name: "Engines: 1 idle, 1 turned off. Show all",
+  })).toBeVisible();
+});
+
+it.each([
+  ["ConnectTimeout: timed out", "Did not answer in time"],
+  ["Connection timed out", "Did not answer in time"],
+  ["connect ETIMEDOUT 127.0.0.1:8000", "Did not answer in time"],
+  ["Connection refused", "Not running"],
+  ["ConnectionRefusedError", "Not running"],
+  ["connect ECONNREFUSED 127.0.0.1:8000", "Not running"],
+])("uses plain connection-failure copy for %s", async (last_error, word) => {
+  mount(engineSnapshot({ observation: "down", tone: "bad", last_error }));
+  await screen.findByRole("heading", { name: "Needs attention" });
+  const row = await visibleChatRow();
+  expect(within(row).getByText(word, { exact: true })).toBeVisible();
+  expect(within(row).queryByText("Down", { exact: true })).toBeNull();
+  expect(within(row).queryByText(last_error, { exact: true })).toBeNull();
+  await userEvent.click(within(row).getByRole("button", { name: "Local chat" }));
+  const sheet = screen.getByRole("dialog", { name: "Local chat" });
+  expect(within(sheet).getByText(`Chat · ${word}`)).toBeVisible();
+  expect(within(sheet).getByText(last_error, { exact: true })).toBeVisible();
+});
+
+it("does not call a disabled engine idle", async () => {
+  const disabledRegistry = {
+    ...chatRegistry,
+    services: { ...chatRegistry.services, chat: { ...chatRegistry.services.chat, enabled: false } },
+  };
+  mount(engineSnapshot({ observation: "down", tone: "neutral", in_use: false }), disabledRegistry);
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Off", { exact: true })).toBeVisible();
+  expect(within(row).queryByText("Idle, starts when needed")).toBeNull();
+});
+
+it("does not let an old refusal override a currently healthy engine", async () => {
+  mount(engineSnapshot({ last_error: "Connection refused" }));
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Ready", { exact: true })).toBeVisible();
+  expect(within(row).queryByText("Not running")).toBeNull();
+});
+
+it("does not turn unavailable observations into idle or connection-failure claims", async () => {
+  const status = engineSnapshot({ observation: "down", tone: "neutral", in_use: false, last_error: "Connection refused" });
+  status.current_health!.observation_available = false;
+  mount(status);
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Unknown", { exact: true })).toBeVisible();
+  expect(within(row).queryByText(/Idle, starts when needed|Not running/)).toBeNull();
+});
+
+it("shows recorded engine and provider check times in the always-visible state cell", async () => {
+  const now = 1_800_000_000;
+  vi.spyOn(Date, "now").mockReturnValue(now * 1000);
+  homeCapabilities.rows = freshChat();
+  providerState.state = "ready";
+  providerState.providers = [{
+    id: "remote", name: "Data provider", enabled: true, reachable: true,
+    keyState: "set", spendText: "", checkedAt: now - 180,
+  }];
+  mount(engineSnapshot({}, now - 120));
+  const engine = await visibleChatRow();
+  const provider = screen.getByRole("button", { name: "Data provider details" }).closest("tr")!;
+  for (const row of [engine, provider]) {
+    const checked = within(row).getByText(/Last checked/);
+    expect(checked).toHaveTextContent(/^Last checked .+ago$/);
+    expect(checked).not.toHaveTextContent(/not recorded|just now/);
+    expect(checked.closest("td")).not.toHaveClass("hidden");
+  }
+  expect(within(engine).getByText(/Last checked/)).not.toHaveTextContent(
+    within(provider).getByText(/Last checked/).textContent!,
+  );
+});
+
+it.each([null, 0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+  "does not invent a check time from the payload generation time when the recorded time is %s",
+  async (observedAt) => {
+    mount(engineSnapshot({}, observedAt));
+    const row = await visibleChatRow();
+    expect(within(row).getByText("Last checked: not recorded")).toBeVisible();
+  },
+);
+
+it("removes stale idle copy and check times after a failed refresh", async () => {
+  mount(engineSnapshot({ observation: "down", tone: "neutral", in_use: false }));
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Idle, starts when needed")).toBeVisible();
+  vi.mocked(api.status).mockRejectedValue(new Error("offline"));
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByRole("heading", { name: "Engine health couldn’t load" });
+  const refreshed = await visibleChatRow();
+  expect(within(refreshed).getByText("Unknown", { exact: true })).toBeVisible();
+  expect(within(refreshed).getByText("Last checked: not recorded")).toBeVisible();
+  expect(within(refreshed).queryByText("Idle, starts when needed")).toBeNull();
 });

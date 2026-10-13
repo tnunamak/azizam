@@ -457,3 +457,57 @@ def test_a_stray_close_cut_between_frames_is_still_routed():
     # "r" went out before the cut tag could be known to be a close tag; the held tag text is not leaked.
     assert _stream(_frame("r</thi"), _frame("nk><think>x</think>v")) == ("rv", "x")
     assert _stream(_frame("</thi"), _frame("nk><think>x</think>v")) == ("v", "x")
+
+
+def test_lone_cr_sse_lines_are_rewritten_with_their_terminators():
+    transform = StreamingThinkSplitTransform()
+    raw = b'data: {"choices":[{"delta":{"content":"<think>a</think>b"}}]}\r\r: keepalive\r'
+    expected = b'data: {"choices":[{"delta":{"content":"b","reasoning_content":"a"}}]}\r\r: keepalive'
+    assert transform.process_chunk(raw) == expected
+    assert transform.finish() == b"\r"
+
+
+@pytest.mark.parametrize("prefix", [b": keepalive", b"event: ping", b"\xff"])
+def test_a_crlf_split_between_reads_holds_the_cr_until_the_lf_arrives(prefix):
+    transform = StreamingThinkSplitTransform()
+    assert transform.process_chunk(prefix + b"\r") == prefix
+    raw = b'data: {"choices":[{"delta":{"content":"<think>a</think>b"}}]}'
+    assert transform.process_chunk(b"\n" + raw + b"\r") == b"\r\n"
+    expected = b'data: {"choices":[{"delta":{"content":"b","reasoning_content":"a"}}]}\r\n\r\n'
+    assert transform.process_chunk(b"\n\r\n") == expected
+    assert transform.finish() == b""
+
+
+def test_a_raw_unicode_line_separator_in_json_is_not_an_sse_line_end():
+    transform = StreamingThinkSplitTransform()
+    raw = 'data: {"choices":[{"delta":{"content":"<think>a\u2028b</think>c"}}]}\n\n'.encode()
+    expected = b'data: {"choices":[{"delta":{"content":"c","reasoning_content":"a\\u2028b"}}]}\n\n'
+    assert transform.process_chunk(raw) == expected
+    assert transform.finish() == b""
+
+
+def test_mixed_sse_terminators_in_one_chunk_are_preserved_on_rewrite():
+    transform = StreamingThinkSplitTransform()
+    raw = b'data: {"choices":[{"delta":{"content":"<think>a</think>b"}}]}'
+    rewritten = b'data: {"choices":[{"delta":{"content":"b","reasoning_content":"a"}}]}'
+    chunk = b": first\r" + raw + b"\r" + raw + b"\n" + raw + b"\r\n\r\n"
+    expected = b": first\r" + rewritten + b"\r" + rewritten + b"\n" + rewritten + b"\r\n\r\n"
+    assert transform.process_chunk(chunk) == expected
+    assert transform.finish() == b""
+
+
+def test_a_final_lone_cr_is_flushed_as_a_rewritten_data_line_terminator(monkeypatch):
+    transform = StreamingThinkSplitTransform()
+    raw = b'data: {"choices":[{"delta":{"content":"<think>a</think>b"}}]}\r'
+    assert transform.process_chunk(raw) == b""
+    expected = b'data: {"choices":[{"delta":{"content":"b","reasoning_content":"a"}}]}\r'
+    assert transform.finish() == expected
+    assert transform.finish() == b""
+
+    # Overflow still passes the line through instead of carrying it, while
+    # the one ambiguous delimiter byte stays within the carry budget.
+    monkeypatch.setattr(t, "_MAX_CARRY_BYTES", 8)
+    oversized = StreamingThinkSplitTransform()
+    assert oversized.process_chunk(raw) == expected[:-1]
+    assert oversized._raw_carry == b"\r"
+    assert oversized.finish() == b"\r"

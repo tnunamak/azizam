@@ -778,6 +778,10 @@ it("lets an owner pick an access plan, and sets it before any key is minted", as
   renderApps(owner);
   await openNewApp("Dictation");
   const select = await screen.findByRole("combobox", { name: "Access plan" });
+  // A key has no permissions of its own: it gets its app's plan.
+  expect(
+    screen.getByText(/A key can use only what its app.s access plan allows/),
+  ).toBeVisible();
   expect(select).toHaveTextContent("Same as you (Family)");
   expect(screen.getByText("Chat and Images.")).toBeVisible();
   await choosePlan("Access plan", "Local only");

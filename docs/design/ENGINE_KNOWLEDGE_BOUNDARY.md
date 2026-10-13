@@ -242,7 +242,7 @@ planned migrations remains UNVERIFIED; these test counts do not establish it.
 The gateway must **not** be in the business of tracking inference engines **in code**.
 Engines churn (~2yr half-life); the OpenAI/Anthropic/ElevenLabs-style contracts the
 gateway fronts are stable. The gateway's durable value is engine-**agnostic**: a stable
-OpenAI-compatible front door (auth, profiles, routing, honest observability) over whatever
+OpenAI-compatible front door (auth, access plans, routing, honest observability) over whatever
 the operator points it at.
 
 **The line:** engine-specific knowledge is acceptable as **DATA** (seed rows, presets,

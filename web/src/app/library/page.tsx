@@ -4,10 +4,13 @@ import Link from "next/link";
 import { JobResult } from "@/components/jobs/job-notices";
 
 import {
+  memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -106,6 +109,7 @@ import {
   modelDisplayName,
   tileDate,
   captionTitle,
+  thumbnailSize,
   type CapabilityNameRow,
 } from "./library-format";
 
@@ -968,6 +972,9 @@ function Preview({
   // The server's small preview stands in as the video poster too: no
   // per-tile poster link, and no video bytes until the person presses play.
   const thumbUrl = asset.thumbnail_url && !thumbFailed && !retrySrc ? asset.thumbnail_url : undefined;
+  const previewSize = thumbUrl
+    ? thumbnailSize(asset.width, asset.height)
+    : { width: asset.width ?? 1024, height: asset.height ?? 768 };
   const posterUrl = thumbUrl ?? poster?.download_url;
   const effectivePosterUrl = posterFailed ? undefined : posterUrl;
   const currentSrc = retrySrc ?? src;
@@ -1046,8 +1053,8 @@ function Preview({
         unoptimized
         loading="lazy"
         decoding="async"
-        width={asset.width ?? 1024}
-        height={asset.height ?? 768}
+        width={large ? (asset.width ?? 1024) : previewSize.width}
+        height={large ? (asset.height ?? 768) : previewSize.height}
         src={imageSrc}
         alt={assetTitle(asset)}
         onError={() => (imageSrc === thumbUrl ? setThumbFailed(true) : setMediaFailed(true))}
@@ -1117,8 +1124,8 @@ function Preview({
             unoptimized
             loading="lazy"
             decoding="async"
-            width={asset.width ?? 1024}
-            height={asset.height ?? 768}
+            width={previewSize.width}
+            height={previewSize.height}
             src={effectivePosterUrl}
             alt={assetTitle(asset)}
             onError={() => (effectivePosterUrl === thumbUrl ? setThumbFailed(true) : setPosterFailed(true))}
@@ -1184,8 +1191,8 @@ function Preview({
         unoptimized
         loading="lazy"
         decoding="async"
-        width={asset.width ?? 1024}
-        height={asset.height ?? 768}
+        width={previewSize.width}
+        height={previewSize.height}
         src={effectivePosterUrl}
         alt={assetTitle(asset)}
         onError={() => (effectivePosterUrl === thumbUrl ? setThumbFailed(true) : setPosterFailed(true))}
@@ -1248,18 +1255,32 @@ function usePeople(enabled: boolean, sources: MediaSource[]) {
         .filter((person) => person.name && !person.name.includes("@")),
     [users],
   );
-  const lookup: PersonLookup = (asset) => {
+  // Preserve the first match, as find() did, including an absent app id.
+  const ownersByApp = useMemo(() => {
+    const owners = new Map<string | undefined, string | null | undefined>();
+    for (const source of sources) {
+      if (!owners.has(source.app_id))
+        owners.set(source.app_id, source.owner_user_id);
+    }
+    return owners;
+  }, [sources]);
+  const namesById = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const person of people) {
+      if (!names.has(person.id)) names.set(person.id, person.name);
+    }
+    return names;
+  }, [people]);
+  const lookup: PersonLookup = useCallback((asset) => {
     if (asset.owner_name) return asset.owner_name;
     const appId =
       asset.source?.app_id ??
       (asset.source?.id?.startsWith("app:")
         ? asset.source.id.slice(4)
         : undefined);
-    const owner = sources.find(
-      (source) => source.app_id === appId,
-    )?.owner_user_id;
-    return people.find((person) => person.id === owner)?.name ?? null;
-  };
+    const owner = ownersByApp.get(appId);
+    return owner == null ? null : namesById.get(owner) ?? null;
+  }, [ownersByApp, namesById]);
   return { people, lookup, query: { isError, isFetching, refetch } };
 }
 
@@ -1276,19 +1297,61 @@ function toDateValue(ts: MediaAsset["created_at"]): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function AssetTile({
+/**
+ * Supplement native Tab/Enter/Space with spatial navigation on tile open
+ * buttons only. Playback controls retain their own keyboard behavior.
+ * Keep native button semantics: this is not an ARIA composite grid.
+ */
+function navigateTiles(event: KeyboardEvent<HTMLDivElement>) {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+    return;
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement) || !target.hasAttribute("data-asset-open"))
+    return;
+  const keys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"];
+  if (!keys.includes(event.key)) return;
+  const tiles = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("[data-asset-open]"));
+  const index = tiles.indexOf(target);
+  if (index < 0) return;
+  event.preventDefault();
+  let next = target;
+  if (event.key === "Home") next = tiles[0];
+  else if (event.key === "End") next = tiles[tiles.length - 1];
+  else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+    const rtl = getComputedStyle(event.currentTarget).direction === "rtl";
+    const step = (event.key === "ArrowRight" ? 1 : -1) * (rtl ? -1 : 1);
+    next = tiles[index + step] ?? target;
+  } else {
+    // Use rendered rows, including any in-progress tiles and responsive gaps.
+    const rect = target.getBoundingClientRect();
+    const down = event.key === "ArrowDown";
+    const candidates = tiles.map((tile) => ({ tile, rect: tile.getBoundingClientRect() }))
+      .filter((item) => down ? item.rect.top > rect.top + 1 : item.rect.top < rect.top - 1);
+    candidates.sort((a, b) =>
+      Math.abs(a.rect.top - rect.top) - Math.abs(b.rect.top - rect.top) ||
+      Math.abs(a.rect.left + a.rect.width / 2 - rect.left - rect.width / 2) -
+        Math.abs(b.rect.left + b.rect.width / 2 - rect.left - rect.width / 2));
+    next = candidates[0]?.tile ?? target;
+  }
+  next.focus();
+}
+
+const AssetTile = memo(function AssetTile({
   asset,
   onOpen,
   everyone,
   person,
   selected,
   day,
+  today,
 }: {
   asset: MediaAsset;
   onOpen: (asset: MediaAsset) => void;
   everyone: boolean;
   person: string | null;
   selected: boolean;
+  /** Local day boundary; unchanged during unrelated page updates. */
+  today: number;
   /** The day label, on the first tile of each day only. */
   day?: string | null;
 }) {
@@ -1302,7 +1365,7 @@ function AssetTile({
   // The first tile of a day already wears the day chip.
   const hoverDate = day
     ? null
-    : tileDate(toDateValue(asset.created_at), new Date());
+    : tileDate(toDateValue(asset.created_at), new Date(today));
   return (
     <article
       className="group relative min-w-0"
@@ -1323,7 +1386,7 @@ function AssetTile({
         type="button"
         data-asset-open={asset.asset_id}
         onClick={() => onOpen(asset)}
-        className="rounded-media absolute inset-0 z-10"
+        className="rounded-media absolute inset-0 z-10 min-h-6 min-w-6 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         aria-label={`Open ${assetTitle(asset)}`}
         aria-describedby={
           everyone && person && makerTooltip ? `maker-${asset.asset_id}` : undefined
@@ -1390,7 +1453,7 @@ function AssetTile({
           <div
             aria-hidden="true"
             className={cn(
-              "dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden",
+              "dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) motion-reduce:transition-none group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden",
               asset.kind === "image" ? "bottom-0" : "bottom-14",
             )}
           >
@@ -1407,7 +1470,7 @@ function AssetTile({
       </div>
     </article>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /* Filters                                                             */
@@ -1666,6 +1729,7 @@ function CreationViewer({
       ),
     retry: false,
   });
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const prompt = asset.prompt?.trim() ?? "";
   // The maker of an item with no prompt learns why, when their settings say.
   const viewer = useViewer();
@@ -1718,16 +1782,24 @@ function CreationViewer({
   return (
     <DialogPrimitive.Root open onOpenChange={(open) => !open && onClose()}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="bg-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 fixed inset-0 z-50" />
+        <DialogPrimitive.Overlay className="bg-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none motion-reduce:data-[state=open]:animate-none fixed inset-0 z-50" />
         <DialogPrimitive.Content
           aria-describedby={undefined}
+          aria-modal="true"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            titleRef.current?.focus();
+          }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             onReturnFocus(asset.asset_id);
           }}
           onKeyDown={(event) => {
             const target = event.target;
-            if (target instanceof HTMLMediaElement) return;
+            // Portalled menus and media controls own their arrow keys.
+            if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey ||
+              !(target instanceof Element) || !event.currentTarget.contains(target) ||
+              target instanceof HTMLMediaElement) return;
             if (
               target instanceof Element &&
               target.closest(
@@ -1735,10 +1807,16 @@ function CreationViewer({
               )
             )
               return;
-            if (event.key === "ArrowLeft" && previous) onSelect(previous);
-            if (event.key === "ArrowRight" && next) onSelect(next);
+            if (event.key === "ArrowLeft" && previous) {
+              event.preventDefault();
+              onSelect(previous);
+            }
+            if (event.key === "ArrowRight" && next) {
+              event.preventDefault();
+              onSelect(next);
+            }
           }}
-          className="bg-background shadow-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 md:rounded-panel fixed inset-0 z-50 flex flex-col overflow-y-auto md:inset-6 md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:overflow-hidden lg:inset-10"
+          className="bg-background shadow-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none motion-reduce:data-[state=open]:animate-none md:rounded-panel fixed inset-0 z-50 flex flex-col overflow-y-auto md:inset-6 md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:overflow-hidden lg:inset-10"
         >
           <div className="bg-media-stage relative flex min-h-[50dvh] shrink-0 items-center justify-center md:min-h-0">
             <div
@@ -1816,7 +1894,7 @@ function CreationViewer({
                 </p>
               ) : null}
               <div className="flex items-start justify-between gap-3">
-                <DialogPrimitive.Title className="text-verdict min-w-0 text-balance break-words">
+                <DialogPrimitive.Title ref={titleRef} tabIndex={-1} className="text-verdict min-w-0 text-balance break-words">
                   {title}
                 </DialogPrimitive.Title>
                 <div className="-mt-1 -mr-1.5 flex shrink-0 items-center gap-1">
@@ -2099,7 +2177,8 @@ function focusTile(
 ) {
   const tiles = Array.from(
     document.querySelectorAll<HTMLElement>("[data-asset-open]"),
-  ).filter((tile) => !removed.has(tile.dataset.assetOpen ?? ""));
+  ).filter((tile) => !removed.has(tile.dataset.assetOpen ?? "") &&
+    !tile.closest("details:not([open]), [hidden]"));
   (
     tiles.find((tile) => tile.dataset.assetOpen === assetId) ??
     tiles[0] ??
@@ -2138,6 +2217,7 @@ export default function LibraryPage() {
   const [selected, setSelected] = useState<MediaAsset | null>(null);
   const [closedDeepLinkId, setClosedDeepLinkId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
+  const [deleteAnnouncement, setDeleteAnnouncement] = useState("");
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
     null,
   );
@@ -2179,13 +2259,13 @@ export default function LibraryPage() {
     setOwner("default");
     setSource("all");
   }
-  function openAsset(asset: MediaAsset) {
+  const openAsset = useCallback((asset: MediaAsset) => {
     setClosedDeepLinkId(null);
     setSelected(asset);
     const params = new URLSearchParams(window.location.search);
     params.set("asset", asset.asset_id);
     window.history.replaceState(null, "", `?${params.toString()}`);
-  }
+  }, []);
   function closeAsset() {
     setClosedDeepLinkId(selected?.asset_id ?? deepLinkedAssetId);
     setSelected(null);
@@ -2355,19 +2435,23 @@ export default function LibraryPage() {
     if (runningMedia.length < runningCount.current) void refetch();
     runningCount.current = runningMedia.length;
   }, [refetch, runningMedia.length]);
-  const goneConfirmed = goneAssets.every((asset) =>
-    confirmedGone(asset.unavailable_reason),
+  const goneConfirmed = useMemo(
+    () => goneAssets.every((asset) => confirmedGone(asset.unavailable_reason)),
+    [goneAssets],
   );
   const [goneOpen, setGoneOpen] = useState(false);
-  const visiblePeople = instanceView
-    ? Array.from(
-        new Set(
-          [...storedAssets, ...(goneOpen ? goneAssets : [])]
-            .map(personFor)
-            .filter((person): person is string => Boolean(person)),
-        ),
-      )
-    : [];
+  const visiblePeople = useMemo(
+    () => instanceView
+      ? Array.from(
+          new Set(
+            [...storedAssets, ...(goneOpen ? goneAssets : [])]
+              .map(personFor)
+              .filter((person): person is string => Boolean(person)),
+          ),
+        )
+      : [],
+    [instanceView, storedAssets, goneOpen, goneAssets, personFor],
+  );
   // Display names: the catalog, else a capability's recommended name (from
   // home, or the status payload if another page already loaded it).
   const cachedStatus = queryClient.getQueryData<MemberStatus>([
@@ -2452,7 +2536,7 @@ export default function LibraryPage() {
     },
     onSuccess: (_result, asset) => {
       removedAssetIds.current.add(asset.asset_id);
-      toast.success("Deleted from your library.");
+      setDeleteAnnouncement("Deleted from your library.");
       closeAsset();
       void queryClient.invalidateQueries({ queryKey: ["library"] });
     },
@@ -2525,9 +2609,44 @@ export default function LibraryPage() {
       ) : null}
     </>
   );
-  const days = dayMarks(
-    storedAssets.map((asset) => toDateValue(asset.created_at)),
-    new Date(),
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const days = useMemo(
+    () => dayMarks(
+      storedAssets.map((asset) => toDateValue(asset.created_at)),
+      new Date(today),
+    ),
+    [storedAssets, today],
+  );
+  const selectedId = selected?.asset_id;
+  const storedTiles = useMemo(
+    () => storedAssets.map((asset, index) => (
+      <AssetTile
+        key={asset.asset_id}
+        asset={asset}
+        onOpen={openAsset}
+        everyone={instanceView}
+        person={instanceView ? personFor(asset) : null}
+        selected={selectedId === asset.asset_id}
+        day={days[index]}
+        today={today}
+      />
+    )),
+    [storedAssets, openAsset, instanceView, personFor, selectedId, days, today],
+  );
+  const goneTiles = useMemo(
+    () => goneAssets.map((asset) => (
+      <AssetTile
+        key={asset.asset_id}
+        asset={asset}
+        onOpen={openAsset}
+        everyone={instanceView}
+        person={instanceView ? personFor(asset) : null}
+        selected={selectedId === asset.asset_id}
+        today={today}
+      />
+    )),
+    [goneAssets, openAsset, instanceView, personFor, selectedId, today],
   );
   const selectedPerson = selected
     ? instanceView
@@ -2563,7 +2682,7 @@ export default function LibraryPage() {
                 .getElementById("gone-files")
                 ?.scrollIntoView({ block: "start" });
             }}
-            className="text-link text-meta ml-3 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
+            className="text-link text-meta ml-3 min-h-6 min-w-6 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
           >
             {goneAssets.length === 1
               ? goneConfirmed
@@ -2575,6 +2694,9 @@ export default function LibraryPage() {
           </button>
         ) : null}
       </header>
+      <p role="status" aria-live="polite" aria-atomic="true" className="text-meta">
+        {deleteAnnouncement}
+      </p>
       {/* The toolbar and the grid it filters are one block, 24 apart. */}
       <div>
         <section
@@ -2700,7 +2822,7 @@ export default function LibraryPage() {
               phone squares jumped to three). */}
             <div className={cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap)}>
               {Array.from({ length: 12 }).map((_, index) => (
-                <Skeleton key={index} className="rounded-media aspect-square" />
+                <Skeleton key={index} className="rounded-media aspect-square motion-reduce:animate-none" />
               ))}
             </div>
           </div>
@@ -2722,16 +2844,16 @@ export default function LibraryPage() {
             title={activeFilters ? "No matching creations" : "No creations yet"}
             description={
               activeFilters
-                ? "Clear filters to see more."
+                ? "Your generated images, video and audio appear here; no creations match these filters."
                 : "Images, video and audio made through the gateway appear here."
             }
             action={
               activeFilters ? (
-                <Button variant="outline" onClick={clearFilters}>
+                <Button size="sm" onClick={clearFilters}>
                   Clear filters
                 </Button>
               ) : (
-                <Button asChild>
+                <Button asChild size="sm">
                   <Link prefetch={false} href="/try/?capability=image">Make an image</Link>
                 </Button>
               )
@@ -2744,21 +2866,16 @@ export default function LibraryPage() {
           <div aria-busy={updating}>
             {/* One continuous grid, newest first (D1.6: date groups left
               part-filled rows); the day rides on its first tile. */}
-            <div className={cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap)}>
+            <div
+              role="group"
+              aria-label="Creations"
+              onKeyDown={navigateTiles}
+              className={cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap)}
+            >
               {inProgress.map((item) => (
                 <MakingTile key={item.id} kind={item.kind} startedAt={item.startedAt} />
               ))}
-              {storedAssets.map((asset, index) => (
-                <AssetTile
-                  key={asset.asset_id}
-                  asset={asset}
-                  onOpen={openAsset}
-                  everyone={instanceView}
-                  person={instanceView ? personFor(asset) : null}
-                  selected={selected?.asset_id === asset.asset_id}
-                  day={days[index]}
-                />
-              ))}
+              {storedTiles}
             </div>
           </div>
         ) : null}
@@ -2785,7 +2902,7 @@ export default function LibraryPage() {
             </p>
             <Button
               variant="link"
-              className="h-auto px-0"
+              className="h-auto min-h-6 min-w-6 px-0"
               onClick={() => void refetch()}
             >
               Refresh library
@@ -2799,17 +2916,13 @@ export default function LibraryPage() {
             <summary className="text-link text-meta flex min-h-8 w-fit cursor-pointer items-center font-medium max-sm:min-h-11">
               Show them
             </summary>
-            <div className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
-              {goneAssets.map((asset) => (
-                <AssetTile
-                  key={asset.asset_id}
-                  asset={asset}
-                  onOpen={openAsset}
-                  everyone={instanceView}
-                  person={instanceView ? personFor(asset) : null}
-                  selected={selected?.asset_id === asset.asset_id}
-                />
-              ))}
+            <div
+              role="group"
+              aria-label="Unavailable creations"
+              onKeyDown={navigateTiles}
+              className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8"
+            >
+              {goneTiles}
             </div>
           </details>
         </section>
@@ -2893,7 +3006,10 @@ export default function LibraryPage() {
             );
           }}
           onDelete={
-            madeByViewer(selected) ? (asset) => setConfirming(asset) : null
+            madeByViewer(selected) ? (asset) => {
+              setDeleteAnnouncement("");
+              setConfirming(asset);
+            } : null
           }
           onReturnFocus={returnFocus}
         />

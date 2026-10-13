@@ -124,6 +124,7 @@ from gateway.admin_api import (
 )
 from gateway.settings_api import create_settings_router, instance_settings, prompt_memory_settings
 from gateway.activity_api import create_activity_router
+from gateway import category_presets
 from gateway.category_api import create_category_router
 from gateway.setup_api import build_setup_api_router
 from gateway.admin_oidc import (
@@ -14943,7 +14944,8 @@ def _category_service_catalog() -> list[dict[str, Any]]:
 
 app.include_router(create_category_router(
     auth=ADMIN_AUTH, store_path=ADMIN_DB_PATH.parent / "categories.db",
-    service_catalog=_category_service_catalog))
+    service_catalog=_category_service_catalog,
+    presets=lambda: [preset.as_json() for preset in category_presets.load_presets()]))
 from gateway import category_enforcement  # noqa: E402
 category_enforcement.configure(
     ADMIN_DB_PATH.parent / "categories.db",
@@ -17536,9 +17538,8 @@ async def _deny_realtime(websocket: WebSocket, response: Response) -> None:
 
 async def _fail_open_realtime(websocket: WebSocket, message: str, code: str) -> None:
     """End an accepted session the way OpenAI Realtime does: an ``error`` event, then close 1011."""
-    event = {"type": "error", "error": {"type": "server_error", "code": code, "message": message}}
     try:
-        await websocket.send_text(json.dumps(event))
+        await websocket.send_text(json.dumps(realtime_proxy.error_event(code, message)))
         await websocket.close(code=1011)
     except (RuntimeError, WebSocketDisconnect):
         pass

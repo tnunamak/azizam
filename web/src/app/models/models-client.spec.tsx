@@ -308,7 +308,7 @@ describe("the list of model names", () => {
           title: "Firefly",
           locality: "remote",
           provider: "provider-internal-id",
-          engine_label: "OpenRouter",
+          engine_label: "provider-a",
           description: "D6.",
         }),
         task("tts", "speech", { title: "Speech", description: "D7." }),
@@ -322,10 +322,10 @@ describe("the list of model names", () => {
     expect(second("coder-q5")).toBe("D2");
     expect(second("words")).toBe("D3");
     // The chat tags end the line, in words.
-    expect(second("opaque-4")).toBe("Lantern · D4 · Tool use, Reasoning, Vision");
+    expect(second("opaque-4")).toBe("Lantern · D4 · Uses tools, Thinks through questions, Understands images");
     expect(second("recommended-only")).toBe("Qwen 3 · D5");
     // A remote row names its provider (the label, not the internal id).
-    expect(second("remote-one")).toBe("Firefly · via OpenRouter · D6");
+    expect(second("remote-one")).toBe("Firefly · via provider-a · D6");
     expect(second("tts")).toBe("D7");
     expect(second("tts-two")).toBe("Supertonic · D8");
     // A local row never shows its engine or service id.
@@ -604,22 +604,22 @@ describe("Details", () => {
     expect(fact("Runs on")).toBe("Acme Cloud");
     expect(fact("Price")).toBe("$2 per 1M tokens");
     expect(fact("Time per request")).toBe("About 151 ms, measured");
-    expect(fact("Can also")).toBe("Tool use, Vision");
-    expect(fact("Takes and makes")).toBe("text, image to text");
-    expect(dialog().getByText("Example request")).toBeVisible();
+    expect(fact("Can also")).toBe("Uses tools, Understands images");
+    expect(fact("What you send and receive")).toBe("text, image to text");
+    expect(dialog().getByText("Example for app setup")).toBeVisible();
     expect(dialog().getByText(/curl 'http/)).toBeInTheDocument();
-    expect(dialog().getByText("Recent receipts")).toBeVisible();
-    expect(dialog().getByRole("link", { name: "View receipt" })).toHaveAttribute(
+    expect(dialog().getByText("Recent activity")).toBeVisible();
+    expect(dialog().getByRole("link", { name: "View request details" })).toHaveAttribute(
       "href",
       "/usage/?receipt=req%201",
     );
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     fireEvent.click(nameButton("bare"));
-    expect(fact("Runs on")).toBe("This gateway's engines");
-    for (const label of ["Also answers to", "Time per request", "Can also", "Takes and makes"]) {
+    expect(fact("Runs on")).toBe("On your equipment");
+    for (const label of ["Also answers to", "Time per request", "Can also", "What you send and receive"]) {
       expect(fact(label)).toBeUndefined();
     }
-    expect(dialog().getByText("No requests have used this model recently.")).toBeVisible();
+    expect(dialog().getByText("No recent requests were reported. Use this model in an app, then check Usage for results.")).toBeVisible();
   });
 
   it.each([
@@ -651,7 +651,7 @@ describe("Details", () => {
     fireEvent.click(nameButton("chat"));
     const sheet = dialog();
     expect(sheet.getByText("Chat through your configured model.")).toBeVisible();
-    for (const value of ["Technical details", "Engine or provider", "Sends requests to", "Notes", "chat.completions: private-target", "Private engine configuration."]) {
+    for (const value of ["Technical details", "Engine or provider", "Sends requests to", "How this model runs", "chat.completions: private-target", "Private engine configuration."]) {
       if (viewer.admin) expect(sheet.getByText(value)).toBeVisible();
       else expect(sheet.queryByText(value)).toBeNull();
     }
@@ -747,10 +747,10 @@ describe("Details", () => {
     await act(async () => {
       await client.refetchQueries({ queryKey: ["models", "catalog"] });
     });
-    expect(await screen.findByText("This model is no longer in the list.")).toBeVisible();
+    expect(await screen.findByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeVisible();
     expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-    expect(screen.queryByText("This model is no longer in the list.")).toBeNull();
+    expect(screen.queryByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeNull();
     // The model comes back: the note goes and Details stays closed.
     fireEvent.click(nameButton("other"));
     expect(dialog().getByRole("heading", { name: "other" })).toBeVisible();
@@ -758,13 +758,13 @@ describe("Details", () => {
     await act(async () => {
       await client.refetchQueries({ queryKey: ["models", "catalog"] });
     });
-    expect(await screen.findByText("This model is no longer in the list.")).toBeVisible();
+    expect(await screen.findByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeVisible();
     vi.mocked(productApi.models).mockResolvedValue(catalog([row({ id: "other" })]));
     await act(async () => {
       await client.refetchQueries({ queryKey: ["models", "catalog"] });
     });
     await screen.findByRole("button", { name: "other" });
-    expect(screen.queryByText("This model is no longer in the list.")).toBeNull();
+    expect(screen.queryByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
@@ -803,7 +803,7 @@ describe("deep links", () => {
       renderModels(catalog([row(), task("draw", "image")]));
       await screen.findByRole("button", { name: "chat" });
       expect(screen.queryByRole("dialog")).toBeNull();
-      expect(screen.queryByText("This model is no longer in the list.")).toBeNull();
+      expect(screen.queryByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeNull();
       expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("All tasks");
       expect(screen.getByRole("button", { name: "draw" })).toBeVisible();
     },
@@ -845,16 +845,16 @@ describe("loading, errors and an empty catalog", () => {
         </QueryClientProvider>
       </ViewerContext.Provider>,
     );
-    expect(await screen.findByText("The models list could not be loaded. Try again.")).toBeVisible();
+    expect(await screen.findByText("We couldn't load the models. Try again.")).toBeVisible();
     expect(screen.queryByRole("searchbox")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /try again/i }));
     expect(await screen.findByRole("button", { name: "chat" })).toBeVisible();
-    expect(screen.queryByText("The models list could not be loaded. Try again.")).toBeNull();
+    expect(screen.queryByText("We couldn't load the models. Try again.")).toBeNull();
   });
 
   it.each([
-    [owner, "Connect an engine", "/engines", "Connect an engine or a provider to add models."],
-    [member, "Review setup", "/", "Ask the owner to connect models your access plan allows."],
+    [owner, "Connect an engine", "/engines", "Connect an engine to run models on your equipment, or connect an online provider."],
+    [member, "Review setup", "/", "Ask the owner to connect an engine or online provider and give you access to a model."],
   ])("points an empty catalog at the next step for $role", async (viewer, label, href, description) => {
     renderModels(catalog([]), viewer);
     expect(await screen.findByText("No models are available yet")).toBeVisible();
