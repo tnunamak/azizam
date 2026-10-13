@@ -662,3 +662,270 @@ def test_a_key_whose_named_grantor_cannot_be_found_has_no_authority(gateway):
                                   granted_by="usr_nobody", path=gateway.path)
     assert bearer_status(gateway, key) == 403
     assert admin_store.effective_admin_roles("service_account", account["id"], path=gateway.path) == frozenset()
+
+
+# ---------------------------------------------------------------------------
+# Review findings: key ownership, stale provider grants, refusal reach, plan writes.
+# ---------------------------------------------------------------------------
+
+def test_a_dashboard_key_never_takes_over_a_service_account_by_name(gateway):
+    """An administrator who names a key like the operator's key gets a refusal, not that account."""
+    from gateway.admin_runtime import create_admin_service_account_key
+
+    signed_in(gateway, sub="owner", email=OWNER)
+    admin, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    deploy_key, _, _ = create_admin_service_account_key("deploy", role="admin", path=gateway.path)
+
+    refused = admin.post("/admin/api/admin-keys", headers=csrf_for(admin), json={"name": "deploy", "role": "admin"})
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["code"] == "admin_key_name_taken"
+    grantors = {row["granted_by"] for row in gateway.rows(
+        "SELECT r.granted_by FROM admin_role_assignments r JOIN service_accounts s ON s.id = r.subject_id "
+        "WHERE s.name = 'deploy'")}
+    assert grantors == {"cli"}
+    # The administrator is demoted; the operator's key does not notice.
+    signed_in(gateway, sub="helper", email="helper@example.test", groups=[])
+    assert bearer_status(gateway, deploy_key) == 200
+
+
+def test_two_dashboard_keys_cannot_share_a_name(gateway):
+    signed_in(gateway, sub="owner", email=OWNER)
+    admin, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    mint_admin_key(admin, name="same")
+    again = admin.post("/admin/api/admin-keys", headers=csrf_for(admin), json={"name": "same", "role": "admin"})
+    assert again.status_code == 409, again.text
+    assert again.json()["error"]["code"] == "admin_key_name_taken"
+
+
+def test_the_owner_cannot_turn_an_admin_key_into_an_owner_key_by_reusing_its_name(gateway):
+    owner, _ = signed_in(gateway, sub="owner", email=OWNER)
+    admin, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    mint_admin_key(admin, name="shared")
+    again = owner.post("/admin/api/admin-keys", headers=csrf_for(owner), json={"name": "shared", "role": "owner"})
+    assert again.status_code == 409, again.text
+
+
+def test_a_service_accounts_grantor_cannot_be_overwritten(gateway):
+    account = admin_store.ensure_service_account("acct", path=gateway.path)
+    admin_store.assign_admin_role(role="admin", subject_kind="service_account", subject_id=account["id"],
+                                  granted_by="cli", path=gateway.path)
+    with pytest.raises(PermissionError):
+        admin_store.assign_admin_role(role="admin", subject_kind="service_account", subject_id=account["id"],
+                                      granted_by="usr_someone", path=gateway.path)
+    assert [row["granted_by"] for row in admin_store.list_admin_roles(
+        subject_kind="service_account", subject_id=account["id"], path=gateway.path)] == ["cli"]
+
+
+def test_the_command_line_will_not_attach_to_an_account_the_dashboard_made(gateway):
+    from gateway.admin_runtime import create_admin_service_account_key
+
+    signed_in(gateway, sub="owner", email=OWNER)
+    admin, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    mint_admin_key(admin, name="theirs")
+    with pytest.raises(PermissionError):
+        create_admin_service_account_key("theirs", role="owner", path=gateway.path)
+    assert gateway.rows("SELECT COUNT(*) AS n FROM credentials WHERE created_by = 'cli'") == [{"n": 0}]
+
+
+def test_a_key_is_capped_by_its_own_minter_even_if_its_account_gains_an_operator_grant(gateway):
+    """The cap follows the credential, so a later grant on the same account cannot lift it."""
+    signed_in(gateway, sub="owner", email=OWNER)
+    admin, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    key = mint_admin_key(admin, name="capped")
+    account = gateway.rows("SELECT id FROM service_accounts WHERE name = 'capped'")[0]["id"]
+    admin_store.assign_admin_role(role="owner", subject_kind="service_account", subject_id=account,
+                                  granted_by="cli", path=gateway.path)
+    assert bearer_status(gateway, key) == 200
+    assert bearer_status(gateway, key, "/admin/api/people") == 403
+
+
+# -- identity-provider grants age out
+
+def _age_provider_grants(gateway, seconds):
+    with accounts.connection(gateway.path) as conn:
+        conn.execute("UPDATE admin_role_assignments SET last_confirmed_at = last_confirmed_at - ? "
+                     "WHERE provenance = 'oidc'", (seconds,))
+
+
+def test_a_group_administrator_who_never_signs_in_again_loses_the_grant_and_their_keys(gateway):
+    signed_in(gateway, sub="owner", email=OWNER)
+    admin, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    key = mint_admin_key(admin)
+    assert admin.get("/admin/api/access-plans").status_code == 200
+    assert bearer_status(gateway, key) == 200
+
+    _age_provider_grants(gateway, 9 * 3600)   # nine hours without a confirming sign-in
+
+    assert admin.get("/admin/api/access-plans").status_code == 403
+    assert bearer_status(gateway, key) == 403
+
+
+def test_signing_in_again_confirms_the_provider_grant(gateway):
+    signed_in(gateway, sub="owner", email=OWNER)
+    signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    _age_provider_grants(gateway, 9 * 3600)
+    fresh, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    assert fresh.get("/admin/api/access-plans").status_code == 200
+
+
+def test_a_hand_given_grant_does_not_age_out(gateway):
+    client, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    user = gateway.user("helper@example.test")
+    admin_store.assign_admin_role(role="admin", subject_kind="user", subject_id=user["id"],
+                                  granted_by="owner", path=gateway.path)
+    _age_provider_grants(gateway, 100 * 3600)
+    assert admin_store.effective_admin_roles("user", user["id"], path=gateway.path) == frozenset({"admin"})
+
+
+def test_the_provider_grant_column_is_added_to_an_existing_database(tmp_path):
+    """Rehearse the additive migration on a database shaped like the one before it."""
+    path = tmp_path / "admin.db"
+    admin_store.init_db(path)
+    user = admin_store.upsert_oidc_user("https://id.example", "u", email="u@example.test", path=path)
+    admin_store.reconcile_oidc_admin_roles(user["id"], {"admin"}, path=path)
+    manual = admin_store.upsert_oidc_user("https://id.example", "m", email="m@example.test", path=path)
+    admin_store.assign_admin_role(role="admin", subject_kind="user", subject_id=manual["id"], path=path)
+    with accounts.connection(path) as conn:
+        conn.execute("ALTER TABLE admin_role_assignments DROP COLUMN last_confirmed_at")
+        before = [dict(r) for r in conn.execute("SELECT id, role, subject_id, provenance FROM admin_role_assignments")]
+
+    admin_store.init_db(path)
+    admin_store.init_db(path)   # idempotent
+
+    with accounts.connection(path) as conn:
+        after = [dict(r) for r in conn.execute(
+            "SELECT id, role, subject_id, provenance, last_confirmed_at FROM admin_role_assignments ORDER BY id")]
+    assert [{k: v for k, v in row.items() if k != "last_confirmed_at"} for row in after] == before
+    by_provenance = {row["provenance"]: row["last_confirmed_at"] for row in after}
+    assert by_provenance["oidc"] is not None          # one session length of grace
+    assert by_provenance["manual"] is None
+    assert admin_store.effective_admin_roles("user", user["id"], path=path) == frozenset({"admin"})
+
+
+# -- a refused sign-in reaches MCP connections and personal keys
+
+def _personal_key(gateway, email):
+    from gateway.runtime_auth import hash_api_key
+
+    user = gateway.user(email)
+    app = admin_store.ensure_personal_app_for_user(user["id"], name="personal", path=gateway.path)
+    admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key("opk_personal"),
+                                       prefix="opk_perso", created_by=user["id"], path=gateway.path)
+    return hash_api_key("opk_personal")
+
+
+def _mcp_grant(gateway, email):
+    from gateway import mcp_oauth_store
+
+    store = mcp_oauth_store.Store(lambda: gateway.path)
+    client = store.put_client(client_id="c1", kind="dcr", name="Client", redirect_uris=["https://c.example/cb"],
+                              grant_types=["authorization_code"], auth_method="none", secret_hash=None, metadata={})
+    return store, store.create_grant(person_id=gateway.user(email)["id"], client=client,
+                                     redirect_uri="https://c.example/cb", resource="https://ai.example/mcp", scope="mcp")
+
+
+def test_a_refused_sign_in_revokes_mcp_connections(gateway):
+    signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    store, grant = _mcp_grant(gateway, "helper@example.test")
+    assert store.active_grant(grant.id) is not None
+    gateway.sign_in(gateway.client(), sub="helper", email="helper@example.test", groups=[])
+    assert store.active_grant(grant.id) is None
+
+
+def test_a_refused_sign_in_pauses_personal_keys_until_a_sign_in_succeeds(gateway):
+    signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    key_hash = _personal_key(gateway, "helper@example.test")
+    before = admin_runtime.runtime_identity_for_app_credential_hash(key_hash, path=gateway.path)
+    assert before is not None and before.denial is None
+
+    gateway.sign_in(gateway.client(), sub="helper", email="helper@example.test", groups=[])
+    paused = admin_runtime.runtime_identity_for_app_credential_hash(key_hash, path=gateway.path)
+    assert paused is not None and paused.denial == "person_signin_refused"
+
+    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
+    signed_in(gateway, sub="helper", email="helper@example.test", groups=[])
+    again = admin_runtime.runtime_identity_for_app_credential_hash(key_hash, path=gateway.path)
+    assert again is not None and again.denial is None
+
+
+# -- plan writes are the owner's
+
+PLAN_DOCUMENT = {
+    "name": "Widened", "can_use": {"chat": {"items": "all"}},
+    "direct_engine_access": {"engines": [], "operations": []}, "paid_providers": [],
+    "provider_fallback": False, "caps": {"usd_per_request": None, "usd_per_day": None, "usd_per_month": None},
+    "can_load_models": False, "receipt_detail": "basic", "media_metadata": "none",
+}
+
+
+def test_an_administrator_cannot_write_access_plans_but_can_read_them(gateway):
+    owner, _, plan_id, admin = owner_and_admin(gateway)
+    assert admin.get("/admin/api/access-plans").status_code == 200
+    assert admin.get(f"/admin/api/access-plans/{plan_id}").status_code == 200
+    for response in (
+        admin.post("/admin/api/access-plans", headers=csrf_for(admin), json=PLAN_DOCUMENT),
+        admin.put(f"/admin/api/access-plans/{plan_id}", headers=csrf_for(admin), json=PLAN_DOCUMENT),
+        admin.delete(f"/admin/api/access-plans/{plan_id}", headers=csrf_for(admin)),
+    ):
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "owner_required"
+    created = owner.post("/admin/api/access-plans", headers=csrf_for(owner), json=PLAN_DOCUMENT)
+    assert created.status_code == 201, created.text
+
+
+# -- keys minted from a claimed browser session
+
+def test_a_key_minted_from_a_claimed_key_session_holds_its_roles(gateway):
+    from gateway.admin_runtime import create_admin_service_account_key
+
+    claim_key, _, _ = create_admin_service_account_key("claimant", role="owner", path=gateway.path)
+    client = gateway.client()
+    claimed = client.post("/setup/claim", data={"admin_key": claim_key}, follow_redirects=False)
+    assert claimed.status_code == 303, claimed.text
+    csrf = {"x-azizam-csrf": client.get("/admin/api/session").json()["actor"]["csrf_token"]}
+    minted = client.post("/admin/api/admin-keys", headers=csrf, json={"name": "from session", "role": "owner"})
+    assert minted.status_code == 201, minted.text
+    child = minted.json()["credential"]["api_key"]
+    assert bearer_status(gateway, child) == 200
+    assert bearer_status(gateway, child, "/admin/api/people") == 200
+    assert not any(str(row["granted_by"]).startswith("service_account:") for row in gateway.rows(
+        "SELECT granted_by FROM admin_role_assignments"))
+
+
+# -- owner bootstrap
+
+def test_the_local_owner_can_be_claimed_beside_a_group_administrator_but_not_after_an_owner(gateway):
+    signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    first = admin_store.claim_first_local_owner(issuer="local", subject="a@example.test", email="a@example.test",
+                                                display_name="a", verifier="v", granted_by="setup", path=gateway.path)
+    assert first is not None
+    second = admin_store.claim_first_local_owner(issuer="local", subject="b@example.test", email="b@example.test",
+                                                 display_name="b", verifier="v", granted_by="setup", path=gateway.path)
+    assert second is None
+
+
+def test_a_revoked_owner_still_blocks_both_first_owner_paths(gateway):
+    owner = admin_store.upsert_oidc_user("https://id.example", "o", email="o@example.test", path=gateway.path)
+    grant = admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=owner["id"], path=gateway.path)
+    admin_store.revoke_admin_role(grant["id"], path=gateway.path)
+    assert admin_store.claim_first_owner(owner["id"], granted_by="oidc-bootstrap", path=gateway.path) is False
+    assert admin_store.claim_first_local_owner(issuer="local", subject="x@example.test", email="x@example.test",
+                                               display_name="x", verifier="v", granted_by="setup",
+                                               path=gateway.path) is None
+
+
+def test_two_first_owner_claims_make_one_owner(gateway):
+    first = admin_store.upsert_oidc_user("https://id.example", "1", email="1@example.test", path=gateway.path)
+    second = admin_store.upsert_oidc_user("https://id.example", "2", email="2@example.test", path=gateway.path)
+    assert admin_store.claim_first_owner(first["id"], granted_by="oidc-bootstrap", path=gateway.path) is True
+    assert admin_store.claim_first_owner(second["id"], granted_by="oidc-bootstrap", path=gateway.path) is False
+    assert len([r for r in admin_store.list_admin_roles(path=gateway.path) if r["role"] == "owner"]) == 1
+
+
+def test_an_app_scoped_grant_is_not_a_control_plane_role(gateway):
+    user = admin_store.upsert_oidc_user("https://id.example", "s", email="s@example.test", path=gateway.path)
+    app = admin_store.create_app("scoped", kind="service", owner_user_id=user["id"], access_plan="person",
+                                 path=gateway.path)
+    admin_store.assign_admin_role(role="admin", subject_kind="user", subject_id=user["id"],
+                                  scope_app_id=app["id"], path=gateway.path)
+    assert admin_store.effective_admin_roles("user", user["id"], path=gateway.path) == frozenset()
