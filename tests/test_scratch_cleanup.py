@@ -36,8 +36,19 @@ wait $!
 """
 
 
+# bash cannot trap a signal it started ignoring, and an ignored signal survives exec. A parent run
+# under nohup (HUP) or by a launcher that ignores TERM would make these tests fail for a reason that
+# has nothing to do with the harness. Reset the three signals, then exec bash: same pid.
+RESET_THEN_EXEC = (
+    "import os, signal, sys\n"
+    "for number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):\n"
+    "    signal.signal(number, signal.SIG_DFL)\n"
+    "os.execvp(sys.argv[1], sys.argv[1:])\n"
+)
+
+
 def _start_harness(root: Path) -> tuple[subprocess.Popen[bytes], Path]:
-    process = subprocess.Popen(["bash", "-c", HARNESS, "harness", str(root)])
+    process = subprocess.Popen([sys.executable, "-c", RESET_THEN_EXEC, "bash", "-c", HARNESS, "harness", str(root)])
     deadline = time.monotonic() + 10
     while not (root / "announced").exists():
         assert time.monotonic() < deadline and process.poll() is None, "harness did not start"

@@ -451,12 +451,16 @@ function AvailabilityFacts({ row }: { row: CatalogRow }) {
 function CopyModelName({ row }: { row: CatalogRow }) {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
+  // The "Copied" mark ends on a timer; a timer that outlives the row would set state on nothing.
+  const resetTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
   async function copyName() {
     try {
       await navigator.clipboard.writeText(row.id);
       setCopyError(false);
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      window.clearTimeout(resetTimer.current);
+      resetTimer.current = window.setTimeout(() => setCopied(false), 1500);
     } catch {
       setCopied(false);
       setCopyError(true);
