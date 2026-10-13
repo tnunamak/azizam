@@ -17,7 +17,7 @@ import pytest
 
 import proxy
 from tests.speech_tier_helpers import SttCase
-from tests.support.fake_upstream import fake_upstreams, load_scenario, read_deadline  # noqa: F401
+from tests.support.fake_upstream import fake_upstreams, load_scenario, read_deadline, scenario_from_data  # noqa: F401
 
 HANG_BOUND_SECONDS = 10
 
@@ -52,6 +52,71 @@ class TtsStreamOwnershipGaps(unittest.IsolatedAsyncioTestCase):
         finally:
             if response is not None:
                 await response.body_iterator.aclose()
+
+    def serve_speech(self, response):
+        """One FK exchange for POST /v1/audio/speech with the given response."""
+        return self.fakes.asgi(scenario_from_data({
+            "protocol": "openai-compatible",
+            "name": "speech-ownership",
+            "provenance": {
+                "source": "hand-written",
+                "reference": "OpenAI-compatible POST /v1/audio/speech as served by speech engines; "
+                             "read by proxy._stream_tts_upstream",
+            },
+            "exchanges": [{
+                "id": "speech",
+                "match": {"method": "POST", "path": "/v1/audio/speech"},
+                "response": response,
+            }],
+        }))
+
+    def open_stream(self, fake):
+        return proxy._stream_tts_upstream(
+            url=f"{fake.base_url}/v1/audio/speech",
+            headers={},
+            body=b'{"input":"hello"}',
+            stream_format="audio",
+            response_format="pcm",
+            native_rate=24000,
+        )
+
+    async def test_rejected_stream_closes_client(self):
+        for status, raw in ((400, "bad voice"), (503, "busy"), (500, "CUDA out of memory")):
+            with self.subTest(status=status):
+                fake = self.serve_speech({
+                    "status": status,
+                    "headers": {"content-type": "text/plain"},
+                    "body": [{"text": raw}],
+                })
+                clients = self.fakes.track_clients(proxy)
+                async with asyncio.timeout(HANG_BOUND_SECONDS):
+                    response = await self.open_stream(fake)
+                self.assertGreaterEqual(response.status_code, 400)
+                [client] = clients
+                self.assertTrue(client.closed, "rejected request leaked its client")
+
+    async def test_cancellation_before_handoff_closes_every_owned_resource(self):
+        for phase, response in (
+            ("send", {"wait_before_headers": "forever", "json": {}}),
+            ("first_chunk", {"headers": {"content-type": "audio/pcm"}, "body": [{"wait": "forever"}]}),
+        ):
+            with self.subTest(phase=phase):
+                fake = self.serve_speech(response)
+                clients = self.fakes.track_clients(proxy)
+                task = asyncio.create_task(self.open_stream(fake))
+                try:
+                    async with asyncio.timeout(HANG_BOUND_SECONDS):
+                        await self.fakes.clock.until_waiting()
+                        task.cancel()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await task
+                    [client] = clients
+                    self.assertTrue(client.closed, "cancellation leaked HTTP client")
+                    if phase == "first_chunk":
+                        self.assertEqual(fake.client_closed, ["speech"], "prefetch cancellation leaked body")
+                finally:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
 
 
 class SttFallbackPolicyGap(SttCase):
