@@ -278,11 +278,11 @@ class StatusBuildTests(unittest.IsolatedAsyncioTestCase):
 class LifecycleProbeLoopTests(unittest.IsolatedAsyncioTestCase):
     async def test_docker_preflight_does_not_delay_loop(self):
         started = threading.Event()
-        started_at = []
+        inspect_threads = []
         driver = status.lifecycle_drivers.DockerDriver()
 
         def inspect(*_args, **_kwargs):
-            started_at.append(time.monotonic())
+            inspect_threads.append(threading.get_ident())
             started.set()
             time.sleep(1.0)
             return SimpleNamespace(returncode=0, stderr=b"", stdout=b"/test")
@@ -298,11 +298,8 @@ class LifecycleProbeLoopTests(unittest.IsolatedAsyncioTestCase):
             while not started.is_set() and time.monotonic() < deadline:
                 await asyncio.sleep(0.001)
             self.assertTrue(started.is_set())
-            self.assertLess(time.monotonic() - started_at[0], 0.1)
+            self.assertNotIn(threading.get_ident(), inspect_threads, "Docker inspect ran on the event loop thread")
             self.assertFalse(probe.done(), "Docker inspect blocked the loop until completion")
-            before = time.monotonic()
-            await asyncio.wait_for(asyncio.sleep(0.01), timeout=0.1)
-            self.assertLess(time.monotonic() - before, 0.1)
             self.assertEqual((await probe)["live_status"], "stopped")
 
 

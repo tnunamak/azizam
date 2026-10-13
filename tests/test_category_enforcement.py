@@ -261,3 +261,18 @@ def test_a_route_check_with_no_services_and_no_capability_says_this_request(gate
     decision = category_enforcement.apply(
         Identity("mia", "family-app"), PolicyRequest(protocol="openai.images"), ALLOW)
     assert decision.reasons == ("category rules: NO_GRANT (no service grants this request)",)
+
+
+@pytest.mark.parametrize("governed", ["person", "app"])
+def test_an_identity_with_no_person_or_app_is_not_governed_by_a_rule_keyed_xxxx(gate, governed):
+    """Kills category_enforcement.py:124 and :125 ``""`` -> ``"XXXX"``.
+
+    A missing person or app id must look up as the empty string. A rule set that governs a person
+    (or app) literally named XXXX must not pick up an identity that has none.
+    """
+    plan = policy.Plan("kids", (policy.Grant("image.generate", "flux@r1"),),
+                       (policy.Row("aud", "audience", "in", ("general",)),))
+    base = _snapshot()
+    people, apps = ({"XXXX": (plan,)}, {}) if governed == "person" else ({}, {"XXXX": (plan,)})
+    _activate(gate, policy.PolicyVersion("rules", base.categories, people, apps, base.services))
+    assert category_enforcement.apply(Identity(None, None), _request(), ALLOW) is ALLOW
