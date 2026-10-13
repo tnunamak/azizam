@@ -362,8 +362,8 @@ test("models seeded catalog: light at 1440px shows row facts and passes axe", as
   await preparePage(page, "light", 1440, seededCatalog);
   const chat = page.getByRole("rowgroup", { name: "Chat models" });
   const chatFacts = chat.getByRole("list", { name: "Model facts" });
-  await expect(chatFacts.getByText("Reasoning")).toBeVisible();
-  await expect(chatFacts.getByText("Vision")).toBeVisible();
+  await expect(chatFacts.getByText("Thinks through questions")).toBeVisible();
+  await expect(chatFacts.getByText("Understands images")).toBeVisible();
   await assertNoOverflow(page);
   await assertNoSeriousAxe(page);
   await page.screenshot({
@@ -390,7 +390,7 @@ test("models error catalog: light at 390px fits and passes axe", async ({
     503,
   );
   await expect(
-    page.getByText("Models catalog could not be loaded. Try again."),
+    page.getByText("We couldn't load the models. Try again."),
   ).toBeVisible();
   await assertNoOverflow(page);
   await assertNoSeriousAxe(page);

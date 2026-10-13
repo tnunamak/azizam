@@ -186,10 +186,10 @@ function hasCapability(
 }
 
 const tagLabels: Record<ModelTag, string> = {
-  reasoning: "Reasoning",
-  "tool-use": "Tool use",
-  vision: "Vision",
-  "file-input": "File input",
+  reasoning: "Thinks through questions",
+  "tool-use": "Uses tools",
+  vision: "Understands images",
+  "file-input": "Reads files",
 };
 
 // The same cells form a task line and an inline alias/cost/status line on phones.
@@ -297,18 +297,18 @@ function hasNoProviderCharge(row: CatalogRow): boolean {
 
 function costLabel(row: CatalogRow): string | undefined {
   if (row.locality === "remote" && row.cost.kind === "unknown")
-    return "Cost not recorded";
+    return "Price not provided";
   if (row.cost.kind === "paid") {
     return row.cost.price === null
-      ? "Paid · price unavailable"
+      ? "Paid · price not provided"
       : `Paid · ${String(row.cost.price)}`;
   }
   return undefined;
 }
 
 function localityLabel(row: CatalogRow): string | undefined {
-  if (row.locality === "local") return "Local";
-  if (row.locality === "remote") return "Remote";
+  if (row.locality === "local") return "On your equipment";
+  if (row.locality === "remote") return "Online service";
   return undefined;
 }
 
@@ -385,20 +385,20 @@ function hasSummaryStatus(row: CatalogRow): boolean {
 function evidenceLabel(row: CatalogRow): string | undefined {
   const source = row.availability.evidence?.source;
   if (row.availability.measured) {
-    if (source === "registry") return "From configuration";
+    if (source === "registry") return "From saved settings";
   }
   return undefined;
 }
 
 function configurationLabel(row: CatalogRow): string | undefined {
-  if (row.availability.configured === false) return "Catalog only";
-  if (row.availability.configured === true) return "Configured";
+  if (row.availability.configured === false) return "Not set up";
+  if (row.availability.configured === true) return "Set up";
   return undefined;
 }
 
 function enabledLabel(row: CatalogRow): string | null {
-  if (row.availability.enabled === true) return "Enabled";
-  if (row.availability.enabled === false) return "Disabled";
+  if (row.availability.enabled === true) return "Turned on";
+  if (row.availability.enabled === false) return "Turned off";
   return null;
 }
 
@@ -420,7 +420,7 @@ function availabilityAction(
     }
     if (row.availability.enabled === false) {
       return {
-        label: row.locality === "remote" ? "Review provider" : "Review engine",
+        label: row.locality === "remote" ? "Check provider settings" : "Check engine settings",
         href: configHref,
       };
     }
@@ -436,7 +436,7 @@ function AvailabilityFacts({ row }: { row: CatalogRow }) {
   const enabled = enabledLabel(row);
   return (
     <div className="flex flex-wrap gap-2 text-meta">
-      <Badge variant="secondary">Allowed by your access</Badge>
+      <Badge variant="secondary">Your access allows this model</Badge>
       {configurationLabel(row) && (
         <Badge variant="outline">{configurationLabel(row)}</Badge>
       )}
@@ -498,7 +498,7 @@ function CopyModelName({ row }: { row: CatalogRow }) {
           onClick={(event) => event.stopPropagation()}
         >
           <p role="alert" className="text-destructive text-meta">
-            Copy failed. Select the model name and copy it manually.
+            Could not copy the name. Select it below and copy it.
           </p>
           <Input
             aria-label="Model name for manual copy"
@@ -600,7 +600,12 @@ function Availability({
       status={state}
       reason={
         showReason
-          ? availabilityReason(state, row.availability.reason_code ?? state)
+          ? [
+              availabilityReason(state, row.availability.reason_code ?? state),
+              state === "unavailable" || state === "degraded"
+                ? "Choose another model, or check Status for help."
+                : null,
+            ].filter(Boolean).join(" ")
           : undefined
       }
       summary={!showReason}
@@ -763,14 +768,30 @@ function LoadingCatalog() {
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="rounded-panel border p-3">
       <div className="text-muted-foreground text-meta">{label}</div>
       <div className="mt-1 font-medium break-words">{value}</div>
+      {hint && <p className="text-muted-foreground mt-2 text-meta">{hint}</p>}
     </div>
   );
 }
+
+const technicalTermHints = [
+  {
+    pattern: /\bcontext window\b/i,
+    hint: "Context window is how much text a model can handle in one request, including its reply.",
+  },
+  {
+    pattern: /\bquantization\b/i,
+    hint: "Quantization makes a model smaller and uses less memory. It can affect answer quality.",
+  },
+  {
+    pattern: /\btokens per second\b/i,
+    hint: "Tokens per second measures how fast text is produced. A token is a small piece of text.",
+  },
+];
 
 function DetailSheet({
   row,
@@ -803,7 +824,11 @@ function DetailSheet({
                   value={row.id}
                 />
                 {engineLabel(row) !== titleFor(row) && (
-                  <Fact label="Engine or provider" value={engineLabel(row)} />
+                  <Fact
+                    label="Engine or provider"
+                    value={engineLabel(row)}
+                    hint="The software or online service that runs this model."
+                  />
                 )}
                 {locality && <Fact label="Location" value={locality} />}
                 {cost && <Fact label="Cost" value={cost} />}
@@ -824,7 +849,7 @@ function DetailSheet({
                   <div className="grid gap-3 text-meta sm:grid-cols-2">
                     {Object.keys(row.resolves_to).length > 0 && (
                       <Fact
-                        label="Resolves to"
+                        label="Model used for each task"
                         value={Object.entries(row.resolves_to)
                           .map(([op, target]) => `${op}: ${target}`)
                           .join(", ")}
@@ -832,8 +857,12 @@ function DetailSheet({
                     )}
                     {row.technical_description && (
                       <Fact
-                        label="Technical description"
+                        label="How this model runs"
                         value={row.technical_description}
+                        hint={technicalTermHints
+                          .filter(({ pattern }) => pattern.test(row.technical_description ?? ""))
+                          .map(({ hint }) => hint)
+                          .join(" ")}
                       />
                     )}
                   </div>
@@ -853,6 +882,9 @@ function DetailSheet({
               </div>
               <div>
                 <h3 className="font-medium">Names you can use</h3>
+                <p className="text-muted-foreground mt-2 text-meta">
+                  Use any of these names when your app asks for a model.
+                </p>
                 {row.use_names?.length ? (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {row.use_names.map((name) => (
@@ -866,18 +898,18 @@ function DetailSheet({
                 )}
               </div>
               {(row.io.input.length > 0 || row.io.output.length > 0) && <div>
-                <h3 className="font-medium">Inputs and outputs</h3>
+                <h3 className="font-medium">What you send and receive</h3>
                 {(row.io.input.length > 0 || row.io.output.length > 0) && (
                   <dl className="text-muted-foreground mt-2 space-y-1 text-meta">
                     {row.io.input.length > 0 && (
                       <div>
-                        <dt className="inline">Inputs: </dt>
+                        <dt className="inline">You send: </dt>
                         <dd className="inline">{row.io.input.join(", ")}</dd>
                       </div>
                     )}
                     {row.io.output.length > 0 && (
                       <div>
-                        <dt className="inline">Outputs: </dt>
+                        <dt className="inline">You receive: </dt>
                         <dd className="inline">{row.io.output.join(", ")}</dd>
                       </div>
                     )}
@@ -885,15 +917,21 @@ function DetailSheet({
                 )}
               </div>}
               <div>
-                <h3 className="font-medium">Example request</h3>
+                <h3 className="font-medium">Example for app setup</h3>
                 <div className="mt-3 [&_pre]:break-all [&_pre]:whitespace-pre-wrap">
-                  <CodeBlock
-                    snippets={snippetsFor(row, window.location.origin)}
-                  />
+                  {snippetsFor(row, window.location.origin).length > 0 ? (
+                    <CodeBlock
+                      snippets={snippetsFor(row, window.location.origin)}
+                    />
+                  ) : (
+                    <p className="text-muted-foreground text-meta">
+                      No example was provided. Use one of the model names above when connecting your app.
+                    </p>
+                  )}
                 </div>
               </div>
               <div>
-                <h3 className="font-medium">Recent receipts</h3>
+                <h3 className="font-medium">Recent activity</h3>
                 {row.recent_receipts.length ? (
                   <ul className="mt-3 space-y-2 text-meta">
                     {row.recent_receipts.slice(0, 5).map((receipt, index) => (
@@ -917,7 +955,7 @@ function DetailSheet({
                             className="mt-2 block min-h-8 max-sm:min-h-11 content-center underline underline-offset-4"
                             href={`/usage/?receipt=${encodeURIComponent(readString(receipt.request_id) ?? "")}`}
                           >
-                            View receipt
+                            View request details
                           </a>
                         )}
                       </li>
@@ -925,7 +963,7 @@ function DetailSheet({
                   </ul>
                 ) : (
                   <p className="text-muted-foreground mt-2 text-meta">
-                    No recent receipts were reported for this model.
+                    No recent requests were reported. Use this model in an app, then check Usage for results.
                   </p>
                 )}
               </div>
@@ -1034,12 +1072,12 @@ export default function ModelsClient() {
 
   return (
     <div className="space-y-(--space-section)">
-      <PageHeader title="Models" answer="Pick a model name." />
+      <PageHeader title="Models" answer="Choose a task, then copy a model name for your app." />
       {catalogPending ? (
         <LoadingCatalog />
       ) : catalogError ? (
         <ErrorState
-          message="Models catalog could not be loaded. Try again."
+          message="We couldn't load the models. Try again."
           onRetry={() => refetchCatalog()}
           retrying={catalogFetching}
         />
@@ -1047,7 +1085,11 @@ export default function ModelsClient() {
         <EmptyState
           icon={SlidersHorizontal}
           title="No models are available yet"
-          description="Ask the owner to connect models your access plan allows."
+          description={
+            viewer.admin
+              ? "Connect an engine to run models on your equipment, or connect an online provider. Start with Review setup."
+              : "Ask the owner to connect an engine or online provider and give you access to a model."
+          }
           action={
             <Button variant="outline" asChild>
               <Link prefetch={false} href="/">Review setup</Link>
@@ -1123,7 +1165,7 @@ export default function ModelsClient() {
                   onClick={() => setShowUnknownCost((value) => !value)}
                   className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground h-8 max-sm:min-h-11 rounded-control px-3 text-meta underline-offset-4 transition outline-none focus-visible:ring-2 aria-pressed:underline"
                 >
-                  Cost not recorded
+                  Price not provided
                 </button>
               </div>
             </div>
@@ -1136,13 +1178,13 @@ export default function ModelsClient() {
               icon={Search}
               title={
                 modelRows.length
-                  ? "No recommended names match these filters"
+                  ? "More models are available below"
                   : "No models match these filters"
               }
               description={
                 modelRows.length
-                  ? "Show all models to use an exact model directly."
-                  : "Clear the search or turn on another price filter."
+                  ? "Choose Show all models to see matching models and copy a name."
+                  : "Choose Clear filters to show all models, or try a different search."
               }
               action={
                 modelRows.length ? (
@@ -1211,7 +1253,7 @@ export default function ModelsClient() {
             </button>
             {tableOpen && (modelRows.length === 0 ? (
               <EmptyState icon={Search} title="No models match these filters."
-                description="Clear the filters to see more models."
+                description="Choose Clear filters to show more models."
                 action={<Button variant="outline" onClick={() => { setQuery(""); setCapability("all"); setShowNoProviderCharge(true); setShowPaid(true); setShowUnknownCost(true); }}>Clear filters</Button>} />
             ) : (
               <div className="overflow-x-auto rounded-panel border">
@@ -1273,7 +1315,7 @@ export default function ModelsClient() {
           </section>}
         </>
       )}
-      {detailNote && <div role="status"><p>This model is no longer in the catalog.</p><Button variant="ghost" onClick={() => setDetailNote(null)}>Dismiss</Button></div>}
+      {detailNote && <div role="status"><p>This model is no longer listed. Choose another model, or review setup if the list is empty.</p><Button variant="ghost" onClick={() => setDetailNote(null)}>Dismiss</Button></div>}
       <DetailSheet
         row={detail}
         onOpenChange={(open) => !open && setDetailId(null)}
