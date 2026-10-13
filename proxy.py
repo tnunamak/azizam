@@ -12517,10 +12517,20 @@ async def lifespan(app: FastAPI):
     state.shutdown_requested = True
     if watchdog is not None:
         watchdog.stop()
-    for task in list(_image_media_job_tasks):
+    # Every worker registry is owned by the gateway: cancel and join them all
+    # before returning, not only the image workers.
+    owned_job_tasks = [
+        task
+        for registry in (
+            _image_media_job_tasks, _audio_media_job_tasks,
+            _video_media_job_tasks, _identity_job_tasks,
+        )
+        for task in registry
+    ]
+    for task in owned_job_tasks:
         task.cancel()
-    if _image_media_job_tasks:
-        await asyncio.gather(*list(_image_media_job_tasks), return_exceptions=True)
+    if owned_job_tasks:
+        await asyncio.gather(*owned_job_tasks, return_exceptions=True)
     if comfy_ws_task is not None:
         comfy_ws_stop.set()
         comfy_ws_task.cancel()
@@ -20329,6 +20339,8 @@ async def _run_image_media_job(job_id: str) -> None:
                     _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
                 finish_image_route_receipt(receipt, response)
             except asyncio.CancelledError:
+                # An interrupted attempt keeps its terminal receipt.
+                finish_image_route_receipt(receipt, None, status="cancelled")
                 raise
             except Exception as exc:  # noqa: BLE001
                 finish_image_route_receipt(
@@ -20461,7 +20473,12 @@ def _schedule_image_media_job(job_id: str) -> bool:
     if job_id in _image_media_job_scheduled:
         return False
     _image_media_job_scheduled.add(job_id)
-    task = asyncio.create_task(_run_image_media_job(job_id))
+    try:
+        task = asyncio.create_task(_run_image_media_job(job_id))
+    except BaseException:
+        # A launch that never started must not leave the job looking scheduled.
+        _image_media_job_scheduled.discard(job_id)
+        raise
     _image_media_job_tasks.add(task)
 
     def _done(done_task: asyncio.Task) -> None:
@@ -21017,7 +21034,12 @@ def _schedule_audio_media_job(job_id: str) -> bool:
     if job_id in _audio_media_job_scheduled:
         return False
     _audio_media_job_scheduled.add(job_id)
-    task = asyncio.create_task(_run_audio_media_job(job_id))
+    try:
+        task = asyncio.create_task(_run_audio_media_job(job_id))
+    except BaseException:
+        # A launch that never started must not leave the job looking scheduled.
+        _audio_media_job_scheduled.discard(job_id)
+        raise
     _audio_media_job_tasks.add(task)
 
     def _done(done_task: asyncio.Task) -> None:
@@ -21591,7 +21613,12 @@ def _schedule_video_media_job(job_id: str) -> bool:
     if job_id in _video_media_job_scheduled:
         return False
     _video_media_job_scheduled.add(job_id)
-    task = asyncio.create_task(_run_video_media_job(job_id))
+    try:
+        task = asyncio.create_task(_run_video_media_job(job_id))
+    except BaseException:
+        # A launch that never started must not leave the job looking scheduled.
+        _video_media_job_scheduled.discard(job_id)
+        raise
     _video_media_job_tasks.add(task)
 
     def _done(done_task: asyncio.Task) -> None:
