@@ -91,15 +91,23 @@ def _external_client_evidence(receipts_path: Path) -> tuple[dict[str, Any], bool
     Only a recorded source proves it: new UI tests carry gateway-ui and
     internal hops never qualify. Legacy receipts predate source attribution,
     so their origin is unknown and they cannot complete the step.
+
+    The newest external request is found by walking the receipts newest first, so it costs
+    what it takes to reach recent traffic, not the size of the history. Whether an older
+    request has no source is asked only when none was observed, the one case that uses it.
     """
+    source = "json_extract(receipt_json, '$.source_kind')"
+    # The unary plus keeps SQLite from choosing the parent_request_id index, which would
+    # find every top-level receipt and sort them; it then walks the created_at index.
+    where = "status = 'succeeded' AND +parent_request_id IS NULL"
     with sqlite_startup.connect_readonly(receipts_path) as conn:
-        observed, unattributed = conn.execute(
-            "SELECT MAX(CASE WHEN json_extract(receipt_json, '$.source_kind') IN ('app', 'local-network') "
-            "THEN created_at END), "
-            "MAX(CASE WHEN json_extract(receipt_json, '$.source_kind') IS NULL THEN created_at END) "
-            "FROM receipts WHERE status = 'succeeded' AND parent_request_id IS NULL"
-        ).fetchone()
-    return {"recorded": observed is not None, "source": "receipt", "observed_at_s": observed}, unattributed is not None
+        row = conn.execute(
+            f"SELECT created_at FROM receipts WHERE {where} AND {source} IN ('app', 'local-network') "
+            "ORDER BY created_at DESC LIMIT 1").fetchone()
+        observed = row[0] if row else None
+        unattributed = observed is None and conn.execute(
+            f"SELECT EXISTS(SELECT 1 FROM receipts WHERE {where} AND {source} IS NULL)").fetchone()[0] == 1
+    return {"recorded": observed is not None, "source": "receipt", "observed_at_s": observed}, unattributed
 
 
 def _setup_evidence(path: Path, subject: str) -> dict[str, dict[str, Any]]:

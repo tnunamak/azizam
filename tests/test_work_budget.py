@@ -487,3 +487,40 @@ def test_finding_an_asset_file_costs_no_probe_once_the_directory_is_listed(tmp_p
     assert probes == [], f"{len(probes)} exists() probes for 60 lookups"
     first_suffix = proxy._ASSET_SUFFIXES_BY_KIND["aud"][0]
     assert proxy.asset_cache_path(f"aud_{12345:064x}").name == f"{12345:064x}{first_suffix}"  # absent: the first candidate
+
+
+# -- setup progress: the newest external request is found without scanning the history -----
+
+def _external_evidence_steps(path: Path, rows: int) -> tuple[dict, int]:
+    import sqlite3
+    from unittest.mock import patch
+
+    from gateway import home_api, sqlite_startup
+
+    steps = [0]
+    real = sqlite_startup.connect_readonly
+
+    def connect(*args, **kwargs):
+        connection = real(*args, **kwargs)
+        connection.set_progress_handler(lambda: steps.__setitem__(0, steps[0] + 1) or 0, 100)
+        return connection
+
+    receipt_store.init_db(path)
+    for n in range(rows):
+        source = "gateway-ui" if n < rows - 5 else "app"  # the newest few are an external app's
+        receipt_store.record(RouteReceipt(
+            protocol="openai.chat", intent="chat", path="/v1/chat/completions", request_id=f"req_ext_{rows}_{n}",
+            requested_model="m", resolved_model="m", status="succeeded", source_kind=source,
+            accepted_at_ms=(1_700_000_000 + n) * 1000,
+        ), path=path, created_at=1_700_000_000 + n)
+    with patch.object(sqlite_startup, "connect_readonly", connect):
+        evidence, unattributed = home_api._external_client_evidence(path)
+    return {**evidence, "unattributed": unattributed}, steps[0]
+
+
+def test_the_newest_external_request_is_found_in_constant_work(tmp_path: Path) -> None:
+    small, small_steps = _external_evidence_steps(tmp_path / "small.db", 200)
+    large, large_steps = _external_evidence_steps(tmp_path / "large.db", 4000)
+    assert small["recorded"] and large["recorded"]
+    assert small["observed_at_s"] == 1_700_000_000 + 199 and large["observed_at_s"] == 1_700_000_000 + 3999
+    assert large_steps <= small_steps + 5, f"{small_steps} steps for 200 receipts, {large_steps} for 4000"
