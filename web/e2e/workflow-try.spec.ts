@@ -473,19 +473,39 @@ test("successive video runs poll their own jobs and never reuse old output", asy
   ]);
 });
 
+// A 1x1 PNG and the overall verdict of a passing likeness check, as the real
+// handlers return them (scripts/ui/identity_contract.py).
+const PIXEL_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+const PASSING_OVERALL = {
+  status: "pass",
+  all_meet_threshold: true,
+  min_score: 1,
+  mean_score: 1,
+  needs_human_check: false,
+  extra_faces: 0,
+  facing_each_other: null,
+};
+
 for (const scenario of [
   {
     id: "image.edit.image-identity",
     route: "/gateway/v1/images/identity",
-    // The scene's likeness report sits under `likeness`.
-    response: (proof: string) => ({ likeness: { object: "likeness.check", pooling: proof } }),
+    // The scene returns its image under `data` and its likeness report under `likeness`.
+    response: (proof: string) => ({
+      created: 1,
+      data: [{ asset_id: "img_1", asset_url: "/assets/img_1", media_type: "image/png", b64_json: PIXEL_PNG }],
+      likeness: { object: "likeness.check", pooling: proof, overall: PASSING_OVERALL },
+    }),
+    summary: "1 output returned.",
     title: "Identity Scene",
     note: null,
   },
   {
     id: "image.analyze.face-likeness",
     route: "/gateway/v1/faces/likeness",
-    response: (proof: string) => ({ object: "likeness.check", pooling: proof }),
+    response: (proof: string) => ({ object: "likeness.check", pooling: proof, overall: PASSING_OVERALL }),
+    summary: "Workflow returned a response. Open Technical details to inspect it.",
     title: "Face Likeness Check",
     note: "Face service starts when you make a request.",
   },
@@ -548,10 +568,7 @@ for (const scenario of [
 
     await expect(page.getByText("Workflow result", { exact: true })).toBeVisible();
     await expect(
-      page.getByText(
-        "Workflow returned a response. Open Technical details to inspect it.",
-        { exact: true },
-      ),
+      page.getByText(scenario.summary, { exact: true }),
     ).toBeVisible();
     const technical = page.locator("details").filter({ hasText: "Technical details" });
     await expect(technical.locator("pre")).toBeHidden();
