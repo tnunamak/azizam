@@ -65,3 +65,29 @@ def test_the_listing_is_every_voice_a_tier_accepts():
     for voice in accepted:
         assert any(resolve_voice(spec, {"old": "alloy", "older": "calm"}, voice) is not None for spec in (fast, full))
     assert voice_listing([], {"old": "alloy"}) == []
+
+
+def test_every_listing_entry_carries_the_exact_documented_fields():
+    fast = {"voices": [{"id": "f1", "name": "Calm", "language": "en", "gender": "female", "description": "Soft"}],
+            "voice_map": {"deep_voice": "f1", "f1": "f1"}}
+    assert voice_listing([fast], {"legacy_one": "deep_voice", "f1": "f1", "legacy_two": "f1"}) == [
+        {"voice_id": "f1", "id": "f1", "name": "Calm", "language": "en", "gender": "female",
+         "description": "Soft", "mapped_to": "f1", "alias": False},
+        {"voice_id": "deep_voice", "id": "deep_voice", "name": "Deep Voice", "language": "en", "gender": "female",
+         "description": "Accepted spelling of 'f1'", "mapped_to": "f1", "alias": True},
+        {"voice_id": "legacy_one", "id": "legacy_one", "name": "Legacy One", "language": "en", "gender": "female",
+         "description": "Legacy alias of 'deep_voice'", "mapped_to": "deep_voice", "alias": True},
+        {"voice_id": "legacy_two", "id": "legacy_two", "name": "Legacy Two", "language": "en", "gender": "female",
+         "description": "Legacy alias of 'f1'", "mapped_to": "f1", "alias": True},
+    ]
+
+
+def test_a_listed_voice_without_a_name_is_named_by_its_id_in_the_listing():
+    entry = voice_listing([{"voices": ["af_heart"]}], {})[0]
+    assert (entry["name"], entry["language"], entry["gender"], entry["description"]) == ("af_heart", None, None, None)
+
+
+def test_an_alias_never_shadows_a_listed_voice_or_an_accepted_spelling_or_an_unknown_target():
+    spec = {"voices": ["F1", "M1"], "voice_map": {"calm": "F1"}}
+    listing = voice_listing([spec], {"M1": "F1", "calm": "M1", "ghost": "nobody"})
+    assert [(e["id"], e["mapped_to"]) for e in listing] == [("F1", "F1"), ("M1", "M1"), ("calm", "F1")]

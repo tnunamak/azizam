@@ -160,7 +160,13 @@ if [[ -e "$HERMETIC_FORBIDDEN_PRODUCTION_PATH" ]] || [[ -e /run/docker.sock ]] |
 exec "$@"'
 
 if [[ -n $junit_out ]]; then set -- --junitxml="$state_dir/tmp/junit.xml" "$@"; fi
-if [[ ${1:-} == "--check" ]]; then
+if [[ ${1:-} == "--python-script" ]]; then
+  # Test tooling that drives pytest itself (scripts/mutate) runs as one
+  # repo-relative Python file inside the same namespace.
+  (($# >= 2)) && [[ $2 == scripts/*.py && -f $checkout_root/$2 ]] || { echo "error: --python-script needs a scripts/*.py file" >&2; exit 2; }
+  shift
+  test_command=("$python_bin" "$@")
+elif [[ ${1:-} == "--check" ]]; then
   shift; (($# == 0)) || { echo "error: --check does not accept pytest arguments" >&2; exit 2; }
   test_command=("$python_bin" -S -c 'import os, sys; assert sys.executable; assert not os.environ.get("OPENAI_API_KEY"); assert not os.environ.get("AZIZAM_ADMIN_DB")')
 else
