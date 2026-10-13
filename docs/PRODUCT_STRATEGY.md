@@ -89,9 +89,9 @@ paid without an explicit alias, access-plan permission, and a receipt.
 
 **People** shows people, invites, and access plans. "Invite someone" creates an
 invite link with an access plan and expiry. The list shows each person's plan,
-last activity, and usage this month. Access plans are the product label for the
-current `profile` concept; keep `profile` internally for compatibility. Access
-plans live as a tab here and keep the current "Test access" simulator.
+last activity, and usage this month. Access plans v4 replace the old Profiles model. Use access-plan wording
+throughout the product. Plans live as a tab here and keep the current
+"Test access" simulator.
 
 **Activity** shows the audit log and receipts.
 

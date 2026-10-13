@@ -86,7 +86,7 @@ Notes:
   A manifest that takes assets of different media (for example `video-scail-2-replace`: a reference
   image and a source video) must declare `media_type` on each one.
 - Output modalities come from the manifest's `outputs.*.media_type` when present.
-- Alias targets resolve against the whole catalog before profile filtering, so visibility does not
+- Alias targets resolve against the whole catalog before access plan filtering, so visibility does not
   change how static alias targets resolve. Dynamic aliases inherit only when this request already
   observes a loaded identity for filtering.
 - Context windows keep their existing lookup (`_annotate_model_context_windows`); this contract only
@@ -94,10 +94,10 @@ Notes:
 
 ## Dynamic aliases (`current`, `current-fast`)
 
-These aliases send requests to whichever local LLM is loaded. When profile filtering already
+These aliases send requests to whichever local LLM is loaded. When access plan filtering already
 observes the loaded identity in this model-list request, metadata uses that same observation.
 Declared service models match through chat execution's activation resolver. Metadata adds no
-health or loaded-state probes and no cache. Profiles that do not need loaded-state filtering,
+health or loaded-state probes and no cache. Access plans that do not need loaded-state filtering,
 and catalog consumers without that observation, use the conservative fallback.
 
 - The aliases inherit `type`, `architecture`, `tags` and `max_tokens` from the `model_metadata`
@@ -118,7 +118,7 @@ and catalog consumers without that observation, use the conservative fallback.
 
 List and retrieve endpoints use the same request policy. The member catalog has no loaded-state
 filtering observation, so its dynamic aliases use the conservative fallback. Model-ID lists in
-response metadata and alias target maps include only IDs visible in `data` under the caller's profile.
+response metadata and alias target maps include only IDs visible in `data` under the caller's access plan.
 
 ## Operator declarations (`model_metadata`)
 

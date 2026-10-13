@@ -431,4 +431,4 @@ Architecture requirement:
 
 Open question:
 
-- Should the gateway ship app profiles for Open WebUI, LibreChat, SillyTavern, Continue, Cline, Claude Code, and n8n?
+- Should the gateway ship app access plans for Open WebUI, LibreChat, SillyTavern, Continue, Cline, Claude Code, and n8n?

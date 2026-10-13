@@ -22,8 +22,8 @@ vendor docs (cited inline).
 | D5 | The model prompt and the logit readout live in the engine, not in gateway code. | One more small engine process. It follows the engine-knowledge boundary. |
 | D6 | Remote selection uses provider-qualified names (`typesafe/jev-latest`, `openrouter/anthropic/claude-…`), and stable aliases can point at them. | Model names get longer. The provider is explicit, so it is never a surprise. |
 | D7 | LLM-shaped remotes (chat, embeddings, Anthropic Messages) run through LiteLLM. Non-LLM remotes (systemone, decisions) use a small gateway HTTP forwarder. | Two execution paths. LiteLLM does not model decisions. |
-| D8 | One control plane in the gateway: Profiles decide who may spend money, and receipts carry the cost. LiteLLM stays a replaceable execution engine. | This argues against the *target* state in the LiteLLM doc (section 5). |
-| D9 | No silent fallback from free to paid, ever. Paid fallback needs an explicit alias entry **and** Profile permission, and it is recorded in the receipt. | Some requests fail that a paid fallback could have answered. |
+| D8 | One control plane in the gateway: Access plans decide who may spend money, and receipts carry the cost. LiteLLM stays a replaceable execution engine. | This argues against the *target* state in the LiteLLM doc (section 5). |
+| D9 | No silent fallback from free to paid, ever. Paid fallback needs an explicit alias entry **and** Access plan permission, and it is recorded in the receipt. | Some requests fail that a paid fallback could have answered. |
 | D10 | Provider keys are secret references (an env name today). Never put values in YAML, admin.db, receipts or logs. A vendor 401 never reaches the client as a 401. | No BYOK by request header in v1. |
 
 ## 1. What exists today (verified in code)
@@ -38,10 +38,9 @@ vendor docs (cited inline).
   available engine and keeps the rest as `fallbacks`. The operations are chat,
   embeddings, images, image_edits, videos, speech, transcriptions,
   audio_generate and rerank. A `decisions` operation does not exist yet.
-- **Profiles** (`gateway/policy.py:144`): `AppProfile` already has
-  `fallback.cloud_allowed` (default False, seeded False in every default
-  profile). Nothing routes to a cloud backend today. No profile has a money
-  budget.
+- **Access plans** replace Profiles in v4. Paid access and budgets are
+  documented in `REMOTE_PROVIDERS.md`. The earlier `AppProfile` design and
+  source-line reference are historical, not a current v4 API contract.
 - **Receipts** (`gateway/receipts.py`) store cost only as admin-visible
   `metadata.litellm.response_cost`. They have no usage or provider fields.
 - **Secrets**: `start.sh` generates the LiteLLM keys. The systemd unit sets plain
@@ -210,7 +209,7 @@ not a decisions endpoint, so it does not change D7.
   `TYPESAFE_API_KEY`.
 - `POST /v1/systemone` is the same handler at host root, for raw HTTP clients.
   It does not clash with anything.
-- `GET /typesafe/v1/models` returns the decision models this key's Profile can use,
+- `GET /typesafe/v1/models` returns the decision models this key's Access plan can use,
   in TypeSafe's list shape. Root `GET /v1/models` is OpenAI-shaped and stays so.
   This is why the SDK base URL carries a prefix.
 - The handler validates locally before any backend call. It checks types, 2–255
@@ -323,7 +322,7 @@ The coordinator's position, tested claim by claim:
 | Virtual keys and budgets need Postgres | **Confirmed** | https://docs.litellm.ai/docs/proxy/virtual_keys |
 | PyPI 1.82.7 and 1.82.8 were backdoored on 2026-03-24 (TeamPCP) | **Confirmed by security vendors** | Wiz, Datadog Security Labs, JFrog. No BerriAI advisory found. Our pin is exact but **not hash-locked**. |
 | Media, local resources and decisions need gateway policy anyway, so the target state means two policy engines | **Agree, and it decides the question for paid remotes** | Decisions and media never touch LiteLLM, so the gateway must gate their spend. A second budget engine for LLM calls would split one owner's money across two ledgers. |
-| Virtual keys bypass Profile policy | **True today, and unacceptable for paid models** | `LITELLM_SUBSTRATE_DECISION.md` "It bypasses gateway Profile policy for those calls". |
+| Virtual keys bypass Access plan policy | **True today, and unacceptable for paid models** | `LITELLM_SUBSTRATE_DECISION.md` "It bypasses gateway Access plan policy for those calls". |
 
 Resulting boundary for this work:
 - **LiteLLM owns:** provider adapters, schema translation, streaming, retries
@@ -335,7 +334,7 @@ Resulting boundary for this work:
   - receipts;
   - all decisions traffic.
 - Paid remote model groups are compiled with `model_info.gateway_cost_class: paid-remote`.
-  The gateway refuses them for any caller whose Profile lacks permission,
+  The gateway refuses them for any caller whose Access plan lacks permission,
   **including virtual-key callers**. The bypass stays only for free-local
   groups, until the open migration question is settled.
 - LiteLLM `pass_through_endpoints` for TypeSafe or OpenRouter systemone is
@@ -419,9 +418,9 @@ reservation transaction that writes the ledger row.
 - Redaction tests assert that no secret value appears in receipts, logs, error
   bodies or `/admin/api` output.
 
-## 7. Policy, profiles, cost in receipts
+## 7. Policy, access plans, cost in receipts
 
-Profile addition (stored in admin.db as Profile JSON, edited in `/admin`):
+Access-plan remote policy (see `REMOTE_PROVIDERS.md` for current configuration):
 
 ```json
 "remote": {
@@ -434,7 +433,7 @@ Profile addition (stored in admin.db as Profile JSON, edited in `/admin`):
 ```
 
 - The default is `remote` absent, so no paid provider is reachable. All seeded
-  profiles stay local-only.
+  access plans stay local-only.
 - `fallback.cloud_allowed` keeps its meaning (automatic fallback). It is
   separate from explicit selection, and both default to false.
 - **Pre-call check:** estimate the cost from operator price data. The current
@@ -443,11 +442,11 @@ Profile addition (stored in admin.db as Profile JSON, edited in `/admin`):
   multimodal input or missing price data fails closed when capped. Reject over
   `max_usd_per_request` with `402`-style `budget_exceeded` before any spend.
 - **Daily budget:** the reservation reads the shared `provider_spend` ledger for
-  the Profile over the last 24 h in the same transaction that reserves the
+  the Access plan over the last 24 h in the same transaction that reserves the
   estimated spend. The check includes reserved and settled rows, and it ignores
   released rows.
-- **Monthly budget:** use the current UTC calendar month. Profile budgets count
-  all paid providers; provider caps count all profiles, and global caps count both.
+- **Monthly budget:** use the current UTC calendar month. Access plan budgets count
+  all paid providers; provider caps count all access plans, and global caps count both.
 - **Receipt fields (new):**
   - `cost {usd, source: provider-reported|litellm|price-table|unknown, provider, cost_class}`
   - `usage {input_tokens, output_tokens}`
@@ -479,12 +478,12 @@ Profile addition (stored in admin.db as Profile JSON, edited in `/admin`):
 | Local engine busy (one slot; queue > 4) | `529` with `retry-after` | same |
 | Remote 429/529/5xx | Pass the status and body through; no retry inside the gateway (the SDK already retries) | **none to paid**; to a free engine only if the alias lists it |
 | Remote 401/403 (owner key bad or not enabled) | `502 provider_auth_failed` (a 401 would tell the client *its* key is bad) | none |
-| Provider key missing, or Profile lacks the provider | `403 remote_provider_not_allowed`, before any call | none |
+| Provider key missing, or Access plan lacks the provider | `403 remote_provider_not_allowed`, before any call | none |
 | Over budget | `402`-style `budget_exceeded` | none |
 
 Rule D9:
 - An alias may list a paid engine after a free one only when
-  `allow_paid_fallback: true` is in the caller's Profile.
+  `allow_paid_fallback: true` is in the caller's Access plan.
 - Every fallback writes `fallback_reasons` and the final `cost` to the receipt.
 - Free-to-free fallback (2B behind 4B) is allowed by default.
 
@@ -541,7 +540,7 @@ Rule D9:
    `inbox/` request for the unit; nothing touches live units without Tim.
 3. **Provider records and secrets:** `kind: provider`, `api_key_env`,
    `configured|missing` in admin and discovery, and the redaction tests.
-4. **Profile `remote` block and cost:** pre-call estimate, daily budget and
+4. **Access plan `remote` block and cost:** pre-call estimate, daily budget and
    client-visible `cost` in receipts.
 5. **TypeSafe and OpenRouter systemone forwarders** behind slices 3–4.
 6. **Remote LLMs through LiteLLM:** OpenRouter first. Compile `paid-remote`
