@@ -7,6 +7,7 @@ no wall-clock time is part of the oracle, so host load cannot flip them.
 """
 import asyncio
 import builtins
+import contextlib
 import os
 import sqlite3
 import threading
@@ -36,6 +37,31 @@ ENDPOINTS = (
 )
 
 
+def _go_cold(tmp_path, monkeypatch) -> None:
+    """Start a test with no process-wide cache that an earlier test warmed.
+
+    The category gate is rebuilt over a fresh store, so its first check opens
+    SQLite. Every module-level memo (a ``*CACHE*``/``*MEMO*`` dict or an
+    ``lru_cache``) in the gateway code is emptied. Statement tracing covers
+    connections that stay open; this covers results that stay cached.
+    """
+    import functools
+    import sys
+    from gateway import category_enforcement
+    from gateway.category_store import CategoryStore
+    store = tmp_path / "categories.db"
+    CategoryStore(store)
+    monkeypatch.setattr(category_enforcement, "_GATE", category_enforcement.CategoryGate(store))
+    for name, module in list(sys.modules.items()):
+        if module is None or not (name == "proxy" or name.startswith("gateway")):
+            continue
+        for attr, value in list(vars(module).items()):
+            if isinstance(value, functools._lru_cache_wrapper):
+                value.cache_clear()
+            elif isinstance(value, dict) and ("CACHE" in attr.upper() or "MEMO" in attr.upper()):
+                monkeypatch.setattr(module, attr, type(value)())
+
+
 @pytest.fixture
 def gateway(tmp_path, monkeypatch):
     db = tmp_path / "admin.db"
@@ -49,6 +75,10 @@ def gateway(tmp_path, monkeypatch):
     receipts = tmp_path / "receipts.db"
     receipt_store.init_db(receipts)
     monkeypatch.setattr(receipt_store, "DB_PATH", receipts)
+    responses = tmp_path / "responses.db"
+    proxy.responses_store.init_db(responses)
+    monkeypatch.setattr(proxy.responses_store, "DB_PATH", responses)
+    _go_cold(tmp_path, monkeypatch)
     cookie = CookieConfig(secure=False)
     key = b"s" * 32
     monkeypatch.setattr(proxy, "ADMIN_OIDC_CONFIG", replace(proxy.ADMIN_OIDC_CONFIG, enabled=False, signing_key=key, cookie=cookie))
@@ -75,8 +105,7 @@ def test_handler_does_not_block_the_event_loop(gateway, path, auth):
         async with httpx.AsyncClient(transport=transport, base_url="http://t", cookies=cookies) as client:
             return (await client.get(path, headers=headers)).status_code
 
-    patches = _loop_thread_work(loop_calls)
-    with patches[0], patches[1], patches[2], patches[3]:
+    with _loop_thread_work(loop_calls):
         status = asyncio.run(call())
     assert status == 200, f"{path} answered {status}; the probe needs a working endpoint"
     assert loop_calls == [], f"{path} ran blocking work on the event loop:\n" + "\n".join(sorted(set(loop_calls)))
@@ -107,8 +136,17 @@ def test_route_table_is_covered():
     assert len(ROUTES) > 60, "the route table walk found too few GET routes"
 
 
+@contextlib.contextmanager
 def _loop_thread_work(loop_calls: list[str]):
-    """Patch SQLite, subprocess and sleeps so a call on the loop thread is recorded."""
+    """Record SQLite, subprocess, sleep and file work done on the loop thread.
+
+    SQLite statements are traced with the connection's own trace hook, which
+    fires on the thread that runs the statement. The hook goes on every
+    connection already open (a store or cache warmed by an earlier test holds
+    one) and on every connection opened while the probe is active, so test
+    order cannot hide work.
+    """
+    import gc
     import subprocess
     loop_thread = threading.get_ident()
 
@@ -118,6 +156,18 @@ def _loop_thread_work(loop_calls: list[str]):
                       if "/site-packages/" not in f.filename and "/lib/python" not in f.filename]
             loop_calls.append(f"{kind} " + " <- ".join(reversed(frames[-7:])))
 
+    def trace_statement(statement: str) -> None:
+        note(f"sqlite3 {statement.strip()[:40]!r}")
+
+    traced: list[sqlite3.Connection] = []
+
+    def trace(conn: sqlite3.Connection) -> None:
+        try:
+            conn.set_trace_callback(trace_statement)
+        except sqlite3.ProgrammingError:
+            return  # closed, or bound to another thread (it cannot run on this one)
+        traced.append(conn)
+
     real_connect, real_popen, real_sleep = sqlite3.connect, subprocess.Popen, time.sleep
     real_open = builtins.open
 
@@ -126,31 +176,11 @@ def _loop_thread_work(loop_calls: list[str]):
             note(f"open({Path(str(file)).name})")
         return real_open(file, *args, **kwargs)
 
-    # A request shares the connections its worker-thread steps opened, so a
-    # loop-thread query on one of them makes no connect call; trace statements too.
-    class TracedCursor(sqlite3.Cursor):
-        def execute(self, *args, **kwargs):
-            note("sqlite3.execute")
-            return super().execute(*args, **kwargs)
-
-        def executemany(self, *args, **kwargs):
-            note("sqlite3.executemany")
-            return super().executemany(*args, **kwargs)
-
-    class Tracing:
-        def cursor(self, factory=TracedCursor):
-            return super().cursor(factory)
-
-        def execute(self, *args, **kwargs):
-            return self.cursor().execute(*args, **kwargs)
-
-        def executemany(self, *args, **kwargs):
-            return self.cursor().executemany(*args, **kwargs)
-
     def connect(*args, **kwargs):
         note("sqlite3.connect")
-        kwargs["factory"] = type("TracedConnection", (Tracing, kwargs.get("factory") or sqlite3.Connection), {})
-        return real_connect(*args, **kwargs)
+        conn = real_connect(*args, **kwargs)
+        trace(conn)
+        return conn
 
     class Popen(real_popen):
         def __init__(self, *args, **kwargs):
@@ -162,8 +192,19 @@ def _loop_thread_work(loop_calls: list[str]):
             note("time.sleep")
         return real_sleep(seconds)
 
-    return (patch.object(sqlite3, "connect", connect), patch.object(subprocess, "Popen", Popen),
-            patch.object(time, "sleep", sleep), patch.object(builtins, "open", traced_open))
+    for obj in gc.get_objects():
+        if isinstance(obj, sqlite3.Connection):
+            trace(obj)
+    try:
+        with patch.object(sqlite3, "connect", connect), patch.object(subprocess, "Popen", Popen), \
+                patch.object(time, "sleep", sleep), patch.object(builtins, "open", traced_open):
+            yield
+    finally:
+        for conn in traced:
+            try:
+                conn.set_trace_callback(None)
+            except sqlite3.ProgrammingError:
+                pass  # closed since
 
 
 @pytest.mark.parametrize("route", ROUTES)
@@ -176,8 +217,7 @@ def test_every_get_route_leaves_the_loop_free(gateway, route):
                                      timeout=20) as client:
             return (await client.get(_concrete(route), headers=gateway["bearer"])).status_code
 
-    patches = _loop_thread_work(loop_calls)
-    with patches[0], patches[1], patches[2], patches[3]:
+    with _loop_thread_work(loop_calls):
         asyncio.run(call())
     assert not loop_calls, f"{route} ran blocking work on the event loop:\n" + "\n".join(sorted(set(loop_calls)))
 
@@ -228,9 +268,8 @@ def test_model_routes_keep_category_reads_off_the_loop_on_a_cold_gate(gateway, t
             for path in COLD_GATE_PATHS:
                 await client.get(path, headers=gateway["bearer"])
 
-    patches = _loop_thread_work(loop_calls)
     try:
-        with patches[0], patches[1], patches[2], patches[3]:
+        with _loop_thread_work(loop_calls):
             asyncio.run(call())
     finally:
         category_enforcement.configure(None)

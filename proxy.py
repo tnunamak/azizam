@@ -23790,16 +23790,8 @@ async def audio_generate(request: Request):
     return media_ingestion.finish_response(receipt, response)
 
 
-@app.get("/openai/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
-@app.get("/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
-async def audio_models(request: Request):
-    """List available audio generation models."""
-    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/models"))
-    if isinstance(auth_context, Response):
-        return auth_context
-    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/audio/models"))
-    if policy_response is not None:
-        return policy_response
+def _audio_models_visible_to(auth_context: AuthContext) -> list[dict[str, Any]]:
+    """Audio workflows this caller may see; runs category reads, so call it off the loop."""
     models = []
     allowlist = _profile_model_allowlist(auth_context)
     include_available = (
@@ -23823,6 +23815,20 @@ async def audio_models(request: Request):
             "max_seconds": cfg.get("max_seconds", 300),
             "min_seconds": cfg.get("min_seconds", 1),
         })
+    return models
+
+
+@app.get("/openai/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
+@app.get("/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
+async def audio_models(request: Request):
+    """List available audio generation models."""
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/models"))
+    if isinstance(auth_context, Response):
+        return auth_context
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/audio/models"))
+    if policy_response is not None:
+        return policy_response
+    models = await asyncio.to_thread(_audio_models_visible_to, auth_context)
     payload = {"data": models}
     if _profile_target_visibility(auth_context) == "available":
         payload["azizam_target_visibility"] = "available"
@@ -26679,7 +26685,8 @@ async def retrieve_response(response_id: str, request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
         return auth_context
-    decision = _protocol_policy_decision(
+    decision = await asyncio.to_thread(
+        _protocol_policy_decision,
         auth_context,
         protocol="openai.chat",
         intent="chat.responses",
@@ -26711,7 +26718,8 @@ async def list_response_input_items(response_id: str, request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
         return auth_context
-    decision = _protocol_policy_decision(
+    decision = await asyncio.to_thread(
+        _protocol_policy_decision,
         auth_context,
         protocol="openai.chat",
         intent="chat.responses",
