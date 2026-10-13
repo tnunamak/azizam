@@ -294,13 +294,12 @@ def test_q5_group_claims_alone_never_grant_an_access_plan(gateway):
     assert has_working_plan(gateway, "helper@example.test") is False
 
 
-def test_q5_removing_someone_from_trusted_does_not_revoke_their_admin_grant_if_they_are_not_listed(gateway):
-    """Finding (low): the revoke happens only after the allow-list check passes.
+def test_q5_removing_someone_from_trusted_revokes_their_admin_grant_and_session_even_when_not_listed(gateway):
+    """A person removed from /Trusted whose email is not otherwise allowed is refused.
 
-    A person removed from /Trusted whose email is not otherwise allowed is
-    turned away at the callback BEFORE the claim-derived grant is reconciled, so
-    the grant row stays active. They cannot start a new session, but a session
-    they already hold keeps its admin role until it expires (8 hours).
+    The refusal used to happen BEFORE the claim-derived grant was reconciled, so
+    the grant and any session they held stayed admin for up to 8 hours. A refused
+    sign-in now ends the provider-derived grant and every session of that person.
     """
     client, response = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
     assert response.status_code == 302
@@ -309,73 +308,218 @@ def test_q5_removing_someone_from_trusted_does_not_revoke_their_admin_grant_if_t
     again = gateway.client()
     refused = gateway.sign_in(again, sub="helper", email="helper@example.test", groups=[])
     assert refused.status_code == 303                      # cannot sign in again
-    assert roles_of(gateway, "helper@example.test") == {("admin", "oidc")}   # grant not revoked
-    assert client.get("/admin/api/access-plans").status_code == 200          # old session still admin
+    assert roles_of(gateway, "helper@example.test") == set()                 # grant revoked
+    assert client.get("/admin/api/access-plans").status_code in {401, 403}   # old session ended
 
 
-def test_q5_finding_a_trusted_admin_can_mint_a_working_key_under_the_owners_plan(gateway):
-    """Finding (design, medium): an admin with no plan can still get a usable key.
+def test_a_refused_sign_in_keeps_grants_the_owner_gave_by_hand(gateway):
+    """Hand-given grants are the owner's decision; only provider-derived ones go."""
+    client, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    user = gateway.user("helper@example.test")
+    admin_store.assign_admin_role(role="admin", subject_kind="user", subject_id=user["id"],
+                                  granted_by="owner", path=gateway.path)
+    refused = gateway.sign_in(gateway.client(), sub="helper", email="helper@example.test", groups=[])
+    assert refused.status_code == 303
+    assert roles_of(gateway, "helper@example.test") == {("admin", "manual")}
+    assert client.get("/admin/api/access-plans").status_code in {401, 403}   # sessions still end
 
-    The admin role is not an access plan, and the admin's own browser work is
-    denied (see the Q2 test). But POST /admin/api/apps accepts ``owner_user_id``,
-    so an admin can create a service App accountable to the OWNER, assign it any
-    plan, and mint a key. That key authorizes generation as the owner's person
-    plan intersected with the App's plan. Spend and receipts land on the owner.
-    Admin is therefore a trusted operator role, not a read-only or plan-less one.
-    """
-    from gateway.runtime_auth import hash_api_key
 
-    signed_in(gateway, sub="owner", email=OWNER)
+def test_an_unverified_email_refusal_also_ends_provider_derived_access(gateway):
+    client, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    refused = gateway.sign_in(gateway.client(), sub="helper", email="helper@example.test",
+                              groups=["/Trusted"], email_verified=False)
+    assert refused.status_code == 303
+    assert roles_of(gateway, "helper@example.test") == set()
+    assert client.get("/admin/api/access-plans").status_code in {401, 403}
+
+
+def test_a_refusal_for_an_unknown_person_creates_nothing(gateway):
+    refused = gateway.sign_in(gateway.client(), sub="nobody", email="nobody@example.test")
+    assert refused.status_code == 303
+    assert gateway.user("nobody@example.test") is None
+
+
+def csrf_for(client):
+    return {"x-azizam-csrf": client.get("/auth/api/options").json()["signed_in_oidc"]["csrf_token"]}
+
+
+def owner_and_admin(gateway):
+    owner, _ = signed_in(gateway, sub="owner", email=OWNER)
     owner_id = gateway.user(OWNER)["id"]
     plan_id = admin_store.person_plan_id(owner_id, path=gateway.path)
     admin, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
-    assert has_working_plan(gateway, "helper@example.test") is False
+    return owner, owner_id, plan_id, admin
 
-    csrf = {"x-azizam-csrf": admin.get("/auth/api/options").json()["signed_in_oidc"]["csrf_token"]}
-    created = admin.post("/admin/api/apps", headers=csrf,
+
+def test_q5_a_trusted_admin_cannot_create_an_app_accountable_to_the_owner(gateway):
+    """An administrator may not make the owner answer for an app.
+
+    POST /admin/api/apps accepted ``owner_user_id``, so an administrator with no
+    plan could create an app accountable to the owner, give it any plan, mint a
+    key, and spend as the owner. Only the owner may create an app for someone else.
+    """
+    _, owner_id, plan_id, admin = owner_and_admin(gateway)
+    before = len(gateway.rows("SELECT id FROM apps"))
+    refused = admin.post("/admin/api/apps", headers=csrf_for(admin),
                          json={"name": "borrowed", "kind": "service", "access_plan": plan_id, "owner_user_id": owner_id})
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["error"]["code"] == "owner_required"
+    assert len(gateway.rows("SELECT id FROM apps")) == before
+
+
+def test_an_administrator_who_names_no_owner_is_accountable_for_the_app_themselves(gateway):
+    """With no owner_user_id the app belongs to the signed-in administrator, never to the owner."""
+    _, _, plan_id, admin = owner_and_admin(gateway)
+    created = admin.post("/admin/api/apps", headers=csrf_for(admin),
+                         json={"name": "mine", "kind": "service", "access_plan": plan_id})
     assert created.status_code == 201, created.text
-    key = admin.post(f"/admin/api/apps/{created.json()['app']['id']}/keys", headers=csrf, json={"display_name": "k"})
+    helper_id = gateway.user("helper@example.test")["id"]
+    assert created.json()["app"]["owner_user_id"] == helper_id
+
+
+def test_an_administrator_without_a_plan_gets_no_usable_key_for_their_own_app(gateway):
+    """The app is accountable to the administrator, who has no plan, so its key authorizes nothing."""
+    from gateway.runtime_auth import hash_api_key
+
+    _, _, plan_id, admin = owner_and_admin(gateway)
+    assert has_working_plan(gateway, "helper@example.test") is False
+    created = admin.post("/admin/api/apps", headers=csrf_for(admin),
+                         json={"name": "mine", "kind": "service", "access_plan": plan_id})
+    key = admin.post(f"/admin/api/apps/{created.json()['app']['id']}/keys", headers=csrf_for(admin),
+                     json={"display_name": "k"})
     assert key.status_code == 201, key.text
     identity = admin_runtime.runtime_identity_for_app_credential_hash(
         hash_api_key(key.json()["credential"]["api_key"]), path=gateway.path)
-    assert identity is not None and identity.access.complete
+    assert identity is None or not identity.access.complete
 
 
-def test_q5_finding_an_admin_key_minted_by_a_trusted_admin_outlives_their_group_membership(gateway):
-    """Finding (low-medium): removing someone from /Trusted does not revoke keys they minted.
+def test_an_administrator_cannot_mint_a_key_on_an_app_the_owner_answers_for(gateway):
+    owner, owner_id, plan_id, admin = owner_and_admin(gateway)
+    app = owner.post("/admin/api/apps", headers=csrf_for(owner),
+                     json={"name": "owners", "kind": "service", "access_plan": plan_id, "owner_user_id": owner_id})
+    assert app.status_code == 201, app.text
+    refused = admin.post(f"/admin/api/apps/{app.json()['app']['id']}/keys", headers=csrf_for(admin),
+                         json={"display_name": "k"})
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["error"]["code"] == "owner_required"
 
-    An admin may mint an admin automation key. It belongs to a service account,
-    not to the person, so it keeps working after the person leaves the group.
-    """
+
+def test_an_administrator_cannot_change_the_plan_or_owner_of_an_app_the_owner_answers_for(gateway):
+    owner, owner_id, plan_id, admin = owner_and_admin(gateway)
+    app = owner.post("/admin/api/apps", headers=csrf_for(owner),
+                     json={"name": "owners", "kind": "service", "access_plan": "person", "owner_user_id": owner_id})
+    app_id = app.json()["app"]["id"]
+    refused = admin.patch(f"/admin/api/apps/{app_id}", headers=csrf_for(admin), json={"access_plan": plan_id})
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["error"]["code"] == "owner_required"
+    helper_id = gateway.user("helper@example.test")["id"]
+    refused = admin.patch(f"/admin/api/apps/{app_id}", headers=csrf_for(admin), json={"owner_user_id": helper_id})
+    assert refused.status_code == 403, refused.text
+    assert gateway.rows("SELECT access_plan, owner_user_id FROM apps WHERE id=?", (app_id,)) == [
+        {"access_plan": "person", "owner_user_id": owner_id}]
+    # The owner may still change it.
+    assert owner.patch(f"/admin/api/apps/{app_id}", headers=csrf_for(owner), json={"access_plan": plan_id}).status_code == 200
+
+
+def test_an_administrator_may_still_change_the_plan_of_their_own_app(gateway):
+    _, _, plan_id, admin = owner_and_admin(gateway)
+    created = admin.post("/admin/api/apps", headers=csrf_for(admin),
+                         json={"name": "mine", "kind": "service", "access_plan": "person"})
+    assert created.status_code == 201, created.text
+    changed = admin.patch(f"/admin/api/apps/{created.json()['app']['id']}", headers=csrf_for(admin),
+                          json={"access_plan": plan_id})
+    assert changed.status_code == 200, changed.text
+
+
+def test_the_owner_can_still_create_an_app_accountable_to_someone_else(gateway):
+    owner, _, plan_id, admin = owner_and_admin(gateway)
+    helper_id = gateway.user("helper@example.test")["id"]
+    created = owner.post("/admin/api/apps", headers=csrf_for(owner),
+                         json={"name": "for helper", "kind": "service", "access_plan": plan_id, "owner_user_id": helper_id})
+    assert created.status_code == 201, created.text
+    assert created.json()["app"]["owner_user_id"] == helper_id
+
+
+def mint_admin_key(client, role="admin", name="helper automation"):
+    minted = client.post("/admin/api/admin-keys", headers=csrf_for(client), json={"name": name, "role": role})
+    assert minted.status_code == 201, minted.text
+    return minted.json()["credential"]["api_key"]
+
+
+def bearer_status(gateway, api_key, path="/admin/api/access-plans"):
+    return gateway.client().get(path, headers={"authorization": f"Bearer {api_key}"}).status_code
+
+
+def test_q5_an_admin_key_minted_by_a_trusted_admin_stops_when_they_leave_the_group(gateway):
+    """An admin-scoped key works only while the person who minted it still holds a permitting role."""
     gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
     signed_in(gateway, sub="owner", email=OWNER)
     admin, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
-    csrf = {"x-azizam-csrf": admin.get("/auth/api/options").json()["signed_in_oidc"]["csrf_token"]}
-    minted = admin.post("/admin/api/admin-keys", headers=csrf, json={"name": "helper automation", "role": "admin"})
-    assert minted.status_code == 201, minted.text
-    api_key = minted.json()["credential"]["api_key"]
+    api_key = mint_admin_key(admin)
+    assert bearer_status(gateway, api_key) == 200
 
     # The person is removed from the group and signs in again: the grant is revoked...
     signed_in(gateway, sub="helper", email="helper@example.test", groups=[])
     assert roles_of(gateway, "helper@example.test") == set()
-    # ...but the key still works on the admin API.
-    bearer = gateway.client().get("/admin/api/access-plans", headers={"authorization": f"Bearer {api_key}"})
-    assert bearer.status_code == 200
+    # ...and the key they minted no longer works on the admin API.
+    assert bearer_status(gateway, api_key) == 403
 
 
-def test_first_signin_by_a_trusted_member_on_a_fresh_instance_blocks_the_listed_owner_bootstrap(gateway):
-    """Finding (low): owner bootstrap only runs while NO role grant exists.
+def test_a_key_minted_by_another_key_stops_with_the_person_at_the_root(gateway):
+    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
+    signed_in(gateway, sub="owner", email=OWNER)
+    admin, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    first = mint_admin_key(admin, name="first")
+    child = gateway.client().post("/admin/api/admin-keys", headers={"authorization": f"Bearer {first}"},
+                                  json={"name": "second", "role": "admin"})
+    assert child.status_code == 201, child.text
+    second = child.json()["credential"]["api_key"]
+    assert bearer_status(gateway, second) == 200
+    signed_in(gateway, sub="helper", email="helper@example.test", groups=[])
+    assert bearer_status(gateway, second) == 403
+    assert bearer_status(gateway, first) == 403
 
-    On a fresh instance, if a /Trusted member signs in before the listed owner
-    email, the member becomes admin; the later owner sign-in finds an existing
-    grant and is not made owner.
-    """
+
+def test_an_owner_key_minted_by_the_owner_and_a_command_line_key_keep_working(gateway):
+    from gateway.admin_runtime import create_admin_service_account_key
+
+    owner, _ = signed_in(gateway, sub="owner", email=OWNER)
+    owner_key = mint_admin_key(owner, role="owner", name="owner automation")
+    cli_key, _, _ = create_admin_service_account_key("ops", role="owner", path=gateway.path)
+    assert bearer_status(gateway, owner_key) == 200
+    assert bearer_status(gateway, cli_key) == 200
+    assert bearer_status(gateway, owner_key, "/admin/api/people") == 200
+
+
+def test_an_owner_key_is_lowered_when_its_minter_is_no_longer_an_owner(gateway):
+    """A key never carries more authority than the person who made it holds now."""
+    owner, _ = signed_in(gateway, sub="owner", email=OWNER)
+    owner_id = gateway.user(OWNER)["id"]
+    owner_key = mint_admin_key(owner, role="owner", name="owner automation")
+    admin_store.assign_admin_role(role="admin", subject_kind="user", subject_id=owner_id, path=gateway.path)
+    for row in admin_store.list_admin_roles(subject_kind="user", subject_id=owner_id, path=gateway.path):
+        if row["role"] == "owner":
+            admin_store.revoke_admin_role(row["id"], path=gateway.path)
+    assert bearer_status(gateway, owner_key) == 200                      # still an administrator's key
+    assert bearer_status(gateway, owner_key, "/admin/api/people") == 403  # no longer owner reach
+
+
+def test_first_signin_by_a_trusted_member_on_a_fresh_instance_does_not_block_the_listed_owner(gateway):
+    """Owner bootstrap applies while no OWNER grant exists, not while no grant of any kind exists."""
     signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
     _, response = signed_in(gateway, sub="owner", email=OWNER)
 
     assert response.status_code == 302
-    assert not any(role == "owner" for role, _ in roles_of(gateway, OWNER))
+    assert any(role == "owner" for role, _ in roles_of(gateway, OWNER))
+    assert admin_store.person_plan_id(gateway.user(OWNER)["id"], path=gateway.path) is not None
+
+
+def test_owner_bootstrap_does_not_apply_once_an_owner_exists(gateway):
+    other = "second@example.test"
+    gateway.set_config(replace(gateway.config, admin_emails=frozenset({OWNER, other})))
+    signed_in(gateway, sub="owner", email=OWNER)
+    signed_in(gateway, sub="second", email=other)
+    assert not any(role == "owner" for role, _ in roles_of(gateway, other))
 
 
 def test_a_disabled_person_cannot_sign_in_through_keycloak(gateway):
@@ -496,3 +640,25 @@ def test_q5_a_listed_person_removed_from_trusted_loses_admin_on_next_sign_in(gat
     _, response = signed_in(gateway, sub="helper", email="helper@example.test", groups=[])
     assert response.status_code == 302
     assert roles_of(gateway, "helper@example.test") == set()
+
+
+def test_a_person_who_loses_the_group_while_still_allowed_loses_their_other_sessions(gateway):
+    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
+    old, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    assert old.get("/admin/api/access-plans").status_code == 200
+    signed_in(gateway, sub="helper", email="helper@example.test", groups=[])
+    assert old.get("/admin/api/access-plans").status_code in {401, 403}
+
+
+def test_a_key_whose_named_grantor_cannot_be_found_has_no_authority(gateway):
+    from gateway.admin_runtime import generate_admin_api_key as make_key
+    from gateway.runtime_auth import hash_api_key
+
+    account = admin_store.ensure_service_account("orphan", path=gateway.path)
+    key = make_key()
+    admin_store.create_credential_hash(subject_kind="service_account", subject_id=account["id"],
+                                       hash=hash_api_key(key), prefix=key[:8], path=gateway.path)
+    admin_store.assign_admin_role(role="admin", subject_kind="service_account", subject_id=account["id"],
+                                  granted_by="usr_nobody", path=gateway.path)
+    assert bearer_status(gateway, key) == 403
+    assert admin_store.effective_admin_roles("service_account", account["id"], path=gateway.path) == frozenset()
