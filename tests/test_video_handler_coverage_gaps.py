@@ -1,6 +1,6 @@
 """Video-specific gap regressions; use the hermetic runner.
 
-The status poll's ComfyUI calls are served by the FK comfyui fake.
+The ComfyUI calls (status poll, queue and history reads) are served by the FK comfyui fake.
 """
 import asyncio
 import json
@@ -10,7 +10,7 @@ import pytest
 from fastapi import Response
 import proxy
 from gateway import media_jobs
-from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401
+from tests.support.fake_upstream import fake_upstreams, load_scenario, scenario_from_data  # noqa: F401
 
 
 def response(body):
@@ -175,26 +175,31 @@ def test_cancel_during_content_fetch_does_not_store_unwanted_asset(worker, monke
     worker.stored.assert_not_called()
 
 
+def _comfy_state_fake(fake_upstreams, monkeypatch, *, queue=None, history=None):
+    """Serve ComfyUI's /queue and /history; each is a response dict (default: a healthy empty one)."""
+    healthy_queue = {"json": {"queue_running": [], "queue_pending": []}}
+    healthy_history = {"json": {}}
+    fake = fake_upstreams.asgi(scenario_from_data({
+        "protocol": "comfyui",
+        "name": "comfy-state",
+        "provenance": {
+            "source": "hand-written",
+            "reference": "ComfyUI server routes GET /queue ({queue_running, queue_pending}) and "
+                         "GET /history (a JSON object keyed by prompt id) (ComfyUI server.py)",
+        },
+        "exchanges": [
+            {"id": "queue", "match": {"method": "GET", "path": "/queue"}, "response": queue or healthy_queue},
+            {"id": "history", "match": {"method": "GET", "path": "/history"}, "response": history or healthy_history},
+        ],
+    }))
+    monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+    return fake
+
+
 @pytest.mark.parametrize("bad_endpoint", ["queue", "history"])
-def test_malformed_provider_json_cannot_orphan_live_video(video_state, monkeypatch, bad_endpoint):
-    class FakeResponse:
-        status_code = 200
-        def __init__(self, bad, body):
-            self.bad, self.body = bad, body
-        def json(self):
-            if self.bad:
-                raise ValueError("malformed provider JSON")
-            return self.body
-    class Client:
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *args):
-            pass
-        async def get(self, url, **kwargs):
-            endpoint = "queue" if url.endswith("/queue") else "history"
-            body = {"queue_running": [], "queue_pending": []} if endpoint == "queue" else {}
-            return FakeResponse(endpoint == bad_endpoint, body)
-    monkeypatch.setattr(proxy.httpx, "AsyncClient", lambda **kw: Client())
+def test_malformed_provider_json_cannot_orphan_live_video(video_state, monkeypatch, fake_upstreams, bad_endpoint):
+    malformed = {"headers": {"content-type": "application/json"}, "body": [{"text": "{not json"}]}
+    _comfy_state_fake(fake_upstreams, monkeypatch, **{bad_endpoint: malformed})
     monkeypatch.setattr(proxy, "time", SimpleNamespace(time=lambda: 100))
     proxy._video_progress["p"] = {"status": "running", "percent": 37, "updated_at": 99}
     async def scenario():
@@ -205,39 +210,37 @@ def test_malformed_provider_json_cannot_orphan_live_video(video_state, monkeypat
 
 
 @pytest.mark.parametrize("prompt", [123, True, ["unexpected"], {"text": "unexpected"}])
-def test_direct_create_rejects_non_string_prompt_before_provider(video_state, monkeypatch, prompt):
+def test_direct_create_rejects_non_string_prompt_before_provider(video_state, monkeypatch, fake_upstreams, prompt):
+    # An optional exchange: the fake records any call and latches it as a violation.
+    fake = fake_upstreams.asgi(scenario_from_data({
+        "protocol": "comfyui",
+        "name": "comfy-untouched",
+        "provenance": {
+            "source": "hand-written",
+            "reference": "ComfyUI server route POST /prompt (ComfyUI server.py); the test expects no call",
+        },
+        "exchanges": [{
+            "id": "submit", "required": False,
+            "match": {"method": "POST", "path": "/prompt"},
+            "response": {"json": {"prompt_id": "p"}},
+        }],
+    }))
+    monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
     monkeypatch.setattr(proxy, "_dispatch_admission_response", lambda *a, **kw: None)
     monkeypatch.setattr(proxy, "_service_availability_response", lambda *a, **kw: None)
     monkeypatch.setattr(proxy, "_begin_media_delivery", lambda *a: None)
     monkeypatch.setattr(proxy, "_note_media_metadata_body", lambda *a: None)
-    transport = Mock(side_effect=AssertionError("invalid input contacted provider"))
-    monkeypatch.setattr(proxy.httpx, "AsyncClient", transport)
     result = asyncio.run(proxy.proxy_comfy_video_create(
         SimpleNamespace(headers={}), proxy.NO_AUTH_CONTEXT,
         body_override={"prompt": prompt, "model": "sora-2"}))
     assert result.status_code == 400
     assert json.loads(result.body)["error"]["type"] == "invalid_request_error"
     assert proxy._video_job_records == {}
-    transport.assert_not_called()
+    assert fake.requests == [], "invalid input contacted the provider"
 
 
 @pytest.mark.parametrize("bad_endpoint", ["queue", "history"])
 @pytest.mark.parametrize("shape", [[], None, "text"])
-def test_wrong_shape_provider_json_is_unavailable(video_state, monkeypatch, bad_endpoint, shape):
-    class FakeResponse:
-        status_code = 200
-        def __init__(self, body):
-            self.body = body
-        def json(self):
-            return self.body
-    class Client:
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *args):
-            pass
-        async def get(self, url, **kwargs):
-            endpoint = "queue" if url.endswith("/queue") else "history"
-            good = {"queue_running": [], "queue_pending": []} if endpoint == "queue" else {}
-            return FakeResponse(shape if endpoint == bad_endpoint else good)
-    monkeypatch.setattr(proxy.httpx, "AsyncClient", lambda **kw: Client())
+def test_wrong_shape_provider_json_is_unavailable(video_state, monkeypatch, fake_upstreams, bad_endpoint, shape):
+    _comfy_state_fake(fake_upstreams, monkeypatch, **{bad_endpoint: {"json": shape}})
     assert asyncio.run(proxy._fetch_comfy_state()) == (None, None)
