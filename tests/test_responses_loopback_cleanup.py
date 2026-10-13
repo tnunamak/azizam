@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -11,6 +12,7 @@ from starlette.requests import Request
 
 import proxy
 from tests.support.access import access_context  # noqa: E402
+from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401
 
 
 def _request(body, path="/v1/responses"):
@@ -58,47 +60,51 @@ def isolated_handlers(monkeypatch):
 
 
 # 1. Source-predicted RED: streaming setup currently has no cleanup owner.
-@pytest.mark.parametrize("phase", ["build", "send"])
-@pytest.mark.parametrize("cancel", [False, True])
+# The loopback upstream is the FK openai-compatible fake; the gateway's httpx client is real
+# and only notes whether it was closed (fake_upstreams.track_clients).
+@pytest.mark.parametrize("case", ["build_rejects_url", "send_refused", "send_cancelled"])
 def test_responses_loopback_setup_failure_closes_client(
-    monkeypatch, isolated_handlers, phase, cancel,
+    monkeypatch, isolated_handlers, fake_upstreams, case,
 ):
-    error = asyncio.CancelledError() if cancel else httpx.ConnectError("offline")
-    closed = AsyncMock()
-
-    def build_request(*args, **kwargs):
-        if phase == "build":
-            raise error
-        return object()
-
-    async def send(*args, **kwargs):
-        raise error
-
-    client = SimpleNamespace(
-        build_request=build_request, send=send, aclose=closed,
-    )
-    monkeypatch.setattr(proxy.httpx, "AsyncClient", lambda **kwargs: client)
+    if case == "send_cancelled":
+        url = fake_upstreams.asgi(load_scenario("openai-compatible/slow-first-byte", model="fake")).base_url
+    elif case == "send_refused":
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            url = f"http://127.0.0.1:{probe.getsockname()[1]}"
+    else:
+        url = "http://[::1"
+    clients = fake_upstreams.track_clients(proxy)
     monkeypatch.setattr(
         proxy, "_protocol_loopback_source_headers", lambda request: {},
     )
     monkeypatch.setattr(
         proxy, "build_chat_loopback_request",
         lambda **kwargs: SimpleNamespace(
-            timeout=1, url="http://fake.invalid/v1/chat/completions",
-            headers={}, body=b"{}",
+            timeout=1, url=f"{url}/v1/chat/completions", headers={}, body=b'{"model":"fake"}',
         ),
     )
+    raised = {
+        "build_rejects_url": httpx.InvalidURL,
+        "send_refused": httpx.ConnectError,
+        "send_cancelled": asyncio.CancelledError,
+    }[case]
 
     async def exercise():
-        with pytest.raises(type(error)) as caught:
-            await proxy._forward_chat_completions(
-                _request({}), proxy.NO_AUTH_CONTEXT,
-                {"model": "fake", "messages": []}, stream=True,
-            )
-        assert caught.value is error
+        call = asyncio.create_task(proxy._forward_chat_completions(
+            _request({}), proxy.NO_AUTH_CONTEXT,
+            {"model": "fake", "messages": []}, stream=True,
+        ))
+        if case == "send_cancelled":
+            async with asyncio.timeout(10):
+                await fake_upstreams.clock.until_waiting()
+            call.cancel()
+        with pytest.raises(raised):
+            await call
 
     asyncio.run(exercise())
-    closed.assert_awaited_once()
+    [client] = clients
+    assert client.closed, "a failed streaming setup leaked its loopback client"
 
 
 # 2. Source-predicted RED: close failure must not skip client cleanup.
