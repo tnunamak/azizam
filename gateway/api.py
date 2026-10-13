@@ -454,7 +454,8 @@ def create_gateway_router(
             summary = registry.summarize_workflow(workflow_id, audience=audience)
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
-        if summary is None:
+        # A workflow the caller cannot see is as absent as one that does not exist.
+        if summary is None or (entry_visible is not None and not entry_visible(request, summary)):
             return JSONResponse(
                 status_code=status.HTTP_404_NOT_FOUND,
                 content=_error_payload(

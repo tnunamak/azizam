@@ -9,7 +9,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Callout, StatusLine } from "@/components/product/status-ui";
 
 export type CatalogService = { stem: string; label: string; kind: "workflow" | "model"; capabilities: string[] };
-export type Category = { id: string; label: string; kind?: string; values: string[]; applies_to: string[] };
+export type Category = {
+  id: string; label: string; kind?: string; values: string[]; applies_to: string[];
+  /** One line saying what the category is for. */
+  description?: string;
+  /** Access plan ids that may see the category's items. Missing or null: everyone. An empty list: only the owner. */
+  visible_to?: string[] | null;
+};
 export type Rule = { id: string; category: string; op: string; values: string[] };
 export type Grant = { capability: string; service: string; release?: string; workflow?: string };
 export type Plan = { id: string; grants: Grant[]; require: Rule[]; deny: Rule[]; missing: Record<string, string>; mode: string; legacy_tags: string[] };

@@ -3,6 +3,7 @@ import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import type { CatalogService, Snapshot } from "../src/app/categories/editor";
 import { fulfilJson } from "./fixtures/intercept";
+import { openAdvanced } from "./fixtures/categories-advanced";
 
 const root = "/admin/api/categories";
 const widths = [1440, 390] as const;
@@ -252,6 +253,7 @@ test("empty rules reach an activated person and app grant through the real fixtu
   const serviceId = service.stem + "@r1";
   const sent = writes(page);
   await page.goto("/categories/");
+  await openAdvanced(page);
   await openEditor(page);
   const form = editor(page);
   await expect(form.getByText("No models or workflows are saved in these rules yet. Add one below.", { exact: true })).toBeVisible();
@@ -317,7 +319,8 @@ test.describe("Categories editor real fixture journeys", () => {
     for (const width of widths) {
       await surface(page, width);
       await page.goto("/categories/");
-      await expect(page.getByText("Add your first category", { exact: true })).toBeVisible();
+      await openAdvanced(page);
+      await expect(page.getByText("No access rules yet", { exact: true })).toBeVisible();
       await accessible(page, width);
       await openEditor(page);
       const form = editor(page);
@@ -356,6 +359,7 @@ test.describe("Categories editor real fixture journeys", () => {
       const base = await seed(request, "editor-plans-" + width, "embed");
       const serviceId = Object.keys(base.snapshot.services)[0];
             await page.goto("/categories/");
+            await openAdvanced(page);
       await openEditor(page);
       const form = editor(page);
       const sent = writes(page);
@@ -444,6 +448,7 @@ test.describe("Categories editor real fixture journeys", () => {
         await surface(page, width);
         const base = await seed(request, "editor-base-" + stage + "-" + width, "embed");
         await page.goto("/categories/");
+        await openAdvanced(page);
         await openEditor(page);
         const form = editor(page);
         await form.getByLabel("Label for Data location", { exact: true }).fill("Reviewed data location");
@@ -511,6 +516,7 @@ test("catalog service can be added, granted and previewed with category APIs stu
     throw new Error("Unexpected category API: " + path);
   });
   await page.goto("/categories/");
+  await openAdvanced(page);
   await openEditor(page);
   const form = editor(page);
   await pick(page, form, "Model or workflow to add", "Paint workflow");
@@ -548,6 +554,7 @@ test("category labels, dual limits and safe draft dismissal at 390 px", async ({
   ] }));
   const sent = writes(page);
   await page.goto("/categories/");
+  await openAdvanced(page);
   await expect(page.getByText(/Active rules apply to the people and apps listed in them/)).toBeVisible();
   await expect(page.getByText(/Nothing is enforced|enforcement comes later/)).toHaveCount(0);
   await expect(page.locator('details:has(> section[aria-labelledby="current-rules"])')).not.toHaveAttribute("open");

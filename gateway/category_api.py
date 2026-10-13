@@ -97,11 +97,15 @@ def _json(value):
 
 
 def _category(value):
-    v = _object(value, ("id", "label"), ("kind", "values", "applies_to"))
+    v = _object(value, ("id", "label"),
+                ("kind", "values", "applies_to", "description", "visible_to"))
+    visible_to = v.get("visible_to")
     return policy.Category(_text(v["id"]), _text(v["label"]),
                            _text(v.get("kind", "set")),
                            _list(v.get("values", []), _text),
-                           _list(v.get("applies_to", ["release", "route", "workflow"]), _text))
+                           _list(v.get("applies_to", ["release", "route", "workflow"]), _text),
+                           _text(v.get("description", "")),
+                           None if visible_to is None else _list(visible_to, _text))
 
 
 def _assertion(value):
