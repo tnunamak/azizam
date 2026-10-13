@@ -350,3 +350,53 @@ def test_reading_provenance_does_not_read_the_picture(tmp_path: Path) -> None:
     with patch.object(builtins, "open", opener):
         assert media_metadata.png_text_chunks_from_path(path) == {"azizam": "kept"}
     assert read[0] < 300, f"read {read[0]} bytes of a {path.stat().st_size}-byte picture"
+
+
+# -- service checks: one TLS context, and a kept answer instead of a new connection --
+
+def test_a_client_for_a_service_check_builds_no_certificate_context() -> None:
+    import ssl
+    from unittest.mock import patch
+
+    import httpx
+
+    import proxy
+
+    built: list[int] = []
+    real = ssl.create_default_context
+
+    def spy(*args, **kwargs):
+        built.append(1)
+        return real(*args, **kwargs)
+
+    with patch.object(ssl, "create_default_context", spy):
+        contexts = {id(proxy.tls_context()) for _ in range(5)}
+        for _ in range(5):
+            httpx.AsyncClient(verify=proxy.tls_context())
+    assert len(contexts) == 1 and built == [], "a check built its own certificate context"
+
+
+def test_a_service_resource_check_is_kept_until_it_expires_or_its_settings_change(monkeypatch) -> None:
+    import asyncio
+
+    import proxy
+
+    config = {"port": 9}
+    probes: list[dict] = []
+
+    async def probe(bcfg):
+        probes.append(dict(bcfg))
+        return {"status": "available"}
+
+    now = [1000.0]
+    monkeypatch.setattr(proxy, "_service_resource_probe_config", lambda service_id: dict(config))
+    monkeypatch.setattr(proxy, "_probe_service_resource_fact", probe)
+    monkeypatch.setattr(proxy.time, "monotonic", lambda: now[0])
+    ask = lambda: asyncio.run(proxy._service_resource_runtime_fact("svc"))  # noqa: E731
+    assert [ask() for _ in range(5)] == [{"status": "available"}] * 5 and len(probes) == 1
+    now[0] += proxy._HEALTH_EVIDENCE_TTL_S + 1
+    ask()
+    assert len(probes) == 2, "an expired answer was reused"
+    config["port"] = 10
+    ask()
+    assert len(probes) == 3, "an answer was reused after the service's settings changed"

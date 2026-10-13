@@ -31,7 +31,6 @@ import sys
 import subprocess
 import tempfile
 import threading
-import ssl
 import time
 import atexit
 import hashlib
@@ -87,6 +86,7 @@ from gateway import (
     voice_design,
 )
 from gateway import loop_watchdog, request_connections, video_extend
+from gateway.http_tls import tls_context
 from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails
 from gateway import video_job_records, prompt_metadata_migration
@@ -3395,7 +3395,7 @@ async def _activate_prepared_litellm_local_target(
 async def get_served_model_id(base_url: str) -> str:
     """The first model id an OpenAI-compatible server lists at ``base_url``."""
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=tls_context()) as client:
             resp = await client.get(f"{base_url}/v1/models", timeout=HEALTH_CHECK_TIMEOUT)
             if resp.status_code != 200:
                 return ""
@@ -3446,7 +3446,7 @@ async def current_llm_model_for_backend(backend: str) -> str:
     if not strategy:
         return ""
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0), verify=tls_context()) as client:
             resp = await client.get(f"{host}{strategy['endpoint']}")
         if resp.status_code != 200:
             return ""
@@ -3584,7 +3584,7 @@ async def probe_backend(
     authority = f"{host}:{port}" if port else str(host)
     url = f"{scheme}://{authority}{safe_path}"
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=tls_context()) as client:
             resp = await client.get(url, timeout=HEALTH_CHECK_TIMEOUT)
         body: Any = None
         try:
@@ -3604,6 +3604,10 @@ async def probe_backend(
         return {"ok": False, "status": None, "error": str(exc) or type(exc).__name__, "url": url, "body": None}
 
 
+# What a service answered to its resource check, kept for the same few seconds as health answers.
+_RESOURCE_FACT_CACHE: dict[str, tuple[float, str, dict[str, Any]]] = {}
+
+
 async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
     """Return a generic runtime status fact for a configured service.
 
@@ -3611,10 +3615,24 @@ async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
     transport fields. That keeps the gateway from learning engine-specific
     health semantics in code; richer queue/admission facts can be added as
     data on the service record.
+
+    An answer is kept for ``_HEALTH_EVIDENCE_TTL_S`` and used only while the service's
+    probe settings are unchanged, so a read of the resource list does not open a
+    connection to every service each time.
     """
     bcfg = _service_resource_probe_config(service_id)
     if not isinstance(bcfg, Mapping):
         return {"status": "unknown"}
+    fingerprint = json.dumps(bcfg, sort_keys=True, default=str)
+    hit = _RESOURCE_FACT_CACHE.get(service_id)
+    if hit is not None and time.monotonic() - hit[0] < _HEALTH_EVIDENCE_TTL_S and hit[1] == fingerprint:
+        return dict(hit[2])
+    fact = await _probe_service_resource_fact(bcfg)
+    _RESOURCE_FACT_CACHE[service_id] = (time.monotonic(), fingerprint, dict(fact))
+    return fact
+
+
+async def _probe_service_resource_fact(bcfg: Mapping[str, Any]) -> dict[str, Any]:
     url = _service_resource_probe_url(bcfg)
     if not url:
         return {"status": "unknown"}
@@ -3626,7 +3644,7 @@ async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
     # accidentally inherit very long service timeouts (e.g. TTS: 86400 s).
     timeout = min(timeout, HEALTH_CHECK_TIMEOUT)
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=tls_context()) as client:
             resp = await client.get(url, timeout=timeout)
             if 200 <= resp.status_code < 300:
                 return {"status": "available"}
@@ -9619,7 +9637,7 @@ async def _fetch_comfy_state() -> tuple[Optional[set[str]], Optional[dict]]:
     Returns (None, None) on any error. Uses 2s timeouts per the spec.
     """
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=2.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=2.0), verify=tls_context()) as client:
             q_resp = await client.get(f"{COMFY_HOST}/queue")
             h_resp = await client.get(f"{COMFY_HOST}/history?max_items={_VIDEO_RECONCILE_HISTORY_LIMIT}")
     except Exception as e:
@@ -12978,6 +12996,9 @@ async def lifespan(app: FastAPI):
     # No engine processes to stop — the gateway never owned an engine's existence.
 
 
+# Build the shared TLS context now, at import, so no request builds it on the event loop.
+tls_context()
+
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
 
 from gateway.api_reference import register_api_reference
@@ -14047,7 +14068,7 @@ async def _showcase_status() -> dict[str, Any]:
     """
     async def _probe(url: str) -> Any:
         try:
-            async with httpx.AsyncClient(timeout=1.5) as client:
+            async with httpx.AsyncClient(timeout=1.5, verify=tls_context()) as client:
                 resp = await client.get(url)
             return resp.json() if resp.status_code == 200 else None
         except Exception:  # noqa: BLE001
@@ -15482,7 +15503,6 @@ def _catalog_auth_context_for_profile(profile: Any, _profile_id: str) -> AuthCon
 # answer is dated by its check time, so a kept answer is not passed off as new.
 _HEALTH_EVIDENCE_TTL_S = 10.0
 _HEALTH_EVIDENCE_CACHE: dict[str, tuple[float, str, dict[str, Any]]] = {}
-_HEALTH_PROBE_SSL: ssl.SSLContext | None = None
 
 
 async def _models_catalog_health_evidence(
@@ -15490,11 +15510,7 @@ async def _models_catalog_health_evidence(
     *,
     service_ids: Iterable[str],
 ) -> dict[str, dict[str, Any]]:
-    global _HEALTH_PROBE_SSL
-    if _HEALTH_PROBE_SSL is None:
-        # Building a TLS context costs about 15 ms; one is enough for every probe.
-        _HEALTH_PROBE_SSL = await asyncio.to_thread(ssl.create_default_context)
-    context = _HEALTH_PROBE_SSL
+    context = tls_context()  # building one costs tens of milliseconds; one serves every probe
 
     async def get_json(url: str) -> Mapping[str, Any] | None:
         if not url.startswith(("http://", "https://")):
@@ -23858,7 +23874,7 @@ async def _probed_context_window(backend: str) -> int | None:
 
     value: int | None = None
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0), verify=tls_context()) as client:
             resp = await client.get(f"{_backend_base_url(backend)}{endpoint}")
         if resp.status_code == 200:
             payload = resp.json()
