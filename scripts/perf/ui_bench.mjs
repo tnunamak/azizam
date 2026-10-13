@@ -5,7 +5,9 @@
 // Per page and persona (owner, member) it records, from navigation start:
 //   meaningful_ms  first moment <main> holds >= 60 characters with no aria-busy element
 //   settled_ms     last /me/api|/admin/api|/v1 response finished (the page waits for API quiet, 30 s cap)
-//   ready_ms       max(meaningful_ms, settled_ms): when the data the page shows is on screen — the ranked number
+//   ready_ms       the last change to <main>'s content before it stayed still for 700 ms (at least
+//                  meaningful_ms): when the data the page shows is on screen — the ranked number.
+//                  Shell fetches that only change the header do not count.
 //   requests, bytes (response bodies), api_requests, long_tasks (count / total ms), fcp_ms
 // Each page is loaded REPEATS times in a fresh context (cold JS cache is not simulated: one
 // warm-up load fills the HTTP cache); the median is reported.
@@ -39,7 +41,7 @@ function pages() {
 
 const INIT = `
   (() => {
-    window.__perf = { meaningful: null, long: [], fcp: null };
+    window.__perf = { meaningful: null, long: [], fcp: null, lastMain: 0 };
     new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__perf.long.push(e.duration); })
       .observe({ entryTypes: ["longtask"] });
     new PerformanceObserver((l) => { for (const e of l.getEntries()) if (e.name === "first-contentful-paint") window.__perf.fcp = e.startTime; })
@@ -51,7 +53,14 @@ const INIT = `
       if (main.querySelector('[aria-busy="true"], [data-loading="true"]')) return;
       if ((main.innerText || "").trim().length >= 60) window.__perf.meaningful = performance.now();
     };
-    new MutationObserver(check).observe(document, { childList: true, subtree: true, characterData: true, attributes: true });
+    new MutationObserver((records) => {
+      for (const r of records) {
+        if (r.type === "attributes") continue;
+        const node = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+        if (node && node.closest && node.closest("main")) window.__perf.lastMain = performance.now();
+      }
+      check();
+    }).observe(document, { childList: true, subtree: true, characterData: true, attributes: true });
     setInterval(check, 25);
   })();
 `;
@@ -81,11 +90,11 @@ async function loadOnce(browser, state, route) {
   try {
     await page.goto(base + route, { waitUntil: "load", timeout: 60000 });
     await page.waitForFunction(() => window.__perf.meaningful !== null, null, { timeout: 30000 }).catch((e) => { error = "no meaningful content in 30 s"; });
-    // quiet = no API request in flight for 400 ms
-    let quietSince = null;
+    // quiet = no API request in flight and <main> unchanged for 700 ms
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
-      if (inflight === 0) { quietSince ??= Date.now(); if (Date.now() - quietSince >= 400) break; } else quietSince = null;
+      const sinceMain = await page.evaluate(() => performance.now() - window.__perf.lastMain).catch(() => 1e9);
+      if (inflight === 0 && sinceMain >= 700) break;
       await page.waitForTimeout(50);
     }
   } catch (e) { error = String(e).split("\n")[0]; }
@@ -94,7 +103,7 @@ async function loadOnce(browser, state, route) {
   await context.close();
   const settled = apiDone.length ? Math.max(...apiDone) - start : 0;
   return {
-    ready_ms: perf.meaningful === null ? null : Math.max(perf.meaningful, settled),
+    ready_ms: perf.meaningful === null ? null : Math.max(perf.meaningful, perf.lastMain),
     meaningful_ms: perf.meaningful, fcp_ms: perf.fcp, settled_ms: settled,
     requests, api_requests: api, bytes, long_tasks: perf.long.length, long_task_ms: Math.round(perf.long.reduce((a, b) => a + b, 0)),
     final, error,

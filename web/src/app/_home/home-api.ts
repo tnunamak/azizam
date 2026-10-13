@@ -46,6 +46,7 @@ export interface HomeCreation {
   created_at?: number | string | null;
   download_url?: string | null;
   media_type?: string | null;
+  size_bytes?: number | null;
   poster_asset_id?: string | null;
   available?: boolean;
 }
