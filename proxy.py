@@ -3695,10 +3695,12 @@ async def _stream_tts_upstream(
                 content = await upstream.aread()
                 if _speech_allocation_failed(upstream.status_code, content.decode("utf-8", "replace")):
                     return _tts_gpu_memory_response()
+                retry_after = upstream.headers.get("retry-after")
                 return Response(
                     content=content,
                     status_code=upstream.status_code,
                     media_type=upstream.headers.get("content-type", "application/json"),
+                    headers={"Retry-After": retry_after} if retry_after else None,
                 )
         except httpx.TimeoutException:
             return _tts_error("TTS request timeout", 504)
