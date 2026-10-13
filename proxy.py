@@ -23950,10 +23950,12 @@ async def _litellm_models_payload(
         print(f"[proxy] LiteLLM model catalog fetch failed: {e}", flush=True)
         return None
     finally:
-        if resp is not None:
-            await resp.aclose()
-        if client is not None:
-            await client.aclose()
+        try:
+            if resp is not None:
+                await resp.aclose()
+        finally:
+            if client is not None:
+                await client.aclose()
 
 
 def _litellm_model_summaries_from_payload(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
