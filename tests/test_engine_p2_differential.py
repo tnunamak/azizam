@@ -285,6 +285,38 @@ class SpeechVoiceDifferentialTests(unittest.TestCase):
         self.assertNotIn("kokoro", listing["engines"])
 
 
+class FfmpegRewriteMemoTests(unittest.TestCase):
+    """The harness runs the real tag rewrite once per distinct input; every later call must get the bytes the real one gives."""
+
+    def test_a_memoized_rewrite_returns_what_the_real_rewrite_returns(self) -> None:
+        from gateway import media_metadata
+        from tests.engine_p2_differential import _memoized_ffmpeg_rewrite
+        from tests.voice_test_audio import speechlike
+
+        started: list[bytes] = []
+
+        def real(content: bytes, suffix: str, workdir: Any, extra: list[str]) -> bytes:
+            started.append(content)
+            return media_metadata._ffmpeg_rewrite(content, suffix, workdir, extra)
+
+        def tag(alias: str, request_id: str, second: str) -> list[str]:
+            record = f'{{"created_at":"{second}","model_alias":"{alias}","receipt":"/gateway/v1/receipts/{request_id}","request_id":"{request_id}"}}'
+            return ["-metadata", f"comment=azizam_provenance={record}"]
+
+        memo = _memoized_ffmpeg_rewrite(real)
+        clip, other_clip = speechlike(0.3), speechlike(0.3, seed=2)
+        a1, a2 = "req_" + "1" * 32, "req_" + "2" * 32
+        cases = [
+            (clip, tag("tts", a1, "2026-01-01T00:00:01Z")),
+            (clip, tag("tts", a2, "2026-01-01T00:00:02Z")),  # same input but id and second: memo hit
+            (clip, tag("tts-hd", a1, "2026-01-01T00:00:01Z")),  # another alias: new input
+            (other_clip, tag("tts", a1, "2026-01-01T00:00:01Z")),  # another clip: new input
+        ]
+        for content, extra in cases:
+            self.assertEqual(memo(content, ".wav", None, extra), media_metadata._ffmpeg_rewrite(content, ".wav", None, extra))
+        self.assertEqual(len(started), 3)
+
+
 def _model_test(model: str):
     return lambda self: self._check_model(model)
 
