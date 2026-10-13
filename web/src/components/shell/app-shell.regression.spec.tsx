@@ -34,6 +34,14 @@ const replace = vi.fn();
 let pathname = "/";
 let search = "";
 
+// The owner checks wait SHELL_CHECKS_DELAY_MS after mount (use-after-first-load.ts); these
+// specs are about what the checks say, so they start at once. app-shell.deferred-checks.spec.tsx
+// covers the delay itself.
+vi.mock("./use-after-first-load", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./use-after-first-load")>()),
+  useAfterFirstLoad: () => true,
+}));
+
 vi.mock("next/navigation", () => ({
   usePathname: () => pathname,
   useSearchParams: () => new URLSearchParams(search),
