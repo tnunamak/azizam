@@ -69,10 +69,7 @@ def test_route_walk_finds_the_surface():
     assert "/gateway/v1/media/jobs/{job_id}" in paths and "/me/api/session" in paths
 
 
-@pytest.mark.parametrize("audience", ["client", "admin", "internal"])
-def test_no_json_get_response_contains_an_internal_key(people, audience):  # noqa: F811
-    # The router captured the resolver at import; the profile mapping is looked up per request.
-    people.monkeypatch.setattr(proxy, "discovery_audience_for_profile", lambda _profile: audience)
+def test_no_json_get_response_contains_an_internal_key(people):  # noqa: F811
     async def no_grid(*_args, **_kwargs):
         return []
 
@@ -92,21 +89,24 @@ def test_no_json_get_response_contains_an_internal_key(people, audience):  # noq
     connect = responses_store._conn
     people.monkeypatch.setattr(responses_store, "_conn", lambda _path: connect(responses_db))
     member = people.alice
-    checked = 0
     failures = []
-    for template in _get_routes():
-        headers = member.browser if template.startswith("/me/api") else member.bearer
-        try:
-            response = people.client.get(_fill(template, member), headers=headers)
-        except BaseException as exc:  # noqa: BLE001
-            leaf = exc
-            while getattr(leaf, "exceptions", None):
-                leaf = leaf.exceptions[0]
-            failures.append(f"{template} crashed: {type(leaf).__name__}: {str(leaf)[:150]}")
-            continue
-        if "json" not in response.headers.get("content-type", ""):
-            continue
-        checked += 1
-        failures += [f"{template} {leak}" for leak in _leaks(response.json())]
-    assert checked >= 10
+    for audience in ("client", "admin", "internal"):
+        # The router captured the resolver at import; the profile mapping is looked up per request.
+        people.monkeypatch.setattr(proxy, "discovery_audience_for_profile", lambda _profile: audience)
+        checked = 0
+        for template in _get_routes():
+            headers = member.browser if template.startswith("/me/api") else member.bearer
+            try:
+                response = people.client.get(_fill(template, member), headers=headers)
+            except BaseException as exc:  # noqa: BLE001
+                leaf = exc
+                while getattr(leaf, "exceptions", None):
+                    leaf = leaf.exceptions[0]
+                failures.append(f"[{audience}] {template} crashed: {type(leaf).__name__}: {str(leaf)[:150]}")
+                continue
+            if "json" not in response.headers.get("content-type", ""):
+                continue
+            checked += 1
+            failures += [f"[{audience}] {template} {leak}" for leak in _leaks(response.json())]
+        assert checked >= 10
     assert not failures, failures
