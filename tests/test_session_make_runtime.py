@@ -622,7 +622,7 @@ class SessionAppStoreTests(unittest.TestCase):
             with self.subTest(actor=actor), self.assertRaises(ValueError):
                 AdminSQLiteStore(self.admin).create_credential(
                     app_id=app["id"], data={},
-                    actor=AdminContext(subject=actor, actor_id=actor, roles=frozenset({"admin"})),
+                    actor=AdminContext(subject=actor, actor_id=actor, roles=frozenset({"owner"})),
                 )
         self.assertEqual(admin_store.list_credentials(path=self.admin), [])
         ordinary = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], access_plan="person", path=self.admin)
