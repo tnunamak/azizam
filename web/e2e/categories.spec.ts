@@ -2,6 +2,7 @@ import { type APIRequestContext, type Page } from "@playwright/test";
 import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { fulfilJson } from "./fixtures/intercept";
+import { openAdvanced } from "./fixtures/categories-advanced";
 
 const root = "/admin/api/categories";
 const widths = [1440, 390] as const;
@@ -164,7 +165,8 @@ test.describe("Categories real fixture journeys", () => {
     for (const width of widths) {
       await surface(page, width);
       await page.goto("/categories/");
-      await expect(page.getByText("Add your first category", { exact: true })).toBeVisible();
+      await openAdvanced(page);
+      await expect(page.getByText("No access rules yet", { exact: true })).toBeVisible();
       await expect(page.getByText(/Active rules apply to the people and apps listed in them/)).toBeVisible();
       await expect(page.getByRole("region", { name: "Current rules", exact: true })).toHaveCount(0);
       await expect(page.getByText("No category history yet", { exact: true })).toBeVisible();
@@ -178,8 +180,10 @@ test.describe("Categories real fixture journeys", () => {
       test.setTimeout(180_000);
       await surface(page, width);
       await page.goto("/categories/");
+      await openAdvanced(page);
       const first = await seed(request, `browser-chat-${width}`, "chat");
       await page.reload();
+      await openAdvanced(page);
       const current = page.getByRole("region", { name: "Current rules", exact: true });
       const preview = page.getByRole("region", { name: "Check access", exact: true });
       const changes = page.getByRole("region", { name: "Change preview", exact: true });
@@ -223,6 +227,7 @@ test.describe("Categories real fixture journeys", () => {
       await test.step("Restore previews gains and losses without activation", async () => {
         const second = await seed(request, `browser-embed-${width}`, "embed");
         await page.reload();
+        await openAdvanced(page);
         await page.locator('details:has(> section[aria-labelledby="current-rules"])').locator(":scope > summary").click();
         await expect(current.getByText(`Revision ${second.revision}`, { exact: true })).toBeVisible();
         await accessible(page, width);

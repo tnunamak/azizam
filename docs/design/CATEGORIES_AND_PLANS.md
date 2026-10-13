@@ -1,6 +1,16 @@
 # Categories and access plans (design v3)
 
-Status: validated design, not implemented. 2026-10-10.
+## What categories do (plain English)
+
+A category is a group of models and workflows with one rule: who may see what is in it. You decide what a category means. The gateway does not know what "Adult" or "Experimental" means. It only follows the rule you set. Nothing is filed automatically; an item is in a category only when you put it there.
+
+A category can be visible to everyone, to you alone, or to you and the people and apps on the access plans you choose. Someone who cannot see a category does not find its items in model lists, workflow lists or the showcase, and cannot run them. You see everything when you use your own key or this console. An app you run for other people is treated like any other app.
+
+Items in no category are unaffected. Move an item out of its category and it is available again.
+
+In code: `gateway/category_enforcement.py` reads a category's `visible_to` list (access plan ids) and refuses and hides the items filed in it. `scripts/migrations/seed_categories.py` creates the two starter categories, Adult and Experimental, as ordinary rows the owner can edit on the Categories page. The sections below are the older, finer design for rules about specific people and apps (the page's Advanced section).
+
+Status of the design below: validated 2026-10-10 and implemented as owner-only category rules (the page's Advanced section). The plain categories above were added 2026-10-13.
 
 Evidence, all in divan `local-ai-gateway/`:
 - `owner-defined-dimensions-…`: nine prior-art reports, 1,082 claims.

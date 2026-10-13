@@ -118,10 +118,22 @@ class Category:
     kind: str = "set"
     values: tuple[str, ...] = ()
     applies_to: tuple[str, ...] = ("release", "route", "workflow")
+    # One line, in the owner's words, saying what the category is for.
+    description: str = ""
+    # Who may see the items in this category. None: everyone (no restriction).
+    # A tuple of access plan ids: the owner, and requests whose person plan AND
+    # app plan are both listed. An empty tuple: the owner only.
+    visible_to: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "values", tuple(self.values))
         object.__setattr__(self, "applies_to", tuple(self.applies_to))
+        if self.visible_to is not None:
+            object.__setattr__(self, "visible_to", tuple(self.visible_to))
+
+    @property
+    def restricted(self) -> bool:
+        return self.visible_to is not None
 
     def validate(self) -> None:
         if self.kind != "set":
@@ -134,6 +146,12 @@ class Category:
         if (any(not isinstance(v, str) or not v for v in self.values)
                 or len(set(self.values)) != len(self.values)):
             raise PolicyError("category needs unique value IDs")
+        if not isinstance(self.description, str):
+            raise PolicyError("category description must be text")
+        if self.visible_to is not None and (
+                any(not isinstance(plan, str) or not plan for plan in self.visible_to)
+                or len(set(self.visible_to)) != len(self.visible_to)):
+            raise PolicyError("category visibility needs unique access plan IDs")
 
     def accepts(self, value: object) -> bool:
         return isinstance(value, str) and value in self.values

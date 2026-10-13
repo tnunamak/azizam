@@ -13115,10 +13115,11 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
         ("capability-catalog", tuple((c.backend, c.model) for c in remote)),
         lambda: _gateway_catalog_finish(live_registry, base, remote),
     )
-    return [
-        _capability_for_access(capability, auth_context, registry=live_registry)
-        for capability in capabilities
-    ]
+    viewed = (_capability_for_access(capability, auth_context, registry=live_registry)
+              for capability in capabilities)
+    # A restricted category hides its items; they are not listed as unavailable.
+    return [capability for capability in viewed
+            if not category_enforcement.is_hidden(capability.policy_reasons)]
 
 
 def _gateway_catalog_base() -> tuple[Mapping[str, Any], list[Capability]]:
@@ -14942,7 +14943,9 @@ app.include_router(create_category_router(
     auth=ADMIN_AUTH, store_path=ADMIN_DB_PATH.parent / "categories.db",
     service_catalog=_category_service_catalog))
 from gateway import category_enforcement  # noqa: E402
-category_enforcement.configure(ADMIN_DB_PATH.parent / "categories.db")
+category_enforcement.configure(
+    ADMIN_DB_PATH.parent / "categories.db",
+    owner_id=lambda: admin_store.instance_owner_id(path=ADMIN_DB_PATH))
 app.include_router(build_setup_api_router(lambda request: {
     "owner_exists": _owner_or_admin_exists(),
     "oidc_enabled": _effective_admin_oidc_config().enabled,

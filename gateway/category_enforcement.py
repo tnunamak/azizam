@@ -16,6 +16,12 @@ path checks again with the resolved target.
 Services are named by their runtime target: a snapshot service ``stem@rev``
 governs requests whose workflow (or, without one, model) is ``stem``.
 
+Restricted categories (a category with ``visible_to`` set) are checked before
+that, for everyone, listed or not. An item in a restricted category is visible
+only to the owner (acting as themself) and to requests whose person plan and
+app plan are both named by the category. This is what lets the owner mark a
+workflow "Experimental" or "Adult" with one category row and no per-person rules.
+
 If an active snapshot exists but cannot be read, every request is denied
 with ``POLICY_UNAVAILABLE`` (fail closed); with no active snapshot the gate
 does nothing.
@@ -26,6 +32,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +45,7 @@ from gateway.policy import DENIED, PolicyDecision, PolicyRequest
 log = logging.getLogger(__name__)
 
 SOURCE = "policy:categories"
+HIDDEN = "CATEGORY_HIDDEN"  # The reason code of a restricted category (see ``visible_to``).
 
 
 def _stem(service_id: str) -> str:
@@ -53,8 +61,10 @@ class CategoryGate:
     query and an activation applies on the next check.
     """
 
-    def __init__(self, store_path: Path):
+    def __init__(self, store_path: Path, owner_id: Callable[[], str | None] | None = None):
         self._path = Path(store_path)
+        self._owner_id = owner_id
+        self._restricted_index: tuple[kernel.PolicyVersion, dict[str, frozenset[str]]] | None = None
         self._lock = threading.Lock()
         self._store: CategoryStore | None = None
         self._watch: sqlite3.Connection | None = None
@@ -113,6 +123,57 @@ class CategoryGate:
                 self._failed = True
                 return None, True
 
+    def _restricted_by_stem(self, version: kernel.PolicyVersion) -> dict[str, frozenset[str]]:
+        """Service stem -> ids of the restricted categories it belongs to."""
+        cached = self._restricted_index
+        if cached is not None and cached[0] is version:
+            return cached[1]
+        restricted = {key for key, category in version.categories.items() if category.restricted}
+        index: dict[str, frozenset[str]] = {}
+        if restricted:
+            for key, service in version.services.items():
+                found = frozenset(
+                    assertion.category
+                    for subject in kernel.resolve(service)
+                    for assertion in subject.assertions
+                    if assertion.accepted and assertion.category in restricted)
+                if found:
+                    index[_stem(key)] = found
+        self._restricted_index = (version, index)
+        return index
+
+    def _is_owner(self, identity: Any) -> bool:
+        person = getattr(identity, "person_id", None)
+        if not person or self._owner_id is None:
+            return False
+        try:
+            owner = request_connections.memo(("category-owner", id(self)), self._owner_id)
+        except Exception:  # noqa: BLE001 - an unreadable owner record never grants
+            log.exception("category rules: owner lookup failed")
+            return False
+        return owner == person
+
+    def _hidden_category(self, version: kernel.PolicyVersion, identity: Any,
+                         request: PolicyRequest) -> str:
+        """The id of a restricted category that hides this item from the caller, else ''."""
+        index = self._restricted_by_stem(version)
+        if not index:
+            return ""
+        categories: set[str] = set()
+        for name in (request.workflow, request.model):
+            categories |= index.get(name or "", frozenset())
+        if not categories:
+            return ""
+        access = getattr(identity, "access", None)
+        plans = {getattr(getattr(access, name, None), "id", None)
+                 for name in ("person_plan", "app_plan")}
+        refused = [category_id for category_id in sorted(categories)
+                   if None in plans or not plans <= set(version.categories[category_id].visible_to or ())]
+        # The owner lookup costs a query, so ask it only when a plan check refused.
+        if not refused or self._is_owner(identity):
+            return ""
+        return refused[0]
+
     def check(self, identity: Any, request: PolicyRequest) -> PolicyDecision | None:
         """Return a denial when the active rules refuse this request, else None."""
         version, unavailable = self._active()
@@ -121,6 +182,10 @@ class CategoryGate:
                                   reasons=("category rules: POLICY_UNAVAILABLE",))
         if version is None:
             return None
+        hidden = self._hidden_category(version, identity, request)
+        if hidden:
+            return PolicyDecision(decision=DENIED, sources=(SOURCE,),
+                                  reasons=(f"category rules: {HIDDEN} {hidden}",))
         person = getattr(identity, "person_id", None) or ""
         app = getattr(identity, "app_id", None) or ""
         if person not in version.people and app not in version.apps:
@@ -160,10 +225,14 @@ class CategoryGate:
 _GATE: CategoryGate | None = None
 
 
-def configure(store_path: Path | None) -> None:
-    """Install the process-wide gate (proxy startup); None disables it."""
+def configure(store_path: Path | None, owner_id: Callable[[], str | None] | None = None) -> None:
+    """Install the process-wide gate (proxy startup); None disables it.
+
+    ``owner_id`` returns the instance owner's person id; without it nobody is
+    exempt from a restricted category.
+    """
     global _GATE
-    _GATE = CategoryGate(store_path) if store_path is not None else None
+    _GATE = CategoryGate(store_path, owner_id) if store_path is not None else None
 
 
 def apply(identity: Any, request: PolicyRequest, decision: PolicyDecision) -> PolicyDecision:
@@ -181,3 +250,11 @@ def apply(identity: Any, request: PolicyRequest, decision: PolicyDecision) -> Po
 def visible(identity: Any, request: PolicyRequest) -> bool:
     """Show a discovery entry only when its runtime category check passes."""
     return _GATE is None or _GATE.check(identity, request) is None
+
+
+def is_hidden(reasons: Any) -> bool:
+    """True when a policy view says a restricted category hides the item.
+
+    Discovery lists drop such items instead of showing them as unavailable.
+    """
+    return any(f"category rules: {HIDDEN}" in str(reason) for reason in reasons or ())
