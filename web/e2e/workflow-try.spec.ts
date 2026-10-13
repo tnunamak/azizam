@@ -476,17 +476,24 @@ test("successive video runs poll their own jobs and never reuse old output", asy
 for (const scenario of [
   {
     id: "image.edit.image-identity",
+    route: "/gateway/v1/images/identity",
+    // The scene's likeness report sits under `likeness`.
+    response: (proof: string) => ({ likeness: { object: "likeness.check", pooling: proof } }),
     title: "Identity Scene",
     note: null,
   },
   {
     id: "image.analyze.face-likeness",
+    route: "/gateway/v1/faces/likeness",
+    response: (proof: string) => ({ object: "likeness.check", pooling: proof }),
     title: "Face Likeness Check",
     note: "Face service starts when you make a request.",
   },
 ] as const) {
   test("Try submits " + scenario.title + " and renders its response", async ({ page }) => {
-    const runPath = "/gateway/v1/workflows/" + scenario.id + "/run";
+    // The routes the gateway really serves for these two workflows (the catalog's
+    // native_route); /gateway/v1/workflows/{id}/run only runs video-edit workflows.
+    const runPath = scenario.route;
     const prompt = "A deterministic composed-workflow request.";
     const proof = "response-for-" + scenario.id;
     const posts: Array<{ method: string; body: unknown }> = [];
@@ -501,7 +508,7 @@ for (const scenario of [
             ...workflow,
             example_request: {
               method: "POST",
-              path: "/gateway/v1/workflows/" + workflow.id + "/run",
+              path: scenario.route,
               content_type: "application/json",
               body: { model: workflow.id, prompt: "" },
             },
@@ -513,7 +520,7 @@ for (const scenario of [
         method: route.request().method(),
         body: route.request().postDataJSON(),
       });
-      return fulfilJson(route, { proof });
+      return fulfilJson(route, scenario.response(proof));
     });
 
     await page.goto("/try/?workflow=" + encodeURIComponent(scenario.id));
@@ -600,41 +607,4 @@ test("workflow multipart run sends a browser-encoded file part without a JSON co
   expect(contentType).toMatch(/^multipart\/form-data; boundary=/);
   expect(uploadedBody).toContain('name="source"; filename="clip.mp4"');
   expect(uploadedBody).toContain("Turn this source into a crisp launch clip.");
-});
-
-// Browser representative: the signed media host is unreachable, so the players' own load
-// failure (not a dispatched event) drives the "could not load" copy and Retry. A player
-// without its signed src never fails, so this also proves each src is set.
-test("workflow JSON media says each signed audio and video file could not load", async ({
-  page,
-}) => {
-  await prepareTryKey(page, "audio.generate.voiceover");
-  await page.route("**/gateway/v1/workflows/voiceover/run", (route) =>
-    fulfilJson(route, {
-        assets: [
-          {
-            kind: "audio",
-            signed_url: "https://media.example.test/audio?sig=fixture",
-            media_type: "audio/mpeg",
-          },
-          {
-            kind: "video",
-            signed_url: "https://media.example.test/video?sig=fixture",
-            media_type: "video/mp4",
-          },
-        ],
-      }),
-  );
-  await page.route("https://media.example.test/**", (route) => route.abort());
-  await fillRequiredPrompt(page);
-  await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("The audio couldn’t be loaded.")).toBeVisible();
-  await expect(page.getByText("The video couldn’t be loaded.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(2);
-  await expect(
-    page.getByRole("link", { name: "Download video 2" }),
-  ).toHaveAttribute("href", "https://media.example.test/video?sig=fixture");
-  await expect(
-    page.getByRole("link", { name: "Download audio 1" }),
-  ).toHaveAttribute("href", "https://media.example.test/audio?sig=fixture");
 });

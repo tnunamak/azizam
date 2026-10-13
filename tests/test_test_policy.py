@@ -230,6 +230,10 @@ def _inject_hygiene(snippet: str):
     return inject
 
 
+def _inject_unprobed_endpoint(tree: Tree) -> None:
+    tree.append("web/e2e/fixtures/intercept-registry.ts", '\nunprobed("POST", "/injected", "no oracle");\n')
+
+
 def _inject_bare_test_import(tree: Tree) -> None:
     tree.append("web/e2e/invite-signin.spec.ts", "\nimport { test as bare } from \"@playwright/test\";\n")
 
@@ -269,6 +273,7 @@ def _inject_bare_test_import(tree: Tree) -> None:
     (_inject_hygiene("await page.screenshot({ path: '/home/someone/.tmp/shot.png' });"), "hygiene: absolute_home_path occurs"),
     (_inject_hygiene("await route.fulfill({ json: { records: [] } });"), "hygiene: raw_fulfil occurs"),
     (_inject_hygiene("await fulfilJson(route, {}, { malformed: 'because' });"), "hygiene: malformed_stub occurs"),
+    (_inject_unprobed_endpoint, "hygiene: unprobed_endpoint occurs 1 times"),
     (_inject_hygiene("await page.waitForTimeout (500);"), "hygiene: waitForTimeout occurs"),
     (_inject_hygiene("await page.waitForLoadState ( 'networkidle' );"), "hygiene: networkidle occurs"),
     (_inject_hygiene("expect (await page.locator('a')?.isVisible ()).toBe(true);"), "hygiene: one_shot_expect occurs"),

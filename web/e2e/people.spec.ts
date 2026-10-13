@@ -302,7 +302,7 @@ test("people lane invite create, plan change, disable, reset and remove journeys
       method: route.request().method(),
       body: route.request().postDataJSON(),
     });
-    await fulfilJson(route, { person });
+    await fulfilJson(route, { ok: true });
   });
   await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
   await page.getByRole("menuitem", { name: "Change access plan" }).click();
