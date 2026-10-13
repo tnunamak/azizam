@@ -76,6 +76,64 @@ def test_explicit_params_skip_the_live_provider(fake_upstreams, monkeypatch):
     ]
 
 
+def test_custom_activation_model_key_round_trips(fake_upstreams):
+    service = _service(model_key="deployment")
+    driver = ld.HttpLoadUnloadDriver()
+    activation = driver.build_activation(service, model="wanted")
+    assert activation == {"deployment": "wanted"}
+    ctx = ld.SwapContext(loaded_model=None, target_model="wanted")
+    # The decision to swap reads the same key and makes no call.
+    assert driver.swap_required(service, activation, ctx) is True
+    result, fake = _swap(
+        fake_upstreams, "load-custom-key", loaded=None,
+        activation=activation, driver_config={"activation_model_key": "deployment"},
+    )
+    assert result is True
+    assert _calls(fake) == [("POST", "/v1/model/load", {"deployment": "wanted"})]
+
+
+@pytest.mark.parametrize("params_source", ["explicit", "provider"])
+def test_extra_params_cannot_replace_the_requested_model(fake_upstreams, monkeypatch, params_source):
+    params = {"model_name": "different-model", "temperature": 0.25}
+    provider = Mock(return_value=dict(params))
+    monkeypatch.setitem(ld.PARAMS_PROVIDERS, "test-gap-provider", provider)
+    service = _service()
+    activation = {"model_name": "wanted"}
+    if params_source == "explicit":
+        activation["params"] = dict(params)
+    result, fake = _swap(
+        fake_upstreams, "load-params-collision", loaded=None,
+        activation=activation, driver_config={"load_body_params": "test-gap-provider"},
+    )
+    assert result is True
+    assert _calls(fake) == [("POST", "/v1/model/load", {"model_name": "wanted", "temperature": 0.25})]
+    if params_source == "explicit":
+        provider.assert_not_called()
+    else:
+        provider.assert_called_once()
+    assert params["model_name"] == "different-model"
+
+
+@pytest.mark.parametrize(
+    "running,healthy,expected",
+    [(None, False, "unknown"), (False, False, "stopped"), (True, True, "running"), (True, False, "starting")],
+)
+def test_docker_status_handles_every_inspection_outcome(monkeypatch, running, healthy, expected):
+    driver = ld.DockerDriver()
+    inspect = AsyncMock(return_value=running)
+    poll = AsyncMock(return_value=healthy)
+    monkeypatch.setattr(driver, "_is_running", inspect)
+    monkeypatch.setattr(ld, "_poll_health", poll)
+    service = {"lifecycle": {"driver": "docker", "driver_config": {"container": "fake-container"}}}
+
+    assert asyncio.run(driver.status(service)) == expected
+    inspect.assert_awaited_once_with(service["lifecycle"]["driver_config"])
+    if running is True:
+        poll.assert_awaited_once_with(service, driver._DOCKER_POLL_INTERVAL_S)
+    else:
+        poll.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     "content,verified_model,expected,expected_gets",
     [
