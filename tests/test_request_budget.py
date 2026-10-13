@@ -21,7 +21,10 @@ from gateway import media_jobs
 from tests.test_event_loop_guard import gateway  # noqa: F401 - fixture
 
 MAX_OPENS = 3
-P95_LIMIT_S = 0.05
+# A full parallel suite (-n 12) triples a 45 ms request; the open count and the
+# injected-delay bound below are the load-independent checks, this one only
+# catches a request that blocks for far longer than its work.
+P95_LIMIT_S = 0.15
 P95_SLOW_LIMIT_S = 0.3
 SAMPLES = 20
 ENDPOINTS = (
