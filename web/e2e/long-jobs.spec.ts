@@ -3,6 +3,12 @@ import AxeBuilder from "@axe-core/playwright";
 import { mkdir } from "node:fs/promises";
 import { fulfilJson } from "./fixtures/intercept";
 
+
+// Try mints one key per sign-in and revokes the session's older Try keys
+// (gateway/user_runtime.py ensure_try_session_key). Cases that open Try share the
+// lane's sign-in, so the cases of this file stay in one worker, one after another.
+test.describe.configure({ mode: "default" });
+
 const png =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 

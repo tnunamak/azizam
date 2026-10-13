@@ -3,6 +3,11 @@ import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { fulfilJson } from "./fixtures/intercept";
 
+// People cases share the lane owner's invitations and people list, so they run
+// in order on one worker (in parallel one case re-rendered another's list and
+// focus did not return to the invitation's Actions trigger).
+test.describe.configure({ mode: "default" });
+
 const plan = {
   id: "plan-local",
   name: "Local creative",
