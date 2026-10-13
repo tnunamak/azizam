@@ -251,7 +251,7 @@ test("Home omits greeting when the API display name is an email", async ({
   await expect(page.locator("main")).not.toContainText("Hello,");
 });
 
-test("one selected and pasted app key scopes all recipes and the gateway check", async ({
+test("one selected and pasted app key scopes the app setup and the gateway check", async ({
   page,
   request,
 }) => {
@@ -282,7 +282,13 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
     page.getByRole("textbox", { name: "Model", exact: true }),
   ).toHaveValue("default");
   await page.getByRole("button", { name: "Setup notes", exact: true }).click();
-  await expect(page.locator("pre code:visible")).toContainText("default");
+  // Open WebUI is set up in its admin panel: numbered steps, no code snippet.
+  const notes = page.getByRole("dialog", { name: "Setup notes" });
+  await expect(notes.getByRole("listitem").first()).toContainText("Open Admin Panel");
+  await expect(notes.getByRole("link", { name: "Open WebUI docs" })).toHaveAttribute(
+    "href",
+    /^https:\/\//,
+  );
   await page.keyboard.press("Escape");
   await expect(paste).toHaveValue("fixture-chat-secret");
   await page

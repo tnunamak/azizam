@@ -6,9 +6,13 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ModelsClient from "@/app/models/models-client";
 import { FilterToggle } from "@/components/product/filter-toggle";
+
+beforeEach(() => {
+  Element.prototype.scrollIntoView ??= () => {};
+});
 
 afterEach(() => {
   cleanup();
@@ -83,13 +87,15 @@ function rowWithAvailability(
 function renderCatalog(aliases: ReturnType<typeof row>[]) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
-      Response.json({
-        schema_version: 1,
-        object: "models.catalog",
-        aliases,
-        models: [],
-      }),
+    vi.fn(async (url: RequestInfo | URL) =>
+      String(url).includes("well-known")
+        ? Response.json({ recipes: {} })
+        : Response.json({
+            schema_version: 1,
+            object: "models.catalog",
+            aliases,
+            models: [],
+          }),
     ),
   );
   const client = new QueryClient({
@@ -102,43 +108,36 @@ function renderCatalog(aliases: ReturnType<typeof row>[]) {
   );
 }
 
+const nameButton = (id: string) => screen.getByRole("button", { name: id });
+const rowOf = (id: string) => nameButton(id).closest("li") as HTMLElement;
+/** True when the row shows the text anywhere (a phone line repeats facts). */
+const rowHas = (id: string, text: string) =>
+  within(rowOf(id)).queryAllByText(text).length > 0;
+
 describe("catalog polish", () => {
-  it("uses a friendly title while keeping the exact copyable alias", async () => {
+  it("keeps the exact alias as the name and prices local and paid rows honestly", async () => {
     renderCatalog([
       row("fast", "chat.completions"),
       row("image", "image.generate", true),
     ]);
-    expect(await screen.findByRole("heading", { name: "Fast" })).toBeVisible();
-    expect(
-      screen.getByRole("heading", { name: "Make a picture", level: 2 }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("heading", { name: "Make a picture", level: 3 }),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Copy model name fast" }),
-    ).toHaveTextContent("fast");
-    expect(screen.getByText("Paid · $0.04 per image")).toBeVisible();
-    const fastCard = screen
-      .getByRole("button", { name: "Copy model name fast" })
-      .closest("tr");
-    expect(within(fastCard!).queryByText("Free (your hardware)")).toBeNull();
-    expect(within(fastCard!).queryByText("No provider charge")).toBeNull();
-    expect(screen.queryByText("Not measured yet")).toBeNull();
+    await screen.findByRole("button", { name: "fast" });
+    // "Fast" only repeats the alias, so it is not shown beside it.
+    expect(within(rowOf("fast")).queryByText("Fast")).toBeNull();
+    expect(rowHas("fast", "Local · no provider charge")).toBe(true);
+    expect(rowHas("image", "$0.04 per image")).toBe(true);
+    for (const old of ["Free (your hardware)", "Not measured yet"]) {
+      expect(screen.queryByText(old)).toBeNull();
+    }
     expect(screen.queryByTitle("Typical time")).toBeNull();
     expect(screen.queryByText(/Two requests are ahead of yours/)).toBeNull();
-    const image = screen
-      .getByRole("button", { name: "Copy model name image" })
-      .closest("tr");
-    fireEvent.click(within(image!).getByRole("button", { name: "Details" }));
-    const detail = screen.getByRole("dialog");
-    expect(within(detail).getByText("Paid · $0.04 per image")).toBeVisible();
-    expect(within(detail).queryByText("Typical time")).toBeNull();
-    expect(within(detail).queryByText("Not measured yet")).toBeNull();
-    expect(within(detail).queryByText("Typical time")).toBeNull();
+    fireEvent.click(nameButton("image"));
+    const detail = within(screen.getByRole("dialog"));
+    expect(detail.getByText("$0.04 per image")).toBeVisible();
+    expect(detail.queryByText("Time per request")).toBeNull();
+    expect(detail.queryByText("Not measured yet")).toBeNull();
   });
 
-  it("uses model titles and does not use engine labels as model names", async () => {
+  it("shows a model's own name and never its engine label", async () => {
     renderCatalog([
       {
         ...row("speech-model", "speech.synthesis"),
@@ -150,53 +149,27 @@ describe("catalog polish", () => {
         title: "Parakeet v3",
         engine_label: "Parakeet (GPU)",
       } as ReturnType<typeof row> & { engine_label: string },
-      {
-        ...row("embedding-model", "text.embeddings"),
-        title: "Embeddings · Embed",
-      },
     ]);
-
+    await screen.findByRole("button", { name: "speech-model" });
+    expect(within(rowOf("speech-model")).getAllByText(/^Chatterbox Turbo/).length).toBeGreaterThan(0);
+    expect(within(rowOf("transcription-model")).getAllByText(/^Parakeet v3/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Chatterbox \(speech\)|Parakeet \(GPU\)/)).toBeNull();
+    // The sections use the capability names the API and Try use.
     expect(
-      await screen.findByRole("heading", { name: "Chatterbox Turbo" }),
-    ).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Parakeet v3" })).toBeVisible();
-    expect(
-      screen.queryByRole("heading", { name: "Embeddings · Embed" }),
-    ).toBeNull();
+      screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent),
+    ).toEqual(["Speech1", "Transcription1"]);
   });
 
-  it("preserves independent no-provider-charge and paid filter choices", async () => {
+  it("names embeddings by the plain task name Try uses, not member jargon", async () => {
     renderCatalog([
-      row("chat", "chat.completions"),
-      row("image", "image.generate", true),
+      row("embedding-model", "text.embeddings"),
+      row("fast", "chat.completions"),
     ]);
-    const group = await screen.findByRole("group", {
-      name: "Price filters (choose any)",
-    });
-    const noCharge = within(group).getByRole("button", {
-      name: "No provider charge",
-    });
-    const paid = within(group).getByRole("button", { name: "Paid" });
-    expect(noCharge).toHaveAttribute("aria-pressed", "true");
-    expect(paid).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(paid);
-    expect(paid).toHaveAttribute("aria-pressed", "false");
-    expect(noCharge).toHaveAttribute("aria-pressed", "true");
+    await screen.findByRole("button", { name: "embedding-model" });
     expect(
-      screen.queryByRole("button", { name: "Copy model name image" }),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Copy model name chat" }),
-    ).toBeVisible();
-    fireEvent.click(noCharge);
-    expect(screen.getByText("No models match these filters")).toBeVisible();
-    fireEvent.click(paid);
-    expect(
-      screen.getByRole("button", { name: "Copy model name image" }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: "Copy model name chat" }),
-    ).toBeNull();
+      screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent),
+    ).toEqual(["Chat1", "Turn text into numbers1"]);
+    expect(screen.queryByRole("heading", { name: /embedding/i })).toBeNull();
   });
 
   it("keeps unknown and startable idle availability distinct from unavailable", async () => {
@@ -223,26 +196,16 @@ describe("catalog polish", () => {
         reason: "Live availability is not measured yet.",
       }),
     ]);
-    await screen.findByText("Ready to start", { exact: true });
+    await screen.findByRole("button", { name: "on-demand" });
+    expect(rowHas("on-demand", "Ready to start")).toBe(true);
+    expect(within(rowOf("on-demand")).getByText("Recommended")).toBeVisible();
+    expect(rowHas("unknown-health", "Couldn't check")).toBe(true);
+    expect(rowHas("unmeasured", "Ready")).toBe(true);
     expect(screen.queryByText("Unknown")).toBeNull();
     expect(screen.queryByText(/No health endpoint is configured/)).toBeNull();
-    expect(
-      screen.queryByText(/Live availability is not measured yet/),
-    ).toBeNull();
-    expect(
-      screen.getByText("Ready to start", { exact: true }),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Live availability is not measured yet/)).toBeNull();
     expect(screen.queryByText(/Starts when you send a request/)).toBeNull();
     expect(screen.queryByText("Unavailable")).toBeNull();
-  });
-
-  it("omits a cost line for local catalog rows", async () => {
-    renderCatalog([row("local-image", "image.generate")]);
-
-    const card = await screen.findByRole("heading", { name: "Make a picture", level: 2 });
-    const rowArticle = card.closest("tr");
-    expect(within(rowArticle!).queryByText("Free (your hardware)")).toBeNull();
-    expect(within(rowArticle!).queryByText("No provider charge")).toBeNull();
   });
 
   it("provides a pressed state without the primary action style", () => {

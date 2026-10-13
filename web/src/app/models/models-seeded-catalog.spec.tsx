@@ -10,9 +10,11 @@ import {
   screen,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ModelsClient from "./models-client";
 import { ViewerContext, type Viewer } from "@/components/shell/session";
+import { accountApi } from "@/lib/account-api";
 import { productApi, type ModelsCatalog } from "@/lib/product-api";
 
 vi.mock("@/lib/product-api", async (importOriginal) => {
@@ -22,6 +24,22 @@ vi.mock("@/lib/product-api", async (importOriginal) => {
     productApi: { ...actual.productApi, models: vi.fn() },
   };
 });
+
+vi.mock("@/lib/account-api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/account-api")>();
+  return {
+    ...actual,
+    accountApi: { ...actual.accountApi, discovery: vi.fn() },
+  };
+});
+
+const owner: Viewer = {
+  authenticated: true,
+  name: "Owner",
+  email: "owner@example.test",
+  role: "owner",
+  admin: true,
+};
 
 const member: Viewer = {
   authenticated: true,
@@ -306,14 +324,6 @@ const seededCatalog = {
   counts: { aliases: 4, models: 2, capabilities: 4 },
 };
 
-const emptyCatalog = {
-  schema_version: 1,
-  object: "models.catalog",
-  aliases: [],
-  models: [],
-  counts: { aliases: 0, models: 0, capabilities: 0 },
-};
-
 const measured = {
   id: "chat",
   object: "model_catalog.alias",
@@ -389,10 +399,10 @@ function aliasesOnly(aliases: unknown[]) {
   return { schema_version: 1, object: "models.catalog", aliases, models: [] };
 }
 
-function renderModels(snapshot: unknown) {
+function renderModels(snapshot: unknown, viewer: Viewer = member) {
   vi.mocked(productApi.models).mockResolvedValue(snapshot as ModelsCatalog);
   render(
-    <ViewerContext.Provider value={member}>
+    <ViewerContext.Provider value={viewer}>
       <QueryClientProvider
         client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
       >
@@ -404,208 +414,137 @@ function renderModels(snapshot: unknown) {
 
 beforeEach(() => {
   vi.mocked(productApi.models).mockReset();
+  vi.mocked(accountApi.discovery).mockReset();
+  vi.mocked(accountApi.discovery).mockResolvedValue({ recipes: {} });
+  Element.prototype.hasPointerCapture ??= () => false;
+  Element.prototype.releasePointerCapture ??= () => {};
+  Element.prototype.scrollIntoView ??= () => {};
 });
 
 afterEach(() => {
   cleanup();
 });
 
-function openDetails(rowgroup: HTMLElement) {
-  fireEvent.click(within(rowgroup).getAllByRole("button", { name: "Details" })[0]);
-  return screen.getByRole("dialog");
+const rowOf = (id: string) =>
+  screen.getByRole("button", { name: id }).closest("li") as HTMLElement;
+/** True when the row shows the text anywhere (a phone line repeats facts). */
+const rowHas = (id: string, text: string) =>
+  within(rowOf(id)).queryAllByText(text).length > 0;
+const sectionOf = (label: string) =>
+  screen.getByRole("region", { name: new RegExp(`^${label}\\s*\\d+$`) });
+const idsIn = (label: string) =>
+  [...sectionOf(label).querySelectorAll("li")].map((li) => li.dataset.model);
+/** One Details fact: the value beside its label. */
+function fact(label: string): string | undefined {
+  return [...screen.getByRole("dialog").querySelectorAll("dt")]
+    .find((dt) => dt.textContent === label)
+    ?.nextElementSibling?.textContent ?? undefined;
+}
+function openDetails(id: string) {
+  fireEvent.click(screen.getByRole("button", { name: id }));
+  return within(screen.getByRole("dialog"));
 }
 
 describe("seeded catalog", () => {
-  it("shows task headings, row facts, honest cost and quiet status", async () => {
+  it("lists every name under its task with honest price and quiet status", async () => {
     renderModels(seededCatalog);
-    await screen.findByRole("button", { name: "Copy model name chat" });
-    for (const name of ["Make a picture", "Choose an option", "Read text aloud"]) {
-      expect(screen.getByRole("heading", { name })).toBeVisible();
-    }
-    const chat = screen.getByRole("rowgroup", { name: "Chat models" });
-    const facts = within(chat).getByRole("list", { name: "Model facts" });
-    expect(within(facts).getByText("Reasoning")).toBeVisible();
-    expect(within(facts).getByText("Vision")).toBeVisible();
-    expect(within(facts).getAllByRole("listitem")[0]).toHaveTextContent(
-      "text, image→totext",
-    );
+    await screen.findByRole("button", { name: "chat" });
     expect(
-      screen.getByRole("button", { name: "Copy model name image" }),
-    ).toBeVisible();
-    // Rows make no local-cost claim; the page note below the table may.
-    expect(
-      within(screen.getByLabelText("Available model names", { selector: "div" })).queryByText(
-        "Local · no provider charge",
-        { exact: true },
-      ),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "No provider charge" }),
-    ).toHaveAttribute("aria-pressed", "true");
-    expect(screen.queryByText("Ready", { exact: true })).toBeNull();
-    expect(screen.getByText("Ready to start", { exact: true })).toBeVisible();
+      screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent),
+    ).toEqual(["Chat2", "Images2", "Speech1", "Choose an option1"]);
+    expect(idsIn("Chat")).toEqual(["chat", "demo-chat"]);
+    expect(idsIn("Images")).toEqual(["image", "provider/image-fast"]);
+    // Row facts: tags in words, a local price, a remote price, quiet status.
+    expect(within(rowOf("chat")).getByTitle(/Tool use, Reasoning, Vision/)).toBeInTheDocument();
+    expect(rowHas("chat", "Local · no provider charge")).toBe(true);
+    expect(rowHas("image", "$0.04 per image")).toBe(true);
+    expect(rowHas("image", "Busy")).toBe(true);
+    expect(rowHas("decide", "Ready to start")).toBe(true);
+    expect(rowHas("tts", "Couldn't check")).toBe(true);
+    expect(rowHas("chat", "Not checked yet")).toBe(true);
     expect(screen.queryByText("Unknown", { exact: true })).toBeNull();
-    expect(
-      screen.queryByText("Ready to start when you make a request."),
-    ).toBeNull();
-    expect(screen.getByText("Paid · $0.04 per image", { exact: true })).toBeVisible();
+    expect(screen.queryByText("Ready to start when you make a request.")).toBeNull();
   });
 
   it("explains a start-on-request model in Details and never prints Unknown", async () => {
     renderModels(seededCatalog);
-    await screen.findByRole("button", { name: "Copy model name chat" });
-    const decision = screen.getByRole("rowgroup", { name: "Choose an option models" });
-    expect(
-      within(openDetails(decision)).getByText(
-        "Ready to start when you make a request.",
-      ),
-    ).toBeVisible();
+    await screen.findByRole("button", { name: "decide" });
+    expect(openDetails("decide").getByText("Ready to start when you make a request.")).toBeVisible();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    const speech = screen.getByRole("rowgroup", { name: "Speech models" });
-    expect(
-      within(openDetails(speech)).queryByText("Unknown", { exact: true }),
-    ).toBeNull();
+    expect(openDetails("tts").queryByText("Unknown", { exact: true })).toBeNull();
   });
 });
 
-describe("empty and error catalog", () => {
-  it("says no models are available and links back to setup", async () => {
-    renderModels(emptyCatalog);
-    expect(await screen.findByText("No models are available yet")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Review setup" })).toHaveAttribute(
-      "href",
-      "/",
-    );
-  });
-
-  it("says the catalog could not be loaded", async () => {
-    vi.mocked(productApi.models).mockRejectedValue(
-      new Error("Unavailable for this test"),
-    );
-    render(
-      <ViewerContext.Provider value={member}>
-        <QueryClientProvider
-          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-        >
-          <ModelsClient />
-        </QueryClientProvider>
-      </ViewerContext.Provider>,
-    );
-    expect(
-      await screen.findByText("Models catalog could not be loaded. Try again."),
-    ).toBeVisible();
-  });
-});
-
-describe("filters, snippets, table and detail sheet", () => {
-  it("narrows by search, keeps filters honest, and opens details and the exact-model table", async () => {
+describe("search, price and Details", () => {
+  it("narrows by search and price, then opens an example request", async () => {
+    const user = userEvent.setup();
     renderModels(seededCatalog);
-    await screen.findByRole("button", { name: "Copy model name chat" });
-    fireEvent.change(screen.getByPlaceholderText("Search model names or providers"), {
-      target: { value: "image" },
-    });
-    expect(
-      screen.getByRole("button", { name: "Copy model name image" }),
-    ).toBeVisible();
-    expect(screen.queryByText("Best default for short conversations")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Paid" }));
-    expect(
-      screen.getByRole("button", { name: "No provider charge" }),
-    ).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByText(/No models match these filters/)).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Paid" }));
-    const imageDetails = within(
-      (fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0]), screen.getByRole("dialog")),
-    );
-    expect(imageDetails.getByText("Example request")).toBeVisible();
-    expect(imageDetails.getByText(/\/v1\/images\/generations/)).toBeVisible();
-    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    fireEvent.click(screen.getByRole("button", { name: /All models/ }));
-    expect(screen.getByRole("button", { name: "All models" })).toBeVisible();
-    const exact = within(screen.getByRole("table", { name: "All models" }))
-      .getAllByText("provider/image-fast")
-      .filter((node) => node.tagName === "CODE");
-    expect(exact).toHaveLength(1);
-    expect(exact[0]).toBeVisible();
+    await screen.findByRole("button", { name: "chat" });
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "image" } });
+    expect(screen.getByRole("button", { name: "image" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "provider/image-fast" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "chat" })).toBeNull();
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    await user.click(screen.getByRole("option", { name: "No provider charge" }));
+    expect(screen.getByText("No models match")).toBeVisible();
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    await user.click(screen.getByRole("option", { name: "Paid" }));
+    const sheet = openDetails("image");
+    expect(sheet.getByText("Example request")).toBeVisible();
+    expect(sheet.getByText(/\/v1\/images\/generations/)).toBeVisible();
+    expect(sheet.getByText("Recent receipts")).toBeVisible();
   });
 
-  it("omits typical time for a model with no timing data", async () => {
+  it("omits time per request for a model with no timing data", async () => {
     renderModels(seededCatalog);
-    fireEvent.click(await screen.findByRole("button", { name: /All models/ }));
-    const table = screen.getByRole("table", { name: "All models" });
-    const sheet = openDetails(table);
-    expect(sheet).not.toHaveTextContent("Typical time");
-    expect(sheet).not.toHaveTextContent("Not measured yet");
+    await screen.findByRole("button", { name: "provider/image-fast" });
+    openDetails("provider/image-fast");
+    expect(fact("Time per request")).toBeUndefined();
+    expect(fact("Runs on")).toBe("OpenRouter");
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("Not measured yet");
   });
 });
 
 describe("truthful metadata", () => {
-  it("keeps locality, engine, timing and ids out of rows and shows them in Details", async () => {
-    renderModels(aliasesOnly([measured, typical]));
-    await screen.findByRole("button", { name: "Copy model name chat" });
-    const table = screen.getByRole("table", { name: "Available model names" });
-    const cards = within(table).getAllByRole("row").filter((r) => r.closest("tbody"));
-    expect(cards).toHaveLength(2);
-    const [first, second] = cards.map((card) => within(card));
-    const aliasGroups = within(screen.getByLabelText("Available model names", { selector: "div" }));
-    expect(aliasGroups.queryByText("Local · no provider charge", { exact: true })).toBeNull();
-    expect(first.queryByText("Local", { exact: true })).toBeNull();
-    expect(first.queryByText("Household chat")).toBeNull();
-    expect(first.queryByText("~151 ms · Measured")).toBeNull();
-    expect(first.queryByText("Unknown", { exact: true })).toBeNull();
-    expect(first.queryByText("Live availability is not measured yet")).toBeNull();
-    expect(second.queryByText("Remote", { exact: true })).toBeNull();
-    expect(second.queryByText("Example image provider")).toBeNull();
-    expect(second.queryByText("~8.0 s · Typical")).toBeNull();
-    expect(within(table).queryByText("Not measured yet", { exact: true })).toBeNull();
-    expect(within(table).queryByText(/capture-engine|provider-opaque-id/i)).toBeNull();
+  it("keeps the engine, service id and timing out of rows and shows them in Details", async () => {
+    renderModels(aliasesOnly([measured, typical]), owner);
+    await screen.findByRole("button", { name: "chat" });
+    const list = screen.getByRole("region", { name: "Model names by task" });
+    // A remote row names its provider; a local row names nothing.
+    expect(within(rowOf("chat")).queryByText(/Household chat|via /)).toBeNull();
+    expect(rowHas("image", "Example image provider")).toBe(false);
+    expect(within(rowOf("image")).getByTitle(/via Example image provider/)).toBeInTheDocument();
+    expect(within(list).queryByText(/capture-engine|provider-opaque-id/i)).toBeNull();
+    expect(within(list).queryByText(/About \d+/)).toBeNull();
+    expect(within(list).queryByText("Not measured yet", { exact: true })).toBeNull();
 
-    const chatDialog = within(openDetails(cards[0]));
-    expect(chatDialog.getByText("Household chat")).toBeVisible();
-    expect(chatDialog.getByText("Measured time")).toBeVisible();
-    expect(chatDialog.getByText("~151 ms · Measured")).toBeVisible();
+    openDetails("chat");
+    expect(fact("Time per request")).toBe("About 151 ms, measured");
+    expect(fact("Runs on")).toBe("This gateway's engines");
+    expect(fact("Engine or provider")).toBe("Household chat");
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    // A configured speed is "typical", not "measured".
+    openDetails("image");
+    expect(fact("Time per request")).toBe("About 8.0 s, typical");
+    expect(fact("Runs on")).toBe("Example image provider");
+    expect(fact("Engine or provider")).toBe("Example image provider");
+    expect(screen.getByRole("dialog")).not.toHaveTextContent(/provider-opaque-id/);
   });
 
-  it("shows a typical time for an alias whose timing is configured, not measured", async () => {
-    renderModels(aliasesOnly([measured, typical]));
-    await screen.findByRole("button", { name: "Copy model name image" });
-    const row = screen.getByRole("button", { name: "Copy model name image" }).closest("tr")!;
-    const dialog = within(openDetails(row));
-    expect(dialog.getByText("Example image provider")).toBeVisible();
-    expect(dialog.getByText("~8.0 s · Typical")).toBeVisible();
-  });
-
-  it("stays honest when engine label and timing are absent, and never shows a service id", async () => {
+  it("stays honest when the engine label and timing are absent, and never shows a service id", async () => {
     renderModels(
-      aliasesOnly([
-        { ...measured, engine_label: null, timing: { typical_seconds: null, source: null } },
-      ]),
+      aliasesOnly([{ ...measured, engine_label: null, timing: { typical_seconds: null, source: null } }]),
+      owner,
     );
-    await screen.findByRole("button", { name: "Copy model name chat" });
-    expect(screen.queryByText("Configured engine")).toBeNull();
-    expect(
-      within(screen.getByLabelText("Available model names", { selector: "div" })).queryByText("Not measured yet", { exact: true }),
-    ).toBeNull();
-    const dialog = within(openDetails(screen.getByRole("table", { name: "Available model names" })));
-    expect(dialog.queryByText("Not measured yet", { exact: true })).toBeNull();
-    expect(dialog.queryByText("Typical time", { exact: true })).toBeNull();
-    expect(screen.queryByText(/capture-engine|Location not measured yet/)).toBeNull();
-  });
-
-  it("offers Clear filters after a search that matches nothing", async () => {
-    renderModels(aliasesOnly([measured]));
-    await screen.findByRole("button", { name: "Copy model name chat" });
-    fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), {
-      target: { value: "unmatched" },
-    });
-    expect(screen.queryByRole("button", { name: "Copy model name chat" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-    expect(screen.getByRole("button", { name: "Copy model name chat" })).toBeVisible();
+    await screen.findByRole("button", { name: "chat" });
+    openDetails("chat");
+    expect(fact("Engine or provider")).toBe("Engine or provider not specified");
+    expect(fact("Time per request")).toBeUndefined();
+    expect(document.body.textContent).not.toMatch(/capture-engine|Not measured yet|Location not measured yet/);
   });
 });
 
-describe("aliases keep alternatives within their server-classified capability", () => {
+describe("each task lists only its own names", () => {
   const peer = (id: string, intent: string, capability: string, label: string) => ({
     ...measured,
     id,
@@ -619,7 +558,7 @@ describe("aliases keep alternatives within their server-classified capability", 
     capabilities: [{ intent, label, capability, icon_key: capability }],
   });
 
-  it("opens each capability's own alternatives and no other's", async () => {
+  it("keeps peers within their server-classified task", async () => {
     renderModels(
       aliasesOnly([
         peer("default", "chat.completions", "chat", "Chat"),
@@ -630,38 +569,10 @@ describe("aliases keep alternatives within their server-classified capability", 
         peer("image-peer", "image.generate", "image", "Images"),
       ]),
     );
-    await screen.findByRole("button", { name: "Copy model name default" });
-    const groupOf = (label: string) =>
-      screen.getByRole("rowgroup", { name: `${label} models` });
-    const alternativesOf = (key: string) =>
-      document.getElementById(`model-alternatives-${key}`)!;
-    for (const [label, key, primary, alternative] of [
-      ["Chat", "chat", "default", "chat-peer"],
-      ["Images", "image", "image", "image-peer"],
-      ["Choose an option", "decide", "decide", null],
-      ["Speech", "speech", "tts", null],
-    ] as const) {
-      const group = groupOf(label);
-      expect(within(group).getByRole("heading", { name: primary })).toBeVisible();
-      if (alternative) {
-        const more = within(group).getByText("1 more", { exact: true });
-        expect(document.getElementById(`model-alternatives-${key}`)).toBeNull();
-        expect(
-          screen.queryByRole("button", { name: `Copy model name ${alternative}` }),
-        ).toBeNull();
-        fireEvent.click(more);
-        expect(
-          within(alternativesOf(key)).getByRole("button", { name: `Copy model name ${alternative}` }),
-        ).toBeVisible();
-      } else {
-        expect(within(group).queryByText(/\d+ more/)).toBeNull();
-      }
-    }
-    expect(
-      within(groupOf("Chat")).queryByRole("button", { name: "Copy model name image-peer" }),
-    ).toBeNull();
-    expect(
-      within(alternativesOf("image")).queryByRole("button", { name: "Copy model name chat-peer" }),
-    ).toBeNull();
+    await screen.findByRole("button", { name: "default" });
+    expect(idsIn("Chat")).toEqual(["default", "chat-peer"]);
+    expect(idsIn("Images")).toEqual(["image", "image-peer"]);
+    expect(idsIn("Choose an option")).toEqual(["decide"]);
+    expect(idsIn("Speech")).toEqual(["tts"]);
   });
 });

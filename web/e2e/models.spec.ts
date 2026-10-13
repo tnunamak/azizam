@@ -346,9 +346,11 @@ test("models seeded catalog: dark at 390px keeps rows on two lines, fits and pas
   await expect(
     page.getByRole("button", { name: "Copy model name chat" }),
   ).toBeVisible();
-  // A phone row is two lines (task, then alias); the facts are in Details.
-  const chat = page.getByRole("rowgroup", { name: "Chat models" });
-  await expect(chat.getByRole("list", { name: "Model facts" })).toHaveCount(0);
+  // A phone row folds its facts into one line under the name; the desktop
+  // line is hidden.
+  const chat = page.locator('li[data-model="chat"]');
+  await expect(chat.locator("p.sm\\:hidden")).toBeVisible();
+  await expect(chat.locator("p[title]")).toBeHidden();
   await assertNoOverflow(page);
   await assertNoSeriousAxe(page);
   await page.screenshot({
@@ -360,10 +362,10 @@ test("models seeded catalog: light at 1440px shows row facts and passes axe", as
   page,
 }) => {
   await preparePage(page, "light", 1440, seededCatalog);
-  const chat = page.getByRole("rowgroup", { name: "Chat models" });
-  const chatFacts = chat.getByRole("list", { name: "Model facts" });
-  await expect(chatFacts.getByText("Reasoning")).toBeVisible();
-  await expect(chatFacts.getByText("Vision")).toBeVisible();
+  // The row's second line carries the chat tags in words.
+  const chat = page.locator('li[data-model="chat"]');
+  await expect(chat.locator("p[title]")).toContainText("Reasoning");
+  await expect(chat.locator("p[title]")).toContainText("Vision");
   await assertNoOverflow(page);
   await assertNoSeriousAxe(page);
   await page.screenshot({
@@ -390,7 +392,7 @@ test("models error catalog: light at 390px fits and passes axe", async ({
     503,
   );
   await expect(
-    page.getByText("Models catalog could not be loaded. Try again."),
+    page.getByText("The models list could not be loaded. Try again."),
   ).toBeVisible();
   await assertNoOverflow(page);
   await assertNoSeriousAxe(page);

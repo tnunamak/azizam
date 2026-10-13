@@ -118,7 +118,7 @@ describe("Home (bugfix regressions)", () => {
     expect(chatLinks[0].getAttribute("href")).toMatch(/^\/try\/?\?capability=chat&model=fast$/);
   });
 
-  it("picks the app recipe before creating a key", async () => {
+  it("picks the app before creating a key", async () => {
     stubGateway();
     renderHome();
     await screen.findByRole("button", { name: "Open WebUI" });
@@ -129,6 +129,7 @@ describe("Home (bugfix regressions)", () => {
     expect(screen.getByRole("button", { name: "Create key for Open WebUI" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Another app" }));
     expect(screen.getByRole("button", { name: "Create key for Python" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Phone" })).toBeNull();
   });
 
   it("connects a renamed paid chat model without a default-model warning", async () => {

@@ -85,7 +85,7 @@ describe("Apps command destinations", () => {
       screen.getByDisplayValue("https://gateway.example/openai/v1"),
     ).toBeVisible();
     expect(mocks.revokeKey).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "I’ve saved it" }));
+    await user.click(screen.getByRole("button", { name: "I’ve saved the key" }));
     await waitFor(() =>
       expect(mocks.revokeKey).toHaveBeenCalledWith("old-key"),
     );

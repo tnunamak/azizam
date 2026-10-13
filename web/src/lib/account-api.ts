@@ -35,7 +35,14 @@ export type TrySessionKey = Credential & {
 export interface AccountSnapshot {
   authenticated: boolean;
   csrf_token: string;
-  user?: { id: string; email: string | null; name: string; role: string };
+  user?: {
+    id: string;
+    email: string | null;
+    name: string;
+    role: string;
+    /** The person's own access plan; a new app starts with it. Null: none. */
+    access_plan?: { id: string; name: string; summary: string | null } | null;
+  };
   apps: AccountApp[];
 }
 
@@ -74,16 +81,6 @@ async function accountRequest<T>(
   }
   return payload as T;
 }
-/** One MCP client's setup notes (gateway/mcp_client_notes.json). */
-export type McpClientNote = {
-  id: string;
-  name: string;
-  auth: "sign-in" | "sign-in-or-key";
-  status: "documented" | "unverified";
-  steps: string[];
-  note?: string;
-  docs: string;
-};
 /** The parts of /.well-known/azizam the UI reads. */
 export type GatewayDiscovery = {
   recipes: Record<string, { canonical_base_url?: string } | undefined>;
@@ -92,7 +89,6 @@ export type GatewayDiscovery = {
     transport: string;
     /** True when MCP clients can sign in here (OAuth needs a public https address). */
     sign_in?: boolean;
-    clients?: { checked: string; clients: McpClientNote[] };
     tools: { name: string; title: string; description: string }[];
   };
 };

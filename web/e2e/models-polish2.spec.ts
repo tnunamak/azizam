@@ -96,9 +96,7 @@ test("models polish 2 metadata rows fit a dark 390 px phone and pass axe", async
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await page.addInitScript(() => localStorage.setItem("theme", "dark"));
   await catalog(page, [measured, typical]);
-  await expect(
-    page.locator('table[aria-label="Available model names"] tbody tr'),
-  ).toHaveCount(2);
+  await expect(page.locator("li[data-model]")).toHaveCount(2);
   await expect
     .poll(() =>
       page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
@@ -116,7 +114,7 @@ test("models polish 2 metadata rows fit a dark 390 px phone and pass axe", async
   });
 });
 
-test("opened alternatives and the details sheet stay accessible and inside a dark phone viewport", async ({
+test("the details sheet stays accessible and inside a dark phone viewport", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -143,15 +141,12 @@ test("opened alternatives and the details sheet stay accessible and inside a dar
         .map((violation) => violation.id),
     ).toEqual([]);
   };
-  await page.getByText("1 more", { exact: true }).click();
+  // Every name is listed at once; there is nothing to expand first.
   await expect(
     page.getByRole("button", { name: "Copy model name chat-peer" }),
   ).toBeVisible();
   await check();
-  await page
-    .getByRole("button", { name: "Copy model name chat-peer" })
-    .locator("xpath=ancestor::tr")
-    .click();
+  await page.getByRole("button", { name: "chat-peer", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await check();
 });

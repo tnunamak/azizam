@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useViewer } from "@/components/shell/session";
 import { PageHeader } from "@/components/product/page-header";
@@ -19,11 +20,18 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { accountApi, type GatewayDiscovery } from "@/lib/account-api";
+import { productApi } from "@/lib/product-api";
 import {
-  accountApi,
-  type GatewayDiscovery,
-  type McpClientNote,
-} from "@/lib/account-api";
+  appGuides,
+  keyApps,
+  mcpApps,
+  resolveMcpGuide,
+  suggestedModel,
+  type AppGuide as AppGuideData,
+  type McpGuide,
+} from "@/lib/app-guides";
+import { AppGuide } from "@/components/product/app-guide";
 import { PRODUCT_NAME } from "@/lib/product";
 
 const KEY_PLACEHOLDER = "<your app key>";
@@ -155,8 +163,12 @@ function ConnectDetails({
   const mcpUrl = absolute(discovery.mcp?.url ?? "/mcp", origin);
   const tools = discovery.mcp?.tools ?? [];
   const signIn = discovery.mcp?.sign_in ?? false;
-  const notes = discovery.mcp?.clients?.clients ?? [];
-  const checked = discovery.mcp?.clients?.checked ?? "";
+  const [guideApp, setGuideApp] = useState(keyApps[0].id);
+  const { data: catalog, isPending: catalogPending } = useQuery({
+    queryKey: ["models", "catalog"],
+    queryFn: productApi.models,
+  });
+  const catalogRows = catalog?.aliases?.length ? catalog.aliases : (catalog?.models ?? []);
   return (
     <>
       <SettingsSection
@@ -175,6 +187,26 @@ function ConnectDetails({
           <CopyField
             label="Ollama-compatible address"
             value={address("ollama", "/ollama")}
+          />
+        </div>
+      </SettingsSection>
+      <SettingsSection
+        title="Set up an app"
+        description="Where to click and what to paste, for each app."
+      >
+        <div className="p-4">
+          <AppGuide
+            appId={guideApp}
+            onAppChange={setGuideApp}
+            values={{
+              openai_url: address("openai", "/openai/v1"),
+              anthropic_url: address("anthropic", "/anthropic"),
+              mcp_url: mcpUrl,
+              chat_model: suggestedModel(catalogRows, "chat"),
+              transcription_model: suggestedModel(catalogRows, "transcribe"),
+            }}
+            keyHint="Paste an app key. Create one in Apps & keys."
+            loading={catalogPending}
           />
         </div>
       </SettingsSection>
@@ -236,18 +268,16 @@ function ConnectDetails({
         </div>
       </SettingsSection>
       <SignInConnections empty="No connections yet. Connect an app with the address above." />
-      {notes.length ? (
-        <SettingsSection
-          title="Notes for each app"
-          description={`From each app's own documentation, checked ${checked}.`}
-        >
-          <Accordion type="single" collapsible className="px-4">
-            {notes.map((note) => (
-              <ClientNote key={note.id} note={note} url={mcpUrl} />
-            ))}
-          </Accordion>
-        </SettingsSection>
-      ) : null}
+      <SettingsSection
+        title="MCP notes for each app"
+        description={`From each app's own documentation, checked ${appGuides.checked}.`}
+      >
+        <Accordion type="single" collapsible className="px-4">
+          {mcpApps.map((app) => (
+            <ClientNote key={app.id} app={app} guide={resolveMcpGuide(app.mcp, mcpUrl)} />
+          ))}
+        </Accordion>
+      </SettingsSection>
       <SettingsSection
         title="Use an app key instead"
         description="For apps and scripts that send a header. ChatGPT and Claude.ai sign in instead."
@@ -286,15 +316,13 @@ function ConnectDetails({
   );
 }
 
-/** One client's setup notes. They are data: the server never treats one
- * client differently from another. */
-function ClientNote({ note, url }: { note: McpClientNote; url: string }) {
-  const fill = (text: string) => text.replaceAll("<server address>", url);
+/** One app's MCP setup notes (lib/app-guides.json): data, never a branch. */
+function ClientNote({ app, guide: note }: { app: AppGuideData; guide: McpGuide }) {
   return (
-    <AccordionItem value={note.id}>
+    <AccordionItem value={app.id}>
       <AccordionTrigger>
         <span className="flex flex-wrap items-center gap-2">
-          {note.name}
+          {app.name}
           <Badge variant="outline">
             {note.auth === "sign-in" ? "Sign in" : "Sign in or app key"}
           </Badge>
@@ -307,7 +335,7 @@ function ClientNote({ note, url }: { note: McpClientNote; url: string }) {
         <ol className="list-decimal pl-5">
           {note.steps.map((step) => (
             <li key={step} className="break-words">
-              {fill(step)}
+              {step}
             </li>
           ))}
         </ol>
@@ -320,7 +348,7 @@ function ClientNote({ note, url }: { note: McpClientNote; url: string }) {
           target="_blank"
           rel="noreferrer noopener"
         >
-          {note.name} documentation
+          {app.name} documentation
         </a>
       </AccordionContent>
     </AccordionItem>

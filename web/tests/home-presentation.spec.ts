@@ -6,7 +6,7 @@ import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react
 import HomePage from "@/app/_home/home-page";
 import { homeApi } from "@/app/_home/home-api";
 import { accountApi } from "@/lib/account-api";
-import { chatAlias } from "@/app/_home/recipes";
+import { chatAlias } from "@/app/_home/chat-alias";
 import {
   capabilitySummary,
   capabilityTiles,

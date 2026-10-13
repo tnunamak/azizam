@@ -111,7 +111,7 @@ test(
       .getByRole("button", { name: "Create app and key", exact: true })
       .click();
     expect((await key).status()).toBe(201);
-    await page.getByRole("button", { name: "I’ve saved it" }).click();
+    await page.getByRole("button", { name: "I’ve saved the key" }).click();
     await expect(
       page.getByRole("heading", { name: "Command palette app", exact: true }),
     ).toBeVisible();

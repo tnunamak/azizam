@@ -122,22 +122,10 @@ const contextualExceptions: Record<
   ],
 };
 
-// Exact protocol/recipe wording remains valid where users must match an app's
+// Exact protocol and app-setup wording remains valid where users must match an app's
 // actual field or paste a protocol-specific configuration value.
 const technicalExceptions: Record<string, { value: string; reason: string }[]> =
   {
-    "app/apps/page.tsx": [
-      {
-        value: "Base URL",
-        reason: "Exact field label used in app setup recipes",
-      },
-    ],
-    "app/_home/home-page.tsx": [
-      {
-        value: "Base URL",
-        reason: "Exact field label used in app setup recipes",
-      },
-    ],
     "app/providers/page.tsx": [
       {
         value: "Provider base URL",
@@ -151,27 +139,6 @@ const technicalExceptions: Record<string, { value: string; reason: string }[]> =
       {
         value: "Base URL",
         reason: "Engine endpoint configuration field label",
-      },
-    ],
-    "app/_home/recipes.ts": [
-      {
-        value: "Base URL",
-        reason: "Exact field label used by OpenAI-compatible app recipes",
-      },
-      {
-        value: "Override OpenAI Base URL",
-        reason: "Exact Cursor setting label",
-      },
-      {
-        value:
-          "In Cursor Settings → Models, enable your OpenAI API key, set Override OpenAI Base URL, and add the model below. Cursor’s servers must reach this URL; a localhost or private LAN URL will not work. Your key is sent through Cursor’s servers. Custom keys cover chat; Tab uses Cursor’s models.",
-        reason: "Third-party Cursor setup recipe must name its exact setting",
-      },
-      {
-        value:
-          "Set GATEWAY_API_KEY to your saved key first, then run these commands in the shell that starts Claude Code. Check /status after launch to confirm the gateway URL and credential.",
-        reason:
-          "Third-party Claude Code recipe must name its exact environment variable and status command",
       },
     ],
   };

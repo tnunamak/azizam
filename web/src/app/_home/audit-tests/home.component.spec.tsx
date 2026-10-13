@@ -604,7 +604,7 @@ describe("Home audit component behavior", () => {
       await screen.findByRole("option", { name: /Browser test app/ }),
     );
     await userEvent.type(
-      screen.getByLabelText("Paste your API key"),
+      screen.getByLabelText("Paste your API Key"),
       "opk_test_secret",
     );
     await userEvent.click(
@@ -620,7 +620,7 @@ describe("Home audit component behavior", () => {
     ).toBeNull();
     expect(evidencePosts).toEqual([]);
   });
-  it("does not infer missing chat access from a missing recipe alias", async () => {
+  it("does not infer missing chat access from a missing guide model", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -664,11 +664,10 @@ describe("Home audit component behavior", () => {
   });
 
   it.each([
-    ["Python", "Install openai, set GATEWAY_API_KEY, then run this.", "https://github.com/openai/openai-python#usage"],
-    ["JavaScript", "Install openai, set GATEWAY_API_KEY, then run this server-side.", "https://github.com/openai/openai-node#usage"],
-    ["curl", "Set GATEWAY_API_KEY. This sends one chat request.", "https://platform.openai.com/docs/api-reference/chat/create"],
-    ["Phone", "Use your household Open WebUI connection.", "https://docs.openwebui.com/getting-started/quick-start/"],
-  ])("makes the %s recipe reachable under Another app with Python as default", async (client, description, docs) => {
+    ["Python", "Install the openai package: pip install openai.", "https://github.com/openai/openai-python#usage"],
+    ["JavaScript", "Install the openai package: npm install openai.", "https://github.com/openai/openai-node#usage"],
+    ["curl", "Set GATEWAY_API_KEY to your key, then run this. It sends one chat request.", "https://platform.openai.com/docs/api-reference/chat/create"],
+  ])("makes %s reachable under Another app with Python as default", async (client, firstStep, docs) => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -685,19 +684,65 @@ describe("Home audit component behavior", () => {
     );
     renderHome();
     await userEvent.click(await screen.findByRole("button", { name: "Another app" }));
-    expect(screen.getByRole("combobox", { name: "Recipe" })).toHaveTextContent("Python");
+    expect(screen.getByRole("combobox", { name: "Language or tool" })).toHaveTextContent("Python");
     expect(screen.getByRole("button", { name: "Create key for Python" })).toBeVisible();
-    await userEvent.click(screen.getByRole("combobox", { name: "Recipe" }));
+    await userEvent.click(screen.getByRole("combobox", { name: "Language or tool" }));
     await userEvent.click(await screen.findByRole("option", { name: client }));
-    expect(screen.getByRole("combobox", { name: "Recipe" })).toHaveTextContent(client);
+    expect(screen.getByRole("combobox", { name: "Language or tool" })).toHaveTextContent(client);
     expect(screen.getByRole("button", { name: `Create key for ${client}` })).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Setup notes" }));
-    expect(await screen.findByText(description)).toBeVisible();
-    expect(screen.getByRole("link", { name: `${client} docs` })).toHaveAttribute("href", docs);
+    const notes = await screen.findByRole("dialog", { name: "Setup notes" });
+    expect(within(notes).getByText(firstStep)).toBeVisible();
+    // The sheet shows the guide's steps and a snippet; never a key.
+    expect(within(notes).getAllByRole("listitem").length).toBeGreaterThan(0);
+    expect(notes.textContent).not.toMatch(/opk_|oak_/);
+    expect(within(notes).getByRole("link", { name: `${client} docs` })).toHaveAttribute("href", docs);
     await userEvent.keyboard("{Escape}");
     await userEvent.click(screen.getByRole("button", { name: "Open WebUI" }));
-    expect(screen.queryByRole("combobox", { name: "Recipe" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Language or tool" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Another app" }));
-    expect(screen.getByRole("combobox", { name: "Recipe" })).toHaveTextContent("Python");
+    expect(screen.getByRole("combobox", { name: "Language or tool" })).toHaveTextContent("Python");
+  });
+
+  it("offers OpenWhispr in the chooser, not Phone, and names its two models", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/.well-known/azizam")
+          return Response.json({ service: { name: "Family gateway" } });
+        if (path === "/me/api/home")
+          return Response.json({
+            ...home,
+            new_app_aliases: [
+              ...home.new_app_aliases,
+              {
+                id: "house-whisper",
+                operation: "audio.transcriptions",
+                available: true,
+                status: "ready",
+                reason_code: "ready",
+              },
+            ],
+          });
+        if (path === "/me/api/media?limit=12")
+          return Response.json({ assets: [] });
+        if (path === "/admin/api/setup-progress")
+          return Response.json({ ...progress(), complete: true });
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+    renderHome();
+    await userEvent.click(await screen.findByRole("button", { name: "OpenWhispr" }));
+    expect(screen.queryByRole("button", { name: "Phone" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Language or tool" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Create key for OpenWhispr" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Speech-to-Text model" })).toHaveValue("house-whisper");
+    expect(screen.getByRole("textbox", { name: "Dictation Cleanup model" })).toHaveValue("default");
+    expect(screen.queryByRole("textbox", { name: "Model" })).toBeNull();
+    // The key field of OpenWhispr is labelled as the app labels it.
+    await userEvent.click(screen.getByRole("combobox", { name: "API key" }));
+    await userEvent.click(await screen.findByRole("option", { name: /Browser test app/ }));
+    expect(screen.getByLabelText("Paste your API Key (Optional)")).toBeVisible();
   });
 });

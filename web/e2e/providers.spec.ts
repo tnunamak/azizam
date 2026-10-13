@@ -479,12 +479,14 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
 
     await page.goto("/models/");
     await expect(page.getByRole("heading", { name: "Models" })).toBeVisible();
-    await page.getByRole("button", { name: /All models/ }).click();
-    await expect(page.getByText("Claude Sonnet 4.5")).toBeVisible();
+    // Every model name is listed; none hides behind a control.
+    const sonnet = page
+      .locator("li[data-model]")
+      .filter({ hasText: "Claude Sonnet 4.5" })
+      .first();
+    await expect(sonnet).toBeVisible();
     await expect(
-      page.getByRole("cell", {
-        name: /Paid · \$3 input \/ \$15 output per 1M tokens/,
-      }),
+      sonnet.getByTitle(/\$3 input \/ \$15 output per 1M tokens/),
     ).toBeVisible();
 
     const allowed = await request.post("/openai/v1/chat/completions", {

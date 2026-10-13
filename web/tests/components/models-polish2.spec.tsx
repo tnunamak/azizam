@@ -6,8 +6,12 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import ModelsClient from "@/app/models/models-client";
+
+beforeEach(() => {
+  Element.prototype.scrollIntoView ??= () => {};
+});
 
 afterEach(() => {
   cleanup();
@@ -50,13 +54,15 @@ function renderCatalog(
 ) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
-      Response.json({
-        schema_version: 1,
-        object: "models.catalog",
-        aliases,
-        models,
-      }),
+    vi.fn(async (url: RequestInfo | URL) =>
+      String(url).includes("well-known")
+        ? Response.json({ recipes: {} })
+        : Response.json({
+            schema_version: 1,
+            object: "models.catalog",
+            aliases,
+            models,
+          }),
     ),
   );
   const client = new QueryClient({
@@ -69,27 +75,31 @@ function renderCatalog(
   );
 }
 
-it("shows the supplied engine label and measured speed without an unknown speed claim", async () => {
+const nameButton = (id: string) => screen.getByRole("button", { name: id });
+const rowOf = (id: string) => nameButton(id).closest("li") as HTMLElement;
+/** One Details fact: the value beside its label. */
+function fact(label: string): string | undefined {
+  return [...screen.getByRole("dialog").querySelectorAll("dt")]
+    .find((dt) => dt.textContent === label)
+    ?.nextElementSibling?.textContent ?? undefined;
+}
+
+it("keeps the engine out of the row and shows a measured speed only in Details", async () => {
   renderCatalog([row()]);
-  const copy = await screen.findByRole("button", {
-    name: "Copy model name chat",
-  });
-  const card = within(copy.closest("tr")!);
-  expect(card.queryByText("Local", { exact: true })).toBeNull();
-  expect(card.queryByText("Local · no provider charge")).toBeNull();
+  await screen.findByRole("button", { name: "chat" });
+  const card = within(rowOf("chat"));
+  expect(card.queryByText(/Household chat|capture-engine/)).toBeNull();
   expect(card.queryByText("Unknown", { exact: true })).toBeNull();
-  expect(card.queryByText("Live availability is not measured yet")).toBeNull();
-  expect(card.queryByText("Not measured yet", { exact: true })).toBeNull();
-  expect(card.queryByText(/capture-engine/)).toBeNull();
-  expect(card.queryByText("Ready")).toBeNull();
-  fireEvent.click(card.getByRole("button", { name: "Details" }));
-  const detail = within(screen.getByRole("dialog"));
-  expect(detail.getByText("Measured time")).toBeVisible();
-  expect(detail.getByText("~151 ms · Measured")).toBeVisible();
-  expect(detail.getByText("Household chat")).toBeVisible();
+  expect(card.queryByText(/Live availability is not measured yet|Not measured yet/)).toBeNull();
+  expect(card.queryByText(/ms\b/)).toBeNull();
+  fireEvent.click(nameButton("chat"));
+  expect(fact("Time per request")).toBe("About 151 ms, measured");
+  // The engine label is for the owner; a member sees where it runs.
+  expect(fact("Runs on")).toBe("This gateway's engines");
+  expect(screen.queryByText("Household chat")).toBeNull();
 });
 
-it("distinguishes configured typical speed from measured requests", async () => {
+it("distinguishes a configured typical speed from measured requests", async () => {
   renderCatalog([
     row({
       locality: "remote",
@@ -98,84 +108,22 @@ it("distinguishes configured typical speed from measured requests", async () => 
       timing: { typical_seconds: 1.2, source: "configured" },
     }),
   ]);
-  await screen.findByRole("button", { name: "Copy model name chat" });
-  expect(screen.queryByText("Remote", { exact: true })).toBeNull();
-  expect(screen.getByText("Paid · $0.02 per request")).toBeVisible();
-  expect(screen.queryByText("~1.2 s · Typical")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Details" }));
-  expect(
-    within(screen.getByRole("dialog")).getByText("~1.2 s · Typical"),
-  ).toBeVisible();
-  expect(screen.queryByText(/Measured/)).toBeNull();
+  await screen.findByRole("button", { name: "chat" });
+  const card = within(rowOf("chat"));
+  expect(card.getAllByText("$0.02 per request").length).toBeGreaterThan(0);
+  expect(card.getByTitle(/via Example provider/)).toBeInTheDocument();
+  expect(card.queryByText(/About 1\.2 s/)).toBeNull();
+  fireEvent.click(nameButton("chat"));
+  expect(fact("Time per request")).toBe("About 1.2 s, typical");
+  expect(screen.queryByText(/measured/)).toBeNull();
 });
 
-it("omits absent timing and does not expose service ids as engine names", async () => {
-  renderCatalog([
-    row({
-      engine_label: undefined,
-      timing: { typical_seconds: null, source: null },
-    }),
-  ]);
-  await screen.findByRole("button", { name: "Copy model name chat" });
-  expect(screen.queryByText("Not measured yet")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Details" }));
-  expect(screen.getByText("Engine or provider not specified")).toBeVisible();
-  expect(
-    within(screen.getByRole("dialog")).queryByText("Not measured yet"),
-  ).toBeNull();
-  expect(
-    within(screen.getByRole("dialog")).queryByText("Typical time"),
-  ).toBeNull();
-  expect(screen.queryByText(/capture-engine/)).toBeNull();
-  expect(screen.queryByText(/Location not measured yet/)).toBeNull();
-});
-
-it("does not display invalid negative duration as a measured speed", async () => {
-  renderCatalog([row({ timing: { typical_seconds: -1, source: "receipts" } })]);
-  await screen.findByRole("button", { name: "Copy model name chat" });
-  expect(screen.queryByText("Not measured yet")).toBeNull();
-  expect(
-    screen.queryByTitle("Measured time from successful requests"),
-  ).toBeNull();
-  expect(screen.queryByText(/-1000 ms/)).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Details" }));
-  expect(
-    within(screen.getByRole("dialog")).queryByText("Not measured yet"),
-  ).toBeNull();
-  expect(
-    within(screen.getByRole("dialog")).queryByText("Measured time"),
-  ).toBeNull();
-});
-
-it("provides actions for the initial empty catalog and filtered empty catalog", async () => {
-  renderCatalog([]);
-  expect(
-    await screen.findByRole("link", { name: "Review setup" }),
-  ).toHaveAttribute("href", "/");
-  cleanup();
-  renderCatalog([row()]);
-  const search = await screen.findByRole("textbox", { name: "Search models" });
-  fireEvent.change(search, { target: { value: "unmatched" } });
-  fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-  expect(search).toHaveValue("");
-  expect(
-    screen.getByRole("button", { name: "Copy model name chat" }),
-  ).toBeVisible();
-});
-
-it("uses human model titles while keeping exact ids as secondary code and detail facts", async () => {
+it("gives each exact model its id as the name and a title only when it adds one", async () => {
   const id = "audio.generate.internal-workflow";
   renderCatalog(
     [],
     [
-      row({
-        id,
-        display_name: id,
-        title: "Chat model",
-        name: id,
-        alias: false,
-        object: "model_catalog.model",
-      }),
+      row({ id, display_name: id, title: "Chat model", name: id, alias: false, object: "model_catalog.model" }),
       row({
         id: "named-id",
         display_name: "named-id",
@@ -183,22 +131,23 @@ it("uses human model titles while keeping exact ids as secondary code and detail
         title: "Household assistant",
         alias: false,
         object: "model_catalog.model",
+        description: "Another description.",
       }),
     ],
   );
-  fireEvent.click(await screen.findByRole("button", { name: /All models/ }));
-  const table = within(screen.getByRole("table", { name: "All models" }));
-  expect(table.getByText("Chat model")).toBeVisible();
-  expect(table.getByText(id).tagName).toBe("CODE");
-  expect(table.getByText("Household assistant")).toBeVisible();
-  fireEvent.click(table.getByText("Chat model"));
+  await screen.findByRole("button", { name: id });
+  // The id is the button; the title and description sit on its second line.
+  expect(nameButton(id).tagName).toBe("BUTTON");
+  expect(nameButton(id)).toHaveClass("font-mono");
+  expect(within(rowOf(id)).getByTitle(/^Chat model/)).toBeInTheDocument();
+  expect(within(rowOf("named-id")).getByTitle(/^Household assistant · Another/)).toBeInTheDocument();
+  fireEvent.click(nameButton(id));
   const detail = within(screen.getByRole("dialog"));
-  expect(detail.getByRole("heading", { name: "Chat model" })).toBeVisible();
-  for (const identifier of detail.getAllByText(id))
-    expect(identifier).toBeVisible();
+  expect(detail.getByRole("heading", { name: id })).toBeVisible();
+  expect(detail.getByText(/^Chat model\./)).toBeVisible();
 });
 
-it("uses the shared status badge for measured availability", async () => {
+it("shows busy as a quiet word in the row and as the status badge in Details", async () => {
   renderCatalog([
     row({
       availability: {
@@ -209,7 +158,22 @@ it("uses the shared status badge for measured availability", async () => {
       },
     }),
   ]);
-  const status = await screen.findByText("Busy");
-  expect(status).toHaveAttribute("data-slot", "badge");
+  await screen.findByRole("button", { name: "chat" });
+  const status = within(rowOf("chat")).getAllByText("Busy")[0];
+  expect(status).not.toHaveAttribute("data-slot", "badge");
   expect(screen.queryByText("A request is running.")).toBeNull();
+  fireEvent.click(nameButton("chat"));
+  expect(within(screen.getByRole("dialog")).getByText("Busy")).toHaveAttribute("data-slot", "badge");
+});
+
+it("provides actions for the initial empty catalog and a search that matches nothing", async () => {
+  renderCatalog([]);
+  expect(await screen.findByRole("link", { name: "Review setup" })).toHaveAttribute("href", "/");
+  cleanup();
+  renderCatalog([row()]);
+  const search = await screen.findByRole("searchbox");
+  fireEvent.change(search, { target: { value: "unmatched" } });
+  fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  expect(search).toHaveValue("");
+  expect(screen.getByRole("button", { name: "chat" })).toBeVisible();
 });

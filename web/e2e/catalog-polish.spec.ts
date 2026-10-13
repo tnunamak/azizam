@@ -60,10 +60,10 @@ const plans = ["Family", "Creative", "Builders"].map((name, index) => ({
 }));
 const choices = plans.map(({ id, name, summary }) => ({ id, name, summary }));
 
-// Copy, grouping, price/provider text and plan summaries are asserted in
+// Copy, sections, price/provider text and plan summaries are asserted in
 // web/src/app/models/models-client.spec.tsx and web/tests/people-plans-list.spec.tsx.
-// The browser keeps what needs real layout: full-width rows, no page overflow,
-// the phone row height and the below-640 px heading, plus axe in both themes.
+// The browser keeps what needs real layout: full-width rows, no page overflow
+// and the phone row, plus axe in both themes.
 
 async function prepare(page: Page, width: number, theme: "light" | "dark") {
   await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
@@ -115,8 +115,7 @@ async function stubCatalog(page: Page, rows: unknown[]) {
   );
 }
 
-const modelCards = (page: Page) =>
-  page.locator('table[aria-label="Available model names"] tbody tr');
+const modelCards = (page: Page) => page.locator("li[data-model]");
 
 test("polished models: three aliases light 1440 fill the width and pass axe", async ({
   page,
@@ -125,12 +124,12 @@ test("polished models: three aliases light 1440 fill the width and pass axe", as
   await stubCatalog(page, aliases);
   await page.goto("/models/");
   await expect(
-    page.getByRole("heading", { name: "Fast", exact: true }),
+    page.getByRole("button", { name: "fast", exact: true }),
   ).toBeVisible();
   await verifyModelLayout(page, modelCards(page), 3);
 });
 
-test("polished model grouping keeps its width and passes axe after a search", async ({
+test("three names in one task keep their width and pass axe after a search", async ({
   page,
 }) => {
   await prepare(page, 1440, "light");
@@ -144,25 +143,28 @@ test("polished model grouping keeps its width and passes axe after a search", as
   }));
   await stubCatalog(page, chatAliases);
   await page.goto("/models/");
+  // All three names are listed at once, with nothing collapsed.
   await expect(
-    page.getByRole("heading", { name: "Fast", exact: true }),
+    page.getByRole("button", { name: "fast", exact: true }),
   ).toBeVisible();
-  await verifyModelLayout(page, modelCards(page), 1);
-  await page.getByRole("textbox", { name: "Search models" }).fill("fast");
   await expect(page.getByText(/\d+ more/)).toHaveCount(0);
+  await verifyModelLayout(page, modelCards(page), 3);
+  await page.getByRole("searchbox").fill("fast");
   await verifyModelLayout(page, modelCards(page), 1);
 });
 
-test("polished models: two aliases dark 390 name the task, fill the width and pass axe", async ({
+test("polished models: two tasks dark 390 name each task, fill the width and pass axe", async ({
   page,
 }) => {
   await prepare(page, 390, "dark");
   await stubCatalog(page, aliases.slice(0, 2));
   await page.goto("/models/");
-  // Below 640 px a row is two lines: the task name, then the alias. The
-  // model's friendly title is a desktop column.
+  // Each task is a section; below 640 px a row folds its facts into one line.
   await expect(
-    page.getByRole("heading", { name: "Chat", exact: true }),
+    page.getByRole("heading", { level: 2, name: /^Chat/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 2, name: /^Images/ }),
   ).toBeVisible();
   await verifyModelLayout(page, modelCards(page), 2);
 });
@@ -190,7 +192,7 @@ test("paid model rows with a long provider name keep the 390 px page inside the 
   }));
   await stubCatalog(page, paid);
   await page.goto("/models/");
-  await verifyModelLayout(page, modelCards(page), 1);
+  await verifyModelLayout(page, modelCards(page), 3);
 });
 
 async function checkPlanRows(page: Page, width: number) {

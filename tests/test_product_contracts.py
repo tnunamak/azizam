@@ -67,7 +67,7 @@ def test_catalog_contract_preserves_technical_description_detail():
     )
     adapter = TypeAdapter(ModelsCatalog)
     round_trip = adapter.dump_python(adapter.validate_python(catalog))
-    assert round_trip["models"][0]["description"] == "A separate chat profile named model."
+    assert round_trip["models"][0]["description"] == "A chat model."
     assert round_trip["models"][0]["technical_description"] == "Served via local llama.cpp on :5051."
 
 

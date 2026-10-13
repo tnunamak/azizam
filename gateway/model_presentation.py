@@ -308,7 +308,7 @@ def _chat_profile_description(profile_name: str) -> str:
         return "Helps with coding tasks and technical questions."
     if normalized in {"rp", "roleplay"} or "roleplay" in normalized:
         return "Uses a roleplay-tuned chat profile."
-    return f"A separate chat profile named {profile_name}."
+    return "A chat model."
 
 
 def _strip_deployment_notes(value: str) -> str:

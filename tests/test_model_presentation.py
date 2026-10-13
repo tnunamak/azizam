@@ -226,7 +226,7 @@ def test_catalog_summary_omits_unknown_metrics_but_preserves_details():
     row = catalog["models"][0]
     assert row["summary"] == {"cost_label": "Local · no provider charge"}
     assert row["timing"] == {"typical_seconds": None, "source": None}
-    assert row["description"] == "A separate chat profile named demo."
+    assert row["description"] == "A chat model."
 
 
 def test_workflow_alias_catalog_is_one_caller_entry_with_metadata():

@@ -71,6 +71,16 @@ const firstMenu: StateAction = async (page) => {
   return true;
 };
 
+/** Open Details for the first model name on the Models page. */
+const firstModelDetails: StateAction = async (page) => {
+  const name = page.locator('main button[aria-haspopup="dialog"]').filter({ visible: true }).first();
+  if (!(await appears(name))) return "no model name in main";
+  await name.scrollIntoViewIfNeeded();
+  await name.click();
+  await page.getByRole("dialog").waitFor({ state: "visible", timeout: 5_000 });
+  return true;
+};
+
 const tab = (name: string): SweepState => ({
   id: `tab-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
   act: click(name, "tab"),
@@ -247,7 +257,7 @@ export const ROUTES: SweepRoute[] = [
     surface: "Models",
     path: "/models/",
     roles: signedIn,
-    states: [{ id: "default" }, { id: "row-menu", act: firstMenu, roles: owner, optional: true }],
+    states: [{ id: "default" }, { id: "details", act: firstModelDetails, roles: owner, optional: true }],
   },
   {
     appRoute: "/workflows",

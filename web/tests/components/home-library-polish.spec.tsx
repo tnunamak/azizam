@@ -113,13 +113,13 @@ describe("Home and Library polish", () => {
     const header = screen.getByRole("heading", { level: 1, name: "Home" }).closest("header")!;
     expect(within(header).getByRole("status")).toHaveTextContent("Images unknown");
     const connect = screen.getByRole("region", { name: "Connect an app" });
-    // The address belongs to an app's recipe, so it waits for the choice.
+    // The address belongs to an app's guide, so it waits for the choice.
     expect(within(connect).queryByLabelText("Gateway address")).toBeNull();
     expect(
       within(connect).queryByRole("button", { name: "Check connection" }),
     ).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Open WebUI" }));
-    // The recipe's base URL is the gateway address, so it is not repeated.
+    // The guide's address is the gateway address, so it is not repeated.
     expect(within(connect).queryByLabelText("Base URL")).toBeNull();
     expect(within(connect).getByLabelText("Gateway address")).toHaveValue(
       home.api_base_url,
