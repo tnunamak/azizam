@@ -307,6 +307,7 @@ it("opens a request with its outcome in the body, filters by person and clears t
   );
   await user.click(screen.getByRole("button", { name: "Clear filters" }));
   expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  expect(screen.getByRole("combobox", { name: "Person" })).toHaveFocus();
   expect(
     within(screen.getByRole("combobox", { name: "Person" })).getByText(
       "Everyone",
@@ -369,3 +370,32 @@ it.each([
     ).toBeVisible();
   },
 );
+
+it("preserves keyboard focus through change details and final pagination", async () => {
+  const user = userEvent.setup();
+  mountActivity({
+    tab: "Changes",
+    audit: async (params) => ({
+      records: params?.before ? [] : [entry({
+        id: "a11y-change", action: "app.create", actor_id: "sam",
+        actor_kind: "user", actor_label: "Sam", target_kind: "app",
+        target_id: "reader", metadata: { name: "Reader" }, created_at: 1,
+      })],
+      next_cursor: params?.before ? null : "older",
+    }),
+  });
+  const row = await screen.findByRole("button", { name: "Details: Created an app by Sam" });
+  expect(row).toHaveAccessibleDescription(/Created an app.*Sam.*Reader/);
+  row.focus();
+  await user.keyboard("{Enter}");
+  expect(await screen.findByRole("dialog")).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(row).toHaveFocus());
+  const more = screen.getByRole("button", { name: "Load more" });
+  more.focus();
+  await user.keyboard("{Enter}");
+  const end = await screen.findByText("End of changes");
+  await waitFor(() => expect(end).toHaveFocus());
+  expect(screen.getByRole("status", { name: "Changes updates" }))
+    .toHaveTextContent("1 change loaded. End of changes.");
+});

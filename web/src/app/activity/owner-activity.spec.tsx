@@ -170,6 +170,7 @@ it("uses the people list's name for a person in rows, sheet and selector (PF-141
   }));
   const row = await screen.findByRole("button", { name: "Details: Created an app by Azizam Owner" });
   expect(row).toHaveTextContent("Azizam Owner · Family app");
+  expect(row).toHaveAccessibleDescription(/Created an app.*Azizam Owner.*Family app/);
   await user.click(row);
   const dialog = await screen.findByRole("dialog");
   expect(within(dialog).getByText("Changed by").nextElementSibling).toHaveTextContent("Azizam Owner");
@@ -225,7 +226,7 @@ it("never shows a stored action name as the change title (PF-140)", async () => 
 
 it("announces loading changes without claiming that an empty list is ready", () => {
   mount(() => new Promise(() => {}));
-  const status = screen.getByText("Loading changes").closest('[role="status"]');
+  const status = screen.getByRole("status", { name: "Changes updates" });
   expect(status).toHaveTextContent("Loading changes");
   expect(status).toHaveAttribute("aria-live", "polite");
   expect(status).toHaveAttribute("aria-atomic", "true");
@@ -379,6 +380,8 @@ it("shows newest receipts first with person and app despite a source label, and 
   expect(within(buttons[0]).getByText("Alex · Studio")).toBeVisible();
   expect(within(buttons[0]).getByText("Failed")).toBeVisible();
   expect(buttons[0]).toHaveTextContent("1.3 s");
+  expect(buttons[0]).toHaveAccessibleDescription(/Image.*Alex.*Studio.*Failed.*1[.]3 s/);
+  expect(within(table).getByRole("columnheader", { name: "Request receipt" })).toHaveAttribute("scope", "col");
   expect(within(buttons[0]).getByText(/1\.3 s/)).toHaveTextContent(
     /^.+ · 1\.3 s$/,
   );
@@ -391,6 +394,7 @@ it("shows newest receipts first with person and app despite a source label, and 
   expect(within(receipt).getByText("Studio")).toBeVisible();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(buttons[0]).toHaveFocus());
   await user.click(buttons[1]);
   expect(within(await screen.findByRole("dialog")).getByText("Request ID: older")).toBeInTheDocument();
 });
@@ -639,4 +643,28 @@ it("COPY-19 backend access guidance", () => {
   );
   expect(screen.getByText("Only an owner or admin can manage engines. Ask an owner or admin for help.")).toBeVisible();
   expect(screen.queryByText(/Sign in with an owner account/)).toBeNull();
+});
+
+it("announces final request pagination and keeps focus on the end message", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const more = String(input).includes("before=older");
+    return Response.json({
+      records: more ? [] : [{
+        receipt: { request_id: "first", intent: "chat", status: "success" },
+        person_label: "Sam", app_label: "Reader", created_at: 1,
+      }],
+      next_cursor: more ? null : "older", people: [], sources: [],
+    });
+  }));
+  mountRequests();
+  const button = await screen.findByRole("button", { name: "Load more" });
+  button.focus();
+  await user.keyboard("{Enter}");
+  const end = await screen.findByText("End of request receipts");
+  await waitFor(() => expect(end).toHaveFocus());
+  const status = screen.getByRole("status", { name: "Request updates" });
+  expect(status).toHaveTextContent("1 request loaded. End of request receipts.");
+  expect(status).toHaveAttribute("aria-live", "polite");
+  expect(status).toHaveAttribute("aria-atomic", "true");
 });

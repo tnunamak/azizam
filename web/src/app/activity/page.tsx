@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { Requests } from "./requests";
+import { useEffect, useId, useRef, useState } from "react";
+import { Requests, ResultsStatus } from "./requests";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { History, ChevronRight } from "lucide-react";
 import { api, type AuditEntry } from "@/lib/api";
@@ -84,6 +84,11 @@ function activityActorName(
 }
 
 export default function ActivityPage() {
+  const rowId = useId();
+  const filterRef = useRef<HTMLButtonElement>(null);
+  const openerRef = useRef<HTMLButtonElement | null>(null);
+  const pageButtonRef = useRef<HTMLButtonElement | null>(null);
+  const endRef = useRef<HTMLParagraphElement>(null);
   const [category, setCategory] = useState("");
   const [showAccessAudit, setShowAccessAudit] = useState(false);
   const [showAutomated, setShowAutomated] = useState(false);
@@ -93,6 +98,7 @@ export default function ActivityPage() {
     setCategory("");
     setActor("");
     setActorInput("");
+    filterRef.current?.focus();
   }
   const {
     data: people,
@@ -164,8 +170,25 @@ export default function ActivityPage() {
   );
   const automatedCount =
     auditData?.pages[0]?.automated_count ?? optionsData?.automated_count ?? 0;
+  useEffect(() => {
+    if (fetchingNextPage || !pageButtonRef.current) return;
+    const button = pageButtonRef.current;
+    if (!hasNextPage && (document.activeElement === button ||
+      (!button.isConnected && document.activeElement === document.body))) {
+      endRef.current?.focus();
+    }
+    pageButtonRef.current = null;
+  }, [hasNextPage, fetchingNextPage]);
+  function loadMore(button: HTMLButtonElement) {
+    if (fetchingNextPage) return;
+    pageButtonRef.current = button;
+    void fetchNextPage();
+  }
+  const status = auditPending ? "Loading changes" : fetchingNextPage ? "Loading more changes"
+    : auditFetching ? "Refreshing changes" : auditError ? ""
+    : `${entries.length} ${entries.length === 1 ? "change" : "changes"} loaded. ${hasNextPage ? "More changes are available." : category || actor ? "No more matching changes." : "End of changes."}`;
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 motion-reduce:[&_*]:animate-none motion-reduce:[&_*]:transition-none">
       <PageHeader title="Activity" subtitle="Changes and request outcomes" />
       <Tabs defaultValue="requests">
         <TabsList>
@@ -173,6 +196,7 @@ export default function ActivityPage() {
           <TabsTrigger value="audit">Changes</TabsTrigger>
         </TabsList>
         <TabsContent value="audit" className="mt-6 space-y-6">
+          <ResultsStatus label="Changes updates" message={status} />
           <div className="flex flex-wrap items-end gap-4">
             <div className="space-y-2">
               <label
@@ -189,7 +213,8 @@ export default function ActivityPage() {
               >
                 <SelectTrigger
                   id="audit-category"
-                  className="w-[180px] max-w-full"
+                  ref={filterRef}
+                  className="min-h-6 min-w-6 w-[180px] max-w-full"
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -222,7 +247,7 @@ export default function ActivityPage() {
               >
                 <SelectTrigger
                   id="audit-person"
-                  className="w-[180px] max-w-full"
+                  className="min-h-6 min-w-6 w-[180px] max-w-full"
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -241,8 +266,8 @@ export default function ActivityPage() {
             </div>
             <Button
               variant="outline"
-              onClick={() => void refetchAudit()}
-              disabled={auditFetching}
+              onClick={() => { if (!auditFetching) void refetchAudit(); }}
+              aria-disabled={auditFetching}
             >
               Refresh
             </Button>
@@ -309,7 +334,7 @@ export default function ActivityPage() {
               {showAccessAudit ? "Hide access history" : "Show access history"}
             </Button>
             <details className="text-muted-foreground text-sm">
-              <summary className="cursor-pointer">Technical: filter by person ID</summary>
+              <summary className="min-h-6 min-w-6 cursor-pointer content-center focus-visible:outline-ring focus-visible:outline-2">Technical: filter by person ID</summary>
             <form
               className="mt-3 flex max-w-md gap-2"
               onSubmit={(e) => {
@@ -353,9 +378,9 @@ export default function ActivityPage() {
               aria-busy="true"
               className="space-y-5"
             >
-              <StatusLine tone="unknown" text="Loading changes" compact />
+              <div aria-hidden="true"><StatusLine tone="unknown" text="Loading changes" compact /></div>
               {[0, 1, 2, 3, 4].map((i) => (
-                <Skeleton className="h-14 w-full" key={i} />
+                <Skeleton className="h-14 w-full motion-reduce:animate-none" key={i} />
               ))}
             </div>
           ) : auditError && !entries.length ? (
@@ -405,13 +430,17 @@ export default function ActivityPage() {
           ) : (
             <>
               <div className="divide-border divide-y">
-                {entries.map((row) => (
+                {entries.map((row, index) => (
                   <button
                     type="button"
                     key={row.id}
                     aria-label={`Details: ${auditSummary(row)} by ${actorName(row)}`}
-                    onClick={() => setEntry(row)}
-                    className="group hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-4 py-4 text-left transition-colors focus-visible:outline-2"
+                    aria-describedby={`${rowId}-${index}-context ${rowId}-${index}-time`}
+                    onClick={(event) => {
+                      openerRef.current = event.currentTarget;
+                      setEntry(row);
+                    }}
+                    className="group hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-4 py-4 text-left transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 motion-reduce:transition-none"
                   >
                     <div className="bg-muted hidden size-8 shrink-0 items-center justify-center rounded-full sm:flex">
                       <History
@@ -419,14 +448,14 @@ export default function ActivityPage() {
                         className="text-muted-foreground size-4"
                       />
                     </div>
-                    <div className="min-w-0 flex-1">
+                    <div id={`${rowId}-${index}-context`} className="min-w-0 flex-1">
                       <p className="text-sm font-medium">{auditSummary(row)}</p>
                       <p className="text-muted-foreground mt-1 text-xs break-words">
                         {actorName(row)}
                         {changedName(row) ? ` · ${changedName(row)}` : ""}
                       </p>
                     </div>
-                    <div className="text-muted-foreground shrink-0 text-xs">
+                    <div id={`${rowId}-${index}-time`} className="text-muted-foreground shrink-0 text-xs">
                       <RelativeTime ts={row.created_at} />
                     </div>
                     <ChevronRight
@@ -443,7 +472,7 @@ export default function ActivityPage() {
                     severity="critical"
                     title="Couldn't load more changes"
                     headerAction={
-                      <Button variant="outline" onClick={() => void fetchNextPage()}>
+                      <Button variant="outline" aria-disabled={fetchingNextPage} onClick={(event) => loadMore(event.currentTarget)}>
                         Try again
                       </Button>
                     }
@@ -458,13 +487,13 @@ export default function ActivityPage() {
                 {hasNextPage ? (
                   <Button
                     variant="outline"
-                    disabled={fetchingNextPage}
-                    onClick={() => void fetchNextPage()}
+                    aria-disabled={fetchingNextPage}
+                    onClick={(event) => loadMore(event.currentTarget)}
                   >
                     {fetchingNextPage ? "Loading…" : "Load more"}
                   </Button>
                 ) : (
-                  <p className="text-muted-foreground text-xs">
+                  <p ref={endRef} tabIndex={-1} className="text-muted-foreground text-xs focus-visible:outline-ring focus-visible:outline-2">
                     {category || actor
                       ? "No more matching changes"
                       : "End of changes"}
@@ -484,7 +513,13 @@ export default function ActivityPage() {
           if (!open) setEntry(null);
         }}
       >
-        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+        <SheetContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            (openerRef.current?.isConnected ? openerRef.current : filterRef.current)?.focus();
+          }}
+          className="w-full overflow-y-auto sm:max-w-lg motion-reduce:animate-none motion-reduce:transition-none motion-reduce:[&_*]:animate-none motion-reduce:[&_*]:transition-none [&_button]:min-h-6 [&_button]:min-w-6"
+        >
           {entry && (
             <>
               <SheetHeader className="pr-14">
@@ -513,7 +548,7 @@ export default function ActivityPage() {
                   </div>
                 </dl>
                 <details>
-                  <summary className="cursor-pointer text-sm font-medium">
+                  <summary className="min-h-6 min-w-6 cursor-pointer content-center text-sm font-medium focus-visible:outline-ring focus-visible:outline-2">
                     Technical details
                   </summary>
                   <div className="mt-4">

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { ArrowRight, ReceiptText } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -161,6 +161,11 @@ function duration(ms?: number | null) {
 }
 
 export function Requests() {
+  const rowId = useId();
+  const filterRef = useRef<HTMLButtonElement>(null);
+  const openerRef = useRef<HTMLButtonElement | null>(null);
+  const pageButtonRef = useRef<HTMLButtonElement | null>(null);
+  const endRef = useRef<HTMLParagraphElement>(null);
   const nameModel = useModelName();
   const [person, setPerson] = useState("");
   const [source, setSource] = useState("all");
@@ -168,6 +173,7 @@ export function Requests() {
   const {
     data,
     isPending,
+    isFetching,
     isError,
     isFetchNextPageError,
     isFetchingNextPage,
@@ -212,8 +218,31 @@ export function Requests() {
   useEffect(() => {
     if (selectedReceiptKey !== null && record === null) setSelectedReceiptKey(null);
   }, [selectedReceiptKey, record]);
+  useEffect(() => {
+    if (isFetchingNextPage || !pageButtonRef.current) return;
+    const button = pageButtonRef.current;
+    if (!hasNextPage && (document.activeElement === button ||
+      (!button.isConnected && document.activeElement === document.body))) {
+      endRef.current?.focus();
+    }
+    pageButtonRef.current = null;
+  }, [hasNextPage, isFetchingNextPage]);
+  function clearFilters() {
+    setPerson("");
+    setSource("all");
+    filterRef.current?.focus();
+  }
+  function loadMore(button: HTMLButtonElement) {
+    if (isFetchingNextPage) return;
+    pageButtonRef.current = button;
+    void fetchNextPage();
+  }
+  const status = isPending ? "Loading requests" : isFetchingNextPage ? "Loading more requests"
+    : isFetching ? "Refreshing requests" : isError ? ""
+    : `${rows.length} ${rows.length === 1 ? "request" : "requests"} loaded. ${hasNextPage ? "More requests are available." : person || source !== "all" ? "No more matching requests." : "End of request receipts."}`;
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 motion-reduce:[&_*]:animate-none motion-reduce:[&_*]:transition-none">
+      <ResultsStatus message={status} label="Request updates" />
       <p className="text-muted-foreground text-meta">
         Receipts show the outcome, model and time. They do not include what was asked.
       </p>
@@ -228,7 +257,7 @@ export function Requests() {
               setPerson(value === "everyone" ? "" : value)
             }
           >
-            <SelectTrigger id="request-person" size="sm" className="w-44 max-w-full">
+            <SelectTrigger ref={filterRef} id="request-person" size="sm" className="min-h-6 min-w-6 w-44 max-w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -246,7 +275,7 @@ export function Requests() {
             Source
           </label>
           <Select value={source} onValueChange={setSource}>
-            <SelectTrigger id="request-source" size="sm" className="w-52 max-w-full">
+            <SelectTrigger id="request-source" size="sm" className="min-h-6 min-w-6 w-52 max-w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -262,10 +291,7 @@ export function Requests() {
         {(person || source !== "all") && (
           <Button
             variant="ghost"
-            onClick={() => {
-              setPerson("");
-              setSource("all");
-            }}
+            onClick={clearFilters}
           >
             Clear filters
           </Button>
@@ -277,9 +303,9 @@ export function Requests() {
           aria-busy="true"
           className="space-y-4"
         >
-          <StatusLine tone="unknown" text="Loading requests" compact />
+          <div aria-hidden="true"><StatusLine tone="unknown" text="Loading requests" compact /></div>
           {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-20 w-full" />
+            <Skeleton key={i} className="h-20 w-full motion-reduce:animate-none" />
           ))}
         </div>
       ) : isError && rows.length === 0 ? (
@@ -311,10 +337,7 @@ export function Requests() {
             person || source !== "all" ? (
               <Button
                 variant="outline"
-                onClick={() => {
-                  setPerson("");
-                  setSource("all");
-                }}
+                onClick={clearFilters}
               >
                 Clear filters
               </Button>
@@ -347,6 +370,7 @@ export function Requests() {
           )}
           <Card className="gap-0 overflow-hidden p-0! max-sm:p-0!">
             <Table dense aria-label="Request receipts" className="table-fixed">
+              <thead className="sr-only"><tr><th scope="col">Request receipt</th></tr></thead>
               <TableBody>
                 {rows.map((row, index) => (
                   <TableRow key={keys[index]}>
@@ -354,10 +378,14 @@ export function Requests() {
                       <button
                         type="button"
                         aria-label={`Request details: ${requestSummary(row.receipt)} by ${row.person_label}`}
-                        className="focus-visible:outline-ring flex min-h-(--row-2) w-full min-w-0 items-center gap-3 px-4 py-2 text-left hover:[&_p:first-child]:underline focus-visible:outline-2 max-sm:min-h-(--row-phone-2)"
-                        onClick={() => setSelectedReceiptKey(keys[index])}
+                        aria-describedby={`${rowId}-${index}-context ${rowId}-${index}-outcome`}
+                        className="focus-visible:outline-ring flex min-h-(--row-2) w-full min-w-0 items-center gap-3 px-4 py-2 text-left hover:[&_p:first-child]:underline focus-visible:outline-2 focus-visible:-outline-offset-2 max-sm:min-h-(--row-phone-2)"
+                        onClick={(event) => {
+                          openerRef.current = event.currentTarget;
+                          setSelectedReceiptKey(keys[index]);
+                        }}
                       >
-                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <div id={`${rowId}-${index}-context`} className="flex min-w-0 flex-1 flex-col gap-0.5">
                           <p className="min-w-0 truncate text-body font-medium">
                             {requestSummary(row.receipt)}
                             {row.receipt.parent_request_id && (
@@ -382,7 +410,7 @@ export function Requests() {
                             ) : null}
                           </p>
                         </div>
-                        <div className="flex min-w-0 max-w-1/2 shrink-0 flex-col items-end gap-0.5">
+                        <div id={`${rowId}-${index}-outcome`} className="flex min-w-0 max-w-1/2 shrink-0 flex-col items-end gap-0.5">
                           {["failed", "error", "backend_failed"].includes(row.receipt.status ?? "") ? (
                             <StateBadge state="down" word={outcome(row.receipt.status)} />
                           ) : ["running", "in_progress"].includes(row.receipt.status ?? "") ? (
@@ -416,7 +444,7 @@ export function Requests() {
                 severity="critical"
                 title="Couldn't load more requests"
                 headerAction={
-                  <Button variant="outline" onClick={() => void fetchNextPage()}>
+                  <Button variant="outline" aria-disabled={isFetchingNextPage} onClick={(event) => loadMore(event.currentTarget)}>
                     Try again
                   </Button>
                 }
@@ -431,13 +459,13 @@ export function Requests() {
             {hasNextPage ? (
               <Button
                 variant="outline"
-                disabled={isFetchingNextPage}
-                onClick={() => void fetchNextPage()}
+                aria-disabled={isFetchingNextPage}
+                onClick={(event) => loadMore(event.currentTarget)}
               >
                 {isFetchingNextPage ? "Loading…" : "Load more"}
               </Button>
             ) : (
-              <p className="text-muted-foreground text-meta">
+              <p ref={endRef} tabIndex={-1} className="text-muted-foreground text-meta focus-visible:outline-ring focus-visible:outline-2">
                 {person || source !== "all"
                   ? "No more matching requests"
                   : "End of request receipts"}
@@ -446,20 +474,29 @@ export function Requests() {
           </div>
         </>
       )}
-      <RequestReceiptSheet record={record} onOpenChange={(open) => {
+      <RequestReceiptSheet record={record} returnFocus={() => {
+        (openerRef.current?.isConnected ? openerRef.current : filterRef.current)?.focus();
+      }} onOpenChange={(open) => {
         if (!open) setSelectedReceiptKey(null);
       }} />
     </div>
   );
 }
 
+/** Keep the same polite region mounted while a query changes state. */
+export function ResultsStatus({ message, label }: { message: string; label?: string }) {
+  return <p role="status" aria-label={label} aria-live="polite" aria-atomic="true"
+    className="sr-only">{message}</p>;
+}
+
 /** Shared receipt presentation for Activity and Usage. Raw routing stays in details. */
-export function RequestReceiptSheet({ record, onOpenChange, title, description, cost }: {
+export function RequestReceiptSheet({ record, onOpenChange, title, description, cost, returnFocus }: {
   record: (Omit<RequestRecord, "created_at"> & { created_at: number | string | null }) | null;
   onOpenChange: (open: boolean) => void;
   title?: string;
   description?: string;
   cost?: ReactNode;
+  returnFocus?: () => void;
 }) {
   const nameModel = useModelName();
   const owner = ["owner", "superadmin"].includes(useViewer().role);
@@ -471,7 +508,13 @@ export function RequestReceiptSheet({ record, onOpenChange, title, description, 
         open={record !== null}
         onOpenChange={onOpenChange}
       >
-        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+        <SheetContent
+          onCloseAutoFocus={returnFocus ? (event) => {
+            event.preventDefault();
+            returnFocus();
+          } : undefined}
+          className="w-full overflow-y-auto sm:max-w-lg motion-reduce:animate-none motion-reduce:transition-none motion-reduce:[&_*]:animate-none motion-reduce:[&_*]:transition-none [&_button]:min-h-6 [&_button]:min-w-6"
+        >
           {record && (
             <>
               <SheetHeader className="pr-14">
@@ -525,7 +568,7 @@ export function RequestReceiptSheet({ record, onOpenChange, title, description, 
                   </div>
                 </dl>
                 <details>
-                  <summary className="cursor-pointer text-meta font-medium">
+                  <summary className="min-h-6 min-w-6 cursor-pointer content-center text-meta font-medium focus-visible:outline-ring focus-visible:outline-2">
                     Technical details
                   </summary>
                   <div className="mt-4 space-y-4">
