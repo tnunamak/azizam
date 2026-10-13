@@ -1,5 +1,6 @@
 import { ApiError } from "@/lib/api";
 import { accountApi } from "@/lib/account-api";
+import { fetchEarly } from "@/lib/early-fetch";
 import {
   productApi,
   type HomeCapability as SharedHomeCapability,
@@ -91,7 +92,7 @@ async function homeRequest<T>(
     headers.set("x-azizam-user-action", "1");
     headers.set("x-azizam-csrf", session.csrf_token);
   }
-  const response = await fetch(path, {
+  const response = await fetchEarly(path, {
     credentials: "same-origin",
     method: body === undefined ? "GET" : "POST",
     headers,

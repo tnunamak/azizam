@@ -49,7 +49,7 @@ export function CapNotice({
         }
         actions={
           <Button asChild size="sm" variant="outline">
-            <Link href="/status/">Open Status</Link>
+            <Link prefetch={false} href="/status/">Open Status</Link>
           </Button>
         }
       >

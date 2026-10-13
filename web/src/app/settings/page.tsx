@@ -914,7 +914,7 @@ function DefaultsForm({
             </SelectContent>
           </Select>
         </Field>
-        <Link
+        <Link prefetch={false}
           href="/people?tab=plans"
           className="text-link inline-flex min-h-11 max-w-full items-center underline underline-offset-4"
         >

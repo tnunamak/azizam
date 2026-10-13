@@ -8,6 +8,15 @@ import socket
 import tempfile
 from pathlib import Path
 
+# anyio binds ``asyncio.sleep`` with ``from asyncio import sleep`` when its
+# asyncio backend is first imported, which is lazy: the first TestClient call or
+# anyio.run in the worker. Many tests patch ``proxy.asyncio.sleep`` (the global
+# asyncio.sleep) with an AsyncMock; if the first import falls inside such a
+# patch, anyio keeps the mock for the rest of the worker. Then sleep_forever()
+# returns at once, so a TestClient websocket closes its streams before the
+# handshake is read (anyio.ClosedResourceError), and anyio checkpoints stop
+# yielding to the loop. Import it now, while asyncio.sleep is the real one.
+import anyio._backends._asyncio  # noqa: F401
 import pytest
 
 from _hermetic import HermeticGuard, assert_hermetic_environment

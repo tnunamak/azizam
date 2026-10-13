@@ -36,8 +36,7 @@ async function routeImageJob(page: import("@playwright/test").Page) {
   );
   await page.route("**/gateway/v1/media/jobs/job_image_try", (route) =>
     fulfilJson(route, {
-      object: "media.job",
-      id: "job_image_try",
+      job_id: "job_image_try",
       status: "succeeded",
       request_id: "req_image_try",
     }),
@@ -873,8 +872,7 @@ test("a picture survives a dropped connection and never reports the browser's er
     // The phone switched apps: the first check gets no answer at all.
     if (polls === 1) return route.abort("connectionfailed");
     return fulfilJson(route, {
-      object: "media.job",
-      id: "job_phone",
+      job_id: "job_phone",
       status: "succeeded",
     });
   });

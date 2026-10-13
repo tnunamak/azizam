@@ -45,6 +45,8 @@ from typing import Any, Awaitable, Callable, Iterable, Mapping, Sequence
 from fastapi import APIRouter, Body, Query, Request, status
 from fastapi.responses import JSONResponse
 
+from gateway import media_jobs as _media_jobs
+from gateway import receipts as _receipts
 from gateway.capabilities import Capability, summarize_capabilities
 from gateway.discovery import VALID_AUDIENCES, WorkflowRegistry
 from gateway.extension_catalog import (
@@ -107,6 +109,21 @@ def _resolve_request_audience(
         return _normalize_audience(resolver(request))
     except Exception:
         return DEFAULT_AUDIENCE
+
+
+# One response serializer per resource. ``internal`` is the operator tier: it adds
+# the raw ``metadata`` bag to the admin shape, nothing else. Owner and input
+# identifiers are never in an API body, whatever the audience.
+def _job_body(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in row.items() if k in _media_jobs.ADMIN_VISIBLE_FIELDS | {"metadata"}}
+
+
+def _receipt_body(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in row.items() if k in _receipts.OPERATOR_VISIBLE_FIELDS}
+
+
+def _record_body(kind: str, row: Mapping[str, Any]) -> dict[str, Any]:
+    return _receipt_body(row) if kind == "receipt" else _job_body(row)
 
 
 def _internal_error(audience: str, exc: BaseException) -> JSONResponse:
@@ -205,7 +222,6 @@ def _build_media_job_providers(
             media_job_canceler,
         )
 
-    from gateway import media_jobs as _media_jobs
 
     store_path = Path(media_job_store_path)
 
@@ -382,7 +398,8 @@ def create_gateway_router(
             internal = getter(record_id, audience="internal")
             if internal is None or not record_authorizer(request, kind, internal):
                 return None
-        return getter(record_id, audience=audience)
+        row = getter(record_id, audience=audience)
+        return None if row is None else _record_body(kind, row)
 
     def scoped_rows(
         rows: list[dict[str, Any]],
@@ -392,7 +409,7 @@ def create_gateway_router(
         audience: str,
     ) -> list[dict[str, Any]]:
         if record_authorizer is None:
-            return rows
+            return [_record_body(kind, row) for row in rows]
         id_field = "request_id" if kind == "receipt" else "job_id"
         many = getattr(getter, "many", None)
         if many is not None:
@@ -401,7 +418,7 @@ def create_gateway_router(
             # so the per-record re-check of an unchanged record is not repeated.
             authorized = [str(row[id_field]) for row in rows if record_authorizer(request, kind, row)]
             visible_rows = many(authorized, audience=audience)
-            return [visible_rows[record_id] for record_id in authorized if record_id in visible_rows]
+            return [_record_body(kind, visible_rows[record_id]) for record_id in authorized if record_id in visible_rows]
         allowed: list[dict[str, Any]] = []
         for row in rows:
             if not record_authorizer(request, kind, row):
@@ -661,7 +678,7 @@ def create_gateway_router(
             )
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
-        return JSONResponse(status_code=status.HTTP_201_CREATED, content=created)
+        return JSONResponse(status_code=status.HTTP_201_CREATED, content=_job_body(created))
 
     @router.get("/media/jobs")
     def list_media_jobs(
@@ -906,6 +923,6 @@ def create_gateway_router(
                     f"media job {job_id!r} not found",
                 ),
             )
-        return JSONResponse(status_code=202 if updated.get("cancel_requested") else 200, content=updated)
+        return JSONResponse(status_code=202 if updated.get("cancel_requested") else 200, content=_job_body(updated))
 
     return router

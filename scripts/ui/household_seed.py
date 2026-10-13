@@ -299,9 +299,15 @@ def registry(engine_port: int, scenario: str = "default") -> dict:
                 "source": "ui",
                 "tags": [cap],
             }
-    return normalize_service_registry(
-        {"schema_version": 1, "services": services, "capabilities": capabilities}
-    )
+    document = {"schema_version": 1, "services": services, "capabilities": capabilities}
+    # Off by default: the household screens and browser tests were written against a
+    # registry without the built-in protocol frontends. The oracle server
+    # (web/e2e/fixtures/oracle.ts) calls routes that read their policy from them.
+    if os.environ.get("UI_HOUSEHOLD_PROTOCOL_FRONTENDS") == "builtin":
+        from gateway.service_registry import build_service_registry_seed
+
+        document["protocol_frontends"] = build_service_registry_seed({})["protocol_frontends"]
+    return normalize_service_registry(document)
 
 
 def seed(state: Path, port: int, scenario: str | None = None, now: int | None = None) -> dict:

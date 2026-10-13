@@ -122,3 +122,69 @@ def test_the_nightly_runs_the_perf_task_and_the_policy_knows_it() -> None:
     sys.path.insert(0, str(ROOT / "scripts"))
     text = (ROOT / "scripts" / "test-scheduled").read_text(encoding="utf-8")
     assert '"perf"' in text and "def task_perf" in text and "--open-issue" in text
+
+
+def _home(desktop_cold=400, mobile_cold=2200, mobile_warm=900, js_kb=240, js_req=29, plain=0):
+    def run(content, **extra):
+        return {"content_ms": content, "js_wire_kb": js_kb, "js_requests": js_req, "js_uncompressed": plain, **extra}
+    return {"profiles": {"desktop": {"cold": run(desktop_cold), "warm": run(300)},
+                         "mobile": {"cold": run(mobile_cold), "warm": run(mobile_warm)}}}
+
+
+def test_home_within_its_budget_is_not_reported() -> None:
+    assert check.home_violations(_home(), BUDGETS["home"]) == []
+
+
+def test_each_home_limit_is_enforced() -> None:
+    cases = {"desktop_cold_ms": _home(desktop_cold=900), "mobile_cold_ms": _home(mobile_cold=4000),
+             "mobile_warm_ms": _home(mobile_warm=2000), "js_wire_kb": _home(js_kb=500),
+             "js_requests": _home(js_req=60), "uncompressed_js": _home(plain=2)}
+    for metric, report in cases.items():
+        assert [v["metric"] for v in check.home_violations(report, BUDGETS["home"])] == [metric]
+
+
+def test_a_home_that_never_showed_content_is_a_violation() -> None:
+    report = _home(mobile_cold=None)
+    assert check.home_violations(report, BUDGETS["home"])[0]["value"] == "never"
+
+
+# -- the fixture's copy of the owner's data never outlives the run ----------------------
+
+def test_the_fixture_copy_is_a_scratch_directory_removed_on_exit_and_swept_when_orphaned(tmp_path, monkeypatch) -> None:
+    import os
+    import subprocess
+
+    serve = _load("serve")
+    monkeypatch.setenv("AZIZAM_CI_SCRATCH", str(tmp_path))
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    started = serve.scratch_owner.start_time(dead.pid)
+    dead.wait()
+    orphan = tmp_path / f"{serve.SCRATCH_PREFIX}orphan"
+    orphan.mkdir()
+    (orphan / ".scratch-owner").write_text(f"{dead.pid}-{started}\n")
+    (orphan / "admin.db").write_text("a copy of someone's data")
+    live_neighbour = tmp_path / "azizam-other-tool"
+    live_neighbour.mkdir()
+    seen: list[Path] = []
+
+    def fake_serve(state, port, source, clone=None):
+        seen.append(state)
+        assert state.parent == tmp_path and state.name.startswith(serve.SCRATCH_PREFIX)
+        assert (state / ".scratch-owner").read_text().startswith(f"{os.getpid()}-")
+        assert not orphan.exists(), "a dead owner's copy was not swept at start"
+        (state / "admin.db").write_text("copy")
+        raise RuntimeError("the run failed")
+
+    monkeypatch.setattr(serve, "serve", fake_serve)
+    monkeypatch.setattr(sys, "argv", ["serve.py", "--port", "18700"])
+    monkeypatch.setattr(serve.scratch_owner, "exit_on_signals", lambda: None)
+    with pytest.raises(RuntimeError):
+        serve.main()
+    assert seen and not seen[0].exists(), "the copy outlived a failed run"
+    assert live_neighbour.is_dir()
+
+
+def test_there_is_no_way_to_keep_a_copy() -> None:
+    text = (PERF / "serve.py").read_text(encoding="utf-8")
+    assert "--state" not in text and "--reuse" not in text and "--prepare-only" not in text
+    assert "scratch_owner.sweep" in text and "rmtree(state" in text

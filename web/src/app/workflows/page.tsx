@@ -333,7 +333,7 @@ function WorkflowAction({
           <StatusPill status={status} reason={view.text ?? undefined} summary />
         )}
         <Button asChild size="sm" variant={hideReadyStatus ? "ghost" : "default"}>
-          <Link href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}>
+          <Link prefetch={false} href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}>
             Open in Try
           </Link>
         </Button>
@@ -355,7 +355,7 @@ function WorkflowAction({
         <p className="text-muted-foreground text-meta">{view.text}</p>
         {view.fix && (
           <Button asChild variant="outline" size="sm">
-            <Link href={view.fix.href}>{view.fix.action}</Link>
+            <Link prefetch={false} href={view.fix.href}>{view.fix.action}</Link>
           </Button>
         )}
       </div>
@@ -791,7 +791,7 @@ function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean
               )}
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" asChild>
-                  <Link
+                  <Link prefetch={false}
                     href={`/library/?asset=${encodeURIComponent(asset.asset_id)}`}
                   >
                     Open in Library
@@ -799,7 +799,7 @@ function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean
                 </Button>
                 {asset.request_id ? (
                   <Button variant="outline" size="sm" asChild>
-                    <Link href={`/usage/?receipt=${encodeURIComponent(asset.request_id)}`}>
+                    <Link prefetch={false} href={`/usage/?receipt=${encodeURIComponent(asset.request_id)}`}>
                       View receipt
                     </Link>
                   </Button>
@@ -904,7 +904,7 @@ export default function WorkflowsPage() {
           }
           action={
             <Button variant="outline" asChild>
-              <Link href="/models">Explore models</Link>
+              <Link prefetch={false} href="/models">Explore models</Link>
             </Button>
           }
         />

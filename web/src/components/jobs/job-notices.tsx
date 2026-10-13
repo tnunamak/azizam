@@ -252,7 +252,7 @@ export function JobNotice({
       <p className="min-w-0 flex-1">
         {jobLabel(job)} {done ? "is ready" : "couldn’t finish"}
       </p>
-      <Link
+      <Link prefetch={false}
         className="text-link inline-flex min-h-11 items-center rounded-md px-3 underline underline-offset-4"
         href={jobLink(job)}
         onClick={() => onDismiss()}
@@ -330,14 +330,14 @@ export function JobResult({ jobId }: { jobId: string }) {
           <h2 className="text-lg font-semibold">{heading}</h2>
           {job.error ? <p>{job.error}</p> : null}
           {job.status === "succeeded" && jobAssetId(job) ? (
-            <Link
+            <Link prefetch={false}
               className="text-link inline-flex min-h-11 min-w-11 items-center underline"
               href={jobLink(job)}
             >
               Open result
             </Link>
           ) : (
-            <Link
+            <Link prefetch={false}
               className="text-link inline-flex min-h-11 min-w-11 items-center underline"
               href="/try/"
             >

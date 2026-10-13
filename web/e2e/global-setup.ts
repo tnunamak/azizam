@@ -1,5 +1,7 @@
 import { request, type FullConfig } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
+import path from "node:path";
+import { buildOracle } from "./fixtures/oracle";
 
 // Each fixture gateway in the config (one per distinct project baseURL) gets
 // the same seed once, before any worker starts: one owner, one engine, one
@@ -17,7 +19,16 @@ export default async function setup(config: FullConfig) {
       throw new Error(`Projects on ${baseURL} must share one storage-state file`);
     servers.set(baseURL, storageState);
   }
-  await Promise.all([...servers].map(([baseURL, storagePath]) => seed(baseURL, storagePath)));
+  // Endpoints a probe cannot reach take their structure from a gateway of the
+  // oracle's own (fixtures/oracle.ts); intercept.ts reads the file it writes.
+  const port = Number(process.env.UI_E2E_PORT ?? "18180");
+  const stateRoot = process.env.UI_E2E_STATE_ROOT ?? path.resolve(__dirname, "../.ui-e2e-state");
+  const oracleFile = path.resolve("test-results", `intercept-oracle-${port}.json`);
+  process.env.INTERCEPT_ORACLE_FILE = oracleFile;
+  await Promise.all([
+    ...[...servers].map(([baseURL, storagePath]) => seed(baseURL, storagePath)),
+    buildOracle(port, stateRoot, oracleFile),
+  ]);
 }
 
 async function seed(baseURL: string, storagePath: string) {

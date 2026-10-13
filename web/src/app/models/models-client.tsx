@@ -592,7 +592,7 @@ function Availability({
   if (state === "unknown" || state === "not_measured") {
     return <span className="text-muted-foreground text-meta whitespace-normal">
       <span>{state === "not_measured" || !row.availability.measured ? "Not checked yet" : "Couldn\'t check"}</span>
-      {!showReason && <> · <Link href="/status/" onClick={(event) => event.stopPropagation()} className="underline underline-offset-4">Check status</Link></>}
+      {!showReason && <> · <Link prefetch={false} href="/status/" onClick={(event) => event.stopPropagation()} className="underline underline-offset-4">Check status</Link></>}
     </span>;
   }
   return (
@@ -1050,7 +1050,7 @@ export default function ModelsClient() {
           description="Ask the owner to connect models your access plan allows."
           action={
             <Button variant="outline" asChild>
-              <Link href="/">Review setup</Link>
+              <Link prefetch={false} href="/">Review setup</Link>
             </Button>
           }
         />

@@ -167,7 +167,8 @@ const openRouterTest = {
 const pending42 = {
   id: 42,
   provider: "openrouter",
-  profile_id: "paid",
+  app_id: "app-paid",
+  person_id: "person-owner",
   status: "needs_reconciliation",
   estimated_usd: "0.015",
   actual_usd: null,

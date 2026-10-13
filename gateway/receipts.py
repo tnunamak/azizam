@@ -57,6 +57,23 @@ CLIENT_VISIBLE_FIELDS = {
     "attempt_number",
 }
 
+# Admin adds routing and policy facts. Ownership (``owner_key_hash``) and the raw
+# ``metadata`` bag stay out; the sanitised metadata projection is merged separately.
+# Allowlist: a new receipt column stays out of responses until it is added here.
+ADMIN_VISIBLE_FIELDS = frozenset(
+    CLIENT_VISIBLE_FIELDS
+    | {
+        "app_profile", "app_id", "api_key_name", "backend",
+        "manifest_id", "manifest_version", "manifest_hash",
+        "parent_request_id", "visibility",
+        "policy_decision", "policy_sources", "policy_reasons",
+        "resource_decision",
+    }
+)
+
+# The operator (``internal``) tier adds the raw metadata bag and nothing else.
+OPERATOR_VISIBLE_FIELDS = ADMIN_VISIBLE_FIELDS | {"metadata"}
+
 # Machine-readable refusal facts a client may see on its own receipt. Codes
 # only: no amounts, provider names or other people's usage.
 REFUSAL_CODES = frozenset({"budget_exceeded", "provider_needs_reconciliation"})
@@ -452,10 +469,8 @@ def serialize_receipt_for_audience(data: Mapping[str, Any], audience: str = "int
     if audience == "internal":
         return dict(data)
     if audience == "admin":
-        out = dict(data)
-        out.pop("owner_key_hash", None)
-        metadata = out.pop("metadata", None)
-        out.update(sanitize_admin_metadata(metadata))
+        out = {name: data[name] for name in ADMIN_VISIBLE_FIELDS if name in data}
+        out.update(sanitize_admin_metadata(data.get("metadata")))
         if isinstance(data.get("resource_decision"), Mapping):
             out["resource_decision"] = project_decision(data["resource_decision"], "admin")
         return out

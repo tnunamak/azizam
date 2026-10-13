@@ -142,7 +142,7 @@ describe("Providers (empty and failed)", () => {
           },
         ],
       },
-      "/admin/api/profiles": { profiles: [] },
+      "/admin/api/access-plans": { access_plans: [] },
     });
     renderPage();
     expect(await screen.findByText("No providers yet", { exact: true })).toBeVisible();

@@ -482,7 +482,7 @@ test.describe("Your settings", () => {
     ).json();
     expect(memory.prompt_memory.effective_remember).toBe(false);
     await page.goto("/try/?capability=image");
-    await expect(page.getByText("Prompts aren’t kept")).toBeVisible();
+    await expect(page.getByText("Prompts aren’t kept", { exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "Change" })).toHaveAttribute(
       "href",
       "/account/",
@@ -579,7 +579,7 @@ test("Try sends forget for a stale off snapshot even after the backend turns on"
   };
   await setMemory(false);
   await page.goto("/try/?capability=speech");
-  await expect(page.getByText("Prompts aren’t kept")).toBeVisible();
+  await expect(page.getByText("Prompts aren’t kept", { exact: true })).toBeVisible();
   await setMemory(true);
   const text = "stale off snapshot sentinel " + Date.now();
   await page.getByRole("textbox", { name: "Prompt" }).fill(text);

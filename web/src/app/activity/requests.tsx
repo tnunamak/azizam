@@ -320,7 +320,7 @@ export function Requests() {
               </Button>
             ) : (
               <Button asChild variant="outline">
-                <Link href="/">Connect an app</Link>
+                <Link prefetch={false} href="/">Connect an app</Link>
               </Button>
             )
           }

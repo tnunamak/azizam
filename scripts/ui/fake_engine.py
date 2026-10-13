@@ -224,3 +224,44 @@ async def speech(request: Request):
         out.setframerate(rate)
         out.writeframes(frames)
     return Response(buffer.getvalue(), media_type="audio/wav")
+
+
+@app.post("/v1/embeddings")
+async def embeddings(request: Request):
+    """The OpenAI embeddings wire shape: one short vector per input."""
+    body = await request.json()
+    inputs = body.get("input")
+    inputs = inputs if isinstance(inputs, list) else [inputs]
+    return {
+        "object": "list",
+        "model": body.get("model", "demo-embedding"),
+        "data": [{"object": "embedding", "index": index, "embedding": [0.25, -0.5, 0.125]} for index, _ in enumerate(inputs)],
+        "usage": {"prompt_tokens": 3, "total_tokens": 3},
+    }
+
+
+@app.post("/v1/audio/transcriptions")
+async def transcriptions(request: Request):
+    """The OpenAI transcription wire shape for a fixed sentence."""
+    await request.body()
+    return {"text": "Your gateway is connected."}
+
+
+@app.post("/v1/systemone")
+async def systemone(request: Request):
+    """The TypeSafe System One wire shape, built by the gateway's own readout code
+    from fixed option scores, so the answer has the structure a real engine sends."""
+    from fastapi.responses import JSONResponse
+
+    from gateway import decision_engine
+
+    class FixedScores:
+        def score_options(self, context):
+            return {index: -float(index) for index in range(len(context.options))}
+
+    body = await request.json()
+    answer = decision_engine.build_systemone_response(
+        decision_engine.parse_request(body), FixedScores(), model=body.get("model", "demo-decider"),
+        engine="cpu", placement="cpu", residency="on_demand",
+    )
+    return JSONResponse(answer, headers={"x-decision-engine": "cpu"})

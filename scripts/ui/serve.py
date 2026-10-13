@@ -77,6 +77,8 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
         env['AZIZAM_PROVIDER_LEDGER_DB'] = str(state / 'provider_spend.db')
         # A household shows the address its members would use, not the loopback test port.
         env['AZIZAM_PUBLIC_URL'] = 'https://ai.household.example'
+        if os.environ.get('UI_HOUSEHOLD_PROTOCOL_FRONTENDS'):
+            env['UI_HOUSEHOLD_PROTOCOL_FRONTENDS'] = os.environ['UI_HOUSEHOLD_PROTOCOL_FRONTENDS']
         if os.environ.get('UI_HOUSEHOLD_MANIFEST_PATH'):
             env['UI_HOUSEHOLD_MANIFEST_PATH'] = os.environ['UI_HOUSEHOLD_MANIFEST_PATH']
         subprocess.run([sys.executable, '-m', 'scripts.ui.household_seed', str(state), str(PORT), SEED_SCENARIO],
@@ -85,6 +87,22 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
         manifest = json.loads(manifest_path.read_text())
         manifest['fixture_state'] = state.name
         manifest_path.write_text(json.dumps(manifest))
+    # Extra top-level configuration for a disposable server that needs more than
+    # the browser seed: JSON data merged into config.yml (web/e2e/fixtures/oracle.ts
+    # adds a video workflow and a transcription alias), after any household seed.
+    if os.environ.get('UI_E2E_EXTRA_CONFIG'):
+        import yaml
+
+        def merge(into, extra):
+            for key, value in extra.items():
+                if isinstance(value, dict) and isinstance(into.get(key), dict):
+                    merge(into[key], value)
+                else:
+                    into[key] = value
+
+        document = yaml.safe_load(config.read_text())
+        merge(document, json.loads(Path(os.environ['UI_E2E_EXTRA_CONFIG']).read_text()))
+        config.write_text(yaml.safe_dump(document))
     try:
         for module, port in [('scripts.ui.fake_engine:app', ENGINE_PORT), ('proxy:app', PORT)]:
             if module != 'proxy:app' and EXTERNAL_UPSTREAM_PORT:

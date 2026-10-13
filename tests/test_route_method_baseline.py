@@ -62,6 +62,24 @@ SHOWCASE_PAGES = {"/showcase/": "/showcase/ showcase_page", "/showcase": "/showc
 DOCS_ROUTES = {"/showcase/docs": "/showcase/docs docs_root", "/showcase/docs/sample/x": "/showcase/docs/{path:path} docs_page"}
 
 
+SHARDS = 4
+SHOWCASE_UNKNOWN = f"/showcase/{route_matrix.UNKNOWN}"
+
+
+def _group(path: str) -> str:
+    """Rows that one comparison reads together (a thumbnail with the content route, a docs path with the unknown
+    showcase path) form one group, and a group is never split between shards."""
+    return THUMBNAIL_SIBLING if path == THUMBNAIL_PATH else SHOWCASE_UNKNOWN if path in DOCS_ROUTES else path
+
+
+def _shard_map(current: dict) -> dict[str, int]:
+    """Every path of the baseline and of the current tree to the live-outcome item that owns it: the sorted
+    groups are dealt out in turn, so each item gets the same mix of cheap and costly paths."""
+    paths = {key.split(" ", 1)[1] for key in BASELINE["live"]} | {path for _, path in route_matrix.live_targets(current["routing"])}
+    dealt = {group: index % SHARDS for index, group in enumerate(sorted({_group(path) for path in paths}))}
+    return {path: dealt[_group(path)] for path in paths}
+
+
 def _flat(routing: dict) -> dict:
     return {f"{method} {path}": outcome for path, row in routing.items() for method, outcome in row.items()}
 
@@ -180,13 +198,17 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
     assert unexpected == {}
 
 
+@pytest.mark.parametrize("shard", range(SHARDS))
 @pytest.mark.parametrize("method", route_matrix.METHODS)
-def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_client, method):
-    # One item per method so the sweep spreads over workers; together they cover every baseline row.
+def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_client, method, shard):
+    # One item per method and path shard so the sweep spreads over workers; together they cover every baseline row.
     assert {_method_of(key) for key in BASELINE["live"]} <= set(route_matrix.METHODS)
     client, principals = live_client
-    targets = [(verb, path) for verb, path in route_matrix.live_targets(current["routing"]) if verb == method]
-    old = {key: cells for key, cells in BASELINE["live"].items() if _method_of(key) == method}
+    owner = _shard_map(current)
+    targets = [(verb, path) for verb, path in route_matrix.live_targets(current["routing"])
+               if verb == method and owner[path] == shard]
+    old = {key: cells for key, cells in BASELINE["live"].items()
+           if _method_of(key) == method and owner[key.split(" ", 1)[1]] == shard}
     new = route_matrix.live_matrix(client, targets, principals)
     unexpected = {}
     for key in sorted(set(old) | set(new)):
@@ -203,11 +225,22 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
             continue
         if kind == "thumbnail" and key not in old and new.get(key) == new.get(_thumbnail_sibling(key)) is not None:
             continue
-        unknown = f"{_method_of(key)} /showcase/{route_matrix.UNKNOWN}"
+        unknown = f"{_method_of(key)} {SHOWCASE_UNKNOWN}"
         if kind == "docs" and key not in old and new.get(key) == new.get(unknown) is not None:
             continue
         unexpected[key] = (old.get(key), new.get(key))
     assert unexpected == {}
+
+
+def test_every_baseline_and_current_live_row_belongs_to_exactly_one_shard(current):
+    owner = _shard_map(current)
+    keys = set(BASELINE["live"]) | {f"{verb} {path}" for verb, path in route_matrix.live_targets(current["routing"])}
+    owned = [sorted(key for key in keys if owner[key.split(" ", 1)[1]] == shard) for shard in range(SHARDS)]
+    assert sorted(key for shard in owned for key in shard) == sorted(keys)
+    assert all(owned)
+    # A pair that one comparison reads together is never split.
+    assert owner[THUMBNAIL_PATH] == owner[THUMBNAIL_SIBLING]
+    assert {owner[path] for path in (*DOCS_ROUTES, SHOWCASE_UNKNOWN)} == {owner[SHOWCASE_UNKNOWN]}
 
 
 def test_deliberate_head_changes():

@@ -12,6 +12,11 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  experimental: {
+    // `import { Dialog } from "radix-ui"` pulled the whole package into the first-load script
+    // (OneTimePasswordField, Menubar and others no screen uses). Import only the parts used.
+    optimizePackageImports: ["radix-ui", "lucide-react"],
+  },
 
   // DEV ONLY: `next dev` sends every path it does not serve itself to the
   // gateway, so the app can call same-origin paths like fetch("/admin/api/...").

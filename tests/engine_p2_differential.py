@@ -322,21 +322,54 @@ def _memoized_process_sample(real):
     return process
 
 
+@functools.lru_cache(maxsize=None)
+def _fake_engine_wav() -> bytes:
+    """The clip every fake engine returns.  Building it walks 260k samples in Python, so a worker builds it once."""
+    from tests.voice_test_audio import speechlike
+
+    return speechlike(11)
+
+
+# The only parts of a provenance tag that change between two requests for the same clip: the request id
+# (which appears twice, as the id and inside the receipt path) and the creation second.  Both have a fixed length.
+_REQUEST_VARIABLES = re.compile(r"req_[0-9a-f]{32}|\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
+_REWRITES: dict[Any, tuple[tuple[str, ...], bytes]] = {}
+
+
+def _memoized_ffmpeg_rewrite(real):
+    """``_ffmpeg_rewrite`` starts an ffmpeg per response (about 40 ms) to write the provenance tag; a sweep
+    gets the same clip back hundreds of times and the tags differ only by request id and second.  The real
+    function runs once per distinct input with those two values set aside; a later call receives that output
+    with its own two values written in, which is the bytes the real function would return (equal lengths)."""
+    def rewrite(content: bytes, suffix_or_mime: str, workdir: Any, extra_out: list[str]) -> bytes:
+        joined = "\x00".join(extra_out)
+        variables = tuple(dict.fromkeys(_REQUEST_VARIABLES.findall(joined)))
+        key = (real, content, suffix_or_mime, _REQUEST_VARIABLES.sub("#", joined))
+        if key not in _REWRITES:
+            _REWRITES[key] = (variables, real(content, suffix_or_mime, workdir, extra_out))
+        recorded, output = _REWRITES[key]
+        for was, now in zip(recorded, variables, strict=True):
+            output = output.replace(was.encode(), now.encode())
+        return output
+
+    return rewrite
+
+
 @contextmanager
 def running_gateway(fixture: dict[str, Any]) -> Iterator[tuple[Any, Any, _Upstream, Path]]:
     """The imported gateway with the fixture's configuration and fake engines: (proxy, client, upstream, scratch)."""
     import proxy
     from fastapi.testclient import TestClient
 
-    from gateway import media_jobs, receipt_store, voices_api
+    from gateway import media_jobs, media_metadata, receipt_store, voices_api
     from tests.support.access import authenticated
-    from tests.voice_test_audio import speechlike
+    from tests.route_matrix import one_portal
 
     with tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
         root = Path(temp)
         receipt_store.init_db(root / "receipts.db")
         media_jobs.init_db(root / "media_jobs.db")
-        upstream = _Upstream(proxy.httpx, speechlike(11))
+        upstream = _Upstream(proxy.httpx, _fake_engine_wav())
         # Each request opens and closes the stores several times. Closing the last connection of a
         # WAL database checkpoints and deletes the WAL, which costs an fsync per close and made one
         # sweep take minutes on a busy host. An idle connection per store keeps the close cheap.
@@ -355,9 +388,11 @@ def running_gateway(fixture: dict[str, Any]) -> Iterator[tuple[Any, Any, _Upstre
             patch.object(receipt_store, "DB_PATH", root / "receipts.db"),
             patch.object(media_jobs, "DB_PATH", root / "media_jobs.db"),
             patch.object(voices_api, "process_sample", _memoized_process_sample(voices_api.process_sample)),
+            patch.object(media_metadata, "_ffmpeg_rewrite", _memoized_ffmpeg_rewrite(media_metadata._ffmpeg_rewrite)),
         ):
             stack.enter_context(patcher)
-        yield proxy, TestClient(proxy.app), upstream, root
+        # One event loop for every request of the context instead of a thread and a loop per request.
+        yield proxy, stack.enter_context(one_portal(TestClient(proxy.app))), upstream, root
 
 
 def observe(fixture: dict[str, Any], sections: tuple[str, ...] = ("voice_design", "speech", "stt")) -> dict[str, Any]:

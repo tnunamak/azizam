@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Save the bodies of a fixed set of GET responses, or compare two saves.
 
-The proof behind "behavior-preserving": run the same requests against the same
+The proof behind "behavior-preserving" (start the second server with `serve.py --clone STATE_OF_THE_FIRST`): run the same requests against the same
 copied data before and after a change and compare the bytes.
 
     snapshot.py save --manifest M --out DIR [--paths FILE]

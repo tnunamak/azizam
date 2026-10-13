@@ -28666,6 +28666,8 @@ from gateway.request_body_limits import RequestBodyLimitMiddleware, RequestBodyL
 app.add_middleware(RequestBodyLimitMiddleware, limits=RequestBodyLimits.from_config(config))
 from gateway.request_connections import RequestConnectionsMiddleware
 app.add_middleware(RequestConnectionsMiddleware)
+from gateway.json_compression import JsonCompressionMiddleware
+app.add_middleware(JsonCompressionMiddleware)
 from gateway.server_timing import ServerTimingMiddleware
 app.add_middleware(ServerTimingMiddleware)
 

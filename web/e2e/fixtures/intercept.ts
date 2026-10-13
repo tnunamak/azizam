@@ -20,6 +20,7 @@ import {
   merge,
   type Shape,
 } from "./intercept-shape";
+import type { OracleFile } from "./oracle";
 import {
   REGISTRY,
   errorSamples,
@@ -118,6 +119,20 @@ function api(origin: string): Promise<APIRequestContext> {
   return found;
 }
 
+// The bodies oracle.ts wrote at the start of the run (global-setup.ts).
+let oracleBodies: Record<string, unknown> | undefined;
+function oracleBody(id: string): unknown {
+  const file = process.env.INTERCEPT_ORACLE_FILE;
+  if (!file)
+    throw new Error(
+      `fulfilJson: ${id} takes its structure from the oracle gateway, but no oracle file exists; run this spec through a config whose global setup builds it`,
+    );
+  oracleBodies ??= (JSON.parse(readFileSync(file, "utf8")) as OracleFile).bodies;
+  if (!(id in oracleBodies))
+    throw new Error(`fulfilJson: the oracle file has no body for ${id}; add its call to e2e/fixtures/oracle.ts`);
+  return oracleBodies[id];
+}
+
 async function realShape(
   origin: string,
   endpoint: Endpoint,
@@ -126,8 +141,10 @@ async function realShape(
   let found = probes.get(key);
   if (!found) {
     found = (async () => {
-      if (!endpoint.probe) return null;
-      const body = await endpoint.probe(await api(origin));
+      if (!endpoint.probe && !endpoint.oracle) return null;
+      const body = endpoint.oracle
+        ? oracleBody(endpoint.id)
+        : await endpoint.probe!(await api(origin));
       const options = {
         open: endpoint.open,
         free: endpoint.free,
@@ -173,9 +190,13 @@ export async function fulfilJson(
     const discovery = process.env.INTERCEPT_DISCOVER;
     if (discovery) {
       const real =
-        endpoint?.probe && status < 400
-          ? await endpoint.probe(await api(url.origin)).catch(() => null)
-          : null;
+        status >= 400
+          ? null
+          : endpoint?.oracle
+            ? oracleBody(endpoint.id)
+            : endpoint?.probe
+              ? await endpoint.probe(await api(url.origin)).catch(() => null)
+              : null;
       appendFileSync(
         discovery,
         `${JSON.stringify({ method, path: url.pathname, status, id: endpoint?.id ?? null, stub: [...keyPaths(body)], real: real && [...keyPaths(real)] })}\n`,

@@ -1,10 +1,13 @@
 // Endpoints a browser test may stub with fulfilJson (intercept.ts). One entry
-// per route family: the methods and path it covers, and `probe`, a read-only
-// call on the fixture gateway the stub's server runs, made with the lane
-// owner's session. The probe's real response gives the structure a stub must
-// have. An endpoint that no safe call can reach (it changes state, or the seed
-// has no data for it) says why in `unprobed`; its stubs are then checked only
-// for the one thing every stub shares, that they are JSON.
+// per route family: the methods and path it covers, and where the real
+// structure comes from:
+//   probe   - a read-only call on the fixture gateway the stub's server runs,
+//             made with the lane owner's session;
+//   oracle  - a call that changes state or needs data the seed lacks. oracle.ts
+//             makes it once per run on a gateway of its own and writes the body;
+//   unprobed - no structure can be taken (the reason says why). Its stubs are
+//             only checked to be JSON. None is left; policy.py fails any new one.
+// The real body gives the structure a stub must have.
 //
 // required: paths of keys a stub must carry, "[]" for any array index. A stub is
 //   a slice of the real response, so only the keys the product reads are listed.
@@ -16,6 +19,9 @@ export interface Endpoint {
   methods: string[];
   path: RegExp;
   probe?: (api: APIRequestContext) => Promise<unknown>;
+  // The call is made once per run on the oracle gateway (oracle.ts); the body it
+  // returns gives the structure, as a probe's body does.
+  oracle?: true;
   unprobed?: string;
   open?: string[];
   free?: string[];
@@ -204,7 +210,23 @@ const reads = (path: string, extra: Spec = {}): Endpoint => ({
   ...extra,
 });
 
-const unprobed = (
+// A call that changes state or needs data the browser seed lacks: oracle.ts makes it
+// once on a gateway of its own and the response gives the structure.
+const executed = (
+  method: string,
+  path: string,
+  extra: Spec = {},
+): Endpoint => ({
+  id: `${method} ${path}`,
+  methods: [method],
+  path: exact(path),
+  oracle: true,
+  ...extra,
+});
+
+// The escape hatch for an endpoint with no structural oracle. scripts/ci/policy.py
+// counts its call sites and tests/budgets.toml sets that ceiling to 0.
+export const unprobed = (
   method: string,
   path: string,
   reason: string,
@@ -215,10 +237,6 @@ const unprobed = (
   path: pattern ?? exact(path),
   unprobed: reason,
 });
-
-const SEED_HAS_NONE =
-  "the fixture seed has no such data, and a probe may not create it";
-const CHANGES_STATE = "it changes state, so a probe may not call it";
 
 export const REGISTRY: Endpoint[] = [
   reads("/.well-known/azizam"),
@@ -258,8 +276,8 @@ export const REGISTRY: Endpoint[] = [
     id: "GET /admin/api/categories/active",
     methods: ["GET"],
     path: exact("/admin/api/categories/active"),
-    unprobed:
-      "the fixture seed has no active policy snapshot, so the real gateway refuses with HTTP 409",
+    oracle: true,
+    free: ["/snapshot"],
   },
   reads("/admin/api/categories/history", { required: ["/history"] }),
   reads("/admin/api/categories/services", {
@@ -409,109 +427,59 @@ export const REGISTRY: Endpoint[] = [
     id: "GET /me/api/media/{id}",
     methods: ["GET"],
     path: /^\/me\/api\/media\/[^/]+$/,
-    unprobed: SEED_HAS_NONE,
+    oracle: true,
   },
-  unprobed(
-    "GET",
-    "/me/api/media/{id}/download",
-    SEED_HAS_NONE,
-    /^\/me\/api\/media\/[^/]+\/download$/,
-  ),
-  unprobed("POST", "/v1/systemone", CHANGES_STATE),
-  unprobed("POST", "/openai/v1/embeddings", CHANGES_STATE),
-  unprobed(
-    "DELETE",
-    "/me/api/media/{id}",
-    CHANGES_STATE,
-    /^\/me\/api\/media\/[^/]+$/,
-  ),
-  unprobed(
-    "GET",
-    "/me/api/receipts/{id}",
-    SEED_HAS_NONE,
-    /^\/me\/api\/receipts\/[^/]+$/,
-  ),
-  unprobed(
-    "GET",
-    "/admin/api/invites/{id}/link",
-    SEED_HAS_NONE,
-    /^\/admin\/api\/invites\/[^/]+\/link$/,
-  ),
-  unprobed(
-    "GET",
-    "/gateway/v1/media/jobs/{id}",
-    SEED_HAS_NONE,
-    /^\/gateway\/v1\/media\/jobs\/[^/]+$/,
-  ),
-  unprobed(
-    "GET",
-    "/gateway/v1/media/jobs/{id}/content",
-    SEED_HAS_NONE,
-    /^\/gateway\/v1\/media\/jobs\/[^/]+\/content$/,
-  ),
-  unprobed("GET", "/v1/videos/{id}", SEED_HAS_NONE, /^\/v1\/videos\/[^/]+$/),
-  unprobed(
-    "DELETE",
-    "/admin/api/invites/{id}",
-    CHANGES_STATE,
-    /^\/admin\/api\/invites\/[^/]+$/,
-  ),
-  unprobed(
-    "DELETE",
-    "/admin/api/people/{id}",
-    CHANGES_STATE,
-    /^\/admin\/api\/people\/[^/]+$/,
-  ),
-  unprobed(
-    "PATCH",
-    "/admin/api/operator/services/{id}",
-    CHANGES_STATE,
-    /^\/admin\/api\/operator\/services\/[^/]+$/,
-  ),
-  unprobed(
-    "PATCH",
-    "/admin/api/people/{id}",
-    CHANGES_STATE,
-    /^\/admin\/api\/people\/[^/]+$/,
-  ),
-  unprobed(
-    "PUT",
-    "/admin/api/access-plans/{id}",
-    CHANGES_STATE,
-    /^\/admin\/api\/access-plans\/[^/]+$/,
-  ),
-  unprobed("POST", "/admin/api/invites", CHANGES_STATE),
-  unprobed("POST", "/admin/api/operator/services/test", CHANGES_STATE),
-  unprobed(
-    "POST",
-    "/admin/api/people/{id}/reset",
-    CHANGES_STATE,
-    /^\/admin\/api\/people\/[^/]+\/reset$/,
-  ),
-  unprobed("POST", "/admin/api/access/check", CHANGES_STATE),
-  unprobed("POST", "/auth/api/invite/accept", CHANGES_STATE),
-  unprobed("POST", "/auth/api/login", CHANGES_STATE),
-  unprobed("POST", "/auth/api/password-reset", CHANGES_STATE),
-  unprobed(
-    "POST",
-    "/gateway/v1/workflows/{id}/run",
-    CHANGES_STATE,
-    /^\/gateway\/v1\/workflows\/[^/]+\/run$/,
-  ),
-  unprobed("POST", "/openai/v1/audio/transcriptions", CHANGES_STATE),
-  unprobed("POST", "/openai/v1/chat/completions", CHANGES_STATE),
-  unprobed("POST", "/v1/images/generations", CHANGES_STATE),
-  unprobed("POST", "/v1/videos", CHANGES_STATE),
-  unprobed("POST", "/admin/api/categories/candidates", CHANGES_STATE),
-  unprobed("POST", "/auth/api/invite", CHANGES_STATE),
-  unprobed("POST", "/gateway/v1/media/jobs/image-generations", CHANGES_STATE),
-  unprobed(
-    "POST",
-    "/me/api/apps/{id}/keys",
-    CHANGES_STATE,
-    /^\/me\/api\/apps\/[^/]+\/keys$/,
-  ),
-  unprobed("POST", "/me/api/connection-test", CHANGES_STATE),
+  executed("GET", "/me/api/media/{id}/download", { path: /^\/me\/api\/media\/[^/]+\/download$/ }),
+  executed("POST", "/v1/systemone"),
+  executed("POST", "/openai/v1/embeddings"),
+  executed("DELETE", "/me/api/media/{id}", { path: /^\/me\/api\/media\/[^/]+$/ }),
+  executed("GET", "/me/api/receipts/{id}", { path: /^\/me\/api\/receipts\/[^/]+$/ }),
+  executed("GET", "/admin/api/invites/{id}/link", {
+    path: /^\/admin\/api\/invites\/[^/]+\/link$/,
+    required: ["/url"],
+  }),
+  executed("GET", "/gateway/v1/media/jobs/{id}", {
+    path: /^\/gateway\/v1\/media\/jobs\/[^/]+$/,
+    required: ["/status"],
+  }),
+  executed("GET", "/gateway/v1/media/jobs/{id}/content", { path: /^\/gateway\/v1\/media\/jobs\/[^/]+\/content$/ }),
+  executed("GET", "/v1/videos/{id}", { path: /^\/v1\/videos\/[^/]+$/ }),
+  executed("DELETE", "/admin/api/invites/{id}", { path: /^\/admin\/api\/invites\/[^/]+$/ }),
+  executed("DELETE", "/admin/api/people/{id}", { path: /^\/admin\/api\/people\/[^/]+$/ }),
+  executed("PATCH", "/admin/api/operator/services/{id}", {
+    path: /^\/admin\/api\/operator\/services\/[^/]+$/,
+    open: ["/service_registry/services"],
+    free: ["/service_registry/services/*/config"],
+  }),
+  executed("PATCH", "/admin/api/people/{id}", {
+    path: /^\/admin\/api\/people\/[^/]+$/,
+    required: ["/ok"],
+  }),
+  executed("PUT", "/admin/api/access-plans/{id}", {
+    path: /^\/admin\/api\/access-plans\/[^/]+$/,
+    free: ["/access_plan/plan"],
+  }),
+  executed("POST", "/admin/api/invites", {
+    required: ["/invite", "/invite/id", "/url"],
+  }),
+  executed("POST", "/admin/api/operator/services/test"),
+  executed("POST", "/admin/api/people/{id}/reset", { path: /^\/admin\/api\/people\/[^/]+\/reset$/ }),
+  executed("POST", "/admin/api/access/check"),
+  executed("POST", "/auth/api/invite/accept"),
+  executed("POST", "/auth/api/login", { required: ["/next"] }),
+  executed("POST", "/auth/api/password-reset"),
+  // Bodies from scripts/ui/identity_contract.py (the real handlers over fakes).
+  executed("POST", "/gateway/v1/faces/likeness", { required: ["/object", "/overall"] }),
+  executed("POST", "/gateway/v1/images/identity", { required: ["/data", "/likeness"] }),
+  executed("POST", "/openai/v1/audio/transcriptions"),
+  executed("POST", "/openai/v1/chat/completions"),
+  executed("POST", "/v1/images/generations"),
+  executed("POST", "/v1/videos"),
+  executed("POST", "/admin/api/categories/candidates", { free: ["/snapshot"] }),
+  executed("POST", "/auth/api/invite"),
+  executed("POST", "/gateway/v1/media/jobs/image-generations"),
+  executed("POST", "/me/api/apps/{id}/keys", { path: /^\/me\/api\/apps\/[^/]+\/keys$/ }),
+  executed("POST", "/me/api/connection-test"),
 ];
 
 export const lookup = (method: string, pathname: string) =>

@@ -3,7 +3,7 @@
 
     scripts/perf/run.py [--port 18740] [--out DIR] [--no-ui] [--counts-only] [--open-issue]
 
-1. copies the live databases and media (read-only) into a fresh state directory under ~/.tmp
+1. copies the live databases and media (read-only) into a scratch directory under ~/.tmp, deleted when the run ends
    and starts an instrumented gateway on PORT (and PORT+1 for the fake engine);
 2. times every GET route (api_bench.py) and, unless --no-ui, loads every page (ui_bench.mjs);
 3. stops the gateway, ranks what exceeds a budget (check.py) and writes result.json and
@@ -18,7 +18,6 @@ import argparse
 import datetime
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -30,18 +29,20 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(REPO / "scripts"))
 
 import api_bench  # noqa: E402
 import check  # noqa: E402
+import scratch_owner  # noqa: E402
 
 LABEL = "perf-red"
 TOP_IN_ISSUE = 15
 
 
-def start_fixture(python: str, port: int, state: Path, source: Path, log: Path) -> tuple[subprocess.Popen, dict]:
+def start_fixture(python: str, port: int, source: Path, log: Path) -> tuple[subprocess.Popen, dict]:
     env = {**os.environ, "PYTHONPATH": str(REPO)}
     process = subprocess.Popen(
-        [python, str(HERE / "serve.py"), "--port", str(port), "--state", str(state), "--source", str(source)],
+        [python, str(HERE / "serve.py"), "--port", str(port), "--source", str(source)],
         cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=log.open("ab"), text=True, start_new_session=True)
     line = process.stdout.readline()  # one JSON line when the gateway answers /health
     if not line.strip().startswith("{"):
@@ -111,37 +112,44 @@ def main() -> int:
     scratch = Path(os.environ.get("AZIZAM_CI_SCRATCH", Path.home() / ".tmp"))
     out = args.out or scratch / "azizam-perf-runs" / stamp
     out.mkdir(parents=True, exist_ok=True)
-    state = scratch / f"azizam-perf-run-{args.port}"
-    shutil.rmtree(state, ignore_errors=True)
-    state.mkdir(parents=True)
     sha = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     load = os.getloadavg()[0]
     budgets = tomllib.loads((HERE / "budgets.toml").read_text(encoding="utf-8"))
     process = None
     try:
-        process, manifest = start_fixture(args.python, args.port, state, args.source, out / "fixture.log")
+        process, manifest = start_fixture(args.python, args.port, args.source, out / "fixture.log")
         api = api_bench.run(manifest)
         (out / "api.json").write_text(json.dumps(api, indent=1), encoding="utf-8")
-        ui = None
+        ui = home = None
         if not args.no_ui:
             ui_file = out / "ui.json"
             done = subprocess.run(
-                ["node", str(HERE / "ui_bench.mjs"), "--manifest", str(state / "perf-manifest.json"), "--out", str(ui_file)],
+                ["node", str(HERE / "ui_bench.mjs"), "--manifest", str(Path(manifest["state"]) / "perf-manifest.json"), "--out", str(ui_file)],
                 cwd=REPO / "web", capture_output=True, text=True)
             (out / "ui.log").write_text(done.stdout + done.stderr, encoding="utf-8")
             if done.returncode:
                 raise RuntimeError(f"ui_bench failed; see {out}/ui.log")
             ui = json.loads(ui_file.read_text(encoding="utf-8"))
+            home_file = out / "home.json"
+            home_run = subprocess.run(
+                ["node", str(HERE / "home_bench.mjs"), "--manifest", str(Path(manifest["state"]) / "perf-manifest.json"), "--out", str(home_file)],
+                cwd=REPO / "web", capture_output=True, text=True)
+            (out / "home.log").write_text(home_run.stdout + home_run.stderr, encoding="utf-8")
+            if home_run.returncode:
+                raise RuntimeError(f"home_bench failed; see {out}/home.log")
+            home = json.loads(home_file.read_text(encoding="utf-8"))
     except Exception as error:  # noqa: BLE001 - a harness failure is not a verdict on the code
         print(f"perf harness could not run: {type(error).__name__}: {error}", file=sys.stderr)
         return 2
     finally:
         if process is not None:
-            stop(process)
-        shutil.rmtree(state, ignore_errors=True)
+            stop(process)  # serve.py deletes its copy of the data as it exits
+        scratch_owner.sweep(scratch, "azizam-perf-run-")  # and if it was killed, the copy goes now, not at the next start
     violations = check.api_violations(api["rows"], budgets["api"], args.counts_only)
     if ui is not None:
         violations += check.ui_violations(ui["rows"], budgets["ui"], args.counts_only)
+    if home is not None and not args.counts_only:
+        violations += check.home_violations(home, budgets["home"])
     text = report(violations, sha, load)
     (out / "report.md").write_text(text, encoding="utf-8")
     (out / "result.json").write_text(json.dumps({"sha": sha, "load_1min": load, "violations": violations}, indent=1), encoding="utf-8")
