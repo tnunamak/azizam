@@ -1,9 +1,9 @@
 """No request handler may block the event loop on slow storage.
 
-Every SQLite connection sleeps 100 ms, as a disk under pressure would. A
-handler that opens one on the loop thread stalls every other request for that
-long; the same work on a worker thread leaves the loop ticking. The probe
-fails any endpoint whose worst loop stall exceeds STALL_LIMIT_S.
+A handler that opens SQLite, spawns a process, sleeps or opens a file on the
+loop thread stalls every other request for as long as that work takes on a
+slow disk. The probes record such calls by thread and assert there are none;
+no wall-clock time is part of the oracle, so host load cannot flip them.
 """
 import asyncio
 import builtins
@@ -25,8 +25,6 @@ from gateway.runtime_auth import hash_api_key
 from gateway.admin_oidc import CookieConfig, encode_session_cookie, session_from_claims
 from tests.test_proxy_admin_integration import _test_backend_grid, _test_status_projection
 
-DB_DELAY_S = 0.1
-STALL_LIMIT_S = 0.08
 ENDPOINTS = (
     ("/me/api/home", "cookie"),
     ("/me/api/status", "cookie"),
@@ -66,53 +64,22 @@ def gateway(tmp_path, monkeypatch):
             "bearer": {"Authorization": "Bearer guard-key"}}
 
 
-def slow_connect(real, loop_calls):
-    loop_thread = threading.get_ident()
-
-    def connect(*args, **kwargs):
-        if threading.get_ident() == loop_thread:
-            frames = [f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in traceback.extract_stack()[:-1]
-                      if "/site-packages/" not in f.filename and "/lib/python" not in f.filename]
-            loop_calls.append(" <- ".join(reversed(frames[-9:])))
-        time.sleep(DB_DELAY_S)
-        return real(*args, **kwargs)
-    return connect
-
-
-async def worst_loop_stall(path: str, headers, cookies) -> tuple[float, int, float]:
-    worst, stop = 0.0, False
-
-    async def ticker():
-        nonlocal worst
-        last = time.perf_counter()
-        while not stop:
-            await asyncio.sleep(0.005)
-            now = time.perf_counter()
-            worst, last = max(worst, now - last), now
-
-    transport = httpx.ASGITransport(app=proxy.app, client=("127.0.0.1", 50000))
-    async with httpx.AsyncClient(transport=transport, base_url="http://t", cookies=cookies) as client:
-        task = asyncio.create_task(ticker())
-        await asyncio.sleep(0.05)
-        started = time.perf_counter()
-        response = await client.get(path, headers=headers)
-        elapsed = time.perf_counter() - started
-        stop = True
-        await task
-    return worst, response.status_code, elapsed
-
-
 @pytest.mark.parametrize("path,auth", ENDPOINTS)
 def test_handler_does_not_block_the_event_loop(gateway, path, auth):
     headers = gateway["bearer"] if auth == "bearer" else {}
     cookies = gateway["cookies"] if auth == "cookie" else {}
     loop_calls: list[str] = []
-    with patch.object(sqlite3, "connect", slow_connect(sqlite3.connect, loop_calls)):
-        worst, status, elapsed = asyncio.run(worst_loop_stall(path, headers, cookies))
+
+    async def call() -> int:
+        transport = httpx.ASGITransport(app=proxy.app, client=("127.0.0.1", 50000))
+        async with httpx.AsyncClient(transport=transport, base_url="http://t", cookies=cookies) as client:
+            return (await client.get(path, headers=headers)).status_code
+
+    patches = _loop_thread_work(loop_calls)
+    with patches[0], patches[1], patches[2], patches[3]:
+        status = asyncio.run(call())
     assert status == 200, f"{path} answered {status}; the probe needs a working endpoint"
-    assert worst < STALL_LIMIT_S, (
-        f"{path} blocked the event loop for {worst:.3f}s (limit {STALL_LIMIT_S}s) opening SQLite on the loop at:\n"
-        + "\n".join(sorted(set(loop_calls))))
+    assert loop_calls == [], f"{path} ran blocking work on the event loop:\n" + "\n".join(sorted(set(loop_calls)))
 
 
 def _get_routes() -> list[str]:
@@ -194,35 +161,24 @@ def test_every_get_route_leaves_the_loop_free(gateway, route):
 
 
 def test_startup_initializes_the_stores_in_parallel_off_the_loop():
-    slow = 0.2
+    slow = 0.3
+    loop_thread = threading.get_ident()
+    lock = threading.Lock()
+    state = {"active": 0, "peak": 0, "on_loop": 0}
 
     def sleeper(*args, **kwargs):
+        with lock:
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+            state["on_loop"] += threading.get_ident() == loop_thread
         time.sleep(slow)
-
-    async def run() -> tuple[float, float]:
-        worst, stop = 0.0, False
-
-        async def ticker():
-            nonlocal worst
-            last = time.perf_counter()
-            while not stop:
-                await asyncio.sleep(0.005)
-                now = time.perf_counter()
-                worst, last = max(worst, now - last), now
-
-        task = asyncio.create_task(ticker())
-        await asyncio.sleep(0.05)
-        started = time.perf_counter()
-        await proxy._initialize_stores()
-        elapsed = time.perf_counter() - started
-        stop = True
-        await task
-        return worst, elapsed
+        with lock:
+            state["active"] -= 1
 
     from gateway import providers
     with patch.object(proxy.ADMIN_STORE, "init_db", sleeper), patch.object(proxy.responses_store, "init_db", sleeper), \
             patch.object(proxy.receipt_store, "init_db", sleeper), patch.object(proxy.media_jobs, "init_db", sleeper), \
             patch.object(providers, "recover_provider_spend", sleeper):
-        worst, elapsed = asyncio.run(run())
-    assert worst < STALL_LIMIT_S, f"startup stalled the event loop for {worst:.3f}s"
-    assert elapsed < slow * 3, f"the stores initialized one after another ({elapsed:.2f}s)"
+        asyncio.run(proxy._initialize_stores())
+    assert state["on_loop"] == 0, "a store initialized on the event loop thread"
+    assert state["peak"] >= 2, "the stores initialized one after another"
