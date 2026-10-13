@@ -145,6 +145,11 @@ def _build_receipt_providers(
             request_id, audience=audience, path=store_path
         )
 
+    def store_many(ids: Iterable[str], *, audience: str) -> dict[str, dict[str, Any]]:
+        return _receipt_store.get_many(ids, audience=audience, path=store_path)
+
+    store_getter.many = store_many  # type: ignore[attr-defined]
+
     def store_lister(
         *,
         audience: str,
@@ -218,6 +223,11 @@ def _build_media_job_providers(
 
     def store_getter(job_id: str, *, audience: str) -> dict[str, Any] | None:
         return _media_jobs.get(job_id, audience=audience, path=store_path)
+
+    def store_many(ids: Iterable[str], *, audience: str) -> dict[str, dict[str, Any]]:
+        return _media_jobs.get_many(ids, audience=audience, path=store_path)
+
+    store_getter.many = store_many  # type: ignore[attr-defined]
 
     def store_lister(
         *,
@@ -384,6 +394,14 @@ def create_gateway_router(
         if record_authorizer is None:
             return rows
         id_field = "request_id" if kind == "receipt" else "job_id"
+        many = getattr(getter, "many", None)
+        if many is not None:
+            # The store reads every authorized row at the caller's audience in one
+            # query. The rows were listed at the internal audience and checked here,
+            # so the per-record re-check of an unchanged record is not repeated.
+            authorized = [str(row[id_field]) for row in rows if record_authorizer(request, kind, row)]
+            visible_rows = many(authorized, audience=audience)
+            return [visible_rows[record_id] for record_id in authorized if record_id in visible_rows]
         allowed: list[dict[str, Any]] = []
         for row in rows:
             if not record_authorizer(request, kind, row):

@@ -782,6 +782,31 @@ def get(
     return _filter_for_audience(data, audience)
 
 
+def get_many(
+    job_ids: Iterable[str],
+    *,
+    audience: str = "internal",
+    path: Path = DB_PATH,
+) -> dict[str, dict[str, Any]]:
+    """Return ``{job_id: job}`` as ``get`` would, in one query per 500 ids."""
+    if audience not in _AUDIENCES:
+        raise ValueError(f"audience must be one of {_AUDIENCES}")
+    ids = sorted({value for value in job_ids if value})
+    out: dict[str, dict[str, Any]] = {}
+    with _conn(path) as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            rows = conn.execute(
+                f"SELECT job_id, job_json FROM media_jobs WHERE job_id IN ({','.join('?' for _ in chunk)})",
+                chunk,
+            ).fetchall()
+            for job_id, raw in rows:
+                data = _safe_loads(raw)
+                if isinstance(data, Mapping):
+                    out[job_id] = _filter_for_audience(data, audience)
+    return out
+
+
 def get_by_request_id(
     request_id: str,
     *,

@@ -39,7 +39,8 @@ def _where(kind: str, detail: str) -> None:
     frames = [f for f in traceback.extract_stack()[:-2]
               if ("/gateway/" in f.filename or f.filename.endswith(("proxy.py", "status_endpoint.py")))
               and "/scripts/perf/" not in f.filename]
-    chain = " < ".join(f"{os.path.basename(f.filename)}:{f.lineno}:{f.name}" for f in reversed(frames[-3:]))
+    depth = 9 if kind == "proc" else 3  # a process is rarer and its caller further up
+    chain = " < ".join(f"{os.path.basename(f.filename)}:{f.lineno}:{f.name}" for f in reversed(frames[-depth:]))
     with _LOCK:
         WHERE[f"{kind} {detail[:70]!r} @ {chain}"] += 1
 
