@@ -227,7 +227,7 @@ function EngineSheet({
         <SheetHeader>
           <SheetTitle>{engine.name}</SheetTitle>
           <SheetDescription>
-            {[engine.label, engine.state].filter(Boolean).join(" · ")}
+            {[engine.label, engineStateWord(engine).word].filter(Boolean).join(" · ")}
           </SheetDescription>
         </SheetHeader>
         <div className="space-y-5 px-4 pb-6 font-normal">
@@ -273,11 +273,22 @@ function joinNames(names: string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
 
-/** Engine rows speak the same state words as capabilities. */
+function engineIsIdle(engine: EngineView): boolean {
+  if (!engine.service.enabled) return false;
+  // These are the shared presentation's explicit standby states. The
+  // gateway also marks a stopped, unused standby engine as neutral.
+  return (
+    ["Ready to start", "Standby, stopped"].includes(engine.state) ||
+    (engine.health?.in_use === false &&
+      engine.health.tone === "neutral" &&
+      ["down", "stopped"].includes(engine.health.observation ?? ""))
+  );
+}
+
+/** Classification stays separate from the plain-language row copy. */
 function engineStateKey(engine: EngineView): CapabilityStateKey {
   if (!engine.service.enabled) return "off";
-  if (["Ready", "Ready to start", "Standby, stopped"].includes(engine.state))
-    return "ready";
+  if (engineIsIdle(engine) || engine.state === "Ready") return "ready";
   if (engine.state === "Busy" || engine.state === "Starting") return "busy";
   if (engine.state === "Degraded") return "degraded";
   if (engine.state === "Unavailable") return "down";
@@ -287,6 +298,42 @@ function engineStateKey(engine: EngineView): CapabilityStateKey {
 
 function stateWordFor(key: CapabilityStateKey) {
   return { word: STATE_WORDS[key].word, tone: STATE_WORDS[key].tone };
+}
+
+function connectionFailure(engine: EngineView): "timeout" | "refused" | null {
+  // A prior transport error cannot override a healthy, idle or unknown check.
+  if (!["down", "degraded"].includes(engineStateKey(engine))) return null;
+  const error = engine.lastError ?? "";
+  if (
+    /connect(?:ion)?[ _-]*timeout|connection[^.\n]*timed?\s*out|\bETIMEDOUT\b/i.test(error)
+  )
+    return "timeout";
+  if (/connection[ _-]*refused|\bECONNREFUSED\b/i.test(error)) return "refused";
+  return null;
+}
+
+function engineStateWord(engine: EngineView): { word: string; tone: StateTone } {
+  if (engineIsIdle(engine))
+    return { word: "Idle, starts when needed", tone: "off" };
+  const state = stateWordFor(engineStateKey(engine));
+  const failure = connectionFailure(engine);
+  if (failure === "timeout") return { ...state, word: "Did not answer in time" };
+  if (failure === "refused") return { ...state, word: "Not running" };
+  return state;
+}
+
+function LastChecked({ at }: { at: number | null | undefined }) {
+  return (
+    <span className="text-muted-foreground block text-meta">
+      {typeof at === "number" && Number.isFinite(at) && at > 0 ? (
+        <>
+          Last checked <RelativeTime ts={at} fallback="not recorded" />
+        </>
+      ) : (
+        "Last checked: not recorded"
+      )}
+    </span>
+  );
 }
 
 /**
@@ -488,6 +535,9 @@ function unexplainedProblems(
 }
 
 function symptomOf(engine: EngineView): string {
+  const failure = connectionFailure(engine);
+  if (failure === "timeout") return `${engine.shortName} did not answer in time.`;
+  if (failure === "refused") return `${engine.shortName} is not running.`;
   return engineSymptom({
     name: engine.shortName,
     lastError: engine.lastError,
@@ -772,8 +822,8 @@ function EngineRow({
   const series = engine.backend?.history?.status_series;
   const slots = hourSlots(series, end);
   const { up, checked } = hoursUp(slots);
-  const key = engineStateKey(engine);
-  const { word, tone } = stateWordFor(key);
+  const idle = engineIsIdle(engine);
+  const { word, tone } = engineStateWord(engine);
   return (
     <tr
       className="border-b last:border-0"
@@ -799,7 +849,7 @@ function EngineRow({
         ) : null}
       </th>
       <td className="hidden py-2.5 pr-3 align-middle sm:table-cell">
-        {engine.service.enabled ? (
+        {engine.service.enabled && !idle ? (
           <UptimeBar
             series={series}
             end={end}
@@ -810,10 +860,11 @@ function EngineRow({
         ) : null}
       </td>
       <td className="figures text-muted-foreground hidden py-2.5 pr-4 text-right align-middle text-meta sm:table-cell">
-        {engine.service.enabled && checked ? `${up}/${checked} h up` : ""}
+        {engine.service.enabled && !idle && checked ? `${up}/${checked} h up` : ""}
       </td>
       <td className="py-2.5 align-middle">
         <StateWord tone={tone} word={word} />
+        <LastChecked at={engine.checkedAt} />
       </td>
     </tr>
   );
@@ -927,15 +978,7 @@ function ProviderRow({ provider }: { provider: ProviderStatusView }) {
       </td>
       <td className="py-2.5 align-middle">
         <StateWord tone={tone} word={word} />
-        <span className="text-muted-foreground block text-meta">
-          {provider.checkedAt ? (
-            <>
-              Checked <RelativeTime ts={provider.checkedAt} fallback="" />
-            </>
-          ) : (
-            "Not checked yet"
-          )}
-        </span>
+        <LastChecked at={provider.checkedAt} />
       </td>
     </tr>
   );
@@ -1313,7 +1356,10 @@ export function StatusClient() {
     (engine) => !troubled.has(engine.service.id),
   );
   const count = (key: CapabilityStateKey) =>
-    others.filter((engine) => engineStateKey(engine) === key).length;
+    others.filter(
+      (engine) => !engineIsIdle(engine) && engineStateKey(engine) === key,
+    ).length;
+  const idleCount = others.filter(engineIsIdle).length;
   const providerList = providers.state === "ready" ? providers.providers : [];
   const providersDown = providerList.filter(
     (provider) => providerState(provider) === "down",
@@ -1325,18 +1371,19 @@ export function StatusClient() {
   // "4 other engines ready, 1 off, 1 provider" cryptic; D1.4 found the
   // sentences that replaced it read as prose): "Other engines: 4 ready,
   // 1 turned off" and "Remote providers: 1 set up".
-  const engineParts = (
-    [
-      ["ready", "ready"],
-      ["busy", "busy"],
-      ["degraded", "degraded"],
-      ["down", "down"],
-      ["unknown", "not checked"],
-      ["off", "turned off"],
-    ] as Array<[CapabilityStateKey, string]>
-  )
-    .map(([key, words]) => [count(key), words] as const)
-    .filter(([n]) => n > 0);
+  const engineParts = [
+    [idleCount, "idle"] as const,
+    ...(
+      [
+        ["ready", "ready"],
+        ["busy", "busy"],
+        ["degraded", "degraded"],
+        ["down", "down"],
+        ["unknown", "not checked"],
+        ["off", "turned off"],
+      ] as Array<[CapabilityStateKey, string]>
+    ).map(([key, words]) => [count(key), words] as const),
+  ].filter(([n]) => n > 0);
   const summaryLines: Array<[string, string]> = [
     ...(engineParts.length
       ? [
