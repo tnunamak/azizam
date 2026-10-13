@@ -163,16 +163,26 @@ interrupted run, lock waiting, and a killed controller.
   in-flight requests on any host network change (`net::ERR_NETWORK_CHANGED`),
   so the browser lanes start only after Compose finishes. The native
   fresh-instance journey runs beside the lanes; it needs no Docker network.
-- `--browser-workers N` (default `9`) and `--browser-servers N` (default `3`)
-  size the main run. It is one `playwright test` invocation with up to four
+- `--browser-workers N` (default `10`) and `--browser-servers N` (default `2`)
+  size the main run. It is one `playwright test` invocation with up to five
   servers: the parallel pool (project `chromium`, N workers spread over the
   pool's servers by worker index) on ports `BASE+10`, `BASE+50`, `BASE+60`,
-  and the `@global-state` project (`chromium-global-state`, 1 worker, 33 cases
-  that write owner-wide settings, services, profiles, categories or providers)
-  on `BASE+20`. The live-data (`BASE+30`) and household (`BASE+40`) runs start at
-  the same time. One gateway is one Python process: with 6 or 10 workers on a
-  single gateway the run took 930-1000 s and failed on timeouts, so the pool
-  has three. Each server is one gateway and one fake engine for its workers.
+  and two serial `@global-state` projects, each with one worker and a server of
+  its own (`chromium-global-state` on `BASE+20`, `chromium-global-state-2` on
+  `BASE+70`). The 33 cases write owner-wide settings, services, profiles,
+  categories or providers. `SECOND_GLOBAL_FILES` in `web/playwright.config.ts`
+  names the files that run on the second server (23 cases); any other file,
+  including a new one, runs on the first. The two projects are listed before
+  `chromium`, so they start with the pool and run beside it. The live-data
+  (`BASE+30`) and household (`BASE+40`) runs start at the same time. One
+  gateway is one Python process: with 6 or 10 workers on a single gateway the
+  run took 930-1000 s and failed on timeouts. Each server is one gateway and one
+  fake engine for its workers.
+  The cases of one file run in parallel in `chromium` (`fullyParallel`). A file
+  whose cases must stay in order or in one worker says so with
+  `test.describe.configure({ mode: "default" })`. The Try files do: Try mints one
+  key per sign-in and revokes the session's older Try keys, so two Try cases on
+  one server at once fail with "Invalid API key".
   Per-test data comes from the `isolated` fixture: a namespaced
   member, app, key and request log created through the admin API. Teardown
   fails a test that leaves queued or running jobs, open fake-engine requests,
@@ -206,11 +216,15 @@ host was shared with other agents (load 13-40).
 | before: 10 shard lanes + live-data + household, copies of `web/` | 342 s | 3,321 | 735 / 0 | 12 |
 | after: 1 pool server, 6 workers | 999 s | 3,736 | 735 / 4 | 4 |
 | after: 1 pool server, 10 workers | 931 s | 4,879 | 735 / 3 | 4 |
-| after: 3 pool servers, 9 workers (default) | 480 s | 3,033 | 735 / 0 | 6 |
+| after: 3 pool servers, 9 workers | 480 s | 3,033 | 735 / 0 | 6 |
+| VT moves to vitest (426 cases), same layout | 411 s | 2,125 | 426 / 0 | 6 |
+| global-state beside the pool on two servers, parallel cases per file, 2 pool servers, 10 workers (default), mean of 3 | 204 s | 1,779 | 426 / 0 | 6 |
 
-The slowest part of the "after" run is the serial `@global-state` project
-(about 255 s of test time) plus the pool. The rest of the gate (Python tier)
-is unchanged.
+Wall seconds stay noisy while other agents use the host (load 15-31 here). The
+two serial `@global-state` projects each run about 115 s of test time; the pool
+ends at about the same time. The tail now is `try.spec.ts`: its cases share the
+lane's Try key and run one after another, and the file sorts last. The rest of
+the gate (Python tier) is unchanged.
 
 ## Priority
 
