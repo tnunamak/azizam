@@ -50,7 +50,7 @@ from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlsplit
 
 import httpx
 import yaml
-from fastapi import FastAPI, Request, Response, WebSocket
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import FormData, Headers, UploadFile
@@ -17510,6 +17510,16 @@ async def _deny_realtime(websocket: WebSocket, response: Response) -> None:
         await websocket.close(code=1008)
 
 
+async def _fail_open_realtime(websocket: WebSocket, message: str, code: str) -> None:
+    """End an accepted session the way OpenAI Realtime does: an ``error`` event, then close 1011."""
+    event = {"type": "error", "error": {"type": "server_error", "code": code, "message": message}}
+    try:
+        await websocket.send_text(json.dumps(event))
+        await websocket.close(code=1011)
+    except (RuntimeError, WebSocketDisconnect):
+        pass
+
+
 def _realtime_policy_denial(auth_context: AuthContext) -> Response | None:
     for path in _REALTIME_POLICY_PATHS:
         denied = _enforce_runtime_route_policy(auth_context, path)
@@ -17536,9 +17546,6 @@ async def _handle_realtime(websocket: WebSocket) -> None:
     service = (config.get("backends") or {}).get(_REALTIME_SERVICE_ID)
     if not service or not service.get("port"):
         return await _deny_realtime(websocket, _tts_error("Realtime is not configured on this gateway.", 503, "realtime_not_configured"))
-    if await _ensure_speech_service_ready(_REALTIME_SERVICE_ID, label="Realtime service") is not None:
-        return await _deny_realtime(websocket, _tts_error("The Realtime service could not be started.", 503, "backend_unavailable"))
-
     admission = _dispatch_admission_response(
         "audio.realtime", auth_context=auth_context, resource_class="audio",
         service_id=_REALTIME_SERVICE_ID, service_available=True,
@@ -17546,6 +17553,11 @@ async def _handle_realtime(websocket: WebSocket) -> None:
     if admission is not None:
         return await _deny_realtime(websocket, admission)
 
+    # Accept before starting the service: the server drops a handshake left open
+    # for 10 s, and a cold start takes longer. Later failures are Realtime error events.
+    await websocket.accept(subprotocol=realtime_proxy.accepted_subprotocol(offered))
+    if await _ensure_speech_service_ready(_REALTIME_SERVICE_ID, label="Realtime service") is not None:
+        return await _fail_open_realtime(websocket, "The Realtime service could not be started.", "backend_unavailable")
     url = realtime_proxy.upstream_url(str(service.get("host") or "127.0.0.1"), int(service["port"]), dict(websocket.query_params))
     try:
         upstream = await ws_connect(
@@ -17553,8 +17565,7 @@ async def _handle_realtime(websocket: WebSocket) -> None:
         )
     except (OSError, TimeoutError, WebSocketException) as exc:
         print(f"[proxy] Realtime service refused the session: {type(exc).__name__}", flush=True)
-        return await _deny_realtime(websocket, _tts_error("The Realtime service did not accept the session.", 503, "realtime_unavailable"))
-    await websocket.accept(subprotocol=realtime_proxy.accepted_subprotocol(offered))
+        return await _fail_open_realtime(websocket, "The Realtime service did not accept the session.", "realtime_unavailable")
     await realtime_proxy.relay(websocket, upstream)
 
 

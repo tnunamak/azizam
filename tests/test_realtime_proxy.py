@@ -207,16 +207,51 @@ class RefusalTests(RealtimeRouteCase):
         with patch.object(proxy, "config", cfg):
             self.assertEqual(self._refused(), 503)
 
-    def test_service_that_will_not_start_is_a_503(self) -> None:
-        self.ensure.return_value = proxy._tts_error("down", 503)
-        self.assertEqual(self._refused(), 503)
 
-    def test_service_that_refuses_the_connection_is_a_503(self) -> None:
+
+class ColdStartTests(RealtimeRouteCase):
+    """The handshake finishes before the service starts: a cold start outlasts the server's 10 s handshake limit."""
+
+    def _error_event_then_close(self) -> dict:
+        with self.client.websocket_connect("/v1/realtime") as ws:
+            event = ws.receive_json()
+            with self.assertRaises(WebSocketDisconnect) as caught:
+                ws.receive_text()
+        self.assertEqual(caught.exception.code, 1011)
+        self.assertEqual(event["type"], "error")
+        self.assertEqual(event["error"]["type"], "server_error")
+        return event["error"]
+
+    def test_the_session_is_accepted_before_the_service_is_ready(self) -> None:
+        accepted_first: list[bool] = []
+
+        async def ensure(*_a, **_k):
+            accepted_first.append(self._accepted)
+            return None
+
+        self._accepted = False
+        real_accept = proxy.WebSocket.accept
+
+        async def accept(ws, *a, **k):
+            self._accepted = True
+            return await real_accept(ws, *a, **k)
+
+        self.ensure.side_effect = ensure
+        with patch.object(proxy.WebSocket, "accept", accept):
+            with self.client.websocket_connect("/v1/realtime") as ws:
+                ws.send_text("x")
+                settle(lambda: self.upstream.sent == ["x"])
+                finish(ws, self.upstream)
+        self.assertEqual(accepted_first, [True])
+
+    def test_service_that_will_not_start_is_an_error_event(self) -> None:
+        self.ensure.return_value = proxy._tts_error("down", 503)
+        self.assertEqual(self._error_event_then_close()["code"], "backend_unavailable")
+        self.connect.assert_not_called()
+
+    def test_service_that_refuses_the_connection_is_an_error_event(self) -> None:
         self.connect.side_effect = ConnectionRefusedError()
-        with self.assertRaises(Exception) as caught:
-            with self.client.websocket_connect("/v1/realtime"):
-                pass
-        self.assertEqual(getattr(caught.exception, "status_code", None), 503)
+        self.assertEqual(self._error_event_then_close()["code"], "realtime_unavailable")
 
 
 class HelperTests(unittest.TestCase):
