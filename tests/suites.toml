@@ -47,11 +47,6 @@ reason = "smoke test against a real gateway and a real key (AZIZAM_LIVE_TEST=1);
 # Gate cases that skip. A new skip fails the gate.
 [[skip]]
 framework = "pytest"
-case = "tests/test_admin_api.py::AdminProfileTests::test_update_profile_name_conflict_returns_409"
-reason = "the fixture has fewer than 2 profiles, so the body skips"
-
-[[skip]]
-framework = "pytest"
 case = "tests/test_decisions_api.py::test_official_typesafe_sdk_works_offline_against_facade"
 reason = "typesafe_sdk is not in the hermetic lock"
 
