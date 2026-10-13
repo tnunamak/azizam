@@ -35,7 +35,6 @@ def _request() -> Request:
     return Request({"type": "http", "method": "POST", "path": "/v1/chat/completions", "headers": []}, receive)
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B8: the paid stream waits for the upstream to close after [DONE], so the client stream and the cost settlement hang (fix/fk-upstream-faults)")
 def test_paid_stream_ends_and_settles_at_done_while_the_upstream_stays_open(fake_upstreams, monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-provider")
     receipts = []

@@ -179,7 +179,6 @@ def _forwarded_stream(fake, frontend: str) -> None:
     _forwarded(fake, stream=True, stream_options={"include_usage": True}, **({"max_tokens": 16} if frontend == "anthropic" else {}))
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B4: the frontends decode each wire chunk on its own, so a cut UTF-8 character becomes U+FFFD (fix/fk-upstream-faults)")
 @pytest.mark.parametrize("frontend", list(FRONTENDS))
 def test_events_cut_across_wire_chunks_reach_the_client_whole(frontend_gateway, fake_upstreams, frontend) -> None:
     serve, hop = frontend_gateway
@@ -200,7 +199,6 @@ def test_events_cut_across_wire_chunks_reach_the_client_whole(frontend_gateway, 
     expect_fixed("FK-B4", events, expected)
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B5: after an upstream drop the frontends end with a successful stop (fix/fk-upstream-faults)")
 @pytest.mark.parametrize("frontend", list(FRONTENDS))
 def test_upstream_drop_mid_stream_ends_with_a_protocol_error(frontend_gateway, fake_upstreams, frontend) -> None:
     serve, hop = frontend_gateway
@@ -222,7 +220,6 @@ def test_upstream_drop_mid_stream_ends_with_a_protocol_error(frontend_gateway, f
     expect_fixed("FK-B5", events[kept:], expected[kept:])
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B6: the frontends drop the upstream Retry-After header (fix/fk-upstream-faults)")
 @pytest.mark.parametrize("stream", [False, True], ids=["text", "stream"])
 @pytest.mark.parametrize("frontend", list(FRONTENDS))
 def test_rate_limit_keeps_status_retry_after_and_message(frontend_gateway, fake_upstreams, frontend, stream) -> None:
@@ -243,7 +240,6 @@ def test_rate_limit_keeps_status_retry_after_and_message(frontend_gateway, fake_
     expect_fixed("FK-B6", response.headers.get("retry-after"), "7")
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B3: the LLM substrate read timeout answers {'detail': ...}, which the frontends pass on as the message (fix/fk-upstream-faults)")
 @pytest.mark.parametrize("stream", [False, True], ids=["text", "stream"])
 @pytest.mark.parametrize("frontend", list(FRONTENDS))
 def test_first_byte_past_the_read_budget_gives_a_504(frontend_gateway, fake_upstreams, monkeypatch, frontend, stream) -> None:
@@ -266,7 +262,6 @@ def test_first_byte_past_the_read_budget_gives_a_504(frontend_gateway, fake_upst
     expect_fixed("FK-B3", json.loads(raw), expected)
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B4: the frontends decode each wire chunk on its own, so a cut UTF-8 character becomes U+FFFD (fix/fk-upstream-faults)")
 def test_frontend_sse_reader_reassembles_a_cut_utf8_character(fake_upstreams) -> None:
     """The frontends' SSE reader on its own, against the wire, without the chat hop's event alignment."""
     fake = fake_upstreams.loopback(load_scenario("openai-compatible/stream-split-event", model=MODEL))
