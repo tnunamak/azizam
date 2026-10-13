@@ -8,7 +8,7 @@
 set -euo pipefail
 [[ -n ${AZIZAM_PRIORITY_SET:-} ]] || exec "${BASH_SOURCE[0]%/*}/low-priority" "${BASH_SOURCE[0]}" "$@"
 
-signoff=0 force=0 port=18640 browser_workers=9 browser_servers=3 py_workers=12 skip_compose=0
+signoff=0 force=0 port=18640 browser_workers=10 browser_servers=2 py_workers=12 skip_compose=0
 seed=$(((RANDOM * 32768 + RANDOM) % 1000000000)) target= closes_nightly_red=
 while (($#)); do
   case $1 in
@@ -28,13 +28,13 @@ while (($#)); do
   shift
 done
 # Each fixture gateway owns ten ports: gateway +0, engine +1, strict probes
-# +2..+9. Up to six gateways: the parallel pool (1-3 servers), the global-state
-# server, live-data and household. Bound inputs before arithmetic.
+# +2..+9. Up to seven gateways: the parallel pool (1-3 servers), the two global-state
+# servers, live-data and household. Bound inputs before arithmetic.
 if [[ ! $port =~ ^18[0-9]{3}$ || ! $browser_workers =~ ^([1-9]|1[0-6])$ || ! $browser_servers =~ ^[1-3]$ || ! $py_workers =~ ^[1-9][0-9]?$ ]]; then
   echo "--port must be 18000-18998, --browser-workers 1-16, --browser-servers 1-3 and --py-workers a positive integer <= 99" >&2
   exit 2
 fi
-if ((port + 69 > 18998)); then
+if ((port + 79 > 18998)); then
   echo "the browser fixture gateways must fit within 18000-18998" >&2
   exit 2
 fi

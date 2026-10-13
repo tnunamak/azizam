@@ -4,6 +4,12 @@ import { type Page, type Route } from "@playwright/test";
 import { expect, test } from "./fixtures/isolation";
 import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
 
+
+// Try mints one key per sign-in and revokes the session's older Try keys
+// (gateway/user_runtime.py ensure_try_session_key). Cases that open Try share the
+// lane's sign-in, so the cases of this file stay in one worker, one after another.
+test.describe.configure({ mode: "default" });
+
 const emptyModelsCatalog = {
   schema_version: 1,
   object: "models.catalog",

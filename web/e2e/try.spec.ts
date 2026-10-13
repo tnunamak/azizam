@@ -3,6 +3,12 @@ import AxeBuilder from "@axe-core/playwright";
 import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
 import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
 
+
+// Try mints one key per sign-in and revokes the session's older Try keys
+// (gateway/user_runtime.py ensure_try_session_key). Cases that open Try share the
+// lane's sign-in, so the cases of this file stay in one worker, one after another.
+test.describe.configure({ mode: "default" });
+
 async function prepareTryKey(page: import("@playwright/test").Page) {
   await page.goto("/try/");
   // Run mints the temporary key; nothing does before it, so waiting for

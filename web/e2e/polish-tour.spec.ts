@@ -131,6 +131,12 @@ async function inspect(page: Page, name: string) {
   if (finalScreens) await copyFile(file, `${finalScreens}/${name}.png`);
 }
 
+// The four tours run in parallel. Each beforeAll makes its own invitation, so
+// the address is unique per call, not only per worker process.
+test.describe.configure({ mode: "parallel" });
+
+let invitations = 0;
+
 test.beforeAll(async ({ request }) => {
   if (finalScreens) await mkdir(finalScreens, { recursive: true });
   const session = await (await request.get("/admin/api/session")).json();
@@ -143,7 +149,7 @@ test.beforeAll(async ({ request }) => {
     headers: { "x-azizam-csrf": session.actor.csrf_token },
     data: {
       profile_id: profile.id,
-      email: `polish-tour+${process.env.UI_E2E_RUN_ID ?? "local"}-${process.pid}@example.test`,
+      email: `polish-tour+${process.env.UI_E2E_RUN_ID ?? "local"}-${process.pid}-${invitations++}@example.test`,
       expires_in: 86400,
     },
   });

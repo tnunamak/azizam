@@ -289,7 +289,7 @@ export const test = base.extend<{ isolated: Isolated; globalStateGuard: void }>(
       if (global) {
         // A global-state test needs the server to itself.
         expect(
-          testInfo.config.workers === 1 || testInfo.project.name.endsWith("global-state"),
+          testInfo.config.workers === 1 || testInfo.project.name.startsWith("chromium-global-state"),
           `${GLOBAL_STATE_TAG} tests run in a one-worker lane or the global-state project, not ${testInfo.project.name} with ${testInfo.config.workers} workers`,
         ).toBe(true);
       }
