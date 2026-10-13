@@ -22,6 +22,12 @@ from gateway.backends.llm_execution import (
 )
 
 
+# Hang guard, not an oracle: every wait below is on an event the test is about, so the guard
+# only turns a real hang into a failure and never decides pass/fail for a correct run. In-process
+# steps take milliseconds; a stall measured at load 51 was 0.27 s, so 30 s is >100x that.
+_HANG_GUARD_S = 30.0
+
+
 class _ClosableClient:
     def __init__(self) -> None:
         self.closed = False
@@ -470,15 +476,15 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         try:
-            await asyncio.wait_for(body_send_started.wait(), timeout=0.25)
-            await asyncio.wait_for(upstream.read_failed.wait(), timeout=0.25)
-            await asyncio.wait_for(upstream.closed.wait(), timeout=0.25)
+            await asyncio.wait_for(body_send_started.wait(), timeout=_HANG_GUARD_S)
+            await asyncio.wait_for(upstream.read_failed.wait(), timeout=_HANG_GUARD_S)
+            await asyncio.wait_for(upstream.closed.wait(), timeout=_HANG_GUARD_S)
             self.assertTrue(client.closed)
             self.assertFalse(response_task.done())
         finally:
             release_send.set()
             with self.assertRaisesRegex(RuntimeError, "upstream read failed"):
-                await asyncio.wait_for(response_task, timeout=0.25)
+                await asyncio.wait_for(response_task, timeout=_HANG_GUARD_S)
 
     async def test_stream_closes_done_upstream_while_asgi_send_is_stalled(self) -> None:
         client = _ClosableClient()
@@ -510,15 +516,15 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         try:
-            await asyncio.wait_for(body_send_started.wait(), timeout=0.25)
-            await asyncio.wait_for(upstream.closed.wait(), timeout=0.25)
+            await asyncio.wait_for(body_send_started.wait(), timeout=_HANG_GUARD_S)
+            await asyncio.wait_for(upstream.closed.wait(), timeout=_HANG_GUARD_S)
             self.assertTrue(client.closed)
             self.assertFalse(response_task.done())
             self.assertFalse(upstream.upstream_eof.is_set())
             self.assertEqual(len(sent_messages), 2)
         finally:
             release_send.set()
-            await asyncio.wait_for(response_task, timeout=0.25)
+            await asyncio.wait_for(response_task, timeout=_HANG_GUARD_S)
 
     async def test_asgi_disconnect_cancels_live_upstream_read_without_second_receive(self) -> None:
         client = _ClosableClient()
@@ -546,7 +552,7 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
                 receive,
                 send,
             ),
-            timeout=0.25,
+            timeout=_HANG_GUARD_S,
         )
 
         self.assertEqual(receive_calls, 1)
