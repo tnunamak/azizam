@@ -206,8 +206,10 @@ def test_startup_initializes_the_stores_in_parallel_off_the_loop():
     assert state["peak"] >= 2, "the stores initialized one after another"
 
 
-@pytest.mark.parametrize("path", ["/v1/models", "/v1/models/x", "/openai/v1/models/x", "/anthropic/v1/models/x"])
-def test_model_routes_keep_category_reads_off_the_loop_on_a_cold_gate(gateway, tmp_path, path):
+COLD_GATE_PATHS = ("/v1/models", "/v1/models/x", "/openai/v1/models/x", "/anthropic/v1/models/x")
+
+
+def test_model_routes_keep_category_reads_off_the_loop_on_a_cold_gate(gateway, tmp_path):
     """A gate built inside the probe makes the first category read hit SQLite.
 
     A gate warmed by an earlier test holds a connection the probe never traced,
@@ -223,7 +225,8 @@ def test_model_routes_keep_category_reads_off_the_loop_on_a_cold_gate(gateway, t
     async def call() -> None:
         transport = httpx.ASGITransport(app=proxy.app, client=("127.0.0.1", 50000), raise_app_exceptions=False)
         async with httpx.AsyncClient(transport=transport, base_url="http://t", timeout=20) as client:
-            await client.get(path, headers=gateway["bearer"])
+            for path in COLD_GATE_PATHS:
+                await client.get(path, headers=gateway["bearer"])
 
     patches = _loop_thread_work(loop_calls)
     try:
@@ -231,4 +234,4 @@ def test_model_routes_keep_category_reads_off_the_loop_on_a_cold_gate(gateway, t
             asyncio.run(call())
     finally:
         category_enforcement.configure(None)
-    assert not loop_calls, f"{path} ran blocking work on the event loop:\n" + "\n".join(sorted(set(loop_calls)))
+    assert not loop_calls, "model routes ran blocking work on the event loop:\n" + "\n".join(sorted(set(loop_calls)))
