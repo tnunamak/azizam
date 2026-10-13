@@ -188,7 +188,7 @@ function HourByHour({
       className="text-muted-foreground mt-1 text-xs"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary className="w-fit cursor-pointer max-sm:min-h-11 max-sm:py-3">
+      <summary className="w-fit max-sm:min-h-11 max-sm:py-3">
         Hour by hour
       </summary>
       {open ? (

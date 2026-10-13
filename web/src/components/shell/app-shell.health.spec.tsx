@@ -1,3 +1,18 @@
+import { readFileSync } from "node:fs";
+import { parse } from "postcss";
+import { CodeBlock } from "@/components/product/code-block";
+import { CopyField } from "@/components/product/copy-field";
+import { EntityName } from "@/components/product/entity-name";
+import { FilterToggle } from "@/components/product/filter-toggle";
+import { PageHeader } from "@/components/product/page-header";
+import { Segmented } from "@/components/product/segmented";
+import { SettingRow } from "@/components/product/setting-row";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { QueryClient } from "@tanstack/react-query";
@@ -367,5 +382,167 @@ describe("owner alert banner", () => {
       "href",
       "/status#providers",
     );
+  });
+});
+
+describe("global interactive cursors", () => {
+  let cursorStyle: HTMLStyleElement;
+
+  beforeEach(() => {
+    const stylesheet = parse(
+      readFileSync("src/app/globals.css", "utf8"),
+    );
+    const base = stylesheet.nodes.find(
+      (node) => node.type === "atrule" && node.name === "layer" && node.params === "base",
+    );
+    if (!base || base.type !== "atrule") throw new Error("Missing global base layer");
+    const rules: string[] = [];
+    base.walkDecls("cursor", (declaration) => {
+      const rule = declaration.parent;
+      if (rule?.type !== "rule") throw new Error("Cursor must belong to a base rule");
+      // Priority over utility-layer primitive defaults is intentional.
+      expect(declaration.important).toBe(true);
+      rules.push(rule.clone({ nodes: [declaration.clone()] }).toString());
+    });
+    expect(rules).toHaveLength(2);
+    cursorStyle = document.createElement("style");
+    // jsdom does not consistently support cascade layers or Tailwind @apply.
+    // Use the production selectors/declarations unchanged, unwrapped from base.
+    // Full compiled utility/layer precedence and pointer hit-testing need a browser.
+    cursorStyle.textContent = rules.join("\n");
+    document.head.append(cursorStyle);
+  });
+
+  afterEach(() => cursorStyle?.remove());
+
+  function expectCursor(element: Element, cursor: string) {
+    expect(getComputedStyle(element).cursor, element.outerHTML).toBe(cursor);
+  }
+
+  function renderInteractiveKinds() {
+    return render(
+      <div>
+        <button data-testid="native-button">Button</button>
+        <div data-testid="role-button" role="button" tabIndex={0}>Role button</div>
+        <a data-testid="link" href="#cursor">Link</a>
+        <details><summary data-testid="summary">Disclosure</summary></details>
+        <label data-testid="label" htmlFor="cursor-checkbox">Checkbox label</label>
+        <div role="tablist"><div data-testid="tab" role="tab" tabIndex={0}>Tab</div></div>
+        <div role="menu"><div data-testid="menuitem" role="menuitem" tabIndex={0}>Item</div></div>
+        <select data-testid="select" aria-label="Select"><option>One</option></select>
+        <input data-testid="checkbox" id="cursor-checkbox" type="checkbox" />
+        <input data-testid="radio" type="radio" aria-label="Radio" />
+      </div>,
+    );
+  }
+
+  it.each(["aria-disabled", "data-disabled", "disabled"])(
+    "covers every interactive kind and restores enabled cursors after %s clears",
+    (attribute) => {
+      renderInteractiveKinds();
+      for (const id of [
+        "native-button", "role-button", "link", "summary", "label",
+        "tab", "menuitem", "select", "checkbox", "radio",
+      ]) {
+        const control = screen.getByTestId(id);
+        expectCursor(control, "pointer");
+        control.setAttribute(attribute, attribute === "aria-disabled" ? "true" : "");
+        expectCursor(control, "not-allowed");
+        control.removeAttribute(attribute);
+        expectCursor(control, "pointer");
+        control.setAttribute("aria-disabled", "false");
+        expectCursor(control, "pointer");
+      }
+    },
+  );
+
+  it("honors inherited native disabled state and the first-legend exception", () => {
+    render(
+      <fieldset disabled>
+        <legend><button>Legend action</button></legend>
+        <button>Fieldset action</button>
+        <select aria-label="Fieldset select"><option>One</option></select>
+        <input aria-label="Fieldset checkbox" type="checkbox" />
+        <input aria-label="Fieldset radio" type="radio" />
+      </fieldset>,
+    );
+    expectCursor(screen.getByRole("button", { name: "Legend action" }), "pointer");
+    for (const control of [
+      screen.getByRole("button", { name: "Fieldset action" }),
+      screen.getByRole("combobox"),
+      screen.getByRole("checkbox"),
+      screen.getByRole("radio"),
+    ]) {
+      expectCursor(control, "not-allowed");
+    }
+  });
+
+  it("applies to real shared product controls, including disabled primitive buttons", () => {
+    render(
+      <>
+        <FilterToggle pressed={false}>Available filter</FilterToggle>
+        <FilterToggle pressed={false} disabled>Unavailable filter</FilterToggle>
+        <CopyField value="example.test" label="Ready address" />
+        <CopyField value="example.test" label="Disabled address" disabled />
+        <CopyField value="example.test" label="Loading address" loading />
+        <EntityName name="Linked entity" href="/apps" />
+        <PageHeader title="Cursor coverage" subtitle="Additional information about this page is available in this disclosure." />
+        <Segmented label="Segments" value="one" options={[{ value: "one", label: "Segment one" }]} onChange={() => {}} />
+        <CodeBlock code="" language="Empty" />
+        <SettingRow label="Shared checkbox label" htmlFor="shared-checkbox" control={<input id="shared-checkbox" type="checkbox" />} />
+      </>,
+    );
+    for (const control of [
+      screen.getByRole("button", { name: "Available filter" }),
+      screen.getByRole("button", { name: "Copy ready address" }),
+      screen.getByRole("button", { name: "Segment one" }),
+      screen.getByRole("link", { name: "Linked entity" }),
+      screen.getByRole("tab", { name: "Empty" }),
+      screen.getByText("About this page"),
+      screen.getByText("Shared checkbox label"),
+      screen.getByRole("checkbox"),
+    ]) {
+      expectCursor(control, "pointer");
+    }
+    for (const name of [
+      "Unavailable filter", "Copy disabled address", "Copy loading address", "Copy Empty code",
+    ]) {
+      expectCursor(screen.getByRole("button", { name }), "not-allowed");
+    }
+  });
+
+  it("covers real shared menu items with enabled and Radix-disabled markup", () => {
+    render(
+      <DropdownMenu open modal={false}>
+        <DropdownMenuTrigger>Cursor menu</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem>Enabled item</DropdownMenuItem>
+          <DropdownMenuItem disabled>Disabled item</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+    expectCursor(screen.getByRole("button", { name: "Cursor menu" }), "pointer");
+    expectCursor(screen.getByRole("menuitem", { name: "Enabled item" }), "pointer");
+    expectCursor(screen.getByRole("menuitem", { name: "Disabled item" }), "not-allowed");
+  });
+
+  it("does not assign an action cursor to noninteractive content or text inputs", () => {
+    render(
+      <>
+        <a data-testid="no-href">Anchor without a destination</a>
+        <label data-testid="no-for">Unassociated label</label>
+        <p data-testid="paragraph">Plain text</p>
+        <input aria-label="Text entry" type="text" />
+      </>,
+    );
+    for (const element of [
+      screen.getByTestId("no-href"),
+      screen.getByTestId("no-for"),
+      screen.getByTestId("paragraph"),
+      screen.getByRole("textbox"),
+    ]) {
+      expect(getComputedStyle(element).cursor).not.toBe("pointer");
+      expect(getComputedStyle(element).cursor).not.toBe("not-allowed");
+    }
   });
 });
