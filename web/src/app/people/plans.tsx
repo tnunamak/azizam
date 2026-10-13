@@ -6,6 +6,7 @@ import {
   queryKeys,
   type PlanCaps,
   type AccessPlan,
+  type AccessPreviewEntry,
   type AccessPlanDocument,
   type AccessPlanEditorContract,
   type CapabilityId,
@@ -25,6 +26,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { ErrorState } from "@/components/product";
+import { FilterToggle } from "@/components/product/filter-toggle";
+import { StateBadge } from "@/components/product/status-ui";
 
 const errorMessage = (error: unknown) =>
   error instanceof Error
@@ -557,8 +560,8 @@ function PlanForm({
   );
 }
 
-/** Check access (design §3.1): what this plan would decide, without running anything. */
-export function TestAccess({
+/** Check access (design §3.1): everything this plan can and cannot use, without running anything. */
+export function CheckAccess({
   plan,
   close,
   restoreFocus,
@@ -567,21 +570,35 @@ export function TestAccess({
   restoreFocus?: (event: Event) => void;
   close: () => void;
 }) {
-  const [model, setModel] = useState("");
-  const [intent, setIntent] = useState("chat.completions");
-  const mutation = useMutation({
-    mutationFn: () =>
-      api.accessPlans.check({
-        plan: plan.id,
-        request: { model: model.trim() || null, intent: intent.trim() || null },
-      }),
+  const [filter, setFilter] = useState("");
+  const [blockedOnly, setBlockedOnly] = useState(false);
+  const preview = useQuery({
+    queryKey: queryKeys.accessPreview(plan.id),
+    queryFn: () => api.accessPlans.preview(plan.id),
+    staleTime: 0,
   });
+  const entries = preview.data?.entries ?? [];
+  const needle = filter.trim().toLowerCase();
+  const shown = entries.filter(
+    (entry) =>
+      (!blockedOnly || entry.state !== "allowed") &&
+      (!needle ||
+        `${entry.name} ${entry.id} ${entry.group_label}`
+          .toLowerCase()
+          .includes(needle)),
+  );
+  const groups = shown.reduce<{ key: string; label: string; entries: AccessPreviewEntry[] }[]>(
+    (found, entry) => {
+      const group = found.find((item) => item.key === entry.group);
+      if (group) group.entries.push(entry);
+      else found.push({ key: entry.group, label: entry.group_label, entries: [entry] });
+      return found;
+    },
+    [],
+  );
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => !open && !mutation.isPending && close()}
-    >
-      <DialogContent onCloseAutoFocus={restoreFocus}>
+    <Dialog open onOpenChange={(open) => !open && close()}>
+      <DialogContent onCloseAutoFocus={restoreFocus} className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Check access · {plan.name}</DialogTitle>
           <DialogDescription>
@@ -589,69 +606,114 @@ export function TestAccess({
             incurring provider charges.
           </DialogDescription>
         </DialogHeader>
-        <form
-          className="space-y-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            mutation.mutate();
-          }}
-        >
-          <div className="space-y-2">
-            <Label htmlFor="test-model">Model or workflow</Label>
-            <Input
-              id="test-model"
-              value={model}
-              onChange={(e) => {
-                setModel(e.target.value);
-                mutation.reset();
-              }}
-              placeholder="Model name or alias"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="test-intent">Request kind</Label>
-            <Input
-              id="test-intent"
-              value={intent}
-              onChange={(e) => {
-                setIntent(e.target.value);
-                mutation.reset();
-              }}
-              placeholder="chat.completions, image.generate, …"
-            />
-          </div>
-          {mutation.data && (
-            <div role="status" className="rounded-panel border p-4">
-              <p className="font-medium">
-                {mutation.data.decision.allowed
-                  ? "This request would be allowed"
-                  : "This request would be denied"}
-              </p>
-              {mutation.data.decision.reasons.map((reason) => (
-                <p
-                  key={reason}
-                  className="text-muted-foreground mt-2 text-meta break-words"
-                >
-                  {reason}
-                </p>
-              ))}
-            </div>
-          )}
-          {mutation.isError && (
-            <p role="alert" className="text-destructive text-meta">
-              {errorMessage(mutation.error)}
+        {preview.isPending ? (
+          <p role="status" className="text-muted-foreground text-meta">
+            Checking what this plan can use…
+          </p>
+        ) : preview.isError ? (
+          <ErrorState
+            message="We couldn't check this plan. Try again."
+            error={preview.error}
+            onRetry={() => preview.refetch()}
+            retrying={preview.isFetching}
+          />
+        ) : entries.length === 0 ? (
+          <p className="text-muted-foreground text-meta">
+            The gateway has no models or workflows to check yet.
+          </p>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-body font-medium">
+              Can use {preview.data.summary.usable} of {preview.data.summary.total}
             </p>
-          )}
-          <DialogFooter>
-            <Button variant="ghost" type="button" onClick={close}>
-              Close
-            </Button>
-            <Button disabled={mutation.isPending}>
-              {mutation.isPending ? "Checking…" : "Check access"}
-            </Button>
-          </DialogFooter>
-        </form>
+            {entries.length > 6 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  type="search"
+                  aria-label="Filter models and workflows"
+                  placeholder="Filter by name"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  className="min-w-0 flex-1 sm:max-w-72"
+                />
+                <FilterToggle pressed={blockedOnly} onClick={() => setBlockedOnly((on) => !on)}>
+                  Show blocked only
+                </FilterToggle>
+              </div>
+            )}
+            <div
+              role="region"
+              aria-label="What this plan can use"
+              tabIndex={0}
+              className="max-h-[50vh] space-y-4 overflow-y-auto pr-1"
+            >
+              {groups.length === 0 ? (
+                <p className="text-muted-foreground text-meta">Nothing matches.</p>
+              ) : (
+                groups.map((group) => (
+                  <section key={group.key} aria-labelledby={`access-group-${group.key}`}>
+                    <h3 id={`access-group-${group.key}`} className="text-meta font-medium">
+                      {group.label}
+                    </h3>
+                    <ul className="divide-y">
+                      {group.entries.map((entry) => (
+                        <AccessEntryRow key={`${entry.alias}:${entry.id}`} entry={entry} />
+                      ))}
+                    </ul>
+                  </section>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="ghost" type="button" onClick={close}>
+            Close
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function AccessEntryRow({ entry }: { entry: AccessPreviewEntry }) {
+  const blocked = entry.kinds.filter((kind) => !kind.allowed);
+  return (
+    <li className="flex items-start justify-between gap-3 py-2">
+      <div className="min-w-0 space-y-1">
+        <p className="text-body font-medium break-words">{entry.name}</p>
+        {entry.id !== entry.name && (
+          <p className="text-muted-foreground text-meta break-all">{entry.id}</p>
+        )}
+        {entry.kinds.length > 0 && (
+          <p className="text-meta">
+            {entry.kinds.map((kind, index) => (
+              <span key={kind.kind}>
+                {index > 0 && " · "}
+                {kind.label}{" "}
+                <span aria-hidden="true">{kind.allowed ? "✓" : "✗"}</span>
+                <span className="sr-only">{kind.allowed ? "allowed" : "blocked"}</span>
+              </span>
+            ))}
+          </p>
+        )}
+        {blocked.length > 0
+          ? blocked.map((kind) => (
+              <p key={kind.kind} className="text-muted-foreground text-meta break-words">
+                {kind.label}: {kind.reason}
+              </p>
+            ))
+          : entry.reason && (
+              <p className="text-muted-foreground text-meta break-words">{entry.reason}</p>
+            )}
+      </div>
+      {entry.state === "allowed" ? (
+        <StateBadge state="ready" word="Allowed" />
+      ) : entry.state === "partial" ? (
+        <StateBadge state="degraded" word="Partly allowed" />
+      ) : (
+        <StateBadge state="blocked" word="Blocked" />
+      )}
+    </li>
   );
 }

@@ -13103,6 +13103,15 @@ def _capability_for_access(
 def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Capability]:
     """Every capability, with this identity's policy view.
 
+    A restricted category hides its items; they are not listed as unavailable.
+    """
+    return [capability for capability in _viewed_gateway_capabilities(auth_context)
+            if not category_enforcement.is_hidden(capability.policy_reasons)]
+
+
+def _viewed_gateway_capabilities(auth_context: AuthContext) -> list[Capability]:
+    """Every capability with this identity's policy view, hidden ones included.
+
     The catalog before the policy view depends only on the identity's remote
     decision models, not on the identity itself. One request therefore builds
     each distinct catalog once, however many keys and plans Home evaluates.
@@ -13118,11 +13127,8 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
         ("capability-catalog", tuple((c.backend, c.model) for c in remote)),
         lambda: _gateway_catalog_finish(live_registry, base, remote),
     )
-    viewed = (_capability_for_access(capability, auth_context, registry=live_registry)
-              for capability in capabilities)
-    # A restricted category hides its items; they are not listed as unavailable.
-    return [capability for capability in viewed
-            if not category_enforcement.is_hidden(capability.policy_reasons)]
+    return [_capability_for_access(capability, auth_context, registry=live_registry)
+            for capability in capabilities]
 
 
 def _gateway_catalog_base() -> tuple[Mapping[str, Any], list[Capability]]:
@@ -14786,6 +14792,35 @@ def _app_access(app_id: str) -> EffectiveAccess | None:
     return identity_from_access_row(row, key_hash="", name="", person_id=None).access
 
 
+async def _access_preview(access: EffectiveAccess) -> dict[str, Any]:
+    """Every Models page entry with what ``access`` can and cannot use (admin Check access).
+
+    Decided by the discovery policy view (``_capability_for_access``), so the
+    preview cannot drift from what the Models page and requests enforce.
+    """
+    from gateway.access_preview import build_access_preview
+
+    auth_context = AuthContext(identity=AuthIdentity(name="access-preview", key_hash="", access=access))
+
+    def assemble() -> dict[str, Any]:
+        viewed = _viewed_gateway_capabilities(auth_context)
+        permitted = [cap for cap in viewed if cap.policy_available is not False]
+        denied = [cap for cap in viewed if cap.policy_available is False]
+        # A decision always records why it denied. A denial with no reason is the
+        # gateway alias projection (never served; the catalog rebuilds aliases
+        # from their targets), so nothing offers it and a plan cannot be blocked from it.
+        offered = [replace(cap, policy_available=True, policy_reasons=())
+                   for cap in viewed if cap.policy_available is not False or cap.policy_reasons]
+        service_records = _workflow_availability_services(ADMIN_STORE.get_service_registry())
+        return build_access_preview(
+            offered=_models_catalog_from([offered], service_records=service_records),
+            permitted=_models_catalog_from([permitted], service_records=service_records),
+            denied=denied,
+        )
+
+    return await asyncio.to_thread(assemble)
+
+
 class _LiveLiteLLMKeyClient:
     """Admin key client that re-resolves the runtime config on every call.
 
@@ -14829,6 +14864,7 @@ app.include_router(
         ADMIN_STORE,
         auth=ADMIN_AUTH,
         access_resolver=_app_access,
+        access_preview=_access_preview,
         service_probe=probe_backend,
         status_provider=_status_payload_with_availability,
         litellm_key_client=_LITELLM_KEY_CLIENT,
@@ -15189,23 +15225,11 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
                                  workflow_records=GATEWAY_WORKFLOW_REGISTRY.records())
             for group in capability_sets
         ]
-        model_entries = [
-            *_stable_alias_model_entries(),
-            *_build_workflow_model_entries(),
-            *_current_loaded_model_entries(),
-        ]
-        return build_models_catalog(
-            model_metadata=_catalog_model_metadata(model_entries, service_records, projected_sets),
-            alias_views=_gateway_aliases_provider(),
-            capability_sets=projected_sets,
-            model_entries=model_entries,
+        return _models_catalog_from(
+            projected_sets,
             service_records=service_records,
             recent_receipts=activity.get("receipts") or (),
             health_evidence=availability_evidence,
-            workflow_records=[
-                {"id": record.id, "manifest": record.manifest}
-                for record in GATEWAY_WORKFLOW_REGISTRY.records()
-            ],
         )
 
     catalog = await asyncio.to_thread(assemble_catalog)
@@ -15223,6 +15247,34 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
             # Unknown choices remain empty rather than borrowing another model's voices.
             continue
     return catalog
+
+
+def _models_catalog_from(
+    capability_sets: list[list[Capability]],
+    *,
+    service_records: Mapping[str, Any],
+    recent_receipts: Iterable[Mapping[str, Any]] = (),
+    health_evidence: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """The Models page catalog over the given capabilities (shared with Check access)."""
+    model_entries = [
+        *_stable_alias_model_entries(),
+        *_build_workflow_model_entries(),
+        *_current_loaded_model_entries(),
+    ]
+    return build_models_catalog(
+        model_metadata=_catalog_model_metadata(model_entries, service_records, capability_sets),
+        alias_views=_gateway_aliases_provider(),
+        capability_sets=capability_sets,
+        model_entries=model_entries,
+        service_records=service_records,
+        recent_receipts=recent_receipts,
+        health_evidence=health_evidence,
+        workflow_records=[
+            {"id": record.id, "manifest": record.manifest}
+            for record in GATEWAY_WORKFLOW_REGISTRY.records()
+        ],
+    )
 
 
 def _catalog_model_metadata(

@@ -56,7 +56,7 @@ import {
   type Person,
   type Invite,
 } from "./people-api";
-import { PlanEditor, TestAccess } from "./plans";
+import { CheckAccess, PlanEditor } from "./plans";
 
 const peopleKey = ["people", "list"];
 const invitesKey = ["people", "invites"];
@@ -829,7 +829,7 @@ export default function PeoplePage() {
         />
       )}
       {testing && (
-        <TestAccess
+        <CheckAccess
           restoreFocus={restoreFocus}
           plan={testing}
           close={() => setTesting(null)}

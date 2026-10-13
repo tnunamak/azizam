@@ -243,10 +243,8 @@ export async function exerciseOracle(origin: string, manifest: Json, engineOrigi
       await admin.call("POST", "/admin/api/operator/services/test", { data: { base_url: engineOrigin, health_endpoint: "/health" } }),
     );
     record(
-      "POST /admin/api/access/check",
-      await admin.call("POST", "/admin/api/access/check", {
-        data: { plan: plan.id, request: { model: "fast", intent: "chat.completions" } },
-      }),
+      "POST /admin/api/access/preview",
+      await admin.call("POST", "/admin/api/access/preview", { data: { plan: plan.id } }),
     );
 
     // --- Category policy: the first candidate becomes the active snapshot.

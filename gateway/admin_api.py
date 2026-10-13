@@ -264,6 +264,7 @@ class AdminStore(Protocol):
 AdminAuth = Callable[[Request], AdminContext]
 # app_id -> the access an App runs under right now (both plans), or None.
 AccessResolver = Callable[[str], "EffectiveAccess | None"]
+AccessPreview = Callable[["EffectiveAccess"], Awaitable[dict[str, Any]]]
 # async (host, port, path) -> {ok, status, error, url}
 ServiceProbe = Callable[[str, "int | None", str], "Awaitable[Mapping[str, Any]]"]
 StatusProvider = Callable[[], "Awaitable[Mapping[str, Any]]"]
@@ -1652,6 +1653,7 @@ def create_admin_router(
     *,
     auth: AdminAuth,
     access_resolver: AccessResolver | None = None,
+    access_preview: AccessPreview | None = None,
     service_probe: ServiceProbe | None = None,
     status_provider: StatusProvider | None = None,
     litellm_key_client: LiteLLMKeyClient | None = None,
@@ -1664,7 +1666,10 @@ def create_admin_router(
     ``store`` provides persistence. ``auth`` is invoked on every request and
     must raise :class:`AdminAuthError` for unauthenticated or forbidden
     callers. ``access_resolver`` lets Check access evaluate an App exactly as
-    the runtime does (its two plans, from the admin store). ``service_probe`` is
+    the runtime does (its two plans, from the admin store). ``access_preview``
+    is an optional ``async (EffectiveAccess) -> {summary, entries}`` that lists
+    every Models page entry with what that access can and cannot use; it is
+    injected so this router stays decoupled from ``proxy.py``. ``service_probe`` is
     an optional ``async (host, port, path) -> {ok, status, error, url}`` used by
     the backend "Test connection" control; when absent that route reports the
     capability is unavailable rather than failing. ``status_provider`` supplies
@@ -3004,6 +3009,29 @@ def create_admin_router(
             content={"event": _safe_audit_record(record)},
         )
 
+    def _access_for(body: Mapping[str, Any]) -> EffectiveAccess:
+        """The plans a Check access body names: an App's two plans, or one plan on both sides."""
+        if body.get("app"):
+            if access_resolver is None:
+                raise _RouteError(status.HTTP_400_BAD_REQUEST, "access_resolver_unavailable",
+                                  "Checking an app is not available here; pass a plan.")
+            access = access_resolver(str(body["app"]))
+            if access is None:
+                raise _RouteError(status.HTTP_404_NOT_FOUND, "app_not_found", "App not found.")
+            return access
+        if body.get("plan"):
+            from gateway.access_plans import PlanError, plan_from_document
+
+            record = store.get_access_plan(str(body["plan"]))
+            if record is None:
+                raise _RouteError(status.HTTP_404_NOT_FOUND, "access_plan_not_found", "Access plan not found.")
+            try:
+                plan = plan_from_document(record["plan"], plan_id=str(record["id"]))
+            except PlanError as exc:
+                raise _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_access_plan", str(exc)) from exc
+            return EffectiveAccess(person_plan=plan, app_plan=plan)
+        raise _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_request", "Pass an app or a plan.")
+
     @router.post("/access/check")
     async def check_access(request: Request) -> JSONResponse:
         """Check access (design §3.1): the decision an App's request would get.
@@ -3018,32 +3046,45 @@ def create_admin_router(
         try:
             body = await _read_json_body(request)
             policy_request = _build_policy_request(body.get("request"))
-            if body.get("app"):
-                if access_resolver is None:
-                    raise _RouteError(status.HTTP_400_BAD_REQUEST, "access_resolver_unavailable",
-                                      "Checking an app is not available here; pass a plan.")
-                access = access_resolver(str(body["app"]))
-                if access is None:
-                    raise _RouteError(status.HTTP_404_NOT_FOUND, "app_not_found", "App not found.")
-            elif body.get("plan"):
-                from gateway.access_plans import PlanError, plan_from_document
-
-                record = store.get_access_plan(str(body["plan"]))
-                if record is None:
-                    raise _RouteError(status.HTTP_404_NOT_FOUND, "access_plan_not_found", "Access plan not found.")
-                try:
-                    plan = plan_from_document(record["plan"], plan_id=str(record["id"]))
-                except PlanError as exc:
-                    raise _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_access_plan", str(exc)) from exc
-                access = EffectiveAccess(person_plan=plan, app_plan=plan)
-            else:
-                raise _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_request", "Pass an app or a plan.")
+            access = _access_for(body)
         except _RouteError as exc:
             return exc.as_response()
         decision = evaluate(access, policy_request)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"plan_ids": list(access.plan_ids), "decision": _decision_payload(decision)},
+        )
+
+    @router.post("/access/preview")
+    async def preview_access(request: Request) -> JSONResponse:
+        """Everything one plan (or an App's two plans) can and cannot use.
+
+        ``{"plan": plan_id}`` or ``{"app": app_id}``. Returns ``plan_ids``,
+        ``summary`` (``usable`` of ``total`` entries) and ``entries``: one per
+        Models page entry with ``state`` (allowed, partial, blocked), a plain
+        ``reason`` when something is blocked, and ``kinds`` when one entry is
+        allowed for some kinds of work and not others. It makes no model
+        request and costs nothing.
+        """
+        ctx = (await asyncio.to_thread(_guard, request))
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+            access = _access_for(body)
+            if access_preview is None:
+                raise _RouteError(status.HTTP_503_SERVICE_UNAVAILABLE, "access_preview_unavailable",
+                                  "The access preview is not available here.")
+        except _RouteError as exc:
+            return exc.as_response()
+        try:
+            preview = await access_preview(access)
+        except Exception:  # A failed preview must never look like a plan that allows nothing.
+            return _RouteError(status.HTTP_503_SERVICE_UNAVAILABLE, "access_preview_unavailable",
+                               "What this plan can use could not be read.").as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"plan_ids": list(access.plan_ids), **preview},
         )
 
     return router

@@ -350,7 +350,7 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   expect(writes[2]).toEqual({ method: "DELETE", body: null });
 });
 
-test("people lane editing sends the whole plan document, and Check access shows the gateway's decision", async ({
+test("people lane editing sends the whole plan document, and Check access lists what the plan can and cannot use", async ({
   page,
 }) => {
   await open(page, "plans", "seeded");
@@ -365,38 +365,44 @@ test("people lane editing sends the whole plan document, and Check access shows 
   await page.getByLabel("Name", { exact: true }).fill("Family access");
   await page.getByRole("button", { name: "Save access plan" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.route("**/admin/api/access/check", (route) => {
-    expect(route.request().postDataJSON()).toEqual({
-      plan: plan.id,
-      request: { model: "demo-chat", intent: "chat.completions" },
-    });
+  await page.route("**/admin/api/access/preview", (route) => {
+    expect(route.request().postDataJSON()).toEqual({ plan: plan.id });
     return fulfilJson(route, {
-        plan_ids: [plan.id],
-        decision: {
-          decision: "denied",
-          allowed: false,
-          code: "not_in_access_plan",
-          side: "person",
-          sources: [],
-          reasons: ["demo-chat isn't in your access plan."],
-          visibility_level: "basic",
+      plan_ids: [plan.id],
+      summary: { usable: 1, total: 2 },
+      entries: [
+        {
+          id: "demo-chat",
+          name: "Demo chat",
+          alias: false,
+          group: "chat",
+          group_label: "Chat",
+          state: "allowed",
+          reason: null,
+          kinds: [],
         },
-      });
+        {
+          id: "demo-video",
+          name: "Demo video",
+          alias: false,
+          group: "video",
+          group_label: "Video",
+          state: "blocked",
+          reason: "demo-video isn't in your access plan.",
+          kinds: [],
+        },
+      ],
+    });
   });
   await page.getByRole("button", { name: "Check access", exact: true }).click();
-  await page.getByLabel("Model or workflow", { exact: true }).fill("demo-chat");
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Check access", exact: true })
-    .click();
-  await expect(page.getByRole("status")).toContainText(
-    "This request would be denied",
-  );
-  await expect(page.getByRole("status")).toContainText(
-    "demo-chat isn't in your access plan.",
-  );
-  await page.getByLabel("Model or workflow", { exact: true }).fill("different-model");
-  await expect(page.getByText("This request would be denied")).toHaveCount(0);
+  const dialog = page.getByRole("dialog");
+  // The answer is there without typing anything.
+  await expect(dialog.getByText("Can use 1 of 2")).toBeVisible();
+  await expect(dialog.getByRole("textbox")).toHaveCount(0);
+  const blocked = dialog.getByRole("listitem").filter({ hasText: "Demo video" });
+  await expect(blocked).toContainText("Blocked");
+  await expect(blocked).toContainText("demo-video isn't in your access plan.");
+  await expect(dialog.getByRole("listitem").filter({ hasText: "Demo chat" })).toContainText("Allowed");
 });
 
 test("people lane account acceptance reveals a key once, then lands on Home", async ({
