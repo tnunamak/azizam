@@ -68,9 +68,9 @@ def make_project(root: Path, own_tests: str = OWN_TESTS, other_tests: dict[str, 
     return root
 
 
-def engine(tmp_path: Path, project: Path) -> driver.Engine:
+def engine(tmp_path: Path, project: Path, workers: int = 2) -> driver.Engine:
     env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST_")}
-    return driver.Engine(project, tmp_path / "work", workers=2, base_env=env,
+    return driver.Engine(project, tmp_path / "work", workers=workers, base_env=env,
                          pytest_cmd=[sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-p", "xdist"],
                          min_limit=60.0, max_limit=120.0)
 
@@ -78,9 +78,23 @@ def engine(tmp_path: Path, project: Path) -> driver.Engine:
 SPEC = {"path": "calc.py", "own_tests": [r"^tests/test_calc\b"]}
 
 
-def score(tmp_path: Path, project: Path, only: set[str], survivors: dict | None = None) -> dict:
-    run = engine(tmp_path, project)
+def score(tmp_path: Path, project: Path, only: set[str], survivors: dict | None = None, workers: int = 1) -> dict:
+    # One worker: a single mutant needs no pool and no xdist; the xdist baseline runs in the shared session below.
+    run = engine(tmp_path, project, workers)
     base = run.baseline(["calc.py"], [])
+    return run.module("calc", SPEC, base, survivors or {}, only)
+
+
+@pytest.fixture(scope="module")
+def session(tmp_path_factory):
+    """One xdist baseline of the default project, scored by several tests (each restores the slots it uses)."""
+    tmp_path = tmp_path_factory.mktemp("mutate-session")
+    run = engine(tmp_path, make_project(tmp_path / "p"))
+    return run, run.baseline(["calc.py"], [])
+
+
+def score_in(session, only: set[str], survivors: dict | None = None) -> dict:
+    run, base = session
     return run.module("calc", SPEC, base, survivors or {}, only)
 
 
@@ -120,10 +134,8 @@ def test_mutant_ids_name_the_change_and_survive_edits_elsewhere(tmp_path):
     assert [i for i in first if ":6:" not in i] == [i for i in edited if ":6:" not in i]
 
 
-def test_a_planted_survivor_is_reported_and_a_kill_names_its_test(tmp_path):
-    project = make_project(tmp_path / "p")
-
-    report = score(tmp_path, project, {BOUNDARY, RETURN_LOW})
+def test_a_planted_survivor_is_reported_and_a_kill_names_its_test(session):
+    report = score_in(session, {BOUNDARY, RETURN_LOW})
     mutants = by_id(report)
 
     assert mutants[BOUNDARY]["status"] == "survived"
@@ -143,11 +155,10 @@ def test_a_survivor_of_its_own_tests_is_killed_by_the_wide_pass(tmp_path):
     assert mutant["killers"] == ["tests/test_boundary.py::test_label_at_the_boundary"]
 
 
-def test_an_equivalent_classification_leaves_the_score_denominator(tmp_path):
-    project = make_project(tmp_path / "p")
+def test_an_equivalent_classification_leaves_the_score_denominator(session):
     survivors = {CLAMP_LOW: {"id": CLAMP_LOW, "class": "equivalent", "reason": "clamp(low) is low"}}
 
-    report = score(tmp_path, project, {CLAMP_LOW, RETURN_LOW}, survivors)
+    report = score_in(session, {CLAMP_LOW, RETURN_LOW}, survivors)
 
     assert by_id(report)[CLAMP_LOW]["status"] == "equivalent"
     assert report["counts"]["equivalent"] == 1
