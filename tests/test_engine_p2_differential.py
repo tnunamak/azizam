@@ -135,7 +135,9 @@ class SttChunkMigrationTests(unittest.TestCase):
     def test_without_the_row_a_timing_chunk_cannot_be_merged(self) -> None:
         fixture = copy.deepcopy(load_fixture("owner_config.migrated.json"))
         fixture["backends"]["stt-canary"]["transforms"] = []
-        observed = observe(fixture, ("stt",))["stt"]
+        asked = ("stt-canary timing x2", "stt-canary plain x2", "stt timing x2")
+        observed = observe(fixture, ("stt",), stt_cases=frozenset(asked))["stt"]
+        self.assertEqual(set(observed), set(asked))
         self.assertEqual(observed["stt-canary timing x2"]["response"]["status"], 502)
         self.assertEqual(observed["stt-canary plain x2"], _GOLDEN["stt"]["stt-canary plain x2"])
         self.assertEqual(observed["stt timing x2"], _GOLDEN["stt"]["stt timing x2"])

@@ -17,6 +17,12 @@ from gateway.backends.cancellation import CancellationRegistry
 from tests.speech_tier_helpers import RouteCase, SttCase, _multipart
 
 
+# Hang guard, not an oracle: every wait below is on an event the test is about, so the guard
+# only turns a real hang into a failure and never decides pass/fail for a correct run. In-process
+# steps take milliseconds; a stall measured at load 51 was 0.27 s, so 30 s is >100x that.
+_HANG_GUARD_S = 30.0
+
+
 class ControlledStream(httpx.AsyncByteStream):
     def __init__(self, chunks, *, after_chunks=None):
         self.chunks = chunks
@@ -216,7 +222,8 @@ class NativeSttLifecycleTests(SttCase):
             else:
                 read.cancel()
             try:
-                done, _ = await asyncio.wait({read}, timeout=0.5)
+                # hang guard only (see _HANG_GUARD_S); the oracle is that the read finished
+                done, _ = await asyncio.wait({read}, timeout=_HANG_GUARD_S)
                 self.assertIn(read, done, "body read ignored cancellation")
                 with self.assertRaises(asyncio.CancelledError):
                     await read

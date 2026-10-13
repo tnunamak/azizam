@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import ipaddress
 import datetime
+import functools
 import json
 import re
 import tomllib
@@ -42,10 +43,15 @@ EXCEPTIONS = {
 
 
 def categories(raw: bytes) -> set[str]:
-    """Which kinds of private data ``raw`` holds: credential, home-path, lan-address.
+    """Which kinds of private data ``raw`` holds: credential, home-path, lan-address."""
+    return set(_categories(raw))
 
-    Scans the raw text, every decoded JSON string and key (so escapes cannot hide
-    a value), and up to four rounds of percent-decoding.
+
+@functools.lru_cache(maxsize=256)
+def _categories(raw: bytes) -> frozenset[str]:
+    """Scans the raw text, every decoded JSON string and key (so escapes cannot hide
+    a value), and up to four rounds of percent-decoding. A pure function of the bytes,
+    cached because the policy self-tests scan the same unchanged corpus in every run.
     """
     texts = [raw.decode("utf-8", "replace")]
     try:
@@ -66,7 +72,7 @@ def categories(raw: bytes) -> set[str]:
             if decoded == text:
                 break
             text = decoded
-    return found
+    return frozenset(found)
 
 
 def _strings(value, out: list[str]) -> None:
