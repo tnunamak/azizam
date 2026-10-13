@@ -210,3 +210,54 @@ def test_visible_without_a_gate_keeps_discovery():
 def test_visible_fails_closed_when_the_store_is_unreadable(gate):
     gate.write_text("not a database")
     assert not category_enforcement.visible(Identity("sam", "work-app"), _request())
+
+
+# Mutation round 2 (scripts/mutate): pins the survivors of the clean baseline sweep.
+
+def test_the_source_label_in_receipts_is_the_literal_policy_categories(gate):
+    _activate(gate, _snapshot(value="adult"))
+    decision = category_enforcement.apply(Identity("mia", "family-app"), _request(), ALLOW)
+    assert decision.sources == ("profile:test", "policy:categories")
+
+
+def test_a_service_stem_drops_only_the_final_revision_suffix():
+    assert category_enforcement._stem("flux@r1") == "flux"
+    assert category_enforcement._stem("team@box@r7") == "team@box"
+    assert category_enforcement._stem("plain") == "plain"
+
+
+def test_an_unexpected_store_error_denies_and_the_next_check_recovers(gate, monkeypatch):
+    _activate(gate, _snapshot())
+    real = CategoryStore.get_active
+    calls = []
+
+    def flaky(self):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("store exploded")
+        return real(self)
+
+    monkeypatch.setattr(CategoryStore, "get_active", flaky)
+    decision = category_enforcement.apply(Identity("sam", "work-app"), _request(), ALLOW)
+    assert decision.decision == DENIED
+    assert decision.reasons == ("category rules: POLICY_UNAVAILABLE",)
+    assert category_enforcement.apply(Identity("mia", "family-app"), _request(), ALLOW) is ALLOW
+
+
+def _empty_rules(path: Path) -> None:
+    plan = policy.Plan("kids", (), ())
+    _activate(path, policy.PolicyVersion("rules", {}, {"mia": (plan,)}, {"family-app": (plan,)}, {}))
+
+
+def test_a_route_check_with_no_services_names_the_requested_capability(gate):
+    _empty_rules(gate)
+    decision = category_enforcement.apply(
+        Identity("mia", "family-app"), PolicyRequest(protocol="openai.images", intent="image.generate"), ALLOW)
+    assert decision.reasons == ("category rules: NO_GRANT (no service grants image.generate)",)
+
+
+def test_a_route_check_with_no_services_and_no_capability_says_this_request(gate):
+    _empty_rules(gate)
+    decision = category_enforcement.apply(
+        Identity("mia", "family-app"), PolicyRequest(protocol="openai.images"), ALLOW)
+    assert decision.reasons == ("category rules: NO_GRANT (no service grants this request)",)

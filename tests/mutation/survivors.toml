@@ -1,0 +1,709 @@
+# Survivors of scripts/mutate on the core modules (tests/mutation/modules.toml), classified.
+# class: killable (a test can kill it), equivalent (no observable difference), unproductive (not worth a test).
+# A killable entry with killed_by was killed by a manual mutant run because the harness cannot see the line.
+# Entries for code that main rewrote after the sweep (policy.py, runtime_auth.py) were dropped; see lanes/mut-REPORT.md.
+
+[[mutant]]
+id = "gateway/admin_store.py:2089:stmt-delete:conn.execute(\"BEGIN IMMEDIATE\")->pass"
+class = "unproductive"
+reason = "The write-lock statement is observable only with two concurrent writers; a unit test would need real thread races and would be flaky. The gate runs the multi-writer stress lane instead."
+
+[[mutant]]
+id = "gateway/admin_store.py:2139:stmt-delete:conn.execute(\"BEGIN IMMEDIATE\")->pass"
+class = "unproductive"
+reason = "The write-lock statement is observable only with two concurrent writers; a unit test would need real thread races and would be flaky. The gate runs the multi-writer stress lane instead."
+
+[[mutant]]
+id = "gateway/admin_store.py:551:str-const:\"credential\"->\"XXcredentialXX\""
+class = "unproductive"
+reason = "Audit text of a one-time startup migration that revokes legacy try keys."
+
+[[mutant]]
+id = "gateway/admin_store.py:552:str-const:\"reason\"->\"XXreasonXX\""
+class = "unproductive"
+reason = "Audit text of a one-time startup migration that revokes legacy try keys."
+
+[[mutant]]
+id = "gateway/admin_store.py:552:str-const:\"unbound_try_key\"->\"XXunbound_try_keyXX\""
+class = "unproductive"
+reason = "Audit text of a one-time startup migration that revokes legacy try keys."
+
+[[mutant]]
+id = "gateway/admin_store.py:830:str-const:\"\"->\"XXXX\""
+class = "equivalent"
+reason = "A NULL column default or empty lookup string; the sentinel matches no stored value either."
+
+[[mutant]]
+id = "gateway/admin_store.py:924:stmt-delete:conn.rollback()->pass"
+class = "unproductive"
+reason = "The rollback only releases a lock early on an error path; the connection context closes the transaction anyway, so no result differs."
+
+[[mutant]]
+id = "gateway/category_enforcement.py:124:str-const:\"\"->\"XXXX\""
+class = "equivalent"
+reason = "A missing person or app id is replaced by a sentinel; the sentinel only matters if a governed person is literally named XXXX."
+
+[[mutant]]
+id = "gateway/category_enforcement.py:125:str-const:\"\"->\"XXXX\""
+class = "equivalent"
+reason = "A missing person or app id is replaced by a sentinel; the sentinel only matters if a governed person is literally named XXXX."
+
+[[mutant]]
+id = "gateway/category_enforcement.py:64:bool-const:False->True"
+class = "equivalent"
+reason = "The initial _failed flag is redundant: _data_version stays unset until a load succeeds, so the first check reloads either way."
+
+[[mutant]]
+id = "gateway/category_policy.py:18:str-const:\"T\"->\"XXTXX\""
+class = "equivalent"
+reason = "The TypeVar name is not observable."
+
+[[mutant]]
+id = "gateway/category_policy.py:377:str-const:\"person\"->\"XXpersonXX\""
+class = "equivalent"
+reason = "Default identity strings of evaluate(); any non-empty string is equally valid."
+
+[[mutant]]
+id = "gateway/category_policy.py:388:str-const:\"invalid request boundary/capability\"->\"XXinvalid request boundary/capabilityXX\""
+class = "equivalent"
+reason = "The message is raised inside a try block whose handler returns POLICY_UNAVAILABLE for every exception, so the text is never observable."
+
+[[mutant]]
+id = "gateway/category_policy.py:399:str-const:\"invalid completeness flags\"->\"XXinvalid completeness flagsXX\""
+class = "equivalent"
+reason = "The message is raised inside a try block whose handler returns POLICY_UNAVAILABLE for every exception, so the text is never observable."
+
+[[mutant]]
+id = "gateway/category_policy.py:403:str-const:\"unsafe completeness gate\"->\"XXunsafe completeness gateXX\""
+class = "equivalent"
+reason = "The message is raised inside a try block whose handler returns POLICY_UNAVAILABLE for every exception, so the text is never observable."
+
+[[mutant]]
+id = "gateway/category_policy.py:439:str-const:\"missing\"->\"XXmissingXX\""
+class = "equivalent"
+reason = "An op \"missing\" row with no values already matched earlier, so the extra guard never decides."
+
+[[mutant]]
+id = "gateway/category_policy.py:470:stmt-delete:object.__setattr__(self, name, _FrozenMa...e4802a08->pass"
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_category_policy_decisions.py::test_a_policy_version_copies_and_freezes_its_catalogs_so_later_edits_to_"
+
+[[mutant]]
+id = "gateway/category_policy.py:483:bool:or->and"
+class = "equivalent"
+reason = "The identity check is repeated by the next line (person not in people), which returns the same decision."
+
+[[mutant]]
+id = "gateway/category_policy.py:483:bool:or->and#2"
+class = "equivalent"
+reason = "The identity check is repeated by the next line (person not in people), which returns the same decision."
+
+[[mutant]]
+id = "gateway/category_policy.py:483:bool:or->and#3"
+class = "equivalent"
+reason = "The identity check is repeated by the next line (person not in people), which returns the same decision."
+
+[[mutant]]
+id = "gateway/category_policy.py:492:str-const:\"invalid snapshot revision\"->\"XXinvalid snapshot revisionXX\""
+class = "equivalent"
+reason = "The message is raised inside a try block whose handler returns POLICY_UNAVAILABLE for every exception, so the text is never observable."
+
+[[mutant]]
+id = "gateway/category_policy.py:494:str-const:\"service key mismatch\"->\"XXservice key mismatchXX\""
+class = "equivalent"
+reason = "The message is raised inside a try block whose handler returns POLICY_UNAVAILABLE for every exception, so the text is never observable."
+
+[[mutant]]
+id = "gateway/category_policy.py:532:str-const:\"request\"->\"XXrequestXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_category_policy_decisions.py::test_a_reason_change_carries_a_copy_of_the_request_that_changed"
+
+[[mutant]]
+id = "gateway/category_policy.py:578:int-const:1->2"
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_category_policy_decisions.py::test_two_services_whose_ids_share_a_prefix_up_to_an_inner_at_sign_are_di"
+
+[[mutant]]
+id = "gateway/category_policy.py:677:str-const:\"release\"->\"XXreleaseXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_category_policy_decisions.py::test_preview_as_reads_the_retained_bundles_for_every_output_phase"
+
+[[mutant]]
+id = "gateway/category_policy.py:677:str-const:\"retrieval\"->\"XXretrievalXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_category_policy_decisions.py::test_preview_as_reads_the_retained_bundles_for_every_output_phase"
+
+[[mutant]]
+id = "gateway/category_policy.py:683:str-const:\"metadata_complete\"->\"XXmetadata_completeXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_category_policy_decisions.py::test_preview_as_passes_the_metadata_flag_to_the_decision"
+
+[[mutant]]
+id = "gateway/media_jobs.py:1048:stmt-delete:conn.execute(\"BEGIN IMMEDIATE\")->pass"
+class = "unproductive"
+reason = "The write-lock statement is observable only with two concurrent writers; a unit test would need real thread races and would be flaky. The gate runs the multi-writer stress lane instead."
+
+[[mutant]]
+id = "gateway/media_jobs.py:1056:return->None:job.to_dict()->None"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/media_jobs.py:1124:stmt-delete:validate_client_event(event_type, payload)->pass"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/media_jobs.py:1156:cmp:<=-><"
+class = "equivalent"
+reason = "At the boundary value the query returns no rows either way (LIMIT 0 or an empty window)."
+
+[[mutant]]
+id = "gateway/media_jobs.py:1173:stmt-delete:conn.execute(\"BEGIN IMMEDIATE\")->pass"
+class = "unproductive"
+reason = "The write-lock statement is observable only with two concurrent writers; a unit test would need real thread races and would be flaky. The gate runs the multi-writer stress lane instead."
+
+[[mutant]]
+id = "gateway/media_jobs.py:1189:str-const:\"job_id\"->\"XXjob_idXX\""
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/media_jobs.py:368:int-const:0->1"
+class = "unproductive"
+reason = "A time or size constant whose exact value is a policy choice with no stable oracle beyond restating it."
+
+[[mutant]]
+id = "gateway/media_jobs.py:373:stmt-delete:conn.execute(\"BEGIN IMMEDIATE\")->pass"
+class = "unproductive"
+reason = "The write-lock statement is observable only with two concurrent writers; a unit test would need real thread races and would be flaky. The gate runs the multi-writer stress lane instead."
+
+[[mutant]]
+id = "gateway/media_jobs.py:434:stmt-delete:conn.close()->pass"
+class = "unproductive"
+reason = "Connection-close hygiene is observable only through descriptor counts."
+
+[[mutant]]
+id = "gateway/media_jobs.py:496:return->None:record->None"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/media_jobs.py:530:str-const:\"input\"->\"XXinputXX\""
+class = "equivalent"
+reason = "The key name inside the hashed submission facts is part of a one-way digest; any fixed name gives an equally distinguishing digest."
+
+[[mutant]]
+id = "gateway/media_jobs.py:591:bool-const:False->True"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/media_jobs.py:591:bool-const:True->False"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/media_jobs.py:597:bool:or->and"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/media_jobs.py:601:stmt-delete:conn.rollback()->pass"
+class = "unproductive"
+reason = "The rollback only releases a lock early on an error path; the connection context closes the transaction anyway, so no result differs."
+
+[[mutant]]
+id = "gateway/media_jobs.py:614:stmt-delete:conn.rollback()->pass"
+class = "unproductive"
+reason = "The rollback only releases a lock early on an error path; the connection context closes the transaction anyway, so no result differs."
+
+[[mutant]]
+id = "gateway/media_jobs.py:640:stmt-delete:conn.execute(\"BEGIN IMMEDIATE\")->pass"
+class = "unproductive"
+reason = "The write-lock statement is observable only with two concurrent writers; a unit test would need real thread races and would be flaky. The gate runs the multi-writer stress lane instead."
+
+[[mutant]]
+id = "gateway/media_jobs.py:699:str-const:\"\"->\"XXXX\""
+class = "equivalent"
+reason = "A sentinel replaces an empty default that is only compared with startswith or stored as NULL."
+
+[[mutant]]
+id = "gateway/media_jobs.py:715:stmt-delete:conn.execute(\"BEGIN IMMEDIATE\")->pass"
+class = "unproductive"
+reason = "The write-lock statement is observable only with two concurrent writers; a unit test would need real thread races and would be flaky. The gate runs the multi-writer stress lane instead."
+
+[[mutant]]
+id = "gateway/media_jobs.py:729:str-const:\"\"->\"XXXX\""
+class = "equivalent"
+reason = "A sentinel replaces an empty default that is only compared with startswith or stored as NULL."
+
+[[mutant]]
+id = "gateway/media_jobs.py:741:continue->break:continue->break"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/media_jobs.py:743:str-const:\"\"->\"XXXX\""
+class = "equivalent"
+reason = "A sentinel replaces an empty default that is only compared with startswith or stored as NULL."
+
+[[mutant]]
+id = "gateway/media_jobs.py:744:str-const:\"\"->\"XXXX\""
+class = "equivalent"
+reason = "A sentinel replaces an empty default that is only compared with startswith or stored as NULL."
+
+[[mutant]]
+id = "gateway/media_jobs.py:746:str-const:\"app_id\"->\"XXapp_idXX\""
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/media_jobs.py:750:stmt-delete:conn.execute(\"BEGIN IMMEDIATE\")->pass"
+class = "unproductive"
+reason = "The write-lock statement is observable only with two concurrent writers; a unit test would need real thread races and would be flaky. The gate runs the multi-writer stress lane instead."
+
+[[mutant]]
+id = "gateway/media_jobs.py:756:continue->break:continue->break"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/media_jobs.py:762:stmt-delete:conn.rollback()->pass"
+class = "unproductive"
+reason = "The rollback only releases a lock early on an error path; the connection context closes the transaction anyway, so no result differs."
+
+[[mutant]]
+id = "gateway/media_jobs.py:903:continue->break:continue->break"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/media_jobs.py:943:str-const:\"add_assets[*]\"->\"XXadd_assets[*]XX\""
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/public_failure.py:154:str-const:\"ui\"->\"XXuiXX\""
+class = "equivalent"
+reason = "Any audience other than \"api\" renders member copy."
+
+[[mutant]]
+id = "gateway/public_failure.py:170:bool:and->or"
+class = "equivalent"
+reason = "A non-string code or copy_key then reaches dict.fromkeys and renders the unknown copy, which the loop already skips."
+
+[[mutant]]
+id = "gateway/public_failure.py:172:str-const:\"max_chars\"->\"XXmax_charsXX\""
+class = "equivalent"
+reason = "No sentence uses these placeholders, and the diagnostics keep the raw values either way."
+
+[[mutant]]
+id = "gateway/public_failure.py:172:str-const:\"max_images\"->\"XXmax_imagesXX\""
+class = "equivalent"
+reason = "No sentence uses these placeholders, and the diagnostics keep the raw values either way."
+
+[[mutant]]
+id = "gateway/public_failure.py:172:str-const:\"minimum\"->\"XXminimumXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_public_failure_copy.py::test_bounded_numbers_in_details_reach_the_api_sentence_for_a_code"
+
+[[mutant]]
+id = "gateway/public_failure.py:177:str-const:\"api\"->\"XXapiXX\""
+class = "equivalent"
+reason = "A legacy message recognised through the other audience or the bounded-fact regex gives the same copy key."
+
+[[mutant]]
+id = "gateway/public_failure.py:177:str-const:\"ui\"->\"XXuiXX\""
+class = "equivalent"
+reason = "A legacy message recognised through the other audience or the bounded-fact regex gives the same copy key."
+
+[[mutant]]
+id = "gateway/public_failure.py:194:str-const:\"input_string\"->\"XXinput_stringXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_public_failure_copy.py::test_legacy_error_text_is_reduced_to_its_bounded_fact"
+
+[[mutant]]
+id = "gateway/public_failure.py:195:str-const:\"input_integer\"->\"XXinput_integerXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_public_failure_copy.py::test_legacy_error_text_is_reduced_to_its_bounded_fact"
+
+[[mutant]]
+id = "gateway/public_failure.py:196:str-const:\"input_number\"->\"XXinput_numberXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_public_failure_copy.py::test_legacy_error_text_is_reduced_to_its_bounded_fact"
+
+[[mutant]]
+id = "gateway/public_failure.py:197:str-const:\"input_boolean\"->\"XXinput_booleanXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_public_failure_copy.py::test_legacy_error_text_is_reduced_to_its_bounded_fact"
+
+[[mutant]]
+id = "gateway/public_failure.py:198:str-const:\"input_choice\"->\"XXinput_choiceXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_public_failure_copy.py::test_legacy_error_text_is_reduced_to_its_bounded_fact"
+
+[[mutant]]
+id = "gateway/public_failure.py:199:str-const:\"input_required\"->\"XXinput_requiredXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_public_failure_copy.py::test_legacy_error_text_is_reduced_to_its_bounded_fact"
+
+[[mutant]]
+id = "gateway/public_failure.py:200:str-const:\"input_unknown\"->\"XXinput_unknownXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_public_failure_copy.py::test_legacy_error_text_is_reduced_to_its_bounded_fact"
+
+[[mutant]]
+id = "gateway/public_failure.py:223:str-const:\"message\"->\"XXmessageXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_public_failure_copy.py::test_the_original_message_is_recorded_only_when_the_sentence_changed"
+
+[[mutant]]
+id = "gateway/public_failure.py:240:str-const:\"ui\"->\"XXuiXX\""
+class = "equivalent"
+reason = "Any audience other than \"api\" renders member copy."
+
+[[mutant]]
+id = "gateway/receipt_store.py:127:str-const:\"api_key_name\"->\"XXapi_key_nameXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_receipt_store_contract.py::test_an_old_database_without_the_lookup_columns_gains_them_and_keeps_its_ro"
+
+[[mutant]]
+id = "gateway/receipt_store.py:127:str-const:\"job_id\"->\"XXjob_idXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_receipt_store_contract.py::test_an_old_database_without_the_lookup_columns_gains_them_and_keeps_its_ro"
+
+[[mutant]]
+id = "gateway/receipt_store.py:127:str-const:\"parent_request_id\"->\"XXparent_request_idXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_receipt_store_contract.py::test_an_old_database_without_the_lookup_columns_gains_them_and_keeps_its_ro"
+
+[[mutant]]
+id = "gateway/receipt_store.py:127:str-const:\"status\"->\"XXstatusXX\""
+class = "killable"
+reason = "Harness cannot see this line (a constant folded into a tuple, a dataclass field or an import-time statement); a manual mutant run is killed by the test named in killed_by."
+killed_by = "tests/test_receipt_store_contract.py::test_an_old_database_without_the_lookup_columns_gains_them_and_keeps_its_ro"
+
+[[mutant]]
+id = "gateway/receipt_store.py:132:stmt-delete:conn.rollback()->pass"
+class = "unproductive"
+reason = "The rollback only releases a lock early on an error path; the connection context closes the transaction anyway, so no result differs."
+
+[[mutant]]
+id = "gateway/receipt_store.py:171:bool:and->or"
+class = "equivalent"
+reason = "The branch tested is guarded again inside the called function."
+
+[[mutant]]
+id = "gateway/receipt_store.py:179:stmt-delete:conn.close()->pass"
+class = "unproductive"
+reason = "Connection-close hygiene is observable only through descriptor counts."
+
+[[mutant]]
+id = "gateway/receipt_store.py:189:stmt-delete:conn.close()->pass"
+class = "unproductive"
+reason = "Connection-close hygiene is observable only through descriptor counts."
+
+[[mutant]]
+id = "gateway/receipt_store.py:243:continue->break:continue->break"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:268:arith:*->/"
+class = "unproductive"
+reason = "A time or size constant whose exact value is a policy choice with no stable oracle beyond restating it."
+
+[[mutant]]
+id = "gateway/receipt_store.py:268:int-const:1000->1001"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:291:stmt-delete:conn.execute(\"BEGIN IMMEDIATE\")->pass"
+class = "unproductive"
+reason = "The write-lock statement is observable only with two concurrent writers; a unit test would need real thread races and would be flaky. The gate runs the multi-writer stress lane instead."
+
+[[mutant]]
+id = "gateway/receipt_store.py:303:bool-const:False->True"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:303:bool-const:True->False"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:340:str-const:\"attempt_number\"->\"XXattempt_numberXX\""
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:379:str-const:\"source_label\"->\"XXsource_labelXX\""
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:402:arith:*->/"
+class = "unproductive"
+reason = "A time or size constant whose exact value is a policy choice with no stable oracle beyond restating it."
+
+[[mutant]]
+id = "gateway/receipt_store.py:463:str-const:\"receipt.cost\"->\"XXreceipt.costXX\""
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:475:stmt-delete:conn.rollback()->pass"
+class = "unproductive"
+reason = "The rollback only releases a lock early on an error path; the connection context closes the transaction anyway, so no result differs."
+
+[[mutant]]
+id = "gateway/receipt_store.py:479:stmt-delete:conn.rollback()->pass"
+class = "unproductive"
+reason = "The rollback only releases a lock early on an error path; the connection context closes the transaction anyway, so no result differs."
+
+[[mutant]]
+id = "gateway/receipt_store.py:482:stmt-delete:_assert_safe(updated)->pass"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:485:bool-const:False->True"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:485:bool-const:True->False"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:520:int-const:500->501"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:521:int-const:500->501"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:530:continue->break:continue->break"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:590:cmp:<=-><"
+class = "equivalent"
+reason = "At the boundary value the query returns no rows either way (LIMIT 0 or an empty window)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:642:continue->break:continue->break"
+class = "killable"
+reason = "Not killed in round 2; a test needs the fixture named in the report (open item)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:717:cmp:<=-><"
+class = "equivalent"
+reason = "At the boundary value the query returns no rows either way (LIMIT 0 or an empty window)."
+
+[[mutant]]
+id = "gateway/receipt_store.py:720:stmt-delete:conn.execute(\"BEGIN IMMEDIATE\")->pass"
+class = "unproductive"
+reason = "The write-lock statement is observable only with two concurrent writers; a unit test would need real thread races and would be flaky. The gate runs the multi-writer stress lane instead."
+
+[[mutant]]
+id = "gateway/receipt_store.py:734:stmt-delete:conn.execute(\"BEGIN IMMEDIATE\")->pass"
+class = "unproductive"
+reason = "The write-lock statement is observable only with two concurrent writers; a unit test would need real thread races and would be flaky. The gate runs the multi-writer stress lane instead."
+
+[[mutant]]
+id = "gateway/receipt_store.py:757:arith:*->/"
+class = "unproductive"
+reason = "A time or size constant whose exact value is a policy choice with no stable oracle beyond restating it."
+
+[[mutant]]
+id = "gateway/receipt_store.py:766:int-const:0->1"
+class = "unproductive"
+reason = "A time or size constant whose exact value is a policy choice with no stable oracle beyond restating it."
+
+[[mutant]]
+id = "gateway/receipt_store.py:774:int-const:0->1"
+class = "unproductive"
+reason = "A time or size constant whose exact value is a policy choice with no stable oracle beyond restating it."
+
+[[mutant]]
+id = "gateway/receipt_store.py:783:int-const:0->1#2"
+class = "unproductive"
+reason = "A time or size constant whose exact value is a policy choice with no stable oracle beyond restating it."
+
+[[mutant]]
+id = "gateway/runtime_auth.py:151:str-const:\"basic\"->\"XXbasicXX\""
+class = "equivalent"
+reason = "Unknown levels already map to \"client\"; the explicit \"basic\" row is the same value as the default."
+
+[[mutant]]
+id = "gateway/speech_voices.py:112:str-const:\"\"->\"XXXX\""
+class = "equivalent"
+reason = "The default is only read when the target is neither listed nor a spelling, and a legacy alias must name one of the two to be listed."
+
+[[mutant]]
+id = "gateway/transforms.py:439:cmp:<-><="
+class = "equivalent"
+reason = "Clamping a value equal to the bound to the bound is the identity."
+
+[[mutant]]
+id = "gateway/transforms.py:441:cmp:>->>="
+class = "equivalent"
+reason = "Clamping a value equal to the bound to the bound is the identity (or a prefix-length boundary no input reaches)."
+
+[[mutant]]
+id = "gateway/transforms.py:536:str-const:\"request\"->\"XXrequestXX\""
+class = "equivalent"
+reason = "Both the default and its mutant differ from \"final\", the only value compared."
+
+[[mutant]]
+id = "gateway/transforms.py:53:stmt-delete:super().__init__(message)->pass"
+class = "equivalent"
+reason = "BaseException.__new__ already stores the args, so str(error) is unchanged."
+
+[[mutant]]
+id = "gateway/transforms.py:786:str-const:\"reasoning_content\"->\"XXreasoning_contentXX\""
+class = "equivalent"
+reason = "The value read is never used (a reasoning-only delta is valid and left alone)."
+
+[[mutant]]
+id = "gateway/transforms.py:826:arith:+->-#2"
+class = "equivalent"
+reason = "ASCII-fold table range end: the extra or missing character is not a letter of either think tag."
+
+[[mutant]]
+id = "gateway/transforms.py:826:int-const:1->2"
+class = "equivalent"
+reason = "ASCII-fold table range end: the extra or missing character is not a letter of either think tag."
+
+[[mutant]]
+id = "gateway/transforms.py:869:arith:-->+"
+class = "equivalent"
+reason = "The scan starts at length 8 instead of 7 or 9; a full tag is not a proper prefix, so the result is the same."
+
+[[mutant]]
+id = "gateway/transforms.py:885:bool:and->or"
+class = "unproductive"
+reason = "Branch of the stream splitter for a stray or repeated tag inside one frame. The observed behaviour there drops reasoning text (see the report), so a test would pin a quirk."
+
+[[mutant]]
+id = "gateway/transforms.py:885:cmp:<-><="
+class = "equivalent"
+reason = "Clamping a value equal to the bound to the bound is the identity."
+
+[[mutant]]
+id = "gateway/transforms.py:885:int-const:0->1"
+class = "unproductive"
+reason = "A time or size constant whose exact value is a policy choice with no stable oracle beyond restating it."
+
+[[mutant]]
+id = "gateway/transforms.py:888:cmp:<-><="
+class = "equivalent"
+reason = "Clamping a value equal to the bound to the bound is the identity."
+
+[[mutant]]
+id = "gateway/transforms.py:888:cmp:<-><=#2"
+class = "unproductive"
+reason = "Branch of the stream splitter for a stray or repeated tag inside one frame. The observed behaviour there drops reasoning text (see the report), so a test would pin a quirk."
+
+[[mutant]]
+id = "gateway/transforms.py:888:cmp:>=->>"
+class = "unproductive"
+reason = "Branch of the stream splitter for a stray or repeated tag inside one frame. The observed behaviour there drops reasoning text (see the report), so a test would pin a quirk."
+
+[[mutant]]
+id = "gateway/transforms.py:888:int-const:0->1"
+class = "unproductive"
+reason = "A time or size constant whose exact value is a policy choice with no stable oracle beyond restating it."
+
+[[mutant]]
+id = "gateway/transforms.py:888:int-const:0->1#2"
+class = "unproductive"
+reason = "A time or size constant whose exact value is a policy choice with no stable oracle beyond restating it."
+
+[[mutant]]
+id = "gateway/transforms.py:891:continue->break:continue->break"
+class = "unproductive"
+reason = "Branch of the stream splitter for a stray or repeated tag inside one frame. The observed behaviour there drops reasoning text (see the report), so a test would pin a quirk."
+
+[[mutant]]
+id = "gateway/transforms.py:902:str-const:\"\"->\"XXXX\"#2"
+class = "unproductive"
+reason = "Branch of the stream splitter for a stray or repeated tag inside one frame. The observed behaviour there drops reasoning text (see the report), so a test would pin a quirk."
+
+[[mutant]]
+id = "gateway/transforms.py:908:bool-const:False->True"
+class = "unproductive"
+reason = "Branch of the stream splitter for a stray or repeated tag inside one frame. The observed behaviour there drops reasoning text (see the report), so a test would pin a quirk."
+
+[[mutant]]
+id = "gateway/transforms.py:908:return->None:False->None"
+class = "unproductive"
+reason = "Branch of the stream splitter for a stray or repeated tag inside one frame. The observed behaviour there drops reasoning text (see the report), so a test would pin a quirk."
+
+[[mutant]]
+id = "gateway/transforms.py:911:continue->break:continue->break"
+class = "unproductive"
+reason = "Branch of the stream splitter for a stray or repeated tag inside one frame. The observed behaviour there drops reasoning text (see the report), so a test would pin a quirk."
+
+[[mutant]]
+id = "gateway/transforms.py:914:continue->break:continue->break"
+class = "unproductive"
+reason = "Branch of the stream splitter for a stray or repeated tag inside one frame. The observed behaviour there drops reasoning text (see the report), so a test would pin a quirk."
+
+[[mutant]]
+id = "gateway/transforms.py:916:int-const:0->1"
+class = "unproductive"
+reason = "A time or size constant whose exact value is a policy choice with no stable oracle beyond restating it."
+
+[[mutant]]
+id = "gateway/transforms.py:919:continue->break:continue->break"
+class = "unproductive"
+reason = "Branch of the stream splitter for a stray or repeated tag inside one frame. The observed behaviour there drops reasoning text (see the report), so a test would pin a quirk."
+
+[[mutant]]
+id = "gateway/transforms.py:936:continue->break:continue->break"
+class = "unproductive"
+reason = "Branch of the stream splitter for a stray or repeated tag inside one frame. The observed behaviour there drops reasoning text (see the report), so a test would pin a quirk."
+
+[[mutant]]
+id = "gateway/transforms.py:961:cmp:>->>="
+class = "equivalent"
+reason = "Clamping a value equal to the bound to the bound is the identity (or a prefix-length boundary no input reaches)."
+
+[[mutant]]
+id = "gateway/transforms.py:978:int-const:1->2"
+class = "equivalent"
+reason = "ASCII-fold table range end: the extra or missing character is not a letter of either think tag."
+
+[[mutant]]
+id = "gateway/transforms.py:979:str-const:\"\"->\"XXXX\""
+class = "unproductive"
+reason = "Carry-over bookkeeping for SSE lines between reads; the values are covered by the frame-exact tests, the remaining mutants change only a line-ending literal that the byte-exact tests do not reach."
+
