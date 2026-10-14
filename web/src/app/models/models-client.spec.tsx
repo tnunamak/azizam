@@ -10,7 +10,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ModelsClient, { snippetsFor } from "./models-client";
+import ModelsClient, { modelDescription, snippetsFor } from "./models-client";
 import { ViewerContext, type Viewer } from "@/components/shell/session";
 import { accountApi } from "@/lib/account-api";
 import {
@@ -281,23 +281,32 @@ describe("the list of model names", () => {
   });
 
   it("shows a description once per task, not on rows that share it", async () => {
+    const custom = 'The alias resolves to upstream/backend-v1; see https://example.test/backend and copy "alias".';
+    expect(modelDescription(custom)).toBe(custom);
+    expect(modelDescription(null)).toBeNull();
     renderModels(
       catalog([
         row({ id: "alpha", description: "Shared by two rows." }),
         row({ id: "beta", description: "Shared by two rows." }),
-        row({ id: "gamma", description: "Only gamma says this." }),
+        row({ id: "gamma", description: "Speech synthesis when a backend is configured." }),
         task("draw", "image", { description: "The only image name." }),
       ]),
     );
     await screen.findByRole("button", { name: "alpha" });
     expect(screen.queryByText("Shared by two rows.")).toBeNull();
     // On one line of facts a sentence drops its full stop.
-    expect(rowHas("gamma", "Only gamma says this")).toBe(true);
+    expect(rowHas("gamma", "Read text aloud when a speech service is connected")).toBe(true);
     // A task's only name needs no description beside the task's own sentence.
     expect(screen.queryByText("The only image name.")).toBeNull();
     // Details still carries the description.
     fireEvent.click(nameButton("alpha"));
     expect(dialog().getByText("Shared by two rows.")).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.change(search(), { target: { value: "speech service" } });
+    expect(nameButton("gamma")).toBeVisible();
+    fireEvent.click(nameButton("gamma"));
+    expect(dialog().getByText("Read text aloud when a speech service is connected.")).toBeVisible();
+    expect(dialog().queryByText(/backend/)).toBeNull();
   });
 
   it("adds a model's own name or provider to the second line only when it adds something", async () => {
