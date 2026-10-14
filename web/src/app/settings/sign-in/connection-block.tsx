@@ -171,7 +171,7 @@ export function ConnectionBlock({
             <Field label="Name" help={nameHelp(label)}>
               <Input
                 autoComplete="off"
-                placeholder={label.host || "For example Keycloak or Family account"}
+                placeholder={label.host || "For example Family account or Home login"}
                 value={connection.name}
                 disabled={readOnly}
                 onChange={(e) => onChange({ name: e.target.value })}

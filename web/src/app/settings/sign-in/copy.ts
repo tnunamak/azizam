@@ -64,7 +64,7 @@ export const rowLabel = (p: ProviderLabel) => p.name || "Your provider";
 /** Starts a sentence. A host does not, so it is rephrased. */
 export const subject = (p: ProviderLabel) =>
   p.typed || (p.host ? `Sign-in with ${p.host}` : "Your provider");
-/** Names the sign-in way itself: "Keycloak sign-in", "Sign-in with id.example.com". */
+/** Names the sign-in way itself: "Family account sign-in", "Sign-in with id.example.com". */
 export const signInOf = (p: ProviderLabel) =>
   p.typed
     ? `${p.typed} sign-in`
