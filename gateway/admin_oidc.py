@@ -63,6 +63,7 @@ __all__ = [
     "OIDCConfigError",
     "PKCEPair",
     "SessionError",
+    "SignInRefused",
     "StateRecord",
     "authorization_url",
     "admin_role_from_oidc_claims",
@@ -97,6 +98,15 @@ class OIDCConfigError(ValueError):
 
 class IDTokenClaimsError(ValueError):
     """Raised when an ID-token claims dict fails validation."""
+
+
+class SignInRefused(IDTokenClaimsError):
+    """A signed, current token for a person the instance does not admit.
+
+    Only the checks on who the person is raise this (unverified email, email
+    not allowed). The caller may end that person's identity-provider access,
+    which a malformed or replayed token must never be able to do.
+    """
 
 
 class SessionError(ValueError):
@@ -741,13 +751,13 @@ def validate_id_token_claims(
 
     email_verified = claims.get("email_verified")
     if email_verified is False:
-        raise IDTokenClaimsError("email not verified by IdP")
+        raise SignInRefused("email not verified by IdP")
 
     if (
         not _email_allowed(email, config)
         and admin_role_from_oidc_claims(claims, config=config) != AdminRole.ADMIN
     ):
-        raise IDTokenClaimsError("email not in allow-list")
+        raise SignInRefused("email not in allow-list")
 
     return claims
 
@@ -1027,11 +1037,14 @@ def bootstrap_admin_role(
 ) -> str:
     """Seed only the first configured, verified owner under the trusted issuer.
 
-    Persisted grants are presence-only here. Returning users recover their
-    grants by immutable (issuer, subject) at the caller, never by email.
-    Once any grant exists, an email cannot create or transfer authorization.
+    ``existing_roles`` maps grant ids to role names. Persisted grants are
+    presence-only here. Returning users recover their grants by immutable
+    (issuer, subject) at the caller, never by email. Once an owner grant exists
+    (even a revoked one), an email cannot create or transfer ownership. An
+    administrator grant does not count: a group administrator who signs in
+    first must not lock the listed owner out.
     """
-    if existing_roles or issuer != config.issuer or email_verified is not True:
+    if AdminRole.OWNER in set(existing_roles.values()) or issuer != config.issuer or email_verified is not True:
         return AdminRole.NONE
     if email.strip().lower() in config.admin_emails:
         return AdminRole.OWNER

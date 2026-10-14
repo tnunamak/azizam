@@ -86,6 +86,10 @@ class AdminContext:
         return self.actor_id or self.subject
 
 
+class AdminKeyNameTaken(ValueError):
+    """The name of a new admin key is already in use."""
+
+
 class AdminAuthError(Exception):
     """Raised by an injected auth callable to deny a request.
 
@@ -1126,6 +1130,10 @@ def _auth_error_response(exc: AdminAuthError) -> JSONResponse:
     )
 
 
+def _owner_required(exc: Exception) -> JSONResponse:
+    return _RouteError(status.HTTP_403_FORBIDDEN, "owner_required", str(exc)).as_response()
+
+
 def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResponse:
     """Resolve admin context, returning a JSONResponse on failure."""
     try:
@@ -1857,6 +1865,8 @@ def create_admin_router(
             ).as_response()
         try:
             record = store.create_app(data=body, actor=ctx)
+        except PermissionError as exc:
+            return _owner_required(exc)
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
@@ -1886,6 +1896,8 @@ def create_admin_router(
                 ).as_response()
         try:
             record = store.update_app(app_id=app_id, data=body, actor=ctx)
+        except PermissionError as exc:
+            return _owner_required(exc)
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
@@ -1907,7 +1919,12 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        record = store.disable_app(app_id=app_id, actor=ctx)
+        try:
+            record = store.disable_app(app_id=app_id, actor=ctx)
+        except PermissionError as exc:
+            return _RouteError(
+                status.HTTP_403_FORBIDDEN, "app_outranks_you", str(exc),
+            ).as_response()
         if record is None:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND,
@@ -2028,11 +2045,21 @@ def create_admin_router(
             return _RouteError(status.HTTP_409_CONFLICT, "access_plan_name_conflict", msg).as_response()
         return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_access_plan", msg).as_response()
 
+    def _owner_only(
+        ctx: AdminContext, message: str = "Only the owner can change access plans.",
+    ) -> JSONResponse | None:
+        """Plans bound what every person may do, so only the owner writes them."""
+        if "owner" in ctx.roles:
+            return None
+        return _RouteError(status.HTTP_403_FORBIDDEN, "owner_required", message).as_response()
+
     @router.post("/access-plans")
     async def create_access_plan(request: Request) -> JSONResponse:
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        if (denied := _owner_only(ctx)) is not None:
+            return denied
         try:
             body = await _read_json_body(request)
             record = store.create_access_plan(data=body, actor=ctx)
@@ -2061,6 +2088,8 @@ def create_admin_router(
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        if (denied := _owner_only(ctx)) is not None:
+            return denied
         try:
             body = await _read_json_body(request)
             record = store.update_access_plan(plan_id=plan_id, data=body, actor=ctx)
@@ -2079,6 +2108,8 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
+        if (denied := _owner_only(ctx)) is not None:
+            return denied
         try:
             record = store.delete_access_plan(plan_id=plan_id, actor=ctx)
         except ValueError as exc:
@@ -2106,6 +2137,8 @@ def create_admin_router(
             ).as_response()
         try:
             record = store.create_credential(app_id=app_id, data=body, actor=ctx)
+        except PermissionError as exc:
+            return _owner_required(exc)
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
@@ -2155,6 +2188,10 @@ def create_admin_router(
             return _RouteError(
                 status.HTTP_403_FORBIDDEN, "admin_role_forbidden", str(exc)
             ).as_response()
+        except AdminKeyNameTaken as exc:
+            return _RouteError(
+                status.HTTP_409_CONFLICT, "admin_key_name_taken", str(exc)
+            ).as_response()
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
@@ -2190,9 +2227,14 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        record = store.revoke_credential(
-            credential_id=credential_id, actor=ctx
-        )
+        try:
+            record = store.revoke_credential(
+                credential_id=credential_id, actor=ctx
+            )
+        except PermissionError as exc:
+            return _RouteError(
+                status.HTTP_403_FORBIDDEN, "credential_outranks_you", str(exc),
+            ).as_response()
         if record is None:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND,
@@ -2211,9 +2253,14 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        record = store.revoke_credential(
-            credential_id=credential_id, actor=ctx
-        )
+        try:
+            record = store.revoke_credential(
+                credential_id=credential_id, actor=ctx
+            )
+        except PermissionError as exc:
+            return _RouteError(
+                status.HTTP_403_FORBIDDEN, "credential_outranks_you", str(exc),
+            ).as_response()
         if record is None:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND,
@@ -2654,6 +2701,9 @@ def create_admin_router(
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        # A virtual key spends the owner's provider money; an administrator may not.
+        if (denied := _owner_only(ctx, "Only the owner can create provider keys.")) is not None:
+            return denied
         client = await asyncio.to_thread(_key_client_or_unavailable)
         if isinstance(client, JSONResponse):
             return client
@@ -2682,6 +2732,9 @@ def create_admin_router(
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        # Deleting a virtual key can cut off the owner's own Apps.
+        if (denied := _owner_only(ctx, "Only the owner can delete provider keys.")) is not None:
+            return denied
         client = await asyncio.to_thread(_key_client_or_unavailable)
         if isinstance(client, JSONResponse):
             return client

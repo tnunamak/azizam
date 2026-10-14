@@ -302,6 +302,9 @@ Refusals use the OpenAI error shape with `type: "access_error"` and a `code`:
 none), `not_in_access_plan`, `cannot_start_model`, `blocked_by_category`,
 `not_reviewed`, `cap_reached`.
 
+Only the owner can mint, delete or edit access plans and provider-spend keys;
+an administrator who tries gets 403 `owner_required`.
+
 ## Downstream Credential Mapping
 
 By default, App API keys map to the global downstream provider credentials

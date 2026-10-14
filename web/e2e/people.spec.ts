@@ -885,7 +885,10 @@ test("administrators cannot invite or manage people but can view access plans", 
     page.getByRole("button", { name: /Actions for invitation/ }),
   ).toHaveCount(0);
   await page.getByRole("tab", { name: "Access plans", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Edit plan" })).toBeVisible();
+  await expect(
+    page.getByText("Only the owner can change access plans.", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit plan" })).toHaveCount(0);
 });
 
 test("an invalid plan document stays editable with an inline error", async ({

@@ -150,14 +150,7 @@ def _user_from_session(session: AdminSession, *, path: Path) -> dict[str, Any]:
 
 
 def _live_role_for_user(user_id: str, *, path: Path) -> str:
-    roles = {
-        str(role.get("role") or "")
-        for role in admin_store.list_admin_roles(
-            subject_kind="user",
-            subject_id=user_id,
-            path=path,
-        )
-    }
+    roles = admin_store.effective_admin_roles("user", user_id, path=path)
     for role in ("owner", "superadmin", "admin"):
         if role in roles:
             return role
@@ -299,12 +292,7 @@ def build_user_activity_snapshot(
 
     safe_limit = max(1, min(int(limit or USER_ACTIVITY_DEFAULT_LIMIT), USER_ACTIVITY_MAX_LIMIT))
     owned = _owned_app_ids(str(user["id"]), path=path)
-    owner_roles = {
-        str(role.get("role") or "")
-        for role in admin_store.list_admin_roles(
-            subject_kind="user", subject_id=str(user["id"]), path=path
-        )
-    }
+    owner_roles = admin_store.effective_admin_roles("user", str(user["id"]), path=path)
     owner = bool(owner_roles & {"owner", "superadmin"})
     receipts = receipt_store.recent(
         limit=safe_limit,
@@ -351,12 +339,7 @@ def get_user_receipt(
         raise not_found
     receipt_app_id = owner_check.get("app_id")
     owned_app_ids = set(_owned_app_ids(str(user["id"]), path=path))
-    owner_roles = {
-        str(role.get("role") or "")
-        for role in admin_store.list_admin_roles(
-            subject_kind="user", subject_id=str(user["id"]), path=path
-        )
-    }
+    owner_roles = admin_store.effective_admin_roles("user", str(user["id"]), path=path)
     owner = bool(owner_roles & {"owner", "superadmin"})
     if not owner and (not receipt_app_id or receipt_app_id not in owned_app_ids):
         raise not_found

@@ -2625,7 +2625,7 @@ class AdminAccessPlanRouteTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _plan(self, **changes) -> dict:
-        response = self.client.post("/admin/api/access-plans", json={**self.PLAN, **changes}, headers=_auth())
+        response = self.client.post("/admin/api/access-plans", json={**self.PLAN, **changes}, headers=_auth("owner"))
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()["access_plan"]
 
@@ -2633,31 +2633,31 @@ class AdminAccessPlanRouteTests(unittest.TestCase):
         return self.client.post(
             "/admin/api/apps",
             json={"name": "client", "owner_user_id": self.owner["id"], "access_plan": access_plan, **body},
-            headers=_auth(),
+            headers=_auth("owner"),
         )
 
     def test_plan_is_created_with_a_server_assigned_id_and_listed(self) -> None:
         plan = self._plan()
         self.assertTrue(plan["id"].startswith("plan_"))
-        listed = self.client.get("/admin/api/access-plans", headers=_auth()).json()["access_plans"]
+        listed = self.client.get("/admin/api/access-plans", headers=_auth("owner")).json()["access_plans"]
         self.assertEqual([row["name"] for row in listed], ["Family"])
 
     def test_plan_with_a_missing_field_is_refused_and_names_it(self) -> None:
         body = {key: value for key, value in self.PLAN.items() if key != "receipt_detail"}
-        response = self.client.post("/admin/api/access-plans", json=body, headers=_auth())
+        response = self.client.post("/admin/api/access-plans", json=body, headers=_auth("owner"))
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "invalid_access_plan")
         self.assertIn("receipt_detail", response.json()["error"]["message"])
 
     def test_duplicate_plan_name_is_a_conflict(self) -> None:
         self._plan()
-        response = self.client.post("/admin/api/access-plans", json=self.PLAN, headers=_auth())
+        response = self.client.post("/admin/api/access-plans", json=self.PLAN, headers=_auth("owner"))
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"]["code"], "access_plan_name_conflict")
 
     def test_app_without_an_access_plan_is_refused(self) -> None:
         response = self.client.post(
-            "/admin/api/apps", json={"name": "client", "owner_user_id": self.owner["id"]}, headers=_auth())
+            "/admin/api/apps", json={"name": "client", "owner_user_id": self.owner["id"]}, headers=_auth("owner"))
         self.assertEqual(response.status_code, 400)
         self.assertIn("access_plan", response.json()["error"]["message"])
         self.assertEqual(admin_store.list_apps(path=self.db), [])
@@ -2670,26 +2670,26 @@ class AdminAccessPlanRouteTests(unittest.TestCase):
     def test_app_assignment_can_be_changed_but_never_cleared(self) -> None:
         plan = self._plan()
         app_id = self._app("person").json()["app"]["id"]
-        moved = self.client.patch(f"/admin/api/apps/{app_id}", json={"access_plan": plan["id"]}, headers=_auth())
+        moved = self.client.patch(f"/admin/api/apps/{app_id}", json={"access_plan": plan["id"]}, headers=_auth("owner"))
         self.assertEqual(moved.status_code, 200, moved.text)
         self.assertEqual(admin_store.get_app(app_id, path=self.db)["access_plan"], plan["id"])
         for cleared in ("", None):
             response = self.client.patch(
-                f"/admin/api/apps/{app_id}", json={"access_plan": cleared}, headers=_auth())
+                f"/admin/api/apps/{app_id}", json={"access_plan": cleared}, headers=_auth("owner"))
             self.assertEqual(response.status_code, 400)
         self.assertEqual(admin_store.get_app(app_id, path=self.db)["access_plan"], plan["id"])
 
     def test_plan_in_use_cannot_be_deleted_until_its_apps_move(self) -> None:
         plan = self._plan()
         app_id = self._app(plan["id"]).json()["app"]["id"]
-        refused = self.client.delete(f"/admin/api/access-plans/{plan['id']}", headers=_auth())
+        refused = self.client.delete(f"/admin/api/access-plans/{plan['id']}", headers=_auth("owner"))
         self.assertEqual(refused.status_code, 409)
         self.assertEqual(refused.json()["error"]["code"], "access_plan_in_use")
         self.assertIn("client", refused.json()["error"]["message"])
-        self.client.patch(f"/admin/api/apps/{app_id}", json={"access_plan": "person"}, headers=_auth())
-        deleted = self.client.delete(f"/admin/api/access-plans/{plan['id']}", headers=_auth())
+        self.client.patch(f"/admin/api/apps/{app_id}", json={"access_plan": "person"}, headers=_auth("owner"))
+        deleted = self.client.delete(f"/admin/api/access-plans/{plan['id']}", headers=_auth("owner"))
         self.assertEqual(deleted.status_code, 200, deleted.text)
-        self.assertEqual(self.client.get("/admin/api/access-plans", headers=_auth()).json()["access_plans"], [])
+        self.assertEqual(self.client.get("/admin/api/access-plans", headers=_auth("owner")).json()["access_plans"], [])
 
     def test_plan_routes_require_an_admin(self) -> None:
         for method, path in (("get", "/admin/api/access-plans"), ("post", "/admin/api/access-plans"),

@@ -642,10 +642,16 @@ export default function PeoplePage() {
               Access plans control capabilities, models and remote access. Save
               a plan, then test a request before assigning it.
             </p>
-            <Button variant="outline" onClick={() => setEditor("new")}>
-              <Plus />
-              New access plan
-            </Button>
+            {owner ? (
+              <Button variant="outline" onClick={() => setEditor("new")}>
+                <Plus />
+                New access plan
+              </Button>
+            ) : (
+              <p className="text-muted-foreground text-meta">
+                Only the owner can change access plans.
+              </p>
+            )}
           </div>
           {plansIsPending ? (
             <Loading label="Loading access plans" />
@@ -657,12 +663,18 @@ export default function PeoplePage() {
           ) : !plansData.length ? (
             <EmptyState
               icon={ShieldCheck}
-              title="Create your first access plan"
-              description="Choose access before inviting people."
+              title={owner ? "Create your first access plan" : "No access plans yet"}
+              description={
+                owner
+                  ? "Choose access before inviting people."
+                  : "The owner creates access plans."
+              }
               action={
-                <Button onClick={() => setEditor("new")}>
-                  Create an access plan
-                </Button>
+                owner ? (
+                  <Button onClick={() => setEditor("new")}>
+                    Create an access plan
+                  </Button>
+                ) : undefined
               }
             />
           ) : (
@@ -681,13 +693,15 @@ export default function PeoplePage() {
                     .join(" · ")}
                   trailing={
                     <>
-                      <Button
-                        variant="outline"
-                        className="max-sm:hidden"
-                        onClick={() => setEditor(plan)}
-                      >
-                        Edit plan
-                      </Button>
+                      {owner && (
+                        <Button
+                          variant="outline"
+                          className="max-sm:hidden"
+                          onClick={() => setEditor(plan)}
+                        >
+                          Edit plan
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         className="max-sm:hidden"
@@ -706,28 +720,34 @@ export default function PeoplePage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onSelect={() => setEditor(plan)}>
-                            Edit access plan
-                          </DropdownMenuItem>
+                          {owner && (
+                            <DropdownMenuItem onSelect={() => setEditor(plan)}>
+                              Edit access plan
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem onSelect={() => setTesting(plan)}>
                             Check access
                           </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onSelect={() =>
-                              setConfirmation({
-                                title: "Delete access plan?",
-                                confirmLabel: "Delete access plan",
-                                name: plan.name,
-                                description:
-                                  "The gateway blocks deletion while this plan is in use. Move people, apps and invitations to another plan first.",
-                                run: () => api.accessPlans.delete(plan.id),
-                              })
-                            }
-                          >
-                            Delete access plan
-                          </DropdownMenuItem>
+                          {owner && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                variant="destructive"
+                                onSelect={() =>
+                                  setConfirmation({
+                                    title: "Delete access plan?",
+                                    confirmLabel: "Delete access plan",
+                                    name: plan.name,
+                                    description:
+                                      "The gateway blocks deletion while this plan is in use. Move people, apps and invitations to another plan first.",
+                                    run: () => api.accessPlans.delete(plan.id),
+                                  })
+                                }
+                              >
+                                Delete access plan
+                              </DropdownMenuItem>
+                            </>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </>

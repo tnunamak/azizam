@@ -17,15 +17,16 @@ import functools
 import secrets
 import json
 import time
+import sqlite3
 from pathlib import Path
 from collections.abc import Callable
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from fastapi import Request, status
 
 from gateway import admin_store, extension_packages, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
-from gateway.admin_api import AdminAuthError, AdminContext, access_model_summary
+from gateway.admin_api import AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
     CookieConfig,
     OIDCConfigError,
@@ -48,6 +49,7 @@ APP_KEY_PREFIX = "opk_"
 ADMIN_KEY_PREFIX = "oak_"
 ADMIN_CONTROL_ROLES = frozenset({"owner", "admin", "superadmin"})
 ADMIN_KEY_CREATABLE_ROLES = frozenset({"owner", "admin"})
+_ROLE_RANK = {"admin": 1, "superadmin": 2, "owner": 3}
 SERVICE_ACCOUNT_SESSION_PREFIX = "service_account:"
 LOCAL_ADMIN_KEY_ISSUER = "local-admin-key"
 SERVICE_AVAILABILITY_OVERRIDES_KEY = "service_availability_overrides"
@@ -343,6 +345,21 @@ class AdminSQLiteStore:
         record = admin_store.get_app(app_id, path=self.path)
         return self._enrich_app(record) if record is not None else None
 
+    @staticmethod
+    def _require_owner_or_accountable(actor: AdminContext, accountable_user_id: str) -> None:
+        """Only the owner may act for an App that someone else answers for.
+
+        An administrator is not the owner: an App accountable to another person
+        spends as that person, so an administrator may only create, re-plan or
+        key an App that answers to themselves. A key has no person of its own
+        and therefore gets no exception.
+        """
+        if "owner" in actor.roles:
+            return
+        if actor.actor_kind == "user" and accountable_user_id and actor.audit_actor_id == accountable_user_id:
+            return
+        raise PermissionError("Only the owner can do this for an App that someone else answers for.")
+
     def create_app(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
@@ -350,7 +367,9 @@ class AdminSQLiteStore:
 
         ``access_plan`` is required: a plan id, or ``"person"`` for "Same as
         its person". The accountable person defaults to the signed-in person,
-        or, for an admin key, to the gateway owner.
+        or, for an owner key, to the gateway owner. Only the owner may name
+        someone else; an administrator's App always answers to the
+        administrator, so its spend stays inside the administrator's own plan.
         """
         name = str(data.get("name") or "").strip()
         if not name:
@@ -365,6 +384,7 @@ class AdminSQLiteStore:
             raise ValueError(
                 "an app needs a person who answers for it: pass owner_user_id, or create the owner account first"
             )
+        self._require_owner_or_accountable(actor, owner_user_id)
         if admin_store.get_user(owner_user_id, path=self.path) is None:
             raise ValueError(f"user {owner_user_id!r} not found")
         access_plan = str(data.get("access_plan") or "").strip()
@@ -392,8 +412,11 @@ class AdminSQLiteStore:
     def update_app(
         self, *, app_id: str, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any] | None:
-        if admin_store.get_app(app_id, path=self.path) is None:
+        before = admin_store.get_app(app_id, path=self.path)
+        if before is None:
             return None
+        if "access_plan" in data or "owner_user_id" in data:
+            self._require_owner_or_accountable(actor, str(before.get("owner_user_id") or ""))
 
         name = None
         if "name" in data:
@@ -430,6 +453,10 @@ class AdminSQLiteStore:
         before = admin_store.get_app(app_id, path=self.path)
         if before is None:
             return None
+        self._require_actor_not_outranked(
+            actor, self._app_holder_roles(before),
+            "This App answers to the owner or to someone with more access than you, "
+            "so only a person with at least their access can disable it.")
         record = admin_store.disable_app(app_id, path=self.path)
         admin_store.record_audit(
             "app.disable",
@@ -579,6 +606,7 @@ class AdminSQLiteStore:
         app = admin_store.get_app(app_id, path=self.path)
         if app is None:
             raise ValueError(f"app {app_id!r} not found")
+        self._require_owner_or_accountable(actor, str(app.get("owner_user_id") or ""))
         api_key = generate_app_api_key()
         record = admin_store.create_credential_hash(
             subject_kind="app",
@@ -616,10 +644,22 @@ class AdminSQLiteStore:
             raise ValueError("role must be one of: owner, admin")
         if "owner" not in actor.roles and role not in actor.roles:
             raise PermissionError("owner role required to mint owner keys")
-        service_account = admin_store.ensure_service_account(
-            name,
-            allowed_roles=None if "owner" in actor.roles else actor.roles,
-            description="Owner for an admin automation key created from the dashboard.",
+        # A key always gets a service account of its own. Reusing one by name
+        # would let a caller take over a key that someone else minted.
+        try:
+            service_account = admin_store.create_service_account(
+                name, description="Owner for an admin automation key created from the dashboard.",
+                path=self.path,
+            )
+        except sqlite3.IntegrityError:
+            raise AdminKeyNameTaken(f"a key named {name!r} already exists; choose another name") from None
+        minter = f"{actor.actor_kind}:{actor.audit_actor_id}"
+        assignment = admin_store.assign_admin_role(
+            role=role,
+            subject_kind="service_account",
+            subject_id=service_account["id"],
+            granted_by=actor.audit_actor_id,
+            actor=actor,
             path=self.path,
         )
         api_key = generate_admin_api_key()
@@ -629,14 +669,7 @@ class AdminSQLiteStore:
             hash=hash_api_key(api_key),
             prefix=_key_prefix(api_key),
             display_name=f"{name} admin automation key",
-            path=self.path,
-        )
-        assignment = admin_store.assign_admin_role(
-            role=role,
-            subject_kind="service_account",
-            subject_id=service_account["id"],
-            granted_by=actor.subject,
-            actor=actor,
+            created_by=minter,
             path=self.path,
         )
         admin_store.record_audit(
@@ -1213,12 +1246,49 @@ class AdminSQLiteStore:
             "revision": admin_store.operator_setting_revision(record),
         }
 
+    @staticmethod
+    def _role_rank(roles: Iterable[str]) -> int:
+        return max((_ROLE_RANK.get(str(role), 0) for role in roles), default=0)
+
+    def _require_actor_not_outranked(
+        self, actor: AdminContext, holder_roles: Iterable[str], message: str,
+    ) -> None:
+        """Refuse when whoever holds this has more control-plane power than the actor.
+
+        An administrator may cut off keys and Apps of members and of other
+        administrators. They may not cut off the owner, or a holder of a role
+        above theirs: that would let them lock out the person who granted
+        their own power.
+        """
+        if self._role_rank(holder_roles) > self._role_rank(actor.roles):
+            raise PermissionError(message)
+
+    def _app_holder_roles(self, app: Mapping[str, Any] | None) -> frozenset[str]:
+        """Control-plane roles of the person an App answers to."""
+        if app is None:
+            return frozenset()
+        if app.get("owner_user_id"):
+            return admin_store.effective_admin_roles(
+                "user", str(app["owner_user_id"]), path=self.path)
+        return frozenset()
+
     def revoke_credential(
         self, *, credential_id: str, actor: AdminContext
     ) -> dict[str, Any] | None:
         before = admin_store.get_credential(credential_id, path=self.path)
         if before is None:
             return None
+        if before.get("subject_kind") in {"user", "service_account"}:
+            holder = admin_store.effective_admin_roles(
+                str(before["subject_kind"]), str(before["subject_id"]),
+                minted_by=str(before.get("created_by") or "") or None, path=self.path)
+        else:
+            holder = self._app_holder_roles(admin_store.get_app(
+                str(before.get("app_id") or before.get("subject_id") or ""), path=self.path))
+        self._require_actor_not_outranked(
+            actor, holder,
+            "This key belongs to the owner or to someone with more access than you, "
+            "so only a person with at least their access can revoke it.")
         admin_store.revoke_credential(credential_id, path=self.path)
         record = admin_store.get_credential(credential_id, path=self.path)
         admin_store.record_audit(
@@ -1402,12 +1472,10 @@ class AdminAuthenticator:
                     subject_kind, subject_id = session_admin_role_subject(
                         session.subject
                     )
-                    roles = admin_store.list_admin_roles(
-                        subject_kind=subject_kind,
-                        subject_id=subject_id,
-                        path=self.store.path,
+                    role_names = admin_store.effective_admin_roles(
+                        subject_kind, subject_id, path=self.store.path,
+                        oidc_max_age=self.cookie.max_age_seconds,
                     )
-                    role_names = frozenset(str(role["role"]) for role in roles)
                     if ADMIN_CONTROL_ROLES & role_names:
                         return AdminContext(
                             subject=session.subject,
@@ -1446,12 +1514,13 @@ class AdminAuthenticator:
                 code="admin_forbidden",
             )
 
-        roles = admin_store.list_admin_roles(
-            subject_kind=str(credential["subject_kind"]),
-            subject_id=str(credential["subject_id"]),
-            path=self.store.path,
+        # An admin key works only while the person who minted it still holds a
+        # role that permits it (see admin_store.effective_admin_roles).
+        role_names = admin_store.effective_admin_roles(
+            str(credential["subject_kind"]), str(credential["subject_id"]),
+            minted_by=str(credential.get("created_by") or "") or None,
+            path=self.store.path, oidc_max_age=self.cookie.max_age_seconds,
         )
-        role_names = frozenset(str(role["role"]) for role in roles)
         if not (ADMIN_CONTROL_ROLES & role_names):
             raise AdminAuthError(
                 "admin role required",
@@ -1552,6 +1621,9 @@ def identity_from_access_row(
     elif (row.get("person_row") is None or row.get("access_row") is None
           or row.get("person_disabled_at") is not None or row.get("person_removed_at") is not None):
         denial = "person_disabled"
+    elif row.get("person_signin_refused"):
+        # Reversible: a successful sign-in deletes the refusal record.
+        denial = "person_signin_refused"
     person_plan = _plan_from_row(row.get("person_plan_json"), row.get("person_plan_id"))
     assignment = row.get("access_plan")
     if assignment == PERSON:
@@ -1673,6 +1745,19 @@ def create_admin_service_account_key(
     if role not in ADMIN_KEY_CREATABLE_ROLES:
         raise ValueError("role must be one of: owner, admin")
     service_account = admin_store.ensure_service_account(name, path=path)
+    if any(row.get("granted_by") not in (None, admin_store.OPERATOR_GRANTOR)
+           for row in admin_store.list_admin_roles(
+               subject_kind="service_account", subject_id=service_account["id"],
+               include_revoked=True, path=path)):
+        raise PermissionError(f"{name!r} was created from the dashboard; choose another name")
+    assignment = admin_store.assign_admin_role(
+        role=role,
+        subject_kind="service_account",
+        subject_id=service_account["id"],
+        granted_by=admin_store.OPERATOR_GRANTOR,
+        actor_kind="cli",
+        path=path,
+    )
     api_key = generate_admin_api_key()
     credential = admin_store.create_credential_hash(
         subject_kind="service_account",
@@ -1680,14 +1765,7 @@ def create_admin_service_account_key(
         hash=hash_api_key(api_key),
         prefix=_key_prefix(api_key),
         display_name=f"{name} admin key",
-        path=path,
-    )
-    assignment = admin_store.assign_admin_role(
-        role=role,
-        subject_kind="service_account",
-        subject_id=service_account["id"],
-        granted_by="cli",
-        actor_kind="cli",
+        created_by=admin_store.OPERATOR_GRANTOR,
         path=path,
     )
     admin_store.record_audit(

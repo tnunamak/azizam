@@ -146,8 +146,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
 
     def issue(user, payload):
         path = path_provider()
-        roles = admin_store.list_admin_roles(subject_kind="user", subject_id=user["id"], path=path)
-        names = {row["role"] for row in roles}
+        names = admin_store.effective_admin_roles("user", user["id"], path=path)
         role = "owner" if "owner" in names else "admin" if "admin" in names else "none"
         cookie, key = cookie_provider(), signing_key_provider()
         if not key:

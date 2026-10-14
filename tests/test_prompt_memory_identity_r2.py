@@ -14,7 +14,7 @@ import proxy
 from gateway import accounts, admin_store, media_jobs, me_media, prompt_memory, receipt_store
 from gateway.admin_api import AdminContext
 from gateway.admin_oidc import AdminSession
-from gateway.admin_runtime import AdminSQLiteStore, runtime_identity_for_app_credential_hash
+from gateway.admin_runtime import AdminSQLiteStore, generate_app_api_key, runtime_identity_for_app_credential_hash
 from gateway.runtime_auth import hash_api_key
 from gateway.user_runtime import mint_user_app_key
 from tests.support.access import service_app
@@ -99,8 +99,12 @@ def test_removed_admins_service_key_keeps_app_access_without_person(hh):
     admin_member = admin_store.upsert_oidc_user("iss", "adm", email="adm@x.test", path=hh.admin)
     sa = admin_store.ensure_service_account("auto", path=hh.admin)
     svc = service_app("Automation", path=hh.admin)
-    ctx = AdminContext(subject=admin_member["id"], actor_id=admin_member["id"], actor_kind="user", roles=frozenset({"admin"}))
-    key = hh.store.create_credential(app_id=svc["id"], data={}, actor=ctx)["api_key"]
+    # An administrator may no longer mint a key on an App the owner answers for
+    # (test_signin_who_can_enter), but keys made before that rule still exist.
+    # Model one directly: it was minted by the administrator, who is removed below.
+    key = generate_app_api_key()
+    admin_store.create_credential_hash(subject_kind="app", subject_id=svc["id"], hash=hash_api_key(key),
+                                       prefix=key[:8], created_by=admin_member["id"], path=hh.admin)
     accounts.change_person(admin_member["id"], hh.owner["id"], remove=True, path=hh.admin)
     auth = runtime_identity_for_app_credential_hash(hash_api_key(key), path=hh.admin)
     assert auth is not None and auth.person_id is None

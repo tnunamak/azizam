@@ -2412,7 +2412,7 @@
         ]
       },
       "post": {
-        "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_access_plans",
         "parameters": [],
         "requestBody": {
@@ -2567,7 +2567,7 @@
     },
     "/admin/api/access-plans/{plan_id}": {
       "delete": {
-        "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_delete_admin_api_access_plans_plan_id",
         "parameters": [
           {
@@ -2747,7 +2747,7 @@
         ]
       },
       "put": {
-        "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_put_admin_api_access_plans_plan_id",
         "parameters": [
           {
@@ -3162,7 +3162,7 @@
     },
     "/admin/api/admin-keys": {
       "post": {
-        "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to mint owner key. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to mint owner key; a key works only while the person who minted it still holds a role that permits it. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_admin_keys",
         "parameters": [],
         "requestBody": {

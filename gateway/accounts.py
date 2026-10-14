@@ -164,6 +164,39 @@ def revoke_session(session_id: str, expires_at: int, *, path: Path) -> None:
                      (int(time.time()), session_id))
 
 
+def revoke_person_sessions(user_id: str, *, path: Path) -> None:
+    """End every signed-in session of a person, including ones never registered.
+
+    From now on only registered sessions count for this person, and none is
+    left, so each cookie they hold stops working. Signing in again registers a
+    new session. Keys bound to their sign-ins end with them.
+    """
+    with connection(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        ensure_access_row(conn, user_id)
+        conn.execute("UPDATE account_access SET require_registered_session=1 WHERE user_id=?", (user_id,))
+        session_ids = [row[0] for row in conn.execute(
+            "SELECT session_id FROM account_sessions WHERE user_id=?", (user_id,))]
+        conn.execute("DELETE FROM account_sessions WHERE user_id=?", (user_id,))
+        now = int(time.time())
+        for session_id in session_ids:
+            conn.execute("UPDATE credentials SET revoked_at=? WHERE session_id=? AND revoked_at IS NULL",
+                         (now, session_id))
+
+
+def record_signin_refusal(user_id: str, *, path: Path) -> None:
+    """Remember that this person's latest sign-in was refused (their keys pause)."""
+    with connection(path) as conn:
+        conn.execute("INSERT INTO account_signin_refusals VALUES(?,?) ON CONFLICT(user_id) "
+                     "DO UPDATE SET refused_at=excluded.refused_at", (user_id, int(time.time())))
+
+
+def clear_signin_refusal(user_id: str, *, path: Path) -> None:
+    """A successful sign-in lifts the pause on the person's keys."""
+    with connection(path) as conn:
+        conn.execute("DELETE FROM account_signin_refusals WHERE user_id=?", (user_id,))
+
+
 def register_session(user_id: str, session_id: str, expires_at: int, *, path: Path):
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")

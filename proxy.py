@@ -132,6 +132,7 @@ from gateway.admin_oidc import (
     OIDCConfigError,
     PKCEPair,
     SessionError,
+    SignInRefused,
     StateRecord,
     access_names_from_oidc_claims,
     admin_role_from_oidc_claims,
@@ -1928,6 +1929,7 @@ ACCESS_ERROR_MESSAGES = {
     "key_invalid": "This key isn't valid. It may have been revoked. Create a new key in Apps.",
     "app_disabled": "This app is turned off. Ask the gateway owner to turn it on.",
     "person_disabled": "The person this app belongs to is turned off or missing. Ask the gateway owner.",
+    "person_signin_refused": "Sign-in for the person this app belongs to was refused. The app works again after they sign in successfully.",
 }
 
 
@@ -2267,9 +2269,13 @@ def handle_cli_command() -> bool:
             print("Role must be one of: owner, admin.", file=sys.stderr)
             sys.exit(2)
         admin_store.init_db(ADMIN_DB_PATH)
-        api_key, credential, assignment = create_admin_service_account_key(
-            name, role=role, path=ADMIN_DB_PATH
-        )
+        try:
+            api_key, credential, assignment = create_admin_service_account_key(
+                name, role=role, path=ADMIN_DB_PATH
+            )
+        except PermissionError as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(1)
         print(f"Created Azizam admin key for service account {name}.")
         print(f"Stored key hash in {ADMIN_DB_PATH}.")
         print(f"Credential id: {credential['id']} ({credential['prefix']}...)")
@@ -14739,6 +14745,29 @@ def _existing_admin_grants(*, include_revoked: bool = False) -> dict[str, str]:
             for row in admin_store.list_admin_roles(include_revoked=include_revoked, path=ADMIN_STORE.path)}
 
 
+def _end_provider_access_after_refusal(issuer: str, claims: Mapping[str, Any]) -> None:
+    """Revoke what the identity provider gave a person whose sign-in was refused.
+
+    Removing someone from the admin group makes their next sign-in fail the
+    email allow-list, and that check runs before roles are reconciled. Without
+    this, their grant and their sessions would last until they expire. Grants
+    the owner gave by hand stay; the provider's grants, every session and every
+    MCP connection end, and their personal keys pause until a sign-in succeeds.
+    The person is found by (issuer, subject) and is never created here.
+    """
+    user = admin_store.find_oidc_user(issuer, str(claims.get("sub") or ""), path=ADMIN_STORE.path)
+    if user is None:
+        return
+    person_id = str(user["id"])
+    # First, so a failure in any later step cannot leave the refusal unrecorded.
+    # Their personal keys pause until a sign-in succeeds (reversible).
+    accounts.record_signin_refusal(person_id, path=ADMIN_STORE.path)
+    admin_store.reconcile_oidc_admin_roles(person_id, set(), path=ADMIN_STORE.path)
+    accounts.revoke_person_sessions(person_id, path=ADMIN_STORE.path)
+    # Connections made through MCP sign-in can refresh for up to 90 days.
+    MCP_OAUTH.deps.store.revoke_person_grants(person_id, "sign_in_refused")
+
+
 def _safe_admin_return_to(value: str | None, *, default: str = "/") -> str:
     return safe_browser_return_to(value, default=default)
 
@@ -16217,12 +16246,9 @@ async def setup_claim_admin_key(request: Request):
             claim_error="That key is not an admin key.",
             status_code=400,
         )
-    roles = admin_store.list_admin_roles(
-        subject_kind=subject_kind,
-        subject_id=subject_id,
-        path=ADMIN_STORE.path,
+    role_names = admin_store.effective_admin_roles(
+        subject_kind, subject_id, path=ADMIN_STORE.path,
     )
-    role_names = {str(role.get("role") or "") for role in roles}
     if "owner" in role_names:
         role = "owner"
     elif "admin" in role_names or "superadmin" in role_names:
@@ -16283,28 +16309,6 @@ _LOCAL_OWNER_ISSUER = "local"
 
 def _normalize_local_email(value: str) -> str:
     return (value or "").strip().lower()
-
-
-def _local_owner_user_record() -> Mapping[str, Any] | None:
-    """Return the local-issuer user that owns this gateway, if any.
-
-    Walks active owner/admin role assignments and returns the first that
-    belongs to a local-issuer user. We don't cache because the result is
-    only consulted during the unauthenticated /setup/local-login path and
-    when bootstrapping, both of which are cold by definition.
-    """
-    for role_row in admin_store.list_admin_roles(path=ADMIN_STORE.path):
-        if role_row.get("subject_kind") != "user":
-            continue
-        if role_row.get("role") not in {"owner", "admin", "superadmin"}:
-            continue
-        user_id = str(role_row.get("subject_id") or "")
-        if not user_id:
-            continue
-        user = admin_store.get_user(user_id, path=ADMIN_STORE.path)
-        if user is not None and user.get("issuer") == _LOCAL_OWNER_ISSUER:
-            return user
-    return None
 
 
 def _issue_browser_admin_session(
@@ -16554,12 +16558,9 @@ async def setup_local_login(request: Request):
             login_email=email,
             status_code=401,
         )
-    roles = admin_store.list_admin_roles(
-        subject_kind="user",
-        subject_id=str(user["id"]),
-        path=ADMIN_STORE.path,
+    role_names = admin_store.effective_admin_roles(
+        "user", str(user["id"]), path=ADMIN_STORE.path,
     )
-    role_names = {str(role.get("role") or "") for role in roles}
     if "owner" in role_names:
         role = "owner"
     elif "admin" in role_names or "superadmin" in role_names:
@@ -16754,7 +16755,12 @@ async def admin_oidc_callback(request: Request):
         if not isinstance(id_token, str) or not id_token:
             raise ValueError("token endpoint did not return id_token")
         claims = await _oidc_verify_id_token(id_token, config=cfg)
-        validate_id_token_claims(claims, config=cfg, expected_nonce=state.nonce)
+        try:
+            validate_id_token_claims(claims, config=cfg, expected_nonce=state.nonce)
+        except SignInRefused:
+            # A refused person keeps nothing the identity provider gave them.
+            await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
+            raise
         user = admin_store.upsert_oidc_user(
             cfg.issuer,
             str(claims["sub"]),
@@ -16763,6 +16769,7 @@ async def admin_oidc_callback(request: Request):
             path=ADMIN_STORE.path,
         )
         accounts.record_oidc_verification(str(user["id"]), claims.get("email_verified") is True, path=ADMIN_STORE.path)
+        accounts.clear_signin_refusal(str(user["id"]), path=ADMIN_STORE.path)
         account_state = accounts.access(str(user["id"]), path=ADMIN_STORE.path)
         if account_state and (account_state["disabled_at"] is not None or account_state["removed_at"] is not None):
             return clear_browser_binding(JSONResponse({"error": {"code": "account_disabled", "message": "This account is disabled."}}, status_code=403), state)
@@ -16779,19 +16786,15 @@ async def admin_oidc_callback(request: Request):
         bootstrap_role = bootstrap_admin_role(
             str(claims.get("email") or ""),
             config=cfg,
-            existing_roles=_existing_admin_grants(include_revoked=True),
+            existing_roles={},
             issuer=str(claims.get("iss") or ""),
             email_verified=claims.get("email_verified") is True,
         )
-        if bootstrap_role == "owner":
-            # Bootstrap is durable and separate from current IdP membership.
-            admin_store.assign_admin_role(
-                role="owner",
-                subject_kind="user",
-                subject_id=user["id"],
-                granted_by="oidc-bootstrap",
-                path=ADMIN_STORE.path,
-            )
+        # Whether an owner already exists is decided inside the write's own
+        # transaction, so two first sign-ins cannot both become owner.
+        if bootstrap_role == "owner" and admin_store.claim_first_owner(
+            str(user["id"]), granted_by="oidc-bootstrap", path=ADMIN_STORE.path,
+        ):
             admin_store.seed_first_owner_plan(str(user["id"]), path=ADMIN_STORE.path)
         claim_role = admin_role_from_oidc_claims(claims, config=cfg)
         effective_grants = admin_store.reconcile_oidc_admin_roles(
