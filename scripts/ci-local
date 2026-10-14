@@ -263,7 +263,8 @@ start_job "$work" bash -c '
   # browser tests start.
   ( step web-unit env CASE_RECEIPTS_FILE="$receipts/raw/vitest.cases.jsonl" bash -c "cd web && npx vitest run --sequence.shuffle --sequence.seed \"\$1\" --reporter=default --reporter=./tests/case-receipts.ts" _ "$seed"; exit "$failed" ) &
   unit_pid=$!
-  step web-check bash -c "cd web && npm run check"
+  # Build the export before browsers; static checks move to the native slot.
+  step web-build bash -c "cd web && npm run build"
   wait "$unit_pid" || failed=1
   step e2e-venv bash -c "uv venv -q --python 3.12 venv && uv pip sync -q --python venv/bin/python --require-hashes tests/requirements-hermetic.lock"
   step e2e-browser bash -c "cd web && npx playwright install chromium"
@@ -298,7 +299,7 @@ wait_job "$compat_pid"
 # let the failed prerequisite be the reported cause.
 browser_steps=4  # e2e-main, e2e-live-data, e2e-household, e2e-tree-unchanged
 browser_ready=1
-for prerequisite in web-npm-ci web-check e2e-venv e2e-browser; do
+for prerequisite in web-npm-ci web-build e2e-venv e2e-browser; do
   rc=$(cut -f2 "$receipts/steps/$prerequisite.tsv" 2>/dev/null || echo missing)
   if [[ $rc != 0 ]]; then browser_ready=0; fi
 done
@@ -337,6 +338,9 @@ if ((browser_ready)); then
 fi
 start_job "$run/fresh" bash -c '
   failed=0
+  # Reuse the native slot, rather than adding a heavy job beside the browsers.
+  # Disable caches: the browser tier checks that the shared build stays unchanged.
+  step web-check bash -c "cd \"\$work/web\" && npx tsc --noEmit --incremental false && npm run lint -- --no-cache && npm run doctor"
   step fresh-native env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh
   exit "$failed"
 '
@@ -386,7 +390,7 @@ git worktree remove --force "$work"
 
 cat "$receipts"/steps/*.tsv > "$receipts/steps.tsv"
 # Missing/truncated receipts or skipped/nonzero steps can never produce PASS.
-if ! awk -F '\t' -v expected="$((browser_steps + 15))" '
+if ! awk -F '\t' -v expected="$((browser_steps + 16))" '
   NF != 3 || $2 != "0" || $3 !~ /^[0-9]+$/ { bad=1 }
   END { exit (bad || NR != expected) }
 ' "$receipts/steps.tsv"; then failed=1; fi
