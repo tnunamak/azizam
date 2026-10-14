@@ -62,6 +62,8 @@ export function SettingRow({
   control,
   htmlFor,
   className,
+  wrapDescription = false,
+  controlClassName,
 }: {
   label: ReactNode;
   description?: ReactNode;
@@ -69,6 +71,10 @@ export function SettingRow({
   /** The id of the control the label names, when it is a form field. */
   htmlFor?: string;
   className?: string;
+  /** Let a long description wrap instead of truncating to one line. */
+  wrapDescription?: boolean;
+  /** Extra classes for the control wrapper, such as `flex-wrap` for a reason beside a switch. */
+  controlClassName?: string;
 }) {
   const Label = htmlFor ? "label" : "p";
   return (
@@ -91,7 +97,10 @@ export function SettingRow({
         {description ? (
           <p
             title={typeof description === "string" ? description : undefined}
-            className="text-muted-foreground text-meta mt-0.5 truncate"
+            className={cn(
+              "text-muted-foreground text-meta mt-0.5",
+              !wrapDescription && "truncate",
+            )}
           >
             {description}
           </p>
@@ -100,7 +109,7 @@ export function SettingRow({
       {control ? (
         <div
           data-slot="setting-row-control"
-          className="flex shrink-0 items-center gap-2"
+          className={cn("flex shrink-0 items-center gap-2", controlClassName)}
         >
           {control}
         </div>
