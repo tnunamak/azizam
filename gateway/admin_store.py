@@ -2943,6 +2943,94 @@ def write_service_registry_in_transaction(
     return next_generation
 
 
+def _upsert_setting_in_transaction(
+    conn: sqlite3.Connection,
+    key: str,
+    payload: str,
+    now: int,
+    updated_by: str | None,
+) -> None:
+    """Write one ordinary setting and advance its revision in a caller-owned transaction."""
+    conn.execute(
+        "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, "
+        "updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+        (key, payload, now, updated_by),
+    )
+    _advance_setting_revision(conn, key)
+
+
+def write_service_registry_and_setting_with_audits(
+    registry: Mapping[str, Any],
+    *,
+    expected_generation: int,
+    updated_by: str | None,
+    setting_key: str,
+    setting_value: Mapping[str, Any],
+    audits: Iterable[Mapping[str, Any]],
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Commit a registry revision, one ordinary setting and their audit facts atomically.
+
+    Each audit mapping carries ``action`` plus the optional ``actor_kind``,
+    ``actor_id``, ``actor_label``, ``target_kind``, ``target_id`` and
+    ``metadata`` fields of :func:`record_audit`. Any failure rolls back every
+    row, including the generation bump. Artifact publication and reload stay
+    with the caller, after the commit.
+    """
+    setting_name = str(setting_key or "").strip()
+    if not setting_name or setting_name in {"service_registry", "prompt_memory"}:
+        raise ValueError("an ordinary operator setting key is required")
+    if not isinstance(registry, Mapping) or not isinstance(setting_value, Mapping):
+        raise ValueError("registry and setting values must be mappings")
+    ts = _now() if now is None else int(now)
+    setting_payload = json.dumps(dict(setting_value), ensure_ascii=False, sort_keys=True)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            next_generation = write_service_registry_in_transaction(
+                conn,
+                registry,
+                updated_by=updated_by,
+                expected_generation=expected_generation,
+                now=ts,
+            )
+            _upsert_setting_in_transaction(conn, setting_name, setting_payload, ts, updated_by)
+            for audit in audits:
+                _record_audit_in_transaction(
+                    conn,
+                    str(audit.get("action") or ""),
+                    actor_kind=audit.get("actor_kind"),
+                    actor_id=audit.get("actor_id"),
+                    actor_label=audit.get("actor_label"),
+                    target_kind=audit.get("target_kind"),
+                    target_id=audit.get("target_id"),
+                    metadata=audit.get("metadata"),
+                    now=ts,
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return (
+        {
+            "key": "service_registry",
+            "value": dict(registry),
+            "updated_at": ts,
+            "updated_by": updated_by,
+            "operator_settings_generation": next_generation,
+        },
+        {
+            "key": setting_name,
+            "value": dict(setting_value),
+            "updated_at": ts,
+            "updated_by": updated_by,
+        },
+    )
+
+
 def get_operator_setting(
     key: str,
     *,
@@ -3151,6 +3239,7 @@ __all__ = [
     "get_service_registry_with_generation",
     "write_service_registry",
     "write_service_registry_with_audit",
+    "write_service_registry_and_setting_with_audits",
     "write_service_registry_in_transaction",
     "OperatorSettingsGenerationConflict",
     "get_operator_setting",

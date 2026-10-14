@@ -584,6 +584,7 @@ describe("Details", () => {
           title: "Lantern",
           description: "Offers gentle explanations.",
           use_names: ["rich", "also-rich"],
+          same_model_as: ["also-rich"],
           locality: "remote",
           engine_label: "Acme Cloud",
           cost: { kind: "paid", price: "$2 per 1M tokens" },
@@ -600,7 +601,7 @@ describe("Details", () => {
     expect(dialog().getByRole("heading", { name: "rich" })).toBeVisible();
     expect(dialog().getByText("Lantern. Offers gentle explanations.")).toBeVisible();
     expect(fact("Task")).toBe("Chat");
-    expect(fact("Also answers to")).toBe("also-rich");
+    expect(fact("Same model as")).toBe("also-rich");
     expect(fact("Runs on")).toBe("Acme Cloud");
     expect(fact("Price")).toBe("$2 per 1M tokens");
     expect(fact("Time per request")).toBe("About 151 ms, measured");
@@ -616,10 +617,43 @@ describe("Details", () => {
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     fireEvent.click(nameButton("bare"));
     expect(fact("Runs on")).toBe("On your equipment");
-    for (const label of ["Also answers to", "Time per request", "Can also", "What you send and receive"]) {
+    for (const label of ["Points to", "Same model as", "Time per request", "Can also", "What you send and receive"]) {
       expect(fact(label)).toBeUndefined();
     }
     expect(dialog().getByText("No recent requests were reported. Use this model in an app, then check Usage for results.")).toBeVisible();
+  });
+
+  it("says what a name points at and which other names reach the same model", async () => {
+    renderModels(
+      catalog(
+        [
+          row({ id: "decide", resolves_to: { decisions: "decider-2b" }, same_model_as: ["decider-2b", "jev-latest"] }),
+          row({ id: "jev-latest", resolves_to: { decisions: "decider-2b" }, same_model_as: ["decide", "decider-2b"] }),
+        ],
+        [exact("decider-2b", { same_model_as: ["decide", "jev-latest"] })],
+      ),
+    );
+    // Every name is its own row, the alias and the model it points at alike.
+    await screen.findByRole("button", { name: "decide" });
+    for (const id of ["decide", "jev-latest", "decider-2b"]) expect(nameButton(id)).toBeVisible();
+    fireEvent.click(nameButton("jev-latest"));
+    expect(fact("Points to")).toBe("decider-2b");
+    expect(fact("Same model as")).toBe("decide, decider-2b");
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.click(nameButton("decider-2b"));
+    expect(fact("Points to")).toBeUndefined(); // an exact model points at nothing
+    expect(fact("Same model as")).toBe("decide, jev-latest");
+  });
+
+  it("shows a member only targets that are names they can use; the owner sees them all", async () => {
+    const hidden = row({ id: "fast", resolves_to: { chat: "internal-slot" } });
+    renderModels(catalog([hidden]), member);
+    fireEvent.click(await screen.findByRole("button", { name: "fast" }));
+    expect(fact("Points to")).toBeUndefined();
+    cleanup();
+    renderModels(catalog([hidden]), owner);
+    fireEvent.click(await screen.findByRole("button", { name: "fast" }));
+    expect(fact("Points to")).toBe("internal-slot");
   });
 
   it.each([

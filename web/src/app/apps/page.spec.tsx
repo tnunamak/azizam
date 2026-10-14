@@ -891,6 +891,38 @@ it("fills the guide with the person's own model names, and warns when a task has
   expect(dialog.queryByText(/needs a .* model, and none is available/)).toBeNull();
 });
 
+it("fills the guide only with names the new app's own plan allows", async () => {
+  const narrowed: AccountApp = {
+    ...app,
+    id: "guide",
+    name: "OpenWhispr laptop",
+    access_plan: { id: "plan_local", name: "Local only", summary: null, same_as_person: false },
+  };
+  // No apps at first; the refresh after creating one lists it with its narrower plan.
+  vi.mocked(accountApi.session)
+    .mockResolvedValueOnce({ ...snapshot, user: person("owner") })
+    .mockResolvedValue({ ...snapshot, user: person("owner"), apps: [narrowed] });
+  vi.mocked(accountApi.createApp).mockResolvedValue(narrowed);
+  vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(minted("OpenWhispr laptop"));
+  const entry = (id: string, state: "allowed" | "blocked") =>
+    ({ id, name: id, alias: true, group: "chat", group_label: "Chat", state, reason: null, kinds: [] });
+  vi.spyOn(api.accessPlans, "preview").mockResolvedValue({
+    plan_ids: ["plan_local"],
+    summary: { usable: 1, total: 2 },
+    entries: [entry("house-chat", "blocked"), entry("house-whisper", "allowed")],
+  });
+  renderApps(owner);
+  await openNewApp("OpenWhispr laptop");
+  fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Connect OpenWhispr laptop" }));
+  // The person's catalog has house-chat; the app's plan does not, so the guide must not suggest it.
+  expect(await dialog.findByText(/needs a .* model, and none is available/)).toBeVisible();
+  expect(api.accessPlans.preview).toHaveBeenCalledWith("plan_local");
+  const models = dialog.getAllByLabelText("Model").map((el) => (el as HTMLInputElement).value);
+  expect(models).toContain("house-whisper");
+  expect(models).not.toContain("house-chat");
+});
+
 it("says which model task is missing once the catalog has loaded", async () => {
   vi.mocked(productApi.models).mockResolvedValue({ aliases: [], models: [] } as unknown as ModelsCatalog);
   vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("member") });

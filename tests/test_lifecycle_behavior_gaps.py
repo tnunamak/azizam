@@ -76,6 +76,44 @@ def test_explicit_params_skip_the_live_provider(fake_upstreams, monkeypatch):
     ]
 
 
+def test_custom_activation_model_key_round_trips(fake_upstreams):
+    service = _service(model_key="deployment")
+    driver = ld.HttpLoadUnloadDriver()
+    activation = driver.build_activation(service, model="wanted")
+    assert activation == {"deployment": "wanted"}
+    ctx = ld.SwapContext(loaded_model=None, target_model="wanted")
+    # The decision to swap reads the same key and makes no call.
+    assert driver.swap_required(service, activation, ctx) is True
+    result, fake = _swap(
+        fake_upstreams, "load-custom-key", loaded=None,
+        activation=activation, driver_config={"activation_model_key": "deployment"},
+    )
+    assert result is True
+    assert _calls(fake) == [("POST", "/v1/model/load", {"deployment": "wanted"})]
+
+
+@pytest.mark.parametrize("params_source", ["explicit", "provider"])
+def test_extra_params_cannot_replace_the_requested_model(fake_upstreams, monkeypatch, params_source):
+    params = {"model_name": "different-model", "temperature": 0.25}
+    provider = Mock(return_value=dict(params))
+    monkeypatch.setitem(ld.PARAMS_PROVIDERS, "test-gap-provider", provider)
+    service = _service()
+    activation = {"model_name": "wanted"}
+    if params_source == "explicit":
+        activation["params"] = dict(params)
+    result, fake = _swap(
+        fake_upstreams, "load-params-collision", loaded=None,
+        activation=activation, driver_config={"load_body_params": "test-gap-provider"},
+    )
+    assert result is True
+    assert _calls(fake) == [("POST", "/v1/model/load", {"model_name": "wanted", "temperature": 0.25})]
+    if params_source == "explicit":
+        provider.assert_not_called()
+    else:
+        provider.assert_called_once()
+    assert params["model_name"] == "different-model"
+
+
 @pytest.mark.parametrize(
     "content,verified_model,expected,expected_gets",
     [
@@ -134,6 +172,7 @@ def test_a_load_that_never_answers_ends_at_the_read_budget(fake_upstreams, monke
 @pytest.mark.parametrize(
     "running,healthy,expected",
     [
+        (None, False, "unknown"),
         (False, False, "stopped"),
         (True, True, "running"),
         (True, False, "starting"),

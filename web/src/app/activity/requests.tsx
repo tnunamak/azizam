@@ -59,6 +59,19 @@ type RequestPage = {
   sources?: { id: string; label: string }[];
 };
 
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+// Rows are dereferenced after the query succeeds, so a malformed page must fail
+// the query, where the retry callout can reach it.
+function isRequestPage(payload: unknown): payload is RequestPage {
+  return (
+    isObject(payload) &&
+    Array.isArray(payload.records) &&
+    payload.records.every((row) => isObject(row) && isObject(row.receipt))
+  );
+}
+
 // The title of a request in the words people use, never the stored intent.
 const requestNames: Record<string, string> = {
   chat: "Chat",
@@ -193,7 +206,11 @@ export function Requests() {
         credentials: "same-origin",
       });
       if (!response.ok) throw new Error("Requests could not be loaded.");
-      return response.json();
+      const payload: unknown = await response.json();
+      if (!isRequestPage(payload)) {
+        throw new Error("Requests response is not in the expected shape.");
+      }
+      return payload;
     },
     getNextPageParam: (page) => page.next_cursor ?? undefined,
   });
@@ -506,7 +523,11 @@ export function RequestReceiptSheet({ record, onOpenChange, title, description, 
   const owner = ["owner", "superadmin"].includes(useViewer().role);
   const requested = record?.receipt.requested_model;
   const served = record?.receipt.resolved_model;
+  // A name that points at a model (`fast` -> `default-fast`) is the normal case. The
+  // banner is for a model that took over: the gateway recorded a fallback.
   const different = Boolean(requested && served && requested !== served);
+  const fallbackReasons = record?.receipt.fallback_reasons;
+  const fellBack = different && (Boolean(record?.receipt.fallback_model) || (Array.isArray(fallbackReasons) && fallbackReasons.length > 0));
   return (
       <Sheet
         open={record !== null}
@@ -545,14 +566,17 @@ export function RequestReceiptSheet({ record, onOpenChange, title, description, 
                     </p>
                   ) : null}
                 </div>
-                {different && <p className="text-meta">A different model was used.</p>}
+                {fellBack && <p className="text-meta">A different model was used.</p>}
                 <dl className="space-y-4 text-meta">
                   {[
                     ["Person", record.person_label],
                     ["App", record.app_label],
-                    ...(different ? [
+                    ...(fellBack ? [
                       ["Requested model", nameModel(requested!)],
                       ["Served model", nameModel(served!)],
+                    ] : different ? [
+                      ["Name used", nameModel(requested!)],
+                      ["Model", nameModel(served!)],
                     ] : [["Model", served || requested ? nameModel((served || requested)!) : "Model not recorded"]]),
                     ["Time taken", duration(record.receipt.latency_ms)],
                   ].filter(([, value]) => value != null && value !== "").map(([label, value]) => (

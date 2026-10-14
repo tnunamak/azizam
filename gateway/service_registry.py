@@ -611,6 +611,11 @@ def merge_imported_records(
             "capability",
         )
 
+    # Imported services join the graph the registry already validated, so the
+    # combined result gets the same checks as a normalized registry.
+    _validate_model_policy_schema_markers(out["services"])
+    _validate_model_policy_graphs(out["services"])
+    _validate_public_alias_uniqueness(out["services"])
     out["updated_at"] = int(time.time())
     return out
 

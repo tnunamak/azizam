@@ -7,7 +7,7 @@ evaluator (``access_plans``) both read it, so neither imports the other.
 CAPABILITY_LABELS = {
     "chat": "Chat", "image": "Images", "video": "Video", "speech": "Speech",
     "transcribe": "Transcription", "music": "Music", "sfx": "Sound effects",
-    "audio": "Audio", "decide": "Decisions", "embed": "Embeddings", "rerank": "Rerank",
+    "audio": "Audio", "decide": "Decisions", "embed": "Document search", "rerank": "Rerank",
 }
 PROTOCOL_CAPABILITIES = {
     "llm.execution": "chat", "typesafe-systemone": "decide",

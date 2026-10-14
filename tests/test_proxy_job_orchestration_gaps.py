@@ -207,3 +207,136 @@ def test_receipt_maintenance_does_not_swallow_task_cancellation(monkeypatch, tmp
 
     asyncio.run(scenario())
     maintain.assert_not_called()
+
+
+def test_lifespan_cancels_and_joins_all_owned_worker_registries(jobs, tmp_path, monkeypatch):
+    # Isolate boot side effects; exercise the real lifespan shutdown body.
+    monkeypatch.setattr(proxy, "ADMIN_STORE",
+                        SimpleNamespace(path=tmp_path / "admin.db", init_db=Mock()))
+    for module in (proxy.responses_store, proxy.receipt_store, proxy.media_jobs):
+        monkeypatch.setattr(module, "init_db", Mock())
+    monkeypatch.setattr(proxy.providers, "recover_provider_spend", Mock())
+    monkeypatch.setattr(proxy.firehose_metrics, "replay_persisted", lambda: {})
+    monkeypatch.setattr(proxy.loop_watchdog, "start", lambda *a: None)
+    monkeypatch.setattr(proxy, "COMFY_ENABLED", False)
+    monkeypatch.setattr(proxy.metrics_sampler, "start_writer",
+                        Mock(side_effect=RuntimeError("disabled test sampler")))
+    monkeypatch.setattr(proxy.metrics_sampler, "close_writer", Mock())
+    monkeypatch.setattr(proxy.receipt_store, "maintain", Mock(return_value=0))
+    for name in ("_fail_orphaned_identity_jobs", "_hydrate_video_job_records",
+                 "_recover_media_jobs", "_provision_existing_user_personal_apps"):
+        monkeypatch.setattr(proxy, name, Mock(return_value=0))
+    monkeypatch.setattr(proxy, "active_app_credential_count", lambda: 1)
+    monkeypatch.setattr(proxy, "_prompt_migration_state_path",
+                        lambda: tmp_path / "migration.json")
+    monkeypatch.setattr(proxy.state, "shutdown_requested", False)
+    # Remember the previous value so monkeypatch restores the lifespan assignment.
+    monkeypatch.setattr(proxy.comfy_object_info, "DISK_CACHE_DIR",
+                        proxy.comfy_object_info.DISK_CACHE_DIR)
+
+    async def parked(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    for name in ("_workflow_drift_loop",
+                 "_prompt_memory_maintenance_loop", "_receipts_maintenance_loop"):
+        monkeypatch.setattr(proxy, name, parked)
+    monkeypatch.setattr(proxy.prompt_metadata_migration, "background_migration", parked)
+
+    async def scenario():
+        started = {kind: asyncio.Event() for kind in ("image", "audio", "video", "identity")}
+        settled = set()
+        owned = []
+
+        def worker(kind):
+            async def run(*args):
+                started[kind].set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    settled.add(kind)
+            return run
+
+        for kind in ("image", "audio", "video"):
+            monkeypatch.setattr(proxy, f"_run_{kind}_media_job", worker(kind))
+        try:
+            async with proxy.lifespan(proxy.app):
+                for kind in ("image", "audio", "video"):
+                    assert getattr(proxy, f"_schedule_{kind}_media_job")(f"test-{kind}")
+                    owned.extend(getattr(proxy, f"_{kind}_media_job_tasks"))
+                identity = asyncio.create_task(worker("identity")())
+                proxy._identity_job_tasks.add(identity)
+                identity.add_done_callback(proxy._identity_job_tasks.discard)
+                owned.append(identity)
+                await asyncio.wait_for(
+                    asyncio.gather(*(event.wait() for event in started.values())), 5)
+            # Assert BEFORE asyncio.run's implicit cancellation can mask a leak.
+            assert all(task.done() for task in owned)
+            assert all(task.cancelled() for task in owned)
+            assert settled == set(started)
+        finally:
+            for task in owned:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*owned, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_image_attempt_cancellation_has_a_durable_terminal_receipt(jobs, tmp_path, monkeypatch):
+    receipts = tmp_path / "receipts.db"
+    receipt_store.init_db(receipts)
+    for name in ("record", "begin", "finalize", "update_phases"):
+        original = getattr(receipt_store, name)
+        monkeypatch.setattr(
+            receipt_store, name,
+            lambda receipt, *a, _fn=original, **kw: _fn(
+                receipt, *a, **{**kw, "path": receipts}))
+    monkeypatch.setattr(proxy.firehose_metrics, "record_event", Mock())
+    job = make_job(jobs)
+    receipt = RouteReceipt(protocol="openai.images",
+                           path="/v1/images/generations", intent="image.generate")
+    monkeypatch.setattr(proxy, "start_image_route_receipt", lambda *a: receipt)
+    monkeypatch.setattr(proxy, "_load_image_media_job_payload",
+                        lambda _: {"body": {}, "created_at": 1})
+    monkeypatch.setattr(proxy, "_request_shim_from_image_job_payload", lambda _: object())
+    monkeypatch.setattr(proxy, "_auth_context_from_image_job_payload",
+                        lambda _: proxy.NO_AUTH_CONTEXT)
+    monkeypatch.setattr(proxy, "_media_job_admission_response", lambda *a, **kw: None)
+    provider = AsyncMock(side_effect=asyncio.CancelledError())
+    monkeypatch.setattr(proxy, "proxy_comfy_request", provider)
+
+    async def scenario():
+        semaphore = asyncio.Semaphore(1)
+        monkeypatch.setattr(proxy, "_image_media_job_semaphore", semaphore)
+        before_worker = proxy._ADMISSION_WORKER.get()
+        before_clock = proxy._MEDIA_JOB_PROMPT_STARTED_AT.get()
+        with pytest.raises(asyncio.CancelledError):
+            await proxy._run_image_media_job(job.job_id)
+        assert proxy._ADMISSION_WORKER.get() == before_worker
+        assert proxy._MEDIA_JOB_PROMPT_STARTED_AT.get() == before_clock
+        assert not semaphore.locked()
+
+    asyncio.run(scenario())
+    provider.assert_awaited_once()
+    row = receipt_store.get(receipt.request_id, audience="internal", path=receipts)
+    assert row is not None, "cancelled image attempts must not disappear from history"
+    assert row["job_id"] == job.job_id
+    assert row["status"] == "cancelled"
+    assert row["finished_at_ms"] is not None
+    assert receipt_store.count(receipts, outer_only=False) == 1
+
+
+@pytest.mark.parametrize("kind", ["image", "audio", "video"])
+def test_scheduler_rolls_back_reservation_when_task_creation_fails(jobs, monkeypatch, kind):
+    # Close the supplied coroutine in the fake to avoid a test-generated warning;
+    # this test asserts reservation rollback, not coroutine-leak handling.
+    def reject(coroutine):
+        coroutine.close()
+        raise RuntimeError("task factory rejected launch")
+
+    monkeypatch.setattr(proxy.asyncio, "create_task", reject)
+    schedule = getattr(proxy, f"_schedule_{kind}_media_job")
+    with pytest.raises(RuntimeError, match="task factory"):
+        schedule("fixture-job")
+    assert "fixture-job" not in getattr(proxy, f"_{kind}_media_job_scheduled")
+    assert not getattr(proxy, f"_{kind}_media_job_tasks")

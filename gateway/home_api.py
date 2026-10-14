@@ -156,7 +156,7 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
                            policy_reasons=upstream.policy_reasons)
         return capability_with_policy_view(resolved, identity.access, request=make_policy_request(
             protocol=_PROTOCOLS.get(product_capability(cap), "openai.chat"),
-            intent=cap.intent, model=model, backend=concrete.backend,
+            intent=cap.intent, model=model, requested_model=cap.model, backend=concrete.backend,
             workflow=concrete.workflow, capability_exposure=concrete.exposure,
             capability_trust_tier=concrete.trust_tier,
             capability_resource_tier=concrete.resource_tier, capability_tags=concrete.tags),

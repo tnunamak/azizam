@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 import proxy
 import pytest
+from gateway.receipts import RouteReceipt
 from test_image_route_receipts import _MultipartRequest, _MultipartUpload, _png_bytes
 from tests.support.fake_upstream import fake_upstreams, load_scenario, read_deadline  # noqa: F401
 
@@ -276,6 +277,79 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
         self.assertIsNot(seen[0], seen[1])
         self.assertEqual(self.workflow, before)
         self.assertEqual(len(fake.calls("upload")), 2)
+
+    async def test_edit_seed_reaches_each_actual_round_without_mutating_template(self):
+        seen = []
+
+        async def run(client, workflow, *args, **kwargs):
+            seen.append(copy.deepcopy(workflow))
+            return None, [b"fake-image"]
+
+        before = copy.deepcopy(self.workflow)
+        self.serve("upload-ok-any")
+        with patch.object(proxy, "_comfy_run_round", side_effect=run):
+            response = await proxy.proxy_comfy_edit_request(
+                self.edit_request(n=2, seed=41), proxy.NO_AUTH_CONTEXT,
+            )
+        self.assertEqual(response.status_code, 200, response.body)
+        self.assertEqual([w["s"]["inputs"]["noise_seed"] for w in seen], [41, 42])
+        self.assertEqual(self.workflow, before)
+
+    async def test_non_object_generation_json_is_400_before_backend_effects(self):
+        fake = self.serve("upload-ok-any")
+        for body in (None, [], 42, True):
+            with self.subTest(body=body):
+                request = SimpleNamespace(json=AsyncMock(return_value=body))
+                with patch.object(proxy, "_generate_images_with_adaptive_batching",
+                                  new_callable=AsyncMock) as generate:
+                    response = await proxy.proxy_comfy_request(request, proxy.NO_AUTH_CONTEXT)
+                self.assertEqual(response.status_code, 400, response.body)
+                error = json.loads(response.body)["error"]
+                self.assertEqual(error["type"], "invalid_request_error")
+                self.assertIsInstance(error["message"], str)
+                self.assertTrue(error["message"])
+                generate.assert_not_awaited()
+                self.assertEqual(len(fake.calls("upload")), 0)
+
+
+class ImageRouteCancellationGapTests(IsolatedAsyncioTestCase):
+    async def test_public_routes_persist_one_cancelled_receipt_and_reraise(self):
+        cases = [
+            (proxy.images_generations, "proxy_comfy_request", "image.generate"),
+            (proxy.images_edits, "proxy_comfy_edit_request", "image.edit"),
+            (proxy.images_variations, "proxy_comfy_variations_request", "image.variations"),
+        ]
+        for route, worker_name, intent in cases:
+            with self.subTest(intent=intent):
+                entered = asyncio.Event()
+                receipt = RouteReceipt(protocol="openai.images", intent=intent)
+
+                async def worker(*args, **kwargs):
+                    entered.set()
+                    await asyncio.Event().wait()
+
+                with patch.object(proxy, "authenticate_request", return_value=proxy.NO_AUTH_CONTEXT), patch.object(
+                    proxy, "start_image_route_receipt", return_value=receipt
+                ), patch.object(
+                    proxy, "_apply_image_route_policy", return_value=SimpleNamespace(denied=False)
+                ), patch.object(
+                    proxy, worker_name, side_effect=worker
+                ), patch.object(
+                    proxy.receipt_store, "record"
+                ) as record, patch.object(proxy.firehose_metrics, "record_event"):
+                    task = asyncio.create_task(route(SimpleNamespace()))
+                    try:
+                        await asyncio.wait_for(entered.wait(), timeout=2)
+                        task.cancel()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await task
+                        record.assert_called_once_with(receipt)
+                        self.assertEqual(receipt.status, "cancelled")
+                        self.assertIsNotNone(receipt.finished_at_ms)
+                    finally:
+                        if not task.done():
+                            task.cancel()
+                            await asyncio.gather(task, return_exceptions=True)
 
 
 class ImageRoundCancellationGapTests(IsolatedAsyncioTestCase):

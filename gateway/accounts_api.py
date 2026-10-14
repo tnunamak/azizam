@@ -317,8 +317,10 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         if not revision:
             raise accounts.AccountError("settings_revision_required", "Reload settings and supply the current revision in If-Match.", 428)
         def validate_sign_in(conn):
-            # Hold the same write lock as OIDC configuration changes.
-            if body.mode in {"oidc", "both"} and not oidc_provider()["enabled"]:
+            # Hold the same write lock as OIDC configuration changes. "both" is the
+            # unset default and already reads as built-in only while no provider is
+            # enabled, so only the OIDC-only mode needs a provider.
+            if body.mode == "oidc" and not oidc_provider()["enabled"]:
                 raise accounts.AccountError("oidc_unavailable", "Configure an identity provider before enabling this sign-in option.", 409)
         try:
             admin_store.put_operator_setting_with_audit("sign_in", {"mode": body.mode}, updated_by=ctx.audit_actor_id, audit_action="operator.sign_in.update",

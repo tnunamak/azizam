@@ -119,11 +119,12 @@ def test_remote_model_price_and_alias_share_observed_availability(ready, expecte
         assert row["availability"]["status"] == expected
         assert row["availability"]["evidence"]["observed_at_s"] == evidence["cloud-service"]["observed_at_s"]
     assert [row["id"] for row in round_trip["aliases"]] == ["fast"]
-    assert round_trip["models"] == []
+    assert [row["id"] for row in round_trip["models"]] == ["openrouter/visible"]
     alias = round_trip["aliases"][0]
     assert alias["resolves_to"] == {"chat": "openrouter/visible"}
-    # The stable alias retains the exact target's observed price and availability
-    # while presenting only one caller entry. Compare the unaliased catalog too.
+    assert alias["same_model_as"] == ["openrouter/visible"]
+    # The alias and the model it points at are two rows that carry the same observed
+    # price and availability (checked in the loop above). Compare the unaliased catalog too.
     concrete = build_models_catalog(capabilities=capabilities, service_records=registry,
                                    health_evidence=evidence)["models"][0]
     assert concrete["id"] == "openrouter/visible"
@@ -142,7 +143,8 @@ def test_chat_alias_does_not_hide_same_named_concrete_embedding_model():
     ])
     catalog = build_models_catalog(capabilities=capabilities, alias_views=views)
     assert [row["id"] for row in catalog["aliases"]] == ["fast"]
-    assert {row["id"] for row in catalog["models"]} == {"fast"}
+    # The chat model `fast` points at is a row too; the embedding model that shares the alias's name stays distinct.
+    assert {row["id"] for row in catalog["models"]} == {"chat-model", "fast"}
     assert catalog["aliases"][0]["resolves_to"] == {"chat": "chat-model"}
     embedding = next(row for row in catalog["models"] if row["id"] == "fast")
     assert [cap["intent"] for cap in embedding["capabilities"]] == ["text.embeddings"]

@@ -740,8 +740,8 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     expect(receipt.request_id).toBe(connection.request_id);
     expect(receipt.status).toBe("succeeded");
     expect(receipt.source_kind).toBe("gateway-ui");
-    // Stable alias resolution precedes the existing durable receipt boundary.
-    expect(receipt.requested_model).toBe("demo-chat");
+    // The receipt records the name the request used; the plan grants the model behind it.
+    expect(receipt.requested_model).toBe("fast");
     expect(
       JSON.stringify(connection).includes(secret),
       "Connection response must not echo the key",

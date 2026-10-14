@@ -1057,39 +1057,57 @@ class AdminSQLiteStore:
             workflows=imported["workflows"],
             capabilities=imported["capabilities"],
         )
-        registry_record = self.update_service_registry(
-            data=registry,
-            actor=actor,
-            expected_generation=expected_generation,
-        )
+        registry = service_registry.normalize_service_registry(registry)
         package_index = extension_packages.merge_package_index(
             self.get_extension_package_index(),
             review,
             source=source,
         )
-        index_record = admin_store.put_operator_setting(
-            EXTENSION_PACKAGE_INDEX_SETTING_KEY,
-            package_index,
-            updated_by=actor.subject,
-            path=self.path,
-        )
         package_id = str((review.get("package") or {}).get("id") or "")
-        admin_store.record_audit(
-            "operator.extension_package.enable",
-            actor_kind=actor.actor_kind,
-            actor_id=actor.audit_actor_id,
-            actor_label=actor.actor_label,
-            target_kind="extension_package",
-            target_id=package_id,
-            metadata={
-                "service_count": len(imported["services"]),
-                "protocol_frontend_count": len(imported["protocol_frontends"]),
-                "workflow_count": len(imported["workflows"]),
-                "capability_count": len(imported["capabilities"]),
-                "package_hash": review.get("package_hash"),
-            },
+        # Registry, package index and both audit facts commit together: a
+        # failure at any step leaves the generation and every row unchanged.
+        registry_record, index_record = admin_store.write_service_registry_and_setting_with_audits(
+            registry,
+            expected_generation=expected_generation,
+            updated_by=actor.subject,
+            setting_key=EXTENSION_PACKAGE_INDEX_SETTING_KEY,
+            setting_value=package_index,
+            audits=[
+                {
+                    "action": "operator.service_registry.update",
+                    "actor_kind": actor.actor_kind,
+                    "actor_id": actor.audit_actor_id,
+                    "actor_label": actor.actor_label,
+                    "target_kind": "operator_setting",
+                    "target_id": SERVICE_REGISTRY_SETTING_KEY,
+                    "metadata": {
+                        "service_count": len(registry.get("services") or {}),
+                        "protocol_frontend_count": len(registry.get("protocol_frontends") or {}),
+                        "workflow_count": len(registry.get("workflows") or {}),
+                        "capability_count": len(registry.get("capabilities") or {}),
+                    },
+                },
+                {
+                    "action": "operator.extension_package.enable",
+                    "actor_kind": actor.actor_kind,
+                    "actor_id": actor.audit_actor_id,
+                    "actor_label": actor.actor_label,
+                    "target_kind": "extension_package",
+                    "target_id": package_id,
+                    "metadata": {
+                        "service_count": len(imported["services"]),
+                        "protocol_frontend_count": len(imported["protocol_frontends"]),
+                        "workflow_count": len(imported["workflows"]),
+                        "capability_count": len(imported["capabilities"]),
+                        "package_hash": review.get("package_hash"),
+                    },
+                },
+            ],
             path=self.path,
         )
+        # The artifact and reload observe the committed registry.
+        self.write_litellm_config(registry_record["value"])
+        self._fire_registry_changed()
         return {
             "extension_package": (index_record["value"].get("packages") or {}).get(package_id),
             "review": review,

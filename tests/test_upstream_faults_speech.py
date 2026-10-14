@@ -14,7 +14,7 @@ import json
 import pytest
 
 import proxy
-from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, KnownBug, expect_fixed, fake_upstreams, load_scenario, read_deadline  # noqa: F401
+from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, fake_upstreams, load_scenario, read_deadline  # noqa: F401
 
 HANG_BOUND_SECONDS = 10
 REQUEST_BODY = b'{"input":"hello"}'
@@ -100,7 +100,6 @@ def test_an_engine_that_drops_mid_stream_aborts_the_client_stream(fake_upstreams
     _expect_forwarded(fake)
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B9: the streamed TTS relay drops the engine's Retry-After on an error status (fix/fk-error-envelope)")
 def test_a_rate_limited_engine_status_and_retry_after_reach_the_caller(fake_upstreams) -> None:
     fake = _serve(fake_upstreams, "speech-rate-limited")
 
@@ -108,8 +107,8 @@ def test_a_rate_limited_engine_status_and_retry_after_reach_the_caller(fake_upst
 
     assert response.status_code == 429
     assert json.loads(response.body)["error"]["type"] == "rate_limited"
+    assert response.headers.get("retry-after") == "7"
     _expect_forwarded(fake)
-    expect_fixed("FK-B9", response.headers.get("retry-after"), "7")
 
 
 def test_an_engine_that_never_answers_ends_at_the_read_budget(fake_upstreams, monkeypatch) -> None:

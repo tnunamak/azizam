@@ -647,3 +647,62 @@ test.each(["switch-task", "unmount"] as const)(
     }
   },
 );
+
+test("serializes pending microphone acquisition and releases the acquired stream", async () => {
+  mocks.params = new URLSearchParams("capability=transcribe");
+  fetchMock.mockImplementation(async (url: string) =>
+    response(url.includes("workflows") ? { workflows: [] } : {
+      aliases: [],
+      models: [{ id: "fixture-stt", name: "Fixture transcription", capabilities: ["transcribe"] }],
+    }),
+  );
+
+  const original = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+  const finishers: Array<(stream: MediaStream) => void> = [];
+  const getUserMedia = vi.fn(() => new Promise<MediaStream>((resolve) => {
+    finishers.push(resolve);
+  }));
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: { getUserMedia },
+  });
+  const constructed = vi.fn();
+  class FakeRecorder {
+    state = "inactive";
+    ondataavailable: ((event: BlobEvent) => void) | null = null;
+    onstop: (() => void) | null = null;
+    constructor(_stream: MediaStream) { constructed(); }
+    start() { this.state = "recording"; }
+    stop() {
+      if (this.state !== "recording") return;
+      this.state = "inactive";
+      this.onstop?.();
+    }
+  }
+  vi.stubGlobal("MediaRecorder", FakeRecorder);
+  const view = render(<TryPage />);
+  try {
+    const record = await screen.findByRole("button", { name: "Record" });
+    fireEvent.click(record);
+    fireEvent.click(record);
+    // Resolve every request even on the buggy implementation so cleanup is tested.
+    const stops = finishers.map(() => vi.fn());
+    await act(async () => {
+      finishers.forEach((finish, index) => finish({
+        getTracks: () => [{ stop: stops[index] }],
+      } as unknown as MediaStream));
+    });
+    view.unmount();
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(constructed).toHaveBeenCalledTimes(1);
+    expect(stops).toHaveLength(1);
+    expect(stops[0]).toHaveBeenCalledTimes(1);
+    expect(mocks.tryKey).not.toHaveBeenCalled();
+    expect(mocks.revokeKey).not.toHaveBeenCalled();
+  } finally {
+    view.unmount();
+    if (original) Object.defineProperty(navigator, "mediaDevices", original);
+    else Reflect.deleteProperty(navigator, "mediaDevices");
+  }
+});
+

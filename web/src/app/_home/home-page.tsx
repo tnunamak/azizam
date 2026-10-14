@@ -575,6 +575,9 @@ function Connect({
         all.findIndex((other) => other.value === field.value) === index,
     );
 
+  // A half-made app is only resumed for the client it was made for.
+  const resumableApp = pendingApp?.name === chosenAppName ? pendingApp : null;
+
   async function createKey() {
     if (createLock.current) return;
     createLock.current = true;
@@ -585,7 +588,8 @@ function Connect({
     setReveal(null);
     setPastedKey("");
     try {
-      const app = pendingApp ?? (await accountApi.createApp(chosenAppName));
+      const app =
+        resumableApp ?? (await accountApi.createApp(chosenAppName));
       setPendingApp(app);
       const key = await accountApi.mintKey(app.id, chosenAppName);
       setSelectedCredentialId(key.id);
@@ -837,7 +841,7 @@ function Connect({
                 )}
                 {creating
                   ? "Creating key…"
-                  : pendingApp
+                  : resumableApp
                     ? "Retry key creation"
                     : `Create key for ${chosenAppName}`}
               </Button>
@@ -1014,6 +1018,13 @@ function CreationMedia({
   const [audioLoading, setAudioLoading] = useState(false);
   const audioLoadLock = useRef(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const tileMounted = useRef(true);
+  useEffect(() => {
+    tileMounted.current = true;
+    return () => {
+      tileMounted.current = false;
+    };
+  }, []);
 
   const resetKey = `${creation.asset_id}:${creation.download_url ?? ""}:${posterUrl ?? ""}`;
   const [previousResetKey, setPreviousResetKey] = useState(resetKey);
@@ -1149,6 +1160,8 @@ function CreationMedia({
                       const renewed = await homeApi.mediaDownload(
                         creation.asset_id,
                       );
+                      // The tile left the page while the renewal was in flight.
+                      if (!tileMounted.current) return;
                       if (!renewed.download_url?.trim()) {
                         setAudioError("unavailable");
                         return;

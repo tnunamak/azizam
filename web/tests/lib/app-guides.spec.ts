@@ -208,6 +208,17 @@ describe("suggestedModel", () => {
     ).toBe("near");
     expect(suggestedModel([row("paid", "chat")], "chat")).toBe("paid");
   });
+  it("prefers a name that points at a model, and skips one known to be unavailable", () => {
+    const pinned = row("default-fast", "chat", { locality: "local", recommended: true });
+    expect(suggestedModel([pinned, row("fast", "chat", { alias: true })], "chat")).toBe("fast");
+    expect(suggestedModel([pinned], "chat")).toBe("default-fast");
+    expect(
+      suggestedModel([row("fast", "chat", { alias: true, availability: { available: false } }), pinned], "chat"),
+    ).toBe("default-fast");
+    expect(
+      suggestedModel([row("down", "chat", { alias: true, availability: { available: false } })], "chat"),
+    ).toBeNull();
+  });
   it("matches the task, reads it from the first capability, and returns null when there is none", () => {
     expect(suggestedModel([row("voice", "transcribe")], "chat")).toBeNull();
     expect(suggestedModel([row("voice", "transcribe")], "transcribe")).toBe("voice");

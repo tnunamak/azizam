@@ -1199,6 +1199,7 @@ export default function TryPage() {
   const stream = useRef<MediaStream | null>(null);
   const objectUrls = useRef<string[]>([]);
   const mounted = useRef(true);
+  const acquiringMicrophone = useRef(false);
   const activeTabRef = useRef<TryTab>("chat");
   const explicitModelTabs = useRef<Set<TryTab>>(new Set());
   const initializedWorkflowId = useRef<string | null>(null);
@@ -1468,6 +1469,10 @@ export default function TryPage() {
   }
 
   async function startRecording() {
+    // One permission request at a time: a second click while the prompt is
+    // open would acquire a second stream and recorder.
+    if (acquiringMicrophone.current) return;
+    acquiringMicrophone.current = true;
     setRecordingError(null);
     let mediaStream: MediaStream | null = null;
     try {
@@ -1502,6 +1507,8 @@ export default function TryPage() {
         setRecordingError(
           "Recording is not available in this browser. Check microphone access and try again.",
         );
+    } finally {
+      acquiringMicrophone.current = false;
     }
   }
 
@@ -1750,6 +1757,10 @@ export default function TryPage() {
 
   async function run(tab: TryTab, event: FormEvent) {
     event.preventDefault();
+    // A sign-out or unmount (both advance keyGeneration) ends the identity
+    // this run started under.
+    const runGeneration = keyGeneration.current;
+    const superseded = () => runGeneration !== keyGeneration.current;
     if (tab === "workflow" && workflowAvailability?.runnable === false) return;
     if (tab === "workflow" && selectedWorkflow?.example_request?.path) {
       // Nothing doomed goes to the gateway: say what is missing, on the field.
@@ -1807,6 +1818,7 @@ export default function TryPage() {
           setPromptMemory(null);
           refreshedState = "unknown";
         }
+        if (superseded()) return;
       }
       if (
         personViewer &&

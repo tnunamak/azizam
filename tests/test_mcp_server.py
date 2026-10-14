@@ -378,6 +378,33 @@ def test_unknown_target_lists_valid_ones(env):
     assert "krea" in result["structuredContent"]["targets"]
 
 
+def test_hidden_workflows_and_names_are_not_listed_or_resolved():
+    """The same visibility check discovery uses: a hidden item is absent, not merely refused later."""
+    seen = []
+
+    def visible(_request, _auth, entry):
+        seen.append(dict(entry))
+        return entry["id"] not in {"audio.generate.sfx", "tts-fast"}
+
+    def authenticate(request, _path):
+        return SimpleNamespace(identity="k")
+
+    deps = McpDeps(authenticate=authenticate, call=Core().call, catalog=lambda: CATALOG, aliases=lambda: ALIASES,
+                   store_asset=lambda *a: {}, read_asset=lambda *a: None, public_base_url=lambda r: "https://gw.test",
+                   poll_interval=0.0, allowed_origins=lambda r: ["https://gw.test"], visible=visible)
+    app = FastAPI()
+    mcp_server.register_mcp_routes(app, deps)
+    hidden = SimpleNamespace(client=TestClient(app))
+    rows = {r["target"]: r for r in call(hidden, "capabilities", {})["structuredContent"]["workflows"]}
+    assert "sfx" not in rows and {"krea", "qwen-edit", "speech"} <= set(rows)
+    assert rows["speech"]["aliases"] == ["tts"]
+    assert {"id": "audio.generate.sfx", "intent": "audio.generate"} in seen
+    assert {"id": "tts-fast", "operation": "speech"} in seen
+    # A hidden workflow cannot be described either: it is an unknown target.
+    result = call(hidden, "capabilities", {"target": "sfx"})
+    assert result["isError"] is True and "sfx" not in result["structuredContent"]["targets"]
+
+
 # --------------------------------------------------------------------- run
 
 
