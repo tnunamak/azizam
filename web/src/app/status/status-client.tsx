@@ -239,7 +239,12 @@ function EngineSheet({
               ...(engine.models.length
                 ? [["Served models", engine.models.join(", ")]]
                 : []),
-              ...(engine.lastError ? [["Last error", engine.lastError]] : []),
+              ...(engine.lastError
+                ? [
+                    ["Symptom", engineStateWord(engine).word],
+                    ["Next step", "Check the engine address and that it is running, then refresh."],
+                  ]
+                : []),
             ].map(([label, value]) => (
               <div key={label}>
                 <dt className="text-muted-foreground">{label}</dt>
@@ -668,7 +673,7 @@ function engineProblems(
       // The verdict line above carries the state word, so the title says
       // what it means for people, or the fault when nothing is exposed.
       title: consequence
-        ? `${joinNames([exposed[0], ...exposed.slice(1).map((label) => label.toLowerCase())])} ${failed.length ? "requests have failed" : `${exposed.length === 1 ? "is" : "are"} unavailable right now`}`
+        ? `${joinNames([exposed[0], ...exposed.slice(1).map((label) => label.toLowerCase())])} ${failed.length ? "requests have failed" : key === "degraded" ? "requests may fail right now" : `${exposed.length === 1 ? "is" : "are"} unavailable right now`}`
         : single
           ? symptomOf(first).replace(/\.$/, "")
           : `${affected.length} engines ${symptomOf(first)

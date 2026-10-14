@@ -1,4 +1,5 @@
 import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
+import type { Route } from "@playwright/test";
 import { fulfilJson } from "./fixtures/intercept";
 
 test("create, rotate and revoke an app key, then inspect its audit receipt", { tag: GLOBAL_STATE_TAG }, async ({
@@ -197,15 +198,23 @@ test("audit has a useful empty filter state and recovers after an API error", as
 }) => {
   await page.goto("/activity/");
   await page.getByRole("tab", { name: "Changes", exact: true }).click();
-  // OWNER-05: people are picked by name; raw IDs live under a technical disclosure.
-  await page.getByText("Technical: filter by person ID", { exact: true }).click();
-  await page
-    .getByRole("textbox", { name: "Technical person ID" })
-    .fill("no-such-test-actor");
-  await page.getByRole("button", { name: "Apply", exact: true }).click();
+  // OWNER-05: filters are pick-lists, never typed ids. A change type with no
+  // changes in it shows the empty state; the server answers that filter with none.
+  const emptyForType = (route: Route) =>
+    new URL(route.request().url()).searchParams.has("action_prefix")
+      ? fulfilJson(route, { records: [], next_cursor: null })
+      : route.fallback();
+  await page.route("**/admin/api/audit?**", emptyForType);
+  await page.getByRole("combobox", { name: "Change type", exact: true }).click();
+  await page.getByRole("option", { name: "Keys", exact: true }).click();
   await expect(
     page.getByText("No matching changes", { exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await expect(
+    page.getByRole("button", { name: /Details:/ }).first(),
+  ).toBeVisible();
+  await page.unroute("**/admin/api/audit?**", emptyForType);
   await page.route("**/admin/api/audit?**", (route) =>
     fulfilJson(route, { error: { message: "Unavailable for this test" } }, { status: 503 }),
   );

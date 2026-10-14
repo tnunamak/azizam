@@ -40,10 +40,11 @@ async function writeRules(base: number | null, snapshot: Snapshot, reason: strin
     method: "POST", body: { expected_active_revision: base },
   });
 }
+const staleMessage = "Categories changed while you were editing. Review the latest settings before saving.";
 const failure = (error: unknown) =>
   error instanceof ApiError && error.code === "stale_base"
-    ? "The categories changed while you were editing. Close this and try again."
-    : "The change was not saved. Try again.";
+    ? staleMessage
+    : "We could not confirm that this change was saved. Reload the categories before trying again.";
 
 export function CategoryList({ active, catalog, presets, catalogLoading, catalogError, onCatalogRetry, onSaved, adding, onAddingChange, picking, onPickingChange }: {
   active: ActiveRules; catalog: CatalogService[]; presets: Preset[]; catalogLoading: boolean; catalogError: boolean; onCatalogRetry: () => void;
@@ -62,16 +63,27 @@ export function CategoryList({ active, catalog, presets, catalogLoading, catalog
   }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [recovery, setRecovery] = useState(0);
+  const [status, setStatus] = useState("");
   const snapshot = active?.snapshot ?? emptySnapshot();
   const categories = plainCategories(snapshot);
   const planName = (id: string) => !plans ? "…" : plans.find((plan) => plan.id === id)?.name ?? "a removed access plan";
   const categoryDialog = adding ? { kind: "category" as const, id: null } : dialog;
+
+  // The category being edited was deleted elsewhere: leave its editor and say why.
+  // Adjusted during render, so the stale editor never paints.
+  if (error === staleMessage && categoryDialog?.kind === "category" && categoryDialog.id && !snapshot.categories[categoryDialog.id]) {
+    setDialog(null);
+    setError("");
+    setStatus("This category was deleted while you were editing.");
+  }
 
   function close() {
     setDialog(null);
     onAddingChange(false);
     onPickingChange(false);
     setError("");
+    setRecovery(0);
   }
   async function commit(next: Snapshot, reason: string, then?: () => void) {
     setBusy(true);
@@ -84,12 +96,14 @@ export function CategoryList({ active, catalog, presets, catalogLoading, catalog
     } catch (cause) {
       setError(failure(cause));
       await onSaved();
+      if (cause instanceof ApiError && cause.code === "stale_base") setRecovery((value) => value + 1);
     } finally {
       setBusy(false);
     }
   }
 
   return <section aria-label="Categories" className="space-y-4">
+    {status && <p role="status" className="text-meta">{status}</p>}
     {catalogError && <Callout as="div" severity="critical" title="Models and workflows couldn't be loaded." headerAction={<Button variant="outline" onClick={onCatalogRetry}>Try again</Button>} />}
     {!categories.length && <EmptyState icon={Layers} title="No categories yet"
       description="A category groups models and workflows and decides who can see them. Start with one for work that is not ready, or for adult content."
@@ -127,8 +141,8 @@ export function CategoryList({ active, catalog, presets, catalogLoading, catalog
 
     {picking && <PresetDialog presets={presets} snapshot={snapshot} busy={busy} error={error} onClose={close}
       onAdd={(preset) => commit(addPreset(snapshot, preset), "Add category " + preset.label)} />}
-    {categoryDialog?.kind === "category" && <CategoryDialog
-      key={categoryDialog.id ?? "new"} category={categoryDialog.id ? snapshot.categories[categoryDialog.id] : undefined}
+    {categoryDialog?.kind === "category" && (!categoryDialog.id || snapshot.categories[categoryDialog.id]) && <CategoryDialog
+      key={categoryDialog.id ?? "new"} recovery={recovery} category={categoryDialog.id ? snapshot.categories[categoryDialog.id] : undefined}
       plans={plans ?? []} plansUnavailable={plansError} onRetryPlans={() => void plansRefetch()}
       busy={busy} error={error} blocker={categoryDialog.id ? deleteBlocker(snapshot, categoryDialog.id) : null} onClose={close}
       onSubmit={(input) => {
@@ -137,14 +151,14 @@ export function CategoryList({ active, catalog, presets, catalogLoading, catalog
       }}
       onDelete={categoryDialog.id ? () => commit(deleteCategory(snapshot, categoryDialog.id!), "Delete category " + snapshot.categories[categoryDialog.id!].label) : undefined} />}
     {dialog?.kind === "add" && <AddItemsDialog key={dialog.id} category={snapshot.categories[dialog.id]} snapshot={snapshot} catalog={catalog}
-      loading={catalogLoading} busy={busy} error={error} onClose={close}
+      loading={catalogLoading} planName={planName} busy={busy} error={error} onClose={close}
       onSubmit={(entries) => {
         const now = new Date().toISOString();
         const next = entries.reduce((current, entry) => moveItem(current, entry, dialog.id, now), snapshot);
         return commit(next, "Add " + entries.length + " to " + snapshot.categories[dialog.id].label);
       }} />}
     {dialog?.kind === "move" && <MoveDialog key={dialog.item.stem} item={dialog.item} categories={categories} current={categoryOf(snapshot, dialog.item.stem)}
-      busy={busy} error={error} onClose={close}
+      planName={planName} busy={busy} error={error} onClose={close}
       onSubmit={(to) => commit(moveItem(snapshot, asEntry(dialog.item), to, new Date().toISOString()),
         to ? "Move " + dialog.item.label + " to " + snapshot.categories[to].label : "Take " + dialog.item.label + " out of its category")} />}
   </section>;
@@ -156,8 +170,8 @@ const visibilityChoices: { value: Visibility; label: string; help: string }[] = 
   { value: "plans", label: "Me and chosen access plans", help: "People and apps on these plans can also see it." },
 ];
 
-function CategoryDialog({ category, plans, plansUnavailable, onRetryPlans, busy, error, blocker, onClose, onSubmit, onDelete }: {
-  category?: Category; plans: { id: string; name: string }[]; plansUnavailable: boolean; onRetryPlans: () => void;
+function CategoryDialog({ category, recovery, plans, plansUnavailable, onRetryPlans, busy, error, blocker, onClose, onSubmit, onDelete }: {
+  category?: Category; recovery: number; plans: { id: string; name: string }[]; plansUnavailable: boolean; onRetryPlans: () => void;
   busy: boolean; error: string; blocker: string | null; onClose: () => void;
   onSubmit: (input: CategoryInput) => Promise<void>; onDelete?: () => Promise<void>;
 }) {
@@ -166,7 +180,24 @@ function CategoryDialog({ category, plans, plansUnavailable, onRetryPlans, busy,
   const [visibility, setVisibility] = useState<Visibility>(category ? visibilityOf(category) : "owner");
   const [chosen, setChosen] = useState<string[]>(category?.visible_to ?? []);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const valid = label.trim().length > 0 && (visibility !== "plans" || chosen.length > 0);
+  const [recoveredCategory, setRecoveredCategory] = useState(category);
+  const [appliedRecovery, setAppliedRecovery] = useState(recovery);
+  // After a stale-save recovery the latest saved values replace the form. The recovered
+  // category and applied counter record what the form last took, so this runs once per
+  // recovery or category change, during render.
+  if (recovery && (recoveredCategory !== category || appliedRecovery !== recovery)) {
+    setLabel(category?.label ?? "");
+    setDescription(category?.description ?? "");
+    setVisibility(category ? visibilityOf(category) : "owner");
+    setChosen(category?.visible_to ?? []);
+    setConfirmDelete(false);
+    setRecoveredCategory(category);
+    setAppliedRecovery(recovery);
+  }
+  const changed = label !== (category?.label ?? "") || description !== (category?.description ?? "")
+    || visibility !== (category ? visibilityOf(category) : "owner")
+    || (visibility === "plans" && (chosen.length !== (category?.visible_to ?? []).length || chosen.some((id) => !category?.visible_to?.includes(id))));
+  const valid = (!recovery || changed) && label.trim().length > 0 && (visibility !== "plans" || chosen.length > 0);
   return <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
     <DialogContent>
       <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); if (valid && !busy) void onSubmit({ label, description, visibility, plans: chosen }); }}>
@@ -212,7 +243,8 @@ function CategoryDialog({ category, plans, plansUnavailable, onRetryPlans, busy,
   </Dialog>;
 }
 
-function AddItemsDialog({ category, snapshot, catalog, loading, busy, error, onClose, onSubmit }: {
+function AddItemsDialog({ category, snapshot, catalog, loading, planName, busy, error, onClose, onSubmit }: {
+  planName: (id: string) => string;
   category: Category; snapshot: Snapshot; catalog: CatalogService[]; loading: boolean; busy: boolean; error: string;
   onClose: () => void; onSubmit: (entries: CatalogService[]) => Promise<void>;
 }) {
@@ -225,6 +257,8 @@ function AddItemsDialog({ category, snapshot, catalog, loading, busy, error, onC
     const id = categoryOf(snapshot, stem);
     return id && id !== category.id ? snapshot.categories[id]?.label : "";
   };
+  const leaving = picked.filter((stem) => Boolean(elsewhere(stem))).length;
+  const promoting = picked.some((stem) => widens(snapshot.categories[categoryOf(snapshot, stem) ?? ""], category));
   return <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
     <DialogContent>
       <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); if (picked.length && !busy) void onSubmit(catalog.filter((entry) => picked.includes(entry.stem))); }}>
@@ -232,6 +266,10 @@ function AddItemsDialog({ category, snapshot, catalog, loading, busy, error, onC
           <DialogTitle>Add items to {category.label}</DialogTitle>
           <DialogDescription>Choose the models and workflows to put in this category. An item can be in one category at a time.</DialogDescription>
         </DialogHeader>
+        <p className="text-meta">Who can see it: {visibilityText(category, planName)}</p>
+        <p className="text-meta">{leaving} selected {leaving === 1 ? "item" : "items"} will leave another category.</p>
+        {picked.map((stem) => <p key={stem} className="text-meta">Move {catalog.find((entry) => entry.stem === stem)?.label} to {category.label}. Who can see it changes from {audienceText(snapshot.categories[categoryOf(snapshot, stem) ?? ""], planName)} to {visibilityText(category, planName)}.</p>)}
+        {promoting && <p className="text-meta">Anyone who could not see these items before may be able to.</p>}
         <Field label="Search"><Input value={query} onChange={(event) => setQuery(event.target.value)} autoComplete="off" /></Field>
         <div role="group" aria-label="Models and workflows" className="max-h-72 overflow-y-auto rounded-control border">
           {loading && <p role="status" className="text-meta text-muted-foreground p-3">Loading models and workflows…</p>}
@@ -255,32 +293,47 @@ function AddItemsDialog({ category, snapshot, catalog, loading, busy, error, onC
   </Dialog>;
 }
 
-function MoveDialog({ item, categories, current, busy, error, onClose, onSubmit }: {
+const audienceText = (category: Category | undefined, planName: (id: string) => string) =>
+  category ? visibilityText(category, planName) : "Everyone who can use the gateway";
+const widens = (from: Category | undefined, to: Category | undefined): boolean => {
+  const before = from?.visible_to;
+  const after = to?.visible_to;
+  if (before == null) return false;
+  return after == null || after.some((id) => !before.includes(id));
+};
+
+function MoveDialog({ item, categories, current, planName, busy, error, onClose, onSubmit }: {
+  planName: (id: string) => string;
   item: Item; categories: Category[]; current: string | null; busy: boolean; error: string;
   onClose: () => void; onSubmit: (to: string | null) => Promise<void>;
 }) {
-  const [to, setTo] = useState(current ?? "none");
-  const promoting = current !== null && to === "none";
+  const initial = current === null ? "uncategorized" : "category:" + current;
+  const [to, setTo] = useState(initial);
+  const destination = to === "uncategorized" ? null : to.startsWith("category:") ? to.slice("category:".length) : undefined;
+  const fromCategory = categories.find((category) => category.id === current);
+  const toCategory = categories.find((category) => category.id === destination);
+  const promoting = widens(fromCategory, toCategory);
   return <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
     <DialogContent>
-      <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); if (to !== (current ?? "none") && !busy) void onSubmit(to === "none" ? null : to); }}>
+      <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); if (to !== initial && destination !== undefined && !busy) void onSubmit(destination); }}>
         <DialogHeader>
           <DialogTitle>Move {item.label}</DialogTitle>
           <DialogDescription>Choose where it goes. Its new category decides who can see it.</DialogDescription>
         </DialogHeader>
         <RadioGroup value={to} onValueChange={setTo} aria-label="Move to" disabled={busy}>
           {categories.map((category) => <label key={category.id} className="flex cursor-pointer items-center gap-3 py-1 max-sm:min-h-11">
-            <RadioGroupItem value={category.id} /><span className="text-body">{category.label}</span>
+            <RadioGroupItem value={"category:" + category.id} aria-label={category.label} /><span className="text-body">{category.label}</span><span className="text-meta text-muted-foreground">{visibilityText(category, planName)}</span>
           </label>)}
           <label className="flex cursor-pointer items-center gap-3 py-1 max-sm:min-h-11">
-            <RadioGroupItem value="none" /><span className="text-body">No category</span>
+            <RadioGroupItem value="uncategorized" aria-label="No category" /><span className="text-body">No category</span><span className="text-meta text-muted-foreground">Everyone who can use the gateway</span>
           </label>
         </RadioGroup>
-        {promoting && <p className="text-meta">With no category, everyone who can use the gateway can see and use it.</p>}
+        <p className="text-meta">Move {item.label} to {toCategory?.label ?? "No category"}. Who can see it changes from {audienceText(fromCategory, planName)} to {audienceText(toCategory, planName)}.</p>
+        {promoting && <p className="text-meta">{destination === null ? "With no category, everyone who can use the gateway can see and use it. " : ""}Anyone who could not see it before may be able to.</p>}
         {error && <p role="alert" className="text-meta text-danger">{error}</p>}
         <DialogFooter>
           <Button type="button" variant="outline" disabled={busy} onClick={onClose}>Cancel</Button>
-          <Button type="submit" disabled={busy || to === (current ?? "none")}>Move</Button>
+          <Button type="submit" disabled={busy || to === initial || destination === undefined}>Move</Button>
         </DialogFooter>
       </form>
     </DialogContent>

@@ -60,6 +60,33 @@ describe("Library tiles load small previews", () => {
     vi.unstubAllGlobals();
   });
 
+
+  test("failed video thumbnails fetch their poster and leave the loader", async () => {
+    const requested = renderLibrary([
+      item("clip", "video", { thumbnail_url: "/signed/clip/thumb", poster_asset_id: "poster", duration_s: 4 }),
+    ]);
+    fireEvent.error(await screen.findByAltText("Prompt clip"));
+    await waitFor(() => expect(requested).toContain("/me/api/media/poster/download?scope=me"));
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Loading video poster" })).toBeNull());
+    expect(screen.getByRole("button", { name: "Play Prompt clip" })).toBeVisible();
+    expect(document.querySelector("video")).toHaveAttribute("poster", "/signed/poster/original");
+  });
+
+  test("the large video preview also replaces a failed thumbnail poster", async () => {
+    const requested = renderLibrary([
+      item("clip", "video", { thumbnail_url: "/signed/clip/thumb", poster_asset_id: "poster", duration_s: 4 }),
+    ]);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Prompt clip" }));
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(dialog.querySelector("video")).not.toBeNull());
+    const thumbnailProbe = dialog.querySelector('img[src="/signed/clip/thumb"]');
+    expect(thumbnailProbe).not.toBeNull();
+    fireEvent.error(thumbnailProbe!);
+    await waitFor(() => expect(requested).toContain("/me/api/media/poster/download?scope=me"));
+    await waitFor(() => expect(dialog.querySelector("video")).toHaveAttribute("poster", "/signed/poster/original"));
+    expect(screen.queryByRole("status", { name: "Loading video poster" })).toBeNull();
+  });
+
   test("an image tile shows the thumbnail, lazily and with its size, not the original", async () => {
     renderLibrary([item("pic", "image", { thumbnail_url: "/signed/pic/thumb" })]);
     const image = await screen.findByAltText("Prompt pic");

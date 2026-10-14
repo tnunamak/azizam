@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import subprocess
@@ -70,6 +71,43 @@ def _page_urls() -> list[str]:
     return [entry["url"] for entry in index]
 
 
+class DocsContractTests(unittest.TestCase):
+    def test_reverse_proxy_listener_guidance(self) -> None:
+        text = (ROOT / "docs/REVERSE_PROXY.md").read_text(encoding="utf-8")
+        self.assertNotIn("binds to `127.0.0.1:5000` by default", text)
+        self.assertIn("checked-in configuration sets `proxy.host` to `0.0.0.0`", text)
+        self.assertIn("[configuration reference](../CONFIG.md)", text)
+        self.assertTrue((ROOT / "docs" / "../CONFIG.md").is_file())
+
+    def test_mcp_auth_matches_oauth_recipe(self) -> None:
+        text = (ROOT / "docs/LOCAL_CLIENT_RECIPES.md").read_text(encoding="utf-8")
+        recipe = text.split("## Recipe: MCP clients", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("OAuth", recipe)
+        self.assertNotIn("There is no OAuth server", text)
+        self.assertIn("sign-in through the gateway's OAuth flow for hosted clients", text)
+
+    def test_mcp_job_argument_contract(self) -> None:
+        text = (ROOT / "docs/LOCAL_CLIENT_RECIPES.md").read_text(encoding="utf-8")
+        recipe = text.split("## Recipe: MCP clients", 1)[1].split("\n## ", 1)[0]
+        for row in (
+            "| `job_id` | string | Required. |",
+            "| `wait_seconds` | integer | 0 to 120; default 0. |",
+            "| `cancel` | boolean | Default false. When true, cancel instead of polling, then report the job state. |",
+        ):
+            with self.subTest(row=row):
+                self.assertIn(row, recipe)
+        self.assertIn("default 30, at most 120", recipe)
+
+    def test_design_python_fences_parse(self) -> None:
+        path = ROOT / "docs/design/ENGINE_REGISTRY_DESIGN.md"
+        text = path.read_text(encoding="utf-8")
+        for block in re.finditer(r"^```python\s*\n(.*?)^```\s*$", text, re.M | re.S):
+            line = text.count("\n", 0, block.start()) + 1
+            with self.subTest(line=line):
+                ast.parse(block.group(1), filename=f"{path}:{line}")
+        self.assertEqual(text.count("Schematic interface (not runnable Python)."), 2)
+
+
 class DocsBuildTests(unittest.TestCase):
     def test_committed_output_matches_sources(self) -> None:
         result = subprocess.run(
@@ -88,6 +126,37 @@ class DocsBuildTests(unittest.TestCase):
     def test_sources_and_output_never_link_to_github(self) -> None:
         for path in [*SOURCES.rglob("*.md"), *DOCS.rglob("*.html"), DOCS / "search-index.json"]:
             self.assertNotIn("github.com", path.read_text(encoding="utf-8").lower(), path)
+
+    def test_every_generated_page_has_shared_site_navigation(self) -> None:
+        home = (STATIC / "index.html").read_text(encoding="utf-8")
+        home_nav = re.search(r'<nav id="site-nav".*?</nav>', home, re.S).group()
+        expected_nav = home_nav.replace(
+            'href="/showcase/docs/"', 'href="/showcase/docs/" aria-current="page"'
+        )
+        footer = re.search(r'<footer class="foot">.*?</footer>', home, re.S).group()
+        brand = re.search(r'<a class="brand".*?</a>', home, re.S).group()
+        brand = brand.replace(' aria-current="page"', "")
+        paths = sorted(DOCS.rglob("*.html"))
+        self.assertIn(DOCS / "404.html", paths)
+        self.assertEqual(len(paths), len(_page_urls()) + 1)
+        for path in paths:
+            with self.subTest(path=path):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn('<header class="site-header">', text)
+                self.assertIn(brand, text)
+                self.assertIn(expected_nav, text)
+                self.assertIn(footer, text)
+                menus = re.findall(r'<details class="site-disclosure">(.*?)</details>', text, re.S)
+                self.assertEqual(len(menus), 1)
+                self.assertIn("<summary>Menu</summary>", menus[0])
+                self.assertIn(expected_nav.replace(' id="site-nav"', ""), menus[0])
+                self.assertEqual(text.count('id="site-nav"'), 1)
+                self.assertNotIn('class="site-menu"', text)
+                self.assertIn('aria-label="Search the docs" aria-haspopup="dialog"', text)
+                self.assertIn('id="search-input"', text)
+                self.assertIn('src="/showcase/static/docs.js"', text)
+                self.assertIn('href="/showcase/static/showcase.css"', text)
+                self.assertIn('href="/showcase/static/docs.css"', text)
 
 
 class DocsServingTests(unittest.TestCase):

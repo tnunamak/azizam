@@ -65,7 +65,7 @@ export function categoryOf(snapshot: Snapshot, stem: string): string | null {
 function uniqueId(snapshot: Snapshot, label: string): string {
   const base = categoryId(label) || "category";
   let id = base;
-  for (let n = 2; snapshot.categories[id]; n++) id = base + "-" + n;
+  for (let n = 2; snapshot.categories[id] || id === "none" || id === "uncategorized"; n++) id = base + "-" + n;
   return id;
 }
 

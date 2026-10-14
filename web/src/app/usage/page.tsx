@@ -85,6 +85,7 @@ interface UsageReceipt {
   costUsd: number | null;
   summary: string;
   sourceLabel: string | null;
+  personLabel?: string | null;
   raw: unknown;
 }
 
@@ -347,6 +348,7 @@ export default function UsagePage() {
               receipts={data.receipts}
               nameModel={nameModel}
               loading={isFetching}
+              showPerson={owner && effectivePerson === "all"}
               onSelect={(receipt) => setSelectedReceiptKey(receipt.selectionKey)}
             />
           ) : null}
@@ -442,14 +444,14 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
         note="This month"
       />
       <Stat
-        label="Spend"
+        label="Spend (USD)"
         value={
           noPaidRequests ? (
             "No paid requests"
           ) : summary.remoteSpendUsd === null ? (
             "Cost not recorded"
           ) : (
-            <Money amount={summary.remoteSpendUsd} summary />
+            <Money amount={summary.remoteSpendUsd} summary precise />
           )
         }
         note={<><span>{spendCoverageDetail(summary)}</span><CoverageNote summary={summary} /></>}
@@ -576,7 +578,7 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
                     <TableHead scope="col" className="max-sm:px-2">Task</TableHead>
                     <TableHead scope="col" numeric className="max-sm:px-2">Requests</TableHead>
                     <TableHead scope="col" numeric className="max-sm:px-2">Share</TableHead>
-                    <TableHead scope="col" numeric className="max-sm:px-2">Spend</TableHead>
+                    <TableHead scope="col" numeric className="max-sm:px-2">Spend (USD)</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -586,7 +588,7 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
                       <TableCell numeric className="max-sm:px-2">{formatNumber(task.requests)}</TableCell>
                       <TableCell numeric className="max-sm:px-2">{requests > 0 && task.requests !== null ? `${Math.round(task.requests / requests * 1000) / 10}%` : "Unknown"}</TableCell>
                       <TableCell numeric className="max-sm:px-2 max-sm:whitespace-normal">
-                        {task.unavailable ? "Cost not recorded" : <Money amount={task.costUsd} summary />}
+                        {task.unavailable ? "Cost not recorded" : <Money amount={task.costUsd} summary precise />}
                         {!task.unavailable && task.incomplete ? <span className="text-muted-foreground ml-1 text-meta">partial</span> : null}
                       </TableCell>
                     </TableRow>
@@ -636,7 +638,7 @@ function ModelTable({
                     Requests
                   </TableHead>
                   <TableHead scope="col" numeric>
-                    Spend
+                    Spend (USD)
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -705,7 +707,7 @@ function ModelCost({ row }: { row: UsageModel }) {
     return <span className="text-muted-foreground">Cost not recorded</span>;
   return (
     <>
-      <Money amount={row.costUsd} summary />
+      <Money amount={row.costUsd} summary precise />
       {kind === "partial" ? (
         <span className="text-muted-foreground ml-1 text-meta">partial</span>
       ) : null}
@@ -718,11 +720,13 @@ function ReceiptsList({
   nameModel,
   onSelect,
   loading,
+  showPerson,
 }: {
   receipts: UsageReceipt[];
   nameModel: (id: string) => string;
   onSelect: (receipt: UsageReceipt) => void;
   loading: boolean;
+  showPerson: boolean;
 }) {
   return (
     <Card id="usage-receipts">
@@ -745,7 +749,7 @@ function ReceiptsList({
               <button
                 type="button"
                 key={receipt.selectionKey}
-                aria-label={`Receipt details for ${receipt.summary}`}
+                aria-label={`Receipt details for ${receipt.summary}${showPerson ? ` · ${receipt.personLabel ?? "Person not recorded"}` : ""}`}
                 onClick={() => onSelect(receipt)}
                 className="hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-3 py-4 text-left focus-visible:outline-2"
               >
@@ -754,6 +758,11 @@ function ReceiptsList({
                   <p className="break-words text-meta font-medium">
                     {receipt.summary}
                   </p>
+                  {showPerson && (
+                    <p className="text-muted-foreground mt-1 break-words text-meta">
+                      {receipt.personLabel ?? "Person not recorded"}
+                    </p>
+                  )}
                   {receipt.model && (
                     <p
                       className="text-muted-foreground mt-1 break-words text-meta"
@@ -775,11 +784,11 @@ function ReceiptsList({
                         .map((part, index) => <span key={index}>{index ? " · " : ""}{part}</span>)}
                     </p>
                   ) : null}
+                  <p className="mt-1 break-words text-meta">
+                    <ReceiptCost receipt={receipt} summary />
+                  </p>
                 </div>
                 <StatusBadge status={receipt.status} />
-                <span className="hidden text-meta sm:block">
-                  <ReceiptCost receipt={receipt} summary />
-                </span>
                 <ChevronRight
                   aria-hidden="true"
                   className="text-muted-foreground size-4 shrink-0"
@@ -1157,6 +1166,7 @@ function normalizeReceipt(raw: unknown, selectionKey: string): UsageReceipt {
     costUsd,
     summary: `${requestNouns[capability]} request`,
     sourceLabel: nullableString(object(data.source).label ?? data.source_label),
+    personLabel: nullableString(data.person_label),
     raw,
   };
 }
@@ -1217,6 +1227,7 @@ function normalizeCapabilityCounts(
   const counts = Object.fromEntries(
     capabilities.map((capability) => [capability, null]),
   ) as Record<UsageCapability, number | null>;
+  const seen = new Set<UsageCapability>();
   // Every recorded count lands somewhere: exact names, then aliases, then Other.
   for (const [key, value] of Object.entries(object(raw))) {
     if (dayFields.has(key)) continue;
@@ -1224,7 +1235,9 @@ function normalizeCapabilityCounts(
       ? (key as UsageCapability)
       : normalizeCapability(key);
     const count = requestCount(value);
-    counts[capability] = count === null ? null : (counts[capability] ?? 0) + count;
+    counts[capability] = count === null || (seen.has(capability) && counts[capability] === null)
+      ? null : (counts[capability] ?? 0) + count;
+    seen.add(capability);
   }
   return counts;
 }
@@ -1301,7 +1314,7 @@ function ReceiptCost({
   summary?: boolean;
 }) {
   if (receipt.costUsd != null)
-    return <Money amount={receipt.costUsd} summary={summary} />;
+    return <Money amount={receipt.costUsd} summary={summary} precise={summary} />;
   if (object(receipt.raw).remote === false) return <>No provider charge</>;
   return <>Cost not recorded</>;
 }

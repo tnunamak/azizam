@@ -381,6 +381,94 @@ def test_interrupt_cancels_the_running_request_and_answers_like_a1111():
     assert json.loads(resp.json()["info"]) == {"interrupted": True}
 
 
+
+def test_interrupt_is_per_task_when_next_request_starts(monkeypatch):
+    import asyncio
+
+    async def scenario():
+        started_a, cancelled_a, release_a = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        started_b, release_b = asyncio.Event(), asyncio.Event()
+
+        async def call(request, method, path, **kwargs):
+            if kwargs["json"]["prompt"] == "a":
+                started_a.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled_a.set()
+                    await release_a.wait()
+                    raise
+            started_b.set()
+            await release_b.wait()
+            return httpx.Response(200, json={"data": [{"b64_json": PNG_B64}]})
+
+        deps = A1111Deps(authenticate=lambda r, p: SimpleNamespace(owner="k1", identity=IDENTITY),
+                         call=call, catalog=lambda: [KREA], aliases=lambda: ALIASES,
+                         owner_of=lambda auth: auth.owner)
+        app = FastAPI()
+        a1111_api.register_a1111_routes(app, deps)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as http:
+            tasks = []
+            try:
+                a = asyncio.create_task(http.post("/sdapi/v1/txt2img", json={"prompt": "a"}))
+                tasks.append(a)
+                await asyncio.wait_for(started_a.wait(), 5)
+                await http.post("/sdapi/v1/interrupt")
+                await asyncio.wait_for(cancelled_a.wait(), 5)
+                b = asyncio.create_task(http.post("/sdapi/v1/txt2img", json={"prompt": "b"}))
+                tasks.append(b)
+                await asyncio.wait_for(started_b.wait(), 5)
+                release_a.set()
+                result = (await asyncio.gather(a, return_exceptions=True))[0]
+                assert isinstance(result, httpx.Response), "interrupted A must return JSON after B starts"
+                assert result.json()["images"] == []
+                assert json.loads(result.json()["info"]) == {"interrupted": True}
+                release_b.set()
+                assert (await b).json()["images"] == [PNG_B64]
+                assert (await http.get("/sdapi/v1/progress")).json()["state"]["interrupted"] is False
+            finally:
+                release_a.set()
+                release_b.set()
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_interrupt_ignores_completed_not_yet_awaited_task(monkeypatch):
+    import asyncio
+
+    async def scenario():
+        completed, resume = asyncio.Event(), asyncio.Event()
+        original_wait_for = asyncio.wait_for
+
+        async def paused_wait_for(task, timeout):
+            # Pause after the core finishes but before txt2img observes it.
+            await asyncio.shield(task)
+            completed.set()
+            await resume.wait()
+            return await original_wait_for(task, timeout)
+
+        monkeypatch.setattr(a1111_api.asyncio, "wait_for", paused_wait_for)
+        deps = A1111Deps(authenticate=lambda r, p: SimpleNamespace(owner="k1", identity=IDENTITY),
+                         call=Core().call, catalog=lambda: [KREA], aliases=lambda: ALIASES,
+                         owner_of=lambda auth: auth.owner)
+        app = FastAPI()
+        a1111_api.register_a1111_routes(app, deps)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as http:
+            pending = asyncio.create_task(http.post("/sdapi/v1/txt2img", json={"prompt": "a"}))
+            try:
+                await original_wait_for(completed.wait(), 5)
+                await http.post("/sdapi/v1/interrupt")
+                state = (await http.get("/sdapi/v1/progress")).json()["state"]
+                assert state["interrupted"] is False
+            finally:
+                resume.set()
+                await pending
+
+    asyncio.run(scenario())
 # ------------------------------------------------------- owner isolation
 
 def _interrupt_between_callers(owner_a, owner_b, *, deny_b=False):
@@ -498,7 +586,8 @@ def test_shared_app_owner_currently_exposes_jobs_and_allows_cross_caller_interru
     result = _interrupt_between_callers("app:shared", "app:shared")
     assert result.before_b["job_count"] == 1
     assert result.cancelled
-    assert result.after_a["interrupted"] and result.after_b["interrupted"]
+    # Once both requests are cleaned up, no interrupted task remains.
+    assert not result.after_a["interrupted"] and not result.after_b["interrupted"]
 
 
 class _AnonymousCallerIsolationError(AssertionError):

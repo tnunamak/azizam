@@ -241,6 +241,20 @@ class CancellationRegistryLiveDurationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CancellationRegistryPositiveTTLTests(unittest.TestCase):
+    def test_signal_refreshes_expired_live_entry_tombstone(self) -> None:
+        with patch("gateway.backends.cancellation.time") as clock:
+            clock.monotonic.return_value = 0.0
+            registry = CancellationRegistry(ttl_seconds=10.0)
+            handle = registry.register("req-refresh")
+            clock.monotonic.return_value = 11.0
+            registry.signal("req-refresh")
+            handle.release()
+            late = registry.register("req-refresh")
+            self.assertTrue(late.token.cancelled)
+            late.release()
+            clock.monotonic.return_value = 21.0
+            registry.register("sweep").release()
+            self.assertNotIn("req-refresh", registry._entries)
     def test_unowned_signal_expires_at_positive_ttl_boundary(self) -> None:
         for now, cancelled in ((109.0, True), (110.0, False), (111.0, False)):
             with self.subTest(now=now, cancelled=cancelled):
@@ -280,8 +294,8 @@ class CancellationRegistryPositiveTTLTests(unittest.TestCase):
 
                 fresh = registry.register("req-live")
                 try:
-                    self.assertFalse(fresh.token.cancelled)
-                    self.assertNotEqual(fresh._generation, second._generation)
+                    self.assertTrue(fresh.token.cancelled)
+                    self.assertEqual(fresh._generation, second._generation)
                 finally:
                     fresh.release()
             finally:

@@ -761,7 +761,7 @@ function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean
                 />
               </div>
               {asset.prompt && <p className="break-words">{asset.prompt}</p>}
-              {(asset.model || asset.workflow || asset.generation_ms != null) && (
+              {(asset.model || asset.workflow === workflow.id || asset.generation_ms != null) && (
                 <dl className="text-muted-foreground grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-label">
                   {asset.model && (
                     <>
@@ -769,10 +769,10 @@ function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean
                       <dd className="break-all">{nameModel(asset.model)}</dd>
                     </>
                   )}
-                  {asset.workflow && (
+                  {asset.workflow === workflow.id && (
                     <>
                       <dt>Workflow</dt>
-                      <dd className="break-all">{asset.workflow}</dd>
+                      <dd className="break-all">{workflow.title}</dd>
                     </>
                   )}
                   {asset.generation_ms != null && (
@@ -783,10 +783,11 @@ function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean
                   )}
                 </dl>
               )}
-              {owner && asset.model && (
+              {owner && (asset.model || asset.workflow) && (
                 <details>
                   <summary className="cursor-pointer text-xs">Technical details</summary>
-                  <p className="mt-2 break-all font-mono text-xs">{asset.model}</p>
+                  {asset.model && <p className="mt-2 break-all font-mono text-xs">{asset.model}</p>}
+                  {asset.workflow && <p className="mt-2 break-all font-mono text-xs">{asset.workflow}</p>}
                 </details>
               )}
               <div className="flex flex-wrap gap-2">
@@ -841,7 +842,7 @@ export default function WorkflowsPage() {
     [allRows, owner],
   );
   // Read the open workflow from the latest catalog so a refresh reaches it.
-  const detail = allRows.find((row) => row.id === detailId) ?? null;
+  const detail = rows.find((row) => row.id === detailId) ?? null;
   // A workflow that left the catalog stays dismissed if it comes back.
   useEffect(() => {
     if (data && detailId !== null && detail === null) setDetailId(null);
@@ -857,14 +858,20 @@ export default function WorkflowsPage() {
   const availableCapabilities = allCapabilities.filter((cap) =>
     rows.some((row) => row.capability === cap),
   );
+  const effectiveCapability = capability === "all" || rows.some((row) => row.capability === capability)
+    ? capability
+    : "all";
+  useEffect(() => {
+    if (capability !== effectiveCapability) setCapability(effectiveCapability);
+  }, [capability, effectiveCapability]);
   const filtered = useMemo(
     () =>
       rows.filter(
         (row) =>
           matches(row, query) &&
-          (capability === "all" || row.capability === capability),
+          (effectiveCapability === "all" || row.capability === effectiveCapability),
       ),
-    [rows, query, capability],
+    [rows, query, effectiveCapability],
   );
   const working = filtered.filter((row) => readiness(row) !== "setup");
   const notSetUp = filtered.filter((row) => readiness(row) === "setup");
@@ -936,7 +943,7 @@ export default function WorkflowsPage() {
               <span className="text-sm font-medium">Task</span>
               <select
                 className="border-input bg-card rounded-control min-h-11 w-full border px-3 text-base"
-                value={capability}
+                value={effectiveCapability}
                 onChange={(event) => setCapability(event.target.value)}
               >
                 <option value="all">All</option>
@@ -950,7 +957,7 @@ export default function WorkflowsPage() {
             <Segmented
               label="Workflow task"
               className="max-sm:hidden"
-              value={capability}
+              value={effectiveCapability}
               onChange={setCapability}
               options={[
                 { value: "all", label: "All", icon: SlidersHorizontal },

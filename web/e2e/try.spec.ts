@@ -123,7 +123,7 @@ test("try creates a session key, runs public chat, and links a receipt", async (
       { exact: true },
     ),
   ).toBeVisible();
-  await expect(page.getByText("Copy as", { exact: true })).toBeVisible();
+  await expect(page.getByText("Copy request as", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("link", { name: "View receipt" }),
   ).toHaveAttribute("href", `/usage/?receipt=${receiptId}`);

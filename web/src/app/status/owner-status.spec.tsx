@@ -403,12 +403,10 @@ it("summarizes connection failures without putting raw transport text in the ans
   ).toHaveAttribute("href", "/engines/?service=chat");
   await userEvent.click(screen.getByRole("button", { name: /Show all/ }));
   await userEvent.click(screen.getByRole("button", { name: "Local chat" }));
-  expect(
-    within(screen.getByRole("dialog", { name: "Local chat" })).getByText(
-      "Connection refused",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  const body = screen.getByRole("dialog", { name: "Local chat" }).querySelector("dl")!;
+  expect(body).not.toHaveTextContent("Connection refused");
+  expect(within(body).getByText("Not running", { exact: true })).toBeVisible();
+  expect(within(body).getByText("Check the engine address and that it is running, then refresh.")).toBeVisible();
 });
 
 it("groups engines with the same problem into one action row", async () => {
@@ -838,7 +836,7 @@ it.each(["down", "stopped"])(
     expect(within(row).queryByRole("img")).toBeNull();
     expect(screen.queryByRole("heading", { name: "Needs attention" })).toBeNull();
     await userEvent.click(within(row).getByRole("button", { name: "Local chat" }));
-    expect(within(screen.getByRole("dialog", { name: "Local chat" })).getByText(/Idle, starts when needed/)).toBeVisible();
+    expect(within(screen.getByRole("dialog", { name: "Local chat" })).getByText("Chat · Idle, starts when needed", { exact: true })).toBeVisible();
   },
 );
 
@@ -851,6 +849,33 @@ it("counts idle engines separately from ready engines in the folded summary", as
   expect(await screen.findByRole("button", {
     name: "Engines: 1 idle, 1 turned off. Show all",
   })).toBeVisible();
+});
+
+it.each([
+  ["chat", "Chat", "degraded"],
+  ["video", "Video", "degraded"],
+  ["chat", "Chat", "down"],
+  ["video", "Video", "down"],
+])("describes a sole %s (%s) engine that is %s without sampled failures", async (capability, label, observation) => {
+  const serviceRegistry = {
+    ...chatRegistry,
+    services: { chat: { ...registry.services.chat, capabilities: [capability] } },
+  };
+  mount(engineSnapshot({
+    observation,
+    tone: observation === "down" ? "bad" : "warn",
+    capability_title: label,
+    capability_labels: [label],
+  }), serviceRegistry);
+  const title = await screen.findByRole("heading", {
+    name: new RegExp(`^${label} (requests may fail|is unavailable) right now$`),
+  });
+  if (observation === "degraded") {
+    expect(title).not.toHaveTextContent(/unavailable/i);
+    expect(title).toHaveTextContent(`${label} requests may fail right now`);
+  } else {
+    expect(title).toHaveTextContent(`${label} is unavailable right now`);
+  }
 });
 
 it.each([
@@ -870,7 +895,11 @@ it.each([
   await userEvent.click(within(row).getByRole("button", { name: "Local chat" }));
   const sheet = screen.getByRole("dialog", { name: "Local chat" });
   expect(within(sheet).getByText(`Chat · ${word}`)).toBeVisible();
-  expect(within(sheet).getByText(last_error, { exact: true })).toBeVisible();
+  const body = sheet.querySelector("dl")!;
+  expect(body).not.toHaveTextContent(last_error);
+  expect(body).not.toHaveTextContent("127.0.0.1:8000");
+  expect(within(body).getByText(word, { exact: true })).toBeVisible();
+  expect(within(body).getByText("Check the engine address and that it is running, then refresh.")).toBeVisible();
 });
 
 it("does not call a disabled engine idle", async () => {
@@ -943,4 +972,53 @@ it("removes stale idle copy and check times after a failed refresh", async () =>
   expect(within(refreshed).getByText("Unknown", { exact: true })).toBeVisible();
   expect(within(refreshed).getByText("Last checked: not recorded")).toBeVisible();
   expect(within(refreshed).queryByText("Idle, starts when needed")).toBeNull();
+});
+
+it("does not hide an unhealthy unused engine unless the gateway marks it neutral", async () => {
+  mount(engineSnapshot({ observation: "down", tone: "bad", in_use: false, last_error: "Connection refused" }));
+  const title = await screen.findByRole("heading", { name: "Chat is unavailable right now" });
+  const card = title.closest("article")!;
+  expect(within(card).getByText("Check the engine address, or start the engine.")).toBeVisible();
+  expect(within(card).getByRole("link", { name: "Inspect Local chat" })).toHaveAttribute("href", "/engines/?service=chat");
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Not running", { exact: true })).toBeVisible();
+  expect(within(row).queryByText("Idle, starts when needed")).toBeNull();
+});
+
+it("gives a stale unchecked engine an honest next step instead of diagnosing an outage", async () => {
+  mount(engineSnapshot({ observation: "unknown", tone: "neutral" }, Date.now() / 1000 - 86400));
+  const title = await screen.findByRole("heading", { name: /Local chat has not answered a check in/ });
+  const card = title.closest("article")!;
+  expect(within(card).getByText("Its capabilities read Unknown until it answers.")).toBeVisible();
+  expect(within(card).getByText("Check that the engine is running and its health address answers.")).toBeVisible();
+  expect(within(card).getByRole("link", { name: "Inspect Local chat" })).toHaveAttribute("href", "/engines/?service=chat");
+  expect(within(card).queryByText(/unavailable right now|is not running/)).toBeNull();
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Unknown", { exact: true })).toBeVisible();
+});
+
+it.each([
+  new TypeError("private transport detail"),
+  new ApiError("failed", "private server detail", 503),
+])("retries only failed health and restores current observations after refresh: %s", async (error) => {
+  mount(engineSnapshot());
+  await screen.findByText("Everything works");
+  vi.mocked(api.status).mockRejectedValue(error);
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  const card = (await screen.findByRole("heading", { name: "Engine health couldn’t load" })).closest("article")!;
+  expect(within(card).getByText(error instanceof ApiError ? "The gateway returned an error. Try again." : "We couldn’t tell where this stopped. Try again.")).toBeVisible();
+  expect(screen.queryByText(/private transport detail|private server detail/)).toBeNull();
+  expect(screen.queryByText("Everything works")).toBeNull();
+  const refreshed = await visibleChatRow();
+  expect(within(refreshed).getByText("Unknown", { exact: true })).toBeVisible();
+  expect(within(refreshed).getByText("Last checked: not recorded")).toBeVisible();
+  const statusCalls = vi.mocked(api.status).mock.calls.length;
+  const registryCalls = vi.mocked(api.services.registry).mock.calls.length;
+  vi.mocked(api.status).mockResolvedValue(engineSnapshot());
+  await userEvent.click(within(card).getByRole("button", { name: "Retry" }));
+  await screen.findByText("Everything works");
+  expect(api.status).toHaveBeenCalledTimes(statusCalls + 1);
+  expect(api.services.registry).toHaveBeenCalledTimes(registryCalls);
+  expect(screen.queryByRole("heading", { name: "Engine health couldn’t load" })).toBeNull();
+  expect(within(await visibleChatRow()).getByText("Ready", { exact: true })).toBeVisible();
 });
