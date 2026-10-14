@@ -15,7 +15,9 @@ from tests.test_signin_settings_api import (  # noqa: F401  (sg is a fixture)
     HELPER, ISSUER, get_snapshot, helper_client, owner_client, preview, proposal, provider_off, rule, save, sg,
     user_id,
 )
-from tests.test_signin_who_can_enter import OWNER, TRUSTED, csrf_for, domain_rule, signed_in
+from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
+    OWNER, TRUSTED, csrf_for, domain_rule, gateway, signed_in,
+)
 
 OTHER_ISSUER = "https://id2.example/realms/home"
 
