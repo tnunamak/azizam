@@ -113,10 +113,13 @@ export const GLOBAL_SETTINGS: GlobalSetting[] = [
         revision: body.revision as string,
       };
     },
-    // A provider that was off is written back off ("save for later", which
-    // needs no test). The saved client secret is never read or sent.
+    // A provider that was configured and off is written back off ("save for
+    // later", which needs no test). One that was never configured has its
+    // switches and rules put back, then its connection blanked, through the
+    // owner's own routes. The saved client secret is never read or sent.
     write: async (owner, value, revision) => {
       const saved = value as { methods: { provider: boolean }; rules: unknown; provider: Json };
+      const connected = Boolean(saved.provider.address && saved.provider.client_id);
       await owner.send(
         "PUT",
         "/admin/api/signin",
@@ -128,9 +131,26 @@ export const GLOBAL_SETTINGS: GlobalSetting[] = [
           },
           test_id: null,
           keep_admin_keys: [],
-          save_for_later: !saved.methods.provider,
+          save_for_later: connected && !saved.methods.provider,
         },
         revision,
+      );
+      if (connected) return;
+      const current = await owner.get("/admin/api/oidc-config");
+      await owner.send(
+        "PUT",
+        "/admin/api/oidc-config",
+        {
+          enabled: false,
+          issuer: "",
+          client_id: "",
+          redirect_uri: "",
+          display_name: "",
+          authorization_endpoint: "",
+          token_endpoint: "",
+          jwks_uri: "",
+        },
+        current.revision as string,
       );
     },
   },
@@ -150,7 +170,7 @@ export const GLOBAL_SETTINGS: GlobalSetting[] = [
   },
 ];
 
-async function ownerApi(request: APIRequestContext): Promise<OwnerApi> {
+export async function ownerApi(request: APIRequestContext): Promise<OwnerApi> {
   const session = await request.get("/admin/api/session");
   expect(session.status(), "the lane owner session").toBe(200);
   const csrf = ((await session.json()) as { actor: { csrf_token: string } }).actor
