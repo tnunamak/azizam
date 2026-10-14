@@ -305,6 +305,17 @@ Selected successful workflows are exercised separately.
 | `POST /admin/api/setup-dismiss` | session-only | denied | `gateway.home_api.dismiss_setup`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /admin/api/setup-evidence` | session-only | denied | `gateway.home_api.setup_evidence`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /admin/api/setup-progress` | owner-bearer | denied | `gateway.home_api.setup_progress`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/signin` | owner-bearer | denied | `gateway.signin_api.get_snapshot`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/signin/preview` | owner-bearer | denied | `gateway.signin_api.preview`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/discover` | owner-bearer | denied | `gateway.signin_api.discover_route`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/test` | owner-bearer | denied | `gateway.signin_api.start_test`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/signin/test/{test_id}/start` | owner-bearer | denied | `gateway.signin_api.begin_test`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/signin/test/{test_id}` | owner-bearer | denied | `gateway.signin_api.get_test`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `DELETE /admin/api/signin/test/{test_id}` | owner-bearer | denied | `gateway.signin_api.cancel_test`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/link-owner` | owner-bearer | denied | `gateway.signin_api.link_owner`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PUT /admin/api/signin` | owner-bearer | denied | `gateway.signin_api.save`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/notice/dismiss` | owner-bearer | denied | `gateway.signin_api.dismiss_notice`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/owner-password` | owner-bearer | denied | `gateway.signin_api.owner_password`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/status` | owner-bearer | denied | `gateway.admin_api.status_payload`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/users` | owner-bearer | denied | `gateway.admin_api.list_users`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `DELETE /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.delete_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |

@@ -255,9 +255,10 @@ export const getSignInTest = (testId: string) =>
   adminFetch<TestStatus>(`/admin/api/signin/test/${encodeURIComponent(testId)}`);
 
 export const cancelSignInTest = (testId: string) =>
-  adminFetch<void>(`/admin/api/signin/test/${encodeURIComponent(testId)}`, {
-    method: "DELETE",
-  });
+  adminFetch<{ cancelled: boolean }>(
+    `/admin/api/signin/test/${encodeURIComponent(testId)}`,
+    { method: "DELETE" },
+  );
 
 export const linkOwner = (testId: string) =>
   adminFetch<SignInSnapshot>("/admin/api/signin/link-owner", {

@@ -175,7 +175,7 @@ def test_cancelling_a_test_ends_it(sg):
 
     cancelled = owner.delete(f"/admin/api/signin/test/{test['test_id']}", headers=csrf_for(owner))
 
-    assert cancelled.status_code == 204
+    assert cancelled.status_code == 200 and cancelled.json() == {"cancelled": True}
     gone = owner.get(f"/admin/api/signin/test/{test['test_id']}")
     assert gone.status_code == 404 and gone.json()["error"]["code"] == "test_not_found"
     assert finish(sg, owner, test).status_code == 404            # the popup has nothing to finish

@@ -457,8 +457,7 @@ def create_signin_api(
 
     @router.delete("/admin/api/signin/test/{test_id}")
     def cancel_test(request: Request, test_id: str, ctx: AdminContext = Depends(owner_ctx)):
-        signin_test.cancel(test_id, ctx.audit_actor_id)
-        return Response(status_code=204)
+        return {"cancelled": signin_test.cancel(test_id, ctx.audit_actor_id)}
 
     @router.post("/admin/api/signin/link-owner")
     def link_owner(request: Request, body: LinkBody, ctx: AdminContext = Depends(owner_ctx)):
@@ -602,8 +601,9 @@ def create_signin_api(
     def dismiss_notice(request: Request, ctx: AdminContext = Depends(owner_ctx)):
         path = path_provider()
         status = signin_admin.load_status(path)
-        status["notice"] = None
-        signin_admin.write_status(path, status, updated_by=ctx.audit_actor_id)
+        if status.get("notice") is not None:
+            status["notice"] = None
+            signin_admin.write_status(path, status, updated_by=ctx.audit_actor_id)
         return build_snapshot(request, ctx)
 
     @router.post("/admin/api/signin/owner-password")
