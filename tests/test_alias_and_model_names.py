@@ -390,3 +390,42 @@ def test_chat_frontends_let_a_plan_for_the_model_use_its_other_names(tmp_path, p
                 assert client.post(path, headers=AUTH_HEADERS, json=body(name)).status_code != 403, name
         with authenticated_profile(plan_for("other", caps=("chat",), models=["rp"])):
             assert client.post(path, headers=AUTH_HEADERS, json=body("fast")).status_code == 403
+
+
+def test_alias_policy_rejects_cross_service_ambiguity_but_scopes_explicit_service():
+    from gateway.alias_policy import AliasPolicyResolutionError, resolve_request_target
+
+    runtime = {"backends": {
+        "alpha": {"models": [{"id": "base-a"}, {"id": "friendly", "base_model_id": "base-a"}]},
+        "beta": {"models": [{"id": "base-b"}, {"id": "friendly", "base_model_id": "base-b"}]},
+    }}
+    with pytest.raises(AliasPolicyResolutionError, match="ambiguous logical alias policies"):
+        resolve_request_target(" FRIENDLY ", runtime_config=runtime, required=True)
+    target = resolve_request_target(" FRIENDLY ", runtime_config=runtime, service_id="beta", required=True)
+    assert (target.logical_service_id, target.base_model_id) == ("beta", "base-b")
+
+
+def test_alias_policy_rejects_missing_base_instead_of_using_another_service():
+    from gateway.alias_policy import AliasPolicyResolutionError, resolve_request_target
+
+    runtime = {"backends": {
+        "alpha": {"models": [{"id": "friendly", "base_model_id": "base"}]},
+        "beta": {"models": [{"id": "base", "transforms": ["wrong-service"]}]},
+    }}
+    with pytest.raises(AliasPolicyResolutionError, match="has no declared base policy"):
+        resolve_request_target("friendly", runtime_config=runtime, service_id="alpha", required=True)
+
+
+def test_alias_policy_returns_independent_nested_base_and_overlay_specs():
+    from gateway.alias_policy import resolve_request_target
+
+    runtime = {"backends": {"svc": {"models": [
+        {"id": "base", "transforms": [{"set": {"nested": ["base"]}}]},
+        {"id": "alias", "base_model_id": "base", "policy_overlay": [{"set": {"nested": ["overlay"]}}]},
+    ]}}}
+    first = resolve_request_target("alias", runtime_config=runtime, required=True)
+    first.base_transform_specs[0]["set"]["nested"].append("changed")
+    first.alias_overlay_specs[0]["set"]["nested"].append("changed")
+    second = resolve_request_target("alias", runtime_config=runtime, required=True)
+    assert second.base_transform_specs == ({"set": {"nested": ["base"]}},)
+    assert second.alias_overlay_specs == ({"set": {"nested": ["overlay"]}},)
