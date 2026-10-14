@@ -528,3 +528,106 @@ def test_a_complete_line_that_only_contains_data_is_passed_on_at_once(chunk):
     expected = chunk[:-1] if chunk.endswith(b"\r") else chunk
     assert transform.process_chunk(chunk) == expected
     assert transform._raw_carry == (b"\r" if chunk.endswith(b"\r") else b"")
+
+# --- invalid primitive configuration -------------------------------------------------------
+
+_INVALID_PRIMITIVE_CONFIGS = [
+    pytest.param(t.ValueMapTransform, {}, "value-map config 'param' is required", id="value-map-missing-param"),
+    pytest.param(t.ValueMapTransform, {"param": []}, "value-map config 'param' must be a string", id="value-map-param-type"),
+    pytest.param(t.ValueMapTransform, {"param": "x", "map": ["x"]}, "value-map config 'map' must be a mapping or null", id="value-map-map-type"),
+    pytest.param(t.ValueMapTransform, {"param": "x", "map": ""}, "value-map config 'map' must be a mapping or null", id="value-map-falsey-map"),
+    pytest.param(t.DropParamsTransform, {"drop": "xy"}, "drop-params config 'drop' must be a list of strings or null", id="drop-params-string"),
+    pytest.param(t.DropParamsTransform, {"drop": [1]}, "drop-params config 'drop' must be a list of strings or null", id="drop-params-entry"),
+    pytest.param(t.DropParamsTransform, {"drop": {}}, "drop-params config 'drop' must be a list of strings or null", id="drop-params-falsey-map"),
+    pytest.param(t.DefaultParamsTransform, {"set": ["x"]}, "default-params config 'set' must be a mapping or null", id="default-params-set-type"),
+    pytest.param(t.DefaultParamsTransform, {"set": {1: True}}, "default-params config 'set' must have string paths", id="default-params-path-type"),
+    pytest.param(t.DefaultParamsTransform, {"set": ""}, "default-params config 'set' must be a mapping or null", id="default-params-falsey-set"),
+    pytest.param(t.ParamMapTransform, {"to": "y"}, "param-map config 'from' is required", id="param-map-missing-from"),
+    pytest.param(t.ParamMapTransform, {"from": "x"}, "param-map config 'to' is required", id="param-map-missing-to"),
+    pytest.param(t.ParamMapTransform, {"from": [], "to": "y"}, "param-map config 'from' must be a string", id="param-map-from-type"),
+    pytest.param(t.ParamMapTransform, {"from": "x", "to": None}, "param-map config 'to' must be a string", id="param-map-to-type"),
+    pytest.param(t.MessageInjectTransform, {"role": []}, "message-inject config 'role' must be a string", id="message-inject-role-type"),
+    pytest.param(t.MessageInjectTransform, {"text": 1}, "message-inject config 'text' must be a string", id="message-inject-text-type"),
+    pytest.param(t.MessageInjectTransform, {"mode": None}, "message-inject config 'mode' must be a string", id="message-inject-mode-type"),
+    pytest.param(t.ClampTransform, {}, "clamp config 'param' is required", id="clamp-missing-param"),
+    pytest.param(t.ClampTransform, {"param": []}, "clamp config 'param' must be a string", id="clamp-param-type"),
+    pytest.param(t.ClampTransform, {"param": "x", "min": "0"}, "clamp config 'min' must be a number or null", id="clamp-min-type"),
+    pytest.param(t.ClampTransform, {"param": "x", "max": []}, "clamp config 'max' must be a number or null", id="clamp-max-type"),
+]
+_PRIMITIVE_CLASSES = [
+    t.ValueMapTransform, t.DropParamsTransform, t.DefaultParamsTransform,
+    t.ParamMapTransform, t.MessageInjectTransform, t.ClampTransform,
+]
+
+
+def _assert_invalid_primitive_config(factory, config, message):
+    # Constructor-time errors must identify the primitive and offending field.
+    # A later KeyError/TypeError/AttributeError is deliberately not accepted.
+    with pytest.raises(ValueError) as raised:
+        factory(config)
+    assert str(raised.value) == message
+
+
+@pytest.mark.parametrize("factory,config,message", _INVALID_PRIMITIVE_CONFIGS)
+def test_invalid_primitive_config_is_rejected_clearly(factory, config, message):
+    _assert_invalid_primitive_config(factory, config, message)
+
+
+@pytest.mark.parametrize("factory", _PRIMITIVE_CLASSES)
+@pytest.mark.parametrize("config", [None, [], "bad", 1])
+def test_each_primitive_rejects_a_non_mapping_config(factory, config):
+    with pytest.raises(ValueError, match="config must be a mapping"):
+        factory(config)
+
+
+@pytest.mark.parametrize("factory,config,message", _INVALID_PRIMITIVE_CONFIGS)
+def test_invalid_config_cases_detect_removed_validation(monkeypatch, factory, config, message):
+    # Negative control: forgetting the constructor's validation call used to
+    # either accept the config or raise an incidental KeyError. Run exactly the
+    # same contract assertion against that regression, then restore validation.
+    original = t._validate_primitive_config
+    with monkeypatch.context() as broken:
+        broken.setattr(t, "_validate_primitive_config", lambda cfg, kind: None)
+        with pytest.raises((pytest.fail.Exception, AssertionError, KeyError, TypeError, AttributeError)):
+            _assert_invalid_primitive_config(factory, config, message)
+    assert t._validate_primitive_config is original
+    _assert_invalid_primitive_config(factory, config, message)
+
+
+@pytest.mark.parametrize("kind,config,body,expected", [
+    ("value-map", {"param": "x"}, {"x": "keep"}, {"x": "keep"}),
+    ("value-map", {"param": "x", "map": None}, {"x": "keep"}, {"x": "keep"}),
+    ("drop-params", {}, {"x": 1}, {"x": 1}),
+    ("drop-params", {"drop": None}, {"x": 1}, {"x": 1}),
+    ("default-params", {}, {"x": 1}, {"x": 1}),
+    ("default-params", {"set": None}, {"x": 1}, {"x": 1}),
+    ("param-map", {"from": "x", "to": "y"}, {"x": 1}, {"y": 1}),
+    ("message-inject", {}, {"messages": []}, {"messages": [{"role": "system", "content": ""}]}),
+    ("clamp", {"param": "x"}, {"x": 10}, {"x": 10}),
+    ("clamp", {"param": "x", "min": None, "max": None}, {"x": 10}, {"x": 10}),
+])
+def test_missing_optional_primitive_keys_keep_their_defaults(kind, config, body, expected):
+    assert t.run_request_pipeline([{"kind": kind, **config}], body) == expected
+
+
+@pytest.mark.parametrize("kind,config,message", [
+    ("value-map", {"param": "x", "map": []}, "value-map config 'map' must be a mapping or null"),
+    ("drop-params", {"drop": "x"}, "drop-params config 'drop' must be a list of strings or null"),
+    ("default-params", {"set": []}, "default-params config 'set' must be a mapping or null"),
+    ("param-map", {"from": "x"}, "param-map config 'to' is required"),
+    ("message-inject", {"text": 1}, "message-inject config 'text' must be a string"),
+    ("clamp", {"param": "x", "max": "2"}, "clamp config 'max' must be a number or null"),
+])
+def test_invalid_inline_and_registered_configs_fail_before_body_mutation(kind, config, message):
+    import copy
+
+    spec = {"kind": kind, **config}
+    body = {"x": 3, "messages": [{"role": "system", "content": "original"}]}
+    original = copy.deepcopy(body)
+    with pytest.raises(ValueError) as raised:
+        t.run_request_pipeline([spec], body)
+    assert str(raised.value) == message
+    assert body == original
+    with pytest.raises(ValueError) as raised:
+        t.TransformRegistry().register("invalid", spec)
+    assert str(raised.value) == message
