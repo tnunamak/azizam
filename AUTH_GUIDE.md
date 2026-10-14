@@ -313,6 +313,19 @@ attached for; a record without that mark compiles with no key. Schema 8
 marked every record that existed then with its current host, once, and wrote
 one audit entry `operator.credential_origin.migrate` naming them.
 
+The check for a credential reference reads the whole record and denies by
+default: any key that is `api_key`, `credential_origin`, or ends in `_env`,
+`_ref` or `_secret_id` counts, at any depth. The same owner-only rule (403
+`owner_required`) covers everything that lets the gateway run a command, read a
+host file or write one: a service `lifecycle` block whose driver is not
+`external` (a driver runs commands or sends a stored key), the LiteLLM
+`config_path`, an `aux` process probe, and an extension package source that is
+a directory on the gateway host or a git URL that is not `https://`. The rule
+applies to create, edit, the whole-registry PUT and extension enable. An
+administrator can still edit a record that already has a driver, as long as the
+driver block stays as it is, and can enable an `https://` git package that
+carries none of these.
+
 An administrator never acts over someone with more access. Turning on or
 renaming an App, removing its trusted address, and revoking its keys answer 403
 `app_outranks_you` or `credential_outranks_you` when the App or key belongs to
