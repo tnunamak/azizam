@@ -597,3 +597,121 @@ it.each([
     .getByRole("heading", { name: "Time and cost" }).closest("section")!;
   expect(within(section).getByText("Time taken").nextElementSibling).toHaveTextContent(expected);
 });
+
+const filterRow = (id: string, name = id) => entry({
+  id, action: "app.create", actor_id: "sam", actor_kind: "user",
+  actor_label: "Sam", target_kind: "app", target_id: id,
+  metadata: { name }, created_at: 1_760_000_000,
+});
+
+async function pickChangeFilter(label: string, option: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: label }));
+  await user.click(await screen.findByRole("option", { name: option, exact: true }));
+}
+
+it("filter regression: change-type pick-list sends each category and restores all changes", async () => {
+  const { audit } = mountActivity({ tab: "Changes", audit: async () => ({
+    records: [filterRow("pick-list")], next_cursor: null,
+  }) });
+  await screen.findByRole("button", { name: /Details: Created an app/ });
+  for (const [label, prefix] of [
+    ["Apps", "app."], ["Keys", "credential."], ["Access plans", "profile."],
+    ["Gateway settings", "operator."], ["Access assignments", "runtime_profile_mapping."],
+    ["All changes", undefined],
+  ] as const) {
+    audit.mockClear();
+    await pickChangeFilter("Change type", label);
+    await waitFor(() => expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      limit: 50, action_prefix: prefix, actor_id: undefined, before: undefined,
+    })));
+    expect(screen.getByRole("combobox", { name: "Change type" })).toHaveTextContent(label);
+  }
+});
+
+it("filter regression: Clear filters resets both selectors and refetches the unfiltered list", async () => {
+  const { audit } = mountActivity({ tab: "Changes", audit: async (params) => ({
+    records: [filterRow(params?.action_prefix || params?.actor_id ? "filtered" : "unfiltered")],
+    next_cursor: null,
+  }) });
+  await screen.findByText("Sam · unfiltered");
+  await pickChangeFilter("Change type", "Apps");
+  await pickChangeFilter("Person", "Sam");
+  await screen.findByText("Sam · filtered");
+  audit.mockClear();
+  await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  expect(await screen.findByText("Sam · unfiltered")).toBeVisible();
+  await waitFor(() => expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+    limit: 50, action_prefix: undefined, actor_id: undefined,
+  })));
+  expect(screen.getByRole("combobox", { name: "Change type" })).toHaveTextContent("All changes");
+  expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Everyone");
+  expect(screen.getByRole("combobox", { name: "Change type" })).toHaveFocus();
+  expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+});
+
+it("filter regression: empty filtered changes explain no matches and can clear from that state", async () => {
+  mountActivity({ tab: "Changes", audit: async (params) => ({
+    records: params?.action_prefix ? [] : [filterRow("visible-before-filter")],
+    next_cursor: null,
+  }) });
+  await screen.findByText("Sam · visible-before-filter");
+  await pickChangeFilter("Change type", "Keys");
+  const empty = await screen.findByRole("region", { name: "No matching changes" });
+  expect(empty).toHaveAccessibleDescription("Changes to apps, keys and access plans appear here; none match these filters.");
+  expect(screen.queryByText("Sam · visible-before-filter")).toBeNull();
+  expect(screen.queryByRole("region", { name: "No changes yet" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  await userEvent.click(within(empty).getByRole("button", { name: "Clear filters" }));
+  expect(await screen.findByText("Sam · visible-before-filter")).toBeVisible();
+  expect(screen.queryByRole("region", { name: "No matching changes" })).toBeNull();
+});
+
+it("filter regression: a 503 failure retries the same filtered changes and recovers", async () => {
+  let unavailable = true;
+  const { audit } = mountActivity({ tab: "Changes", audit: async (params) => {
+    if (params?.action_prefix && unavailable) {
+      throw Object.assign(new Error("Service Unavailable"), { status: 503 });
+    }
+    return { records: [filterRow(params?.action_prefix ? "recovered-filter" : "initial-row")], next_cursor: null };
+  } });
+  await screen.findByText("Sam · initial-row");
+  await pickChangeFilter("Change type", "Apps");
+  expect(await screen.findByText("Couldn't load changes")).toBeVisible();
+  expect(screen.queryByRole("region", { name: "No matching changes" })).toBeNull();
+  expect(screen.queryByText("Sam · initial-row")).toBeNull();
+  expect(screen.getByRole("combobox", { name: "Change type" })).toHaveTextContent("Apps");
+  audit.mockClear();
+  unavailable = false;
+  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("Sam · recovered-filter")).toBeVisible();
+  expect(audit).toHaveBeenCalledTimes(1);
+  expect(audit).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 50, action_prefix: "app." }));
+  expect(screen.queryByText("Couldn't load changes")).toBeNull();
+});
+
+it("filter regression: paging retains both filters and appends older matching changes", async () => {
+  const { audit } = mountActivity({ tab: "Changes", audit: async (params) => ({
+    records: [filterRow(params?.before ? "older-match" : "first-match")],
+    next_cursor: params?.before ? null : "older-filter-cursor",
+  }) });
+  await screen.findByText("Sam · first-match");
+  await pickChangeFilter("Change type", "Apps");
+  await pickChangeFilter("Person", "Sam");
+  await waitFor(() => expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+    limit: 50, action_prefix: "app.", actor_id: "sam", before: undefined,
+  })));
+  audit.mockClear();
+  await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+  expect(await screen.findByText("Sam · older-match")).toBeVisible();
+  expect(screen.getByText("Sam · first-match")).toBeVisible();
+  expect(audit).toHaveBeenCalledTimes(1);
+  expect(audit).toHaveBeenLastCalledWith({
+    limit: 50, action_prefix: "app.", actor_id: "sam",
+    before: "older-filter-cursor", exclude_access_audit: true, show_automated: false,
+  });
+  expect(screen.getByRole("combobox", { name: "Change type" })).toHaveTextContent("Apps");
+  expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Sam");
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  expect(screen.getByRole("status", { name: "Changes updates" })).toHaveTextContent("2 changes loaded. No more matching changes.");
+});
