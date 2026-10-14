@@ -1879,7 +1879,7 @@ function CreationViewer({
                   </>
                 ) : null}
                 {renewing ? <p role="status">Opening your file…</p> : renewalFailed ? (
-                  <p role="status">We couldn’t prepare this file. <button className="text-link min-h-11 px-3 underline" onClick={() => void renew()}>Try again</button></p>
+                  <p role="status">We couldn’t prepare this file. <button type="button" className="text-link min-h-11 px-3 underline" onClick={() => void renew()}>Try again</button></p>
                 ) : renewed ? <Preview
                   key={`${asset.asset_id}-${renewed.download_url}`}
                   asset={{ ...asset, download_url: renewed.download_url, available: true, unavailable_reason: null }}
