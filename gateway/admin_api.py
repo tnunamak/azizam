@@ -2732,6 +2732,9 @@ def create_admin_router(
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        # Deleting a virtual key can cut off the owner's own Apps.
+        if (denied := _owner_only(ctx, "Only the owner can delete provider keys.")) is not None:
+            return denied
         client = await asyncio.to_thread(_key_client_or_unavailable)
         if isinstance(client, JSONResponse):
             return client
