@@ -302,10 +302,25 @@ def resolve_key(values: Mapping[str, Any], ctx: Any, *, record: Mapping[str, Any
 # ---------------------------------------------------------------------------
 
 
+def model_rows(models: Any) -> list[dict[str, Any]]:
+    """A record's models as rows. Older records keep a mapping of name to settings; read it as rows."""
+    if isinstance(models, Mapping):
+        rows = []
+        for name, settings in models.items():
+            row = dict(settings) if isinstance(settings, Mapping) else {"upstream_model": str(settings or name)}
+            ident = row.get("id") or name
+            row["id"] = ident
+            row["model_group"] = row.get("model_group") or ident
+            row["upstream_model"] = row.get("upstream_model") or row.get("deployment") or row.get("model") or ident
+            rows.append(row)
+        return rows
+    return [dict(row) for row in models or () if isinstance(row, Mapping)]
+
+
 def _models_config(definition: Mapping[str, Any], values: Mapping[str, Any], models: Any,
                    stored: Iterable[Any] = ()) -> list[dict[str, Any]]:
     """Model rows for the record. A row the record already holds keeps every key this form does not edit."""
-    stored_rows = [dict(row) for row in stored if isinstance(row, Mapping)]
+    stored_rows = model_rows(stored)
 
     def stored_row(upstream: str, public: str) -> dict[str, Any]:
         for row in stored_rows:
@@ -586,7 +601,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     models = [{"id": m.get("upstream_model"), "public_name": m.get("model_group") or m.get("id"),
                "context_window": m.get("context_window"), "enabled": m.get("enabled", True),
                "use": model_use.get(m.get("upstream_model"), "")}
-              for m in config.get("models") or () if isinstance(m, Mapping)]
+              for m in model_rows(config.get("models"))]
     if definition["flow"] == "declared" and models:
         values["public_name"] = models[0]["public_name"]
         values["server_model"] = models[0]["id"] if models[0]["id"] != models[0]["public_name"] else ""
