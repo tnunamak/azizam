@@ -52,6 +52,15 @@ if ((!signoff)) && [[ -n $target || -n $closes_nightly_red ]]; then
 fi
 command -v setsid >/dev/null || { echo "ci-local requires setsid" >&2; exit 2; }
 command -v flock >/dev/null || { echo "ci-local requires flock" >&2; exit 2; }
+command -v timeout >/dev/null || { echo "ci-local requires GNU timeout" >&2; exit 2; }
+# Bootstrap ceiling; retained successful step receipts calibrate it below.
+# Without receipts, 900 seconds is explicitly uncalibrated.
+# Override in seconds; zero (GNU timeout's unbounded mode) is forbidden.
+step_timeout=${AZIZAM_CI_STEP_TIMEOUT_SECONDS:-900}
+if [[ ! $step_timeout =~ ^[1-9][0-9]{0,5}$ ]]; then
+  echo "AZIZAM_CI_STEP_TIMEOUT_SECONDS must be a positive integer <= 999999" >&2
+  exit 2
+fi
 
 repo=$(git rev-parse --show-toplevel)
 cd "$repo"
@@ -120,6 +129,33 @@ if [[ -f $receipts/PASS && $force == 0 ]]; then
   exit 0
 fi
 echo "order seed: $seed (reproduce with --order-seed $seed)"
+
+# Read retained measurements under the host lock, before replacing receipts.
+# One shared ceiling is three times the slowest successful observed step.
+# Ignore failed/skipped/malformed rows and implausibly large durations. The
+# receipt schema and step names are the ones emitted by this script.
+if [[ -z ${AZIZAM_CI_STEP_TIMEOUT_SECONDS:-} ]]; then
+  observed_slowest=$(
+    for timing_receipt in "$receipts_root"/*/steps.tsv; do
+      [[ -f $timing_receipt ]] || continue
+      awk -F '\t' '
+        NF == 3 && $2 == "0" && $3 ~ /^[0-9]+$/ && length($3) <= 6 &&
+        $3 > 0 && $3 <= 333333 &&
+        $1 ~ /^(python-hermetic|fresh-venv|fresh-compose|web-npm-ci|web-unit|web-check|e2e-venv|e2e-browser|compat-node|pi-unit|showcase-core|mcp-conformance|e2e-main|e2e-live-data|e2e-household|fresh-native|e2e-tree-unchanged|cases|policy)$/ {
+          print $3
+        }
+      ' "$timing_receipt"
+    done | awk 'BEGIN { maximum=0 } $1 > maximum { maximum=$1 } END { printf "%.0f\n", maximum }'
+  )
+  if ((observed_slowest > 0)); then
+    step_timeout=$((observed_slowest * 3))
+    echo "step timeout: ${step_timeout}s (slowest retained successful step: ${observed_slowest}s x 3)"
+  else
+    echo "step timeout: ${step_timeout}s (UNVERIFIED bootstrap: no successful timing receipts)"
+  fi
+else
+  echo "step timeout: ${step_timeout}s (AZIZAM_CI_STEP_TIMEOUT_SECONDS override)"
+fi
 
 scratch=${AZIZAM_CI_SCRATCH:-$HOME/.tmp}
 mkdir -p "$scratch" "$receipts/logs"
@@ -191,21 +227,49 @@ started=$(date -u +%FT%TZ)
 printf 'sha\t%s\ntree\t%s\nstarted\t%s\nseed\t%s\nbrowser_workers\t%s\npy_workers\t%s\nbase_port\t%s\n' "$sha" "$tree" "$started" "$seed" "$browser_workers" "$py_workers" "$port" > "$receipts/run.tsv"
 
 failed=0
+# Each step has a lock-owning supervisor and a separate command process group.
+# Only the actual command closes FD 9: it must not leak the host lock into a
+# daemon. On interruption the supervisor keeps its lock until its group is
+# stopped and reaped, even if the top-level gate has already exited.
+run_timed_step() (
+  local child= rc=0
+  stop_step() {
+    local deadline=$((SECONDS + 10))
+    trap '' INT TERM
+    [[ -n $child ]] || return 0
+    kill -TERM -- "-$child" 2>/dev/null || true
+    while kill -0 -- "-$child" 2>/dev/null && ((SECONDS < deadline)); do sleep .2; done
+    kill -KILL -- "-$child" 2>/dev/null || true
+    wait "$child" 2>/dev/null || true
+  }
+  trap stop_step EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  setsid timeout --kill-after=10s "${step_timeout}s" \
+    bash -c 'exec 9>&-; exec "$@"' _ "$@" &
+  child=$!
+  wait "$child" || rc=$?
+  exit "$rc"
+)
 step() {
   local name=$1; shift
   local start=$SECONDS rc=0
   echo "== $name"
   # Run in the background and wait: a trapped INT or TERM interrupts wait at
   # once, while a foreground child would make bash defer or drop the signal.
-  ( "$@" ) > "$receipts/logs/$name.log" 2>&1 &
+  run_timed_step "$@" > "$receipts/logs/$name.log" 2>&1 &
   wait "$!" || rc=$?
+  if (((rc == 124 || rc == 137) && SECONDS - start >= step_timeout)); then
+    echo "   TIMED OUT: $name exceeded ${step_timeout}s (exit $rc); see $receipts/logs/$name.log"
+    printf 'ci-local: step %s timed out after %ss (exit %s)\n' "$name" "$step_timeout" "$rc" >> "$receipts/logs/$name.log"
+  fi
   # One writer per file; aggregation happens only after every job is reaped.
   printf '%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" > "$receipts/steps/$name.tsv"
   if ((rc)); then failed=1; echo "   FAILED (exit $rc): $receipts/logs/$name.log"; fi
   return 0
 }
-export receipts work skip_compose py_workers run seed
-export -f step
+export receipts work skip_compose py_workers run seed step_timeout
+export -f step run_timed_step
 start_job() {
   local directory=$1; shift
   setsid bash -c 'cd "$1" || exit; shift; "$@"' _ "$directory" "$@" &

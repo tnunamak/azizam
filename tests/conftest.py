@@ -69,6 +69,10 @@ _GUARD = HermeticGuard()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
+    # Keep stack dumps ahead of the gate's wall timeout. Explicit ini/-o values
+    # still override this default, including 0 to disable diagnostics.
+    parser.addini("faulthandler_timeout", "Dump thread stacks after this many seconds",
+                  default="120")
     parser.addoption("--order-seed", type=int, default=None,
                      help="shuffle test order from this seed (scripts/ci-local passes one on every run)")
 
