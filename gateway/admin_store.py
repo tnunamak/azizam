@@ -2356,7 +2356,7 @@ def effective_admin_roles(
     """The control-plane roles this subject may use right now.
 
     A person's roles are their active global grants (an App-scoped grant is not
-    a control-plane role). A grant from the identity provider counts only while
+    a control-plane role, for a person or a key). A grant from the identity provider counts only while
     a sign-in confirmed it within ``oidc_max_age`` seconds, so an administrator
     who is dropped from the group and never signs in again loses it.
 
@@ -2381,6 +2381,8 @@ def effective_admin_roles(
         )
     kept: set[str] = set()
     for row in rows:
+        if row.get("scope_app_id") is not None:
+            continue  # a grant for one App is not a control-plane role
         role = str(row["role"])
         held = _held_by_grantor(str(row.get("granted_by") or ""), oidc_max_age=oidc_max_age,
                                 now=ts, path=path, depth=_depth)

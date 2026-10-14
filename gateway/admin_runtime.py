@@ -20,7 +20,7 @@ import time
 import sqlite3
 from pathlib import Path
 from collections.abc import Callable
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from fastapi import Request, status
 
@@ -49,6 +49,7 @@ APP_KEY_PREFIX = "opk_"
 ADMIN_KEY_PREFIX = "oak_"
 ADMIN_CONTROL_ROLES = frozenset({"owner", "admin", "superadmin"})
 ADMIN_KEY_CREATABLE_ROLES = frozenset({"owner", "admin"})
+_ROLE_RANK = {"admin": 1, "superadmin": 2, "owner": 3}
 SERVICE_ACCOUNT_SESSION_PREFIX = "service_account:"
 LOCAL_ADMIN_KEY_ISSUER = "local-admin-key"
 SERVICE_AVAILABILITY_OVERRIDES_KEY = "service_availability_overrides"
@@ -452,6 +453,10 @@ class AdminSQLiteStore:
         before = admin_store.get_app(app_id, path=self.path)
         if before is None:
             return None
+        self._require_actor_not_outranked(
+            actor, self._app_holder_roles(before),
+            "This App answers to the owner or to someone with more access than you, "
+            "so only a person with at least their access can disable it.")
         record = admin_store.disable_app(app_id, path=self.path)
         admin_store.record_audit(
             "app.disable",
@@ -1223,12 +1228,49 @@ class AdminSQLiteStore:
             "revision": admin_store.operator_setting_revision(record),
         }
 
+    @staticmethod
+    def _role_rank(roles: Iterable[str]) -> int:
+        return max((_ROLE_RANK.get(str(role), 0) for role in roles), default=0)
+
+    def _require_actor_not_outranked(
+        self, actor: AdminContext, holder_roles: Iterable[str], message: str,
+    ) -> None:
+        """Refuse when whoever holds this has more control-plane power than the actor.
+
+        An administrator may cut off keys and Apps of members and of other
+        administrators. They may not cut off the owner, or a holder of a role
+        above theirs: that would let them lock out the person who granted
+        their own power.
+        """
+        if self._role_rank(holder_roles) > self._role_rank(actor.roles):
+            raise PermissionError(message)
+
+    def _app_holder_roles(self, app: Mapping[str, Any] | None) -> frozenset[str]:
+        """Control-plane roles of the person an App answers to."""
+        if app is None:
+            return frozenset()
+        if app.get("owner_user_id"):
+            return admin_store.effective_admin_roles(
+                "user", str(app["owner_user_id"]), path=self.path)
+        return frozenset()
+
     def revoke_credential(
         self, *, credential_id: str, actor: AdminContext
     ) -> dict[str, Any] | None:
         before = admin_store.get_credential(credential_id, path=self.path)
         if before is None:
             return None
+        if before.get("subject_kind") in {"user", "service_account"}:
+            holder = admin_store.effective_admin_roles(
+                str(before["subject_kind"]), str(before["subject_id"]),
+                minted_by=str(before.get("created_by") or "") or None, path=self.path)
+        else:
+            holder = self._app_holder_roles(admin_store.get_app(
+                str(before.get("app_id") or before.get("subject_id") or ""), path=self.path))
+        self._require_actor_not_outranked(
+            actor, holder,
+            "This key belongs to the owner or to someone with more access than you, "
+            "so only a person with at least their access can revoke it.")
         admin_store.revoke_credential(credential_id, path=self.path)
         record = admin_store.get_credential(credential_id, path=self.path)
         admin_store.record_audit(

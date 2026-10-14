@@ -14676,12 +14676,13 @@ def _end_provider_access_after_refusal(issuer: str, claims: Mapping[str, Any]) -
     if user is None:
         return
     person_id = str(user["id"])
+    # First, so a failure in any later step cannot leave the refusal unrecorded.
+    # Their personal keys pause until a sign-in succeeds (reversible).
+    accounts.record_signin_refusal(person_id, path=ADMIN_STORE.path)
     admin_store.reconcile_oidc_admin_roles(person_id, set(), path=ADMIN_STORE.path)
     accounts.revoke_person_sessions(person_id, path=ADMIN_STORE.path)
     # Connections made through MCP sign-in can refresh for up to 90 days.
     MCP_OAUTH.deps.store.revoke_person_grants(person_id, "sign_in_refused")
-    # Their personal keys pause until a sign-in succeeds (reversible).
-    accounts.record_signin_refusal(person_id, path=ADMIN_STORE.path)
 
 
 def _safe_admin_return_to(value: str | None, *, default: str = "/") -> str:
@@ -16212,28 +16213,6 @@ _LOCAL_OWNER_ISSUER = "local"
 
 def _normalize_local_email(value: str) -> str:
     return (value or "").strip().lower()
-
-
-def _local_owner_user_record() -> Mapping[str, Any] | None:
-    """Return the local-issuer user that owns this gateway, if any.
-
-    Walks active owner/admin role assignments and returns the first that
-    belongs to a local-issuer user. We don't cache because the result is
-    only consulted during the unauthenticated /setup/local-login path and
-    when bootstrapping, both of which are cold by definition.
-    """
-    for role_row in admin_store.list_admin_roles(path=ADMIN_STORE.path):
-        if role_row.get("subject_kind") != "user":
-            continue
-        if role_row.get("role") not in {"owner", "admin", "superadmin"}:
-            continue
-        user_id = str(role_row.get("subject_id") or "")
-        if not user_id:
-            continue
-        user = admin_store.get_user(user_id, path=ADMIN_STORE.path)
-        if user is not None and user.get("issuer") == _LOCAL_OWNER_ISSUER:
-            return user
-    return None
 
 
 def _issue_browser_admin_session(

@@ -456,12 +456,7 @@ def _parse_asset_id(asset_id: str) -> tuple[str, str] | None:
 
 
 def _live_role_for_user(user_id: str, path: Path) -> str:
-    roles = {
-        str(role.get("role") or "")
-        for role in admin_store.list_admin_roles(
-            subject_kind="user", subject_id=user_id, path=path
-        )
-    }
+    roles = admin_store.effective_admin_roles("user", user_id, path=path)
     for role in ("owner", "superadmin", "admin"):
         if role in roles:
             return role
