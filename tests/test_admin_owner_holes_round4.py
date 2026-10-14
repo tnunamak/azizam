@@ -186,6 +186,19 @@ def test_credential_references_flag_any_reference_shaped_key_at_any_depth(key):
     assert f"lifecycle.driver_config.{key}" in found
 
 
+def test_an_administrator_editing_a_note_keeps_a_driver_kept_only_on_the_record(gateway):
+    owner, _, _, admin = owner_and_admin(gateway)
+    put = owner.put("/admin/api/operator/service-registry",
+                    headers={**csrf_for(owner), "If-Match": _etag(owner)},
+                    json=_registry_with_lifecycle(_COMMAND_LIFECYCLE))
+    assert put.status_code == 200, put.text
+    assert "lifecycle" not in _services(gateway)["engine"]["config"]
+    allowed = admin.patch("/admin/api/operator/services/engine",
+                          headers={**csrf_for(admin), "If-Match": _etag(admin)}, json={"note": "fine"})
+    assert allowed.status_code == 200, allowed.text
+    assert _services(gateway)["engine"]["lifecycle"]["driver"] == "command"
+
+
 def test_credential_references_do_not_flag_plain_fields():
     record = {"config": {"host": "h", "port": 1, "models": [{"id": "m"}]},
               "lifecycle": {"type": "external", "driver_config": {"load_url": "/x"}}}
