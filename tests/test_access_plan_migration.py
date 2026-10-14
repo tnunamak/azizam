@@ -156,7 +156,7 @@ def _assignment_name(conn, app_id):
 
 def test_schema_7_has_no_legacy_tables_columns_or_settings(migrated):
     _, conn, _ = migrated
-    assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 7
+    assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == admin_store.SCHEMA_VERSION
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"profiles", "runtime_profile_mappings"}.isdisjoint(tables)
     def columns(table):

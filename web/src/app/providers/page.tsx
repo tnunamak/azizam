@@ -54,6 +54,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { adminFetch, ApiError } from "@/lib/api";
+import { useViewer } from "@/components/shell/session";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/cn";
 
@@ -804,8 +805,11 @@ function DetailCard({
   onAction,
   onSaveModels,
   onSaveCaps,
+  readOnly = false,
 }: {
   provider: ProviderRecord;
+  /** An administrator who is not the owner may look, not change. */
+  readOnly?: boolean;
   featured?: boolean;
   plans: AccessPlan[];
   busy?: boolean;
@@ -1077,15 +1081,17 @@ function DetailCard({
                 Spend totals include estimates until you record the verified
                 provider charges. Check charges before removing this provider.
               </p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="mt-3"
-                onClick={() => onAction("reconcile", provider)}
-              >
-                Check charges
-              </Button>
+              {!readOnly && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => onAction("reconcile", provider)}
+                >
+                  Check charges
+                </Button>
+              )}
             </div>
           )}
           <div
@@ -1161,6 +1167,7 @@ function DetailCard({
               </TableBody>
             </Table>
           </div>
+          {!readOnly && (
           <div className="mt-5 flex flex-wrap gap-2">
             <Button
               variant="outline"
@@ -1253,6 +1260,7 @@ function DetailCard({
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
+          )}
           {check.isSuccess ? (
             <p
               role="status"
@@ -2193,7 +2201,13 @@ function AddProviderDialog({
   );
 }
 
-function ProviderEmptyState({ onAdd }: { onAdd: () => void }) {
+function ProviderEmptyState({
+  onAdd,
+  readOnly = false,
+}: {
+  onAdd: () => void;
+  readOnly?: boolean;
+}) {
   return (
     <div className="border-border bg-card rounded-panel border p-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -2210,9 +2224,11 @@ function ProviderEmptyState({ onAdd }: { onAdd: () => void }) {
             </p>
           </div>
         </div>
-        <Button onClick={onAdd}>
-          <Plus aria-hidden="true" /> Add provider
-        </Button>
+        {!readOnly && (
+          <Button onClick={onAdd}>
+            <Plus aria-hidden="true" /> Add provider
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -2224,8 +2240,10 @@ function GlobalCapsEditor({
   error,
   onEdit,
   onSave,
+  readOnly = false,
 }: {
   global: GlobalProviderState;
+  readOnly?: boolean;
   busy?: boolean;
   error?: string | null;
   onEdit: () => void;
@@ -2253,6 +2271,7 @@ function GlobalCapsEditor({
             {capSummary(global.capDaily, global.capMonthly)}
           </p>
         </div>
+        {!readOnly && (
         <details className="group">
           <summary className="list-none marker:hidden">
             <span className="border-input bg-background hover:bg-accent hover:text-accent-foreground inline-flex h-8 max-sm:min-h-11 cursor-pointer items-center justify-center rounded-control border px-3 text-meta font-medium transition-colors">
@@ -2292,6 +2311,7 @@ function GlobalCapsEditor({
             )}
           </div>
         </details>
+        )}
       </div>
       {error && (
         <p role="alert" className="text-danger mt-3 text-meta">
@@ -2419,6 +2439,9 @@ function ReplaceKeyDialog({
 }
 
 export default function ProvidersPage() {
+  const viewer = useViewer();
+  // Every provider write belongs to the owner; an administrator may only look.
+  const readOnly = viewer.admin && viewer.role !== "owner";
   const [addOpen, setAddOpen] = useState(false);
   const [confirmTarget, setConfirmTarget] = useState<{
     action: "delete-key" | "remove";
@@ -2585,6 +2608,7 @@ export default function ProvidersPage() {
       busy={busy}
       error={errorProviderId === null ? latestError : null}
       onEdit={clearErrors}
+      readOnly={readOnly}
       onSave={(daily, monthly) =>
         saveGlobalCaps.mutate({ daily, monthly })
       }
@@ -2597,15 +2621,22 @@ export default function ProvidersPage() {
         answer="Paid models run with providers."
         tight
         actions={
-          <Button onClick={() => setAddOpen(true)}>
-            <Plus aria-hidden="true" /> Add provider
-          </Button>
+          readOnly ? undefined : (
+            <Button onClick={() => setAddOpen(true)}>
+              <Plus aria-hidden="true" /> Add provider
+            </Button>
+          )
         }
       >
         {/* PageHeader shows only one of answer and description. */}
         <p className="text-muted-foreground text-meta max-w-2xl">
           A request uses a provider only when its model names one.
         </p>
+        {readOnly && (
+          <p className="text-muted-foreground text-meta mt-1">
+            Only the owner can change this.
+          </p>
+        )}
       </PageHeader>
       <div className="max-w-(--content-max) pb-20 sm:pb-0">
         {loading ? (
@@ -2640,7 +2671,7 @@ export default function ProvidersPage() {
             </Button>
           </div>
         ) : records.length === 0 && !globalState.needsReconciliation ? (
-          <ProviderEmptyState onAdd={() => setAddOpen(true)} />
+          <ProviderEmptyState onAdd={() => setAddOpen(true)} readOnly={readOnly} />
         ) : (
           <div className="space-y-(--space-section)">
             {records.length !== 1 && globalCaps}
@@ -2651,6 +2682,7 @@ export default function ProvidersPage() {
                   provider={provider}
                   featured={records.length === 1}
                   plans={planRows}
+                  readOnly={readOnly}
                   busy={busy}
                   error={
                     errorProviderId === provider.id ? latestError : null

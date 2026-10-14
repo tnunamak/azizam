@@ -35,6 +35,7 @@ def test_compiles_openai_compatible_local_service() -> None:
                     "protocol": "openai-compatible",
                     "base_url": "http://127.0.0.1:8081/v1",
                     "api_key_env": "LOCAL_LLM_API_KEY",
+                    "credential_origin": "http://127.0.0.1:8081",
                     "models": ["llama3:8b"],
                 },
             }
@@ -228,6 +229,7 @@ def test_references_external_secrets_without_exposing_secret_values() -> None:
                 "config": {
                     "protocol": "openai",
                     "base_url": "http://127.0.0.1:9999/v1",
+                    "credential_origin": "http://127.0.0.1:9999",
                     "models": [{"id": "gpt-4.1-mini"}],
                     "metadata": {"api_key": "sk-should-not-leak"},
                 },
@@ -742,6 +744,7 @@ def test_lifecycle_backed_service_can_override_gateway_internal_target() -> None
                     "gateway_lifecycle": True,
                     "gateway_lifecycle_base_url": "http://gateway.internal/v1",
                     "gateway_lifecycle_api_key_ref": "os.environ/CUSTOM_INTERNAL_KEY",
+                    "credential_origin": "http://gateway.internal",
                     "models": {"default": "loaded-model.gguf"},
                 },
             }

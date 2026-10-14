@@ -303,7 +303,20 @@ none), `not_in_access_plan`, `cannot_start_model`, `blocked_by_category`,
 `not_reviewed`, `cap_reached`.
 
 Only the owner can mint, delete or edit access plans and provider-spend keys;
-an administrator who tries gets 403 `owner_required`.
+an administrator who tries gets 403 `owner_required`. The same holds for every
+write to the providers (add, retarget models, remove, set or delete a key, spend
+caps and global caps, record a charge, run a connection check), and for attaching
+a credential reference to a service record or moving a service record that
+already carries one. An administrator can still manage local engine services
+that name no credential. A service's key is sent only to the host it was
+attached for; a record without that mark compiles with no key. Schema 8
+marked every record that existed then with its current host, once, and wrote
+one audit entry `operator.credential_origin.migrate` naming them.
+
+An administrator never acts over someone with more access. Turning on or
+renaming an App, removing its trusted address, and revoking its keys answer 403
+`app_outranks_you` or `credential_outranks_you` when the App or key belongs to
+the owner.
 
 ## Downstream Credential Mapping
 
