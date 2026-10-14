@@ -113,7 +113,7 @@ for (const [theme, width] of [
     await expect(options.nth(1)).toBeVisible();
     await options.nth(1).click();
     await expect(rows.first()).toBeVisible();
-    await page.getByRole("button", { name: "Clear filters" }).click();
+    await page.getByRole("button", { name: "Clear filters", exact: true }).click();
     await expect.poll(() => page.evaluate(noHorizontalScroll)).toBe(true);
     await expectNoSeriousViolations(page);
   });
