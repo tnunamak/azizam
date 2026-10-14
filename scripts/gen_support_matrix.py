@@ -34,7 +34,7 @@ def public_routes(app):
 
     for route in walk(app.routes):
         path = route.path
-        if path.startswith(("/admin", "/me", "/setup", "/login", "/auth", "/showcase", "/internal")):
+        if path.startswith(("/admin", "/me", "/setup", "/login", "/auth", "/internal")):
             continue
         if getattr(route, "endpoint", None) is not None:
             yield route
@@ -88,7 +88,7 @@ def render(app):
     return "\n".join([
         "# Public API support matrix", "",
         "Generated from the registered FastAPI app, including routes hidden from OpenAPI.",
-        "No servers are started. Account/admin, setup, showcase, internal routes and static mounts are excluded.",
+        "No servers are started. Account/admin, setup, internal routes and static mounts are excluded.",
         "Public discovery and diagnostic pages are included alongside JSON and WebSocket APIs.", "",
         "**Supported** means the handler exists, not complete vendor-spec conformance or backend availability.",
         "**Partial** identifies protocol subsets and configuration-dependent vendor features.",

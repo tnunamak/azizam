@@ -1,7 +1,7 @@
 # Public API support matrix
 
 Generated from the registered FastAPI app, including routes hidden from OpenAPI.
-No servers are started. Account/admin, setup, showcase, internal routes and static mounts are excluded.
+No servers are started. Account/admin, setup, internal routes and static mounts are excluded.
 Public discovery and diagnostic pages are included alongside JSON and WebSocket APIs.
 
 **Supported** means the handler exists, not complete vendor-spec conformance or backend availability.

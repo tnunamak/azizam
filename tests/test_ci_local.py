@@ -90,7 +90,6 @@ if [[ ${1:-} != --compose && -n ${FAKE_DURING_RUN:-} ]]; then eval "$FAKE_DURING
     "tests/requirements-hermetic.lock": "",
     "tests/compat/node/probe-gates.test.mjs": "",
     "integrations/pi/test/a.test.ts": "",
-    "tests/showcase/core.test.mjs": "",
     "web/package.json": "{}\n",
     "web/vitest.config.ts": "export default { test: { retry: 0 } };\n",
     "web/playwright.config.ts": "export default { retries: 0 };\n",
@@ -212,7 +211,7 @@ def test_signoff_posts_to_the_tested_sha_then_writes_the_receipt(world: World) -
     assert receipt["steps"].split(",") == sorted([
         "cases", "compat-node", "e2e-browser", "e2e-household", "e2e-live-data", "e2e-main", "e2e-tree-unchanged", "e2e-venv",
         "fresh-compose", "fresh-native", "fresh-venv", "mcp-conformance", "pi-unit", "policy", "python-hermetic",
-        "showcase-core", "web-build", "web-check", "web-npm-ci", "web-unit"])
+        "web-build", "web-check", "web-npm-ci", "web-unit"])
     assert receipt["policy"].startswith("policy: ok:")
     assert world.run_dirs() == []  # a passed run removes its directory
 
@@ -391,7 +390,7 @@ def test_static_checks_overlap_browsers_after_build_in_native_slot(world: World)
     rows = [line.split("\t") for line in (world.receipts / "steps.tsv").read_text().splitlines()]
     names = [row[0] for row in rows]
     assert names == sorted(names)
-    assert len(names) == len(set(names)) == 20
+    assert len(names) == len(set(names)) == 19
     assert all(row[1] == "0" for row in rows)
     assert (world.receipts / "logs/web-build.log").read_text() == "build-log\n"
     assert (world.receipts / "logs/web-check.log").read_text() == "type-log\nlint-log\ndoctor-log\n"

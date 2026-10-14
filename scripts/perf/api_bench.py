@@ -28,7 +28,7 @@ REPEATS = 9
 SLOW_MS = 2000  # a first request slower than this gets SLOW_REPEATS repeats, not REPEATS
 SLOW_REPEATS = 3
 PREFIXES = ("/me/api", "/admin/api", "/v1", "/openai/v1", "/anthropic/v1", "/ollama/api", "/api/",
-            "/.well-known", "/llms.txt", "/health", "/gateway/v1", "/status/raw", "/sdapi/v1", "/showcase")
+            "/.well-known", "/llms.txt", "/health", "/gateway/v1", "/status/raw", "/sdapi/v1")
 SKIP = {"/mcp", "/docs", "/redoc", "/openapi.json"}
 
 

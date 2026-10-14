@@ -114,7 +114,7 @@ Scanned 217 .tsx/.ts/.css files under web/src (variant prefixes such as sm:, max
 | `h-4` | 11 | 6 | app/design/page.tsx (4), components/product/uptime-bar.tsx (2), components/ui/data-table.tsx (2) |
 | `size-2` | 11 | 7 | components/shell/app-shell.tsx (3), components/ui/avatar.tsx (3), app/usage/page.tsx (1) |
 | `size-3` | 11 | 8 | app/providers/page.tsx (2), components/ui/charts.tsx (2), components/ui/avatar.tsx (2) |
-| `h-64` | 10 | 8 | app/showcase/page.tsx (2), app/providers/page.tsx (2), app/workflows/page.tsx (1) |
+| `h-64` | 8 | 7 | app/providers/page.tsx (2), app/workflows/page.tsx (1) |
 | `size-11` | 10 | 7 | app/library/page.tsx (3), components/shell/app-shell.tsx (2), app/try/receipt-link.tsx (1) |
 | `size-10` | 10 | 9 | components/ui/avatar.tsx (2), app/design/page.tsx (1), app/usage/page.tsx (1) |
 | `size-6` | 9 | 7 | app/home/page.tsx (2), components/ui/avatar.tsx (2), app/library/page.tsx (1) |
@@ -122,7 +122,7 @@ Scanned 217 .tsx/.ts/.css files under web/src (variant prefixes such as sm:, max
 | `min-h-8` | 7 | 6 | app/globals.css (2), app/library/page.tsx (1), app/status/status-view.tsx (1) |
 | `h-6` | 7 | 5 | components/product/audio-cover.tsx (3), app/library/page.spec.tsx (1), app/try/page.tsx (1) |
 | `size-9` | 6 | 6 | app/library/page.tsx (1), app/activity/requests.tsx (1), app/providers/page.tsx (1) |
-| `max-h-96` | 6 | 3 | app/try/page.tsx (3), app/showcase/page.tsx (2), app/status/status-client.tsx (1) |
+| `max-h-96` | 4 | 2 | app/try/page.tsx (3), app/status/status-client.tsx (1) |
 | `h-9` | 5 | 5 | app/design/page.tsx (1), components/ui/command.tsx (1), components/ui/legacy/button.tsx (1) |
 | `h-5` | 5 | 3 | components/ui/command.tsx (2), components/ui/legacy/switch.tsx (2), app/home/page.tsx (1) |
 | `h-14` | 4 | 4 | app/library/page.tsx (1), app/activity/page.tsx (1), app/home/page.tsx (1) |
@@ -185,7 +185,7 @@ Scanned 217 .tsx/.ts/.css files under web/src (variant prefixes such as sm:, max
 |---|---|---|---|
 | `rounded-lg` | 54 | 19 | app/providers/page.tsx (18), app/try/page.tsx (8), app/models/models-client.tsx (6) |
 | `rounded-full` | 33 | 16 | app/library/page.tsx (7), components/ui/avatar.tsx (4), components/shell/app-shell.tsx (3) |
-| `rounded-md` | 31 | 20 | app/models/models-client.tsx (5), app/showcase/page.tsx (3), app/usage/page.tsx (2) |
+| `rounded-md` | 28 | 19 | app/models/models-client.tsx (5), app/usage/page.tsx (2) |
 | `rounded-control` | 20 | 10 | components/shell/app-shell.tsx (5), app/home/page.tsx (4), app/library/page.tsx (3) |
 | `rounded-panel` | 19 | 6 | app/home/page.tsx (5), app/status/status-client.tsx (5), components/product/status-ui.tsx (4) |
 | `rounded-xl` | 16 | 9 | app/providers/page.tsx (5), app/workflows/page.tsx (3), app/try/page.tsx (2) |

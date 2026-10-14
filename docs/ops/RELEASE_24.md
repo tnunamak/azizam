@@ -2,9 +2,9 @@
 
 ## What changed
 
-- Product docs: verified fixes to the API, concepts, start and use pages
-  (`showcase/docs-src`), and the docs-drift corrections to README, CONFIG and
-  the retention pages. `showcase/docs` is rebuilt with `scripts/build-docs`.
+- Product docs: verified fixes to the API, concepts, start and use pages, and
+  the docs-drift corrections to README, CONFIG and the retention pages. The
+  product docs now live at https://azizam.dev/docs/.
 - Depersonalization: the status renderer, `proxy.py`, `start.sh` and a script
   default no longer name the owner's hosts. The renderer shows the request host,
   then an optional `public_url`, then a neutral label.

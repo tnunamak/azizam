@@ -188,6 +188,6 @@ def test_startup_refuses_a_public_path_that_reaches_a_protected_route(entry):
     assert conflicts and conflicts[0].startswith(entry)
 
 
-def test_public_paths_may_name_health_and_the_showcase():
-    assert proxy.public_path_conflicts(["/health", "/showcase/*"], _routes()) == []
+def test_public_paths_may_name_health():
+    assert proxy.public_path_conflicts(["/health", "/health/*"], _routes()) == []
     assert proxy.public_path_conflicts(proxy.AUTH_PUBLIC_PATHS, _routes()) == []

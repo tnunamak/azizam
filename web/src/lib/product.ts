@@ -4,7 +4,7 @@ import registry from "../../../gateway/ui_pages.json";
 export const PRODUCT_NAME = identity.name;
 export const PRODUCT_DESCRIPTION =
   "Your own AI provider. Connect your apps and manage your gateway.";
-// The link preview's line (and the showcase headline).
+// The link preview's line.
 export const PRODUCT_TAGLINE =
   "One AI gateway for your apps and the people you invite.";
 

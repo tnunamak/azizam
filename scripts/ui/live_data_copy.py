@@ -45,7 +45,7 @@ DATABASES = ("admin.db", "receipts.db", "media_jobs.db", "responses.db", "metric
 # Runtime directories the gateway reads by relative path from its working directory.
 SYMLINKED_REPO_ENTRIES = (
     "workflows", "registry", "manifests", "extensions", "engines", "services",
-    "providers", "integrations", "skills", "showcase",
+    "providers", "integrations", "skills",
 )
 COPIED_SOURCE_FILES = ("openai_model_aliases.generated.yml",)
 

@@ -210,7 +210,8 @@ test("audit has a useful empty filter state and recovers after an API error", as
   await expect(
     page.getByText("No matching changes", { exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Clear filters" }).click();
+  // The toolbar and the empty state both offer Clear filters; either clears.
+  await page.getByRole("button", { name: "Clear filters" }).first().click();
   await expect(
     page.getByRole("button", { name: /Details:/ }).first(),
   ).toBeVisible();

@@ -34,7 +34,6 @@ def public_client(monkeypatch):
     ("GET", "/gateway/v1/providers/absent/v1/models"),
     ("GET", "/typesafe/v1/models"), ("POST", "/typesafe/v1/systemone"),
     ("POST", "/v1/decisions"), ("POST", "/mcp"),
-    ("GET", "/showcase/api/status"),
     ("POST", "/me/api/apps"), ("GET", "/me/api/media"),
     ("GET", "/me/api/usage/summary"), ("GET", "/admin/api/people"),
     ("GET", "/admin/api/operator/service-registry"),

@@ -74,8 +74,7 @@ secret environment variable.
   ingress. Media admission does not provide a per-member chat or Realtime
   session limit. Protect login and OIDC start routes from sustained abuse.
 - Decide which discovery information may be public. `/docs`, `/openapi.json`,
-  the discovery documents, static UI and curated showcase files are public.
-  Showcase backend status requires authentication. Signed media URLs are
+  the discovery documents and static UI are public. Signed media URLs are
   bearer capabilities: anyone holding an unexpired URL can download it.
 
 ## Recheck the public edge

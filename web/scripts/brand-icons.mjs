@@ -34,7 +34,7 @@ const TAB_COPPER = "#d65f33";
 const DEEP_WATER = "#0c1f25";
 const INK_ON_DARK = "#e3ecee";
 const MUTED_ON_DARK = "#b4c6cb";
-// The showcase's own headline: one plain line, no slogan.
+// The link preview's line: one plain line, no slogan.
 const DESCRIPTOR = "One AI gateway for your apps and the people you invite."; // = PRODUCT_TAGLINE (src/lib/product.ts)
 
 async function pathOf(name) {

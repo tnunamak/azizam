@@ -17,7 +17,6 @@ const routes = [
   "/settings/",
   "/workflows/",
   "/setup/",
-  "/showcase/",
   "/design/",
 ];
 

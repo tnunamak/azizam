@@ -18,7 +18,6 @@ const routes = [
   ["sign-in", "/sign-in/"],
   ["setup", "/setup/"],
   ["invite", "/invite/"],
-  ["showcase", "/showcase/"],
   ["docs", "/docs"],
   ["redoc", "/redoc"],
 ] as const;
