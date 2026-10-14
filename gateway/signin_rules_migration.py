@@ -133,7 +133,10 @@ def migrate(conn: sqlite3.Connection) -> dict[str, Any]:
     if oidc is not None and any(key in oidc for key in LEGACY_LISTS):
         _write_setting(conn, OIDC_KEY, {k: v for k, v in oidc.items() if k not in LEGACY_LISTS}, now)
 
-    grants = conn.execute(
+    # The caller's connection may return plain tuples; the grant helpers read columns by name.
+    rows = conn.cursor()
+    rows.row_factory = sqlite3.Row
+    grants = rows.execute(
         "SELECT * FROM admin_role_assignments WHERE granted_by = ? AND subject_kind='user' "
         "AND role='admin' AND provenance='manual' AND revoked_at IS NULL AND scope_app_id IS NULL",
         (LEGACY_GRANT_SOURCE,),
@@ -143,7 +146,7 @@ def migrate(conn: sqlite3.Connection) -> dict[str, Any]:
             "UPDATE admin_role_assignments SET provenance='oidc', last_confirmed_at=? WHERE id=?",
             (now, grant["id"]),
         )
-        relabelled = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (grant["id"],)).fetchone()
+        relabelled = rows.execute("SELECT * FROM admin_role_assignments WHERE id=?", (grant["id"],)).fetchone()
         admin_store._audit_admin_role(conn, "admin_role.relabel", relabelled, now,
                                       actor_kind="system", actor_id="migration")
         report["relabelled_grants"].append(grant["id"])
