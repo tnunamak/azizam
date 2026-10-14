@@ -1110,6 +1110,8 @@ def _admin_auth(request: Request) -> AdminContext:
             email="owner@example.com",
             roles=frozenset({"admin"}),
         )
+    if header == "Bearer member-token":
+        return AdminContext(subject="u_member", roles=frozenset({"member"}))
     if header == "Bearer viewer-token":
         return AdminContext(
             subject="u_viewer",
@@ -1161,6 +1163,104 @@ def _auth(role: str = "admin") -> dict[str, str]:
     return {"Authorization": f"Bearer {role}-token", "If-Match": '"os-1"'}
 
 
+
+class AdminHighRiskAuthorizationTests(unittest.TestCase):
+    """Authorization must precede validation and every privileged side effect."""
+
+    def _assert_denied_then_allowed(
+        self, method, path, body, store_method, *, role="admin",
+        code="owner_required", allowed_status=200, result=None,
+    ) -> None:
+        client, store = _make_client()
+        # Keep the existing fake store but spy at the side-effect boundary.
+        # A successful owner control rules out an invalid body or missing route.
+        with patch.object(store, store_method, return_value=result) as operation:
+            denied = client.request(method, path, json=body, headers=_auth(role))
+            self.assertEqual(denied.status_code, 403, denied.text)
+            self.assertEqual(denied.json()["error"]["code"], code)
+            operation.assert_not_called()
+            self.assertEqual(store.audit, [])
+            allowed = client.request(method, path, json=body, headers=_auth("owner"))
+            self.assertEqual(allowed.status_code, allowed_status, allowed.text)
+            operation.assert_called_once()
+            self.assertIn("owner", operation.call_args.kwargs["actor"].roles)
+
+    def test_non_owner_cannot_create_access_plan(self) -> None:
+        self._assert_denied_then_allowed(
+            "POST", "/admin/api/access-plans", {"name": "Restricted plan"},
+            "create_access_plan", allowed_status=201,
+            result={"id": "plan_new", "name": "Restricted plan"},
+        )
+
+    def test_non_owner_cannot_update_access_plan(self) -> None:
+        self._assert_denied_then_allowed(
+            "PUT", "/admin/api/access-plans/plan_local", {"name": "Changed plan"},
+            "update_access_plan", result={"id": "plan_local", "name": "Changed plan"},
+        )
+
+    def test_non_owner_cannot_delete_access_plan(self) -> None:
+        self._assert_denied_then_allowed(
+            "DELETE", "/admin/api/access-plans/plan_local", None,
+            "delete_access_plan", result={"id": "plan_local", "name": "Local only"},
+        )
+
+    def _assert_provider_key_owner_only(self, path, body, operation_name, expected_status):
+        # This client never contacts a sidecar or mints a real credential.
+        from unittest.mock import AsyncMock, Mock
+
+        key_client = Mock()
+        operation = AsyncMock(return_value={"key_alias": "test-alias"})
+        setattr(key_client, operation_name, operation)
+        store = FakeAdminStore()
+        app = FastAPI()
+        app.include_router(create_admin_router(
+            store, auth=_admin_auth, litellm_key_client=key_client,
+        ))
+        client = TestClient(app)
+        denied = client.post(path, json=body, headers=_auth())
+        self.assertEqual(denied.status_code, 403, denied.text)
+        self.assertEqual(denied.json()["error"]["code"], "owner_required")
+        operation.assert_not_called()
+        self.assertEqual(store.audit, [])
+        allowed = client.post(path, json=body, headers=_auth("owner"))
+        self.assertEqual(allowed.status_code, expected_status, allowed.text)
+        operation.assert_awaited_once()
+
+    def test_non_owner_cannot_create_provider_key(self) -> None:
+        self._assert_provider_key_owner_only(
+            "/admin/api/operator/litellm/keys",
+            {"key_alias": "test-alias", "models": ["test-model"], "max_budget": 1},
+            "generate_key", 201,
+        )
+
+    def test_non_owner_cannot_delete_provider_keys(self) -> None:
+        self._assert_provider_key_owner_only(
+            "/admin/api/operator/litellm/keys/delete",
+            {"key_aliases": ["test-alias"]}, "delete_keys", 200,
+        )
+
+    def test_member_cannot_create_admin_key(self) -> None:
+        self._assert_denied_then_allowed(
+            "POST", "/admin/api/admin-keys", {"name": "Automation", "role": "admin"},
+            "create_admin_automation_key", role="member", code="admin_forbidden",
+            allowed_status=201, result={"id": "cred_test", "name": "Automation"},
+        )
+
+    def test_member_cannot_replace_service_registry(self) -> None:
+        self._assert_denied_then_allowed(
+            "PUT", "/admin/api/operator/service-registry",
+            {"services": {}, "protocol_frontends": {}, "workflows": {}, "capabilities": {}},
+            "update_service_registry", role="member", code="admin_forbidden",
+            result={"value": {}, "operator_settings_generation": 2},
+        )
+
+    def test_member_cannot_enable_extension_package(self) -> None:
+        self._assert_denied_then_allowed(
+            "POST", "/admin/api/extensions/enable",
+            {"source": {"type": "local_directory", "path": "/unused-test-package"}},
+            "enable_extension_package", role="member", code="admin_forbidden",
+            result={"review": {"ok": True}, "operator_settings_generation": 2},
+        )
 class AdminAuthTests(unittest.TestCase):
     def test_missing_token_returns_401_json(self) -> None:
         client, _ = _make_client()
