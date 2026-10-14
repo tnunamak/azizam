@@ -431,6 +431,7 @@ function CopyModelName({ row }: { row: CatalogRow }) {
         type="button"
         variant="ghost"
         size="icon"
+        className="relative z-10 shrink-0"
         aria-label={`Copy model name ${row.id}`}
         onClick={() => void copy()}
       >
@@ -444,7 +445,7 @@ function CopyModelName({ row }: { row: CatalogRow }) {
         {state === "copied" ? `${row.id} copied` : ""}
       </span>
       {state === "failed" && (
-        <div className="bg-popover absolute top-full right-4 z-20 w-72 space-y-2 rounded-panel border p-3 shadow-(--shadow-overlay)">
+        <div className="bg-popover relative z-10 w-full min-w-0 space-y-2 rounded-panel border p-3">
           <p role="alert" className="text-destructive text-meta">
             Copy failed. Select the model name and copy it yourself.
           </p>
@@ -502,7 +503,7 @@ function ModelRow({
       data-slot="list-row"
       data-model={row.id}
       className={cn(
-        "hover:bg-muted/50 relative flex items-center gap-3 px-4 py-1.5 transition-colors duration-(--motion-fast) max-sm:min-h-(--row-phone-2)",
+        "hover:bg-muted/50 relative flex flex-wrap items-center gap-3 px-4 py-1.5 transition-colors duration-(--motion-fast) max-sm:min-h-(--row-phone-2)",
         meta.length ? "min-h-(--row-2)" : "min-h-(--row-1)",
       )}
     >
@@ -552,9 +553,7 @@ function ModelRow({
           <QuietStatus row={row} />
         </span>
       </div>
-      <div className="relative z-10 flex shrink-0 items-center">
-        <CopyModelName row={row} />
-      </div>
+      <CopyModelName row={row} />
     </li>
   );
 }
@@ -667,7 +666,7 @@ function DetailSheet({
         {row && (
           <>
             <SheetHeader className="border-b pr-12">
-              <SheetTitle className="font-mono">{row.id}</SheetTitle>
+              <SheetTitle className="min-w-0 font-mono [overflow-wrap:anywhere]">{row.id}</SheetTitle>
               <SheetDescription>
                 {[title, row.description].filter(Boolean).join(". ")}
               </SheetDescription>
@@ -792,10 +791,11 @@ function DetailSheet({
 /** The address an app pastes beside a model name. */
 function GatewayAddress({ address }: { address: string }) {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
   return (
-    <div className="text-meta flex min-w-0 items-center gap-2 max-sm:w-full">
+    <div className="text-meta flex min-w-0 flex-wrap items-center gap-2 max-sm:w-full">
       <span className="text-muted-foreground shrink-0">{preferredTerms.connectionAddress}</span>
       <code className="min-w-0 truncate font-mono">{address}</code>
       <Button
@@ -806,6 +806,7 @@ function GatewayAddress({ address }: { address: string }) {
         onClick={async () => {
           const ok = await copyText(address);
           setCopied(ok);
+          setFailed(!ok);
           window.clearTimeout(timer.current);
           if (ok) timer.current = window.setTimeout(() => setCopied(false), 1500);
         }}
@@ -815,6 +816,17 @@ function GatewayAddress({ address }: { address: string }) {
       <span role="status" className="sr-only">
         {copied ? `${preferredTerms.connectionAddress} copied` : ""}
       </span>
+      {failed && (
+        <div className="w-full min-w-0 space-y-2">
+          <p role="alert">Could not copy. Select the address below and copy it yourself.</p>
+          <Input
+            aria-label="Gateway address for manual copy"
+            readOnly
+            value={address}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -1047,10 +1059,14 @@ export default function ModelsClient() {
             </div>
           )}
           <p className="text-muted-foreground text-meta">
-            {filtered
-              ? `${visible.length} of ${allRows.length} model names`
-              : `${allRows.length} model names`}
-            {". "}
+            <span role="status" aria-live="polite" aria-atomic="true">
+              {visible.length === 0
+                ? `No models match. 0 of ${allRows.length} model names.`
+                : filtered
+                  ? `${visible.length} of ${allRows.length} model names.`
+                  : `${allRows.length} model names.`}
+            </span>
+            {" "}
             <Link prefetch={false} href="/connect/" className="underline underline-offset-4">
               How to connect an app
             </Link>

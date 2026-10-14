@@ -558,6 +558,11 @@ describe("copying", () => {
     );
     expect(screen.getByRole("textbox", { name: "Model name for manual copy" })).toHaveValue(id);
     expect(writeText).toHaveBeenCalledWith(id);
+    const panel = screen.getByRole("alert").parentElement!;
+    expect(panel.parentElement).toBe(rowOf(id));
+    expect(panel).not.toHaveClass("absolute");
+    expect(panel).toHaveClass("w-full", "min-w-0");
+    expect(rowOf(id)).toHaveClass("flex-wrap");
   });
 
   it("shows the gateway address from discovery, or this origin, and copies it", async () => {
@@ -909,4 +914,55 @@ describe("multipart example parity", () => {
     expect(snippets[0].code).toContain("--form-string 'prompt=@literal input'");
     expect(snippets[0].code).toContain(path.endsWith("edits") ? "-F image=@sample.png" : "-F file=@sample.wav");
   });
+});
+
+it("offers a full gateway address in flow when clipboard access fails", async () => {
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } });
+  Object.defineProperty(document, "execCommand", { configurable: true, value: () => false });
+  renderModels(catalog([row()]));
+  await screen.findByText(GATEWAY);
+  fireEvent.click(screen.getByRole("button", { name: "Copy gateway address" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Could not copy. Select the address below and copy it yourself.");
+  const input = screen.getByRole("textbox", { name: "Gateway address for manual copy" }) as HTMLInputElement;
+  expect(input).toBeVisible();
+  expect(input).toHaveValue(GATEWAY);
+  expect(input).toHaveAttribute("readonly");
+  fireEvent.focus(input);
+  expect(input.selectionStart).toBe(0);
+  expect(input.selectionEnd).toBe(GATEWAY.length);
+  expect(alert.parentElement).not.toHaveClass("absolute");
+});
+
+it("announces persistent result counts for search, task, price and zero matches", async () => {
+  const user = userEvent.setup();
+  renderModels(catalog([row({ id: "home" }), task("draw", "image"), row({ id: "paid", locality: "remote", cost: { kind: "paid", price: "$1" } })]));
+  await screen.findByRole("button", { name: "home" });
+  const count = screen.getByText("3 model names.");
+  expect(count).toHaveAttribute("role", "status");
+  expect(count).toHaveAttribute("aria-live", "polite");
+  expect(count).toHaveAttribute("aria-atomic", "true");
+  expect(count).not.toHaveTextContent("How to connect");
+  fireEvent.change(search(), { target: { value: "home" } });
+  expect(count).toHaveTextContent(/^1 of 3 model names\.$/);
+  fireEvent.change(search(), { target: { value: "" } });
+  await user.click(screen.getByRole("combobox", { name: "Task" }));
+  await user.click(screen.getByRole("option", { name: "Images" }));
+  expect(count).toHaveTextContent(/^1 of 3 model names\.$/);
+  await user.click(screen.getByRole("combobox", { name: "Task" }));
+  await user.click(screen.getByRole("option", { name: "All tasks" }));
+  await user.click(screen.getByRole("combobox", { name: "Price" }));
+  await user.click(screen.getByRole("option", { name: "Paid" }));
+  expect(count).toHaveTextContent(/^1 of 3 model names\.$/);
+  fireEvent.change(search(), { target: { value: "nothing-matches" } });
+  expect(count).toHaveTextContent("No models match. 0 of 3 model names.");
+  expect(screen.getAllByRole("status")).toContain(count);
+});
+
+it("wraps an unbroken 100-character model title in its detail sheet", async () => {
+  const id = "x".repeat(100);
+  const user = userEvent.setup();
+  renderModels(catalog([row({ id })]));
+  await user.click(await screen.findByRole("button", { name: id }));
+  expect(dialog().getByRole("heading", { name: id })).toHaveClass("min-w-0", "[overflow-wrap:anywhere]");
 });
