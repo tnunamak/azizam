@@ -169,6 +169,22 @@ function slotWord(value: number | null): string {
   return "degraded";
 }
 
+const downPattern = {
+  backgroundImage:
+    "repeating-linear-gradient(135deg, transparent 0 3px, currentColor 3px 4px)",
+};
+
+function slotLabel(start: number, value: number | null, enabled: boolean): string {
+  const time = (ts: number) => new Date(ts * 1000).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+  return `${time(start)} to ${time(start + 3600)}: ${enabled ? slotWord(value) : "turned off"}`;
+}
+
 function clock(ts: number): string {
   return new Date(ts * 1000).toLocaleTimeString(undefined, {
     hour: "numeric",
@@ -206,7 +222,7 @@ function HourByHour({
 
 /**
  * Hourly health checks over the last day, oldest left (Linear 2a.3), with
- * start and end labels. Down hours are taller as well as red, so colour is
+ * start and end labels. Down hours are striped as well as taller, so colour is
  * not the only signal; the full hour-by-hour text is in a details list.
  */
 export function UptimeBar({
@@ -216,7 +232,7 @@ export function UptimeBar({
   label,
   className,
   showAxis = true,
-  showLegend = false,
+  showLegend = true,
   hourByHour = true,
   size = "sm",
 }: {
@@ -261,7 +277,7 @@ export function UptimeBar({
         ["bg-success-fill", "Up"],
         ["bg-warning-fill", "Degraded"],
         ["bg-danger-fill", "Down"],
-        ["bg-nocheck-fill", "No check"],
+        ["bg-nocheck-fill", enabled ? "No check" : "Turned off"],
       ]
         .filter(([swatch]) =>
           slots.some((slot) => slotClass(slot.value, enabled) === swatch),
@@ -270,6 +286,7 @@ export function UptimeBar({
           <li key={word} className="flex items-center gap-1.5">
             <span
               aria-hidden="true"
+              style={word === "Down" ? downPattern : undefined}
               className={cn(
                 "rounded-xs",
                 large ? "size-2.5" : "size-2",
@@ -285,7 +302,7 @@ export function UptimeBar({
     <div className={cn("min-w-0", className)}>
       {large ? legend : null}
       <div
-        role="img"
+        role="group"
         aria-label={summary}
         className={cn(
           "flex min-w-0 items-end",
@@ -295,7 +312,10 @@ export function UptimeBar({
         {slots.map((slot) => (
           <span
             key={slot.start}
-            title={`${clock(slot.start)}: ${slotWord(slot.value)}`}
+            role="img"
+            aria-label={slotLabel(slot.start, slot.value, enabled)}
+            title={slotLabel(slot.start, slot.value, enabled)}
+            style={enabled && slot.value !== null && slot.value <= 0 ? downPattern : undefined}
             className={cn(
               "flex-1 rounded-xs",
               slotClass(slot.value, enabled),
