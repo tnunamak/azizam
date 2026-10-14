@@ -766,6 +766,45 @@ def _conn(path: Path = DB_PATH):
         yield conn
 
 
+class Transaction:
+    """One SQLite write transaction that several store steps share.
+
+    A step that takes ``tx.conn`` writes inside it; nothing is visible to other
+    connections until the block ends cleanly. What cannot be undone by a
+    rollback (an in-memory cache, another database) is registered with
+    ``after_commit`` and runs only once the commit has happened.
+    """
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+        self._after_commit: list[Callable[[], None]] = []
+
+    def after_commit(self, action: Callable[[], None]) -> None:
+        self._after_commit.append(action)
+
+
+@contextmanager
+def transaction(path: Path = DB_PATH):
+    """Commit every write made through the yielded ``Transaction``, or none of them."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        tx = Transaction(conn)
+        try:
+            yield tx
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+    failures: list[BaseException] = []
+    for action in tx._after_commit:
+        try:
+            action()
+        except Exception as exc:  # noqa: BLE001 - the commit stands; every action still runs
+            failures.append(exc)
+    if failures:
+        raise failures[0]
+
+
 @contextmanager
 def runtime_auth_connection(path: Path = DB_PATH):
     """Own one connection for a synchronous runtime identity lookup.
@@ -1949,15 +1988,20 @@ def revoke_credential(
     cred_id: str, *, now: int | None = None, path: Path = DB_PATH
 ) -> bool:
     """Mark a credential revoked. Idempotent; returns True if state changed."""
-    ts = _now() if now is None else int(now)
     with _conn(path) as conn:
-        cur = conn.execute(
-            "UPDATE credentials SET revoked_at = ? "
-            "WHERE id = ? AND revoked_at IS NULL",
-            (ts, cred_id),
-        )
+        changed = revoke_credential_in(conn, cred_id, now=now)
         conn.commit()
-        return cur.rowcount > 0
+        return changed
+
+
+def revoke_credential_in(conn: sqlite3.Connection, cred_id: str, *, now: int | None = None) -> bool:
+    """``revoke_credential`` inside a transaction the caller owns and commits."""
+    ts = _now() if now is None else int(now)
+    cur = conn.execute(
+        "UPDATE credentials SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+        (ts, cred_id),
+    )
+    return cur.rowcount > 0
 
 
 def revoke_older_session_credentials(
@@ -2287,58 +2331,74 @@ def reconcile_oidc_admin_roles(
     path: Path = DB_PATH,
 ) -> list[dict[str, Any]]:
     """Replace claim-derived global grants while preserving every manual grant."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            result = reconcile_oidc_admin_roles_in(conn, subject_id, roles, now=now)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        return result
+
+
+def reconcile_oidc_admin_roles_in(
+    conn: sqlite3.Connection,
+    subject_id: str,
+    roles: Iterable[str],
+    *,
+    now: int | None = None,
+) -> list[dict[str, Any]]:
+    """``reconcile_oidc_admin_roles`` inside a transaction the caller owns and commits."""
     desired = set(roles)
     if not subject_id or desired - {"owner", "admin", "superadmin"}:
         raise ValueError("valid user and control-plane roles are required")
     ts = _now() if now is None else int(now)
-    with _conn(path) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        rows = conn.execute(
-            "SELECT * FROM admin_role_assignments "
-            "WHERE subject_kind='user' AND subject_id=? AND scope_app_id IS NULL",
-            (subject_id,),
-        ).fetchall()
-        for row in rows:
-            if row["provenance"] == "oidc" and row["role"] not in desired and row["revoked_at"] is None:
-                conn.execute(
-                    "UPDATE admin_role_assignments SET revoked_at=? "
-                    "WHERE id=? AND revoked_at IS NULL", (ts, row["id"]),
-                )
-                _audit_admin_role(conn, "admin_role.revoke", row, ts,
-                                  actor_kind="system", actor_id="oidc")
-        for role in sorted(desired):
-            matching = [row for row in rows if row["role"] == role]
-            if any(row["provenance"] == "manual" and row["revoked_at"] is None for row in matching):
-                continue
-            existing = next((row for row in matching if row["provenance"] == "oidc"), None)
-            if existing is not None:
-                if existing["revoked_at"] is None:
-                    # The claim is still true: this sign-in confirms it.
-                    conn.execute(
-                        "UPDATE admin_role_assignments SET last_confirmed_at=? WHERE id=?",
-                        (ts, existing["id"]),
-                    )
-                    continue
-                conn.execute(
-                    "UPDATE admin_role_assignments SET revoked_at=NULL, granted_at=?, "
-                    "last_confirmed_at=? WHERE id=?", (ts, ts, existing["id"]),
-                )
-                assignment_id = existing["id"]
-            else:
-                cur = conn.execute(
-                    "INSERT INTO admin_role_assignments(role,subject_kind,subject_id,"
-                    "scope_app_id,granted_at,granted_by,provenance,last_confirmed_at) "
-                    "VALUES (?,'user',?,NULL,?,'oidc','oidc',?)", (role, subject_id, ts, ts),
-                )
-                assignment_id = cur.lastrowid
-            granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
-            _audit_admin_role(conn, "admin_role.grant", granted, ts,
+    rows = conn.execute(
+        "SELECT * FROM admin_role_assignments "
+        "WHERE subject_kind='user' AND subject_id=? AND scope_app_id IS NULL",
+        (subject_id,),
+    ).fetchall()
+    for row in rows:
+        if row["provenance"] == "oidc" and row["role"] not in desired and row["revoked_at"] is None:
+            conn.execute(
+                "UPDATE admin_role_assignments SET revoked_at=? "
+                "WHERE id=? AND revoked_at IS NULL", (ts, row["id"]),
+            )
+            _audit_admin_role(conn, "admin_role.revoke", row, ts,
                               actor_kind="system", actor_id="oidc")
-        conn.commit()
-        return [_row_to_dict(row) for row in conn.execute(
-            "SELECT * FROM admin_role_assignments WHERE subject_kind='user' "
-            "AND subject_id=? AND revoked_at IS NULL", (subject_id,)
-        )]  # type: ignore[misc]
+    for role in sorted(desired):
+        matching = [row for row in rows if row["role"] == role]
+        if any(row["provenance"] == "manual" and row["revoked_at"] is None for row in matching):
+            continue
+        existing = next((row for row in matching if row["provenance"] == "oidc"), None)
+        if existing is not None:
+            if existing["revoked_at"] is None:
+                # The claim is still true: this sign-in confirms it.
+                conn.execute(
+                    "UPDATE admin_role_assignments SET last_confirmed_at=? WHERE id=?",
+                    (ts, existing["id"]),
+                )
+                continue
+            conn.execute(
+                "UPDATE admin_role_assignments SET revoked_at=NULL, granted_at=?, "
+                "last_confirmed_at=? WHERE id=?", (ts, ts, existing["id"]),
+            )
+            assignment_id = existing["id"]
+        else:
+            cur = conn.execute(
+                "INSERT INTO admin_role_assignments(role,subject_kind,subject_id,"
+                "scope_app_id,granted_at,granted_by,provenance,last_confirmed_at) "
+                "VALUES (?,'user',?,NULL,?,'oidc','oidc',?)", (role, subject_id, ts, ts),
+            )
+            assignment_id = cur.lastrowid
+        granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
+        _audit_admin_role(conn, "admin_role.grant", granted, ts,
+                          actor_kind="system", actor_id="oidc")
+    return [_row_to_dict(row) for row in conn.execute(
+        "SELECT * FROM admin_role_assignments WHERE subject_kind='user' "
+        "AND subject_id=? AND revoked_at IS NULL", (subject_id,)
+    )]  # type: ignore[misc]
 
 
 def revoke_admin_role(
@@ -2753,29 +2813,53 @@ def put_operator_setting(
         raise ValueError(
             "service_registry must be written through the registry transaction primitive"
         )
-    ts = _now() if now is None else int(now)
-    payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        if setting_key == "prompt_memory":
-            _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn), now=ts)
-            if value.get("never_keep"):
-                _record_prompt_erasure(conn, "*", ts)
-        conn.execute(
-            "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
-            "VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET "
-            "value_json = excluded.value_json, "
-            "updated_at = excluded.updated_at, "
-            "updated_by = excluded.updated_by",
-            (setting_key, payload, ts, updated_by),
-        )
-        _advance_setting_revision(conn, setting_key)
-        conn.commit()
-        row = conn.execute(
-            _SETTING_SELECT + " WHERE s.key = ?", (setting_key,)
-        ).fetchone()
+        try:
+            record = put_operator_setting_in(conn, setting_key, value, updated_by=updated_by, now=now)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return record
+
+
+def put_operator_setting_in(
+    conn: sqlite3.Connection,
+    key: str,
+    value: Mapping[str, Any],
+    *,
+    updated_by: str | None = None,
+    now: int | None = None,
+) -> dict[str, Any]:
+    """``put_operator_setting`` inside a transaction the caller owns and commits."""
+    setting_key = str(key or "").strip()
+    ts = _now() if now is None else int(now)
+    payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
+    if setting_key == "prompt_memory":
+        _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn), now=ts)
+        if value.get("never_keep"):
+            _record_prompt_erasure(conn, "*", ts)
+    conn.execute(
+        "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET "
+        "value_json = excluded.value_json, "
+        "updated_at = excluded.updated_at, "
+        "updated_by = excluded.updated_by",
+        (setting_key, payload, ts, updated_by),
+    )
+    _advance_setting_revision(conn, setting_key)
+    row = conn.execute(_SETTING_SELECT + " WHERE s.key = ?", (setting_key,)).fetchone()
     return _operator_setting_row_to_dict(row)
+
+
+def operator_setting_revision_in(conn: sqlite3.Connection, key: str) -> str:
+    """The revision of one setting as this connection sees it (``"0"`` when never written)."""
+    row = conn.execute(
+        "SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key=?", (key,)
+    ).fetchone()
+    return str(row[0]) if row else "0"
 
 
 def put_operator_setting_with_audit(
@@ -2796,6 +2880,41 @@ def put_operator_setting_with_audit(
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Commit one ordinary setting and its audit fact in one transaction."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            record = put_operator_setting_with_audit_in(
+                conn, key, value, updated_by=updated_by, audit_action=audit_action,
+                audit_actor_kind=audit_actor_kind, audit_actor_id=audit_actor_id,
+                audit_actor_label=audit_actor_label, audit_target_kind=audit_target_kind,
+                audit_target_id=audit_target_id, audit_metadata=audit_metadata,
+                expected_revision=expected_revision, validate_in_transaction=validate_in_transaction, now=now,
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return record
+
+
+def put_operator_setting_with_audit_in(
+    conn: sqlite3.Connection,
+    key: str,
+    value: Mapping[str, Any],
+    *,
+    updated_by: str | None,
+    audit_action: str,
+    audit_actor_kind: str | None,
+    audit_actor_id: str | None,
+    audit_actor_label: str | None,
+    audit_target_kind: str | None,
+    audit_target_id: str | None,
+    audit_metadata: Mapping[str, Any] | None = None,
+    expected_revision: str | None = None,
+    validate_in_transaction: Callable[[sqlite3.Connection], None] | None = None,
+    now: int | None = None,
+) -> dict[str, Any]:
+    """``put_operator_setting_with_audit`` inside a transaction the caller owns and commits."""
     setting_key = str(key or "").strip()
     if not setting_key:
         raise ValueError("operator setting key is required")
@@ -2806,49 +2925,22 @@ def put_operator_setting_with_audit(
     if not isinstance(value, Mapping):
         raise ValueError("operator setting value must be a mapping")
     ts = _now() if now is None else int(now)
-    payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
-    with _conn(path) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            current = conn.execute(
-                "SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key=?",
-                (setting_key,),
-            ).fetchone()
-            revision = str(current[0]) if current else "0"
-            if expected_revision is not None and expected_revision != revision:
-                raise SettingsConflictError("Settings changed elsewhere; reload to see the latest")
-            if validate_in_transaction is not None:
-                validate_in_transaction(conn)
-            if setting_key == "prompt_memory":
-                _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn), now=ts)
-                if value.get("never_keep"):
-                    _record_prompt_erasure(conn, "*", ts)
-            conn.execute(
-                "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
-                "VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, "
-                "updated_at = excluded.updated_at, updated_by = excluded.updated_by",
-                (setting_key, payload, ts, updated_by),
-            )
-            _advance_setting_revision(conn, setting_key)
-            _record_audit_in_transaction(
-                conn, audit_action,
-                actor_kind=audit_actor_kind,
-                actor_id=audit_actor_id,
-                actor_label=audit_actor_label,
-                target_kind=audit_target_kind,
-                target_id=audit_target_id,
-                metadata=audit_metadata,
-                now=ts,
-            )
-            row = conn.execute(
-                _SETTING_SELECT + " WHERE s.key = ?", (setting_key,)
-            ).fetchone()
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-    return _operator_setting_row_to_dict(row)
+    if expected_revision is not None and expected_revision != operator_setting_revision_in(conn, setting_key):
+        raise SettingsConflictError("Settings changed elsewhere; reload to see the latest")
+    if validate_in_transaction is not None:
+        validate_in_transaction(conn)
+    record = put_operator_setting_in(conn, setting_key, value, updated_by=updated_by, now=ts)
+    _record_audit_in_transaction(
+        conn, audit_action,
+        actor_kind=audit_actor_kind,
+        actor_id=audit_actor_id,
+        actor_label=audit_actor_label,
+        target_kind=audit_target_kind,
+        target_id=audit_target_id,
+        metadata=audit_metadata,
+        now=ts,
+    )
+    return record
 
 
 class SettingsConflictError(ValueError):
@@ -3129,6 +3221,12 @@ def get_operator_setting(
         row = conn.execute(
             _SETTING_SELECT + " WHERE s.key = ?", (setting_key,)
         ).fetchone()
+    return _operator_setting_row_to_dict(row) if row is not None else None
+
+
+def get_operator_setting_in(conn: sqlite3.Connection, key: str) -> dict[str, Any] | None:
+    """:func:`get_operator_setting` as one open transaction sees it, including its own uncommitted writes."""
+    row = conn.execute(_SETTING_SELECT + " WHERE s.key = ?", (str(key or "").strip(),)).fetchone()
     return _operator_setting_row_to_dict(row) if row is not None else None
 
 

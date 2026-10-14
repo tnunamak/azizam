@@ -18,7 +18,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from gateway import accounts, admin_store, signin_admin, signin_rules, signin_test
+from gateway import accounts, admin_store, secret_store, signin_admin, signin_rules, signin_test
 from gateway.accounts_api import signin_options
 from gateway.admin_api import AdminContext, _require_admin
 from gateway.admin_oidc import OIDCConfig, OIDCConfigError, StateRecord
@@ -183,8 +183,7 @@ def create_signin_api(
     states: Callable[[], dict[str, StateRecord]],
     public_base_provider: Callable[[Request], str],
     signing_key_provider: Callable[[], bytes | None],
-    end_provider_access: Callable[[str], None],
-    revoke_person_sessions: Callable[[str], None],
+    end_provider_access: Callable[[admin_store.Transaction, str], None],
     fetch_json: Callable[[str], Mapping[str, Any]] | None = None,
 ) -> "SignInApi":
     router = APIRouter(route_class=_SignInRoute, tags=["sign-in"])
@@ -570,61 +569,60 @@ def create_signin_api(
         mode = "both" if after.password and after.provider else "oidc" if after.provider else "built-in"
         payload = connection_payload(request, cfg, provider, enabled=after.provider, issuer=issuer)
 
-        def write_rules() -> None:
-            admin_store.put_operator_setting_with_audit(
-                signin_admin.RULES_KEY, rules_doc, updated_by=ctx.audit_actor_id,
+        def write_rules(conn) -> None:
+            admin_store.put_operator_setting_with_audit_in(
+                conn, signin_admin.RULES_KEY, rules_doc, updated_by=ctx.audit_actor_id,
                 audit_action="operator.signin_rules.update", audit_target_kind="operator_setting",
                 audit_target_id=signin_admin.RULES_KEY,
-                audit_metadata={"rules": len(rules_doc["rules"]), "fallback": rules_doc["fallback"]},
-                path=path, **audit)
+                audit_metadata={"rules": len(rules_doc["rules"]), "fallback": rules_doc["fallback"]}, **audit)
 
-        def write_mode() -> None:
-            def validate(_conn):
-                if mode in {"oidc", "both"} and not oidc_config_provider().enabled:
-                    raise SignInError("oidc_unavailable", "Turn on the provider before using it to sign in.", 409)
-            admin_store.put_operator_setting_with_audit(
-                "sign_in", {"mode": mode}, updated_by=ctx.audit_actor_id, audit_action="operator.sign_in.update",
-                audit_target_kind="operator_setting", audit_target_id="sign_in", validate_in_transaction=validate,
-                path=path, **audit)
+        def write_mode(conn) -> None:
+            def validate(inner):
+                if mode in {"oidc", "both"}:
+                    stored = admin_store.get_operator_setting_in(inner, "oidc_provider_config")
+                    if not (stored and stored["value"].get("enabled")):
+                        raise SignInError("oidc_unavailable", "Turn on the provider before using it to sign in.", 409)
+            admin_store.put_operator_setting_with_audit_in(
+                conn, "sign_in", {"mode": mode}, updated_by=ctx.audit_actor_id, audit_action="operator.sign_in.update",
+                audit_target_kind="operator_setting", audit_target_id="sign_in", validate_in_transaction=validate, **audit)
 
-        def write_connection() -> None:
+        def write_connection(tx) -> None:
             try:
-                store.update_oidc_config_setting(data=payload, actor=ctx)
+                store.update_oidc_config_setting_in(tx, data=payload, actor=ctx)
             except ValueError as exc:
                 raise SignInError("connection_invalid", str(exc), 400) from exc
 
-        def write_status() -> None:
+        def write_status(conn) -> None:
             status = signin_admin.load_status(path)
             if run is not None:
                 status["last_test"] = {"at": run.passed_at, "sig": sig, "groups_missing": not run.groups_seen,
                                        "issuer": run.cfg.issuer}
             elif not tested_before(path, sig):
                 status.pop("last_test", None)
-            signin_admin.write_status(path, status, updated_by=ctx.audit_actor_id)
+            signin_admin.write_status_in(conn, status, updated_by=ctx.audit_actor_id)
 
-        def enforce() -> list[dict[str, Any]]:
-            """Make what is now saved true for people. Runs on what was actually written, even after a failure."""
-            return signin_admin.apply_changes(
-                path, saved, saved_world(path, oidc_config_provider()), plans,
-                keep_admin_keys=set(body.keep_admin_keys), owner_id=owner.id if owner else "",
-                end_provider_access=end_provider_access, revoke_person_sessions=revoke_person_sessions,
-                actor_label=ctx.actor_label, actor_id=ctx.audit_actor_id, actor_kind=ctx.actor_kind)
-
-        try:
-            write_rules()
+        secret_store.ensure_provider_secret_schema(path)
+        # One transaction: the settings, the rules, and every grant removed, session ended and key revoked
+        # for the people they touch commit together, or none of them happen. What a rollback cannot undo
+        # (the person's MCP connections) is registered on `tx` and runs only after the commit.
+        with admin_store.transaction(path) as tx:
+            if revision != signin_admin.revisions_in(tx.conn):
+                raise SettingsConflictError()
+            write_rules(tx.conn)
             if not wants_connection:
-                write_mode()
+                write_mode(tx.conn)
             elif after.provider:
-                write_connection()
-                write_mode()
+                write_connection(tx)
+                write_mode(tx.conn)
             else:
-                write_mode()
-                write_connection()
-            write_status()
-        except BaseException:
-            enforce()
-            raise
-        removed = enforce()
+                write_mode(tx.conn)
+                write_connection(tx)
+            write_status(tx.conn)
+            removed = signin_admin.apply_changes(
+                tx, path, saved, after, plans,
+                keep_admin_keys=set(body.keep_admin_keys), owner_id=owner.id if owner else "",
+                end_provider_access=end_provider_access,
+                actor_label=ctx.actor_label, actor_id=ctx.audit_actor_id, actor_kind=ctx.actor_kind)
         return {
             "snapshot": build_snapshot(request, ctx),
             "applied": {

@@ -70,13 +70,3 @@ def test_oidc_save_is_checked_against_the_revision_the_caller_read(client_store)
     with pytest.raises(admin_store.SettingsConflictError):
         store.update_oidc_config_setting(data={'enabled': False, 'client_id': 'stale'}, actor=actor, expected_revision='0')
     assert store.get_oidc_config_setting_raw()['client_id'] == 'first'
-
-
-def test_oidc_read_merge_race_is_checked_inside_write_transaction(client_store):
-    _, store, actor = client_store
-    def concurrent_change(candidate):
-        admin_store.put_operator_setting('oidc_provider_config', {'enabled': False, 'client_id': 'new@example.test'}, path=store.path)
-    store.oidc_config_validator = concurrent_change
-    with pytest.raises(admin_store.SettingsConflictError):
-        store.update_oidc_config_setting(data={'enabled': False, 'client_id': 'stale@example.test'}, actor=actor)
-    assert store.get_oidc_config_setting_raw()['client_id'] == 'new@example.test'

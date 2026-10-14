@@ -827,26 +827,6 @@ def bearer(key, extra=None):
     return {"authorization": f"Bearer {key}", **(extra or {})}
 
 
-def test_a_save_that_fails_halfway_still_removes_what_the_saved_rules_no_longer_support(sg, monkeypatch):
-    owner = owner_client(sg)
-    helper = helper_client(sg)
-    key = mint_admin_key(helper)
-    snapshot = get_snapshot(owner)
-
-    def broken(*args, **kwargs):
-        raise ValueError("issuer is required when enabled=true")
-
-    monkeypatch.setattr(sg.proxy.ADMIN_STORE, "update_oidc_config_setting", broken)
-    refused = save(owner, snapshot, proposal(snapshot, rules={"fallback": "closed", "rules": []}, name="New name"))
-
-    assert refused.status_code == 400 and refused.json()["error"]["code"] == "connection_invalid"
-    # The rules did get written, so the people they no longer cover lose their grant, session and keys now.
-    assert signin_admin.load_rules(sg.path).rules == ()
-    assert roles_of(sg, HELPER) == set()
-    assert helper.get("/admin/api/access-plans").status_code in {401, 403}
-    assert bearer_status(sg, key) in {401, 403}
-
-
 def test_keep_them_working_also_works_when_an_owner_key_does_the_saving(sg):
     owner = owner_client(sg)
     helper = helper_client(sg)

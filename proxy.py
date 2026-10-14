@@ -14804,6 +14804,20 @@ def _end_provider_access(person_id: str) -> None:
     MCP_OAUTH.deps.store.revoke_person_grants(person_id, "sign_in_refused")
 
 
+def _end_provider_access_in(tx: admin_store.Transaction, person_id: str) -> None:
+    """:func:`_end_provider_access` for a Sign-in save: its steps join the save's transaction.
+
+    The save is all or nothing, so no step here is written first for safety; what a
+    rollback cannot undo (the person's MCP connections) runs after the commit.
+    """
+    if "owner" in admin_store.effective_admin_roles("user", person_id, path=ADMIN_STORE.path):
+        return
+    accounts.record_signin_refusal_in(tx.conn, person_id)
+    admin_store.reconcile_oidc_admin_roles_in(tx.conn, person_id, set())
+    accounts.revoke_person_sessions_in(tx.conn, person_id)
+    tx.after_commit(lambda: MCP_OAUTH.deps.store.revoke_person_grants(person_id, "sign_in_refused"))
+
+
 def _safe_admin_return_to(value: str | None, *, default: str = "/") -> str:
     return safe_browser_return_to(value, default=default)
 
@@ -15179,8 +15193,7 @@ SIGNIN_API = create_signin_api(
     states=lambda: ADMIN_OIDC_STATES,
     public_base_provider=lambda request: instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
     signing_key_provider=_browser_admin_session_signing_key,
-    end_provider_access=_end_provider_access,
-    revoke_person_sessions=lambda person_id: accounts.revoke_person_sessions(person_id, path=ADMIN_STORE.path),
+    end_provider_access=_end_provider_access_in,
 )
 app.include_router(SIGNIN_API.router)
 

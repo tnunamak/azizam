@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from gateway import admin_store, signin_rules
+from gateway import accounts, admin_store, signin_rules
 from gateway.admin_runtime import LOCAL_ADMIN_KEY_ISSUER
 from gateway.signin_rules import Claims, Outcome, Rules, Standing
 
@@ -71,6 +71,11 @@ def write_status(path: Path, status: Mapping[str, Any], *, updated_by: str = SYS
     admin_store.put_operator_setting(STATUS_KEY, dict(status), updated_by=updated_by, path=path)
 
 
+def write_status_in(conn: sqlite3.Connection, status: Mapping[str, Any], *, updated_by: str = SYSTEM_ACTOR) -> None:
+    """``write_status`` inside a transaction the caller owns and commits."""
+    admin_store.put_operator_setting_in(conn, STATUS_KEY, dict(status), updated_by=updated_by)
+
+
 def revisions(path: Path) -> str:
     """One revision for everything the page saves together."""
     parts = [
@@ -78,6 +83,12 @@ def revisions(path: Path) -> str:
         for key in (RULES_KEY, "oidc_provider_config", "sign_in")
     ]
     return "-".join(parts)
+
+
+def revisions_in(conn: sqlite3.Connection) -> str:
+    """:func:`revisions` as one open transaction sees it."""
+    return "-".join(admin_store.operator_setting_revision_in(conn, key)
+                    for key in (RULES_KEY, "oidc_provider_config", "sign_in"))
 
 
 # ---------------------------------------------------------------------------
@@ -292,42 +303,46 @@ def sync_rule_plan(path: Path, user_id: str, outcome: Outcome, *, now: int | Non
     rule gave is replaced when another rule now gives one, and removed when no
     rule gives one. Returns the plan id the person now has.
     """
-    ts = int(time.time()) if now is None else now
     with admin_store._conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute(
-            "SELECT plan_id FROM account_access WHERE user_id=? AND removed_at IS NULL", (user_id,)
-        ).fetchone()
-        if row is None:
-            conn.rollback()
-            return None
-        current = row["plan_id"]
-        marker = conn.execute("SELECT plan_id FROM signin_rule_plans WHERE user_id=?", (user_id,)).fetchone()
-        rule_given = current is not None and marker is not None and marker["plan_id"] == current
-        if current is not None and not rule_given:
-            if marker is not None:  # a stale marker: the plan was changed by hand
-                conn.execute("DELETE FROM signin_rule_plans WHERE user_id=?", (user_id,))
-            conn.commit()
-            return current
-        wanted = outcome.plan if outcome.plan_from == "rule" else None
-        if wanted != current:
-            conn.execute("UPDATE account_access SET plan_id=? WHERE user_id=?", (wanted, user_id))
-            admin_store._record_audit_in_transaction(
-                conn, "signin.plan.set" if wanted else "signin.plan.clear",
-                actor_kind="system", actor_id=SYSTEM_ACTOR, actor_label="Sign-in rules",
-                target_kind="user", target_id=user_id,
-                metadata={"plan_id": wanted, "was": current}, now=ts,
-            )
-        if wanted:
-            conn.execute(
-                "INSERT INTO signin_rule_plans(user_id, plan_id, set_at) VALUES (?,?,?) "
-                "ON CONFLICT(user_id) DO UPDATE SET plan_id=excluded.plan_id, set_at=excluded.set_at",
-                (user_id, wanted, ts),
-            )
-        else:
-            conn.execute("DELETE FROM signin_rule_plans WHERE user_id=?", (user_id,))
+        plan = sync_rule_plan_in(conn, user_id, outcome, now=now)
         conn.commit()
-        return wanted
+        return plan
+
+
+def sync_rule_plan_in(conn: sqlite3.Connection, user_id: str, outcome: Outcome, *, now: int | None = None) -> str | None:
+    """:func:`sync_rule_plan` inside a transaction the caller owns and commits."""
+    ts = int(time.time()) if now is None else now
+    row = conn.execute(
+        "SELECT plan_id FROM account_access WHERE user_id=? AND removed_at IS NULL", (user_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    current = row["plan_id"]
+    marker = conn.execute("SELECT plan_id FROM signin_rule_plans WHERE user_id=?", (user_id,)).fetchone()
+    rule_given = current is not None and marker is not None and marker["plan_id"] == current
+    if current is not None and not rule_given:
+        if marker is not None:  # a stale marker: the plan was changed by hand
+            conn.execute("DELETE FROM signin_rule_plans WHERE user_id=?", (user_id,))
+        return current
+    wanted = outcome.plan if outcome.plan_from == "rule" else None
+    if wanted != current:
+        conn.execute("UPDATE account_access SET plan_id=? WHERE user_id=?", (wanted, user_id))
+        admin_store._record_audit_in_transaction(
+            conn, "signin.plan.set" if wanted else "signin.plan.clear",
+            actor_kind="system", actor_id=SYSTEM_ACTOR, actor_label="Sign-in rules",
+            target_kind="user", target_id=user_id,
+            metadata={"plan_id": wanted, "was": current}, now=ts,
+        )
+    if wanted:
+        conn.execute(
+            "INSERT INTO signin_rule_plans(user_id, plan_id, set_at) VALUES (?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET plan_id=excluded.plan_id, set_at=excluded.set_at",
+            (user_id, wanted, ts),
+        )
+    else:
+        conn.execute("DELETE FROM signin_rule_plans WHERE user_id=?", (user_id,))
+    return wanted
 
 
 # ---------------------------------------------------------------------------
@@ -448,27 +463,26 @@ def _host(address: str) -> str:
         return address
 
 
-def adopt_admin_keys(path: Path, key_ids: Iterable[str], owner_id: str) -> int:
-    """Keep these keys working by making the owner the person who stands behind them."""
+def adopt_admin_keys_in(conn: sqlite3.Connection, key_ids: Iterable[str], owner_id: str) -> int:
+    """Keep these keys working by making the owner the person who stands behind them.
+
+    Runs inside a transaction the caller owns and commits.
+    """
     ids = list(key_ids)
-    if not ids:
-        return 0
-    with admin_store._conn(path) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        for key_id in ids:
-            row = conn.execute("SELECT subject_id FROM credentials WHERE id=?", (key_id,)).fetchone()
-            if row is None:
-                continue
-            conn.execute("UPDATE credentials SET created_by=? WHERE id=?", (f"user:{owner_id}", key_id))
-            conn.execute(
-                "UPDATE admin_role_assignments SET granted_by=? WHERE subject_kind='service_account' "
-                "AND subject_id=? AND revoked_at IS NULL", (owner_id, row["subject_id"]),
-            )
-        conn.commit()
+    for key_id in ids:
+        row = conn.execute("SELECT subject_id FROM credentials WHERE id=?", (key_id,)).fetchone()
+        if row is None:
+            continue
+        conn.execute("UPDATE credentials SET created_by=? WHERE id=?", (f"user:{owner_id}", key_id))
+        conn.execute(
+            "UPDATE admin_role_assignments SET granted_by=? WHERE subject_kind='service_account' "
+            "AND subject_id=? AND revoked_at IS NULL", (owner_id, row["subject_id"]),
+        )
     return len(ids)
 
 
 def apply_changes(
+    tx: admin_store.Transaction,
     path: Path,
     before: World,
     after: World,
@@ -476,13 +490,18 @@ def apply_changes(
     *,
     keep_admin_keys: Iterable[str],
     owner_id: str,
-    end_provider_access: Callable[[str], None],
-    revoke_person_sessions: Callable[[str], None],
+    end_provider_access: Callable[[admin_store.Transaction, str], None],
     actor_label: str | None = None,
     actor_id: str | None = None,
     actor_kind: str = "user",
 ) -> list[dict[str, Any]]:
-    """Make a saved change true for the people it touches. Returns who lost administrator."""
+    """Make a saved change true for the people it touches. Returns who lost administrator.
+
+    Every write goes through ``tx``: the caller commits them with the saved
+    settings, or none of them happen. A step that cannot be rolled back
+    registers itself with ``tx.after_commit``.
+    """
+    conn = tx.conn
     keep = set(keep_admin_keys)
     issuer_moved = issuer_changes(before, after)
     removed: list[dict[str, Any]] = []
@@ -504,28 +523,28 @@ def apply_changes(
         # only; members' sessions and keys are not the provider switch's to end.
         kept_out = after.provider and not moved and can_b and not can_a and not person.is_owner
         if lost_admin and not person.is_owner:
-            admin_store.reconcile_oidc_admin_roles(person.id, set(), path=path)
-            revoke_person_sessions(person.id)
+            admin_store.reconcile_oidc_admin_roles_in(conn, person.id, set())
+            accounts.revoke_person_sessions_in(conn, person.id)
             revoked = kept = 0
             if person.id in keep:
-                kept = adopt_admin_keys(path, person.admin_keys, owner_id)
+                kept = adopt_admin_keys_in(conn, person.admin_keys, owner_id)
             else:
                 for key_id in person.admin_keys:
-                    if admin_store.revoke_credential(key_id, path=path):
+                    if admin_store.revoke_credential_in(conn, key_id):
                         revoked += 1
             removed.append({"id": person.id, "name": person.name, "keys_revoked": revoked, "keys_kept": kept})
-            admin_store.record_audit(
-                "signin.admin_removed", actor_kind=actor_kind, actor_id=actor_id, actor_label=actor_label,
+            admin_store._record_audit_in_transaction(
+                conn, "signin.admin_removed", actor_kind=actor_kind, actor_id=actor_id, actor_label=actor_label,
                 target_kind="user", target_id=person.id,
-                metadata={"keys_revoked": revoked, "keys_kept": kept}, path=path,
+                metadata={"keys_revoked": revoked, "keys_kept": kept}, now=int(time.time()),
             )
         elif lost_admin:
             # The owner is not an administrator by rule; a grant left from before goes quietly.
-            admin_store.reconcile_oidc_admin_roles(person.id, set(), path=path)
+            admin_store.reconcile_oidc_admin_roles_in(conn, person.id, set())
         if kept_out:
-            end_provider_access(person.id)
+            end_provider_access(tx, person.id)
         if not moved and person.provider_issuers:
-            sync_rule_plan(path, person.id, oa if can_a else _no_plan(oa))
+            sync_rule_plan_in(conn, person.id, oa if can_a else _no_plan(oa))
     return removed
 
 

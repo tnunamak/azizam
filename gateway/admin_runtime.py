@@ -1223,11 +1223,25 @@ class AdminSQLiteStore:
         self, *, data: Mapping[str, Any], actor: AdminContext,
         expected_revision: str | None = None,
     ) -> dict[str, Any]:
-        """Persist the DB-stored OIDC provider config.
+        """Persist the DB-stored OIDC provider config, in a transaction of its own."""
+        secret_store.ensure_provider_secret_schema(self.path)
+        with admin_store.transaction(self.path) as tx:
+            return self.update_oidc_config_setting_in(
+                tx, data=data, actor=actor, expected_revision=expected_revision)
+
+    def update_oidc_config_setting_in(
+        self, tx: admin_store.Transaction, *, data: Mapping[str, Any], actor: AdminContext,
+        expected_revision: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist the DB-stored OIDC provider config inside a transaction the caller commits.
 
         Preserves the existing ``client_secret`` when the update omits it or
         passes an empty/redacted value. Unknown fields are rejected so a
-        misspelled key never silently disables auth.
+        misspelled key never silently disables auth. A new secret is stored
+        under a fresh id and the old one deleted, both in ``tx``: a rollback
+        leaves the old secret in place and no stray new one. The caller must
+        have run ``secret_store.ensure_provider_secret_schema`` before ``tx``
+        began.
         """
         if "owner" not in actor.roles:
             raise PermissionError("owner role required to change OIDC trust configuration")
@@ -1236,7 +1250,8 @@ class AdminSQLiteStore:
             raise ValueError(
                 f"unknown oidc_provider_config fields: {sorted(unknown)}"
             )
-        current = admin_store.get_operator_setting(OIDC_PROVIDER_SETTING_KEY, path=self.path)
+        conn = tx.conn
+        current = admin_store.get_operator_setting_in(conn, OIDC_PROVIDER_SETTING_KEY)
         current_revision = admin_store.operator_setting_revision(current)
         if expected_revision is not None and expected_revision != current_revision:
             raise admin_store.SettingsConflictError()
@@ -1262,7 +1277,7 @@ class AdminSQLiteStore:
             # A fresh id per write: a rejected settings write leaves the
             # current reference pointing at the current secret.
             new_ref = f"oidc-client-secret-{secrets.token_hex(8)}"
-            secret_store.put_provider_secret(new_ref, new_secret, db_path=self.path)
+            secret_store.put_provider_secret(new_ref, new_secret, db_path=self.path, conn=conn)
             merged.pop("client_secret", None)
             merged[OIDC_CLIENT_SECRET_REF] = new_ref
 
@@ -1272,31 +1287,26 @@ class AdminSQLiteStore:
             if mode == "oidc" and not candidate_enabled:
                 raise ValueError("Enable built-in sign-in before disabling the identity provider; at least one working sign-in method is required.")
 
-        try:
-            record = admin_store.put_operator_setting_with_audit(
-                OIDC_PROVIDER_SETTING_KEY,
-                merged,
-                updated_by=actor.subject,
-                expected_revision=current_revision,
-                validate_in_transaction=validate_sign_in,
-                audit_action="operator.oidc_provider_config.update",
-                audit_actor_kind=actor.actor_kind,
-                audit_actor_id=actor.audit_actor_id,
-                audit_actor_label=actor.actor_label,
-                audit_target_kind="operator_setting",
-                audit_target_id=OIDC_PROVIDER_SETTING_KEY,
-                audit_metadata={
-                    "fields": sorted(str(k) for k in data.keys()),
-                    "secret_changed": new_ref is not None,
-                },
-                path=self.path,
-            )
-        except BaseException:
-            if new_ref is not None:
-                secret_store.delete_provider_secret(new_ref, db_path=self.path)
-            raise
+        record = admin_store.put_operator_setting_with_audit_in(
+            conn,
+            OIDC_PROVIDER_SETTING_KEY,
+            merged,
+            updated_by=actor.subject,
+            expected_revision=current_revision,
+            validate_in_transaction=validate_sign_in,
+            audit_action="operator.oidc_provider_config.update",
+            audit_actor_kind=actor.actor_kind,
+            audit_actor_id=actor.audit_actor_id,
+            audit_actor_label=actor.actor_label,
+            audit_target_kind="operator_setting",
+            audit_target_id=OIDC_PROVIDER_SETTING_KEY,
+            audit_metadata={
+                "fields": sorted(str(k) for k in data.keys()),
+                "secret_changed": new_ref is not None,
+            },
+        )
         if new_ref is not None and old_ref:
-            secret_store.delete_provider_secret(str(old_ref), db_path=self.path)
+            secret_store.delete_provider_secret(str(old_ref), db_path=self.path, conn=conn)
         return {
             **_redact_oidc_setting(record["value"], updated_at=record.get("updated_at")),
             "revision": admin_store.operator_setting_revision(record),
