@@ -46,14 +46,21 @@ function uniqueLabels(sources: UsageSource[]): Map<string, string> {
     byName.set(source.label, [...(byName.get(source.label) ?? []), source]);
   }
   const labels = new Map<string, string>();
+  const reserved = new Set(sources.map((source) => source.label));
   for (const [label, same] of byName) {
     const created = [...same].sort(
       (a, b) =>
         (a.createdAt ?? 0) - (b.createdAt ?? 0) || (a.id < b.id ? -1 : 1),
     );
-    created.forEach((source, index) =>
-      labels.set(source.id, same.length > 1 ? `${label} (${index + 1})` : label),
-    );
+    let suffix = 1;
+    for (const source of created) {
+      let unique = label;
+      if (same.length > 1) {
+        do { unique = `${label} (${suffix++})`; } while (reserved.has(unique));
+        reserved.add(unique);
+      }
+      labels.set(source.id, unique);
+    }
   }
   return labels;
 }
