@@ -28,6 +28,56 @@ from gateway.backends.llm_execution import (
 _HANG_GUARD_S = 30.0
 
 
+
+class OpenAiSseDoneDetectorBoundsTests(unittest.TestCase):
+    def test_long_non_done_event_has_linear_scan_and_bounded_retention(self):
+        from unittest.mock import patch
+        from gateway.backends import llm_execution as module
+
+        scanned = 0
+        pattern = module._SSE_EVENT_END
+
+        class CountedPattern:
+            def search(self, data, pos=0):
+                nonlocal scanned
+                scanned += len(data) - pos
+                return pattern.search(data, pos)
+
+        detector = module._OpenAiSseDoneDetector()
+        retained = 0
+        size = 4096 * 4096 + 2
+        with patch.object(module, "_SSE_EVENT_END", CountedPattern()):
+            for index in range(4096):
+                chunk = (b"data: " + b"x" * 4090) if index == 0 else b"x" * 4096
+                self.assertEqual(detector.consume(chunk), (chunk, False))
+                retained = max(retained, len(detector._unfinished_event))
+            self.assertEqual(detector.consume(b"\n\n"), (b"\n\n", False))
+        self.assertLess(scanned, 4 * size)
+        self.assertLess(retained, 64)
+
+    def test_done_split_at_every_byte_and_terminal_only_once(self):
+        from gateway.backends.llm_execution import _OpenAiSseDoneDetector
+
+        for event in (b"data: [DONE]\n\n", b"data:[DONE]\n\n",
+                      b"data: [DONE]\r\n\r\n", b": comment\r\ndata: [DONE]\r\n\r\n",
+                      b"data: [DONE]\r\r"):
+            for split in range(len(event) + 1):
+                with self.subTest(event=event, split=split):
+                    detector = _OpenAiSseDoneDetector()
+                    results = [detector.consume(event[:split]), detector.consume(event[split:])]
+                    self.assertEqual(b"".join(output for output, _ in results), event)
+                    self.assertEqual(sum(terminal for _, terminal in results), 1)
+                    self.assertEqual(detector.consume(event), (b"", False))
+
+    def test_rejected_event_resets_at_boundary_and_preserves_bytes(self):
+        from gateway.backends.llm_execution import _OpenAiSseDoneDetector
+
+        for prefix in (b"data: [DONE] extra\n\n", b"other: value\ndata: [DONE]\n\n",
+                       b"data: [DONE]\ndata: \n\n", b":" + b"x" * 10000 + b"\n\n"):
+            detector = _OpenAiSseDoneDetector()
+            self.assertEqual(detector.consume(prefix), (prefix, False))
+            done = b": comment\ndata:[DONE]\n\n"
+            self.assertEqual(detector.consume(done + b"ignored"), (done, True))
 class _ClosableClient:
     def __init__(self) -> None:
         self.closed = False

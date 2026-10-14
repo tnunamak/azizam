@@ -192,6 +192,7 @@ class CancellationRegistry:
             entry = _Entry(expires_at=self._deadline(), generation=self._new_generation())
             entry.signalled_without_registration = True
             self._entries[request_id] = entry
+        entry.expires_at = self._deadline()
         entry.event.set()
 
     def is_cancelled(self, request_id: str) -> bool:
