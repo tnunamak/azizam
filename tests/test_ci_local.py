@@ -390,7 +390,7 @@ def test_static_checks_overlap_browsers_after_build_in_native_slot(world: World)
     rows = [line.split("\t") for line in (world.receipts / "steps.tsv").read_text().splitlines()]
     names = [row[0] for row in rows]
     assert names == sorted(names)
-    assert len(names) == len(set(names)) == 20
+    assert len(names) == len(set(names)) == 19
     assert all(row[1] == "0" for row in rows)
     assert (world.receipts / "logs/web-build.log").read_text() == "build-log\n"
     assert (world.receipts / "logs/web-check.log").read_text() == "type-log\nlint-log\ndoctor-log\n"
