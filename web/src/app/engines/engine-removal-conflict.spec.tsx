@@ -14,14 +14,10 @@ import Page from "./page";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push: vi.fn() }),
 }));
 vi.mock("@/components/shell/session", () => ({
   useViewer: () => ({ admin: true }),
-}));
-vi.mock("./engine-checks", () => ({
-  EngineChecks: ({ service }: { service: Service }) => (
-    <button>Test {service.name}</button>
-  ),
 }));
 
 const service = (id: string, role = "primary", enabled = true): Service => ({
