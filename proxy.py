@@ -15019,7 +15019,6 @@ app.include_router(
         known_model_names_getter=lambda: litellm_known_model_names(
             ADMIN_STORE.get_service_registry()
         ),
-        effective_oidc_config_provider=lambda: _admin_oidc_config_snapshot(),
     )
 )
 

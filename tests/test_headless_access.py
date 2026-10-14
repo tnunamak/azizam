@@ -282,8 +282,6 @@ def _request(row):
     path = re.sub(r"\{[^}]+\}", "missing-fixture-id", path)
     # Supply valid typed bodies so the request reaches auth instead of 422.
     body = {"access_plan": "plan-missing"} if path == "/admin/api/invites" else {}
-    if path == "/admin/api/operator/sign-in":
-        body = {"mode": "both"}
     body = SIGNIN_BODIES.get(path, body)
     return path, body
 

@@ -34,7 +34,6 @@ from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway.admin_oidc import validate_oidc_display_name
 from gateway.policy import (
     EffectiveAccess,
     PolicyDecision,
@@ -240,13 +239,6 @@ class AdminStore(Protocol):
         self, *, package_id: str, actor: AdminContext
     ) -> dict[str, Any]: ...
 
-    def get_oidc_config_setting(self) -> dict[str, Any] | None: ...
-
-    def update_oidc_config_setting(
-        self, *, data: Mapping[str, Any], actor: AdminContext,
-        expected_revision: str | None = None,
-    ) -> dict[str, Any]: ...
-
     def recent_audit(
         self, *, limit: int, include_internal: bool = False
     ) -> list[dict[str, Any]]: ...
@@ -282,7 +274,6 @@ StatusProvider = Callable[[], "Awaitable[Mapping[str, Any]]"]
 # LiteLLMAdminError. Kept as a parameter (like ``service_probe``) so this module
 # never reads os.environ or touches proxy.py to find the sidecar.
 LiteLLMKeyClient = Any
-EffectiveOidcConfigProvider = Callable[[], Mapping[str, Any] | None]
 
 
 _AUDIT_DEFAULT_LIMIT = 50
@@ -1482,86 +1473,6 @@ _OIDC_CONFIG_FIELDS = frozenset(
         "display_name",
     }
 )
-_OIDC_STRING_FIELDS = frozenset(
-    {
-        "issuer",
-        "client_id",
-        "client_secret",
-        "redirect_uri",
-        "authorization_endpoint",
-        "token_endpoint",
-        "jwks_uri",
-        "groups_claim",
-        "display_name",
-    }
-)
-_OIDC_LIST_FIELDS = frozenset({"scopes"})
-
-
-def _validate_oidc_config_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    unknown = set(payload.keys()) - _OIDC_CONFIG_FIELDS
-    if unknown:
-        raise _RouteError(
-            status.HTTP_400_BAD_REQUEST,
-            "invalid_oidc_config",
-            f"unknown oidc fields: {sorted(unknown)}",
-        )
-    out: dict[str, Any] = {}
-    if "enabled" in payload:
-        out["enabled"] = _validate_bool_field(payload["enabled"], field="enabled")
-    for key in _OIDC_STRING_FIELDS:
-        if key not in payload:
-            continue
-        value = payload[key]
-        if value is None:
-            # ``null`` explicitly clears ordinary scalar fields. For the
-            # write-only secret it preserves the current stored value.
-            out[key] = None if key == "client_secret" else ""
-            continue
-        if not isinstance(value, str):
-            raise _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_oidc_config",
-                f"{key} must be a string",
-            )
-        # Empty is the explicit clear for bootstrap-backed scalar fields.
-        # Omission remains the only patch-preserve operation.
-        out[key] = validate_oidc_display_name(value) if key == "display_name" else value.strip()
-    for key in _OIDC_LIST_FIELDS:
-        if key not in payload:
-            continue
-        if payload[key] is None:
-            raise _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_oidc_config",
-                f"{key} must be a list of strings; use [] to clear it",
-            )
-        out[key] = _validate_string_list(payload[key], field=key)
-    if "clock_skew_seconds" in payload:
-        value = payload["clock_skew_seconds"]
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_oidc_config",
-                "clock_skew_seconds must be a non-negative integer",
-            )
-        seconds = int(value)
-        if seconds < 0:
-            raise _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_oidc_config",
-                "clock_skew_seconds must be a non-negative integer",
-            )
-        out["clock_skew_seconds"] = seconds
-    if out.get("enabled"):
-        for required in ("issuer", "client_id", "redirect_uri"):
-            if required in out and not out[required]:
-                raise _RouteError(
-                    status.HTTP_400_BAD_REQUEST,
-                    "invalid_oidc_config",
-                    f"{required} is required when enabled=true",
-                )
-    return out
 
 
 def _validate_bool_field(value: Any, *, field: str) -> bool:
@@ -1662,7 +1573,6 @@ def create_admin_router(
     status_provider: StatusProvider | None = None,
     litellm_key_client: LiteLLMKeyClient | None = None,
     known_model_names_getter: Callable[[], frozenset[str]] | None = None,
-    effective_oidc_config_provider: EffectiveOidcConfigProvider | None = None,
     prefix: str = "/admin/api",
 ) -> APIRouter:
     """Build an admin-plane router.
@@ -1686,9 +1596,7 @@ def create_admin_router(
     ``known_model_names_getter`` is an optional zero-arg callable that returns
     the current set of model names in the compiled LiteLLM catalog; when
     provided and non-empty, virtual-key ``models`` allowlists are validated
-    against it at mint time. ``effective_oidc_config_provider`` exposes the
-    runtime's already-resolved OIDC view (including bootstrap provenance)
-    without coupling this router to a configuration source.
+    against it at mint time.
     """
 
     router = APIRouter(prefix=prefix, tags=["admin"])
@@ -2908,64 +2816,6 @@ def create_admin_router(
             status_code=status.HTTP_200_OK,
             content={"media_job_admission": {k: v for k, v in record.items() if k != "revision"}, "revision": record["revision"]},
         )
-
-    def oidc_config_response() -> JSONResponse:
-        # The effective projection includes bootstrap defaults and provenance.
-        # Keep that projection, but only pair it with a revision if no provider
-        # write occurred while it was being read.
-        for _ in range(3):
-            revision = store.setting_revision("oidc_provider_config")
-            record = (
-                effective_oidc_config_provider()
-                if effective_oidc_config_provider is not None
-                else store.get_oidc_config_setting()
-            )
-            if store.setting_revision("oidc_provider_config") == revision:
-                return JSONResponse(
-                    status_code=status.HTTP_200_OK,
-                    content={"oidc_config": record, "revision": revision},
-                )
-        response = _RouteError(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "settings_snapshot_unavailable",
-            "Settings are changing elsewhere; retry to read the current configuration.",
-        ).as_response()
-        response.headers["Retry-After"] = "1"
-        return response
-
-    @router.get("/oidc-config")
-    def get_oidc_config(request: Request) -> JSONResponse:
-        ctx = _guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        return oidc_config_response()
-
-    @router.put("/oidc-config")
-    async def update_oidc_config(request: Request) -> JSONResponse:
-        ctx = (await asyncio.to_thread(_guard, request))
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        if "owner" not in ctx.roles:
-            return _RouteError(
-                status.HTTP_403_FORBIDDEN,
-                "admin_role_forbidden",
-                "owner role required to change OIDC trust configuration",
-            ).as_response()
-        try:
-            body = await _read_json_body(request)
-            payload = _validate_oidc_config_payload(body)
-            store.update_oidc_config_setting(data=payload, actor=ctx, expected_revision=settings_revision(request))
-        except _RouteError as exc:
-            return exc.as_response()
-        except admin_store.SettingsConflictError:
-            return settings_conflict()
-        except ValueError as exc:
-            return _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_oidc_config",
-                str(exc),
-            ).as_response()
-        return oidc_config_response()
 
     @router.get("/audit")
     def audit(request: Request) -> JSONResponse:

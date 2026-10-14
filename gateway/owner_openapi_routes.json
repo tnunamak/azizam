@@ -151,14 +151,6 @@
     "tag": "people and plans",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
   },
-  "GET /admin/api/oidc-config": {
-    "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
-  },
-  "PUT /admin/api/oidc-config": {
-    "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
-  },
   "GET /admin/api/operator/litellm-config": {
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
@@ -224,14 +216,6 @@
   "POST /admin/api/operator/services/{service_id}/enabled": {
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
-  },
-  "GET /admin/api/operator/sign-in": {
-    "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
-  },
-  "PUT /admin/api/operator/sign-in": {
-    "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
   },
   "GET /admin/api/overview": {
     "tag": "status",

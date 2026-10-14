@@ -361,22 +361,6 @@
   },
   {
     "method": "GET",
-    "path": "/admin/api/oidc-config",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.get_oidc_config",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/oidc-config",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.admin_api.update_oidc_config",
-    "schema": true
-  },
-  {
-    "method": "GET",
     "path": "/admin/api/operator/litellm-config",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
@@ -501,22 +485,6 @@
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.set_service_enabled",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/operator/sign-in",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.accounts_api.get_mode",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/operator/sign-in",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.accounts_api.set_mode",
     "schema": true
   },
   {

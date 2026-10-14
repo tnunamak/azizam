@@ -249,8 +249,6 @@ Selected successful workflows are exercised separately.
 | `POST /admin/api/invites` | owner-bearer | denied | `gateway.accounts_api.create_invite`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `DELETE /admin/api/invites/{link_id}` | owner-bearer | denied | `gateway.accounts_api.revoke_invite`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/invites/{link_id}/link` | owner-bearer | denied | `gateway.accounts_api.copy_invite`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
-| `GET /admin/api/oidc-config` | owner-bearer | denied | `gateway.admin_api.get_oidc_config`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `PUT /admin/api/oidc-config` | owner-bearer | denied | `gateway.admin_api.update_oidc_config`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/operator/litellm-config` | owner-bearer | denied | `gateway.admin_api.get_litellm_config`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/operator/litellm/keys` | owner-bearer | denied | `gateway.admin_api.list_litellm_keys`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/operator/litellm/keys` | owner-bearer | denied | `gateway.admin_api.create_litellm_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
@@ -267,8 +265,6 @@ Selected successful workflows are exercised separately.
 | `DELETE /admin/api/operator/services/{service_id}` | owner-bearer | denied | `gateway.admin_api.remove_service`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PATCH /admin/api/operator/services/{service_id}` | owner-bearer | denied | `gateway.admin_api.update_service`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/operator/services/{service_id}/enabled` | owner-bearer | denied | `gateway.admin_api.set_service_enabled`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `GET /admin/api/operator/sign-in` | owner-bearer | denied | `gateway.accounts_api.get_mode`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
-| `PUT /admin/api/operator/sign-in` | owner-bearer | denied | `gateway.accounts_api.set_mode`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/overview` | owner-bearer | denied | `gateway.admin_api.overview`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/people` | owner-bearer | denied | `gateway.accounts_api.people`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `DELETE /admin/api/people/{user_id}` | owner-bearer | denied | `gateway.accounts_api.remove_person`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |

@@ -115,8 +115,9 @@ export const GLOBAL_SETTINGS: GlobalSetting[] = [
     },
     // A provider that was configured and off is written back off ("save for
     // later", which needs no test). One that was never configured has its
-    // switches and rules put back, then its connection blanked, through the
-    // owner's own routes. The saved client secret is never read or sent.
+    // switches and rules put back through the owner's route, then its connection
+    // blanked through the fixture gateway's own route (Save cannot blank it).
+    // The saved client secret is never read or sent.
     write: async (owner, value, revision) => {
       const saved = value as { methods: { provider: boolean }; rules: unknown; provider: Json };
       const connected = Boolean(saved.provider.address && saved.provider.client_id);
@@ -136,10 +137,9 @@ export const GLOBAL_SETTINGS: GlobalSetting[] = [
         revision,
       );
       if (connected) return;
-      const current = await owner.get("/admin/api/oidc-config");
       await owner.send(
         "PUT",
-        "/admin/api/oidc-config",
+        "/fixture/operator-settings/oidc_provider_config",
         {
           enabled: false,
           issuer: "",
@@ -150,7 +150,6 @@ export const GLOBAL_SETTINGS: GlobalSetting[] = [
           token_endpoint: "",
           jwks_uri: "",
         },
-        current.revision as string,
       );
     },
   },

@@ -225,7 +225,7 @@ def test_q2_admin_can_run_the_control_plane_but_not_people_invites_settings_or_s
     assert owner.get("/admin/api/access-plans").status_code == 200
     # Only the owner can do these.
     for method, path in (("get", "/admin/api/people"), ("get", "/admin/api/invites"),
-                         ("get", "/admin/api/settings/instance"), ("put", "/admin/api/oidc-config")):
+                         ("get", "/admin/api/settings/instance"), ("put", "/admin/api/signin")):
         def kwargs(client):
             token = client.get("/auth/api/options").json()["signed_in_oidc"]["csrf_token"]
             return {"json": {}, "headers": {"x-azizam-csrf": token}} if method == "put" else {}

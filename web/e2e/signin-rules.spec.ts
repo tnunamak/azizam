@@ -15,17 +15,17 @@ for (const viewport of [
     await page.setViewportSize(viewport);
     const owner = await ownerApi(request);
     // A provider that is on: the page is the live one, not the empty first run.
-    const connection = await owner.get("/admin/api/oidc-config");
-    await owner.send("PUT", "/admin/api/oidc-config", {
+    // The connection and the "both" switches are set up through the fixture gateway's own route:
+    // the page's Save would need a test sign-in against a real provider.
+    await owner.send("PUT", "/fixture/operator-settings/oidc_provider_config", {
       enabled: true,
       issuer: "https://id.example.test/realms/e2e",
       client_id: "azizam-e2e",
       client_secret: "e2e-secret",
       redirect_uri: `${new URL(baseURL!).origin}/admin/oidc/callback`,
       scopes: ["openid", "email", "profile"],
-    }, connection.revision as string);
-    const mode = await owner.get("/admin/api/operator/sign-in");
-    await owner.send("PUT", "/admin/api/operator/sign-in", { mode: "both" }, mode.revision as string);
+    });
+    await owner.send("PUT", "/fixture/operator-settings/sign_in", { mode: "both" });
 
     // An administrator by the owner's hand (a hand-made grant is what the page must not touch).
     const helper = await isolated.member({ name: "Helper" });

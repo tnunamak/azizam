@@ -737,75 +737,12 @@ endpoint; the React client should prefer `/audit`.
 
 ## Surface 8 — Settings
 
-### GET /admin/api/oidc-config
-
-Returns the **effective** runtime configuration: bootstrap OIDC configuration
-merged with non-blank database overrides. **Never returns raw secrets.**
-`client_secret` is replaced with `"<redacted>"` and the companion boolean
-`client_secret_set` indicates whether the effective configuration has a
-secret. Returns `null` only when neither source configures OIDC.
-
-```json
-{
-  "oidc_config": {
-    "enabled": true,
-    "issuer": "https://accounts.google.com",
-    "client_id": "my-app.apps.googleusercontent.com",
-    "client_secret": "<redacted>",
-    "client_secret_set": true,
-    "redirect_uri": "https://gateway.example.com/auth/callback",
-    "scopes": ["openid", "email", "profile"],
-    "authorization_endpoint": "",
-    "token_endpoint": "",
-    "jwks_uri": "",
-    "clock_skew_seconds": 60,
-    "groups_claim": "groups",
-    "updated_at": 1765…,
-    "source": "bootstrap" | "database" | "merged" | "runtime_default",
-    "provenance": {
-      "summary": "bootstrap" | "database" | "merged" | "runtime_default",
-      "fields": { "issuer": "bootstrap", "client_id": "database" }
-    },
-    "apply_mode": "live"
-  } | null
-}
-```
-
-`groups_claim` is an accepted OIDC configuration field in
-`gateway/admin_api.py`. Its presence is not evidence of OIDC
-group-to-access-plan auto-assignment: the legacy mapping table and routes
-have been removed. See B7 in `ADMIN_USER_STORIES.md`.
-
-UNVERIFIED in this scoped review: live login claim handling, persistence in
-`user_identity_claims`, and readership elsewhere in the repository. The
-configuration field alone cannot establish those runtime behaviors.
-
-`client_secret` is write-only and redacted in GET responses.
-
-### PUT /admin/api/oidc-config  (save OIDC config)
-
-Request: any subset of the `oidc_config` fields above. When `client_secret` is
-omitted, blank, or `"<redacted>"`, the existing stored secret is preserved
-(patch semantics). Omitting `groups_claim` preserves the existing value
-(patch semantics). Unknown fields return `400 invalid_oidc_config`.
-
-Accepted fields: `enabled`, `issuer`, `client_id`, `client_secret`,
-`redirect_uri`, `scopes`, `authorization_endpoint`, `token_endpoint`,
-`jwks_uri`, `clock_skew_seconds`, `groups_claim`.
-
-For non-secret string fields, `null` or `""` explicitly clears a bootstrap
-value; for list fields, `[]` explicitly clears it. Omit a field to preserve
-the database override. `client_secret` remains write-only: blank, null, and
-`"<redacted>"` preserve its stored value.
-
-`200` → `{ "oidc_config": { …same scrubbed shape… } }`
-
-The existing write-only secret behavior is preserved. An empty, omitted, or
-`"<redacted>"` `client_secret` preserves the stored database secret. Dashboard
-provider changes apply live for subsequent OIDC authentication requests. To
-recover access, use an existing authenticated admin session, or generate an
-admin key on the host and claim it at `/setup/claim`; do not promise a hidden
-local-owner sign-in path while OIDC is enabled.
+The identity provider connection is read and written only through the Sign-in
+routes below (`GET` and `PUT /admin/api/signin`). It has no route of its own.
+`client_secret` is write-only: the snapshot says only whether one is saved
+(`client_secret_saved`), and a save that leaves the secret blank keeps the
+stored one. A save that changes the connection while the provider is on must
+carry a passed test sign-in.
 
 ### Sign-in rules and the Sign-in page (`/admin/api/signin*`)
 

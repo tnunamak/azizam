@@ -187,6 +187,9 @@ def _redact_oidc_setting(
     return out
 
 
+_OIDC_LIST_FIELDS = frozenset({"scopes"})
+
+
 def _merge_oidc_setting(
     current: Mapping[str, Any], update: Mapping[str, Any]
 ) -> dict[str, Any]:

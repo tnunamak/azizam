@@ -205,7 +205,7 @@
       {"id": "profiles", "type": "http", "method": "GET", "path": "/admin/api/profiles", "auth": "admin", "expect_status": [200], "required": false},
       {"id": "audit", "type": "http", "method": "GET", "path": "/admin/api/audit", "auth": "admin", "expect_status": [200], "required": false},
       {"id": "service_registry", "type": "http", "method": "GET", "path": "/admin/api/operator/service-registry", "auth": "admin", "expect_status": [200], "required": false},
-      {"id": "oidc_config", "type": "http", "method": "GET", "path": "/admin/api/oidc-config", "auth": "admin", "expect_status": [200], "required": false}
+      {"id": "signin", "type": "http", "method": "GET", "path": "/admin/api/signin", "auth": "admin", "expect_status": [200], "required": false}
     ],
     "reddit_angles": [
       "If no admin key/session is available, admin claims are not proven.",

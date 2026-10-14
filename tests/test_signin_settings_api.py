@@ -443,6 +443,21 @@ def test_save_for_later_keeps_the_connection_with_the_provider_off_and_needs_no_
     assert admin_store.get_operator_setting("sign_in", path=sg.path)["value"] == {"mode": "built-in"}
 
 
+def test_the_groups_claim_name_round_trips_and_the_secret_never_comes_back(sg):
+    owner = owner_client(sg)
+    provider_off(sg)
+    snapshot = get_snapshot(owner)
+
+    saved = save(owner, snapshot, proposal(snapshot, groups_claim="cognito:groups", client_secret="a-secret-value"),
+                 save_for_later=True)
+
+    assert saved.status_code == 200, saved.text
+    again = owner.get("/admin/api/signin")
+    assert again.json()["provider"]["groups_claim"] == "cognito:groups"
+    assert again.json()["provider"]["client_secret_saved"] is True
+    assert "a-secret-value" not in again.text and "a-secret-value" not in saved.text
+
+
 def test_save_for_later_needs_the_address_and_client_id(sg):
     owner = owner_client(sg)
     provider_off(sg)
