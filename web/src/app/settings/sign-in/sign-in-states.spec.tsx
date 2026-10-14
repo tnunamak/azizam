@@ -24,6 +24,7 @@ vi.mock("@/lib/signin-api", async (original) => {
 
 import type { Preview, SignInProposal, TestVerdict } from "@/lib/signin-api";
 import {
+  clearPhone,
   emptyPreview,
   fillConnection,
   firstRunSnapshot,
@@ -34,8 +35,8 @@ import {
   passedStatus,
   runTest,
   setPhone,
-  clearPhone,
   text,
+  until,
 } from "./test-support";
 
 beforeEach(() => {
@@ -120,7 +121,7 @@ describe("state a: live and configured", () => {
     expect(redirect).toHaveAttribute("readonly");
     expect(screen.getByRole("button", { name: "Copy redirect address" })).toBeEnabled();
     expect(screen.getByLabelText("Provider address")).toHaveValue(
-      "https://id.vivid.fish/realms/vivid-fish",
+      "https://id.vivid.fish/realms/home",
     );
     expect(screen.getByText("Found a sign-in provider at id.vivid.fish.")).toBeInTheDocument();
     expect(screen.getByLabelText("Client secret")).toHaveAttribute("placeholder", "Saved");
@@ -256,7 +257,7 @@ describe("state c: a new rule", () => {
     });
     await addFamilyRule(user);
     await screen.findByRole("region", { name: "What changes" });
-    await vi.waitFor(() => expect(caption()).toBe("1 change · Review"));
+    await until(() => expect(caption()).toBe("1 change · Review"));
     expect(screen.getByRole("link", { name: "Review" })).toHaveAttribute(
       "href",
       "#sign-in-changes",
@@ -277,7 +278,7 @@ describe("state c: a new rule", () => {
     await user.click(
       screen.getByRole("radio", { name: /Let them in, but with no access/ }),
     );
-    await vi.waitFor(() => expect(caption()).toBe("3 changes · Review"));
+    await until(() => expect(caption()).toBe("3 changes · Review"));
     expect(screen.getByRole("region", { name: "What changes" })).toHaveTextContent(
       "Everyone else is now let in with no access. The sign-in button reads “Sign in with Keycloak”.",
     );
@@ -321,7 +322,7 @@ describe("state d: first-time setup", () => {
     // After the test it can be turned on, and says what that does.
     await runTest(user);
     await screen.findByText("Keycloak works.");
-    await vi.waitFor(() =>
+    await until(() =>
       expect(screen.getByRole("button", { name: "Turn on Keycloak" })).toBeEnabled(),
     );
     expect(screen.getByText("Passed, not on yet")).toBeInTheDocument();
@@ -355,7 +356,7 @@ describe("state d: first-time setup", () => {
     expect(
       screen.getByRole("button", { name: "Link tim.nunamaker@gmail.com to my account" }),
     ).toBeEnabled();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(caption()).toBe(
         "The test passed. Turning it on adds a Keycloak button to the sign-in page. You are not linked yet, so your own Keycloak sign-in would be turned away. Link first.",
       ),
@@ -375,7 +376,7 @@ describe("state d: first-time setup", () => {
       name: "Keycloak",
     });
     await runTest(user);
-    await vi.waitFor(() =>
+    await until(() =>
       expect(caption()).toBe(
         "The test passed. Turning it on adds a Keycloak button to the sign-in page. Not linked yet. Link first.",
       ),
@@ -585,7 +586,7 @@ describe("N3: the provider's name is the typed Name, else the host", () => {
     });
     await runTest(user);
     await screen.findByText("Sign-in with id.example.com works.");
-    await vi.waitFor(() =>
+    await until(() =>
       expect(caption()).toContain("Link first."),
     );
     return user;

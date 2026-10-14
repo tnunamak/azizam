@@ -58,7 +58,7 @@ describe("Test sign-in: the pop-up flow", () => {
     expect(window.open).toHaveBeenCalledWith("", "_blank");
     expect(mocked.start).toHaveBeenCalledTimes(1);
     expect(mocked.start.mock.calls[0][0]).toMatchObject({
-      address: "https://id.vivid.fish/realms/vivid-fish",
+      address: "https://id.vivid.fish/realms/home",
       client_id: "azizam",
       client_secret: "",
     });

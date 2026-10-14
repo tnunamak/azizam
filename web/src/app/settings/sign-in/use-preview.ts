@@ -27,7 +27,7 @@ export function usePreview(
     return () => clearTimeout(timer);
   }, [now, debounced]);
 
-  const query = useQuery({
+  const { data, isError, isFetching, isPlaceholderData } = useQuery({
     queryKey: [...signInKeys.snapshot, "preview", debounced],
     queryFn: () => {
       const [p, id] = JSON.parse(debounced) as [SignInProposal, string | null];
@@ -41,8 +41,8 @@ export function usePreview(
     retry: false,
   });
   return {
-    preview: query.data,
-    failed: query.isError,
-    settled: debounced === now && !query.isFetching && !query.isPlaceholderData,
+    preview: data,
+    failed: isError,
+    settled: debounced === now && !isFetching && !isPlaceholderData,
   };
 }

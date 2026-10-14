@@ -41,6 +41,7 @@ import {
   ownerUnlinked,
   passedStatus,
   runTest,
+  until,
 } from "./test-support";
 
 beforeEach(() => {
@@ -131,7 +132,7 @@ describe("Discard changes", () => {
     await user.click(screen.getByRole("radio", { name: /Let them in, but with no access/ }));
     await user.click(screen.getByRole("switch", { name: "Email and password" }));
     expect(screen.getByRole("switch", { name: "Email and password" })).not.toBeChecked();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(screen.getByRole("button", { name: "Discard changes" })).toBeInTheDocument(),
     );
     await user.click(screen.getByRole("button", { name: "Discard changes" }));
@@ -143,7 +144,7 @@ describe("Discard changes", () => {
     expect(screen.getByRole("switch", { name: "Email and password" })).toBeChecked();
     expect(screen.queryByRole("button", { name: "Discard changes" })).toBeNull();
     expect(screen.queryByRole("region", { name: "What changes" })).toBeNull();
-    await vi.waitFor(() => expect(caption()).toBe("Nothing to save."));
+    await until(() => expect(caption()).toBe("Nothing to save."));
     expect(toast.success).toHaveBeenCalledWith("Changes discarded.");
   });
 
@@ -160,11 +161,11 @@ describe("Discard changes", () => {
     await user.click(screen.getByRole("button", { name: /Keycloak · id\.vivid\.fish/ }));
     await user.click(screen.getByLabelText("Client ID"));
     await user.paste("x");
-    await vi.waitFor(() =>
+    await until(() =>
       expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled(),
     );
     await user.click(screen.getByRole("switch", { name: "Keycloak" }));
-    await vi.waitFor(() =>
+    await until(() =>
       expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled(),
     );
   });
@@ -218,11 +219,11 @@ describe("Save", () => {
         admin_removed: [{ name: "Simon Agent", keys_revoked: 0, keys_kept: 2 }],
       }),
     );
-    await vi.waitFor(() =>
+    await until(() =>
       expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled(),
     );
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await vi.waitFor(() => expect(mocked.save).toHaveBeenCalledTimes(1));
+    await until(() => expect(mocked.save).toHaveBeenCalledTimes(1));
     const [revision, body] = request();
     expect(revision).toBe("rev-1");
     expect(body).toMatchObject({
@@ -239,7 +240,7 @@ describe("Save", () => {
     );
     // The saved snapshot is the new base.
     expect(await screen.findByText("No rules yet.")).toBeInTheDocument();
-    await vi.waitFor(() => expect(caption()).toBe("Nothing to save."));
+    await until(() => expect(caption()).toBe("Nothing to save."));
     expect(screen.queryByRole("region", { name: "What changes" })).toBeNull();
   });
 
@@ -250,11 +251,11 @@ describe("Save", () => {
         admin_removed: [{ name: "Simon Agent", keys_revoked: 2, keys_kept: 0 }],
       }),
     );
-    await vi.waitFor(() =>
+    await until(() =>
       expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled(),
     );
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await vi.waitFor(() => expect(mocked.save).toHaveBeenCalled());
+    await until(() => expect(mocked.save).toHaveBeenCalled());
     expect(request()[1].keep_admin_keys).toEqual([]);
     expect(toast.success).toHaveBeenCalledWith(
       "Saved. Simon Agent lost administrator and was signed out. 2 admin keys Simon Agent made were revoked.",
@@ -280,12 +281,12 @@ describe("Save", () => {
     await user.paste("azizam-2");
     await runTest(user, passedStatus(), "t9");
     await screen.findByText("Keycloak works.");
-    await vi.waitFor(() =>
+    await until(() =>
       expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled(),
     );
     mocked.save.mockResolvedValue(saved());
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await vi.waitFor(() => expect(mocked.save).toHaveBeenCalled());
+    await until(() => expect(mocked.save).toHaveBeenCalled());
     expect(request()[0]).toBe("rev-1");
     expect(request()[1]).toMatchObject({
       test_id: "t9",
@@ -311,7 +312,7 @@ describe("Save", () => {
       name: "Keycloak",
     });
     await runTest(user);
-    await vi.waitFor(() =>
+    await until(() =>
       expect(screen.getByRole("button", { name: "Turn on Keycloak" })).toBeEnabled(),
     );
     mocked.save.mockResolvedValue({
@@ -319,7 +320,7 @@ describe("Save", () => {
       applied: { provider_turned_on: true, admin_removed: [] },
     });
     await user.click(screen.getByRole("button", { name: "Turn on Keycloak" }));
-    await vi.waitFor(() => expect(mocked.save).toHaveBeenCalled());
+    await until(() => expect(mocked.save).toHaveBeenCalled());
     expect(request()[0]).toBe("rev-1");
     expect(request()[1]).toMatchObject({
       test_id: "t1",
@@ -358,7 +359,7 @@ describe("Save", () => {
       secret: "s3cret",
       name: "Keycloak",
     });
-    await vi.waitFor(() =>
+    await until(() =>
       expect(screen.getByRole("button", { name: "Save for later" })).toBeEnabled(),
     );
     expect(screen.getByRole("button", { name: "Turn on Keycloak" })).toBeDisabled();
@@ -367,7 +368,7 @@ describe("Save", () => {
       applied: { provider_turned_on: false, admin_removed: [] },
     });
     await user.click(screen.getByRole("button", { name: "Save for later" }));
-    await vi.waitFor(() => expect(mocked.save).toHaveBeenCalled());
+    await until(() => expect(mocked.save).toHaveBeenCalled());
     expect(request()[0]).toBe("rev-1");
     expect(request()[1]).toMatchObject({
       test_id: null,
@@ -398,7 +399,7 @@ describe("Save", () => {
         rule_matches: {},
       }),
     );
-    await vi.waitFor(() =>
+    await until(() =>
       expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled(),
     );
     await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -407,7 +408,7 @@ describe("Save", () => {
       "Sign-in settings changed elsewhere. Reload to see the latest.",
     );
     await user.click(within(alert).getByRole("button", { name: "Reload" }));
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         screen.getByRole("radio", { name: /Let them in, but with no access/ }),
       ).toBeChecked(),
@@ -420,7 +421,7 @@ describe("Save", () => {
     mocked.save.mockRejectedValue(
       new ApiError("owner_required", "Owner required.", 403),
     );
-    await vi.waitFor(() =>
+    await until(() =>
       expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled(),
     );
     await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -444,7 +445,7 @@ describe("turning the provider off (round 3, item 8)", () => {
     const { user } = await mountSignIn(liveSnapshot(), { preview: server });
     await user.click(screen.getByRole("switch", { name: "Keycloak" }));
     const region = await screen.findByRole("region", { name: "What changes" });
-    await vi.waitFor(() =>
+    await until(() =>
       expect(region).toHaveTextContent(
         "Simon Agent: can no longer sign in (uses Keycloak), loses administrator now and is signed out.",
       ),
@@ -465,7 +466,7 @@ describe("turning the provider off (round 3, item 8)", () => {
       },
     });
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await vi.waitFor(() => expect(mocked.save).toHaveBeenCalled());
+    await until(() => expect(mocked.save).toHaveBeenCalled());
     expect(request()[1]).toMatchObject({
       keep_admin_keys: ["simon"],
       proposal: { methods: { password: true, provider: false } },
@@ -514,7 +515,7 @@ describe("linking the owner", () => {
     const button = await screen.findByRole("button", {
       name: "Link tim.nunamaker@gmail.com to my account",
     });
-    await vi.waitFor(() => expect(caption()).toContain("Link first."));
+    await until(() => expect(caption()).toContain("Link first."));
     const getsBefore = mocked.get.mock.calls.length;
     mocked.link.mockImplementation(async () => {
       linked = true;
@@ -522,7 +523,7 @@ describe("linking the owner", () => {
     });
     await user.click(button);
     expect(mocked.link).toHaveBeenCalledWith("t1");
-    await vi.waitFor(() =>
+    await until(() =>
       expect(mocked.get.mock.calls.length).toBeGreaterThan(getsBefore),
     );
     expect(
@@ -532,7 +533,7 @@ describe("linking the owner", () => {
       "Linked. You can sign in with Keycloak as the owner.",
     );
     expect(screen.queryByRole("button", { name: /^Link / })).toBeNull();
-    await vi.waitFor(() => expect(caption()).not.toContain("Link first."));
+    await until(() => expect(caption()).not.toContain("Link first."));
     expect(caption()).toBe(
       "The test passed. Turning it on adds a Keycloak button to the sign-in page.",
     );
@@ -556,7 +557,7 @@ describe("linking the owner", () => {
     await user.click(screen.getByRole("button", { name: /Keycloak · id\.vivid\.fish/ }));
     const address = screen.getByLabelText("Provider address");
     await user.clear(address);
-    await user.paste("https://id2.vivid.fish/realms/vivid-fish");
+    await user.paste("https://id2.vivid.fish/realms/home");
     await screen.findByText("Found a sign-in provider at id2.vivid.fish.");
     const region = await screen.findByRole("region", { name: "What changes" });
     expect(region).toHaveTextContent(
@@ -568,7 +569,7 @@ describe("linking the owner", () => {
     expect(region).toHaveTextContent(
       "2 of them are signed out when you save, and their keys pause until they sign in again.",
     );
-    await vi.waitFor(() =>
+    await until(() =>
       expect(caption()).toBe(
         "Changes apply to the next sign-in. You stay signed in. You will need to link your account again.",
       ),
@@ -587,7 +588,7 @@ describe("linking the owner", () => {
       screen.getByRole("button", { name: "Link tim.nunamaker@gmail.com to my account" }),
     );
     await screen.findByText("Linked. You can sign in with Keycloak as the owner.");
-    await vi.waitFor(() =>
+    await until(() =>
       expect(caption()).toBe("Changes apply to the next sign-in. You stay signed in."),
     );
   });

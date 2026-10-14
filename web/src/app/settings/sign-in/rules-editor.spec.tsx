@@ -31,6 +31,7 @@ import {
   setPhone,
   trusted,
   type Mount,
+  until,
 } from "./test-support";
 
 beforeEach(() => {
@@ -78,13 +79,13 @@ describe("the rule editor", () => {
       "aria-expanded",
       "true",
     );
-    await vi.waitFor(() =>
+    await until(() =>
       expect(caption()).toBe("Finish or remove the new rule first."),
     );
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
     // Remove it: the page is back to nothing to save.
     await user.click(within(added).getByRole("button", { name: "Remove rule" }));
-    await vi.waitFor(() => expect(caption()).toBe("Nothing to save."));
+    await until(() => expect(caption()).toBe("Nothing to save."));
     expect(screen.queryByRole("group", { name: "Rule 2" })).toBeNull();
   });
 
@@ -92,7 +93,7 @@ describe("the rule editor", () => {
     const { user } = await mountSignIn(liveSnapshot(), { preview: server });
     await user.click(within(rule(1)).getByRole("button", { name: "Remove rule" }));
     expect(screen.getByText("No rules yet.")).toBeInTheDocument();
-    await vi.waitFor(() => expect(rulesOf()).toEqual([]));
+    await until(() => expect(rulesOf()).toEqual([]));
     expect(
       screen.getByText("Only people you invite can sign in with Keycloak."),
     ).toBeInTheDocument();
@@ -109,7 +110,7 @@ describe("the rule editor", () => {
     expect(
       within(rule(1)).getByRole("option", { name: /simon\.agent@vivid\.fish\s+Simon Agent/ }),
     ).toBeInTheDocument();
-    await vi.waitFor(() => expect(rulesOf()[0]).toMatchObject({ field: "email", values: [] }));
+    await until(() => expect(rulesOf()[0]).toMatchObject({ field: "email", values: [] }));
   });
 
   it("picks seen values with their counts and removes them again", async () => {
@@ -126,9 +127,9 @@ describe("the rule editor", () => {
     );
     await user.click(within(r).getByRole("option", { name: /\/Family/ }));
     expect(within(r).getByText("is one of")).toBeInTheDocument();
-    await vi.waitFor(() => expect(rulesOf()[0].values).toEqual(["/Trusted", "/Family"]));
+    await until(() => expect(rulesOf()[0].values).toEqual(["/Trusted", "/Family"]));
     await user.click(within(r).getByRole("button", { name: "Remove /Trusted" }));
-    await vi.waitFor(() => expect(rulesOf()[0].values).toEqual(["/Family"]));
+    await until(() => expect(rulesOf()[0].values).toEqual(["/Family"]));
   });
 
   it("adds a value nobody has signed in with, and flags it", async () => {
@@ -149,7 +150,7 @@ describe("the rule editor", () => {
       "aria-selected",
       "true",
     );
-    await vi.waitFor(() => expect(rulesOf()[0].values).toContain("/Staff"));
+    await until(() => expect(rulesOf()[0].values).toContain("/Staff"));
     // A repeated value (any case) is not added twice.
     await user.type(add, "/staff{Enter}");
     expect(rulesOf()[0].values.filter((v) => v.toLowerCase() === "/staff")).toHaveLength(1);
@@ -183,9 +184,9 @@ describe("the rule editor", () => {
     await user.keyboard("{ArrowDown}");
     expect(options[1]).toHaveFocus();
     await user.keyboard(" ");
-    await vi.waitFor(() => expect(rulesOf()[0].values).toEqual([]));
+    await until(() => expect(rulesOf()[0].values).toEqual([]));
     await user.keyboard("{ArrowUp}{Enter}");
-    await vi.waitFor(() => expect(rulesOf()[0].values).toEqual(["/Family"]));
+    await until(() => expect(rulesOf()[0].values).toEqual(["/Family"]));
     await user.keyboard("{Escape}");
     expect(combobox).toHaveAttribute("aria-expanded", "false");
   });
@@ -214,7 +215,7 @@ describe("the rule editor", () => {
         "Everyone in /Trusted can manage models, apps, keys and plans. They cannot manage people or sign-in, and cannot become the owner.",
       ),
     ).toBeInTheDocument();
-    await vi.waitFor(() =>
+    await until(() =>
       expect(rulesOf()[0]).toMatchObject({ admin: true, admit: true }),
     );
   });
@@ -267,9 +268,9 @@ describe("the rule editor", () => {
       "Give plan: Local and paid",
     );
     expect(document.body.textContent).not.toMatch(/plan_(local|everything|assistant)/);
-    await vi.waitFor(() => expect(rulesOf()[1].plan).toBe("plan_local"));
+    await until(() => expect(rulesOf()[1].plan).toBe("plan_local"));
     // A rule that only gives a plan is finished, so Save is open.
-    await vi.waitFor(() =>
+    await until(() =>
       expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled(),
     );
   });
@@ -320,7 +321,7 @@ describe("the rule editor", () => {
       await user.click(
         within(rule(1)).getByRole("button", { name: "Move down, lower plan priority" }),
       );
-      await vi.waitFor(() =>
+      await until(() =>
         expect(rulesOf().map((r) => r.id)).toEqual(["c", "b", "a"]),
       );
       expect(within(rule(1)).getByText("/C")).toBeInTheDocument();
@@ -354,7 +355,7 @@ describe("Everyone else", () => {
         "Anyone with an account at id.vivid.fish can sign in. They can use nothing until you give them a plan.",
       ),
     ).toBeInTheDocument();
-    await vi.waitFor(() =>
+    await until(() =>
       expect((lastProposal()[0] as SignInProposal).rules.fallback).toBe("open"),
     );
     await user.click(screen.getByRole("radio", { name: /Keep them out unless I invite them/ }));

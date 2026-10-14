@@ -30,6 +30,7 @@ import {
   liveSnapshot,
   mocked,
   mountSignIn,
+  until,
 } from "./test-support";
 
 beforeEach(() => {
@@ -82,7 +83,7 @@ describe("the two ways to sign in can never both be off", () => {
     // No instruction wording anywhere.
     expect(document.body.textContent).not.toMatch(/Turn on .* first, or only you/);
     // The footer never offers a save that leaves nobody able to sign in.
-    await vi.waitFor(() =>
+    await until(() =>
       expect(
         (mocked.preview.mock.calls.at(-1)?.[0] as { methods: object }).methods,
       ).toEqual({ password: true, provider: false }),
@@ -220,7 +221,7 @@ describe("the one-time note about a removed rule (P6)", () => {
     mocked.dismiss.mockResolvedValue(liveSnapshot({ notice: null }));
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(mocked.dismiss).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => expect(note).not.toBeInTheDocument());
+    await until(() => expect(note).not.toBeInTheDocument());
   });
 
   it("tells the owner once that an upgrade kept the door open, and dismisses it on the server", async () => {
@@ -234,7 +235,7 @@ describe("the one-time note about a removed rule (P6)", () => {
     mocked.dismiss.mockResolvedValue(liveSnapshot({ notice: null }));
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(mocked.dismiss).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => expect(note).not.toBeInTheDocument());
+    await until(() => expect(note).not.toBeInTheDocument());
   });
 
   it("shows no note when the snapshot has none", async () => {

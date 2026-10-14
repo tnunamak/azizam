@@ -14,6 +14,7 @@ import type {
   TestStatus,
 } from "@/lib/signin-api";
 import { SignInSection } from "./sign-in-section";
+import { PREVIEW_DEBOUNCE_MS } from "./use-preview";
 
 export const mocked = {
   get: vi.mocked(api.getSignIn),
@@ -30,6 +31,18 @@ export const mocked = {
 
 // The preview waits 300 ms and discovery 600 ms before they ask; the machine is shared.
 configure({ asyncUtilTimeout: 6000 });
+
+// Each journey types a form, runs a test and waits for the preview: about 1 s
+// alone, past the 5 s default when the gate runs beside the web build.
+vi.setConfig({ testTimeout: 20_000 });
+
+/**
+ * `vi.waitFor` with the same 6 s limit. Its own default is 1 s, and the preview
+ * alone waits 300 ms after a test passes, so a loaded machine ran out of time
+ * before the page had done anything wrong.
+ */
+export const until = <T,>(check: () => T | Promise<T>) =>
+  vi.waitFor(check, { timeout: 6000, interval: 50 });
 
 // jsdom lacks these; Radix Select and the value picker need them.
 Element.prototype.hasPointerCapture ??= () => false;
@@ -101,7 +114,7 @@ export function liveSnapshot(over: Partial<SignInSnapshot> = {}): SignInSnapshot
     provider: {
       ...baseProvider,
       name: "Keycloak",
-      address: "https://id.vivid.fish/realms/vivid-fish",
+      address: "https://id.vivid.fish/realms/home",
       client_id: "azizam",
       scopes: "openid email profile",
       groups_claim: "groups",
@@ -312,6 +325,8 @@ export async function runTest(
   const popup = stubPopup();
   await user.click(screen.getByRole("button", { name: "Test sign-in" }));
   await vi.advanceTimersByTimeAsync(1600);
+  // The passed test changes what the preview asks; step past its wait.
+  await vi.advanceTimersByTimeAsync(PREVIEW_DEBOUNCE_MS + 50);
   return popup;
 }
 
