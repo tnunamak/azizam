@@ -1042,3 +1042,31 @@ it("offers an administrator no way to enable, rename or trust an address on an A
     expect(screen.queryByRole("menuitem", { name })).toBeNull();
   }
 });
+
+it("retains a rejected new app's name and access plan for a safe retry", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("owner") });
+  vi.mocked(accountApi.createApp).mockRejectedValueOnce(new Error("That app name is already in use."));
+  vi.mocked(accountApi.mintKey).mockResolvedValue(mintedKey);
+  renderApps(owner);
+  await openNewApp("   ");
+  expect(screen.getByRole("button", { name: "Create app and key" })).toBeDisabled();
+  expect(accountApi.createApp).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("App name"), { target: { value: "  My laptop  " } });
+  await choosePlan("Access plan", "Local only");
+  fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("That app name is already in use.");
+  expect(screen.getByRole("alert")).not.toHaveTextContent("Your app was created");
+  expect(screen.getByLabelText("App name")).toHaveValue("  My laptop  ");
+  expect(screen.getByRole("combobox", { name: "Access plan" })).toHaveTextContent("Local only");
+  expect(api.apps.setAccessPlan).not.toHaveBeenCalled();
+  expect(accountApi.mintKey).not.toHaveBeenCalled();
+  const retry = screen.getByRole("button", { name: "Create app and key" });
+  await waitFor(() => expect(retry).toBeEnabled());
+  fireEvent.click(retry);
+  expect(await screen.findByRole("heading", { name: "Connect My laptop" })).toBeVisible();
+  expect(vi.mocked(accountApi.createApp).mock.calls).toEqual([["My laptop"], ["My laptop"]]);
+  expect(api.apps.setAccessPlan).toHaveBeenCalledWith(app.id, "plan_local");
+  expect(api.apps.setAccessPlan).toHaveBeenCalledTimes(1);
+  expect(accountApi.mintKey).toHaveBeenCalledTimes(1);
+});
+

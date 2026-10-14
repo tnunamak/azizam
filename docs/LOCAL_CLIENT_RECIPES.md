@@ -80,7 +80,7 @@ on 2026-10-02; those scripts are not part of the test suite.
 | | `max_tokens_per_doc`, `max_chunks_per_doc`, `rank_fields` | Unsupported: 400 `unsupported_parameter` (they would change what is scored) | same |
 | **MCP** (`/mcp`, Streamable HTTP) | Three tools, `capabilities`, `run` and `job`, over every image, audio and video workflow, the stable aliases, and `speech` | Works | `tests/test_mcp_server.py`; Live: Claude Code 2.1.286, `pi-mcp-adapter` 4.0.0 (legacy, auto and 2026-07-28), MCP Python SDK 1.26.0 |
 | | Protocol revisions | 2026-07-28 (stateless) and 2025-03-26 to 2025-11-25 (no sessions) | same |
-| | Auth | Bearer app key. A 401 carries an RFC 9728 `resource_metadata` challenge. There is no OAuth server. | same |
+| | Auth | Bearer app key, or sign-in through the gateway's OAuth flow for hosted clients; see [Recipe: MCP clients](#recipe-mcp-clients-chatgpt-claudeai-claude-code-cursor-pi-codex). A 401 carries an RFC 9728 `resource_metadata` challenge. | same |
 | | Results | `resource_link` blocks that point at signed asset URLs; no base64 | same |
 | | Resources, prompts, sampling, elicitation, tasks, `subscriptions/listen`, SSE streams, `GET /mcp`, session ids | Unsupported: `-32601` or 405 | same |
 | | External image URLs as tool inputs | Unsupported: tool error. Use a data URI or an asset id from an earlier result. | same |
@@ -1505,6 +1505,14 @@ agent pays about 600 tokens once and gets every workflow:
 | `capabilities` | List workflows, aliases (`image`, `video`, `music`, `sfx`, ...) and `speech`. With `target`, return the typed inputs, outputs and expected run time. |
 | `run` | Start a `target` with `inputs`. Fast work returns the result. Slow work returns a `job_id` after `wait_seconds` (default 30, at most 120). |
 | `job` | Poll a `job_id`, wait for it (`wait_seconds`), or `cancel` it. |
+
+Arguments for `job`:
+
+| Argument | Type | Requirement, default and limits |
+|---|---|---|
+| `job_id` | string | Required. |
+| `wait_seconds` | integer | 0 to 120; default 0. |
+| `cancel` | boolean | Default false. When true, cancel instead of polling, then report the job state. |
 
 Media comes back as MCP `resource_link` blocks that point at signed asset URLs, and
 as `structuredContent.assets[]` with the `asset_id`. Pass an `asset_id` or a data URI

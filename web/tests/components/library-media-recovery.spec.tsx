@@ -382,7 +382,9 @@ describe("Library media recovery", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     const { container } = mount();
-    await screen.findByRole("status", { name: "Loading video poster" });
+    // Off-screen, no poster request is in flight, so no loader is shown.
+    await screen.findByRole("button", { name: "Open Saved video" });
+    expect(screen.queryByRole("status", { name: "Loading video poster" })).toBeNull();
     const cardWrapper = observed;
     expect(
       fetchMock.mock.calls.filter(([input]) => String(input).includes("/poster/download")),
@@ -399,6 +401,7 @@ describe("Library media recovery", () => {
       ),
     );
     await waitFor(() => expect(rejectPoster).toBeDefined());
+    expect(await screen.findByRole("status", { name: "Loading video poster" })).toBeVisible();
     await act(async () => rejectPoster!(new Error("Poster unavailable")));
     expect(cardWrapper.isConnected).toBe(true);
     await waitFor(() =>

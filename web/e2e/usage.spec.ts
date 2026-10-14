@@ -76,7 +76,7 @@ test("usage light at 1440px has no serious axe violation", async ({ page }) => {
   );
   await page.goto("/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
-  await expect(page.getByText("Spend", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Spend (USD)", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "View recent requests" }).click();
   await expect(page.getByText("Receipts", { exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page);
@@ -90,7 +90,7 @@ test("usage dark at 390px fits the phone and has no serious axe violation", asyn
   );
   await page.goto("/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
-  await expect(page.getByText("Spend", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Spend (USD)", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "View recent requests" }).click();
   await expect(page.getByText("Receipts", { exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page);

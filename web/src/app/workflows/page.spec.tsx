@@ -999,6 +999,133 @@ describe("composed workflow availability names the engine it waits on (moved fro
 });
 
 
+describe("Workflows remaining interactive gaps", () => {
+  afterEach(() => {
+    cleanup();
+    for (const client of gapClients.splice(0)) client.clear();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  // Mutation proof: removing owner from the rows memo dependencies leaves the privileged row visible.
+  test("H01 changing owner to member recalculates the list, count and task options without refetching", async () => {
+    const user = userEvent.setup();
+    const fetcher = gapServe(() => Response.json(gapCatalog([
+      gapRow(),
+      gapRow({ id: "hidden.voice", title: "Unconfigured narration", capability: "voice",
+        availability: { status: "unavailable", reason_code: "unavailable_unconfigured", available: false } }),
+    ])));
+    const app = gapMount(owner);
+    await screen.findByRole("listitem", { name: workflows[0].title });
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Workflows2");
+    expect(Array.from((screen.getByRole("combobox", { name: "Task" }) as HTMLSelectElement).options)
+      .map((option) => option.value)).toContain("voice");
+    await user.click(screen.getByText("Not set up (1)"));
+    expect(screen.getByRole("listitem", { name: "Unconfigured narration" })).toBeVisible();
+
+    app.setViewer(member);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Workflows1");
+    expect(screen.queryByRole("listitem", { name: "Unconfigured narration" })).toBeNull();
+    expect(screen.queryByText("Not set up (1)")).toBeNull();
+    expect(Array.from((screen.getByRole("combobox", { name: "Task" }) as HTMLSelectElement).options)
+      .map((option) => option.value)).not.toContain("voice");
+    expect(screen.getByRole("listitem", { name: workflows[0].title })).toBeVisible();
+    expect(gapCatalogCalls(fetcher)).toHaveLength(1);
+  });
+
+  // Mutation proof: String(value) loses structured defaults as [object Object].
+  test("H02 owner input defaults preserve structured JSON in both responsive views", async () => {
+    const user = userEvent.setup();
+    const value = { mode: "precise", layers: [0, false] };
+    gapServe(() => Response.json(gapCatalog([gapRow({
+      inputs: [{ name: "settings", type: "object", accepted: true, default: value }],
+    })])));
+    gapMount(owner);
+    const sheet = await gapOpen(user);
+    await user.click(sheet.getByText("Technical details", { exact: true }));
+    const expected = '{"mode":"precise","layers":[0,false]}';
+    expect(within(sheet.getByLabelText("Scrollable inputs"))
+      .queryByRole("cell", { name: expected })).toBeInTheDocument();
+    const item = within(sheet.getByRole("list", { name: "Input summaries" }))
+      .getByRole("heading", { name: "settings" }).closest("li")!;
+    expect(within(item).getByText("Default", { exact: true }).nextElementSibling?.textContent)
+      .toBe(expected);
+  });
+
+  // Mutation proof: retrying={false} leaves the retry button enabled during the request.
+  test("H03 media Retry disables repeated requests until the pending retry resolves", async () => {
+    const user = userEvent.setup();
+    const pending = gapDeferred<Response>();
+    let attempts = 0;
+    const fetcher = gapServe(undefined, () => {
+      attempts += 1;
+      if (attempts === 1) return Response.json({ assets: [gapAsset({ prompt: "Previous output" })] });
+      if (attempts === 2) return new Response(null, { status: 503 });
+      return pending.promise;
+    });
+    const { client } = gapMount();
+    const sheet = await gapOpen(user);
+    await sheet.findByText("Previous output");
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["workflow-media", workflows[0].id], exact: true });
+    });
+    await sheet.findByText(gapMediaError);
+    await user.click(sheet.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(gapMediaCalls(fetcher)).toHaveLength(3));
+    const retry = within(sheet.getByRole("region", { name: "Recent creations" })).getByRole("button");
+    expect(retry).toBeDisabled();
+    await user.click(retry);
+    expect(gapMediaCalls(fetcher)).toHaveLength(3);
+    await act(async () => {
+      pending.resolve(Response.json({ assets: [gapAsset({ prompt: "Retried output" })] }));
+    });
+    expect(await sheet.findByText("Retried output")).toBeVisible();
+    expect(sheet.queryByText(gapMediaError)).toBeNull();
+    expect(gapCatalogCalls(fetcher)).toHaveLength(1);
+  });
+
+  // Mutation proof: interpolating asset_id without encoding splits the query and adds a fragment.
+  test("H04 result navigation preserves reserved characters in the asset identifier", async () => {
+    const user = userEvent.setup();
+    const id = "image/result & variant=2#crop";
+    gapServe(undefined, () => Response.json({ assets: [gapAsset({ asset_id: id })] }));
+    gapMount();
+    const sheet = await gapOpen(user);
+    const recent = within(sheet.getByRole("region", { name: "Recent creations" }));
+    const link = await recent.findByRole("link", { name: "Open in Library" });
+    const url = gapHref(link);
+    expect(["/library", "/library/"]).toContain(url.pathname);
+    expect([...url.searchParams.entries()]).toEqual([["asset", id]]);
+    expect(url.hash).toBe("");
+  });
+
+  // Mutation proof: memoizing availability by workflow ID retains the obsolete runnable action.
+  test("H05 an open workflow follows ready-to-busy-to-ready changes including empty-result guidance", async () => {
+    const user = userEvent.setup();
+    let busy = false;
+    gapServe(() => Response.json(gapCatalog([gapRow({
+      availability: busy
+        ? { status: "busy", reason_code: "busy", available: false }
+        : { status: "ready", reason_code: "ready" },
+    })])));
+    const { client } = gapMount();
+    const sheet = await gapOpen(user);
+    expect(await sheet.findByText("No creations yet. Open this workflow in Try.")).toBeVisible();
+    await waitFor(() => expect(sheet.getByRole("link", { name: "Open in Try" })).toBeVisible());
+    busy = true;
+    await act(async () => { await client.refetchQueries({ queryKey: ["workflows", "catalog"], exact: true }); });
+    await waitFor(() => expect(sheet.queryByRole("button", { name: "Open in Try" })).toBeDisabled(), { onTimeout: (error) => error });
+    expect(sheet.queryByRole("link", { name: "Open in Try" })).toBeNull();
+    expect(sheet.getByText("No creations yet.", { exact: true })).toBeVisible();
+    expect(sheet.queryByText("No creations yet. Open this workflow in Try.")).toBeNull();
+    busy = false;
+    await act(async () => { await client.refetchQueries({ queryKey: ["workflows", "catalog"], exact: true }); });
+    await waitFor(() => expect(sheet.getByRole("link", { name: "Open in Try" })).toBeVisible());
+    expect(sheet.queryByRole("button", { name: "Open in Try" })).toBeNull();
+    expect(sheet.getByText("No creations yet. Open this workflow in Try.")).toBeVisible();
+  });
+});
+
 const gapClients: QueryClient[] = [];
 const gapCatalogError = "Workflows catalog could not be loaded. Try again.";
 const gapMediaError = "Recent creations could not be loaded. Try again.";
@@ -1718,7 +1845,8 @@ describe("Workflows catalog, detail and API branch regressions", () => {
     expect(recent.getByText("0.0 s")).toBeVisible();
     expect(recent.getByText("Model", { exact: true })).toBeVisible();
     expect(recent.getByText("Workflow", { exact: true })).toBeVisible();
-    expect(recent.getByText(workflows[0].id, { exact: true })).toBeVisible();
+    expect(recent.getByText(workflows[0].title, { exact: true })).toBeVisible();
+    if (viewer.role !== "owner") expect(recent.queryByText(workflows[0].id, { exact: true })).toBeNull();
     const receipt = recent.getByRole("link", { name: "View receipt" });
     expect(gapHref(receipt).pathname.replace(/\/$/, "")).toBe("/usage");
     expect(gapHref(receipt).searchParams.get("receipt")).toBe(requestId);
@@ -1732,6 +1860,7 @@ describe("Workflows catalog, detail and API branch regressions", () => {
       expect(disclosure).not.toHaveAttribute("open");
       await user.click(summary);
       expect(within(disclosure).getByText("example-model-raw", { exact: true })).toBeVisible();
+      expect(within(disclosure).getByText(workflows[0].id, { exact: true })).toBeVisible();
     } else {
       expect(recent.queryByText("Technical details", { exact: true })).toBeNull();
       expect(region.querySelector("details")).toBeNull();
@@ -2068,4 +2197,15 @@ describe("Workflows catalog, detail and API branch regressions", () => {
       "Workflow data could not be loaded. Try again.",
     );
   });
+});
+
+test("recent creations omit unmatched workflow names for members", async () => {
+  const user = userEvent.setup();
+  gapServe(undefined, () => Response.json({ assets: [gapAsset({ workflow: "unknown-private-workflow" })] }));
+  gapMount();
+  const sheet = await gapOpen(user);
+  const recent = within(sheet.getByRole("region", { name: "Recent creations" }));
+  await recent.findByText("Image output");
+  expect(recent.queryByText("Workflow", { exact: true })).toBeNull();
+  expect(recent.queryByText("unknown-private-workflow")).toBeNull();
 });

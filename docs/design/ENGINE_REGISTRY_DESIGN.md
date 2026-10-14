@@ -332,7 +332,9 @@ This deletes audit findings: `LLM_BACKEND_HOSTS` closed dict, the `EMBEDDINGS_HO
 
 Every driver implements the same interface. **No driver installs, builds, or provisions anything.**
 
-```python
+Schematic interface (not runnable Python).
+
+```text
 class LifecycleDriver(Protocol):
     def health(svc) -> HealthState        # healthy|degraded|unhealthy|unknown (always available)
     def status(svc) -> ProcessState       # stopped|starting|running|draining|swapping|failed|unmanaged
@@ -401,7 +403,9 @@ class LifecycleDriver(Protocol):
 
 Today `/no_think` injection, the `VOICE_MAP`, and reasoning-effort translation are `if model.startswith("qwen")`-style branches scattered across `proxy.py`. Replace them with a **transform registry**: named, ordered, attached to a service or deployment by id.
 
-```python
+Schematic interface (not runnable Python).
+
+```text
 class Transform(Protocol):
     id: str
     def on_request(body, ctx) -> body

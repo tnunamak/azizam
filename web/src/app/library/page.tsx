@@ -529,9 +529,9 @@ function absolute(ts: MediaAsset["created_at"]) {
   return ts ? formatAbsoluteUTC(ts) : undefined;
 }
 
-function pauseOtherAudio(current: HTMLAudioElement) {
-  current.ownerDocument.querySelectorAll("audio").forEach((audio) => {
-    if (audio !== current) audio.pause();
+function pauseOtherMedia(current?: HTMLMediaElement) {
+  (current?.ownerDocument ?? document).querySelectorAll<HTMLMediaElement>("audio, video").forEach((media) => {
+    if (media !== current) media.pause();
   });
 }
 
@@ -557,6 +557,7 @@ function AudioTile({
   duration,
   sizeBytes,
   visible,
+  everyone,
 }: {
   assetId: string;
   src: string;
@@ -564,8 +565,11 @@ function AudioTile({
   duration?: number | null;
   sizeBytes?: number | null;
   visible: boolean;
+  everyone: boolean;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const renewedSrc = useRef<string | null>(null);
+  const retryPending = useRef(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [buffering, setBuffering] = useState(false);
   const [measuredDuration, setMeasuredDuration] = useState<number | null>(
@@ -618,7 +622,7 @@ function AudioTile({
           setMeasuredDuration(event.currentTarget.duration);
         }}
         onPlay={(event) => {
-          pauseOtherAudio(event.currentTarget);
+          pauseOtherMedia(event.currentTarget);
           setError(null);
           setIsPlaying(true);
         }}
@@ -647,19 +651,32 @@ function AudioTile({
             setIsPlaying(false);
             return;
           }
-          if (audio.getAttribute("src") !== src) {
-            audio.setAttribute("src", src);
-          }
-          if (error === "media") {
-            audio.load();
-          }
+          if (retryPending.current) return;
+          retryPending.current = true;
           try {
+            if (error === "media") {
+              setBuffering(true);
+              const renewed = await mediaRequest<{ download_url: string }>(
+                `/me/api/media/${encodeURIComponent(assetId)}/download?scope=${everyone ? "everyone" : "me"}`,
+              );
+              if (!renewed.download_url) throw new Error("Missing audio");
+              if (!audio.isConnected) return;
+              renewedSrc.current = renewed.download_url;
+            }
+            const playbackSrc = renewedSrc.current ?? src;
+            if (audio.getAttribute("src") !== playbackSrc) {
+              audio.setAttribute("src", playbackSrc);
+            }
+            if (error === "media") audio.load();
             await audio.play();
             setError(null);
             setIsPlaying(true);
           } catch {
             setIsPlaying(false);
-            setError(audio.error ? "media" : "playback");
+            setError(error === "media" || audio.error ? "media" : "playback");
+          } finally {
+            retryPending.current = false;
+            setBuffering(false);
           }
         }}
       >
@@ -710,7 +727,7 @@ function LargeAudioPlayer({
         onPlaying={() => setBuffering(false)}
         onError={() => { setBuffering(false); onFailed(); }}
         onPlay={(event) => {
-          pauseOtherAudio(event.currentTarget);
+          pauseOtherMedia(event.currentTarget);
           setBlocked(false);
           setPlaying(true);
         }}
@@ -850,7 +867,7 @@ function LargeVideoPlayer({
         onPlaying={() => setBuffering(false)}
         onError={() => { setBuffering(false); onFailed(); }}
         onPlay={(event) => {
-          pauseOtherAudio(event.currentTarget);
+          pauseOtherMedia(event.currentTarget);
           setBlocked(false);
           setPlaying(true);
         }}
@@ -953,15 +970,17 @@ function Preview({
   const [tileBlocked, setTileBlocked] = useState(false);
   const [tileBuffering, setTileBuffering] = useState(false);
   const [tileDuration, setTileDuration] = useState(asset.duration_s);
+  const thumbUrl = asset.thumbnail_url && !thumbFailed && !retrySrc ? asset.thumbnail_url : undefined;
+  const posterEnabled = asset.kind === "video" && !!asset.poster_asset_id && visible && !thumbUrl;
   const {
     data: poster,
-    isPending: posterPending,
+    isFetching: posterFetching,
     isError: posterLoadFailed,
     refetch: refetchPoster,
   } = useQuery({
     queryKey: ["library", "poster", asset.poster_asset_id, everyone],
     // Off-screen tiles wait: one poster link per video would flood a large Library.
-    enabled: asset.kind === "video" && !!asset.poster_asset_id && visible && !asset.thumbnail_url,
+    enabled: posterEnabled,
     queryFn: () =>
       mediaRequest<{ download_url: string }>(
         `/me/api/media/${encodeURIComponent(asset.poster_asset_id!)}/download?scope=${everyone ? "everyone" : "me"}`,
@@ -971,7 +990,6 @@ function Preview({
 
   // The server's small preview stands in as the video poster too: no
   // per-tile poster link, and no video bytes until the person presses play.
-  const thumbUrl = asset.thumbnail_url && !thumbFailed && !retrySrc ? asset.thumbnail_url : undefined;
   const previewSize = thumbUrl
     ? thumbnailSize(asset.width, asset.height)
     : { width: asset.width ?? 1024, height: asset.height ?? 768 };
@@ -979,7 +997,7 @@ function Preview({
   const effectivePosterUrl = posterFailed ? undefined : posterUrl;
   const currentSrc = retrySrc ?? src;
   const waitingForPoster =
-    asset.kind === "video" && !!asset.poster_asset_id && !thumbUrl && posterPending;
+    posterEnabled && posterFetching && !poster?.download_url;
   const posterUnavailable =
     asset.kind !== "video" ||
     !asset.poster_asset_id ||
@@ -1071,13 +1089,27 @@ function Preview({
     (!asset.poster_asset_id || !waitingForPoster)
   )
     return large ? (
-      <LargeVideoPlayer
-        key={`video-${asset.asset_id}-${retryKey}`}
-        src={currentSrc}
-        poster={effectivePosterUrl}
-        title={assetTitle(asset)}
-        onFailed={() => setMediaFailed(true)}
-      />
+      <>
+        {thumbUrl ? (
+          <NextImage
+            unoptimized
+            loading="eager"
+            src={thumbUrl}
+            alt=""
+            width={1}
+            height={1}
+            hidden
+            onError={() => setThumbFailed(true)}
+          />
+        ) : null}
+        <LargeVideoPlayer
+          key={`video-${asset.asset_id}-${retryKey}`}
+          src={currentSrc}
+          poster={effectivePosterUrl}
+          title={assetTitle(asset)}
+          onFailed={() => setMediaFailed(true)}
+        />
+      </>
     ) : (
       <>
         <video
@@ -1103,7 +1135,7 @@ function Preview({
             }
           }}
           onPlay={(event) => {
-            pauseOtherAudio(event.currentTarget);
+            pauseOtherMedia(event.currentTarget);
             setTilePlaying(true);
             setTileStarted(true);
             setTileBlocked(false);
@@ -1403,6 +1435,7 @@ const AssetTile = memo(function AssetTile({
           <AudioTile
             key={mediaResource(asset.download_url!)}
             assetId={asset.asset_id}
+            everyone={everyone}
             src={asset.download_url!}
             title={assetTitle(asset)}
             duration={asset.duration_s}
@@ -1699,6 +1732,7 @@ function CreationViewer({
   /** Called with the creation shown last when the viewer closes. */
   onReturnFocus: (assetId: string) => void;
 }) {
+  useEffect(() => { pauseOtherMedia(); }, [asset.asset_id]);
   const { data: renewed, isFetching: renewing, isError: renewalFailed, refetch: renew } = useQuery({
     queryKey: ["library", "download", asset.asset_id, everyone],
     queryFn: () => mediaRequest<{ download_url: string }>(
@@ -2218,6 +2252,7 @@ export default function LibraryPage() {
   const [closedDeepLinkId, setClosedDeepLinkId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
   const [deleteAnnouncement, setDeleteAnnouncement] = useState("");
+  const [loadMoreRequest, setLoadMoreRequest] = useState<{ path: string; ids: Set<string>; pages: number } | null>(null);
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
     null,
   );
@@ -2440,6 +2475,36 @@ export default function LibraryPage() {
     [goneAssets],
   );
   const [goneOpen, setGoneOpen] = useState(false);
+  const [loadMoreFocus, setLoadMoreFocus] = useState<string | null>(null);
+  function loadMore() {
+    if (isFetchingNextPage || loadMoreRequest) return;
+    setLoadMoreRequest({ path: mediaPath, ids: new Set(assets.map((asset) => asset.asset_id)), pages: mediaPages.length });
+    setDeleteAnnouncement("");
+    void fetchNextPage();
+  }
+  // A finished "Load more" announces what it added and moves focus to the first new tile.
+  // When the first new tile is a removed creation, the removed section opens first so the
+  // tile is visible. All of this is adjusted during render; only the focus move is an effect.
+  const loadMoreStale = loadMoreRequest && (loadMoreRequest.path !== mediaPath || isFetchNextPageError);
+  if (loadMoreStale) setLoadMoreRequest(null);
+  const loadedMore = useMemo(
+    () => loadMoreRequest && !loadMoreStale && !isFetchingNextPage && mediaPages.length > loadMoreRequest.pages
+      ? assets.filter((asset) => !loadMoreRequest.ids.has(asset.asset_id))
+      : null,
+    [assets, loadMoreRequest, loadMoreStale, mediaPages.length, isFetchingNextPage],
+  );
+  if (loadedMore) {
+    if (loadedMore[0]?.available === false && !goneOpen) {
+      setGoneOpen(true);
+    } else {
+      setLoadMoreRequest(null);
+      setDeleteAnnouncement(`${loadedMore.length} more creations loaded`);
+      setLoadMoreFocus(loadedMore[0]?.asset_id ?? null);
+    }
+  }
+  useEffect(() => {
+    if (loadMoreFocus) focusTile(loadMoreFocus, removedAssetIds.current, headingRef.current);
+  }, [loadMoreFocus]);
   const visiblePeople = useMemo(
     () => instanceView
       ? Array.from(
@@ -2512,7 +2577,7 @@ export default function LibraryPage() {
   }, [confirming]);
   const retryRetainedError = () => {
     if (isFetchNextPageError) {
-      void fetchNextPage();
+      loadMore();
       return;
     }
     void refetch();
@@ -2960,7 +3025,7 @@ export default function LibraryPage() {
           <Button
             variant="outline"
             disabled={isFetchingNextPage}
-            onClick={() => void fetchNextPage()}
+            onClick={loadMore}
           >
             {isFetchingNextPage ? "Loading more…" : "Load more"}
           </Button>

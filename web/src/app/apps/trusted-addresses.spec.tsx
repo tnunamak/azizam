@@ -161,3 +161,44 @@ it("shows the gateway's sentence when an address is refused", async () => {
     "would trust the whole internet",
   );
 });
+
+it("preserves the refused address and note until a successful retry", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
+  renderApps();
+  await screen.findByRole("heading", { name: "Living room display" });
+  openMenu();
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Trusted addresses" }));
+  await screen.findByText(/No address is trusted/);
+  const address = screen.getByLabelText("IP address or range");
+  const note = screen.getByLabelText("Note (optional)");
+  const submit = screen.getByRole("button", { name: "Trust address" });
+  fireEvent.change(address, { target: { value: "   " } });
+  expect(submit).toBeDisabled();
+  fireEvent.change(address, { target: { value: "192.168.1.0/24" } });
+  fireEvent.change(note, { target: { value: "Keep my display note" } });
+  let refuse!: (reason: Error) => void;
+  vi.mocked(adminFetch).mockImplementationOnce(() => new Promise((_, reject) => { refuse = reject; }));
+  fireEvent.click(submit);
+  expect(submit).toBeDisabled();
+  expect(address).toBeDisabled();
+  expect(note).toBeDisabled();
+  refuse(new Error("This address could not be saved."));
+  expect(await screen.findByRole("alert")).toHaveTextContent("This address could not be saved.");
+  await waitFor(() => expect(submit).toBeEnabled());
+  expect(address).toHaveValue("192.168.1.0/24");
+  expect(note).toHaveValue("Keep my display note");
+  expect(entries).toEqual([]);
+  fireEvent.click(submit);
+  expect(await screen.findByText("192.168.1.0/24")).toBeVisible();
+  expect(screen.getByText("Keep my display note")).toBeVisible();
+  expect(address).toHaveValue("");
+  expect(note).toHaveValue("");
+  expect(screen.queryByRole("alert")).toBeNull();
+  const posts = vi.mocked(adminFetch).mock.calls.filter(([, init]) => init?.method === "POST");
+  expect(posts).toHaveLength(2);
+  for (const [path, init] of posts) {
+    expect(path).toBe("/admin/api/apps/display/trusted-addresses");
+    expect(init?.body).toEqual({ address: "192.168.1.0/24", note: "Keep my display note" });
+  }
+});
+
