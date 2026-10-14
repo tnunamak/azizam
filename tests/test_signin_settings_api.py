@@ -509,14 +509,18 @@ def test_narrowing_the_administrator_rule_removes_only_the_people_it_no_longer_c
 def test_a_grant_the_owner_gave_by_hand_is_never_touched_by_rules(sg):
     owner = owner_client(sg)
     helper = helper_client(sg)
+    # The owner makes the helper an administrator by hand; the rule's grant becomes the owner's.
     admin_store.assign_admin_role(role="admin", subject_kind="user", subject_id=user_id(sg, HELPER),
                                   granted_by="owner", path=sg.path)
     snapshot = get_snapshot(owner)
 
     saved = save(owner, snapshot, proposal(snapshot, rules={"fallback": "closed", "rules": []}))
 
-    assert saved.json()["applied"]["admin_removed"][0]["name"] == HELPER     # the rule's grant is gone
-    assert ("admin", "manual") in roles_of(sg, HELPER)                       # the hand-made one stays
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["applied"]["admin_removed"] == []
+    assert roles_of(sg, HELPER) == {("admin", "manual")}                      # the grant itself stays
+    # Kept out by the rules, they lose the session like a refused sign-in does (see who_can_enter).
+    assert helper.get("/admin/api/access-plans").status_code in {401, 403}
 
 
 def test_someone_the_rules_now_keep_out_loses_their_session(sg):
