@@ -8,7 +8,6 @@ import { History, ChevronRight } from "lucide-react";
 import { api, type AuditEntry } from "@/lib/api";
 import { auditDescription, auditTargetName } from "@/lib/audit-description";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -93,11 +92,9 @@ export default function ActivityPage() {
   const [showAccessAudit, setShowAccessAudit] = useState(false);
   const [showAutomated, setShowAutomated] = useState(false);
   const [actor, setActor] = useState("");
-  const [actorInput, setActorInput] = useState("");
   function clearFilters() {
     setCategory("");
     setActor("");
-    setActorInput("");
     filterRef.current?.focus();
   }
   const {
@@ -242,7 +239,6 @@ export default function ActivityPage() {
                 onValueChange={(value) => {
                   const next = value === "everyone" ? "" : value;
                   setActor(next);
-                  setActorInput(next);
                 }}
               >
                 <SelectTrigger
@@ -295,11 +291,10 @@ export default function ActivityPage() {
               }
             >
               <p>
-                The gateway&apos;s people list could not be loaded. We could not
-                identify the cause.
+                People could not be loaded. Try again.
                 {optionsData?.records.length
                   ? " Names from recent changes are still shown."
-                  : " Try again."}
+                  : ""}
               </p>
             </Callout>
           )}
@@ -333,26 +328,6 @@ export default function ActivityPage() {
             >
               {showAccessAudit ? "Hide access history" : "Show access history"}
             </Button>
-            <details className="text-muted-foreground text-sm">
-              <summary className="min-h-6 min-w-6 cursor-pointer content-center focus-visible:outline-ring focus-visible:outline-2">Technical: filter by person ID</summary>
-            <form
-              className="mt-3 flex max-w-md gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                setActor(actorInput.trim());
-              }}
-            >
-              <Input
-                aria-label="Technical person ID"
-                value={actorInput}
-                onChange={(e) => setActorInput(e.target.value)}
-                placeholder="Person ID"
-              />
-              <Button type="submit" variant="outline">
-                Apply
-              </Button>
-            </form>
-            </details>
           </div>
           {auditError && entries.length > 0 && !nextPageError && (
             <Callout

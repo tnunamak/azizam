@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import Activity from "./page";
+import { StateBadge } from "@/components/product/status-ui";
 
 // Radix Select and Sheet call these; jsdom lacks them.
 for (const method of [
@@ -459,4 +460,68 @@ it("empty changes reveal existing automated records instead of claiming there ar
   await userEvent.setup().click(within(region).getByRole("button", { name: "Show automated changes" }));
   expect(await screen.findByRole("button", { name: /Created an app/ })).toBeVisible();
   expect(screen.queryByRole("region", { name: "No visible changes" })).toBeNull();
+});
+
+function mountOutcome(receipt: Record<string, unknown>) {
+  mountActivity({ requests: {
+    records: [{ person_label: "Mira", app_label: "Notes", created_at: 1,
+      receipt: { request_id: "outcome", intent: "chat", ...receipt } }],
+    people: [], next_cursor: null,
+  } });
+}
+
+it.each([
+  [401, "This request was rejected because it had no valid sign-in or app key. Check the app's access key for this person."],
+  [403, "This request was rejected because it did not have permission. Check this person's access plan and the app's access."],
+  [429, "This request was rate-limited."],
+  [500, "The gateway could not complete this request."],
+  [599, "The gateway could not complete this request."],
+])("describes stored rejection %s in the past tense", async (statusCode, message) => {
+  mountOutcome({ status: "rejected", metadata: { status_code: statusCode } });
+  await userEvent.click(await screen.findByRole("button", { name: /Request details:/ }));
+  expect(within(screen.getByRole("dialog")).getByText(message)).toBeVisible();
+  expect(screen.getByRole("dialog")).not.toHaveTextContent("Sign in to continue.");
+  expect(screen.getByRole("dialog")).not.toHaveTextContent("Your account does not have permission");
+});
+
+it.each([400, 404, 600])("does not invent a cause for stored status %s", async (status_code) => {
+  mountOutcome({ status: "rejected", status_code });
+  await userEvent.click(await screen.findByRole("button", { name: /Request details:/ }));
+  const summary = within(screen.getByRole("dialog")).getByText("The gateway rejected this request.").parentElement;
+  expect(summary?.querySelectorAll("p")).toHaveLength(2);
+});
+
+it.each([
+  ["timed_out", "Timed out", "degraded"],
+  ["disconnected", "Disconnected", "degraded"],
+  ["incomplete", "Outcome not recorded", "unknown"],
+  ["stale_incomplete", "Outcome not recorded", "unknown"],
+  [undefined, "Outcome not recorded", "unknown"],
+  ["unrecognized", "Outcome not recorded", "unknown"],
+  ["accepted", "Accepted", "busy"],
+  ["cancelled", "Cancelled", "unknown"],
+] as const)("visually distinguishes the %s outcome from completion", async (status, label, state) => {
+  mountOutcome({ status });
+  const row = await screen.findByRole("button", { name: /Request details:/ });
+  const reference = render(<StateBadge state={state} word={label} />);
+  const expected = reference.container.firstElementChild;
+  const outcome = row.querySelector('[id$="-outcome"]')?.firstElementChild;
+  expect(outcome?.outerHTML).toBe(expected?.outerHTML);
+  expect(outcome?.querySelector("svg")).not.toBeNull();
+});
+
+it.each(["success", "succeeded", "ok"])("keeps %s completion quiet", async (status) => {
+  mountOutcome({ status });
+  const row = await screen.findByRole("button", { name: /Request details:/ });
+  expect(within(row).getByText("Completed")).toHaveClass("text-foreground");
+  expect(row.querySelector('[id$="-outcome"]')?.querySelector("svg")).toBeNull();
+});
+
+it.each([undefined, null, -1])("records unknown duration in row and details (%s)", async (latency_ms) => {
+  mountOutcome({ status: "success", latency_ms });
+  const row = await screen.findByRole("button", { name: /Request details:/ });
+  expect(row).toHaveTextContent("Duration not recorded");
+  await userEvent.click(row);
+  const label = within(screen.getByRole("dialog")).getByText("Time taken");
+  expect(label.nextElementSibling).toHaveTextContent("Duration not recorded");
 });

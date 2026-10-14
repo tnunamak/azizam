@@ -729,7 +729,7 @@ test("a rejected receipt gives the recorded 403 reason in plain words", async ()
   await user.click(await screen.findByRole("button", { name: "View recent requests" }));
   await user.click(screen.getByRole("button", { name: /Receipt details for Chat request/ }));
   expect(within(screen.getByRole("dialog")).getByText(
-    "Your account does not have permission for this action. Ask the gateway owner to check your access.",
+    "This request was rejected because it did not have permission. Check this person's access plan and the app's access.",
   )).toBeVisible();
 });
 
