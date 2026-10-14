@@ -190,11 +190,13 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* Cancel motion rather than accelerating infinite animations. Shorthands
+     also reset delays; include pseudo-elements and portal-mounted UI. */
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
+    animation: none !important;
+    transition: none !important;
     scroll-behavior: auto !important;
   }
 }
