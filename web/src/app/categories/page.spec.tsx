@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { adminFetch, ApiError, api, type AdminFetchInit } from "@/lib/api";
@@ -333,4 +333,62 @@ it("makes a unique id for a new category and leaves the others alone", () => {
   expect(first.id).toBe("adult-2");
   expect(Object.keys(first.snapshot.categories)).toEqual(["adult", "experimental", "adult-2"]);
   expect(deleteBlocker(rules(), "adult")).toBeNull();
+});
+
+it.each(["", "   "])("refuses an empty category name %j even on direct form submission", async (name) => {
+  const { posted } = mount();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Add category" }));
+  const dialog = await screen.findByRole("dialog", { name: "Add category" });
+  fireEvent.change(within(dialog).getByLabelText(/Name/), { target: { value: name } });
+  expect(within(dialog).getByRole("button", { name: "Add category" })).toBeDisabled();
+  fireEvent.submit(dialog.querySelector("form")!);
+  expect(posted).toEqual([]);
+});
+
+it("blocks deletion when only an app deny rule uses the category", async () => {
+  const plan = { id: "app-only", grants: [], require: [], deny: [{ id: "deny-adult", category: "adult", op: "exists", values: [] }], missing: {}, mode: "v3", legacy_tags: [] };
+  const { posted } = mount({ snapshot: rules({ people: {}, apps: { studio: [plan] } }) });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Edit Adult" }));
+  const dialog = await screen.findByRole("dialog", { name: "Edit Adult" });
+  const remove = within(dialog).getByRole("button", { name: "Delete category" });
+  expect(remove).toBeDisabled();
+  await user.click(remove);
+  expect(screen.queryByRole("dialog", { name: "Delete Adult?" })).toBeNull();
+  expect(posted).toEqual([]);
+});
+
+it("moves an item without discarding advanced assertions or retained evidence", () => {
+  const snapshot = rules();
+  snapshot.categories.audience = { id: "audience", label: "Audience", kind: "set", values: ["general", "adult"], applies_to: ["workflow"] };
+  const evidence = { ...fact("audience"), value: "general" };
+  snapshot.services["tiles@r1"].members[0].assertions.push(evidence);
+  snapshot.retained.saved = JSON.parse(JSON.stringify(snapshot.services["tiles@r1"]));
+  const before = JSON.parse(JSON.stringify(snapshot));
+  const moved = moveItem(snapshot, catalog[0], "adult", NOW);
+  expect(moved.services["tiles@r1"].members[0].assertions).toEqual([
+    evidence, { ...fact("adult"), accepting_owner: "" },
+  ]);
+  expect(moved.retained).toEqual(before.retained);
+  expect(snapshot).toEqual(before);
+});
+
+it("keeps the tail of a long category list available as a move destination", async () => {
+  const snapshot = rules();
+  for (let n = 0; n < 60; n++) {
+    const id = "group-" + n;
+    snapshot.categories[id] = category(id, "Group " + n, "", []);
+  }
+  const { posted } = mount({ snapshot });
+  const user = userEvent.setup();
+  await screen.findByRole("region", { name: "Adult" });
+  expect(screen.queryByRole("region", { name: "Group 59" }) !== null).toBe(true);
+  await user.click(screen.getByRole("button", { name: "Move Tile maker" }));
+  const dialog = await screen.findByRole("dialog", { name: "Move Tile maker" });
+  expect(within(dialog).getAllByRole("radio")).toHaveLength(63);
+  await user.click(within(dialog).getByRole("radio", { name: "Group 59" }));
+  await user.click(within(dialog).getByRole("button", { name: "Move" }));
+  await waitFor(() => expect(posted).toHaveLength(2));
+  expect(posted[0].body.snapshot!.services["tiles@r1"].members[0].assertions.map((a) => a.category)).toEqual(["group-59"]);
 });
