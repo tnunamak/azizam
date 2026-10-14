@@ -1073,27 +1073,31 @@ def test_a_refusal_is_recorded_even_when_the_cleanup_before_it_fails(gateway, mo
 # -- a local password sign-in does not lift a provider refusal
 
 def test_a_local_password_sign_in_does_not_lift_the_refusal_of_the_providers_account(gateway):
-    """The password account and the provider account are two people-records with the same email.
+    """The password account and the provider account are two records that share an email.
 
     Only a successful provider sign-in lifts a provider refusal. A password sign-in
     is a different account and must leave the refused one paused.
     """
-    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
-    signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
-    oidc_user = gateway.user("helper@example.test")
-    key_hash = _personal_key(gateway, "helper@example.test")
-    gateway.sign_in(gateway.client(), sub="helper", email="helper@example.test", groups=[],
-                    email_verified=False)
-    paused = admin_runtime.runtime_identity_for_app_credential_hash(key_hash, path=gateway.path)
-    assert paused is not None and paused.denial == "person_signin_refused"
+    from gateway.runtime_auth import hash_api_key
 
     plan = store_plan("Family", path=gateway.path, caps=("chat",))
     _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], email="helper@example.test",
                                     path=gateway.path)
-    password_client = gateway.client()
-    accepted = password_client.post("/auth/api/invite/accept", json={
+    accepted = gateway.client().post("/auth/api/invite/accept", json={
         "token": token, "email": "helper@example.test", "name": "Helper", "password": "a sufficiently long password"})
     assert accepted.status_code == 200, accepted.text
+
+    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
+    signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    oidc_user = gateway.rows("SELECT * FROM users WHERE issuer != 'local' AND email = 'helper@example.test'")[0]
+    app = admin_store.ensure_personal_app_for_user(oidc_user["id"], name="personal", path=gateway.path)
+    admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key("opk_personal"),
+                                       prefix="opk_perso", created_by=oidc_user["id"], path=gateway.path)
+    key_hash = hash_api_key("opk_personal")
+    gateway.sign_in(gateway.client(), sub="helper", email="helper@example.test", groups=[], email_verified=False)
+    paused = admin_runtime.runtime_identity_for_app_credential_hash(key_hash, path=gateway.path)
+    assert paused is not None and paused.denial == "person_signin_refused"
+
     login = gateway.client().post("/auth/api/login", json={
         "email": "helper@example.test", "password": "a sufficiently long password"})
     assert login.status_code == 200, login.text
