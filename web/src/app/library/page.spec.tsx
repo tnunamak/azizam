@@ -1974,3 +1974,107 @@ describe("Library accessibility", () => {
     expect(document.querySelector(".bg-overlay")).toHaveClass("motion-reduce:animate-none");
   });
 });
+
+describe("Library paging regressions", () => {
+  beforeEach(() => {
+    navigation.searchParams = new URLSearchParams();
+    session.viewer = { role: "member", name: "Alex" };
+    session.home = { receipts: [] };
+    window.history.replaceState(null, "", "/library/");
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  test("paging retention keeps earlier tiles while pending and after append", async () => {
+    let finish!: (response: Response) => void;
+    routeFetch((path) => {
+      if (!path.startsWith("/me/api/media?")) return undefined;
+      const cursor = new URL(path, "https://test.invalid").searchParams.get("cursor");
+      return cursor
+        ? new Promise<Response>((resolve) => { finish = resolve; })
+        : list([picture("kept", "Kept first page")], { next_cursor: "page/+ two" });
+    });
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(screen.getByRole("button", { name: "Open Kept first page" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Loading more…" })).toBeDisabled();
+    await act(async () => finish(list([picture("added", "Added second page")])));
+    await screen.findByRole("button", { name: "Open Added second page" });
+    expect(screen.getByRole("button", { name: "Open Kept first page" })).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Creations" })).getAllByRole("button", { name: /^Open / })).toHaveLength(2);
+  });
+
+  test("paging failure retains tiles and exposes Retry loading more in an alert", async () => {
+    routeFetch((path) => {
+      if (!path.startsWith("/me/api/media?")) return undefined;
+      return new URL(path, "https://test.invalid").searchParams.has("cursor")
+        ? Response.json({}, { status: 503 })
+        : list([picture("kept-error", "Kept after error")], { next_cursor: "failed-page" });
+    });
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("We couldn’t load more library items. Try again.");
+    expect(within(alert).getByRole("button", { name: "Retry loading more" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Open Kept after error" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  test("paging retry requests the failed cursor and appends each tile exactly once", async () => {
+    const cursors: (string | null)[] = [];
+    let nextAttempts = 0;
+    routeFetch((path) => {
+      if (!path.startsWith("/me/api/media?")) return undefined;
+      const cursor = new URL(path, "https://test.invalid").searchParams.get("cursor");
+      cursors.push(cursor);
+      if (!cursor) return list([picture("retry-first", "Retry first")], { next_cursor: "retry/+ &=cursor" });
+      return ++nextAttempts === 1
+        ? Response.json({}, { status: 503 })
+        : list([picture("retry-second", "Retry second")]);
+    });
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry loading more" }));
+    await screen.findByRole("button", { name: "Open Retry second" });
+    const grid = screen.getByRole("group", { name: "Creations" });
+    expect(within(grid).getAllByRole("button", { name: "Open Retry first" })).toHaveLength(1);
+    expect(within(grid).getAllByRole("button", { name: "Open Retry second" })).toHaveLength(1);
+    expect(within(grid).getAllByRole("button", { name: /^Open / })).toHaveLength(2);
+    expect(cursors).toEqual([null, "retry/+ &=cursor", "retry/+ &=cursor"]);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  test("paging filter reset starts at page one then uses only the new cursor", async () => {
+    const requests: (string | null)[][] = [];
+    routeFetch((path) => {
+      if (!path.startsWith("/me/api/media?")) return undefined;
+      const params = new URL(path, "https://test.invalid").searchParams;
+      const kind = params.get("kind");
+      const cursor = params.get("cursor");
+      requests.push([kind, cursor]);
+      if (kind === "image") return cursor
+        ? list([picture("new-two", "New two")])
+        : list([picture("new-one", "New one")], { next_cursor: "new-cursor" });
+      return cursor
+        ? list([picture("old-two", "Old two")])
+        : list([picture("old-one", "Old one")], { next_cursor: "old-cursor" });
+    });
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    await screen.findByRole("button", { name: "Open Old two" });
+    fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
+    await screen.findByRole("button", { name: "Open New one" });
+    expect(screen.queryByRole("button", { name: "Open Old one" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open Old two" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await screen.findByRole("button", { name: "Open New two" });
+    expect(screen.getByRole("button", { name: "Open New one" })).toBeVisible();
+    expect(requests).toEqual([[null, null], [null, "old-cursor"], ["image", null], ["image", "new-cursor"]]);
+    expect(within(screen.getByRole("group", { name: "Creations" })).getAllByRole("button", { name: /^Open / })).toHaveLength(2);
+  });
+});
