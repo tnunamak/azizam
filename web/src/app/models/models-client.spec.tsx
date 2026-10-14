@@ -650,6 +650,34 @@ describe("Details", () => {
     expect(fact("Same model as")).toBe("decide, jev-latest");
   });
 
+  it("lists each visible Points to target once and omits hidden targets", async () => {
+    renderModels(catalog([
+      row({
+        id: "multi-name",
+        resolves_to: { chat: "visible-a", completion: "visible-a", image: "visible-b", private: "hidden-target" },
+        same_model_as: ["visible-a", "visible-b"],
+      }),
+    ], [exact("visible-a"), exact("visible-b")]));
+    fireEvent.click(await screen.findByRole("button", { name: "multi-name" }));
+    expect(fact("Points to")).toBe("visible-a, visible-b");
+    expect(fact("Same model as")).toBe("visible-a, visible-b");
+    expect(dialog().queryByText(/hidden-target/)).toBeNull();
+  });
+
+  it("keeps catalog relationships when search hides the related rows", async () => {
+    renderModels(catalog([
+      row({ id: "nickname", resolves_to: { chat: "exact-name" }, same_model_as: ["other-name", "exact-name"] }),
+      row({ id: "other-name", resolves_to: { chat: "exact-name" } }),
+    ], [exact("exact-name")]));
+    await screen.findByRole("button", { name: "nickname" });
+    fireEvent.change(search(), { target: { value: "nickname" } });
+    expect(screen.queryByRole("button", { name: "exact-name" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "other-name" })).toBeNull();
+    fireEvent.click(nameButton("nickname"));
+    expect(fact("Points to")).toBe("exact-name");
+    expect(fact("Same model as")).toBe("other-name, exact-name");
+  });
+
   it("shows a member only targets that are names they can use; the owner sees them all", async () => {
     const hidden = row({ id: "fast", resolves_to: { chat: "internal-slot" } });
     renderModels(catalog([hidden]), member);
