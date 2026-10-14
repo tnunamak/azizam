@@ -234,7 +234,9 @@ def test_migration_scope_generation_and_opt_out(tmp_path):
     admin_store.init_db(db)
     raw, generation = snapshot(db)
     migrated = json.loads(raw)
-    assert generation == 8
+    # One bump for the reasoning rows, one for the credential origin of the remote record (schema 8).
+    assert generation == 9
+    assert migrated["services"]["remote"]["config"].pop("credential_origin").startswith("http")
     for key in changes:
         expected = copy.deepcopy(original["services"][key])
         if key in {"local", "completion-only", "already"}:
