@@ -929,3 +929,175 @@ def test_an_app_scoped_grant_is_not_a_control_plane_role(gateway):
     admin_store.assign_admin_role(role="admin", subject_kind="user", subject_id=user["id"],
                                   scope_app_id=app["id"], path=gateway.path)
     assert admin_store.effective_admin_roles("user", user["id"], path=gateway.path) == frozenset()
+
+
+def test_an_app_scoped_grant_on_a_service_account_is_not_a_control_plane_role(gateway):
+    """A key's grant for one App must not count as a global role, same as for a person."""
+    owner = admin_store.upsert_oidc_user("https://id.example", "so", email="so@example.test", path=gateway.path)
+    app = admin_store.create_app("scoped", kind="service", owner_user_id=owner["id"], access_plan="person",
+                                 path=gateway.path)
+    account = admin_store.ensure_service_account("scoped key", path=gateway.path)
+    admin_store.assign_admin_role(role="owner", subject_kind="service_account", subject_id=account["id"],
+                                  scope_app_id=app["id"], path=gateway.path)
+    assert admin_store.effective_admin_roles("service_account", account["id"], path=gateway.path) == frozenset()
+    admin_store.assign_admin_role(role="admin", subject_kind="service_account", subject_id=account["id"],
+                                  path=gateway.path)
+    assert admin_store.effective_admin_roles(
+        "service_account", account["id"], path=gateway.path) == frozenset({"admin"})
+
+
+def _person_with_scoped_owner_grant(gateway):
+    user = admin_store.upsert_oidc_user("https://id.example", "sc", email="sc@example.test", path=gateway.path)
+    app = admin_store.create_app("mine", kind="service", owner_user_id=user["id"], access_plan="person",
+                                 path=gateway.path)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=user["id"],
+                                  scope_app_id=app["id"], path=gateway.path)
+    return user, app
+
+
+def test_receipts_and_media_treat_an_app_scoped_owner_grant_as_no_role(gateway, monkeypatch):
+    """Who may see everyone's receipts and media follows the same roles as the control plane."""
+    from types import SimpleNamespace
+
+    from gateway import me_media, user_runtime
+
+    user, app = _person_with_scoped_owner_grant(gateway)
+    assert user_runtime._live_role_for_user(user["id"], path=gateway.path) == "none"
+    assert me_media._live_role_for_user(user["id"], gateway.path) == "none"
+
+    seen = {}
+    monkeypatch.setattr(user_runtime.receipt_store, "recent", lambda **kw: seen.update(kw) or [])
+    user_runtime.build_user_activity_snapshot(SimpleNamespace(subject=user["id"]), path=gateway.path)
+    assert seen["app_ids"] == [app["id"]]  # not None: the feed is limited to their own App
+
+    monkeypatch.setattr(user_runtime.receipt_store, "get", lambda *a, **kw: {"app_id": "someone-elses-app"})
+    with pytest.raises(user_runtime.UserPortalError) as refused:
+        user_runtime.get_user_receipt(SimpleNamespace(subject=user["id"]), "req-1", path=gateway.path)
+    assert refused.value.code == "receipt_not_found"
+
+
+def test_receipts_and_media_drop_a_provider_grant_nobody_confirmed_lately(gateway):
+    from gateway import me_media, user_runtime
+
+    user = admin_store.upsert_oidc_user("https://id.example", "old", email="old@example.test", path=gateway.path)
+    admin_store.reconcile_oidc_admin_roles(user["id"], {"admin"}, path=gateway.path)
+    assert user_runtime._live_role_for_user(user["id"], path=gateway.path) == "admin"
+    _age_provider_grants(gateway, 9 * 3600)
+    assert user_runtime._live_role_for_user(user["id"], path=gateway.path) == "none"
+    assert me_media._live_role_for_user(user["id"], gateway.path) == "none"
+
+
+# -- provider-spend keys are the owner's
+
+def test_only_the_owner_can_mint_provider_spend_keys(gateway):
+    """A LiteLLM virtual key spends the owner's provider money, so an administrator cannot mint one."""
+    owner, _, _, admin = owner_and_admin(gateway)
+    body = {"key_alias": "spender", "models": ["x"]}
+    refused = admin.post("/admin/api/operator/litellm/keys", headers=csrf_for(admin), json=body)
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["error"]["code"] == "owner_required"
+    # The owner gets past the check (this gateway has no LiteLLM, so it then says so).
+    allowed = owner.post("/admin/api/operator/litellm/keys", headers=csrf_for(owner), json=body)
+    assert allowed.status_code != 403, allowed.text
+
+
+# -- an administrator cannot cut off someone who outranks them
+
+def _credential_id_of_key(gateway, api_key):
+    from gateway.runtime_auth import hash_api_key
+
+    return gateway.rows("SELECT id FROM credentials WHERE hash=?", (hash_api_key(api_key),))[0]["id"]
+
+
+def test_an_administrator_cannot_revoke_the_owners_admin_key(gateway):
+    owner, _, _, admin = owner_and_admin(gateway)
+    owner_key = mint_admin_key(owner, role="owner", name="owner automation")
+    credential_id = _credential_id_of_key(gateway, owner_key)
+    for refused in (
+        admin.post(f"/admin/api/credentials/{credential_id}/revoke", headers=csrf_for(admin)),
+        admin.delete(f"/admin/api/credentials/{credential_id}", headers=csrf_for(admin)),
+    ):
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["error"]["code"] == "credential_outranks_you"
+    assert bearer_status(gateway, owner_key, "/admin/api/people") == 200
+    # The owner may revoke it, and an administrator may revoke a key of their own.
+    own_key = mint_admin_key(admin)
+    assert admin.post(f"/admin/api/credentials/{_credential_id_of_key(gateway, own_key)}/revoke",
+                      headers=csrf_for(admin)).status_code == 200
+    assert owner.post(f"/admin/api/credentials/{credential_id}/revoke", headers=csrf_for(owner)).status_code == 200
+
+
+def test_an_administrator_cannot_revoke_or_disable_what_belongs_to_the_owner(gateway):
+    owner, owner_id, plan_id, admin = owner_and_admin(gateway)
+    app_id = owner.post("/admin/api/apps", headers=csrf_for(owner), json={
+        "name": "owners", "kind": "service", "access_plan": plan_id, "owner_user_id": owner_id}).json()["app"]["id"]
+    key = owner.post(f"/admin/api/apps/{app_id}/keys", headers=csrf_for(owner), json={"display_name": "k"})
+    credential_id = key.json()["credential"]["id"]
+    refused = admin.post(f"/admin/api/credentials/{credential_id}/revoke", headers=csrf_for(admin))
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["error"]["code"] == "credential_outranks_you"
+    disabled = admin.delete(f"/admin/api/apps/{app_id}", headers=csrf_for(admin))
+    assert disabled.status_code == 403, disabled.text
+    assert disabled.json()["error"]["code"] == "app_outranks_you"
+    assert gateway.rows("SELECT revoked_at FROM credentials WHERE id=?", (credential_id,))[0]["revoked_at"] is None
+    assert gateway.rows("SELECT disabled_at FROM apps WHERE id=?", (app_id,))[0]["disabled_at"] is None
+
+
+def test_an_administrator_can_still_revoke_a_members_app_key(gateway):
+    owner, _, plan_id, admin = owner_and_admin(gateway)
+    member_id = admin_store.upsert_oidc_user("https://id.example", "m", email="m@example.test", path=gateway.path)["id"]
+    app_id = owner.post("/admin/api/apps", headers=csrf_for(owner), json={
+        "name": "members", "kind": "service", "access_plan": plan_id, "owner_user_id": member_id}).json()["app"]["id"]
+    key = owner.post(f"/admin/api/apps/{app_id}/keys", headers=csrf_for(owner), json={"display_name": "k"})
+    revoked = admin.post(f"/admin/api/credentials/{key.json()['credential']['id']}/revoke", headers=csrf_for(admin))
+    assert revoked.status_code == 200, revoked.text
+    assert admin.delete(f"/admin/api/apps/{app_id}", headers=csrf_for(admin)).status_code == 200
+
+
+# -- a refusal always sticks
+
+def test_a_refusal_is_recorded_even_when_the_cleanup_before_it_fails(gateway, monkeypatch):
+    signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    user = gateway.user("helper@example.test")
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(admin_store, "reconcile_oidc_admin_roles", broken)
+    monkeypatch.setattr(accounts, "revoke_person_sessions", broken)
+    with pytest.raises(RuntimeError):
+        gateway.proxy._end_provider_access_after_refusal(gateway.config.issuer, {"sub": "helper"})
+    assert gateway.rows("SELECT user_id FROM account_signin_refusals") == [{"user_id": user["id"]}]
+
+
+# -- a local password sign-in does not lift a provider refusal
+
+def test_a_local_password_sign_in_does_not_lift_the_refusal_of_the_providers_account(gateway):
+    """The password account and the provider account are two people-records with the same email.
+
+    Only a successful provider sign-in lifts a provider refusal. A password sign-in
+    is a different account and must leave the refused one paused.
+    """
+    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
+    signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    oidc_user = gateway.user("helper@example.test")
+    key_hash = _personal_key(gateway, "helper@example.test")
+    gateway.sign_in(gateway.client(), sub="helper", email="helper@example.test", groups=[],
+                    email_verified=False)
+    paused = admin_runtime.runtime_identity_for_app_credential_hash(key_hash, path=gateway.path)
+    assert paused is not None and paused.denial == "person_signin_refused"
+
+    plan = store_plan("Family", path=gateway.path, caps=("chat",))
+    _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], email="helper@example.test",
+                                    path=gateway.path)
+    password_client = gateway.client()
+    accepted = password_client.post("/auth/api/invite/accept", json={
+        "token": token, "email": "helper@example.test", "name": "Helper", "password": "a sufficiently long password"})
+    assert accepted.status_code == 200, accepted.text
+    login = gateway.client().post("/auth/api/login", json={
+        "email": "helper@example.test", "password": "a sufficiently long password"})
+    assert login.status_code == 200, login.text
+
+    still = admin_runtime.runtime_identity_for_app_credential_hash(key_hash, path=gateway.path)
+    assert still is not None and still.denial == "person_signin_refused"
+    assert gateway.rows("SELECT user_id FROM account_signin_refusals") == [{"user_id": oidc_user["id"]}]
