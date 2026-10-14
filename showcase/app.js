@@ -442,7 +442,7 @@
   function chatLike(card, imageField) {
     const aliases = card.aliases.map((a) => ({ value: a.alias, label: a.alias + " -> " + a.resolves_to }));
     const fields = [
-      { name: "alias", label: "Model alias", type: "select", options: aliases, value: aliases[0] && aliases[0].value },
+      { name: "alias", label: "Model name", type: "select", options: aliases, value: aliases[0] && aliases[0].value },
     ];
     if (imageField) fields.push({ name: "image", label: "Image", type: "file", accept: "image/*" });
     fields.push({ name: "prompt", label: imageField ? "Question about the image" : "Message", multiline: true, value: imageField ? "What shapes and colors do you see?" : "Explain in two sentences why the sky is blue.", wide: true });
@@ -745,9 +745,51 @@
     return h("div", { class: "io" }, label, h("pre", { class: "in-text", text: typeof i.value === "object" ? JSON.stringify(i.value, null, 2) : String(i.value) }));
   }
 
+  // Deliberately small Markdown subset. All data becomes text nodes, never HTML,
+  // attributes or URLs. Unsupported Markdown and HTML remain literal text.
+  function recordedText(text) {
+    const box = h("div", { class: "out-text recorded-text" });
+    function inline(value) {
+      const parts = [];
+      const bold = /\*\*(.+?)\*\*/g;
+      let cursor = 0, match;
+      while ((match = bold.exec(value))) {
+        parts.push(document.createTextNode(value.slice(cursor, match.index)));
+        parts.push(h("strong", { text: match[1] }));
+        cursor = match.index + match[0].length;
+      }
+      parts.push(document.createTextNode(value.slice(cursor)));
+      return parts;
+    }
+    let list = null;
+    for (const line of String(text).replace(/\r\n?/g, "\n").split("\n")) {
+      const heading = /^#{1,6}\s+(.+)$/.exec(line);
+      const item = /^\s*(?:([-+*])|([0-9]+)[.)])\s+(.+)$/.exec(line);
+      if (item) {
+        const tag = item[2] ? "ol" : "ul";
+        if (!list || list.tagName.toLowerCase() !== tag) {
+          list = h(tag);
+          if (item[2]) list.setAttribute("start", String(Number(item[2])));
+          box.append(list);
+        }
+        list.append(h("li", {}, inline(item[3])));
+      } else {
+        list = null;
+        box.append(heading
+          ? h("div", { class: "recorded-heading" }, h("strong", {}, inline(heading[1])))
+          : h("div", { class: "recorded-line" }, line ? inline(line) : h("br")));
+      }
+    }
+    return box;
+  }
+
   function outputBlock(o, ex) {
     const label = o.label ? h("div", { class: "io-label", text: o.label }) : null;
-    if (o.kind === "text" || o.kind === "json") return h("div", { class: "io" }, label, h("pre", { class: "out-text", text: typeof o.text === "string" ? o.text : JSON.stringify(o.value ?? o.text, null, 2) }));
+    if (o.kind === "text" || o.kind === "json") {
+      const text = typeof o.text === "string" ? o.text : JSON.stringify(o.value ?? o.text, null, 2);
+      return h("div", { class: "io" }, label, o.kind === "text"
+        ? recordedText(text) : h("pre", { class: "out-text", text }));
+    }
     return h("div", { class: "io" }, label, recordedMedia(o.kind, ex.base + o.file, { loop: o.kind === "video" && ex.loop }));
   }
 
@@ -761,7 +803,7 @@
     const day = recordedDay(ex.recorded_at);
     if (day) meta.push(h("span", { class: "chip", text: "Recorded " + day }));
     if (ex.seconds != null) meta.push(h("span", { class: "chip time", title: "Wall time of this request through the gateway, when it was recorded", text: "Ran in " + (ex.seconds < 90 ? ex.seconds.toFixed(1) + " s" : Math.round(ex.seconds) + " s") }));
-    if (ex.model) meta.push(h("span", { class: "chip model", text: ex.model }));
+    if (ex.model) meta.push(h("span", { class: "chip model", text: "Model name: " + ex.model }));
     for (const c of ex.chips || []) meta.push(h("span", { class: "chip", text: c }));
     const parts = C.recordedParts(ex);
     const load = form && form._load && parts.inputs.some((i) => i.name)
@@ -794,7 +836,7 @@
   function aliasLine(card) {
     const aliases = (card.aliases || []).map((a) => typeof a === "string" ? a : a.alias).filter(Boolean);
     if (!aliases.length) return null;
-    return h("p", { class: "alias" }, "Model names: ", aliases.map((a, i) => [i ? ", " : "", h("code", { text: a })]));
+    return h("p", { class: "alias" }, aliases.length === 1 ? "Model name: " : "Model names: ", aliases.map((a, i) => [i ? ", " : "", h("code", { text: a })]));
   }
 
   function cardDescription(card) {
@@ -809,7 +851,7 @@
       stt: "Turn speech into text.",
       "stt-diarize": "Transcribe audio and label who spoke when, in OpenAI's diarized_json shape.",
       protocol: card.note,
-    }[card.kind] || "";
+    }[card.kind === "recorded" ? card.id : card.kind] || (card.kind === "recorded" ? "Recorded input and output from this gateway." : "");
   }
 
   function exampleCardKey(card) {
@@ -839,9 +881,9 @@
     const tryBody = card.kind === "voices" ? voicesTable() : form;
     if (!examples.length && !tryBody) return null;
     const node = h("article", { class: "card kind-" + card.kind, id: "card-" + card.id },
-      h("div", { class: "examples" }, exBlocks),
       h("header", {}, h("h3", { text: card.title }), h("div", { class: "badges" }, badges(card))),
       card.kind === "workflow" ? h("p", { class: "desc" }, shortDesc(card.description)) : h("p", { class: "desc", text: cardDescription(card) }),
+      h("div", { class: "examples" }, exBlocks),
       aliasLine(card),
       tryBody ? h("details", { class: "try" }, h("summary", { text: tryLabel }), tryBody) : null,
       card.kind === "recorded" ? null : snippetsPanel(card, examples[0]));
@@ -1007,12 +1049,6 @@
     el.dataset.level = sum.level;
     const statusText = $("#status-text");
     if (statusText.textContent !== sum.text) statusText.textContent = sum.text;
-    const chips = $("#engines");
-    chips.replaceChildren();
-    // Public capability names come from the curated sections, never engine IDs.
-    for (const section of state.sections || []) {
-      chips.append(h("span", { class: "eng", text: section.title }));
-    }
   }
 
   function initKey() {

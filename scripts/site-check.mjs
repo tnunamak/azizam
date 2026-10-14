@@ -119,7 +119,27 @@ function measure(phone) {
         .filter((el) => { const r = el.getBoundingClientRect(); return r.height < 44 || r.width < 44; })
         .map((el) => `${el.tagName.toLowerCase()} "${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 30)}"`)
     : [];
+  const flow = document.querySelector('.home .flow');
+  let flowLayout = null;
+  if (flow) {
+    const apps = flow.querySelector(':scope > .flow-step').getBoundingClientRect();
+    const gateway = flow.querySelector('.flow-gateway').getBoundingClientRect();
+    const ends = flow.querySelector('.flow-ends').getBoundingClientRect();
+    const caption = flow.querySelector('figcaption').getBoundingClientRect();
+    flowLayout = {
+      height: flow.getBoundingClientRect().height,
+      horizontal: apps.right <= gateway.left && gateway.right <= ends.left,
+      vertical: apps.bottom <= gateway.top && gateway.bottom <= ends.top,
+      captionBelow: caption.top >= Math.max(apps.bottom, gateway.bottom, ends.bottom),
+    };
+  }
+  const reply = document.getElementById('proof-reply');
+  const replyStyle = reply && getComputedStyle(reply);
+  const requestCells = [...document.querySelectorAll('.proof-request code')].map((el) => el.getBoundingClientRect());
   return {
+    flowLayout,
+    proofClamped: reply ? reply.getBoundingClientRect().height <= parseFloat(replyStyle.lineHeight) * 6 + 1 : null,
+    proofRequestOneRow: requestCells.length ? requestCells.every((r) => Math.abs(r.top - requestCells[0].top) < 1) : null,
     words: document.body.innerText.split(/\s+/).filter(Boolean).length,
     height: document.documentElement.scrollHeight,
     overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -146,7 +166,7 @@ for (const name of wanted) {
   const spec = PAGES[name];
   if (!fileFor(spec.path)) { fail(`${name}: ${spec.path} does not exist in showcase/`); continue; }
   const out = {};
-  for (const [tag, width, height, phone] of [['desk', 1440, 900, false], ['phone', 390, 844, true]]) {
+  for (const [tag, width, height, phone] of [['desk', 1440, 900, false], ['compact', 900, 900, false], ['tablet', 899, 900, false], ['phone', 390, 844, true]]) {
     for (const scheme of ['light', 'dark']) {
       const ctx = await browser.newContext({ viewport: { width, height }, colorScheme: scheme });
       const page = await ctx.newPage();
@@ -173,12 +193,17 @@ for (const name of wanted) {
       if (hits.length) fail(`${where}: banned tokens ${hits.join(', ')}`);
       if (errors.length) fail(`${where}: ${errors.length} script errors`);
       if (name === 'home') {
+        if (!m.flowLayout || (width >= 900 ? !m.flowLayout.horizontal : !m.flowLayout.vertical)) fail(`${where}: flow orientation`);
+        if (m.flowLayout && width >= 900 && m.flowLayout.height > 320) fail(`${where}: flow height ${m.flowLayout.height} > 320`);
+        if (!m.flowLayout?.captionBelow) fail(`${where}: flow caption must follow the diagram`);
+        if (!m.proofClamped) fail(`${where}: reply exceeds six lines`);
+        if (!m.proofRequestOneRow) fail(`${where}: proof request wraps rows`);
         if (!m.nav) fail(`${where}: no top nav`);
         if (!m.heroInFold) fail(`${where}: h1 not in the first screen`);
         if (!m.ctasInFold) fail(`${where}: two [data-cta] links not both in the first screen`);
         if (phone && m.smallTargetCount) fail(`${where}: ${m.smallTargetCount} tap targets under 44 px`);
         if (m.imgNoSize) fail(`${where}: ${m.imgNoSize} images without width and height`);
-        if (spec.height && m.height > spec.height[tag]) fail(`${where}: height ${m.height} > ${spec.height[tag]}`);
+        if (spec.height && m.height > spec.height[phone ? 'phone' : 'desk']) fail(`${where}: height ${m.height} > ${spec.height[tag]}`);
         if (spec.bytes && m.bytes > spec.bytes) fail(`${where}: ${m.bytes} bytes > ${spec.bytes}`);
         if (spec.words && scheme === 'light' && tag === 'desk' && (m.words < spec.words[0] || m.words > spec.words[1])) {
           fail(`${where}: ${m.words} words, want ${spec.words[0]}-${spec.words[1]}`);

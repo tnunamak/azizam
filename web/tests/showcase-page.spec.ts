@@ -53,7 +53,7 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 /** Mount the page. `data` returning null answers the examples index with 503. */
-async function mountExamples(data: () => Example[] | null) {
+async function mountExamples(data: () => Example[] | null, routes: Record<string, unknown> = {}) {
   mountMarkup(html);
   const requested: string[] = [];
   vi.stubGlobal(
@@ -61,6 +61,7 @@ async function mountExamples(data: () => Example[] | null) {
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       requested.push(url);
+      if (url in routes) return json(routes[url]);
       if (url.endsWith("/showcase/static/sections.json")) return json(sections);
       if (url.endsWith("/showcase/examples/index.json")) {
         const list = data();
@@ -97,6 +98,74 @@ describe("Examples page", () => {
     expect(screen.getByRole("heading", { level: 1, name: "See it work" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Site" })).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Main navigation" })).toBeNull();
+  });
+
+  it("introduces each card before its examples and does not repeat capabilities in status", async () => {
+    await mountExamples(() => [answer]);
+    await screen.findByText("Air scatters blue light.");
+    const card = document.querySelector(".card")!;
+    const header = card.querySelector("header")!;
+    const description = card.querySelector(".desc")!;
+    expect(description.textContent?.trim()).toBeTruthy();
+    expect(card.querySelector(".chip.model")).toHaveTextContent("Model name: local-chat");
+    const examples = card.querySelector(".examples")!;
+    expect(header.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(description.compareDocumentPosition(examples) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.querySelector("#status .eng, #engines")).toBeNull();
+    expect(within(document.querySelector<HTMLElement>("#status")!).getByRole("button", { name: "API key" })).toBeInTheDocument();
+  });
+
+  it("renders only safe Markdown nodes while preserving hostile API text literally", async () => {
+    const hostile = '<img src=x onerror="window.pwned=1"><script>window.pwned=2</script>';
+    const link = "[click](javascript:alert(1))";
+    await mountExamples(() => [recorded("markdown", {
+      title: hostile,
+      inputs: [{ kind: "text", value: hostile }],
+      outputs: [{ kind: "text", text: [
+        "### A **bold** heading", "Normal **strong** text", "",
+        "- First **item**", "- " + hostile, "3. Ordered item",
+        "**<svg onload=alert(1)>**", link, "&lt;iframe src=x&gt;",
+        '<a href="javascript:alert(1)">unsafe</a>', "**unclosed",
+      ].join("\n") }],
+    })]);
+    await waitFor(() => expect(document.querySelector(".recorded-text")).not.toBeNull());
+    const output = document.querySelector<HTMLElement>(".recorded-text")!;
+    expect(output.querySelector(".recorded-heading strong")).toHaveTextContent("A bold heading");
+    expect(Array.from(output.querySelectorAll("strong"), (el) => el.textContent)).toContain("strong");
+    expect(output.querySelectorAll("ul li")).toHaveLength(2);
+    expect(output.querySelector("ol")).toHaveAttribute("start", "3");
+    expect(output.querySelector("ol li")).toHaveTextContent("Ordered item");
+    expect(output.querySelector("br")).not.toBeNull();
+    for (const text of [hostile, link, "&lt;iframe src=x&gt;", "**unclosed", "<svg onload=alert(1)>"]) {
+      expect(output.textContent).toContain(text);
+    }
+    expect(output.querySelector("img, script, svg, iframe, a")).toBeNull();
+    expect(document.querySelector(".ex-title img, .in-text img")).toBeNull();
+    expect(Array.from(output.querySelectorAll("*")).every((el) =>
+      ["DIV", "STRONG", "BR", "UL", "OL", "LI"].includes(el.tagName))).toBe(true);
+    expect(appJs).not.toMatch(/innerHTML|insertAdjacentHTML/);
+  });
+
+  it.each([["default"], ["default", "fast"]])("labels model names from discovery without Alias jargon: %s", async (...names) => {
+    await mountExamples(() => [answer], {
+      "/gateway/v1/workflows": { workflows: [] },
+      "/openapi.json": {},
+      "/gateway/v1/capabilities": { capabilities: [] },
+      "/gateway/v1/aliases": { operations: { chat: { stable: names.map((alias) => ({ alias, resolves_to: "local" })) } } },
+    });
+    await screen.findByText("Air scatters blue light.");
+    expect(document.querySelector(".alias")).toHaveTextContent(names.length === 1 ? "Model name: default" : "Model names: default, fast");
+    expect(screen.getByLabelText("Model name")).toBeInTheDocument();
+    expect(document.querySelector(".card")!.textContent).not.toMatch(/Alias|Model alias/);
+  });
+
+  it("keeps recorded JSON literal instead of treating it as Markdown", async () => {
+    await mountExamples(() => [recorded("json", {
+      outputs: [{ kind: "json", text: '{"text":"**literal** <img src=x>"}' }],
+    })]);
+    await screen.findByText('{"text":"**literal** <img src=x>"}');
+    const output = document.querySelector("pre.out-text")!;
+    expect(output.querySelector("strong, img")).toBeNull();
   });
 
   it("retries a failed recorded-example request from the banner", async () => {
@@ -212,6 +281,9 @@ describe("Home page", () => {
     ]);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your own AI gateway");
     expect(document.querySelector("#sections, #status, #apikey")).toBeNull();
+    expect(document.querySelectorAll(".mini-visual[aria-label]")).toHaveLength(4);
+    expect(document.querySelector("#proof-toggle")).toHaveAttribute("hidden");
+    expect(document.querySelector("#proof-reply")).not.toHaveClass("is-clamped");
   });
 
   it("runs its declared script without gateway requests, including menu and copy interactions", async () => {
@@ -231,6 +303,18 @@ describe("Home page", () => {
     vi.useFakeTimers();
     try {
       for (const script of scripts) (0, eval)(read(script.getAttribute("src")!.split("/").pop()!));
+      const toggle = screen.getByRole("button", { name: "Show full reply" });
+      const reply = document.getElementById("proof-reply")!;
+      expect(reply).toHaveClass("is-clamped");
+      for (let repeat = 0; repeat < 2; repeat++) {
+        fireEvent.click(toggle);
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+        expect(toggle).toHaveTextContent("Show less");
+        expect(reply).not.toHaveClass("is-clamped");
+        fireEvent.click(toggle);
+        expect(toggle).toHaveAttribute("aria-expanded", "false");
+        expect(reply).toHaveClass("is-clamped");
+      }
       fireEvent.click(screen.getByRole("button", { name: "Menu" }));
       expect(screen.getByRole("navigation", { name: "Site" })).toBeVisible();
       fireEvent.click(screen.getByRole("button", { name: "Copy" }));

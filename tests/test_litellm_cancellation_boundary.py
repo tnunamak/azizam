@@ -97,7 +97,7 @@ def _free_port() -> int:
 # a live ComfyUI (127.0.0.1:7890) and mutated cache/key_activity.jsonl
 # because `_serve` let uvicorn run proxy.app's real lifespan. `_serve` now
 # passes `lifespan="off"`; this oracle proves that holds for the whole
-# harness lifetime rather than trusting the uvicorn flag silently.
+# harness's active intervals rather than trusting the uvicorn flag silently.
 # ---------------------------------------------------------------------------
 
 _PRODUCTION_IGNORED_FILES = [
@@ -130,6 +130,21 @@ def _assert_ignored_file_mtimes_unchanged(before: dict[str, float | None]) -> No
             "Real-socket harness mutated production ignored-file(s) it must "
             f"never touch (lifespan side effect leaked through): {changed}"
         )
+
+
+def _run_harness(loop, coro):
+    """Check only intervals when this harness can execute on its event loop.
+
+    Worksteal can run unrelated modules between this module's tests. Their
+    writes to worker-owned state must not be attributed to our idle harness.
+    Startup, requests and shutdown all pass through here; the finally also
+    checks a failing run, including writes made during shutdown.
+    """
+    before = _snapshot_ignored_file_mtimes()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        _assert_ignored_file_mtimes_unchanged(before)
 
 
 class _LifespanEntryGuard:
@@ -507,19 +522,20 @@ def setUpModule() -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     _HARNESS["loop"] = loop
-    loop.run_until_complete(_boot_harness())
+    _run_harness(loop, _boot_harness())
 
 
 def tearDownModule() -> None:
     loop = _HARNESS.get("loop")
     if loop is None:
         return
-    loop.run_until_complete(_shutdown_harness())
-    loop.close()
+    try:
+        _run_harness(loop, _shutdown_harness())
+    finally:
+        loop.close()
 
 
 async def _boot_harness() -> None:
-    ignored_file_mtimes_before = _snapshot_ignored_file_mtimes()
     lifespan_guard = _LifespanEntryGuard()
     lifespan_guard.start()
     metrics_sinks = _IsolatedMetricsSinks()
@@ -564,7 +580,6 @@ async def _boot_harness() -> None:
         "registry_patch": registry_patch,
         "lifespan_guard": lifespan_guard,
         "metrics_sinks": metrics_sinks,
-        "ignored_file_mtimes_before": ignored_file_mtimes_before,
     })
 
 
@@ -583,8 +598,6 @@ async def _shutdown_harness() -> None:
     _HARNESS["metrics_sinks"].stop()
     _HARNESS["lifespan_guard"].stop()
     lifespan_entered = _HARNESS["lifespan_guard"].entered
-    ignored_file_mtimes_before = _HARNESS["ignored_file_mtimes_before"]
-    _assert_ignored_file_mtimes_unchanged(ignored_file_mtimes_before)
     if lifespan_entered:
         raise AssertionError(
             "proxy.app's real lifespan was entered during the real-socket "
@@ -616,7 +629,7 @@ class RealSocketCancellationTests(unittest.TestCase):
         self._run(self.http.aclose())
 
     def _run(self, coro):
-        return self.loop.run_until_complete(coro)
+        return _run_harness(self.loop, coro)
 
     async def _reset_fakes(self) -> None:
         self.backend.headers_released = asyncio.Event()
@@ -931,7 +944,6 @@ async def _boot_composed_harness() -> None:
     backend, so no test ever proved the real internal route was reached, let
     alone that a single id was carried through it.
     """
-    ignored_file_mtimes_before = _snapshot_ignored_file_mtimes()
     lifespan_guard = _LifespanEntryGuard()
     lifespan_guard.start()
     metrics_sinks = _IsolatedMetricsSinks()
@@ -1008,7 +1020,6 @@ async def _boot_composed_harness() -> None:
         ],
         "lifespan_guard": lifespan_guard,
         "metrics_sinks": metrics_sinks,
-        "ignored_file_mtimes_before": ignored_file_mtimes_before,
     })
 
 
@@ -1026,8 +1037,6 @@ async def _shutdown_composed_harness() -> None:
     _COMPOSED_HARNESS["metrics_sinks"].stop()
     _COMPOSED_HARNESS["lifespan_guard"].stop()
     lifespan_entered = _COMPOSED_HARNESS["lifespan_guard"].entered
-    ignored_file_mtimes_before = _COMPOSED_HARNESS["ignored_file_mtimes_before"]
-    _assert_ignored_file_mtimes_unchanged(ignored_file_mtimes_before)
     if lifespan_entered:
         raise AssertionError(
             "proxy.app's real lifespan was entered during the composed "
@@ -1055,12 +1064,14 @@ class ComposedRealSocketOracleTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(cls.loop)
-        cls.loop.run_until_complete(_boot_composed_harness())
+        _run_harness(cls.loop, _boot_composed_harness())
 
     @classmethod
     def tearDownClass(cls) -> None:
-        cls.loop.run_until_complete(_shutdown_composed_harness())
-        cls.loop.close()
+        try:
+            _run_harness(cls.loop, _shutdown_composed_harness())
+        finally:
+            cls.loop.close()
 
     def setUp(self) -> None:
         self.loop = ComposedRealSocketOracleTests.loop
@@ -1073,7 +1084,7 @@ class ComposedRealSocketOracleTests(unittest.TestCase):
         self._run(self.http.aclose())
 
     def _run(self, coro):
-        return self.loop.run_until_complete(coro)
+        return _run_harness(self.loop, coro)
 
     async def _reset_fakes(self) -> None:
         self.backend.headers_released = asyncio.Event()
@@ -1283,6 +1294,46 @@ class ComposedRealSocketOracleTests(unittest.TestCase):
             self.assertFalse(self.backend.headers_released.is_set())
 
         self._run(run())
+
+
+class HarnessIgnoredFileGuardTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory(prefix="gw-ignored-guard-")
+        self.addCleanup(self.tmpdir.cleanup)
+        self.path = Path(self.tmpdir.name) / "key_activity.jsonl"
+        self.paths_patch = patch.dict(
+            globals(), {"_PRODUCTION_IGNORED_FILES": [self.path]}
+        )
+        self.paths_patch.start()
+        self.addCleanup(self.paths_patch.stop)
+        self.loop = asyncio.new_event_loop()
+        self.addCleanup(self.loop.close)
+
+    def test_other_module_write_between_harness_runs_is_not_attributed(self) -> None:
+        async def idle():
+            await asyncio.sleep(0)
+            return "finished"
+
+        self.assertEqual(_run_harness(self.loop, idle()), "finished")
+        self.path.write_text("other module's worker-owned state\n")
+        self.assertEqual(_run_harness(self.loop, idle()), "finished")
+
+    def test_injected_harness_write_is_detected(self) -> None:
+        async def writes():
+            self.path.write_text("injected harness lifespan write\n")
+
+        with self.assertRaisesRegex(AssertionError, "mutated production ignored-file"):
+            _run_harness(self.loop, writes())
+
+    def test_injected_shutdown_write_is_detected_when_run_raises(self) -> None:
+        async def writes_on_exit():
+            try:
+                raise RuntimeError("injected startup failure")
+            finally:
+                self.path.write_text("injected shutdown write\n")
+
+        with self.assertRaisesRegex(AssertionError, "mutated production ignored-file"):
+            _run_harness(self.loop, writes_on_exit())
 
 
 class LiteLlmConfigHeaderForwardingTests(unittest.TestCase):

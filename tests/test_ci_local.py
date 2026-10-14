@@ -25,8 +25,24 @@ COPIED = ("scripts/ci-local", "scripts/low-priority", "scripts/ci/merge_cases.py
 
 STUBS = {
     # Tools on PATH.
-    "npm": """case $1 in ci) mkdir -p node_modules/.bin && cp "$FAKE_BIN/playwright" node_modules/.bin/ ;; esac""",
+    "npm": """
+case "$1 ${2:-}" in
+  "ci "*) mkdir -p node_modules/.bin && cp "$FAKE_BIN/playwright" node_modules/.bin/ ;;
+  "run build") echo build-log; eval "${FAKE_WEB_BUILD:-:}" ;;
+  "run lint") [[ "$*" == "run lint -- --no-cache" ]] || exit 91; echo lint-log; exit "${FAKE_LINT_RC:-0}" ;;
+  "run doctor") echo doctor-log; exit "${FAKE_DOCTOR_RC:-0}" ;;
+esac""",
     "npx": """
+if [[ $1 == tsc && $PWD == */integrations/pi ]]; then
+  [[ "$*" == "tsc --noEmit" ]] || exit 92
+  exit "${FAKE_PI_TYPE_RC:-0}"
+fi
+if [[ $1 == tsc ]]; then
+  [[ "$*" == "tsc --noEmit --incremental false" ]] || exit 92
+  echo type-log
+  eval "${FAKE_STATIC_CHECK:-:}"
+  exit "${FAKE_TYPE_RC:-0}"
+fi
 if [[ $1 == vitest ]]; then
   printf '{"framework":"vitest","config":"vitest.config.ts","project":"","id":"v1","file":"%s","titles":["a"],"status":"%s","duration_ms":5}\\n' \\
     "$PWD/tests/a.spec.ts" "${FAKE_VITEST_STATUS:-passed}" >> "$CASE_RECEIPTS_FILE"
@@ -49,6 +65,7 @@ exit 0""",
     # Copied into web/node_modules/.bin by the npm stub.
     "playwright": """
 [[ $1 == test ]] || exit 0
+eval "${FAKE_BROWSER_GATE:-:}" || exit $?
 if [[ -n ${FAKE_TREE_WRITE:-} ]]; then touch "$PWD/$FAKE_TREE_WRITE"; fi
 case $3 in
   playwright.config.ts) file=e2e/a.spec.ts ;;
@@ -195,7 +212,7 @@ def test_signoff_posts_to_the_tested_sha_then_writes_the_receipt(world: World) -
     assert receipt["steps"].split(",") == sorted([
         "cases", "compat-node", "e2e-browser", "e2e-household", "e2e-live-data", "e2e-main", "e2e-tree-unchanged", "e2e-venv",
         "fresh-compose", "fresh-native", "fresh-venv", "mcp-conformance", "pi-unit", "policy", "python-hermetic",
-        "showcase-core", "web-check", "web-npm-ci", "web-unit"])
+        "showcase-core", "web-build", "web-check", "web-npm-ci", "web-unit"])
     assert receipt["policy"].startswith("policy: ok:")
     assert world.run_dirs() == []  # a passed run removes its directory
 
@@ -345,3 +362,89 @@ def test_a_browser_write_into_the_shared_build_fails_the_run(world: World) -> No
     assert result.returncode == 1, result.stdout + result.stderr
     log = (world.receipts / "logs" / "e2e-tree-unchanged.log").read_text()
     assert "browser tests wrote into the shared build tree:" in log and "web/stray-output.json" in log
+
+
+# These barriers prove actual overlap without depending on scheduler speed.
+# A wrong ordering fails in five seconds instead of hanging the gate.
+def _await_marker(name: str) -> str:
+    return (f'for attempt in {{1..100}}; do test -f "$FAKE_SYNC/{name}" && break; sleep .05; done; '
+            f'test -f "$FAKE_SYNC/{name}" || exit 93; ')
+
+
+def test_static_checks_overlap_browsers_after_build_in_native_slot(world: World) -> None:
+    sync = world.tmp / "sync"
+    sync.mkdir()
+    result = world.run(
+        FAKE_SYNC=str(sync),
+        FAKE_WEB_BUILD='touch "$FAKE_SYNC/build"',
+        FAKE_STATIC_CHECK=(
+            'test -f "$FAKE_SYNC/build" || exit 94; touch "$FAKE_SYNC/static"; '
+            + _await_marker("browser") + 'touch "$FAKE_SYNC/static-done"'
+        ),
+        FAKE_BROWSER_GATE=(
+            'test -f "$FAKE_SYNC/build" || exit 95; touch "$FAKE_SYNC/browser"; '
+            + _await_marker("static")
+        ),
+        FAKE_DURING_RUN='test -f "$FAKE_SYNC/static-done" || exit 96',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    rows = [line.split("\t") for line in (world.receipts / "steps.tsv").read_text().splitlines()]
+    names = [row[0] for row in rows]
+    assert names == sorted(names)
+    assert len(names) == len(set(names)) == 20
+    assert all(row[1] == "0" for row in rows)
+    assert (world.receipts / "logs/web-build.log").read_text() == "build-log\n"
+    assert (world.receipts / "logs/web-check.log").read_text() == "type-log\nlint-log\ndoctor-log\n"
+
+
+@pytest.mark.parametrize("stage", ["TYPE", "LINT", "DOCTOR"])
+def test_static_check_failure_is_fatal_with_its_own_receipt(world: World, stage: str) -> None:
+    result = world.run(**{f"FAKE_{stage}_RC": "17"})
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (world.receipts / "steps/web-check.tsv").read_text().split("\t")[:2] == ["web-check", "17"]
+    assert (world.receipts / "steps/e2e-main.tsv").read_text().split("\t")[1] == "0"
+    assert (world.receipts / "steps/fresh-native.tsv").read_text().split("\t")[1] == "0"
+    assert not (world.receipts / "PASS").exists()
+    log = (world.receipts / "logs/web-check.log").read_text()
+    assert "type-log" in log
+    assert ("lint-log" in log) == (stage != "TYPE")
+    assert ("doctor-log" in log) == (stage == "DOCTOR")
+
+
+def test_failed_build_skips_browsers_but_still_checks_static_sources(world: World) -> None:
+    result = world.run(FAKE_WEB_BUILD="exit 18")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (world.receipts / "steps/web-build.tsv").read_text().split("\t")[1] == "18"
+    assert (world.receipts / "steps/web-check.tsv").read_text().split("\t")[1] == "0"
+    assert not (world.receipts / "steps/e2e-main.tsv").exists()
+    assert not (world.receipts / "PASS").exists()
+
+
+def test_static_checks_reuse_the_existing_native_job() -> None:
+    script = (ROOT / "scripts/ci-local").read_text()
+    native_job = script[script.rindex('start_job "$run/fresh"'):].split('for pid in "${pids[@]}"', 1)[0]
+    assert native_job.index("step web-check ") < native_job.index("step fresh-native ")
+    assert native_job.count("start_job ") == 1
+    # Four preparation jobs and the same browser-loop/native launch sites.
+    assert script.count("\nstart_job ") == 5
+    assert script.count("\n    start_job ") == 1
+
+
+def test_pi_typecheck_failure_stays_fatal_and_separate_from_web(world: World) -> None:
+    result = world.run(FAKE_PI_TYPE_RC="19")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (world.receipts / "steps/pi-unit.tsv").read_text().split("\t")[1] == "19"
+    assert (world.receipts / "steps/web-check.tsv").read_text().split("\t")[1] == "0"
+    assert (world.receipts / "steps/e2e-main.tsv").read_text().split("\t")[1] == "0"
+    assert not (world.receipts / "PASS").exists()
+    assert world.run_dirs() == []
+
+
+def test_static_check_write_into_shared_build_is_fatal(world: World) -> None:
+    result = world.run(FAKE_STATIC_CHECK='touch "$PWD/static-output.json"')
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (world.receipts / "steps/web-check.tsv").read_text().split("\t")[1] == "0"
+    assert (world.receipts / "steps/e2e-tree-unchanged.tsv").read_text().split("\t")[1] == "1"
+    assert "web/static-output.json" in (world.receipts / "logs/e2e-tree-unchanged.log").read_text()
+    assert not (world.receipts / "PASS").exists()
+    assert world.run_dirs() == []
