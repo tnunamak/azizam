@@ -55,7 +55,7 @@
       <p class="eyebrow">Start here</p>
       <h1 id="install-azizam">Install Azizam</h1>
 <p>This page installs the gateway with Docker Compose on one computer. At the end, the gateway runs on that computer and its setup page opens in a browser.</p>
-<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#before-you-start">Before you start</a></li><li class="toc-l2"><a href="#start-the-gateway">Start the gateway</a></li><li class="toc-l2"><a href="#use-a-different-port">Use a different port</a></li><li class="toc-l2"><a href="#connect-to-an-engine-on-the-same-computer">Connect to an engine on the same computer</a></li><li class="toc-l2"><a href="#where-your-data-lives">Where your data lives</a></li><li class="toc-l2"><a href="#next-step">Next step</a></li></ul></nav></details><h2 id="before-you-start">Before you start <a class="anchor" href="#before-you-start" aria-label="Link to Before you start">#</a></h2>
+<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#before-you-start">Before you start</a></li><li class="toc-l2"><a href="#start-the-gateway">Start the gateway</a></li><li class="toc-l2"><a href="#use-a-different-port">Use a different port</a></li><li class="toc-l2"><a href="#connect-to-an-engine-on-the-same-computer">Connect to an engine on the same computer</a></li><li class="toc-l2"><a href="#configure-engine-credentials">Configure engine credentials</a></li><li class="toc-l2"><a href="#where-your-data-lives">Where your data lives</a></li><li class="toc-l2"><a href="#next-step">Next step</a></li></ul></nav></details><h2 id="before-you-start">Before you start <a class="anchor" href="#before-you-start" aria-label="Link to Before you start">#</a></h2>
 <p>You need:</p>
 <ul>
 <li>Docker with a Compose plugin that supports optional env_file entries (required: false).</li>
@@ -73,7 +73,8 @@ docker<span class="w"> </span>compose<span class="w"> </span>ps
 <p>When the gateway is running, open this address in a browser on the same computer:</p>
 <div class="codeblock"><div class="code-bar"><span class="code-lang">Text</span><button class="copy js-only" type="button">Copy</button></div><pre><code>http://127.0.0.1:5000/setup
 </code></pre></div>
-<p>You do not need a <code>.env</code> file for this local setup. Continue with <a href="/showcase/docs/start/first-run/">First run</a>.</p>
+<p>You do not need a <code>.env</code> file for a local engine that does not require credentials. For a host-based engine or one that requires a key, complete the connection setup below before continuing with <a href="/showcase/docs/start/first-run/">First run</a>.</p>
+<p>The gateway health check probes <code>/health</code>; a running or healthy gateway does not prove that an engine can answer. The <code>litellm</code> sidecar waits for <code>/app/data/litellm.config.yaml</code> before starting its server, so a running sidecar container alone is not a readiness check. Finish engine setup and send the real request in First run.</p>
 <h2 id="use-a-different-port">Use a different port <a class="anchor" href="#use-a-different-port" aria-label="Link to Use a different port">#</a></h2>
 <p>The gateway publishes port 5000 on the computer's loopback address only. Other devices cannot reach it yet. See <a href="/showcase/docs/operate/security/">Security</a> before you open it to other devices.</p>
 <p>To use another port, set <code>AZIZAM_PORT</code> when you start Compose. This example uses 5001:</p>
@@ -81,12 +82,34 @@ docker<span class="w"> </span>compose<span class="w"> </span>ps
 </code></pre></div>
 <p>Then open <code>http://127.0.0.1:5001/setup</code>. Use the same setting every time you run a Compose command that recreates the gateway.</p>
 <h2 id="connect-to-an-engine-on-the-same-computer">Connect to an engine on the same computer <a class="anchor" href="#connect-to-an-engine-on-the-same-computer" aria-label="Link to Connect to an engine on the same computer">#</a></h2>
-<p>The gateway runs in a container, so <code>127.0.0.1</code> inside the container is the container itself, not your computer. Use <code>host.docker.internal</code> to reach your computer from the gateway.</p>
+<p>The gateway and execution sidecar run in separate containers, so <code>127.0.0.1</code> inside either container is that container itself, not your computer. Both need to reach the engine. The supplied Compose file adds <code>host.docker.internal</code> only to the gateway; add the same alias to the sidecar instead of relying on Docker to provide it automatically.</p>
+<p>Create <code>compose.override.yaml</code> beside <code>docker-compose.yml</code> with the following content, or merge this service setting into an existing override:</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">YAML</span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nt">services</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">litellm</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">extra_hosts</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">"host.docker.internal:host-gateway"</span>
+</code></pre></div>
+<p>Apply it from the repository root:</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+</code></pre></div>
+<p>Compose automatically reads this override alongside <code>docker-compose.yml</code>. Preserve your <code>AZIZAM_PORT</code> and network settings when recreating containers.</p>
 <p>For example, an engine that listens on port 8080 of your computer has this address:</p>
 <div class="codeblock"><div class="code-bar"><span class="code-lang">Text</span><button class="copy js-only" type="button">Copy</button></div><pre><code>http://host.docker.internal:8080/v1
 </code></pre></div>
 <p>An engine that listens only on the computer's loopback address is not reachable from the container. Make the engine listen on an address the container can reach, and use your firewall to restrict who else can reach it.</p>
 <p>If the Compose network conflicts with another network on your computer, set <code>AZIZAM_DOCKER_SUBNET</code> and <code>AZIZAM_DOCKER_GATEWAY</code> together. See <a href="/showcase/docs/reference/configuration/#listener-and-network">Configuration</a>.</p>
+<h2 id="configure-engine-credentials">Configure engine credentials <a class="anchor" href="#configure-engine-credentials" aria-label="Link to Configure engine credentials">#</a></h2>
+<p>Skip this section if your engine does not require a key. Otherwise, choose an environment variable name, such as <code>MY_ENGINE_API_KEY</code>, and put its value in the repository's local <code>.env</code> file. Keep that file private; do not commit it or paste the value into the browser's <strong>Key environment variable</strong> field.</p>
+<p>The supplied Compose file loads <code>.env</code> into the gateway, but not into the <code>litellm</code> sidecar. Pass the engine credential to the sidecar too. Add this setting under <code>services.litellm</code> in <code>compose.override.yaml</code>, alongside <code>extra_hosts</code> if you added it above:</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">YAML</span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nt">services</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">litellm</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">environment</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">MY_ENGINE_API_KEY</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MY_ENGINE_API_KEY:?Set MY_ENGINE_API_KEY in .env}</span>
+</code></pre></div>
+<p>Use your chosen variable name in both places. This forwards only that variable to the sidecar rather than every value in <code>.env</code>. Then recreate the containers so both processes receive the new environment:</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+</code></pre></div>
+<p>In First run, enter <code>MY_ENGINE_API_KEY</code> (the name, not its value) as the engine's key environment variable. Repeat the recreation after changing its value. <code>AZIZAM_LITELLM_API_KEY</code> is the gateway-to-sidecar credential; it is not your engine provider key.</p>
 <h2 id="where-your-data-lives">Where your data lives <a class="anchor" href="#where-your-data-lives" aria-label="Link to Where your data lives">#</a></h2>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Table">
 <table>
@@ -119,7 +142,7 @@ docker<span class="w"> </span>compose<span class="w"> </span>ps
     </article>
     <nav class="pager" aria-label="Previous and next page"><a class="pager-prev" href="/showcase/docs/" rel="prev"><span>Previous</span>Azizam documentation</a><a class="pager-next" href="/showcase/docs/start/first-run/" rel="next"><span>Next</span>First run</a></nav>
   </main>
-  <aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="toc-l2"><a href="#before-you-start">Before you start</a></li><li class="toc-l2"><a href="#start-the-gateway">Start the gateway</a></li><li class="toc-l2"><a href="#use-a-different-port">Use a different port</a></li><li class="toc-l2"><a href="#connect-to-an-engine-on-the-same-computer">Connect to an engine on the same computer</a></li><li class="toc-l2"><a href="#where-your-data-lives">Where your data lives</a></li><li class="toc-l2"><a href="#next-step">Next step</a></li></ul></nav></aside>
+  <aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="toc-l2"><a href="#before-you-start">Before you start</a></li><li class="toc-l2"><a href="#start-the-gateway">Start the gateway</a></li><li class="toc-l2"><a href="#use-a-different-port">Use a different port</a></li><li class="toc-l2"><a href="#connect-to-an-engine-on-the-same-computer">Connect to an engine on the same computer</a></li><li class="toc-l2"><a href="#configure-engine-credentials">Configure engine credentials</a></li><li class="toc-l2"><a href="#where-your-data-lives">Where your data lives</a></li><li class="toc-l2"><a href="#next-step">Next step</a></li></ul></nav></aside>
 </div>
 <footer class="foot">
   <p class="foot-links"><strong>Azizam</strong> <a href="/showcase/examples/">Examples</a> <a href="/showcase/docs/">Docs</a> <a href="/showcase/docs/start/install/">Setup guide</a> <a href="/showcase/docs/api/">API reference</a> <a href="/showcase/docs/operate/security/">Security</a></p>
