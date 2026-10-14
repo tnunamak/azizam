@@ -929,6 +929,31 @@ class AdminSQLiteStore:
             expected_generation=expected_generation,
         )
 
+    def write_engine(
+        self, *, service_id: str, raw: Mapping[str, Any], actor: AdminContext,
+        expected_generation: int, replace: bool, existing: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create or replace one service from an engine definition's record (gateway/engine_admin.py).
+
+        ``raw`` is the whole record, already built and checked; the credential and
+        lifecycle rules for administrators are applied here as for every write.
+        """
+        registry, record = service_registry.upsert_service_in_registry(
+            self.get_service_registry(), service_id=service_id, raw=raw, source="ui", replace=replace,
+        )
+        if existing is not None:
+            for field in ("kind", "provenance"):
+                if field in existing:
+                    record[field] = copy.deepcopy(existing[field])
+        return self._persist_service_registry(
+            registry,
+            action="operator.service.updated" if replace else "operator.service.added",
+            actor=actor,
+            service_id=service_id,
+            expected_generation=expected_generation,
+            extra={"definition": str(raw.get("definition") or "")},
+        )
+
     def update_service(
         self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext,
         expected_generation: int,

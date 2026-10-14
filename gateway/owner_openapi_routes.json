@@ -180,10 +180,6 @@
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   },
-  "GET /admin/api/operator/service-presets": {
-    "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
-  },
   "GET /admin/api/operator/service-registry": {
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
@@ -438,5 +434,25 @@
   "POST /admin/api/signin/owner-password": {
     "tag": "settings",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+  },
+  "GET /admin/api/engine-definitions": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "POST /admin/api/engines/check": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "POST /admin/api/engines/test": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "POST /admin/api/engines/workflow": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "GET /admin/api/engines/{service_id}": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   }
 }

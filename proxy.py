@@ -96,6 +96,7 @@ from gateway.decision_routing import DecisionRuntime
 from gateway import rerank as rerank_api
 from gateway import stable_aliases
 from gateway import model_metadata
+from gateway import engine_check
 from gateway import speech_stream
 from gateway import custom_voices
 from gateway import voice_audio
@@ -15014,6 +15015,8 @@ app.include_router(
         known_model_names_getter=lambda: litellm_known_model_names(
             ADMIN_STORE.get_service_registry()
         ),
+        # Add engine never calls the gateway itself: its default ports and the one it listens on.
+        engine_fetch=engine_check.make_http_fetch(gateway_ports={*engine_check.GATEWAY_PORTS, PROXY_PORT}),
     )
 )
 

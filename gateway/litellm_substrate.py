@@ -430,7 +430,7 @@ def _model_list_entries(
         else:
             if is_remote_provider_config(config) and not base_url:
                 raise ValueError("remote provider requires an explicit api_base")
-            api_key_ref = _api_key_ref(config, secret_refs, base_url)
+            api_key_ref = _api_key_ref(config, secret_refs, base_url, service_id=str(service.get("id") or ""))
             if base_url:
                 litellm_params["api_base"] = base_url
             if api_key_ref:
@@ -590,7 +590,9 @@ def _lifecycle_api_key(config: Mapping[str, Any], api_base: str) -> str:
     return LOCAL_NO_AUTH_API_KEY
 
 
-def _api_key_ref(config: Mapping[str, Any], secret_refs: Mapping[str, Any], api_base: str = "") -> str:
+def _api_key_ref(
+    config: Mapping[str, Any], secret_refs: Mapping[str, Any], api_base: str = "", *, service_id: str = "",
+) -> str:
     if not is_remote_provider_config(config) and not _credential_bound_to(config, api_base):
         # A local record names a key; send it only to the host it was attached for.
         return ""
@@ -610,7 +612,8 @@ def _api_key_ref(config: Mapping[str, Any], secret_refs: Mapping[str, Any], api_
         return f"os.environ/{env_name}"
     secret_id = str(config.get("api_key_secret_id") or "").strip()
     if secret_id:
-        env_name = secret_env_name_for_provider(str(config.get("provider_id") or ""), secret_id)
+        # A local engine has no provider id; the sidecar names its variable after the service id.
+        env_name = secret_env_name_for_provider(str(config.get("provider_id") or service_id), secret_id)
         return f"os.environ/{env_name}"
     if secret_refs.get("api_key") == SECRET_PLACEHOLDER:
         return "os.environ/AZIZAM_DOWNSTREAM_API_KEY"

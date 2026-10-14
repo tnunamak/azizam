@@ -7,7 +7,6 @@ per-protocol allowlists. A finding names a category and a file, never the value.
 
 from __future__ import annotations
 
-import ast
 import ipaddress
 import datetime
 import functools
@@ -148,26 +147,22 @@ def check_root(root: Path) -> list[str]:
 CELLS = "tests/live/rp_cells.toml"
 REQUEST_SETS = "tests/live/request_sets.json"
 PENDING_WINDOW_DAYS = 90
-LOCAL_PRESETS = "gateway/service_registry.py"
+LOCAL_DEFINITIONS = "registry/engine_definitions.json"
 
 
 def local_upstream_protocols(root: Path) -> set[str]:
-    """Upstream protocols the shipped local-engine presets speak (PROVIDER_PRESETS).
+    """Upstream protocols the shipped engine definitions speak (registry/engine_definitions.json).
 
-    Read as data from the module source, without importing the gateway. Remote
-    providers (the provider catalog) are not counted: replay recordings are made
-    against local engines only (owner rule, TEST_STRATEGY 4.7), and remote
-    upstreams belong to the budgeted live lanes.
+    Read as data, without importing the gateway. Remote providers (the provider
+    catalog) are not counted: replay recordings are made against local engines
+    only (owner rule, TEST_STRATEGY 4.7), and remote upstreams belong to the
+    budgeted live lanes.
     """
-    source = root / LOCAL_PRESETS
+    source = root / LOCAL_DEFINITIONS
     if not source.is_file():
         return set()
-    for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
-        target = node.target if isinstance(node, ast.AnnAssign) else (node.targets[0] if isinstance(node, ast.Assign) else None)
-        if isinstance(target, ast.Name) and target.id == "PROVIDER_PRESETS" and node.value is not None:
-            presets = ast.literal_eval(node.value)
-            return {str(preset["protocol"]) for preset in presets if preset.get("protocol")}
-    return set()
+    data = json.loads(source.read_text(encoding="utf-8"))
+    return {str(row["record"]["protocol"]) for row in data.get("definitions", ()) if row.get("record", {}).get("protocol")}
 
 
 def check_cells(root: Path, today: datetime.date) -> list[str]:
@@ -177,7 +172,7 @@ def check_cells(root: Path, today: datetime.date) -> list[str]:
     A pending cell names an owner and a reason and expires within 90 days; an
     expired one fails, and a renewal states why in its PR (TEST_STRATEGY 4.2.7).
     A not-applicable cell names the registry ``upstream_protocol`` it stands for
-    and a reason; it is valid only while no shipped local-engine preset speaks
+    and a reason; it is valid only while no shipped engine definition speaks
     that protocol upstream. When one does, the cell fails until it is recorded
     (or pending), and so does a local upstream protocol with no request set.
     """
@@ -217,12 +212,12 @@ def check_cells(root: Path, today: datetime.date) -> list[str]:
             if not (isinstance(upstream, str) and upstream.strip() and isinstance(cell.get("reason"), str) and cell["reason"].strip()):
                 problems.append(f"replay cell {name}: not-applicable needs upstream_protocol and reason")
             elif upstream in local:
-                problems.append(f"replay cell {name}: a local engine preset speaks {upstream} upstream; record it (status recorded or pending)")
+                problems.append(f"replay cell {name}: an engine definition speaks {upstream} upstream; record it (status recorded or pending)")
         else:
             problems.append(f"replay cell {name}: status must be 'recorded', 'pending' or 'not-applicable'")
     problems += [f"replay cell {protocol}/{name}: request set has no cell"
                  for protocol, named in sets.items() if isinstance(named, dict) and not protocol.startswith("_")
                  for name in named if (protocol, name) not in seen]
-    problems += [f"replay: a local engine preset speaks {protocol} upstream, but no request set covers it"
+    problems += [f"replay: an engine definition speaks {protocol} upstream, but no request set covers it"
                  for protocol in sorted(local) if protocol not in sets]
     return problems

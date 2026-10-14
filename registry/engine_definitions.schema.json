@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azizam.local/schemas/engine_definitions.schema.json",
+  "title": "Azizam engine definitions",
+  "description": "The data file Add engine reads. Each definition says which fields a kind of server needs, how Azizam checks it, what it can do and what to say when something fails. Detection rules name API shapes only. The gateway refuses a file outside this schema at load.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format_version", "capabilities", "evidence_text", "metadata_rows", "model_rules", "advice", "real_tests", "definitions"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "format_version": {"const": 1},
+    "notes": {"type": "string"},
+    "model_rules_note": {"type": "string"},
+    "capabilities": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/capability"}
+    },
+    "evidence_text": {
+      "type": "object",
+      "required": ["possible", "possible_why", "against", "against_why", "none", "none_why", "needs_key", "declared", "likely_model_field", "likely_metadata", "likely_test"],
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "metadata_rows": {"type": "array", "items": {"$ref": "#/$defs/metadataRow"}},
+    "model_rules": {"type": "array", "items": {"$ref": "#/$defs/modelRule"}},
+    "context_window_keys": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "public_name_rules": {"type": "array", "items": {"$ref": "#/$defs/nameRule"}},
+    "against_body": {"type": "string", "minLength": 1},
+    "real_tests": {"type": "object", "additionalProperties": {"$ref": "#/$defs/realTest"}},
+    "advice": {"type": "array", "items": {"$ref": "#/$defs/advice"}},
+    "definitions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/definition"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "path"],
+      "properties": {
+        "method": {"enum": ["GET", "POST"]},
+        "path": {"type": "string", "pattern": "^/"}
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "noun", "record_capabilities"],
+      "properties": {
+        "label": {"type": "string", "minLength": 1},
+        "noun": {"type": "string", "minLength": 1},
+        "record_capabilities": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "route": {"$ref": "#/$defs/route"},
+        "real_test": {"type": "string"}
+      }
+    },
+    "metadataRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "document", "method", "path", "from", "kind"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "document": {"type": "string"},
+        "method": {"const": "GET"},
+        "path": {"type": "string", "pattern": "^/"},
+        "from": {"enum": ["origin", "address"]},
+        "cap_bytes": {"type": "integer", "minimum": 1024, "maximum": 16777216},
+        "kind": {"enum": ["openapi_paths", "capability_document", "identity", "node_catalog", "model_list"]},
+        "paths": {"type": "object", "additionalProperties": {"type": "string"}},
+        "values": {"type": "object", "additionalProperties": {"type": "string"}},
+        "require_json_key": {"type": "string"},
+        "name_from": {"$ref": "#/$defs/nameFrom"}
+      }
+    },
+    "nameFrom": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["json"],
+      "properties": {
+        "json": {"type": "string"},
+        "ignore": {"type": "array", "items": {"type": "string"}},
+        "extract": {"type": "string", "format": "regex"},
+        "suffix": {"type": "string"}
+      }
+    },
+    "modelRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "capability"],
+      "oneOf": [{"required": ["equals"]}, {"required": ["contains"]}, {"required": ["matches"]}],
+      "properties": {
+        "field": {"type": "string", "minLength": 1},
+        "equals": {"type": "string"},
+        "contains": {"type": "string"},
+        "matches": {"type": "string", "format": "regex"},
+        "capability": {"$ref": "#/$defs/id"}
+      }
+    },
+    "nameRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "strip": {"type": "string", "format": "regex"},
+        "replace": {"type": "string", "format": "regex"},
+        "with": {"type": "string"},
+        "lower": {"type": "boolean"}
+      }
+    },
+    "realTest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sent", "cost"],
+      "properties": {
+        "sent": {"type": "string"},
+        "cost": {"type": "string"},
+        "body": {"type": "object"},
+        "multipart_silence": {"type": "object"},
+        "path": {"type": "string", "pattern": "^/"},
+        "from": {"enum": ["origin", "address"]},
+        "pass_json": {"type": "string"},
+        "pass_status": {"type": "integer", "minimum": 1, "maximum": 5},
+        "pass_status_in": {"type": "array", "items": {"type": "integer"}},
+        "pass_body": {"type": "string", "format": "regex"},
+        "reply_json": {"type": "string"},
+        "reply_text": {"type": "string"},
+        "reply_count_json": {"type": "string"},
+        "reply_count_text": {"type": "string"},
+        "reply_audio": {"type": "boolean"},
+        "invalid_input": {"type": "array", "items": {"type": "object", "required": ["input", "value"], "properties": {"input": {"type": "string"}, "value": {}}, "additionalProperties": false}}
+      }
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Every key must hold for the row to apply. Rows are tried in order; the first one that applies wins.",
+      "properties": {
+        "transport": {"enum": ["ok", "refused", "dns", "timeout", "tls", "redirect", "blocked", "too_large"]},
+        "transport_in": {"type": "array", "items": {"enum": ["refused", "dns", "timeout", "tls", "redirect", "blocked", "too_large"]}},
+        "status": {"type": "integer"},
+        "status_in": {"type": "array", "items": {"type": "integer"}},
+        "status_class": {"type": "integer", "minimum": 1, "maximum": 5},
+        "key_sent": {"type": "boolean"},
+        "probe": {"type": "string"},
+        "shape": {"enum": ["list", "not_list"]},
+        "address_matches": {"type": "string", "format": "regex"},
+        "body_matches": {"type": "string", "format": "regex"},
+        "recognised": {"type": "boolean"},
+        "models_count": {"type": "integer"},
+        "duplicate": {"type": "boolean"},
+        "workflow": {"enum": ["ui_format", "not_json", "too_large"]}
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "properties": {
+        "id": {"enum": ["fixpath", "openexisting"]},
+        "label": {"type": "string"},
+        "address_append": {"type": "string"},
+        "address_strip": {"type": "string"}
+      }
+    },
+    "advice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "severity", "field", "when", "title", "what", "why", "fix"],
+      "properties": {
+        "code": {"$ref": "#/$defs/id"},
+        "severity": {"enum": ["error", "warning"]},
+        "field": {"enum": ["address", "key", "path", "file"]},
+        "when": {"$ref": "#/$defs/condition"},
+        "title": {"type": "string", "minLength": 1},
+        "what": {"type": "string", "minLength": 1},
+        "why": {"type": "string", "minLength": 1},
+        "why_everywhere": {"type": "string"},
+        "fix": {"type": "string", "minLength": 1},
+        "fix_admin": {"type": "string"},
+        "summary_admin": {"type": "string"},
+        "admin_note": {"type": "boolean"},
+        "keep_off": {"type": "boolean"},
+        "with_key": {"type": "boolean"},
+        "raw_label": {"type": "string"},
+        "action": {"$ref": "#/$defs/action"}
+      }
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "type"],
+      "properties": {
+        "key": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "label": {"type": "string", "minLength": 1},
+        "help": {"type": "string"},
+        "type": {"enum": ["text", "url", "secret", "number", "boolean", "select", "multiselect", "list", "keyvalue", "duration"]},
+        "required": {"type": "boolean"},
+        "default": {},
+        "placeholder": {"type": "string"},
+        "order": {"type": "integer"},
+        "group": {"type": "string"},
+        "secret": {"type": "boolean"},
+        "writeOnly": {"type": "boolean"},
+        "show_if": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field", "equals"],
+          "properties": {"field": {"type": "string"}, "equals": {}}
+        },
+        "one_of": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["discriminator", "options"],
+          "properties": {"discriminator": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}}
+        },
+        "options": {
+          "type": "array",
+          "items": {"type": "object", "additionalProperties": false, "required": ["value", "label"], "properties": {"value": {"type": "string"}, "label": {"type": "string"}}}
+        },
+        "options_from": {"type": "string"},
+        "custom_value": {"type": "boolean"},
+        "default_from": {"type": "string"},
+        "advanced": {"type": "boolean"},
+        "owner_only": {"type": "boolean"},
+        "secondary_of": {"type": "string"},
+        "unit": {"enum": ["seconds", "minutes", "tokens"]},
+        "items": {"enum": ["transform", "text"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"const": "secret"}}}, "then": {"required": ["secret", "writeOnly"], "properties": {"secret": {"const": true}, "writeOnly": {"const": true}}}},
+        {"if": {"required": ["secret"], "properties": {"secret": {"const": true}}}, "then": {"required": ["writeOnly"], "properties": {"writeOnly": {"const": true}}}}
+      ]
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "method", "path", "from", "kind"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "method": {"enum": ["GET", "POST"]},
+        "path": {"type": "string", "pattern": "^(/|\\{path\\}$)"},
+        "from": {"enum": ["origin", "address"]},
+        "kind": {"enum": ["model_list", "identity", "declared_path"]},
+        "list_keys": {"type": "array", "items": {"type": "string"}},
+        "id_keys": {"type": "array", "items": {"type": "string"}},
+        "require_json_key": {"type": "string"}
+      }
+    },
+    "workflowInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "help", "fields"],
+      "properties": {
+        "key": {"$ref": "#/$defs/id"},
+        "label": {"type": "string"},
+        "required": {"type": "boolean"},
+        "help": {"type": "string"},
+        "fields": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "class_matches": {"type": "string", "format": "regex"},
+        "prefer": {"enum": ["positive"]},
+        "matched_note": {"type": "string"},
+        "missing_note": {"type": "string"}
+      }
+    },
+    "definition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["definition", "definition_version", "title", "summary", "flow", "steps", "fields", "probes", "capabilities", "default_ticked", "check_rows", "name_fallback", "advice", "record"],
+      "properties": {
+        "definition": {"$ref": "#/$defs/id"},
+        "definition_version": {"type": "integer", "minimum": 1},
+        "title": {"type": "string", "minLength": 1},
+        "example": {"type": "string"},
+        "summary": {"type": "string", "minLength": 1},
+        "badge": {"type": "string"},
+        "keywords": {"type": "array", "items": {"type": "string"}},
+        "flow": {"enum": ["detect", "declared", "workflow"]},
+        "declared_capability": {"$ref": "#/$defs/id"},
+        "steps": {"type": "array", "minItems": 5, "maxItems": 5, "items": {"type": "string"}},
+        "fields": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/field"}},
+        "probes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["primary", "metadata", "route_probes"],
+          "properties": {
+            "primary": {"$ref": "#/$defs/probe"},
+            "metadata": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+            "route_probes": {"type": "boolean"},
+            "route_base": {"type": "string", "pattern": "^/"}
+          }
+        },
+        "capabilities": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/id"}},
+        "default_ticked": {"enum": ["likely", "declared", "workflow"]},
+        "check_rows": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "name_fallback": {"type": "string"},
+        "models_note": {"type": "string"},
+        "workflow": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_bytes", "api_format", "output_rules", "inputs"],
+          "properties": {
+            "max_bytes": {"type": "integer", "minimum": 1},
+            "api_format": {"type": "object"},
+            "output_rules": {"type": "array", "items": {"type": "object", "required": ["class_matches", "makes"], "properties": {"class_matches": {"type": "string", "format": "regex"}, "makes": {"enum": ["images", "video"]}}, "additionalProperties": false}},
+            "inputs": {"type": "array", "items": {"$ref": "#/$defs/workflowInput"}}
+          }
+        },
+        "advice": {"type": "array", "items": {"$ref": "#/$defs/advice"}},
+        "record": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "native_passthrough", "base_path"],
+          "properties": {
+            "protocol": {"type": "string"},
+            "native_passthrough": {"type": "boolean"},
+            "transforms": {"type": "array", "items": {"type": "string"}},
+            "base_path": {"type": "string"}
+          }
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"flow": {"const": "declared"}}}, "then": {"required": ["declared_capability"]}},
+        {"if": {"properties": {"flow": {"const": "workflow"}}}, "then": {"required": ["workflow"]}}
+      ]
+    }
+  }
+}

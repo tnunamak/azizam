@@ -1,0 +1,2061 @@
+{
+  "$schema": "./engine_definitions.schema.json",
+  "format_version": 1,
+  "notes": "Seeded engine definitions for Add engine. Data only: titles may name common servers, detection rules name API shapes. The metadata rows and the 5a rules come from ~/Documents/azizam/ux-findings/add-engine-probe-table.md (measured 2026-10-14).",
+  "capabilities": {
+    "chat": {
+      "label": "Chat",
+      "noun": "chat",
+      "record_capabilities": [
+        "chat",
+        "completions"
+      ],
+      "route": {
+        "method": "POST",
+        "path": "/chat/completions"
+      },
+      "real_test": "chat"
+    },
+    "embeddings": {
+      "label": "Embeddings",
+      "noun": "embedding",
+      "record_capabilities": [
+        "embeddings"
+      ],
+      "route": {
+        "method": "POST",
+        "path": "/embeddings"
+      },
+      "real_test": "embeddings"
+    },
+    "images": {
+      "label": "Images",
+      "noun": "image",
+      "record_capabilities": [
+        "image"
+      ],
+      "route": {
+        "method": "POST",
+        "path": "/images/generations"
+      },
+      "real_test": "images"
+    },
+    "rerank": {
+      "label": "Reranking",
+      "noun": "reranking",
+      "record_capabilities": [
+        "rerank"
+      ],
+      "route": {
+        "method": "POST",
+        "path": "/rerank"
+      },
+      "real_test": "rerank"
+    },
+    "stt": {
+      "label": "Speech to text",
+      "noun": "speech-to-text",
+      "record_capabilities": [
+        "audio",
+        "transcriptions"
+      ],
+      "route": {
+        "method": "POST",
+        "path": "/audio/transcriptions"
+      },
+      "real_test": "stt"
+    },
+    "tts": {
+      "label": "Text to speech",
+      "noun": "text-to-speech",
+      "record_capabilities": [
+        "audio",
+        "speech"
+      ],
+      "route": {
+        "method": "POST",
+        "path": "/audio/speech"
+      },
+      "real_test": "tts"
+    },
+    "realtime": {
+      "label": "Live voice",
+      "noun": "live voice",
+      "record_capabilities": [
+        "realtime"
+      ]
+    },
+    "graph_images": {
+      "label": "Images",
+      "noun": "image",
+      "record_capabilities": [
+        "images",
+        "generations"
+      ],
+      "real_test": "graph"
+    },
+    "graph_video": {
+      "label": "Video",
+      "noun": "video",
+      "record_capabilities": [
+        "videos"
+      ],
+      "real_test": "graph"
+    }
+  },
+  "evidence_text": {
+    "likely_model_field": "Its model list marks “{model}” as a {noun} model.",
+    "likely_model_field_many": "Its model list marks “{model}” and {others} other models as {noun} models.",
+    "likely_metadata": "Its {document} lists {path}, and the route answered.",
+    "likely_metadata_only": "Its {document} lists {path}.",
+    "likely_test": "A real test passed at {time}. That shows the server can do this.",
+    "possible": "The {noun} route answered an empty request with “{status_text}”. That shows the route exists.",
+    "possible_why": "A “{status_short}” answer shows the route exists, not that a model can do this. Run a real test to find out.",
+    "against": "It answered the {noun} route with “{excerpt}”.",
+    "against_why": "The server said not supported.",
+    "none": "The route answered “{status_text}”, the same as a path that does not exist.",
+    "none_server_error": "The route answered with a server error, “{status_text}”. That proves nothing.",
+    "none_transport": "The route did not answer.",
+    "none_why": "Nothing was found.",
+    "none_nothing_recognised": "The server answered every standard request with “not supported” or “not found”.",
+    "needs_key": "The route exists, but it is locked: it answered “{status_text}”.",
+    "needs_key_why": "Add the key, then check again.",
+    "declared": "You chose this kind and gave the path {path}. An empty request to that path answered “{status_text}”, so the path exists.",
+    "declared_unchecked": "You chose this kind and gave the path {path}.",
+    "workflow": "The workflow ends in a node that saves {makes}.",
+    "none_unlisted": "Nothing the server publishes mentions it."
+  },
+  "metadata_rows": [
+    {
+      "id": "openapi",
+      "document": "API description",
+      "method": "GET",
+      "path": "/openapi.json",
+      "from": "origin",
+      "cap_bytes": 1048576,
+      "kind": "openapi_paths",
+      "paths": {
+        "/chat/completions": "chat",
+        "/embeddings": "embeddings",
+        "/images/generations": "images",
+        "/rerank": "rerank",
+        "/audio/transcriptions": "stt",
+        "/audio/speech": "tts",
+        "/realtime": "realtime"
+      },
+      "name_from": {
+        "json": "info.title",
+        "ignore": [
+          "FastAPI",
+          "OpenAPI",
+          "API"
+        ]
+      }
+    },
+    {
+      "id": "capability-document",
+      "document": "capability list",
+      "method": "GET",
+      "path": "/models/capabilities",
+      "from": "address",
+      "kind": "capability_document",
+      "values": {
+        "chat": "chat",
+        "completion_chat": "chat",
+        "embeddings": "embeddings",
+        "embedding": "embeddings",
+        "rerank": "rerank",
+        "transcript": "stt",
+        "transcription": "stt",
+        "tts": "tts",
+        "image": "images"
+      }
+    },
+    {
+      "id": "node-stats",
+      "document": "system details",
+      "method": "GET",
+      "path": "/system_stats",
+      "from": "origin",
+      "kind": "identity",
+      "require_json_key": "system",
+      "name_from": {
+        "json": "devices.0.name",
+        "extract": "((?:RTX|GTX|RX|Arc|Quadro|Tesla|A|H|L)\\s?\\d{2,4}[A-Za-z]*(?:\\s?(?:Ti|SUPER|XT|Ada))?)",
+        "suffix": " workflows"
+      }
+    },
+    {
+      "id": "node-catalog",
+      "document": "node catalog",
+      "method": "GET",
+      "path": "/object_info",
+      "from": "origin",
+      "cap_bytes": 8388608,
+      "kind": "node_catalog"
+    },
+    {
+      "id": "own-model-list",
+      "document": "own model list",
+      "method": "GET",
+      "path": "/api/tags",
+      "from": "origin",
+      "kind": "model_list",
+      "require_json_key": "models"
+    }
+  ],
+  "model_rules": [
+    {
+      "field": "task",
+      "equals": "asr",
+      "capability": "stt"
+    },
+    {
+      "field": "task",
+      "equals": "transcription",
+      "capability": "stt"
+    },
+    {
+      "field": "task",
+      "equals": "tts",
+      "capability": "tts"
+    },
+    {
+      "field": "task",
+      "equals": "embedding",
+      "capability": "embeddings"
+    },
+    {
+      "field": "task",
+      "equals": "embed",
+      "capability": "embeddings"
+    },
+    {
+      "field": "task",
+      "equals": "generate",
+      "capability": "chat"
+    },
+    {
+      "field": "task",
+      "equals": "chat",
+      "capability": "chat"
+    },
+    {
+      "field": "type",
+      "equals": "embedding",
+      "capability": "embeddings"
+    },
+    {
+      "field": "model_type",
+      "equals": "embedding",
+      "capability": "embeddings"
+    },
+    {
+      "field": "capabilities",
+      "contains": "embedding",
+      "capability": "embeddings"
+    },
+    {
+      "field": "capabilities",
+      "contains": "embeddings",
+      "capability": "embeddings"
+    },
+    {
+      "field": "capabilities",
+      "contains": "chat",
+      "capability": "chat"
+    },
+    {
+      "field": "capabilities",
+      "contains": "tools",
+      "capability": "chat"
+    },
+    {
+      "field": "details.family",
+      "matches": "bert$",
+      "capability": "embeddings"
+    },
+    {
+      "field": "details.families",
+      "contains": "nomic-bert",
+      "capability": "embeddings"
+    }
+  ],
+  "model_rules_note": "A capabilities array that holds only \"completion\" is not chat evidence (5a): an embedding-only server reports it too. No rule maps it.",
+  "context_window_keys": [
+    "max_model_len",
+    "context_length",
+    "context_window",
+    "max_context_length",
+    "meta.n_ctx_train",
+    "meta.n_ctx",
+    "n_ctx"
+  ],
+  "public_name_rules": [
+    {
+      "strip": "^.*/"
+    },
+    {
+      "strip": "\\.(gguf|safetensors|bin|onnx|pt)$"
+    },
+    {
+      "strip": "[-_.](q\\d(_k)?(_[a-z0-9]+)?|iq\\d[a-z0-9_]*|f16|bf16|fp16|fp8|int8|int4|awq|gptq)$"
+    },
+    {
+      "strip": "[-_](instruct|it|chat)$"
+    },
+    {
+      "replace": "[:\\s]+",
+      "with": "-"
+    },
+    {
+      "lower": true
+    }
+  ],
+  "against_body": "not.?supported|does not support|not_supported|not_implemented|is disabled",
+  "real_tests": {
+    "chat": {
+      "sent": "One chat message, “Say OK”, with a limit of 1 token",
+      "body": {
+        "model": "{model}",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Say OK"
+          }
+        ],
+        "max_tokens": 1,
+        "stream": false
+      },
+      "pass_json": "choices",
+      "reply_json": "choices.0.message.content",
+      "cost": "About one token"
+    },
+    "embeddings": {
+      "sent": "One short text, “hello”",
+      "body": {
+        "model": "{model}",
+        "input": "hello"
+      },
+      "pass_json": "data",
+      "reply_count_json": "data.0.embedding",
+      "reply_count_text": "A list of {count} numbers",
+      "cost": "About one token"
+    },
+    "images": {
+      "sent": "One request for a 64-pixel image of “a red dot”",
+      "body": {
+        "model": "{model}",
+        "prompt": "a red dot",
+        "size": "64x64",
+        "n": 1,
+        "response_format": "b64_json"
+      },
+      "pass_json": "data",
+      "reply_text": "An image",
+      "cost": "One small image"
+    },
+    "rerank": {
+      "sent": "One question and two short texts",
+      "body": {
+        "model": "{model}",
+        "query": "Which one is a pet?",
+        "documents": [
+          "a cat",
+          "a car"
+        ]
+      },
+      "pass_json": "results",
+      "reply_text": "Two scores",
+      "cost": "About one token"
+    },
+    "stt": {
+      "sent": "One second of silence, as a WAV file of 32 KB",
+      "multipart_silence": {
+        "file_field": "file",
+        "fields": {
+          "model": "{model}",
+          "response_format": "json"
+        }
+      },
+      "pass_status": 2,
+      "reply_json": "text",
+      "cost": "About one second of audio"
+    },
+    "tts": {
+      "sent": "The single word “Hello”",
+      "body": {
+        "model": "{model}",
+        "input": "Hello",
+        "voice": "{voice}"
+      },
+      "pass_status": 2,
+      "reply_audio": true,
+      "cost": "One short audio clip"
+    },
+    "graph": {
+      "sent": "Your workflow, with the seed set to −1, a value the server must refuse",
+      "path": "/prompt",
+      "from": "origin",
+      "invalid_input": [
+        {
+          "input": "seed",
+          "value": -1
+        },
+        {
+          "input": "steps",
+          "value": -1
+        },
+        {
+          "input": "width",
+          "value": -1
+        }
+      ],
+      "pass_status_in": [
+        400
+      ],
+      "pass_body": "node_errors|smaller than min|value_smaller_than_min",
+      "cost": "None. Nothing was queued or generated."
+    }
+  },
+  "advice": [
+    {
+      "code": "blocked",
+      "severity": "error",
+      "field": "address",
+      "when": {
+        "transport": "blocked"
+      },
+      "title": "Azizam will not call this address",
+      "what": "Azizam did not send anything to {host}.",
+      "why": "{reason}",
+      "fix": "Use the address of the engine itself, not of the gateway or of the computer’s cloud settings service."
+    },
+    {
+      "code": "dns",
+      "severity": "error",
+      "field": "address",
+      "keep_off": true,
+      "when": {
+        "transport": "dns"
+      },
+      "title": "Address not found",
+      "what": "Azizam could not find the computer called {host}.",
+      "why": "The name does not resolve to an address on this network.",
+      "fix": "Check the spelling of the address, or use the computer’s IP address instead."
+    },
+    {
+      "code": "down",
+      "severity": "error",
+      "field": "address",
+      "keep_off": true,
+      "when": {
+        "transport_in": [
+          "refused",
+          "timeout"
+        ]
+      },
+      "title": "Server not reachable",
+      "what": "Azizam could not reach the server.",
+      "why": "Nothing answered at {host} within {timeout_words}. The server may be off, or the address or port may be wrong.",
+      "fix": "Check that the server is running and that the address and port are right. If Azizam runs in a container, “localhost” means the container, not your computer. If Azizam should start this server itself, add it kept off, then set its start command on the engine page.",
+      "fix_admin": "Check that the server is running and that the address and port are right. If Azizam runs in a container, “localhost” means the container, not your computer. If the server starts only when needed, add it kept off and ask the owner to set its start command."
+    },
+    {
+      "code": "tls",
+      "severity": "error",
+      "field": "address",
+      "keep_off": true,
+      "when": {
+        "transport": "tls"
+      },
+      "title": "Secure connection failed",
+      "what": "Azizam reached {host}, but the secure connection failed.",
+      "why": "The server’s certificate is not trusted, or the server does not speak https on this port.",
+      "fix": "If the server has no certificate, use http:// instead of https://. Otherwise install a certificate this computer trusts."
+    },
+    {
+      "code": "redirect",
+      "severity": "error",
+      "field": "address",
+      "keep_off": true,
+      "when": {
+        "transport": "redirect"
+      },
+      "title": "The server sent Azizam somewhere else",
+      "what": "The server answered with a redirect to {location}.",
+      "why": "Azizam does not follow redirects when it checks a server, so a key is never sent to a place you did not type.",
+      "fix": "Type the address the redirect points to, if you trust it, then check again."
+    },
+    {
+      "code": "too_large",
+      "severity": "error",
+      "field": "address",
+      "keep_off": true,
+      "when": {
+        "transport": "too_large"
+      },
+      "title": "The answer was too large",
+      "what": "The server sent more than Azizam reads during a check.",
+      "why": "A model list or a status page is small. A large answer usually means the address points at something else.",
+      "fix": "Check the address and the port."
+    },
+    {
+      "code": "auth_rejected",
+      "severity": "error",
+      "field": "key",
+      "keep_off": true,
+      "when": {
+        "status_in": [
+          401,
+          403
+        ],
+        "key_sent": true
+      },
+      "title": "Key refused",
+      "what": "The server refused the key.",
+      "why": "It answered “{status_text}”. The key may be mistyped, out of date, or made for another server.",
+      "fix": "Paste the key again. If the server lists its keys in its own settings, make a new one and paste that.",
+      "with_key": true
+    },
+    {
+      "code": "needkey",
+      "severity": "error",
+      "field": "key",
+      "keep_off": true,
+      "admin_note": true,
+      "when": {
+        "status_in": [
+          401,
+          403
+        ],
+        "key_sent": false
+      },
+      "title": "This server needs a key",
+      "what": "This server needs a key.",
+      "why": "Every real route answered “{status_text}”, but a made-up path answered “{baseline_text}”. So the routes exist and are locked.",
+      "why_everywhere": "Every path answered “{status_text}”, even a made-up one. The server wants a key before it says anything.",
+      "fix": "Paste the key the server expects, then continue. Azizam stores it and never shows it again.",
+      "fix_admin": "This server needs a key, and only the owner can add one. Save it without a key and ask the owner, or ask the owner to add it.",
+      "summary_admin": "This server needs a key. Only the owner can add one."
+    },
+    {
+      "code": "rate_limited",
+      "severity": "error",
+      "field": "address",
+      "keep_off": true,
+      "when": {
+        "status": 429
+      },
+      "title": "The server asked Azizam to slow down",
+      "what": "The server answered “429 Too Many Requests”.",
+      "why": "It limits how often it answers, and the limit is used up.",
+      "fix": "Wait a minute, then check again."
+    },
+    {
+      "code": "path_v1_missing",
+      "severity": "error",
+      "field": "address",
+      "keep_off": true,
+      "when": {
+        "probe": "model_list",
+        "status": 404,
+        "address_matches": "^(?!.*/v1$)",
+        "recognised": false
+      },
+      "title": "No model list at this address",
+      "what": "The address answered, but it has no list of models.",
+      "why": "The server returned “404 Not Found” for {route}, the same as for a made-up path. The API probably starts one level deeper.",
+      "fix": "Add /v1 to the end of the address, then check again.",
+      "action": {
+        "id": "fixpath",
+        "label": "Add /v1 and check again",
+        "address_append": "/v1"
+      }
+    },
+    {
+      "code": "path_not_found",
+      "severity": "error",
+      "field": "address",
+      "keep_off": true,
+      "when": {
+        "probe": "model_list",
+        "status": 404,
+        "recognised": false
+      },
+      "title": "No model list at this address",
+      "what": "The address answered, but it has no list of models.",
+      "why": "The server returned “404 Not Found” for {route}.",
+      "fix": "Check the address and the port with whoever set up the server."
+    },
+    {
+      "code": "server_error",
+      "severity": "error",
+      "field": "address",
+      "keep_off": true,
+      "when": {
+        "status_class": 5,
+        "recognised": false
+      },
+      "title": "The server had an error",
+      "what": "The server answered “{status_text}”.",
+      "why": "Something is wrong on the server itself. Its own text is under Details.",
+      "fix": "Look at the server’s own log, fix the problem there, then check again."
+    },
+    {
+      "code": "path_server_error",
+      "severity": "warning",
+      "field": "path",
+      "when": {
+        "probe": "path",
+        "status_class": 5
+      },
+      "title": "The path answered with a server error",
+      "what": "The server answered “{status_text}” at POST {url}.",
+      "why": "An empty request can make a server fail even when the path is right. A server error proves nothing either way.",
+      "fix": "Run a real test on the next screen. If it fails too, check the path and the server’s own log."
+    },
+    {
+      "code": "models_unavailable",
+      "severity": "warning",
+      "field": "address",
+      "when": {
+        "probe": "model_list",
+        "status_in": [
+          404,
+          405,
+          500,
+          501,
+          502,
+          503
+        ],
+        "recognised": true
+      },
+      "title": "The server has no model list",
+      "what": "The server answers, but it does not list its models at {route}.",
+      "why": "Some servers serve one model and never list it.",
+      "fix": "Add the model by name on the next screens."
+    },
+    {
+      "code": "not_openai_shape",
+      "severity": "warning",
+      "field": "address",
+      "when": {
+        "probe": "model_list",
+        "shape": "not_list"
+      },
+      "title": "The server answers, but not in the expected shape",
+      "what": "The address answered {route}, but not with a list of models.",
+      "why": "The answer is not the shape this kind of server sends. The address may point at a different kind of server.",
+      "fix": "Check that you picked the right kind. Or add the server anyway and say yourself what it can do."
+    },
+    {
+      "code": "nocap",
+      "severity": "warning",
+      "field": "address",
+      "when": {
+        "recognised": false
+      },
+      "title": "Nothing recognised",
+      "what": "Azizam could not tell what this server can do.",
+      "why": "The server is reachable and did not refuse the key. But it listed no models, and it answered every standard request with “not supported” or “not found”.",
+      "fix": "Check that the address ends where the API starts, often /v1. Or add the server anyway and say yourself what it can do."
+    },
+    {
+      "code": "empty_models",
+      "severity": "warning",
+      "field": "address",
+      "when": {
+        "models_count": 0,
+        "recognised": true
+      },
+      "title": "The server lists no models",
+      "what": "The server answered, but its model list is empty.",
+      "why": "Nothing is loaded yet, or the server loads models only when asked.",
+      "fix": "Load a model on the server and check again, or add a model by name on the next screens."
+    },
+    {
+      "code": "dup",
+      "severity": "error",
+      "field": "address",
+      "when": {
+        "duplicate": true
+      },
+      "title": "Already added",
+      "what": "An engine already uses this address.",
+      "why": "“{existing_name}” points to {address}. Adding it twice would split its load and its history.",
+      "fix": "Open the engine that exists, or change the address.",
+      "action": {
+        "id": "openexisting",
+        "label": "Open {existing_name}"
+      }
+    }
+  ],
+  "definitions": [
+    {
+      "definition": "openai-compatible",
+      "definition_version": 1,
+      "title": "Any OpenAI-compatible server",
+      "example": "For example, vLLM, llama.cpp or LM Studio",
+      "summary": "Chat, embeddings, reranking, speech, transcription and images. Azizam finds out which of these the server offers.",
+      "badge": "Most servers",
+      "keywords": [
+        "openai",
+        "compatible",
+        "vllm",
+        "llama.cpp",
+        "lm studio",
+        "localai",
+        "tabby",
+        "text generation",
+        "api",
+        "v1",
+        "jan",
+        "sglang",
+        "llamafile",
+        "kobold"
+      ],
+      "flow": "detect",
+      "steps": [
+        "Kind",
+        "Address and key",
+        "What it can do",
+        "Models",
+        "Name"
+      ],
+      "fields": [
+        {
+          "key": "address",
+          "label": "Address",
+          "type": "url",
+          "required": true,
+          "order": 1,
+          "placeholder": "http://192.168.1.50:8080/v1",
+          "help": "Where the server listens, with its port. Usually ends in /v1."
+        },
+        {
+          "key": "api_key",
+          "label": "API key",
+          "type": "secret",
+          "secret": true,
+          "writeOnly": true,
+          "order": 2,
+          "placeholder": "Optional",
+          "help": "Leave empty if the server has no key."
+        },
+        {
+          "key": "api_key_env",
+          "label": "Environment variable name",
+          "type": "text",
+          "order": 3,
+          "placeholder": "LAN_SERVER_KEY",
+          "secondary_of": "api_key",
+          "help": "Azizam reads the key from this variable on the gateway’s computer. Only the name is saved. The value is never shown."
+        },
+        {
+          "key": "headers",
+          "label": "Request headers",
+          "type": "keyvalue",
+          "advanced": true,
+          "group": "Request headers",
+          "order": 10,
+          "default": [],
+          "help": "Extra headers Azizam sends with every request to this server, for example X-Client: azizam-home."
+        },
+        {
+          "key": "connect_timeout_s",
+          "label": "Time to connect",
+          "type": "duration",
+          "advanced": true,
+          "group": "Timeouts",
+          "order": 20,
+          "default": 5,
+          "unit": "seconds"
+        },
+        {
+          "key": "reply_timeout_s",
+          "label": "Time to wait for a reply",
+          "type": "duration",
+          "advanced": true,
+          "group": "Timeouts",
+          "order": 21,
+          "default": 120,
+          "unit": "seconds",
+          "help": "Raise this for slow models."
+        },
+        {
+          "key": "path_prefix",
+          "label": "Extra path before every request",
+          "type": "text",
+          "advanced": true,
+          "group": "Extra path and sign-in header",
+          "order": 30,
+          "default": "",
+          "placeholder": "Empty",
+          "help": "Leave empty unless the server needs one, for example /openai. Azizam puts it between the address and each route."
+        },
+        {
+          "key": "auth_header",
+          "label": "Key header name",
+          "type": "text",
+          "advanced": true,
+          "group": "Extra path and sign-in header",
+          "order": 31,
+          "default": "Authorization",
+          "help": "The header that carries the key. Most servers use Authorization. Some use X-API-Key."
+        },
+        {
+          "key": "transforms",
+          "label": "Request adjustments",
+          "type": "list",
+          "items": "transform",
+          "advanced": true,
+          "group": "Request adjustments",
+          "order": 40,
+          "default": [
+            "reasoning-effort-final-chat"
+          ],
+          "help": "Fix a mismatch between what apps send and what this server accepts, for example leave out a field the server refuses. Each one says in plain words what it does."
+        },
+        {
+          "key": "lifecycle_mode",
+          "label": "Who starts and stops this server",
+          "type": "select",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 50,
+          "default": "external",
+          "options": [
+            {
+              "value": "external",
+              "label": "Azizam leaves it running (default)"
+            },
+            {
+              "value": "managed",
+              "label": "Azizam starts and stops it"
+            }
+          ]
+        },
+        {
+          "key": "lifecycle_start",
+          "label": "Start command",
+          "type": "text",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 51,
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          },
+          "help": "Run on the gateway’s computer when a request needs this server."
+        },
+        {
+          "key": "lifecycle_stop",
+          "label": "Stop command",
+          "type": "text",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 52,
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "lifecycle_ready_s",
+          "label": "Wait for it to be ready",
+          "type": "duration",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 53,
+          "default": 120,
+          "unit": "seconds",
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "lifecycle_idle_min",
+          "label": "Stop when idle for",
+          "type": "duration",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 54,
+          "default": 0,
+          "unit": "minutes",
+          "help": "0 means never.",
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "models",
+          "label": "Models",
+          "type": "multiselect",
+          "order": 60,
+          "options_from": "models",
+          "custom_value": true
+        },
+        {
+          "key": "context_window",
+          "label": "Context window",
+          "type": "number",
+          "order": 61,
+          "unit": "tokens",
+          "default_from": "models.context_window"
+        }
+      ],
+      "probes": {
+        "primary": {
+          "id": "model_list",
+          "method": "GET",
+          "path": "/models",
+          "from": "address",
+          "kind": "model_list",
+          "list_keys": [
+            "data",
+            "models"
+          ],
+          "id_keys": [
+            "id",
+            "model",
+            "name"
+          ]
+        },
+        "metadata": [
+          "openapi",
+          "capability-document"
+        ],
+        "route_probes": true
+      },
+      "capabilities": [
+        "chat",
+        "embeddings",
+        "images",
+        "rerank",
+        "stt",
+        "tts",
+        "realtime"
+      ],
+      "default_ticked": "likely",
+      "check_rows": [
+        "Reaching the server",
+        "Checking the key",
+        "Listing the models",
+        "Finding what it can do"
+      ],
+      "name_fallback": "{host_label}",
+      "advice": [],
+      "record": {
+        "protocol": "openai-compatible",
+        "native_passthrough": true,
+        "transforms": [
+          "reasoning-effort-final-chat"
+        ],
+        "base_path": "from_address"
+      }
+    },
+    {
+      "definition": "own-model-list",
+      "definition_version": 1,
+      "title": "Server with its own model list",
+      "example": "For example, Ollama",
+      "summary": "Lists its models at its own address and loads them when asked. Chat and embeddings.",
+      "keywords": [
+        "ollama",
+        "native",
+        "tags",
+        "pull",
+        "library"
+      ],
+      "flow": "detect",
+      "steps": [
+        "Kind",
+        "Address and key",
+        "What it can do",
+        "Models",
+        "Name"
+      ],
+      "fields": [
+        {
+          "key": "address",
+          "label": "Address",
+          "type": "url",
+          "required": true,
+          "order": 1,
+          "placeholder": "http://192.168.1.50:11434",
+          "help": "Where the server listens, with its port. Usually port 11434. Do not add /v1."
+        },
+        {
+          "key": "api_key",
+          "label": "API key",
+          "type": "secret",
+          "secret": true,
+          "writeOnly": true,
+          "order": 2,
+          "placeholder": "Optional",
+          "help": "Leave empty if the server has no key."
+        },
+        {
+          "key": "api_key_env",
+          "label": "Environment variable name",
+          "type": "text",
+          "order": 3,
+          "placeholder": "LAN_SERVER_KEY",
+          "secondary_of": "api_key",
+          "help": "Azizam reads the key from this variable on the gateway’s computer. Only the name is saved. The value is never shown."
+        },
+        {
+          "key": "headers",
+          "label": "Request headers",
+          "type": "keyvalue",
+          "advanced": true,
+          "group": "Request headers",
+          "order": 10,
+          "default": []
+        },
+        {
+          "key": "connect_timeout_s",
+          "label": "Time to connect",
+          "type": "duration",
+          "advanced": true,
+          "group": "Timeouts",
+          "order": 20,
+          "default": 5,
+          "unit": "seconds"
+        },
+        {
+          "key": "reply_timeout_s",
+          "label": "Time to wait for a reply",
+          "type": "duration",
+          "advanced": true,
+          "group": "Timeouts",
+          "order": 21,
+          "default": 120,
+          "unit": "seconds",
+          "help": "Raise this for slow models."
+        },
+        {
+          "key": "transforms",
+          "label": "Request adjustments",
+          "type": "list",
+          "items": "transform",
+          "advanced": true,
+          "group": "Request adjustments",
+          "order": 40,
+          "default": [
+            "reasoning-effort-final-chat"
+          ]
+        },
+        {
+          "key": "lifecycle_mode",
+          "label": "Who starts and stops this server",
+          "type": "select",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 50,
+          "default": "external",
+          "options": [
+            {
+              "value": "external",
+              "label": "Azizam leaves it running (default)"
+            },
+            {
+              "value": "managed",
+              "label": "Azizam starts and stops it"
+            }
+          ]
+        },
+        {
+          "key": "lifecycle_start",
+          "label": "Start command",
+          "type": "text",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 51,
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "lifecycle_stop",
+          "label": "Stop command",
+          "type": "text",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 52,
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "lifecycle_ready_s",
+          "label": "Wait for it to be ready",
+          "type": "duration",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 53,
+          "default": 120,
+          "unit": "seconds",
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "lifecycle_idle_min",
+          "label": "Stop when idle for",
+          "type": "duration",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 54,
+          "default": 0,
+          "unit": "minutes",
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "models",
+          "label": "Models",
+          "type": "multiselect",
+          "order": 60,
+          "options_from": "models",
+          "custom_value": true
+        }
+      ],
+      "probes": {
+        "primary": {
+          "id": "model_list",
+          "method": "GET",
+          "path": "/api/tags",
+          "from": "origin",
+          "kind": "model_list",
+          "list_keys": [
+            "models"
+          ],
+          "id_keys": [
+            "name",
+            "model"
+          ],
+          "require_json_key": "models"
+        },
+        "metadata": [],
+        "route_probes": true,
+        "route_base": "/v1"
+      },
+      "capabilities": [
+        "chat",
+        "embeddings"
+      ],
+      "default_ticked": "likely",
+      "check_rows": [
+        "Reaching the server",
+        "Checking the key",
+        "Listing its models",
+        "Reading what each model can do"
+      ],
+      "name_fallback": "{host_label}",
+      "models_note": "This server loads a model the first time something asks for it. That first request can take a while.",
+      "advice": [
+        {
+          "code": "native_v1",
+          "severity": "error",
+          "field": "address",
+          "keep_off": true,
+          "when": {
+            "probe": "model_list",
+            "status": 404,
+            "address_matches": "/v1$"
+          },
+          "title": "No model list at this address",
+          "what": "The address answered, but it has no model list of its own.",
+          "why": "The server returned “404 Not Found” for /api/tags. An address that ends in /v1 points at the OpenAI-style part of a server, which has no such list.",
+          "fix": "Take /v1 off the end of the address, then check again.",
+          "action": {
+            "id": "fixpath",
+            "label": "Remove /v1 and check again",
+            "address_strip": "/v1"
+          }
+        },
+        {
+          "code": "native_port",
+          "severity": "error",
+          "field": "address",
+          "keep_off": true,
+          "when": {
+            "probe": "model_list",
+            "status": 404
+          },
+          "title": "No model list at this address",
+          "what": "The address answered, but it has no model list of its own.",
+          "why": "The server returned “404 Not Found” for /api/tags.",
+          "fix": "Check the port. The usual port for this kind of server is 11434."
+        },
+        {
+          "code": "nocap",
+          "severity": "warning",
+          "field": "address",
+          "when": {
+            "recognised": false
+          },
+          "title": "Nothing recognised",
+          "what": "Azizam could not tell what this server can do.",
+          "why": "The server is reachable and did not refuse the key. But its model list is empty, so it has nothing to offer yet.",
+          "fix": "Pull a model on the server, then check again. Or add the server anyway and say yourself what it can do."
+        }
+      ],
+      "record": {
+        "protocol": "openai-compatible",
+        "native_passthrough": true,
+        "transforms": [
+          "reasoning-effort-final-chat"
+        ],
+        "base_path": "/v1"
+      }
+    },
+    {
+      "definition": "node-graph",
+      "definition_version": 1,
+      "title": "Node-graph image and video server",
+      "example": "For example, ComfyUI",
+      "summary": "Runs a workflow file. You pick the file and say which inputs it takes.",
+      "keywords": [
+        "comfyui",
+        "comfy",
+        "workflow",
+        "nodes",
+        "graph",
+        "image",
+        "video"
+      ],
+      "flow": "workflow",
+      "steps": [
+        "Kind",
+        "Address and key",
+        "Workflow file",
+        "Inputs",
+        "Name"
+      ],
+      "fields": [
+        {
+          "key": "address",
+          "label": "Address",
+          "type": "url",
+          "required": true,
+          "order": 1,
+          "placeholder": "http://192.168.1.50:8188",
+          "help": "Where the server listens, with its port. Usually port 8188. Do not add /v1."
+        },
+        {
+          "key": "api_key",
+          "label": "API key",
+          "type": "secret",
+          "secret": true,
+          "writeOnly": true,
+          "order": 2,
+          "placeholder": "Optional",
+          "help": "Leave empty if the server has no key."
+        },
+        {
+          "key": "api_key_env",
+          "label": "Environment variable name",
+          "type": "text",
+          "order": 3,
+          "placeholder": "LAN_SERVER_KEY",
+          "secondary_of": "api_key",
+          "help": "Azizam reads the key from this variable on the gateway’s computer. Only the name is saved. The value is never shown."
+        },
+        {
+          "key": "workflow",
+          "label": "Workflow file",
+          "type": "text",
+          "order": 5,
+          "required": true,
+          "help": "A .json file in API format, up to 20 MB."
+        },
+        {
+          "key": "workflow_public_name",
+          "label": "Name apps use",
+          "type": "text",
+          "order": 6,
+          "required": true,
+          "default_from": "workflow.file_stem",
+          "help": "Apps ask for this workflow by this name, for example “sdxl-text-to-image”."
+        },
+        {
+          "key": "headers",
+          "label": "Request headers",
+          "type": "keyvalue",
+          "advanced": true,
+          "group": "Request headers",
+          "order": 10,
+          "default": []
+        },
+        {
+          "key": "connect_timeout_s",
+          "label": "Time to connect",
+          "type": "duration",
+          "advanced": true,
+          "group": "Timeouts",
+          "order": 20,
+          "default": 5,
+          "unit": "seconds"
+        },
+        {
+          "key": "reply_timeout_s",
+          "label": "Time to wait for a reply",
+          "type": "duration",
+          "advanced": true,
+          "group": "Timeouts",
+          "order": 21,
+          "default": 600,
+          "unit": "seconds",
+          "help": "Pictures and video take longer than text."
+        },
+        {
+          "key": "lifecycle_mode",
+          "label": "Who starts and stops this server",
+          "type": "select",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 50,
+          "default": "external",
+          "options": [
+            {
+              "value": "external",
+              "label": "Azizam leaves it running (default)"
+            },
+            {
+              "value": "managed",
+              "label": "Azizam starts and stops it"
+            }
+          ]
+        },
+        {
+          "key": "lifecycle_start",
+          "label": "Start command",
+          "type": "text",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 51,
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "lifecycle_stop",
+          "label": "Stop command",
+          "type": "text",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 52,
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "lifecycle_ready_s",
+          "label": "Wait for it to be ready",
+          "type": "duration",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 53,
+          "default": 120,
+          "unit": "seconds",
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "lifecycle_idle_min",
+          "label": "Stop when idle for",
+          "type": "duration",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 54,
+          "default": 0,
+          "unit": "minutes",
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        }
+      ],
+      "probes": {
+        "primary": {
+          "id": "identity",
+          "method": "GET",
+          "path": "/system_stats",
+          "from": "origin",
+          "kind": "identity",
+          "require_json_key": "system"
+        },
+        "metadata": [
+          "node-stats",
+          "node-catalog"
+        ],
+        "route_probes": false
+      },
+      "capabilities": [
+        "graph_images",
+        "graph_video"
+      ],
+      "default_ticked": "workflow",
+      "check_rows": [
+        "Reaching the server",
+        "Checking the key",
+        "Reading its node catalog",
+        "Reading what it reports"
+      ],
+      "name_fallback": "{host_label}",
+      "workflow": {
+        "max_bytes": 20971520,
+        "api_format": {
+          "node_keys": [
+            "class_type",
+            "inputs"
+          ],
+          "ui_format_keys": [
+            "nodes",
+            "links"
+          ]
+        },
+        "output_rules": [
+          {
+            "class_matches": "Video|Animated|VHS_VideoCombine|SaveWEBM|SaveAnimated",
+            "makes": "video"
+          },
+          {
+            "class_matches": "SaveImage|PreviewImage|Image.*Save",
+            "makes": "images"
+          }
+        ],
+        "inputs": [
+          {
+            "key": "prompt",
+            "label": "Prompt",
+            "required": true,
+            "help": "The words an app sends, for example “a red bicycle”.",
+            "fields": [
+              "text",
+              "prompt",
+              "positive"
+            ],
+            "class_matches": "TextEncode|Prompt|CLIP",
+            "prefer": "positive",
+            "matched_note": "Matched on its own: node {node}, “{title}”, feeds the sampler’s positive input."
+          },
+          {
+            "key": "image",
+            "label": "Image in",
+            "help": "A picture an app sends to edit or to start from.",
+            "fields": [
+              "image"
+            ],
+            "class_matches": "LoadImage",
+            "missing_note": "This file has no node that loads an image, so image-in stays off."
+          },
+          {
+            "key": "seed",
+            "label": "Seed",
+            "help": "Azizam sends a new random number each time, unless an app sets one.",
+            "fields": [
+              "seed",
+              "noise_seed"
+            ]
+          },
+          {
+            "key": "width",
+            "label": "Width",
+            "help": "In pixels, for example 1024.",
+            "fields": [
+              "width"
+            ]
+          },
+          {
+            "key": "height",
+            "label": "Height",
+            "help": "In pixels, for example 1024.",
+            "fields": [
+              "height"
+            ]
+          },
+          {
+            "key": "steps",
+            "label": "Steps",
+            "help": "How long the server refines the picture. Left unused, the file’s own value stays.",
+            "fields": [
+              "steps"
+            ]
+          },
+          {
+            "key": "model",
+            "label": "Model",
+            "help": "Which model file the server loads, for example “sd_xl_base_1.0”.",
+            "fields": [
+              "ckpt_name",
+              "unet_name",
+              "model_name"
+            ]
+          }
+        ]
+      },
+      "advice": [
+        {
+          "code": "not_node_graph",
+          "severity": "error",
+          "field": "address",
+          "keep_off": true,
+          "when": {
+            "probe": "identity",
+            "status": 404
+          },
+          "title": "This does not look like a node-graph server",
+          "what": "The address answered, but it has no node catalog.",
+          "why": "The server returned “404 Not Found” for /system_stats, the same as for a made-up path.",
+          "fix": "Check the address and the port. The usual port for this kind of server is 8188."
+        },
+        {
+          "code": "badfile",
+          "severity": "error",
+          "field": "file",
+          "keep_off": true,
+          "when": {
+            "workflow": "ui_format"
+          },
+          "title": "This file is not in API format",
+          "what": "Azizam read “{file}”, but it only holds the picture of the graph: where the boxes sit and what colour they are.",
+          "why": "The editor saves two kinds of file. The server runs only the API kind, which lists each step and its settings.",
+          "fix": "In the editor, choose “Export (API)”, then pick that new file here.",
+          "raw_label": "What Azizam found in the file"
+        }
+      ],
+      "record": {
+        "protocol": "comfyui",
+        "native_passthrough": false,
+        "base_path": ""
+      }
+    },
+    {
+      "definition": "speech-to-text-custom-path",
+      "definition_version": 1,
+      "title": "Speech-to-text server with a custom path",
+      "example": "For example, a whisper.cpp server",
+      "summary": "Turns audio into text at a path you give.",
+      "keywords": [
+        "whisper",
+        "transcription",
+        "speech to text",
+        "stt",
+        "asr"
+      ],
+      "flow": "declared",
+      "declared_capability": "stt",
+      "steps": [
+        "Kind",
+        "Address and path",
+        "What it can do",
+        "Model",
+        "Name"
+      ],
+      "fields": [
+        {
+          "key": "address",
+          "label": "Address",
+          "type": "url",
+          "required": true,
+          "order": 1,
+          "placeholder": "http://192.168.1.60:8178",
+          "help": "Where the server listens, with its port. Leave the path out. It goes in the next field."
+        },
+        {
+          "key": "path",
+          "label": "Path on the server",
+          "type": "text",
+          "required": true,
+          "order": 2,
+          "placeholder": "/inference",
+          "help": "The part after the address that accepts audio, starting with /. For example /inference. Ask whoever set up the server if you are not sure."
+        },
+        {
+          "key": "api_key",
+          "label": "API key",
+          "type": "secret",
+          "secret": true,
+          "writeOnly": true,
+          "order": 3,
+          "placeholder": "Optional",
+          "help": "Leave empty if the server has no key."
+        },
+        {
+          "key": "api_key_env",
+          "label": "Environment variable name",
+          "type": "text",
+          "order": 4,
+          "placeholder": "LAN_SERVER_KEY",
+          "secondary_of": "api_key",
+          "help": "Azizam reads the key from this variable on the gateway’s computer. Only the name is saved. The value is never shown."
+        },
+        {
+          "key": "public_name",
+          "label": "Public name",
+          "type": "text",
+          "required": true,
+          "order": 5,
+          "default": "whisper",
+          "help": "The name apps use to pick this model, for example “whisper”."
+        },
+        {
+          "key": "server_model",
+          "label": "Name the server uses (optional)",
+          "type": "text",
+          "order": 6,
+          "placeholder": "For example, base.en",
+          "help": "Sent as the model name with every request. Leave it empty if the server has one model and ignores the name."
+        },
+        {
+          "key": "headers",
+          "label": "Request headers",
+          "type": "keyvalue",
+          "advanced": true,
+          "group": "Request headers",
+          "order": 10,
+          "default": []
+        },
+        {
+          "key": "connect_timeout_s",
+          "label": "Time to connect",
+          "type": "duration",
+          "advanced": true,
+          "group": "Timeouts",
+          "order": 20,
+          "default": 5,
+          "unit": "seconds"
+        },
+        {
+          "key": "reply_timeout_s",
+          "label": "Time to wait for a reply",
+          "type": "duration",
+          "advanced": true,
+          "group": "Timeouts",
+          "order": 21,
+          "default": 120,
+          "unit": "seconds"
+        },
+        {
+          "key": "lifecycle_mode",
+          "label": "Who starts and stops this server",
+          "type": "select",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 50,
+          "default": "external",
+          "options": [
+            {
+              "value": "external",
+              "label": "Azizam leaves it running (default)"
+            },
+            {
+              "value": "managed",
+              "label": "Azizam starts and stops it"
+            }
+          ]
+        },
+        {
+          "key": "lifecycle_start",
+          "label": "Start command",
+          "type": "text",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 51,
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "lifecycle_stop",
+          "label": "Stop command",
+          "type": "text",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 52,
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "lifecycle_ready_s",
+          "label": "Wait for it to be ready",
+          "type": "duration",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 53,
+          "default": 120,
+          "unit": "seconds",
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "lifecycle_idle_min",
+          "label": "Stop when idle for",
+          "type": "duration",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 54,
+          "default": 0,
+          "unit": "minutes",
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        }
+      ],
+      "probes": {
+        "primary": {
+          "id": "path",
+          "method": "POST",
+          "path": "{path}",
+          "from": "address",
+          "kind": "declared_path"
+        },
+        "metadata": [],
+        "route_probes": false
+      },
+      "capabilities": [
+        "stt"
+      ],
+      "default_ticked": "declared",
+      "check_rows": [
+        "Reaching the server",
+        "Checking the key",
+        "Calling the path",
+        "Reading the answer"
+      ],
+      "name_fallback": "Speech to text at {host}",
+      "advice": [
+        {
+          "code": "path",
+          "severity": "error",
+          "field": "path",
+          "keep_off": true,
+          "when": {
+            "probe": "path",
+            "status": 404
+          },
+          "title": "Nothing at that path",
+          "what": "The server answered “404 Not Found” at POST {url}.",
+          "why": "It gave the same answer as for a made-up path, so no route exists there.",
+          "fix": "Check the path with whoever set the server up. If the server uses OpenAI-style paths such as /v1/audio/transcriptions, go back and pick “Any OpenAI-compatible server”."
+        },
+        {
+          "code": "path_method",
+          "severity": "error",
+          "field": "path",
+          "keep_off": true,
+          "when": {
+            "probe": "path",
+            "status": 405
+          },
+          "title": "That path does not accept audio",
+          "what": "The server answered “405 Method Not Allowed” at POST {url}.",
+          "why": "A path that takes audio accepts a POST request. This one does not.",
+          "fix": "Check the path with whoever set the server up."
+        }
+      ],
+      "record": {
+        "protocol": "openai-compatible",
+        "native_passthrough": false,
+        "base_path": ""
+      }
+    },
+    {
+      "definition": "text-to-speech-custom-path",
+      "definition_version": 1,
+      "title": "Text-to-speech server with a custom path",
+      "example": "For example, Piper or Kokoro",
+      "summary": "Turns text into audio at a path you give.",
+      "keywords": [
+        "tts",
+        "voice",
+        "speech synthesis",
+        "piper",
+        "kokoro"
+      ],
+      "flow": "declared",
+      "declared_capability": "tts",
+      "steps": [
+        "Kind",
+        "Address and path",
+        "What it can do",
+        "Model and voices",
+        "Name"
+      ],
+      "fields": [
+        {
+          "key": "address",
+          "label": "Address",
+          "type": "url",
+          "required": true,
+          "order": 1,
+          "placeholder": "http://192.168.1.60:5002",
+          "help": "Where the server listens, with its port. Leave the path out. It goes in the next field."
+        },
+        {
+          "key": "path",
+          "label": "Path on the server",
+          "type": "text",
+          "required": true,
+          "order": 2,
+          "placeholder": "/api/tts",
+          "help": "The part after the address that accepts text, starting with /. For example /api/tts. Ask whoever set up the server if you are not sure."
+        },
+        {
+          "key": "api_key",
+          "label": "API key",
+          "type": "secret",
+          "secret": true,
+          "writeOnly": true,
+          "order": 3,
+          "placeholder": "Optional",
+          "help": "Leave empty if the server has no key."
+        },
+        {
+          "key": "api_key_env",
+          "label": "Environment variable name",
+          "type": "text",
+          "order": 4,
+          "placeholder": "LAN_SERVER_KEY",
+          "secondary_of": "api_key",
+          "help": "Azizam reads the key from this variable on the gateway’s computer. Only the name is saved. The value is never shown."
+        },
+        {
+          "key": "public_name",
+          "label": "Public name",
+          "type": "text",
+          "required": true,
+          "order": 5,
+          "default": "local-voice",
+          "help": "The name apps use to pick this model, for example “local-voice”."
+        },
+        {
+          "key": "server_model",
+          "label": "Name the server uses (optional)",
+          "type": "text",
+          "order": 6,
+          "placeholder": "For example, en_US-lessac",
+          "help": "Sent as the model name with every request. Leave it empty if the server has one model and ignores the name."
+        },
+        {
+          "key": "voices",
+          "label": "Voices",
+          "type": "list",
+          "order": 7,
+          "default": [],
+          "help": "Apps pick a voice by this name, for example “en_US-lessac-medium”. This kind of server does not list its voices, so type each one."
+        },
+        {
+          "key": "default_voice",
+          "label": "Voice when an app names none",
+          "type": "select",
+          "order": 8,
+          "options_from": "voices"
+        },
+        {
+          "key": "headers",
+          "label": "Request headers",
+          "type": "keyvalue",
+          "advanced": true,
+          "group": "Request headers",
+          "order": 10,
+          "default": []
+        },
+        {
+          "key": "connect_timeout_s",
+          "label": "Time to connect",
+          "type": "duration",
+          "advanced": true,
+          "group": "Timeouts",
+          "order": 20,
+          "default": 5,
+          "unit": "seconds"
+        },
+        {
+          "key": "reply_timeout_s",
+          "label": "Time to wait for a reply",
+          "type": "duration",
+          "advanced": true,
+          "group": "Timeouts",
+          "order": 21,
+          "default": 120,
+          "unit": "seconds"
+        },
+        {
+          "key": "lifecycle_mode",
+          "label": "Who starts and stops this server",
+          "type": "select",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 50,
+          "default": "external",
+          "options": [
+            {
+              "value": "external",
+              "label": "Azizam leaves it running (default)"
+            },
+            {
+              "value": "managed",
+              "label": "Azizam starts and stops it"
+            }
+          ]
+        },
+        {
+          "key": "lifecycle_start",
+          "label": "Start command",
+          "type": "text",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 51,
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "lifecycle_stop",
+          "label": "Stop command",
+          "type": "text",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 52,
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "lifecycle_ready_s",
+          "label": "Wait for it to be ready",
+          "type": "duration",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 53,
+          "default": 120,
+          "unit": "seconds",
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        },
+        {
+          "key": "lifecycle_idle_min",
+          "label": "Stop when idle for",
+          "type": "duration",
+          "advanced": true,
+          "owner_only": true,
+          "group": "Start and stop",
+          "order": 54,
+          "default": 0,
+          "unit": "minutes",
+          "show_if": {
+            "field": "lifecycle_mode",
+            "equals": "managed"
+          }
+        }
+      ],
+      "probes": {
+        "primary": {
+          "id": "path",
+          "method": "POST",
+          "path": "{path}",
+          "from": "address",
+          "kind": "declared_path"
+        },
+        "metadata": [],
+        "route_probes": false
+      },
+      "capabilities": [
+        "tts"
+      ],
+      "default_ticked": "declared",
+      "check_rows": [
+        "Reaching the server",
+        "Checking the key",
+        "Calling the path",
+        "Reading the answer"
+      ],
+      "name_fallback": "Text to speech at {host}",
+      "advice": [
+        {
+          "code": "path",
+          "severity": "error",
+          "field": "path",
+          "keep_off": true,
+          "when": {
+            "probe": "path",
+            "status": 404
+          },
+          "title": "Nothing at that path",
+          "what": "The server answered “404 Not Found” at POST {url}.",
+          "why": "It gave the same answer as for a made-up path, so no route exists there.",
+          "fix": "Check the path with whoever set the server up. If the server uses OpenAI-style paths such as /v1/audio/speech, go back and pick “Any OpenAI-compatible server”."
+        },
+        {
+          "code": "path_method",
+          "severity": "error",
+          "field": "path",
+          "keep_off": true,
+          "when": {
+            "probe": "path",
+            "status": 405
+          },
+          "title": "That path does not accept text",
+          "what": "The server answered “405 Method Not Allowed” at POST {url}.",
+          "why": "A path that takes text accepts a POST request. This one does not.",
+          "fix": "Check the path with whoever set the server up."
+        }
+      ],
+      "record": {
+        "protocol": "openai-compatible",
+        "native_passthrough": false,
+        "base_path": ""
+      }
+    }
+  ]
+}

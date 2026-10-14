@@ -289,55 +289,44 @@ the registry is the source of truth after its initial seed.
 deployment mappings. It makes a service's public model names routable and
 round-trips through PATCH without a client-side provider branch.
 
-### GET /admin/api/operator/service-presets
+### Add engine: definitions, check, test, workflow, engine view
 
-Returns optional service-record presets and the canonical capability vocabulary.
-They are operator-configurable data; the UI consumes them without encoding a
-provider catalog or choosing a preferred/default preset.
+The engine preset list is gone. Engine kinds are data in
+`registry/engine_definitions.json`, validated against
+`registry/engine_definitions.schema.json` at load (gateway/engine_admin.py).
 
-`200` →
-```json
-{
-  "presets": [
-    {
-      "id": "custom-http",
-      "label": "Custom HTTP service",
-      "base_path": null,
-      "default_port": null,
-      "protocol": null,
-      "capabilities": ["chat", "completions"],
-      "native_passthrough": true
-    }
-  ],
-  "capabilities": [
-    { "id": "chat", "label": "Chat" },
-    { "id": "completions", "label": "Completions" },
-    { "id": "vision", "label": "Vision" },
-    { "id": "embeddings", "label": "Embeddings" },
-    { "id": "image", "label": "Images" },
-    { "id": "audio", "label": "Audio" },
-    { "id": "speech", "label": "Speech" },
-    { "id": "generations", "label": "Generations" },
-    { "id": "videos", "label": "Videos" }
-  ]
-}
-```
-
-Every preset has: `id`, `label`, `base_path`, `default_port`, `protocol`,
-`capabilities`, and `native_passthrough`. Their order has no product meaning.
-
-`capabilities` is the canonical list of capability identifiers and human labels
-for the service form. Do not fall back to a client-maintained copy. The add
-form starts with no selected preset, handles loading/error/empty responses
-explicitly, and submits only an API-supplied preset selected by the operator.
+- `GET /admin/api/engine-definitions` → `{format_version, definitions, real_tests}`.
+  Each definition has `definition`, `definition_version`, `title`, `example`,
+  `summary`, `flow` (`detect`, `declared`, `workflow`), `steps`, the curated
+  `fields` list, `check_rows`, `check_request` and `capabilities`.
+- `POST /admin/api/engines/check` `{definition, values, service_id?}` → `{check}`:
+  findings (`{code, severity, field, title, what, why, fix, keep_off, action?, details}`),
+  capabilities with a level (`likely`, `possible`, `declared`, `against`, `none`,
+  `needs_key`) and the evidence, models, `suggested_name`. Persists nothing. A
+  stored key is sent only to the address it was stored for.
+- `POST /admin/api/engines/test` `{definition, values, capability, model?, voice?, workflow?, inputs?}`
+  → `{test}`: one tiny real request from the gateway's computer.
+- `POST /admin/api/engines/workflow` `{file, text}` → `{workflow}`: API format or
+  not, the nodes, and a first input mapping.
+- `GET /admin/api/engines/{service_id}` → `{engine}`: the record as typed values,
+  key state (never the key), capabilities, models, tests, last check, other
+  settings and the stored record with secrets shown as `configured`.
 
 ### POST /admin/api/operator/services  (add service)
 
-Request:
+A body that names a `definition` is an Add engine create: `{definition, name,
+values, capabilities?, models?, tests?, acknowledge_warnings?, disabled?}`. The
+gateway re-runs the check and refuses on an error (422 `engine_check_failed`),
+on a warning not acknowledged (409 `engine_check_warnings`) and on an address
+already in use (409 `engine_duplicate`). `disabled` saves it turned off without
+a check. A body without `definition` writes a raw record, as below; `preset` is
+refused.
+
+Request (raw record):
 ```json
 {
   "name": "Text generation",
-  "preset": "custom-http",
+  "protocol": "openai-compatible",
   "base_url": "http://10.0.0.5:8000/api",
   "api_key_env": "TEXT_SERVICE_API_KEY",
   "capabilities": ["chat.completions"],
