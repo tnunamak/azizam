@@ -1226,4 +1226,91 @@ test.each([
 test("HONEST-3 Money keeps other pages' default formatting", () => {
   const { container } = render(<><Money amount={0.014} /><Money amount={0.0000001} /></>);
   expect(container.textContent).toBe("$0.01$0.00");
+
+test("Usage reconciles an unexplained daily remainder into Other without changing the total", async () => {
+  renderUsage({ requests: 9, by_day: [{ date: "2026-10-01", total: 9, chat: 2, image: 3 }] });
+  const chart = await screen.findByTestId("usage-chart");
+  expect(JSON.parse(chart.getAttribute("data-values")!)).toEqual([{ label: "Oct 1", total: 9 }]);
+  await userEvent.setup().click(screen.getByText("View daily totals"));
+  const table = screen.getByRole("table", { name: "Requests by day and task" });
+  expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent))
+    .toEqual(["Date", "Chat", "Make a picture", "Other", "Total"]);
+  expect(within(table).getAllByRole("row").slice(1).map((row) =>
+    within(row).getAllByRole("cell").map((cell) => cell.textContent),
+  )).toEqual([["2", "3", "4", "9"]]);
+});
+
+test("Usage receipt duration changes units at one second and precision at ten seconds", async () => {
+  renderUsage({ receipts: [999, 1000, 1250, 10000].map((duration_ms) => ({
+    request_id: `duration-${duration_ms}`, capability: "chat", duration_ms,
+  })) });
+  await userEvent.setup().click(await screen.findByRole("button", { name: "View recent requests" }));
+  const receipts = screen.getAllByRole("button", { name: "Receipt details for Chat request" });
+  for (const [index, duration] of ["999 ms", "1.0 s", "1.3 s", "10 s"].entries()) {
+    expect(within(receipts[index]).getByText(duration, { exact: true })).toBeVisible();
+  }
+});
+
+test("Usage By task keeps a mixed known and unknown request aggregate and share unknown", async () => {
+  renderUsage({
+    requests: 10,
+    by_model: [
+      { model: "known-chat", capability: "chat", requests: 4, cost_usd: 0.25 },
+      { model: "unknown-chat", capability: "chat", requests: null, cost_usd: 0.5 },
+    ],
+  });
+  const table = await screen.findByRole("table", { name: "By task" });
+  const row = within(table).getByRole("row", { name: /Chat/ });
+  expect(within(row).getAllByRole("cell").map((cell) => cell.textContent))
+    .toEqual(["Chat", "Unknown", "Unknown", "$0.75"]);
+});
+
+test("Usage filtered empty state clears both filters and returns to the period empty state", async () => {
+  renderUsage({
+    requests: 0, media_count: 0,
+    people: [{ id: "person-a", label: "Mira" }],
+    sources: [{ id: "app-a", label: "Open WebUI" }],
+  });
+  const user = userEvent.setup();
+  await screen.findByText("No requests in this period");
+  screen.getByRole("combobox", { name: "Person" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("option", { name: "Mira" }));
+  await screen.findByText("No matching requests");
+  screen.getByRole("combobox", { name: "Source" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("option", { name: "Open WebUI" }));
+  await screen.findByText("No matching requests");
+  expect(screen.queryByRole("link", { name: "Connect an app" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Clear filters" }));
+  expect(await screen.findByText("No requests in this period")).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Everyone");
+  expect(screen.getByRole("combobox", { name: "Source" })).toHaveTextContent("All sources");
+  expect(screen.getByRole("link", { name: "Connect an app" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Clear filters" })).not.toBeInTheDocument();
+});
+
+test("Usage changing person resets a previously selected source in picker and request", async () => {
+  renderUsage({
+    people: [{ id: "person-a", label: "Mira" }],
+    sources: [{ id: "app-a", label: "Open WebUI" }],
+  });
+  const user = userEvent.setup();
+  await screen.findByText("Requests");
+  screen.getByRole("combobox", { name: "Source" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("option", { name: "Open WebUI" }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Source" })).toHaveTextContent("Open WebUI"));
+  screen.getByRole("combobox", { name: "Person" }).focus();
+  await user.keyboard("{Enter}");
+  vi.mocked(fetch).mockClear();
+  await user.click(await screen.findByRole("option", { name: "Mira" }));
+  await waitFor(() => {
+    const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url)).filter((url) => url.includes("/usage/summary"));
+    expect(urls).toHaveLength(1);
+    const params = new URL(urls[0], "https://azizam.test").searchParams;
+    expect(params.get("person")).toBe("person-a");
+    expect(params.get("source")).toBeNull();
+  });
+  expect(screen.getByRole("combobox", { name: "Source" })).toHaveTextContent("All sources");
 });
