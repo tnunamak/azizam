@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { adminFetch, ApiError, api, type AdminFetchInit } from "@/lib/api";
 import { ViewerContext } from "@/components/shell/session";
 import CategoriesPage from "./page";
-import { addPreset, deleteBlocker, itemsIn, moveItem, saveCategory, visibilityText, type Preset } from "./simple";
+import { addPreset, deleteBlocker, itemsIn, moveItem, saveCategory, visibilityText, categoryOf, type Preset } from "./simple";
 import type { CatalogService, Snapshot } from "./editor";
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -56,7 +56,7 @@ const presetList: Preset[] = [
 const active = (snapshot: Snapshot) => ({ revision: 4, parent_revision: 3, active_counter: 4, snapshot, created_at: NOW, activated_at: NOW, author: "usr_owner", reason: "x" });
 
 type Posted = { path: string; body: { base_revision?: number | null; expected_active_revision?: number | null; reason?: string; snapshot?: Snapshot } };
-function mount({ snapshot = rules() as Snapshot | null, role = "owner", fail, presets = presetList }: { snapshot?: Snapshot | null; role?: "owner" | "admin" | "member"; fail?: ApiError; presets?: Preset[] } = {}) {
+function mount({ snapshot = rules() as Snapshot | null, role = "owner", fail, refreshed, failActivation = false, presets = presetList }: { snapshot?: Snapshot | null; role?: "owner" | "admin" | "member"; fail?: ApiError; refreshed?: Snapshot; failActivation?: boolean; presets?: Preset[] } = {}) {
   const posted: Posted[] = [];
   vi.spyOn(api.users, "list").mockResolvedValue([]);
   vi.spyOn(api.apps, "list").mockResolvedValue([]);
@@ -68,7 +68,7 @@ function mount({ snapshot = rules() as Snapshot | null, role = "owner", fail, pr
   fetchCategory.mockImplementation((async (path: string, init?: AdminFetchInit) => {
     if (init?.method === "POST") {
       posted.push({ path, body: init.body as Posted["body"] });
-      if (fail) throw fail;
+      if (fail && (!failActivation || path.endsWith("/activate"))) { if (refreshed) snapshot = refreshed; throw fail; }
       return path.endsWith("/candidates") ? { revision: 5 } : { revision: 5, active_counter: 5 };
     }
     if (path.endsWith("/active")) {
@@ -286,7 +286,7 @@ it("says when the categories changed underneath, and keeps the dialog open", asy
   await user.click(await screen.findByRole("button", { name: "Edit Adult" }));
   const dialog = await screen.findByRole("dialog", { name: "Edit Adult" });
   await user.click(within(dialog).getByRole("button", { name: "Save" }));
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent("The categories changed while you were editing");
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("Categories changed while you were editing");
 });
 
 it("keeps the old access rules under Advanced", async () => {
@@ -333,4 +333,126 @@ it("makes a unique id for a new category and leaves the others alone", () => {
   expect(first.id).toBe("adult-2");
   expect(Object.keys(first.snapshot.categories)).toEqual(["adult", "experimental", "adult-2"]);
   expect(deleteBlocker(rules(), "adult")).toBeNull();
+});
+
+it.each(["None", "Uncategorized"])("reserves the %s category id", (label) => {
+  const first = saveCategory(rules(), { label, description: "", visibility: "owner", plans: [] });
+  expect(first.id).toBe(label.toLowerCase() + "-2");
+  expect(saveCategory(first.snapshot, { label, description: "", visibility: "owner", plans: [] }).id).toBe(label.toLowerCase() + "-3");
+});
+
+it.each(["none", "uncategorized"])("moves into a legacy %s category without clearing membership", async (id) => {
+  const snapshot = rules();
+  snapshot.categories[id] = category(id, "None", "", []);
+  const { posted } = mount({ snapshot });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Move Tile maker" }));
+  const dialog = await screen.findByRole("dialog");
+  const destination = within(dialog).getByRole("radio", { name: "None" });
+  const unfiled = within(dialog).getByRole("radio", { name: "No category" });
+  expect(destination).not.toHaveAttribute("value", unfiled.getAttribute("value"));
+  await user.click(destination);
+  await user.click(within(dialog).getByRole("button", { name: "Move" }));
+  await waitFor(() => expect(posted).toHaveLength(2));
+  expect(categoryOf(posted[0].body.snapshot!, "tiles")).toBe(id);
+});
+
+it("creates None, moves into it, then explicitly moves to No category", async () => {
+  const created = saveCategory(rules(), { label: "None", description: "", visibility: "owner", plans: [] });
+  expect(created.id).toBe("none-2");
+  const { posted } = mount({ snapshot: created.snapshot });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Move Tile maker" }));
+  await user.click(screen.getByRole("radio", { name: "None" }));
+  await user.click(screen.getByRole("button", { name: "Move" }));
+  await waitFor(() => expect(posted).toHaveLength(2));
+  expect(categoryOf(posted[0].body.snapshot!, "tiles")).toBe(created.id);
+  const moved = posted[0].body.snapshot!;
+  cleanup();
+  const second = mount({ snapshot: moved });
+  await user.click(await screen.findByRole("button", { name: "Move Tile maker" }));
+  await user.click(screen.getByRole("radio", { name: "No category" }));
+  await user.click(screen.getByRole("button", { name: "Move" }));
+  await waitFor(() => expect(second.posted).toHaveLength(2));
+  expect(categoryOf(second.posted[0].body.snapshot!, "tiles")).toBeNull();
+});
+
+it.each([true, false])("shows move audiences and warns only when widening: %s", async (widening) => {
+  const snapshot = rules();
+  snapshot.categories.experimental.visible_to = widening ? [] : null;
+  snapshot.categories.adult.visible_to = widening ? null : [];
+  mount({ snapshot });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Move Tile maker" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).queryByText("Only you")).not.toBeNull();
+  expect(within(dialog).getAllByText("Everyone who can use the gateway").length).toBeGreaterThan(0);
+  await user.click(within(dialog).getByRole("radio", { name: "Adult" }));
+  const oldAudience = widening ? "Only you" : "Everyone who can use the gateway";
+  const newAudience = widening ? "Everyone who can use the gateway" : "Only you";
+  expect(within(dialog).getByText("Move Tile maker to Adult. Who can see it changes from " + oldAudience + " to " + newAudience + ".")).toBeVisible();
+  expect(within(dialog).queryByText(/Anyone who could not see/ ) !== null).toBe(widening);
+});
+
+it.each([true, false])("summarises bulk moves and warns only when widening: %s", async (widening) => {
+  const snapshot = rules();
+  snapshot.categories.experimental.visible_to = widening ? [] : null;
+  snapshot.categories.adult.visible_to = widening ? null : [];
+  mount({ snapshot });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Add items to Adult" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.click(within(dialog).getByRole("checkbox", { name: "Tile maker" }));
+  await user.click(within(dialog).getByRole("checkbox", { name: "Chatty" }));
+  expect(within(dialog).queryByText("1 selected item will leave another category.")).not.toBeNull();
+  expect(within(dialog).getByText(/Who can see it: /)).toHaveTextContent(widening ? "Everyone who can use the gateway" : "Only you");
+  expect(within(dialog).queryByText(/Anyone who could not see/) !== null).toBe(widening);
+  await user.click(within(dialog).getByRole("checkbox", { name: "Tile maker" }));
+  expect(within(dialog).getByText("0 selected items will leave another category.")).toBeVisible();
+});
+
+it("resets stale edits to latest fields and blocks an unchanged second save", async () => {
+  const refreshed = rules();
+  refreshed.categories.adult = category("adult", "Latest", "Latest meaning", ["plan_family"]);
+  const { posted } = mount({ fail: new ApiError("stale_base", "stale", 409), refreshed });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Edit Adult" }));
+  await user.type(screen.getByLabelText(/Name/), " old");
+  await user.click(screen.getByRole("radio", { name: /^Everyone/ }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  const dialog = await screen.findByRole("dialog", { name: "Edit Latest" });
+  await waitFor(() => expect(within(dialog).getByLabelText(/Name/)).toHaveValue("Latest"));
+  expect(within(dialog).getByLabelText("What it is for")).toHaveValue("Latest meaning");
+  expect(within(dialog).getByRole("radio", { name: /Me and chosen access plans/ })).toBeChecked();
+  expect(within(dialog).getByRole("checkbox", { name: "Family" })).toBeChecked();
+  expect(within(dialog).getByRole("alert")).toHaveTextContent("Categories changed while you were editing. Review the latest settings before saving.");
+  const save = within(dialog).getByRole("button", { name: "Save" });
+  expect(save).toBeDisabled();
+  await user.click(save);
+  expect(posted).toHaveLength(1);
+  await user.type(within(dialog).getByLabelText(/Name/), " reviewed");
+  expect(save).toBeEnabled();
+});
+
+it("closes a stale editor when its category was deleted", async () => {
+  const refreshed = rules();
+  delete refreshed.categories.adult;
+  const { posted } = mount({ fail: new ApiError("stale_base", "stale", 409), refreshed });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Edit Adult" }));
+  await user.type(screen.getByLabelText(/Name/), " changed");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByRole("dialog") !== null).toBe(false));
+  expect(screen.getByRole("status")).toHaveTextContent("This category was deleted while you were editing.");
+  expect(posted).toHaveLength(1);
+});
+
+it("does not claim a failed activation was definitely unsaved", async () => {
+  const { posted } = mount({ fail: new ApiError("network_error", "lost", 500), failActivation: true });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Edit Adult" }));
+  await user.type(screen.getByLabelText(/Name/), " changed");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("We could not confirm that this change was saved. Reload the categories before trying again.");
+  expect(posted).toHaveLength(2);
 });
