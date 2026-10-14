@@ -880,7 +880,7 @@ _ENV_REFERENCE_PREFIX = "os.environ/"
 _ENDPOINT_KEYS = (
     "base_url", "api_base", "default_base_url", "host", "port", "scheme", "base_path",
 )
-_LIFECYCLE_BASE_KEY = "gateway_lifecycle_base_url"
+LIFECYCLE_BASE_KEY = "gateway_lifecycle_base_url"
 
 
 def service_base_url(config: Mapping[str, Any]) -> str:
@@ -941,7 +941,7 @@ def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
 
 def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[str, str]:
     url = service_base_url(config)
-    return (origin_of(url) or url, str(config.get(_LIFECYCLE_BASE_KEY) or ""))
+    return (origin_of(url) or url, str(config.get(LIFECYCLE_BASE_KEY) or ""))
 
 
 def credential_binding_changes(
@@ -962,8 +962,8 @@ def credential_binding_changes(
         reasons = [path for path, value in refs.items() if prior.get(path) != value]
         config = record.get("config") or {}
         before_config = before.get("config") or {}
-        if config.get(_LIFECYCLE_BASE_KEY) and config.get(_LIFECYCLE_BASE_KEY) != before_config.get(_LIFECYCLE_BASE_KEY):
-            reasons.append(f"config.{_LIFECYCLE_BASE_KEY}")
+        if config.get(LIFECYCLE_BASE_KEY) and config.get(LIFECYCLE_BASE_KEY) != before_config.get(LIFECYCLE_BASE_KEY):
+            reasons.append(f"config.{LIFECYCLE_BASE_KEY}")
         if prior and _endpoint_fingerprint(config) != _endpoint_fingerprint(before_config):
             reasons.append("host")
         if reasons:
@@ -987,7 +987,7 @@ def bind_credential_origins(
         config = record["config"]
         if is_remote_provider_config(config) or not any(config.get(key) for key in CREDENTIAL_REFERENCE_KEYS):
             continue
-        origin = origin_of(str(config.get(_LIFECYCLE_BASE_KEY) or "") or service_base_url(config))
+        origin = origin_of(str(config.get(LIFECYCLE_BASE_KEY) or "") or service_base_url(config))
         if origin:
             config["credential_origin"] = origin
     return out
