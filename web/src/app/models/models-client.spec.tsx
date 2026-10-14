@@ -595,6 +595,65 @@ describe("copying", () => {
   });
 });
 
+describe("Details mutation regressions", () => {
+  it("shows distinct Points to targets once without aliasing Same model as", async () => {
+    renderModels(catalog([row({ id: "route", resolves_to: { chat: "target-a", image: "target-a", audio: "target-b" }, same_model_as: ["sibling"] })], [exact("target-a"), exact("target-b")]));
+    fireEvent.click(await screen.findByRole("button", { name: "route" }));
+    expect(fact("Points to")).toBe("target-a, target-b");
+    expect(fact("Same model as")).toBe("sibling");
+  });
+
+  it("shows Same model as for an exact model without inventing Points to", async () => {
+    renderModels(catalog([], [exact("concrete", { resolves_to: { chat: "internal" }, same_model_as: ["nickname-a", "nickname-b"] })]));
+    fireEvent.click(await screen.findByRole("button", { name: "concrete" }));
+    expect(fact("Same model as")).toBe("nickname-a, nickname-b");
+    expect(fact("Points to")).toBeUndefined();
+  });
+
+  it("copies the selected name after closing Details, never its display title or target", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    renderModels(catalog([row({ id: "provider/name+v2", display_name: "Pretty title", resolves_to: { chat: "different-target" } })]));
+    fireEvent.click(await screen.findByRole("button", { name: "provider/name+v2" }));
+    expect(dialog().getByRole("heading", { name: "provider/name+v2" })).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.click(copyButton("provider/name+v2"));
+    await waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith("provider/name+v2"));
+    expect(await screen.findByText("provider/name+v2 copied")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("keeps the local no-provider-charge price in Details for unrecorded costs", async () => {
+    renderModels(catalog([row({ id: "local-price", locality: "local", cost: { kind: "unknown", price: null } })]));
+    fireEvent.click(await screen.findByRole("button", { name: "local-price" }));
+    expect(fact("Price")).toBe("Local · no provider charge");
+  });
+
+  it("keeps the paid numeric price in Details even on local equipment", async () => {
+    renderModels(catalog([row({ id: "paid-price", locality: "local", cost: { kind: "paid", price: 0.25 } })]));
+    fireEvent.click(await screen.findByRole("button", { name: "paid-price" }));
+    expect(fact("Price")).toBe("Paid · 0.25");
+  });
+
+  it("opens a category-hidden model by deep link without changing the category", async () => {
+    const previousUrl = window.location.href;
+    try {
+      window.history.replaceState(null, "", "?capability=image&model=hidden-chat");
+      renderModels(catalog([row({ id: "hidden-chat", same_model_as: ["draw"] }), task("draw", "image")]));
+      expect(await screen.findByRole("heading", { name: "hidden-chat" })).toBeVisible();
+      expect(fact("Task")).toBe("Chat");
+      expect(fact("Same model as")).toBe("draw");
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("Images");
+      expect(screen.queryByRole("button", { name: "hidden-chat" })).toBeNull();
+      expect(nameButton("draw")).toBeVisible();
+      expect(screen.getByText("1 of 2 model names.")).toBeVisible();
+    } finally {
+      window.history.replaceState(null, "", previousUrl);
+    }
+  });
+});
+
 describe("Details", () => {
   it("lists the facts a person needs, and omits the ones the catalog does not report", async () => {
     renderModels(
