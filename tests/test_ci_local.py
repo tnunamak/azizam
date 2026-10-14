@@ -236,30 +236,42 @@ def test_nightly_red_bypass_needs_a_commit_that_closes_the_issue(world: World) -
     assert "nightly_red_closed\t7" in (world.receipts / f"signoff-{sha}.tsv").read_text()
 
 
-def test_only_the_latest_failed_run_directory_is_kept(world: World) -> None:
-    first = world.run(FAKE_VITEST_STATUS="failed")
-    assert first.returncode == 1
-    [kept] = world.run_dirs()
-    assert f"kept the failed run's directory for debugging: {kept}" in first.stdout
-    second = world.run(FAKE_VITEST_STATUS="failed")
-    assert second.returncode == 1
-    [newer] = world.run_dirs()
-    assert newer != kept and f"debugging: {newer}" in second.stdout
+def test_failed_runs_keep_logs_without_scratch(world: World) -> None:
+    for _ in range(2):
+        result = world.run(FAKE_VITEST_STATUS="failed")
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert world.run_dirs() == []
+        assert (world.receipts / "logs" / "web-unit.log").is_file()
+        assert (world.receipts / "cases.jsonl").is_file()
+        assert not (world.receipts / "test-results").exists()
     assert world.run().returncode == 0
-    assert world.run_dirs() == [newer]
-    assert (world.receipts / "cases.jsonl").is_file()  # receipts live outside the run directory
+    assert world.run_dirs() == []
 
 
-def test_a_killed_runs_directory_goes_at_the_next_start_and_the_kept_failure_stays(world: World) -> None:
-    failed = world.run(FAKE_VITEST_STATUS="failed")
-    [kept] = world.run_dirs()
-    assert f"kept the failed run's directory for debugging: {kept}" in failed.stdout
-    killed = world.home / ".tmp" / "azizam-ci-local.SIGKILLED"
-    (killed / "python").mkdir(parents=True)
-    (killed / ".ci-local-run").touch()
-    (killed / "python" / "copy").write_text("x")
+def test_abandoned_and_legacy_kept_scratch_are_swept(world: World) -> None:
+    root = world.home / ".tmp"
+    for name in ("SIGKILLED", "OLDFAILURE"):
+        directory = root / f"azizam-ci-local.{name}"
+        (directory / "python").mkdir(parents=True)
+        (directory / ".ci-local-run").touch()
+        (directory / "python" / "copy").write_text("x")
+    # A stale legacy pointer is not a reason to keep a complete failed build.
+    (root / "azizam-ci-local.kept").write_text(str(root / "azizam-ci-local.OLDFAILURE"))
+    untouched = root / "azizam-ci-local.UNMARKED"
+    untouched.mkdir()
     assert world.run().returncode == 0
-    assert world.run_dirs() == [kept]
+    assert world.run_dirs() == [untouched]
+
+
+def test_finished_installs_are_released_before_native_journey(world: World) -> None:
+    result = world.run(FAKE_DURING_RUN=(
+        'test ! -d ../web-build/tests/compat/node/node_modules && '
+        'test ! -d ../web-build/integrations/pi/node_modules && '
+        'test -d ../web-build/web/node_modules && '
+        'test -d .ci-fresh-venv && test -d ../python'
+    ))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert world.run_dirs() == []
 
 
 def test_the_gate_compacts_old_receipts_at_start(world: World) -> None:
