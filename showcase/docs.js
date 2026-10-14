@@ -3,6 +3,11 @@
 (() => {
   "use strict";
 
+  // Shared header enhancement preserves the generated docs and search button.
+  const siteScript = document.createElement("script");
+  siteScript.src = "/showcase/static/site.js";
+  document.head.append(siteScript);
+
   const INDEX_URL = "/showcase/docs/search-index.json";
   const status = document.getElementById("copy-status");
 

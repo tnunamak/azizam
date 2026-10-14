@@ -73,10 +73,48 @@ class ShowcaseRouteTests(unittest.TestCase):
             moved = c.request(method, "/showcase?a=1&b=2", follow_redirects=False)
             self.assertEqual((moved.status_code, moved.headers["location"]), (308, "/showcase/?a=1&b=2"))
 
+    def test_examples_page_is_public_and_keeps_data_routes(self) -> None:
+        c = _app(self.examples, deny=True)
+        for method in ("GET", "HEAD"):
+            response = c.request(method, "/showcase/examples/")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["content-type"], "text/html; charset=utf-8")
+            self.assertEqual(response.headers["content-security-policy"], showcase.SHOWCASE_CSP)
+            self.assertEqual(response.headers["cache-control"], "no-cache")
+            if method == "HEAD":
+                self.assertEqual(response.content, b"")
+            moved = c.request(method, "/showcase/examples?kind=chat", follow_redirects=False)
+            self.assertEqual((moved.status_code, moved.headers["location"]),
+                             (308, "/showcase/examples/?kind=chat"))
+        self.assertEqual(c.get("/showcase/examples/index.json").json(), {"object": "list", "data": []})
+        self.assertEqual(c.get("/showcase/api/status").status_code, 401)
+
+    def test_home_is_static_and_gallery_is_on_examples(self) -> None:
+        home = (STATIC / "index.html").read_text(encoding="utf-8")
+        examples = (STATIC / "examples" / "index.html").read_text(encoding="utf-8")
+        self.assertEqual(home.count("<h1"), 1)
+        self.assertEqual(examples.count("<h1"), 1)
+        self.assertEqual(home.count("data-cta"), 2)
+        self.assertIn("Your own</span> AI gateway, shared on your terms.", home)
+        self.assertIn("<h1>See it work</h1>", examples)
+        for target in ('id="status"', 'id="apikey"', '/showcase/static/app.js', '/showcase/static/core.js'):
+            self.assertNotIn(target, home)
+            self.assertIn(target, examples)
+        for page in (home, examples):
+            self.assertIn('class="site-header"', page)
+            self.assertIn('aria-label="Main navigation"', page)
+            self.assertIn('src="/showcase/static/site.js"', page)
+        script = (STATIC / "site.js").read_text(encoding="utf-8")
+        for network in ("fetch(", "XMLHttpRequest", "WebSocket", "sendBeacon"):
+            self.assertNotIn(network, script)
+        self.assertNotIn("Jump to a capability", examples)
+        self.assertIn('class="nav capability-filter"', examples)
+
     def test_page_missing_is_404(self) -> None:
         app = FastAPI()
         app.include_router(showcase.build_showcase_router(static_dir=self.examples, examples_dir=self.examples))
         self.assertEqual(TestClient(app).get("/showcase/").status_code, 404)
+        self.assertEqual(TestClient(app).get("/showcase/examples/").status_code, 404)
 
     def test_static_rejects_unknown_and_traversal(self) -> None:
         c = _app(self.examples)
@@ -85,7 +123,7 @@ class ShowcaseRouteTests(unittest.TestCase):
         self.assertEqual(c.get("/showcase/static/index.html").status_code, 404)
 
     def test_page_uses_no_external_origins(self) -> None:
-        for name in ("index.html", "app.js", "core.js", "showcase.css"):
+        for name in ("index.html", "examples/index.html", "site.js", "app.js", "core.js", "showcase.css"):
             text = (STATIC / name).read_text(encoding="utf-8")
             # Plain <a> links to the docs are navigation; anything the page loads stays same-origin.
             for url in re.findall(r"""(?:\bsrc=|<link\b[^>]*\bhref=)["'](https?://[^"']+)""", text):
@@ -120,7 +158,7 @@ class ShowcaseRouteTests(unittest.TestCase):
 
     def test_public_path_rules(self) -> None:
         pub = showcase.is_public_showcase_path
-        for p in ("/showcase", "/showcase/", "/showcase/static/app.js", "/showcase/examples/index.json", "/showcase/examples/a/b.png"):
+        for p in ("/showcase", "/showcase/", "/showcase/examples", "/showcase/examples/", "/showcase/static/app.js", "/showcase/examples/index.json", "/showcase/examples/a/b.png"):
             self.assertTrue(pub(p), p)
         for p in ("/showcase/api/status", "/showcaseX", "/v1/models", "/gateway/v1/workflows"):
             self.assertFalse(pub(p), p)
