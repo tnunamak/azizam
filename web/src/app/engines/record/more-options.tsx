@@ -121,7 +121,7 @@ export function MoreOptions({
       onToggle={(event) => onOpenChange(event.currentTarget.open)}
       className="bg-card rounded-panel scroll-mt-20 border"
     >
-      <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-2 px-4 py-3">
+      <summary className="flex min-h-12 cursor-pointer flex-wrap items-center justify-between gap-2 px-4 py-3">
         <span className="text-heading">More options</span>
         {n ? <Tag tone="changed">{n} changed from default</Tag> : <Tag>All defaults</Tag>}
       </summary>

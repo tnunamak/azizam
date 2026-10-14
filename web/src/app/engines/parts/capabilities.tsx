@@ -192,7 +192,7 @@ export function CapabilityList({
         const testable = !unchecked && !readOnly && onTest && (on || row.level === "possible");
         return (
           <div key={row.id} className="flex flex-col gap-2 p-4">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <label className="text-body flex min-h-8 cursor-pointer items-center gap-3 font-medium max-sm:min-h-11">
                 <Checkbox
                   aria-label={row.label}

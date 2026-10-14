@@ -6,7 +6,7 @@
  * the model name, or the workflow inputs), then name and create. Every field
  * label, help line, check row and capability comes from the definition.
  */
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleCheck, Circle, Loader2 } from "lucide-react";
 import { ApiError, queryKeys, type ServiceRegistry } from "@/lib/api";
@@ -124,9 +124,27 @@ export function AddEngineDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {open && <Wizard onAdded={onAdded} onOpenEngine={onOpenEngine} checkRevealMs={checkRevealMs} />}
+      {open && (
+        <ReturnFocusScope>
+          <Wizard onAdded={onAdded} onOpenEngine={onOpenEngine} checkRevealMs={checkRevealMs} />
+        </ReturnFocusScope>
+      )}
     </Dialog>
   );
+}
+
+/*
+ * Each step mounts its own dialog content, so the dialog cannot remember what
+ * opened it. The element that had focus when the wizard mounted (the Add engine
+ * button) gets it back when the dialog closes.
+ */
+const ReturnFocus = createContext<HTMLElement | null>(null);
+
+function ReturnFocusScope({ children }: { children: ReactNode }) {
+  const [returnTo] = useState<HTMLElement | null>(() =>
+    typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null),
+  );
+  return <ReturnFocus.Provider value={returnTo}>{children}</ReturnFocus.Provider>;
 }
 
 function Wizard({
@@ -1021,8 +1039,18 @@ function Wizard({
 }
 
 function Frame({ step, stepName, footer, children }: { step: number; stepName: string; footer: ReactNode; children: ReactNode }) {
+  const returnTo = useContext(ReturnFocus);
   return (
-    <DialogContent aria-describedby={undefined} className="flex! max-h-[85dvh] flex-col gap-0! overflow-hidden p-0 sm:max-w-2xl">
+    <DialogContent
+      aria-describedby={undefined}
+      className="flex! max-h-[85dvh] flex-col gap-0! overflow-hidden p-0 sm:max-w-2xl"
+      onCloseAutoFocus={(event) => {
+        if (returnTo?.isConnected) {
+          event.preventDefault();
+          returnTo.focus();
+        }
+      }}
+    >
       <div className="shrink-0 px-6 pt-5 pr-14 pb-3">
         <DialogTitle className="text-heading">Add engine</DialogTitle>
         <p className="text-meta text-muted-foreground mt-0.5">
