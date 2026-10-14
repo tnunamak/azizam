@@ -21,7 +21,6 @@ from gateway.admin_oidc import (  # noqa: E402
     SessionError,
     StateRecord,
     access_names_from_oidc_claims,
-    admin_role_from_oidc_claims,
     authorization_url,
     bootstrap_admin_role,
     consume_state,
@@ -49,7 +48,6 @@ def make_config(**overrides) -> OIDCConfig:
         "client_secret": "shh",
         "redirect_uri": "https://proxy.example.com/admin/callback",
         "scopes": ("openid", "email", "profile"),
-        "allowed_email_domains": frozenset(),
         "admin_emails": frozenset(),
         "signing_key": SIGNING_KEY,
         "authorization_endpoint": "https://idp.example.com/authorize",
@@ -106,7 +104,8 @@ class TestConfigLoad(unittest.TestCase):
         self.assertEqual(cfg.client_secret, "from-env")
         self.assertEqual(cfg.signing_key, b"k" * 40)
 
-    def test_loads_oidc_admin_groups_and_roles_exactly(self) -> None:
+    def test_the_old_allow_lists_are_not_config_any_more(self) -> None:
+        """Who may sign in is a sign-in rule (gateway.signin_rules); old keys are not read."""
         cfg = load_oidc_config(
             {
                 "enabled": True,
@@ -117,30 +116,11 @@ class TestConfigLoad(unittest.TestCase):
                 "signing_key": "a" * 32,
                 "admin_groups": ["/Trusted Users"],
                 "admin_roles": ["trusted-admins"],
+                "allowed_email_domains": ["example.com"],
             }
         )
-        self.assertEqual(cfg.admin_groups, frozenset({"/Trusted Users"}))
-        self.assertEqual(cfg.admin_roles, frozenset({"trusted-admins"}))
-
-    def test_loads_oidc_admin_groups_and_roles_from_env(self) -> None:
-        cfg = load_oidc_config(
-            {
-                "enabled": True,
-                "issuer": "https://i",
-                "client_id": "c",
-                "client_secret": "s",
-                "redirect_uri": "https://x/cb",
-                "signing_key": "a" * 32,
-                "admin_groups_env": "ADMIN_GROUPS",
-                "admin_roles_env": "ADMIN_ROLES",
-            },
-            env={
-                "ADMIN_GROUPS": "/Trusted, trusted users",
-                "ADMIN_ROLES": "trusted-admins",
-            },
-        )
-        self.assertEqual(cfg.admin_groups, frozenset({"/Trusted", "trusted users"}))
-        self.assertIn("trusted-admins", cfg.admin_roles)
+        for name in ("admin_groups", "admin_roles", "allowed_email_domains"):
+            self.assertFalse(hasattr(cfg, name), name)
 
     def test_scopes_must_include_openid(self) -> None:
         with self.assertRaises(OIDCConfigError):
@@ -359,50 +339,12 @@ class TestIDTokenClaims(unittest.TestCase):
                 expected_nonce="NONCE",
             )
 
-    def test_domain_allow_list(self) -> None:
-        cfg = make_config(allowed_email_domains=frozenset({"example.com"}))
-        validate_id_token_claims(self._claims(), config=cfg, expected_nonce="NONCE")
-        with self.assertRaises(IDTokenClaimsError):
-            validate_id_token_claims(
-                self._claims(email="bob@other.com"),
-                config=cfg,
-                expected_nonce="NONCE",
-            )
-
-    def test_admin_email_allow_list(self) -> None:
+    def test_the_token_check_does_not_decide_who_may_sign_in(self) -> None:
+        """Any verified email passes the shape check; sign-in rules decide the rest."""
         cfg = make_config(admin_emails=frozenset({"alice@example.com"}))
-        validate_id_token_claims(self._claims(), config=cfg, expected_nonce="NONCE")
-        with self.assertRaises(IDTokenClaimsError):
-            validate_id_token_claims(
-                self._claims(email="bob@example.com"),
-                config=cfg,
-                expected_nonce="NONCE",
-            )
+        validate_id_token_claims(self._claims(email="bob@other.com"), config=cfg, expected_nonce="NONCE")
 
-    def test_configured_admin_group_is_an_allow_list_path(self) -> None:
-        cfg = make_config(
-            admin_emails=frozenset({"alice@example.com"}),
-            admin_groups=frozenset({"trusted"}),
-        )
-        validate_id_token_claims(
-            self._claims(email="simon@example.com", groups=["/trusted"]),
-            config=cfg,
-            expected_nonce="NONCE",
-        )
-
-    def test_unmatched_admin_group_does_not_bypass_allow_list(self) -> None:
-        cfg = make_config(
-            admin_emails=frozenset({"alice@example.com"}),
-            admin_groups=frozenset({"trusted"}),
-        )
-        with self.assertRaises(IDTokenClaimsError):
-            validate_id_token_claims(
-                self._claims(email="simon@example.com", groups=["/Everyone"]),
-                config=cfg,
-                expected_nonce="NONCE",
-            )
-
-    def test_open_allow_list_permits_anyone(self) -> None:
+    def test_any_email_passes_the_shape_check(self) -> None:
         cfg = make_config()
         validate_id_token_claims(
             self._claims(email="random@anywhere.io"),
@@ -565,36 +507,7 @@ class TestBootstrapRole(unittest.TestCase):
         ), AdminRole.NONE)
 
 
-class TestOIDCClaimRole(unittest.TestCase):
-    def test_group_claim_can_grant_admin(self) -> None:
-        cfg = make_config(admin_groups=frozenset({"/local-ai/trusted-users"}))
-        role = admin_role_from_oidc_claims(
-            {"groups": ["/local-ai/trusted-users"]},
-            config=cfg,
-        )
-        self.assertEqual(role, AdminRole.ADMIN)
-
-    def test_realm_role_claim_can_grant_admin(self) -> None:
-        cfg = make_config(admin_roles=frozenset({"trusted"}))
-        role = admin_role_from_oidc_claims(
-            {"realm_access": {"roles": ["trusted"]}},
-            config=cfg,
-        )
-        self.assertEqual(role, AdminRole.ADMIN)
-
-    def test_client_role_claim_can_grant_admin(self) -> None:
-        cfg = make_config(client_id="azizam", admin_roles=frozenset({"trusted"}))
-        role = admin_role_from_oidc_claims(
-            {
-                "resource_access": {
-                    "azizam": {"roles": ["trusted"]},
-                    "other-client": {"roles": ["trusted"]},
-                }
-            },
-            config=cfg,
-        )
-        self.assertEqual(role, AdminRole.ADMIN)
-
+class TestOIDCClaimNames(unittest.TestCase):
     def test_access_names_from_claims_preserves_exact_runtime_mapping_inputs(self) -> None:
         names = access_names_from_oidc_claims(
             {
@@ -610,14 +523,6 @@ class TestOIDCClaimRole(unittest.TestCase):
         self.assertEqual(names["oidc_group"], ("/local-ai/trusted-users",))
         self.assertEqual(names["oidc_role"], ("Power Users", "video-team"))
         self.assertNotIn("ignored", names["oidc_role"])
-
-    def test_unconfigured_claims_do_not_grant_admin(self) -> None:
-        cfg = make_config(admin_groups=frozenset({"trusted-users"}))
-        role = admin_role_from_oidc_claims(
-            {"groups": ["/everyone"]},
-            config=cfg,
-        )
-        self.assertEqual(role, AdminRole.NONE)
 
 
 if __name__ == "__main__":
