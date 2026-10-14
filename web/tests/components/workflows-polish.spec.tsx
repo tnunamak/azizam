@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import WorkflowsPage from "@/app/workflows/page";
@@ -228,7 +228,7 @@ it("keeps available workflow Run links unchanged on cards and in details", async
   expect(sheet.getByRole("link", { name: "Open in Try" })).toHaveAttribute("href", "/try?workflow=image.product-render");
 });
 
-it("updates an open details sheet when a refresh makes its workflow unavailable", async () => {
+it("closes a member's open details sheet when a refresh makes its workflow unavailable", async () => {
   const user = userEvent.setup();
   let available = true;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) =>
@@ -252,13 +252,10 @@ it("updates an open details sheet when a refresh makes its workflow unavailable"
   await act(async () => {
     await client.refetchQueries({ queryKey: ["workflows", "catalog"] });
   });
-  const sheetRun = await within(screen.getByRole("dialog", { name: "Product render" }))
-    .findByRole("button", { name: "Open in Try" });
-  expect(sheetRun).toBeDisabled();
-  expect(sheetRun.nextElementSibling).toHaveTextContent(
-    "Not available right now. The person who manages Azizam can set it up.",
-  );
-  expect(sheetRun.nextElementSibling).not.toHaveTextContent(/Unavailable/);
+  // A member has nothing to do about a workflow that is not set up: the sheet
+  // closes with it instead of staying open on a disabled button.
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Product render" })).toBeNull());
+  expect(screen.queryByRole("listitem", { name: "Product render" })).toBeNull();
   client.clear();
 });
 

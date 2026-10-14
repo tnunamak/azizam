@@ -1718,7 +1718,8 @@ describe("Workflows catalog, detail and API branch regressions", () => {
     expect(recent.getByText("0.0 s")).toBeVisible();
     expect(recent.getByText("Model", { exact: true })).toBeVisible();
     expect(recent.getByText("Workflow", { exact: true })).toBeVisible();
-    expect(recent.getByText(workflows[0].id, { exact: true })).toBeVisible();
+    expect(recent.getByText(workflows[0].title, { exact: true })).toBeVisible();
+    if (viewer.role !== "owner") expect(recent.queryByText(workflows[0].id, { exact: true })).toBeNull();
     const receipt = recent.getByRole("link", { name: "View receipt" });
     expect(gapHref(receipt).pathname.replace(/\/$/, "")).toBe("/usage");
     expect(gapHref(receipt).searchParams.get("receipt")).toBe(requestId);
@@ -1732,6 +1733,7 @@ describe("Workflows catalog, detail and API branch regressions", () => {
       expect(disclosure).not.toHaveAttribute("open");
       await user.click(summary);
       expect(within(disclosure).getByText("example-model-raw", { exact: true })).toBeVisible();
+      expect(within(disclosure).getByText(workflows[0].id, { exact: true })).toBeVisible();
     } else {
       expect(recent.queryByText("Technical details", { exact: true })).toBeNull();
       expect(region.querySelector("details")).toBeNull();
@@ -2068,4 +2070,15 @@ describe("Workflows catalog, detail and API branch regressions", () => {
       "Workflow data could not be loaded. Try again.",
     );
   });
+});
+
+test("recent creations omit unmatched workflow names for members", async () => {
+  const user = userEvent.setup();
+  gapServe(undefined, () => Response.json({ assets: [gapAsset({ workflow: "unknown-private-workflow" })] }));
+  gapMount();
+  const sheet = await gapOpen(user);
+  const recent = within(sheet.getByRole("region", { name: "Recent creations" }));
+  await recent.findByText("Image output");
+  expect(recent.queryByText("Workflow", { exact: true })).toBeNull();
+  expect(recent.queryByText("unknown-private-workflow")).toBeNull();
 });
