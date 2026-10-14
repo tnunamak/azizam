@@ -6,7 +6,7 @@ import { Requests, ResultsStatus } from "./requests";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { History, ChevronRight } from "lucide-react";
 import { api, type AuditEntry } from "@/lib/api";
-import { auditDescription, auditTargetName } from "@/lib/audit-description";
+import { auditDescription } from "@/lib/audit-description";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -60,7 +60,7 @@ function changedName(entry: AuditEntry) {
     runtime_profile_mapping: "Access assignment",
     app: "App",
   };
-  return labels[entry.target_kind ?? ""] ?? auditTargetName(entry);
+  return labels[entry.target_kind ?? ""] ?? "Item";
 }
 
 function personLabel(person: {
@@ -307,8 +307,8 @@ export default function ActivityPage() {
               >
                 <span>
                   {showAutomated
-                    ? `Showing ${automatedCount} automated changes`
-                    : `${automatedCount} automated changes hidden`}
+                    ? `Showing ${automatedCount} automated ${automatedCount === 1 ? "change" : "changes"}`
+                    : `${automatedCount} automated ${automatedCount === 1 ? "change" : "changes"} hidden`}
                 </span>
                 <Button
                   variant="outline"
