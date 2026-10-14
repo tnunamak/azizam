@@ -505,9 +505,15 @@ def _migrate_to_access_plans(conn: sqlite3.Connection) -> None:
         raise
     finally:
         conn.execute("PRAGMA foreign_keys=ON")
-    for line in report.lines():
-        print(f"[admin_store] {line}", flush=True)
-    print(f"[admin_store] the database before this change is at {backup}", flush=True)
+    # Detailed reports contain user-controlled names and account identifiers.
+    # Keep only aggregate operational facts in process logs.
+    counts = {name: len(items) for name, items in report.as_dict().items()}
+    print(
+        "[admin_store] Access plans migration (schema 7) completed: "
+        + ", ".join(f"{name}={count}" for name, count in counts.items()),
+        flush=True,
+    )
+    print("[admin_store] pre-migration database backup is available beside the database", flush=True)
 
 
 def _backfill_credential_creators(conn: sqlite3.Connection) -> None:
