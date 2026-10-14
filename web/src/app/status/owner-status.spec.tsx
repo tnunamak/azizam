@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { UptimeBar } from "@/components/product/uptime-bar";
 import {
   cleanup,
   render,
@@ -896,7 +897,8 @@ it.each([
   await screen.findByRole("heading", { name: "Needs attention" });
   const row = await visibleChatRow();
   expect(within(row).getByText(word, { exact: true })).toBeVisible();
-  expect(within(row).queryByText("Down", { exact: true })).toBeNull();
+  const currentState = within(row).getAllByRole("cell").at(-1)!;
+  expect(within(currentState).queryByText("Down", { exact: true })).toBeNull();
   expect(within(row).queryByText(last_error, { exact: true })).toBeNull();
   await userEvent.click(within(row).getByRole("button", { name: "Local chat" }));
   const sheet = screen.getByRole("dialog", { name: "Local chat" });
@@ -1047,7 +1049,8 @@ it("honesty: a failed engine reports Down and its unavailable capability", async
   mount(engineSnapshot({ observation: "down", tone: "bad", last_error: null }));
   expect(await screen.findByRole("heading", { name: "Chat is unavailable right now" })).toBeVisible();
   const row = await visibleChatRow();
-  expect(within(row).getByText("Down", { exact: true })).toBeVisible();
+  const currentState = within(row).getAllByRole("cell").at(-1)!;
+  expect(within(currentState).getByText("Down", { exact: true })).toBeVisible();
   expect(row).not.toHaveTextContent(/Ready|Off|Degraded/);
 });
 
@@ -1076,4 +1079,60 @@ it("honesty: a slow engine stays degraded without claiming its capability is una
   expect(within(row).getByText("Degraded", { exact: true })).toBeVisible();
   expect(screen.getByRole("status")).toHaveTextContent("Chat degraded");
   expect(screen.queryByRole("heading", { name: /Chat is unavailable right now/ })).toBeNull();
+});
+
+it("labels every history segment with its time range and worst state, with a matching down pattern", () => {
+  const end = new Date(2026, 9, 14, 1, 30).getTime() / 1000;
+  const start = end - 24 * 3600;
+  render(<UptimeBar label="History" end={end} series={[
+    [start + 1800, 1],
+    [start + 3600 + 1800, 0.5],
+    [start + 7200 + 900, 1],
+    [start + 7200 + 1800, 0],
+    [end, 1],
+  ]} />);
+  const history = screen.getByRole("group", { name: /History: 2 of 4 checked hours up/ });
+  const segments = within(history).getAllByRole("img");
+  expect(segments).toHaveLength(24);
+  const time = (ts: number) => new Date(ts * 1000).toLocaleString(undefined, {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short",
+  });
+  segments.forEach((segment, index) => {
+    const state = index === 0 || index === 23 ? "up" : index === 1 ? "degraded" : index === 2 ? "down" : "no check";
+    const range = `${time(start + index * 3600)} to ${time(start + (index + 1) * 3600)}: ${state}`;
+    expect(segment).toHaveAccessibleName(range);
+    expect(segment).toHaveAttribute("title", range);
+  });
+  for (const word of ["Up", "Degraded", "Down", "No check"]) {
+    expect(screen.getByText(word, { exact: true })).toBeVisible();
+  }
+  const down = segments[2] as HTMLElement;
+  expect(down.style.backgroundImage).toContain("repeating-linear-gradient");
+  expect(screen.getByText("Down", { exact: true }).querySelector("span")?.style.backgroundImage).toBe(down.style.backgroundImage);
+  expect((segments[1] as HTMLElement).style.backgroundImage).toBe("");
+  expect((segments[0] as HTMLElement).style.backgroundImage).toBe("");
+});
+
+it("keeps unobserved history explicit rather than reporting it up", () => {
+  const end = 1_800_000_000;
+  render(<UptimeBar label="History" end={end} series={[[NaN, 0], [end, NaN], [end - 86401, 0]]} />);
+  const history = screen.getByRole("group", { name: "History: no checks recorded in the last 24 hours" });
+  expect(within(history).getAllByRole("img", { name: /: no check$/ })).toHaveLength(24);
+  expect(screen.getByText("No check", { exact: true })).toBeVisible();
+  expect(screen.queryByText("Up", { exact: true })).toBeNull();
+  expect(screen.queryByText("Down", { exact: true })).toBeNull();
+});
+
+it("updates disabled history labels and legend without retaining down cues", () => {
+  const end = 1_800_000_000;
+  const { rerender } = render(<UptimeBar label="History" end={end} series={[[end, 0]]} />);
+  expect(screen.getByRole("img", { name: /: down$/ })).toBeInTheDocument();
+  rerender(<UptimeBar label="History" end={end} series={[[end, 0]]} enabled={false} />);
+  const history = screen.getByRole("group", { name: "History: turned off" });
+  const segments = within(history).getAllByRole("img", { name: /: turned off$/ });
+  expect(segments).toHaveLength(24);
+  segments.forEach((segment) => expect((segment as HTMLElement).style.backgroundImage).toBe(""));
+  expect(screen.getByText("Turned off", { exact: true })).toBeVisible();
+  expect(screen.queryByText("Down", { exact: true })).toBeNull();
+  expect(screen.queryByText("No check", { exact: true })).toBeNull();
 });

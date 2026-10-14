@@ -642,7 +642,7 @@ describe("WP-20 shared widgets", () => {
   it("keeps empty and invalid health samples as gaps", () => {
     expect(hourSlots([[1, Number.NaN]], 3600).every((slot) => slot.value === null)).toBe(true);
     render(<UptimeBar series={[]} end={86400} label="Engine" />);
-    expect(screen.getByRole("img")).toHaveAttribute("aria-label", "Engine: no checks recorded in the last 24 hours");
+    expect(screen.getByRole("group")).toHaveAttribute("aria-label", "Engine: no checks recorded in the last 24 hours");
   });
 });
 
