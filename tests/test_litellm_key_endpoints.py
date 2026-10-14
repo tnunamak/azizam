@@ -131,15 +131,24 @@ def test_create_rejects_invalid_input_before_the_sidecar(sidecar, body, code) ->
 def test_delete_forwards_keys_and_aliases(sidecar, body, target) -> None:
     sidecar.serve("key-delete", target=target, deleted=target.get("keys", []))
 
-    response = sidecar.gateway().post(f"{KEYS}/delete", headers=ADMIN, json=body)
+    response = sidecar.gateway().post(f"{KEYS}/delete", headers=OWNER, json=body)
 
     assert response.status_code == 200, response.text
     assert response.json() == {"deleted": {"deleted_keys": target.get("keys", [])}}
     assert sidecar.fake.calls("delete")[0].json == target
 
 
+def test_delete_is_owner_only_and_never_reaches_the_sidecar_for_an_administrator(sidecar) -> None:
+    gateway = sidecar.gateway()  # no scenario served: any sidecar call would fail
+
+    response = gateway.post(f"{KEYS}/delete", headers=ADMIN, json={"keys": ["sk-1"]})
+
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "owner_required"
+
+
 def test_delete_requires_a_target(sidecar) -> None:
-    response = sidecar.gateway().post(f"{KEYS}/delete", headers=ADMIN, json={})
+    response = sidecar.gateway().post(f"{KEYS}/delete", headers=OWNER, json={})
 
     assert response.status_code == 400, response.text
 
