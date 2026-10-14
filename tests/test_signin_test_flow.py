@@ -12,7 +12,7 @@ import pytest
 from gateway import accounts, admin_store, signin_api, signin_test
 from tests.support.access import store_plan
 from tests.test_signin_settings_api import (  # noqa: F401  (sg is a fixture)
-    HELPER, ISSUER, get_snapshot, helper_client, owner_client, preview, proposal, provider_off, rule, save, sg,
+    HELPER, ISSUER, csrf_for, get_snapshot, helper_client, owner_client, preview, proposal, provider_off, rule, save, sg,
     user_id,
 )
 from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
@@ -20,11 +20,6 @@ from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixtu
 )
 
 OTHER_ISSUER = "https://id2.example/realms/home"
-
-
-def csrf_for(client):
-    """The token of whoever is signed in: with the provider or with a password."""
-    return {"x-azizam-csrf": client.get("/admin/api/session").json()["actor"]["csrf_token"]}
 
 
 @pytest.fixture(autouse=True)
@@ -277,7 +272,8 @@ def test_an_unverified_email_is_named(sg):
 
 def test_an_address_that_cannot_be_reached_fails_at_once_and_the_popup_just_closes(sg):
     owner = owner_client(sg)
-    test = begin(owner, get_snapshot(owner), address="https://down.example/realms/home")
+    test = begin(owner, get_snapshot(owner), address="https://down.example/realms/home",
+                 authorization_endpoint="", token_endpoint="", jwks_uri="")
 
     result = status(owner, test)
     page = owner.get(test["start_url"], follow_redirects=False)

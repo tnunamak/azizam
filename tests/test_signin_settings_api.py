@@ -10,8 +10,13 @@ import pytest
 from gateway import accounts, admin_store, signin_admin, signin_test
 from tests.support.access import store_plan
 from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
-    OWNER, SIGNING_KEY, TRUSTED, csrf_for, domain_rule, gateway, roles_of, signed_in,
+    OWNER, SIGNING_KEY, TRUSTED, domain_rule, gateway, roles_of, signed_in,
 )
+
+def csrf_for(client):
+    """The token of whoever is signed in: with the provider or with a password."""
+    return {"x-azizam-csrf": client.get("/admin/api/session").json()["actor"]["csrf_token"]}
+
 
 HELPER = "helper@example.test"
 ISSUER = "https://id.example/realms/home"

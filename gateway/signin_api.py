@@ -400,13 +400,14 @@ def create_signin_api(
             raise SignInError("address_invalid", "Fix the provider address first.")
         if not provider.client_id.strip():
             raise SignInError("client_id_required", "Enter the client ID first.")
-        typed, secret = typed_config(request, saved, provider, enabled=True)
+        typed, secret = typed_config(request, saved, provider, enabled=False)
         if not secret:
             raise SignInError("client_secret_required", "Enter the client secret first.")
         signature = signin_test.connection_signature(signature_key(), typed, secret)
         found = discover(provider.address)
         cfg = replace(
             typed,
+            enabled=True,
             authorization_endpoint=typed.authorization_endpoint or found["authorization_endpoint"],
             token_endpoint=typed.token_endpoint or found["token_endpoint"],
             jwks_uri=typed.jwks_uri or found["jwks_uri"],
