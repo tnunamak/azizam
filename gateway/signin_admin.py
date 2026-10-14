@@ -179,7 +179,7 @@ def people_facts(path: Path, *, now: int | None = None) -> list[PersonFacts]:
             is_owner=any(g["role"] == "owner" for g in held),
             disabled=state is not None and state["disabled_at"] is not None,
             has_password=uid in passwords,
-            claims=Claims(email=email, groups=tuple(sorted(groups.get(uid, []))),
+            claims=Claims(email=email if uid in verified else "", groups=tuple(sorted(groups.get(uid, []))),
                           roles=tuple(sorted(roles.get(uid, [])))),
             plan_id=plan_id,
             plan_is_rule=bool(plan_id and rule_plans.get(uid) == plan_id),
@@ -200,8 +200,11 @@ def claim_view(claims: Mapping[str, Any], *, client_id: str, groups_claim: str) 
     from gateway.admin_oidc import access_names_from_oidc_claims
 
     names = access_names_from_oidc_claims(claims, client_id=client_id, groups_claim=groups_claim)
+    # Only an email the provider vouches for can match an email or domain rule, or an invitation:
+    # an absent claim often means the provider lets people edit their own address.
+    verified = claims.get("email_verified") is True
     return Claims(
-        email=str(claims.get("email") or "").strip().lower(),
+        email=str(claims.get("email") or "").strip().lower() if verified else "",
         groups=tuple(names["oidc_group"]),
         roles=tuple(names["oidc_role"]),
     )
@@ -384,7 +387,7 @@ def preview(path: Path, before: World, after: World, plans: Mapping[str, str]) -
             can_b = can_sign_in(before, person, ob)
             can_a = person.is_owner or bool(person.has_password and after.password)
             admin_a = False
-            plan_a = person.plan_id if not person.plan_is_rule else None
+            plan_a = person.plan_id  # the old accounts keep their plans
         else:
             can_b = can_sign_in(before, person, ob)
             can_a = can_sign_in(after, person, oa)
@@ -423,6 +426,8 @@ def preview(path: Path, before: World, after: World, plans: Mapping[str, str]) -
 def _plan_after(person: PersonFacts, outcome: Outcome, can_after: bool) -> str | None:
     if person.plan_id and not person.plan_is_rule:
         return person.plan_id  # set by hand or by an invitation: rules never touch it
+    if not person.provider_issuers:
+        return person.plan_id  # a person who only uses a password is not a rules person
     if not can_after or not outcome.admitted:
         return None
     return outcome.plan if outcome.plan_from == "rule" else None
@@ -519,7 +524,7 @@ def apply_changes(
             admin_store.reconcile_oidc_admin_roles(person.id, set(), path=path)
         if kept_out:
             end_provider_access(person.id)
-        if not moved:
+        if not moved and person.provider_issuers:
             sync_rule_plan(path, person.id, oa if can_a else _no_plan(oa))
     return removed
 

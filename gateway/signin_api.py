@@ -223,25 +223,44 @@ def create_signin_api(
     def plan_map(path: Path) -> dict[str, str]:
         return signin_admin.plan_names(path)
 
+    def same_destination(saved: OIDCConfig, body: ConnectionBody) -> bool:
+        """The saved secret may go only where it was already going: the same provider host and endpoints."""
+        if not saved.issuer or _host(body.address) != _host(saved.issuer):
+            return False
+        pairs = ((body.authorization_endpoint, saved.authorization_endpoint),
+                 (body.token_endpoint, saved.token_endpoint), (body.jwks_uri, saved.jwks_uri))
+        return all(not typed.strip() or typed.strip() == kept for typed, kept in pairs)
+
     def typed_config(request: Request, saved: OIDCConfig, body: ConnectionBody, *, enabled: bool) -> tuple[OIDCConfig, str]:
-        """The connection as typed (overrides only, no discovery), and its secret."""
-        secret = body.client_secret.strip() or saved.client_secret
-        key = signing_key_provider() or b"\0" * 32
+        """The connection as typed (overrides only, no discovery), and its secret.
+
+        A blank secret means the saved one, but only for the same destination: a new
+        address needs the secret typed again, so a typed address cannot collect it.
+        """
+        secret = body.client_secret.strip() or (saved.client_secret if same_destination(saved, body) else "")
+        key = signature_key()
         scopes = _split_scopes(body.scopes) or tuple(DEFAULT_SCOPES.split())
         return OIDCConfig(
             enabled=enabled, display_name=body.name.strip(), issuer=body.address.strip(), client_id=body.client_id.strip(),
             client_secret=secret, redirect_uri=callback_url(request, saved), scopes=scopes, admin_emails=frozenset(),
-            signing_key=key if len(key) >= 32 else b"\0" * 32, cookie=saved.cookie,
+            signing_key=key, cookie=saved.cookie,
             authorization_endpoint=body.authorization_endpoint.strip(), token_endpoint=body.token_endpoint.strip(),
             jwks_uri=body.jwks_uri.strip(), clock_skew_seconds=int(body.clock_skew_seconds),
             groups_claim=body.groups_claim.strip() or DEFAULT_GROUPS_CLAIM,
         ), secret
 
     def signature_key() -> bytes:
-        return signing_key_provider() or b"\0" * 32
+        key = signing_key_provider()
+        if not key or len(key) < 32:
+            raise SignInError("sessions_unavailable", "Browser sessions are unavailable.", 503)
+        return key
 
     def saved_signature(saved: OIDCConfig) -> str:
         return signin_test.connection_signature(signature_key(), saved, saved.client_secret)
+
+    def instance_owner(path: Path) -> "signin_admin.PersonFacts | None":
+        """The person who is the owner. Keys and passwords answer to a person, not to a key's account."""
+        return next((p for p in signin_admin.people_facts(path) if p.is_owner), None)
 
     def tested_before(path: Path, signature: str) -> bool:
         """This exact connection already passed a test (the saved one, or one saved for later)."""
@@ -334,9 +353,9 @@ def create_signin_api(
         if not after.password and not after.provider:
             found.append({"code": "both_methods_off",
                           "message": "Keep at least one way to sign in turned on."})
-        if not after.provider:
-            owner = next((p for p in signin_admin.people_facts(path) if p.id == user_id), None)
-            if owner is not None and owner.is_owner and not owner.has_password and saved.provider:
+        if not after.provider and saved.provider:
+            owner = instance_owner(path)
+            if owner is not None and not owner.has_password:
                 found.append({"code": "owner_needs_password",
                               "message": "Set a password for yourself first, so you can still get in."})
         if (after.provider or provider.address.strip()) and not _valid_address(provider.address):
@@ -521,19 +540,22 @@ def create_signin_api(
             raise SignInError("incomplete_rule", "Finish or remove the new rule first.", 409)
         if not after.password and not after.provider:
             raise SignInError("last_sign_in_method", "Keep at least one way to sign in turned on.", 409)
-        owner = next((p for p in signin_admin.people_facts(path) if p.id == ctx.audit_actor_id), None)
-        if not after.provider and saved.provider and owner is not None and owner.is_owner and not owner.has_password:
+        owner = instance_owner(path)
+        if not after.provider and saved.provider and owner is not None and not owner.has_password:
             raise SignInError("owner_needs_password", "Set a password for yourself first, so you can still get in.", 409)
+        if body.keep_admin_keys and owner is None:
+            raise SignInError("owner_required", "Admin keys can be kept only under a person who is the owner.", 409)
         provider = proposal.provider
         wants_connection = bool(provider.address.strip() or provider.client_id.strip() or after.provider)
         if wants_connection and not _valid_address(provider.address):
             raise SignInError("address_invalid", "Fix the provider address first.", 409)
         typed, secret = typed_config(request, cfg, provider, enabled=False)
         sig = signin_test.connection_signature(signature_key(), typed, secret)
-        issuer = provider.address.strip()
         run = signin_test.passed_for(body.test_id, ctx.audit_actor_id, sig)
-        if run is not None:
-            issuer = run.cfg.issuer
+        last = signin_admin.load_status(path).get("last_test")
+        remembered = last.get("issuer") if isinstance(last, dict) and last.get("sig") == sig else None
+        # The exact issuer the provider names (it may end in a slash); a sign-in checks it character for character.
+        issuer = run.cfg.issuer if run is not None else (remembered or provider.address.strip())
         if after.provider:
             if not provider.client_id.strip() or not secret:
                 raise SignInError("connection_incomplete", "Enter the client ID and secret first.", 409)
@@ -545,13 +567,16 @@ def create_signin_api(
 
         rules_doc = after.rules.as_dict()
         audit = dict(audit_actor_kind=ctx.actor_kind, audit_actor_id=ctx.audit_actor_id, audit_actor_label=ctx.actor_label)
-        admin_store.put_operator_setting_with_audit(
-            signin_admin.RULES_KEY, rules_doc, updated_by=ctx.audit_actor_id,
-            audit_action="operator.signin_rules.update", audit_target_kind="operator_setting",
-            audit_target_id=signin_admin.RULES_KEY,
-            audit_metadata={"rules": len(rules_doc["rules"]), "fallback": rules_doc["fallback"]},
-            path=path, **audit)
         mode = "both" if after.password and after.provider else "oidc" if after.provider else "built-in"
+        payload = connection_payload(request, cfg, provider, enabled=after.provider, issuer=issuer)
+
+        def write_rules() -> None:
+            admin_store.put_operator_setting_with_audit(
+                signin_admin.RULES_KEY, rules_doc, updated_by=ctx.audit_actor_id,
+                audit_action="operator.signin_rules.update", audit_target_kind="operator_setting",
+                audit_target_id=signin_admin.RULES_KEY,
+                audit_metadata={"rules": len(rules_doc["rules"]), "fallback": rules_doc["fallback"]},
+                path=path, **audit)
 
         def write_mode() -> None:
             def validate(_conn):
@@ -562,35 +587,44 @@ def create_signin_api(
                 audit_target_kind="operator_setting", audit_target_id="sign_in", validate_in_transaction=validate,
                 path=path, **audit)
 
-        payload = connection_payload(request, cfg, provider, enabled=after.provider, issuer=issuer)
-
         def write_connection() -> None:
             try:
                 store.update_oidc_config_setting(data=payload, actor=ctx)
             except ValueError as exc:
                 raise SignInError("connection_invalid", str(exc), 400) from exc
 
-        if wants_connection:
-            if after.provider:
+        def write_status() -> None:
+            status = signin_admin.load_status(path)
+            if run is not None:
+                status["last_test"] = {"at": run.passed_at, "sig": sig, "groups_missing": not run.groups_seen,
+                                       "issuer": run.cfg.issuer}
+            elif not tested_before(path, sig):
+                status.pop("last_test", None)
+            signin_admin.write_status(path, status, updated_by=ctx.audit_actor_id)
+
+        def enforce() -> list[dict[str, Any]]:
+            """Make what is now saved true for people. Runs on what was actually written, even after a failure."""
+            return signin_admin.apply_changes(
+                path, saved, saved_world(path, oidc_config_provider()), plans,
+                keep_admin_keys=set(body.keep_admin_keys), owner_id=owner.id if owner else "",
+                end_provider_access=end_provider_access, revoke_person_sessions=revoke_person_sessions,
+                actor_label=ctx.actor_label, actor_id=ctx.audit_actor_id, actor_kind=ctx.actor_kind)
+
+        try:
+            write_rules()
+            if not wants_connection:
+                write_mode()
+            elif after.provider:
                 write_connection()
                 write_mode()
             else:
                 write_mode()
                 write_connection()
-        else:
-            write_mode()
-        status = signin_admin.load_status(path)
-        if run is not None:
-            status["last_test"] = {"at": run.passed_at, "sig": sig, "groups_missing": not run.groups_seen}
-        elif not tested_before(path, sig):
-            status.pop("last_test", None)
-        signin_admin.write_status(path, status, updated_by=ctx.audit_actor_id)
-        # The world after the write is what the sign-in code now reads.
-        removed = signin_admin.apply_changes(
-            path, saved, replace(after, issuer=norm_issuer(issuer)), plans,
-            keep_admin_keys=set(body.keep_admin_keys), owner_id=ctx.audit_actor_id,
-            end_provider_access=end_provider_access, revoke_person_sessions=revoke_person_sessions,
-            actor_label=ctx.actor_label, actor_id=ctx.audit_actor_id, actor_kind=ctx.actor_kind)
+            write_status()
+        except BaseException:
+            enforce()
+            raise
+        removed = enforce()
         return {
             "snapshot": build_snapshot(request, ctx),
             "applied": {
@@ -648,7 +682,7 @@ def create_signin_api(
                 if run.signature == saved_signature(oidc_config_provider()):
                     status = signin_admin.load_status(path)
                     status["last_test"] = {"at": run.passed_at, "sig": run.signature,
-                                           "groups_missing": not run.groups_seen}
+                                           "groups_missing": not run.groups_seen, "issuer": run.cfg.issuer}
                     signin_admin.write_status(path, status)
         return HTMLResponse(_CLOSE_PAGE, headers={"cache-control": "no-store"})
 

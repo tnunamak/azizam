@@ -305,6 +305,51 @@ def test_any_other_refusal_says_what_the_provider_said(sg):
     assert result["details"] == "error=access_denied\nerror_description=The user denied the request"
 
 
+def test_the_saved_secret_goes_only_where_it_was_already_going(sg):
+    owner = owner_client(sg)
+    snapshot = get_snapshot(owner)
+    elsewhere = proposal(snapshot, address=OTHER_ISSUER)["provider"]
+    other_endpoint = proposal(snapshot, token_endpoint="https://collector.example/token")["provider"]
+
+    for body in (elsewhere, other_endpoint):
+        refused = owner.post("/admin/api/signin/test", json={"provider": body}, headers=csrf_for(owner))
+        assert refused.status_code == 400 and refused.json()["error"]["code"] == "client_secret_required"
+    # The same provider host, another realm, is still the same destination.
+    same_host = proposal(snapshot, address=ISSUER + "/")["provider"]
+    allowed = owner.post("/admin/api/signin/test", json={"provider": same_host}, headers=csrf_for(owner))
+    assert allowed.status_code == 200, allowed.text
+    # Typing the secret again is what a new address needs.
+    again = proposal(snapshot, address=OTHER_ISSUER, client_secret="typed-again")["provider"]
+    assert owner.post("/admin/api/signin/test", json={"provider": again}, headers=csrf_for(owner)).status_code == 200
+
+
+def test_the_provider_address_is_saved_as_the_provider_names_itself(sg):
+    owner = owner_client(sg)
+    snapshot = get_snapshot(owner)
+    test = begin(owner, snapshot, address=ISSUER + "/")
+    finish(sg, owner, test)
+
+    saved = save(owner, snapshot, proposal(snapshot, address=ISSUER + "/"), test_id=test["test_id"])
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["snapshot"]["provider"]["address"] == ISSUER       # sign-in checks it character for character
+
+
+def test_a_saved_for_later_address_keeps_the_exact_issuer_the_test_found(sg):
+    owner = owner_client(sg)
+    provider_off(sg)
+    snapshot = get_snapshot(owner)
+    test = begin(owner, snapshot, address=ISSUER + "/")
+    finish(sg, owner, test)
+    save(owner, snapshot, proposal(snapshot, address=ISSUER + "/"), test_id=test["test_id"], save_for_later=True)
+    snapshot = get_snapshot(owner)
+
+    on = save(owner, snapshot, proposal(snapshot, methods={"password": True, "provider": True}, address=ISSUER + "/"))
+
+    assert on.status_code == 200, on.text
+    assert on.json()["snapshot"]["provider"]["address"] == ISSUER
+
+
 def test_a_test_needs_an_address_a_client_id_and_a_secret(sg):
     owner = owner_client(sg)
     snapshot = get_snapshot(owner)

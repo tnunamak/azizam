@@ -795,3 +795,102 @@ def test_a_rule_that_stops_matching_removes_the_grant_at_the_next_sign_in(sg):
 
     assert response.status_code == 302
     assert roles_of(sg, HELPER) == set()
+
+
+# ---------------------------------------------------------------------------
+# Save keeps its promises when something goes wrong, and when a key does the saving
+# ---------------------------------------------------------------------------
+
+def owner_key(g):
+    from gateway.admin_runtime import create_admin_service_account_key
+
+    key, _, _ = create_admin_service_account_key("ops", role="owner", path=g.path)
+    return key
+
+
+def bearer(key, extra=None):
+    return {"authorization": f"Bearer {key}", **(extra or {})}
+
+
+def test_a_save_that_fails_halfway_still_removes_what_the_saved_rules_no_longer_support(sg, monkeypatch):
+    owner = owner_client(sg)
+    helper = helper_client(sg)
+    key = mint_admin_key(helper)
+    snapshot = get_snapshot(owner)
+
+    def broken(*args, **kwargs):
+        raise ValueError("issuer is required when enabled=true")
+
+    monkeypatch.setattr(sg.proxy.ADMIN_STORE, "update_oidc_config_setting", broken)
+    refused = save(owner, snapshot, proposal(snapshot, rules={"fallback": "closed", "rules": []}, name="New name"))
+
+    assert refused.status_code == 400 and refused.json()["error"]["code"] == "connection_invalid"
+    # The rules did get written, so the people they no longer cover lose their grant, session and keys now.
+    assert signin_admin.load_rules(sg.path).rules == ()
+    assert roles_of(sg, HELPER) == set()
+    assert helper.get("/admin/api/access-plans").status_code in {401, 403}
+    assert bearer_status(sg, key) in {401, 403}
+
+
+def test_keep_them_working_also_works_when_an_owner_key_does_the_saving(sg):
+    owner = owner_client(sg)
+    helper = helper_client(sg)
+    helper_key = mint_admin_key(helper)
+    ops = owner_key(sg)
+    snapshot = get_snapshot(owner)
+
+    saved = sg.client().put(
+        "/admin/api/signin", headers=bearer(ops, {"If-Match": snapshot["revision"]}),
+        json={"proposal": proposal(snapshot, rules={"fallback": "closed", "rules": []}), "test_id": None,
+              "keep_admin_keys": [user_id(sg, HELPER)], "save_for_later": False})
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["applied"]["admin_removed"] == [{"name": HELPER, "keys_revoked": 0, "keys_kept": 1}]
+    assert bearer_status(sg, helper_key) == 200                    # the person who is the owner now stands behind it
+
+
+def test_an_owner_key_cannot_turn_the_provider_off_while_the_person_who_is_the_owner_has_no_password(sg):
+    owner = owner_client(sg)
+    ops = owner_key(sg)
+    snapshot = get_snapshot(owner)
+
+    refused = sg.client().put(
+        "/admin/api/signin", headers=bearer(ops, {"If-Match": snapshot["revision"]}),
+        json={"proposal": proposal(snapshot, methods={"password": True, "provider": False}), "test_id": None,
+              "keep_admin_keys": [], "save_for_later": False})
+
+    assert refused.status_code == 409 and refused.json()["error"]["code"] == "owner_needs_password"
+
+
+def test_rules_never_give_a_plan_to_a_person_who_only_uses_a_password(sg):
+    plan = store_plan("Family", path=sg.path, caps=("chat",))
+    owner = owner_client(sg)
+    pw = store_plan("Pw", path=sg.path, caps=("chat",))
+    _, token = accounts.create_link("invite", "owner", plan_id=pw["id"], email="pat@example.test", path=sg.path)
+    accounts.accept_invite(token, "pat@example.test", "Pat", "a sufficiently long password", path=sg.path)
+    accounts.change_person(user_id(sg, "pat@example.test"), "owner", plan_id=None, path=sg.path)
+    snapshot = get_snapshot(owner)
+    everyone = {"fallback": "closed", "rules": [*snapshot["rules"]["rules"],
+                                               rule("everyone", [], admit=True, plan=plan["id"], id="all")]}
+
+    result = preview(owner, proposal(snapshot, rules=everyone))
+    saved = save(owner, snapshot, proposal(snapshot, rules=everyone))
+
+    assert person_line(result, "Pat") is None
+    assert saved.status_code == 200
+    assert admin_store.person_plan_id(user_id(sg, "pat@example.test"), path=sg.path) is None
+
+
+def test_a_linked_owner_whose_provider_refuses_them_keeps_their_session(sg):
+    from tests.test_signin_test_flow import local_owner_client
+
+    owner, record = local_owner_client(sg)
+    admin_store.upsert_oidc_user(ISSUER, "tims-provider-id-unlinked", path=sg.path)
+    from gateway import signin_admin as sa
+    sa.link_identity(sg.path, ISSUER, "tims-provider-id", record["id"], linked_by=None)
+
+    refused = sg.sign_in(sg.client(), sub="tims-provider-id", email="tim@example.test", email_verified=False)
+
+    assert refused.status_code == 303
+    assert owner.get("/admin/api/session").status_code == 200       # the provider cannot lock the owner out
+    assert sg.rows("SELECT * FROM account_signin_refusals") == []

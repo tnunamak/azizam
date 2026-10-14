@@ -155,7 +155,7 @@ from gateway.local_owner import (
     load_or_create_signing_key as local_load_signing_key,
 )
 from gateway.setup_render import render_setup_page
-from gateway import signin_admin
+from gateway import signin_admin, signin_rules_migration
 from gateway.signin_api import create_signin_api
 from gateway.admin_runtime import (
     ADMIN_CONTROL_ROLES,
@@ -12426,6 +12426,16 @@ async def _workflow_drift_loop(stop_event: asyncio.Event) -> None:
             continue
 
 
+def _adopt_bootstrap_signin_lists() -> None:
+    """First start after schema 9: the config file's old allow-lists become sign-in rules, once."""
+    try:
+        if signin_rules_migration.adopt_bootstrap_lists(ADMIN_STORE.path, _bootstrap_admin_oidc_cfg(), os.environ):
+            print("[proxy] Sign-in rules were made from the old lists in the config file. "
+                  "Check them in Settings > Sign-in.", flush=True)
+    except Exception as exc:  # noqa: BLE001 - a start must not fail over a convenience
+        print(f"[proxy] WARNING: could not read the old sign-in lists from the config: {exc}", flush=True)
+
+
 async def _initialize_stores() -> None:
     """Initialize the independent store files side by side on worker threads.
 
@@ -12448,6 +12458,7 @@ async def lifespan(app: FastAPI):
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
+    await asyncio.to_thread(_adopt_bootstrap_signin_lists)
     print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
     print(f"[proxy] STT backend: {STT_HOST} (enabled: {STT_ENABLED})", flush=True)
@@ -14777,7 +14788,13 @@ def _end_provider_access_after_refusal(issuer: str, claims: Mapping[str, Any]) -
 
 
 def _end_provider_access(person_id: str) -> None:
-    """End what the rules gave a person who is now kept out (see the refusal above)."""
+    """End what the rules gave a person who is now kept out (see the refusal above).
+
+    The owner is never cut off here: the provider gives the owner nothing, and a
+    provider that misbehaves must not be able to lock the owner out.
+    """
+    if "owner" in admin_store.effective_admin_roles("user", person_id, path=ADMIN_STORE.path):
+        return
     # First, so a failure in any later step cannot leave the refusal unrecorded.
     # Their personal keys pause until a sign-in succeeds (reversible).
     accounts.record_signin_refusal(person_id, path=ADMIN_STORE.path)

@@ -399,3 +399,80 @@ def test_the_migration_writes_an_audit_entry_that_names_no_email(tmp_path):
     text = json.dumps(migrated[0])
     assert OWNER_EMAIL not in text and "simon@example.test" not in text
     assert any(e["action"] == "admin_role.relabel" for e in records)
+
+
+def test_the_first_owner_email_stays_in_the_provider_setting_while_no_owner_has_ever_existed(tmp_path):
+    legacy = {"enabled": True, "issuer": ISSUER, "client_id": "azizam", "admin_emails": ["first@example.test"],
+              "admin_groups": ["/Trusted"], "allowed_email_domains": ["family.test"]}
+    path, _, _ = legacy_database(tmp_path, oidc=legacy, grants=False)
+
+    admin_store.init_db(path)
+
+    provider = setting(path, "oidc_provider_config")
+    assert provider["admin_emails"] == ["first@example.test"]
+    assert {"admin_groups", "allowed_email_domains", "admin_roles"}.isdisjoint(provider)
+
+
+# ---------------------------------------------------------------------------
+# Lists a deployment kept in its config file
+# ---------------------------------------------------------------------------
+
+def adopt(path, bootstrap, env=None):
+    from gateway import signin_rules_migration
+    return signin_rules_migration.adopt_bootstrap_lists(path, bootstrap, env or {})
+
+
+def fresh_with_migration(tmp_path, oidc=None):
+    path, _, _ = legacy_database(tmp_path, oidc={} if oidc is None else oidc, grants=False)
+    admin_store.init_db(path)
+    return path
+
+
+def test_lists_in_the_config_file_become_rules_once_on_the_first_start(tmp_path):
+    path = fresh_with_migration(tmp_path)
+    bootstrap = {"enabled": True, "allowed_email_domains": ["family.test"], "admin_groups": ["/Trusted"],
+                 "admin_roles_env": "ROLES"}
+
+    assert adopt(path, bootstrap, {"ROLES": "operator, ops"}) is True
+
+    rules = setting(path, "signin_rules")
+    assert [(r["field"], r["values"], r["admin"]) for r in rules["rules"]] == [
+        ("group", ["/Trusted"], True), ("role", ["operator", "ops"], True), ("domain", ["family.test"], False)]
+    assert rules["fallback"] == "closed"
+    assert setting(path, "signin_status")["bootstrap_lists_adopted"] is True
+    # The second start leaves the owner's edits alone.
+    admin_store.put_operator_setting("signin_rules", {"fallback": "closed", "rules": []}, path=path)
+    assert adopt(path, bootstrap) is False
+    assert setting(path, "signin_rules")["rules"] == []
+
+
+def test_a_config_file_that_listed_nothing_and_enabled_the_provider_keeps_the_door_open(tmp_path):
+    path = fresh_with_migration(tmp_path)
+
+    assert adopt(path, {"enabled": True}) is True
+
+    assert setting(path, "signin_rules") == {"fallback": "open", "rules": []}
+
+
+def test_what_the_database_already_answered_is_not_overridden_by_the_config_file(tmp_path):
+    legacy = {"enabled": True, "issuer": ISSUER, "admin_emails": ["someone@example.test"], "admin_groups": []}
+    path = fresh_with_migration(tmp_path, oidc=legacy)
+    before = setting(path, "signin_rules")
+
+    changed = adopt(path, {"enabled": True, "admin_groups": ["/FromFile"], "allowed_email_domains": ["file.test"]})
+
+    # The database set admin_groups and admin_emails; only the list it never set can come from the file.
+    after = setting(path, "signin_rules")
+    assert changed is True and before["fallback"] == after["fallback"] == "closed"
+    assert [(r["field"], r["values"]) for r in after["rules"] if r not in before["rules"]] == [
+        ("domain", ["file.test"])]
+
+
+def test_nothing_changes_for_a_config_file_with_no_lists_and_no_provider(tmp_path):
+    path = fresh_with_migration(tmp_path)
+    before = setting(path, "signin_rules")
+
+    assert adopt(path, {"cookie": {"secure": False}}) is False
+
+    assert setting(path, "signin_rules") == before
+    assert setting(path, "signin_status")["bootstrap_lists_adopted"] is True

@@ -652,25 +652,46 @@ def test_self_service_keys_never_exceed_the_persons_own_plan(gateway):
     assert identity.access.complete and identity.access.plan_ids == (plan["id"],)
 
 
-def test_a_missing_email_verified_claim_is_not_treated_as_unverified(gateway):
-    """Info: only an explicit ``email_verified: false`` is refused; an absent claim passes.
+def test_a_missing_email_verified_claim_passes_sign_in_but_never_matches_an_email_rule_or_an_invitation(gateway):
+    """Only an explicit ``email_verified: false`` is refused, but nothing keyed on an email trusts an absent claim.
 
-    The invitation path stays safe because it needs a stored verified=True fact,
-    which only an explicit true claim records.
+    A provider that omits the claim often lets people edit their own address, so an email or domain
+    rule, or an invitation, would be a way in for anyone who types the right address. Group rules
+    do not depend on the email and still work. The invitation path stays safe because accepting
+    one needs a stored verified=True fact, which only an explicit true claim records.
     """
     gateway.set_rules([TRUSTED, domain_rule("example.test")])
     plan = store_plan("Family", path=gateway.path, caps=("chat",))
     _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], email="friend@example.test",
                                     path=gateway.path)
-    client = gateway.client()
-    response = gateway.sign_in(client, sub="friend", email="friend@example.test", email_verified=None)
-    assert response.status_code == 302
 
+    by_domain = gateway.sign_in(gateway.client(), sub="friend", email="friend@example.test", email_verified=None)
+    by_group = gateway.sign_in(gateway.client(), sub="trusted", email="trusted@elsewhere.test",
+                               groups=["/Trusted"], email_verified=None)
+
+    assert by_domain.status_code == 303 and gateway.user("friend@example.test") is None
+    assert by_group.status_code == 302                       # a group rule needs no email
+    assert roles_of(gateway, "trusted@elsewhere.test") == {("admin", "oidc")}
+    # Once the provider does vouch for the email, the same person is let in and can accept.
+    client, response = signed_in(gateway, sub="friend", email="friend@example.test")
+    assert response.status_code == 302
     csrf = client.get("/auth/api/options").json()["signed_in_oidc"]["csrf_token"]
     accepted = client.post("/auth/api/invite/accept", headers={"x-azizam-csrf": csrf},
                            json={"token": token, "email": "friend@example.test", "name": "Friend"})
-    assert accepted.status_code == 403
-    assert accepted.json()["error"]["code"] == "verified_email_required"
+    assert accepted.status_code == 200, accepted.text
+
+
+def test_an_email_rule_that_makes_administrators_does_not_trust_an_unverified_email(gateway):
+    gateway.set_rules([{"id": "ops", "field": "email", "values": ["ops@example.test"], "admit": True,
+                        "admin": True, "plan": None}])
+
+    unverified = gateway.sign_in(gateway.client(), sub="x", email="ops@example.test", email_verified=None)
+    assert unverified.status_code == 303 and gateway.user("ops@example.test") is None
+
+    verified = gateway.sign_in(gateway.client(), sub="ops", email="ops@example.test")
+
+    assert verified.status_code == 302
+    assert roles_of(gateway, "ops@example.test") == {("admin", "oidc")}
 
 
 def test_q5_a_listed_person_removed_from_trusted_loses_admin_on_next_sign_in(gateway):

@@ -14,7 +14,9 @@ Version 9 keeps who may sign in, and what they get, as ordered rules in the
 * keeps the old behaviour for "everyone else". The old code let everyone in
   while both the email list and the domain list were empty and the provider
   was on. That becomes ``fallback = "open"``. Anything else is ``"closed"``.
-* removes the four lists from ``oidc_provider_config``, so there is one place.
+* removes the old lists from ``oidc_provider_config``, so there is one place.
+  ``admin_emails`` stays while no owner has ever existed: it names who may
+  become the first owner, and nothing else.
 * marks the administrator grants the old group rule gave by hand-written
   provenance. Earlier code recorded them with ``granted_by =
   'oidc-trusted-group'`` and provenance ``manual``, so nothing ever revoked
@@ -128,10 +130,15 @@ def migrate(conn: sqlite3.Connection) -> dict[str, Any]:
         if _setting(conn, SIGNIN_STATUS_KEY) is None:
             _write_setting(
                 conn, SIGNIN_STATUS_KEY,
-                {"notice": NOTICE_REMOVED_OWNER_RULE if dropped else None}, now,
+                {"notice": NOTICE_REMOVED_OWNER_RULE if dropped else None,
+                 # The lists the database already answered for: the config file's copies never apply to them.
+                 "database_lists": sorted(key for key in LEGACY_LISTS if oidc and key in oidc)}, now,
             )
     if oidc is not None and any(key in oidc for key in LEGACY_LISTS):
-        _write_setting(conn, OIDC_KEY, {k: v for k, v in oidc.items() if k not in LEGACY_LISTS}, now)
+        owner_ever = conn.execute("SELECT 1 FROM admin_role_assignments WHERE role='owner' LIMIT 1").fetchone()
+        _write_setting(conn, OIDC_KEY, {
+            k: v for k, v in oidc.items() if k not in LEGACY_LISTS or (k == "admin_emails" and not owner_ever)
+        }, now)
 
     # The caller's connection may return plain tuples; the grant helpers read columns by name.
     rows = conn.cursor()
@@ -167,3 +174,57 @@ def migrate(conn: sqlite3.Connection) -> dict[str, Any]:
         now=now,
     )
     return report
+
+
+def adopt_bootstrap_lists(path, bootstrap, env) -> bool:
+    """First start only: turn lists a deployment kept in its config file into rules.
+
+    Before schema 9 ``admin.oidc.allowed_email_domains``, ``admin_groups`` and
+    ``admin_roles`` could live in the config file or in environment variables
+    (``admin_groups_env``). The upgrade of admin.db cannot see them, so the first
+    start after it reads them once, adds the rules they meant (skipping any that
+    exist), and remembers it did (``signin_status.bootstrap_lists_adopted``).
+    Later edits are the owner's, made on the Sign-in page. Returns True if it
+    changed the rules.
+    """
+    from gateway import admin_store
+
+    status_record = admin_store.get_operator_setting(SIGNIN_STATUS_KEY, path=path)
+    status = dict(status_record["value"]) if status_record else {}
+    if status.get("bootstrap_lists_adopted"):
+        return False
+
+    def listed(key: str) -> list[str]:
+        value = bootstrap.get(key)
+        if not value and bootstrap.get(f"{key}_env"):
+            value = [part.strip() for chunk in str(env.get(str(bootstrap[f"{key}_env"]), "")).splitlines()
+                     for part in chunk.split(",")]
+        return _strings(value if isinstance(value, (list, str)) else [])
+
+    answered = set(status.get("database_lists", []))
+    lists = {key: ([] if key in answered else listed(key))
+             for key in ("allowed_email_domains", "admin_emails", "admin_groups", "admin_roles")}
+    # Whether the door was open depends on both allow-lists; if the database answered either, it decided.
+    door_decided = bool(answered & {"allowed_email_domains", "admin_emails"})
+    changed = False
+    if any(lists.values()) or (bootstrap.get("enabled") and not door_decided):
+        with admin_store._conn(path) as conn:
+            owners = _owner_emails(conn)
+            record = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (SIGNIN_RULES_KEY,)).fetchone()
+        current = json.loads(record[0]) if record else {"fallback": "closed", "rules": []}
+        proposed, _ = _rules_from_lists({**lists, "enabled": bool(bootstrap.get("enabled"))}, owners)
+        have = {(r["field"], tuple(r["values"]), r["admin"]) for r in current.get("rules", [])}
+        added = [dict(r, id=f"rule_{len(current.get('rules', [])) + i + 1}")
+                 for i, r in enumerate(r for r in proposed["rules"]
+                                       if (r["field"], tuple(r["values"]), r["admin"]) not in have)]
+        fallback = current.get("fallback", "closed")
+        if not door_decided and not current.get("rules") and fallback == "closed" and proposed["fallback"] == "open":
+            fallback = "open"
+        if added or fallback != current.get("fallback"):
+            admin_store.put_operator_setting(
+                SIGNIN_RULES_KEY, {"fallback": fallback, "rules": [*current.get("rules", []), *added]},
+                updated_by="migration", path=path)
+            changed = True
+    status["bootstrap_lists_adopted"] = True
+    admin_store.put_operator_setting(SIGNIN_STATUS_KEY, status, updated_by="migration", path=path)
+    return changed
