@@ -313,7 +313,13 @@ function dotClass(tone: StateTone): string {
   }
 }
 
-function HealthLink({ compact = false }: { compact?: boolean }) {
+function HealthLink({
+  compact = false,
+  onStatusChange,
+}: {
+  compact?: boolean;
+  onStatusChange?: (status: string) => void;
+}) {
   const viewer = useViewer();
   const {
     data: gatewayData,
@@ -361,6 +367,10 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
                   ? { label: "Nothing turned on", tone: "off" as const }
                   : { label: "All working", tone: "ok" as const };
   const visibleLabel = label;
+  const checking = label === "Checking";
+  useEffect(() => {
+    onStatusChange?.(checking ? "" : `Gateway status: ${label}`);
+  }, [checking, label, onStatusChange]);
   const dot = dotClass(tone);
   // The capabilities behind the count: tapping the pill must explain it.
   const listed = signedIn && currentCapabilities;
@@ -376,6 +386,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
               : "shell-nav-footer"
           }
           aria-label={`Gateway status: ${visibleLabel}`}
+          aria-busy={checking}
         >
           <span
             aria-hidden="true"
@@ -630,6 +641,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     }
   }, [instanceData?.presentation?.theme_default, setTheme]);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [statusAnnouncement, setStatusAnnouncement] = useState("");
   const [shortcut, setShortcut] = useState("Ctrl K");
   useEffect(() => {
     if (/Mac|iPhone|iPad/.test(navigator.userAgent)) setShortcut("⌘K");
@@ -847,7 +859,7 @@ function Shell({ children }: { children: React.ReactNode }) {
               </Button>
               <Nav />
               <div className="border-chrome-border mt-auto flex flex-col gap-1 border-t pt-3">
-                <HealthLink />
+                <HealthLink onStatusChange={setStatusAnnouncement} />
                 <div className="flex items-center gap-1 max-lg:flex-col">
                   <div className="min-w-0 flex-1 max-lg:w-full">
                     <AccountMenu />
@@ -856,6 +868,16 @@ function Shell({ children }: { children: React.ReactNode }) {
                 </div>
               </div>
             </aside>
+            {/* One live region outside either responsive copy of the pill. */}
+            <span
+              role="status"
+              aria-label="Gateway status announcement"
+              aria-live="polite"
+              aria-atomic="true"
+              className="sr-only"
+            >
+              {statusAnnouncement}
+            </span>
             <div className="sm:ml-(--rail-width) lg:ml-(--sidebar-width)">
               <header className="bg-chrome text-chrome-foreground border-chrome-border sticky top-0 z-30 flex h-14 items-center justify-between border-b pr-2 pl-4 sm:hidden">
                 <Link prefetch={false}

@@ -70,6 +70,36 @@ afterEach(() => {
 const ownerChecks = ["/admin/api/status", "/admin/api/providers", "/admin/api/operator/service-registry", "/admin/api/activity/requests"];
 
 describe("shell owner checks", () => {
+  it("marks both Checking pills busy and announces the settled status only once", async () => {
+    const { rerender } = render(<AppShell><h1>Usage</h1></AppShell>);
+    const pills = await screen.findAllByRole("button", { name: "Gateway status: Checking" });
+    expect(pills).toHaveLength(2);
+    pills.forEach((pill) => expect(pill).toHaveAttribute("aria-busy", "true"));
+    const announcement = screen.getByRole("status", { name: "Gateway status announcement" });
+    expect(announcement).toBeEmptyDOMElement();
+    expect(announcement).toHaveAttribute("aria-live", "polite");
+    expect(announcement).toHaveAttribute("aria-atomic", "true");
+    const announcements: string[] = [];
+    const observer = new MutationObserver(() => {
+      if (announcement.textContent) announcements.push(announcement.textContent);
+    });
+    observer.observe(announcement, { childList: true, characterData: true, subtree: true });
+    try {
+      await waitFor(() => {
+        pills.forEach((pill) => expect(pill).toHaveAttribute("aria-busy", "false"));
+        expect(announcement).not.toBeEmptyDOMElement();
+      }, { timeout: SHELL_CHECKS_DELAY_MS + 3000 });
+      const settled = pills[0].getAttribute("aria-label");
+      expect(announcement.textContent).toBe(settled);
+      pills.forEach((pill) => expect(pill).toHaveAttribute("aria-label", settled));
+      rerender(<AppShell><h1>Usage updated</h1></AppShell>);
+      await waitFor(() => expect(announcements).toEqual([settled]));
+      expect(screen.getAllByRole("status", { name: "Gateway status announcement" })).toHaveLength(1);
+    } finally {
+      observer.disconnect();
+    }
+  }, SHELL_CHECKS_DELAY_MS + 8000);
+
   it("wait for the page, then run, and say Checking meanwhile", async () => {
     render(<AppShell><h1>Usage</h1></AppShell>);
     await waitFor(() => expect(requested).toContain("/me/api/home"));

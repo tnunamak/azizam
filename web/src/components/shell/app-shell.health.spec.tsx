@@ -353,7 +353,8 @@ describe("owner alert banner", () => {
         expect(requested.filter((path) => path === "/admin/api/status").length).toBeGreaterThan(0),
       );
       expect(screen.queryByText(ENGINE_ALERT)).toBeNull();
-      expect(screen.queryByRole("status")).toBeNull();
+      // The named gateway live region is independent of the owner banner.
+      expect(screen.queryByRole("status", { name: "" })).toBeNull();
       // Hardware signals never become an owner-wide banner.
       expect(screen.queryByText("Disk is full")).toBeNull();
     },
