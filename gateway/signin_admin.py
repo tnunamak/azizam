@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
+from urllib.parse import urlsplit, urlunsplit
 
 from gateway import accounts, admin_store, signin_rules
 from gateway.admin_runtime import LOCAL_ADMIN_KEY_ISSUER
@@ -31,8 +32,20 @@ SYSTEM_ACTOR = "signin-rules"
 
 
 def norm_issuer(address: str) -> str:
-    """The provider address as compared: no spaces, no trailing slash."""
-    return (address or "").strip().rstrip("/")
+    """The provider address as compared: no spaces, no trailing slash, scheme and host in lower case.
+
+    The path keeps its case. Two addresses that differ only in these ways are the same provider.
+    This is for comparing. What is stored is the issuer the provider names, which a sign-in
+    checks character for character.
+    """
+    text = (address or "").strip().rstrip("/")
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return text
+    if not parts.scheme or not parts.netloc:
+        return text
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), parts.query, parts.fragment))
 
 
 class SignInError(Exception):

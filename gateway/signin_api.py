@@ -224,7 +224,7 @@ def create_signin_api(
 
     def same_destination(saved: OIDCConfig, body: ConnectionBody) -> bool:
         """The saved secret may go only where it was already going: the same provider host and endpoints."""
-        if not saved.issuer or _host(body.address) != _host(saved.issuer):
+        if not saved.issuer or _host(norm_issuer(body.address)) != _host(norm_issuer(saved.issuer)):
             return False
         pairs = ((body.authorization_endpoint, saved.authorization_endpoint),
                  (body.token_endpoint, saved.token_endpoint), (body.jwks_uri, saved.jwks_uri))
@@ -565,7 +565,10 @@ def create_signin_api(
         last = signin_admin.load_status(path).get("last_test")
         remembered = last.get("issuer") if isinstance(last, dict) and last.get("sig") == sig else None
         # The exact issuer the provider names (it may end in a slash); a sign-in checks it character for character.
-        issuer = run.cfg.issuer if run is not None else (remembered or provider.address.strip())
+        # An address that only differs in a slash or in the case of the scheme and host is the same provider:
+        # keep the issuer already stored, or its sign-ins would all be turned away.
+        same_provider = bool(cfg.issuer) and norm_issuer(provider.address) == norm_issuer(cfg.issuer)
+        issuer = run.cfg.issuer if run is not None else (remembered or (cfg.issuer if same_provider else provider.address.strip()))
         if after.provider:
             if not provider.client_id.strip() or not secret:
                 raise SignInError("connection_incomplete", "Enter the client ID and secret first.", 409)

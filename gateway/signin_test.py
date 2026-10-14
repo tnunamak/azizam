@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from gateway.admin_oidc import IDTokenClaimsError, OIDCConfig, SignInRefused, validate_id_token_claims
+from gateway.signin_admin import norm_issuer
 from gateway.signin_rules import Claims
 
 TEST_TTL_SECONDS = 900
@@ -53,7 +54,7 @@ def connection_signature(key: bytes, cfg: OIDCConfig, secret: str) -> str:
     """Names the connection a test covers. The secret is in it, so it is keyed."""
     payload = json.dumps(
         [
-            cfg.issuer.strip().rstrip("/"), cfg.client_id, secret, list(cfg.scopes), cfg.groups_claim,
+            norm_issuer(cfg.issuer), cfg.client_id, secret, list(cfg.scopes), cfg.groups_claim,
             cfg.authorization_endpoint, cfg.token_endpoint, cfg.jwks_uri, cfg.clock_skew_seconds,
         ],
         sort_keys=True,

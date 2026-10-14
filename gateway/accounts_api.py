@@ -177,6 +177,8 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         if not options()["built_in"] and "owner" not in admin_store.effective_admin_roles(
                 "user", user["id"], path=path_provider()):
             raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
+        # A good password is a good sign-in: it lifts the pause a refused provider sign-in put on their keys.
+        accounts.clear_signin_refusal(str(user["id"]), path=path_provider())
         return issue(user, {"next": safe_browser_return_to(body.return_to)})
 
     @router.post("/auth/api/invite")

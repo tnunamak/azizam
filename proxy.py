@@ -16634,6 +16634,7 @@ async def setup_local_login(request: Request):
             login_email=email,
             status_code=403,
         )
+    accounts.clear_signin_refusal(str(user["id"]), path=ADMIN_STORE.path)
     admin_store.record_audit(
         "setup.local_owner_login",
         actor_kind="user",
