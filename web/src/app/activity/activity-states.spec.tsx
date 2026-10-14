@@ -662,7 +662,7 @@ it("filter regression: empty filtered changes explain no matches and can clear f
   expect(screen.queryByText("Sam · visible-before-filter")).toBeNull();
   expect(screen.queryByRole("region", { name: "No changes yet" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
-  await userEvent.click(within(empty).getByRole("button", { name: "Clear filters" }));
+  await userEvent.click(within(empty).getByRole("button", { name: "Clear filters and show all changes" }));
   expect(await screen.findByText("Sam · visible-before-filter")).toBeVisible();
   expect(screen.queryByRole("region", { name: "No matching changes" })).toBeNull();
 });

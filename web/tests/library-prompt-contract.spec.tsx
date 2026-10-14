@@ -94,7 +94,7 @@ it.each([
   const user = userEvent.setup();
   const fixture = mountPromptContract("me", remember);
   try {
-    await user.click(await screen.findByRole("button", { name: "Open Picture" }));
+    await user.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Picture, ") }));
     await waitFor(() => expect(
       fixture.client.getQueryState(["account", "prompt-memory"]),
     ).toMatchObject({ status: "success", fetchStatus: "idle" }));
@@ -111,7 +111,7 @@ it("does not reveal missing-prompt history or load settings for another maker", 
   const user = userEvent.setup();
   const fixture = mountPromptContract("someone-else", false);
   try {
-    await user.click(await screen.findByRole("button", { name: "Open Picture" }));
+    await user.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Picture, ") }));
     await waitFor(() => expect(
       fixture.client.getQueryState(["library", "download", "image", false]),
     ).toMatchObject({ status: "success", fetchStatus: "idle" }));
@@ -130,7 +130,7 @@ it("shows the actual deletion scope before confirmation and Cancel deletes nothi
   const user = userEvent.setup();
   const fixture = mountPromptContract("me", true);
   try {
-    await user.click(await screen.findByRole("button", { name: "Open Picture" }));
+    await user.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Picture, ") }));
     await user.click(screen.getByRole("button", { name: "Actions for Picture" }));
     await user.click(screen.getByRole("menuitem", { name: "Delete" }));
     const confirmation = await screen.findByRole("dialog", { name: "Delete Picture?" });

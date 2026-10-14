@@ -277,13 +277,13 @@ describe("Home and Library polish", () => {
         : Response.json({ assets, models: [] })),
     );
     const { container } = renderPage(<LibraryPage />);
-    await screen.findByRole("button", { name: "Open Ocean sounds" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Ocean sounds, ") });
     const audio = container.querySelector("audio");
     expect(audio).not.toHaveAttribute("controls");
     expect(audio).toHaveAttribute("preload", "none");
     const play = screen.getByRole("button", { name: "Play Ocean sounds" });
     expect(
-      screen.getByRole("button", { name: "Open Ocean sounds" }).contains(play),
+      screen.getByRole("button", { name: (name) => name.startsWith("Open Ocean sounds, ") }).contains(play),
     ).toBe(false);
     expect(audio).not.toHaveAttribute("src");
     expect(audio?.closest("button")).toBeNull();
@@ -309,7 +309,7 @@ describe("Home and Library polish", () => {
     );
     expect(screen.queryByRole("dialog")).toBeNull();
     await userEvent.click(
-      screen.getByRole("button", { name: "Open Ocean sounds" }),
+      screen.getByRole("button", { name: (name) => name.startsWith("Open Ocean sounds, ") }),
     );
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toBeVisible();
@@ -336,7 +336,7 @@ describe("Home and Library polish", () => {
       }),
     );
     renderPage(<LibraryPage />, true);
-    await screen.findByRole("button", { name: "Open Swimming fish" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Swimming fish, ") });
     expect(requests).toContain("/me/api/media/poster1/download?scope=everyone");
     screen.getByRole("combobox", { name: "Person" }).focus();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -364,7 +364,7 @@ describe("Home and Library polish", () => {
       }),
     );
     renderPage(<LibraryPage />);
-    await screen.findByRole("button", { name: "Open Swimming fish" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Swimming fish, ") });
     expect(screen.queryByText(/^\d+ s$/)).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Video" }));
     expect(screen.getByRole("button", { name: "Video" })).toHaveAttribute(

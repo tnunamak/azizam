@@ -133,7 +133,7 @@ it("names an uncatalogued model readably and keeps the raw id only in Details", 
   // (D1.6: the first tile of a day leads with its day chip.)
   expect(tile).toHaveTextContent(/^\w+.*Retired model image/);
   expect(tile).not.toHaveTextContent(/model\b.*v1|vendor/i);
-  fireEvent.click(screen.getByRole("button", { name: "Open Retired model image" }));
+  fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open Retired model image, ") }));
   const dialog = await screen.findByRole("dialog");
   const modelFact = Array.from(dialog.querySelectorAll("dt")).find(
     (term) => term.textContent === "Model",
@@ -175,7 +175,7 @@ it("offers the maker's file with details from the viewer's actions", async () =>
     </QueryClientProvider>,
   );
   await loaded(client);
-  fireEvent.click(screen.getByRole("button", { name: "Open Workflow image" }));
+  fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open Workflow image, ") }));
   // The gateway sends workflow_download_url to the maker only; the viewer
   // offers it as "Download with details" in its actions menu, not as a
   // standing link (docs/design/PROMPT_MEMORY.md).
@@ -228,7 +228,7 @@ it("pauses every other audio player when a card or drawer starts playing", async
     expect(firstPause).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Play First clip" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Pause Second clip" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Open First clip" }));
+    fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open First clip, ") }));
     const drawer = await screen.findByLabelText("Generated audio");
     const drawerPause = vi.spyOn(drawer as HTMLAudioElement, "pause").mockImplementation(() => {
       fireEvent.pause(drawer);
@@ -333,19 +333,19 @@ it("marks retained results as updating until changed filter results arrive", asy
     </QueryClientProvider>,
   );
   await loaded(client);
-  expect(screen.getByRole("button", { name: "Open Old result" })).toBeVisible();
+  expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Old result, ") })).toBeVisible();
   expect(screen.queryByText("Updating")).toBeNull();
   expect(container.querySelector("article")?.closest("[aria-busy]")).toHaveAttribute("aria-busy", "false");
   fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
   await waitFor(() => expect(finish).toBeTypeOf("function"));
-  expect(screen.getByRole("button", { name: "Open Old result" })).toBeVisible();
+  expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Old result, ") })).toBeVisible();
   expect(container.querySelector("article")?.closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
   expect(screen.getByText("Updating")).toBeVisible();
   expect(screen.getByText("Updating")).toHaveAttribute("role", "status");
   finish();
   await loaded(client);
-  expect(screen.getByRole("button", { name: "Open New result" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Open Old result" })).toBeNull();
+  expect(screen.getByRole("button", { name: (name) => name.startsWith("Open New result, ") })).toBeVisible();
+  expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Old result, ") })).toBeNull();
   expect(container.querySelector("article")?.closest("[aria-busy]")).toHaveAttribute("aria-busy", "false");
   expect(screen.queryByText("Updating")).toBeNull();
   client.clear();
