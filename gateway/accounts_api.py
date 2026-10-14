@@ -104,6 +104,8 @@ def signin_options(path, oidc: dict, *, include_revision: bool = False) -> dict:
     result = {"mode": mode, "built_in": mode in {"built-in", "both"},
             "oidc": mode in {"oidc", "both"} and oidc["enabled"],
             "oidc_label": oidc.get("label") or "single sign-on",
+            # The owner's own password works whatever the switch says (see the login routes).
+            "owner_password": True,
             "oidc_url": "/login?return_to=%2Finvite%2F", "instance_name": "Azizam",
             "owner_name": "The gateway owner"}
     if include_revision:

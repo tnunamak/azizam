@@ -11,7 +11,7 @@ are unchanged by this feature.
    email restriction. A pending invitation can be copied again or revoked.
 2. The invitee opens `/invite/#token=...`. They create an email/password
    account, or sign in with the configured OIDC provider and accept using
-   their signed-in identity. Targeted OIDC invites require a verified email.
+   their signed-in identity. Targeted OIDC invites require a verified email, and a verified email an open invitation names is let through the sign-in rules (an invitation with no email cannot admit a provider sign-in).
 3. Acceptance atomically assigns the access plan, creates a personal App and
    API key, consumes the invitation and records an audit event. All existing
    Apps and keys of an OIDC invitee receive the invitation's plan as well.

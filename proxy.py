@@ -1572,7 +1572,20 @@ def _bootstrap_admin_oidc_cfg() -> dict:
     return oidc_cfg
 
 
+_RETIRED_OIDC_LISTS = (
+    "admin_groups", "admin_roles", "allowed_email_domains", "admin_groups_env", "admin_roles_env",
+)
+
+
 def _load_admin_oidc_config():
+    retired = [key for key in _RETIRED_OIDC_LISTS if _bootstrap_admin_oidc_cfg().get(key)]
+    if retired:
+        print(
+            f"[proxy] WARNING: admin.oidc {', '.join(retired)} in the config file are no longer read. "
+            "Who may sign in, and who becomes an administrator, are sign-in rules now "
+            "(Settings > Sign-in).",
+            flush=True,
+        )
     try:
         return load_oidc_config(_bootstrap_admin_oidc_cfg(), env=os.environ)
     except OIDCConfigError as e:

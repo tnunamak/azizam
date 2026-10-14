@@ -49,7 +49,6 @@ an empty name clears it even when the environment variable is set.
 |---|---|---|
 | `AZIZAM_ADMIN_OIDC_DISPLAY_NAME` | Public provider name; overrides `admin.oidc.display_name` at bootstrap | empty (single sign-on) |
 | `AZIZAM_OIDC_CLIENT_SECRET` | Client secret when referenced by `admin.oidc.client_secret_env` | unset |
-| `AZIZAM_ADMIN_OIDC_ADMIN_GROUPS` | Admin groups when referenced by `admin.oidc.admin_groups_env` | unset |
 
 ## Engine integrations
 

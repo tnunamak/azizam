@@ -755,10 +755,6 @@ secret. Returns `null` only when neither source configures OIDC.
     "client_secret_set": true,
     "redirect_uri": "https://gateway.example.com/auth/callback",
     "scopes": ["openid", "email", "profile"],
-    "allowed_email_domains": ["example.com"],
-    "admin_emails": ["ops@example.com"],
-    "admin_groups": [],
-    "admin_roles": [],
     "authorization_endpoint": "",
     "token_endpoint": "",
     "jwks_uri": "",
@@ -794,8 +790,7 @@ omitted, blank, or `"<redacted>"`, the existing stored secret is preserved
 (patch semantics). Unknown fields return `400 invalid_oidc_config`.
 
 Accepted fields: `enabled`, `issuer`, `client_id`, `client_secret`,
-`redirect_uri`, `scopes`, `allowed_email_domains`, `admin_emails`,
-`admin_groups`, `admin_roles`, `authorization_endpoint`, `token_endpoint`,
+`redirect_uri`, `scopes`, `authorization_endpoint`, `token_endpoint`,
 `jwks_uri`, `clock_skew_seconds`, `groups_claim`.
 
 For non-secret string fields, `null` or `""` explicitly clears a bootstrap
@@ -811,6 +806,24 @@ provider changes apply live for subsequent OIDC authentication requests. To
 recover access, use an existing authenticated admin session, or generate an
 admin key on the host and claim it at `/setup/claim`; do not promise a hidden
 local-owner sign-in path while OIDC is enabled.
+
+### Sign-in rules and the Sign-in page (`/admin/api/signin*`)
+
+Who may sign in, and what they get, is a set of rules (`gateway/signin_rules.py`).
+The Settings > Sign-in page reads and writes them through these routes; an
+administrator may `GET /admin/api/signin`, and every other route is owner-only
+(`403 owner_required`). Types: `web/src/lib/signin-api.ts`.
+
+| Route | What it does |
+|---|---|
+| `GET /admin/api/signin` | One snapshot: the two sign-in switches, the provider connection (no secret), the rules, values past sign-ins carried, plans, and a revision |
+| `POST /admin/api/signin/preview` | `{proposal, test_id}` → who changes (by name), settings, blockers, who each rule matches, and the test verdict. Same evaluator as sign-in |
+| `PUT /admin/api/signin` | Save the proposal with `If-Match`; `keep_admin_keys` and `save_for_later`. `409` for `last_sign_in_method`, `test_required`, `incomplete_rule`, `owner_needs_password` |
+| `POST /admin/api/signin/discover` | `{address}` → the endpoints found at the provider address |
+| `POST /admin/api/signin/test` | Start a test sign-in for the connection as typed; `GET …/test/{id}/start` opens it in a pop-up; `GET …/test/{id}` polls; `DELETE …/test/{id}` cancels |
+| `POST /admin/api/signin/link-owner` | Link the provider identity from a passed test to the owner account |
+| `POST /admin/api/signin/notice/dismiss` | Dismiss the one-time note from the upgrade |
+| `POST /admin/api/signin/owner-password` | Set the owner's own password |
 
 ### GET /admin/api/extensions
 

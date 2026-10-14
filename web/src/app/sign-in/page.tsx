@@ -20,7 +20,7 @@ function signInError(error: Error): string {
       case "login_rate_limited":
         return error.message;
       case "builtin_disabled":
-        return "Password sign-in is turned off. Reload this page to see how to sign in.";
+        return "Password sign-in is turned off for everyone but the owner. Reload this page to see how to sign in.";
       case "invalid_password":
         return "Use a password between 12 and 1,024 characters.";
     }
@@ -34,6 +34,7 @@ export default function SignInPage() {
   const [providerError, setProviderError] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [ownerForm, setOwnerForm] = useState(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -97,6 +98,10 @@ export default function SignInPage() {
       : "Continue with single sign-on";
   const instanceName = data?.instance_name?.trim();
   const hasProvider = data?.oidc && !reset;
+  // While passwords are off for the household, the owner's own password still works.
+  const ownerCanUsePassword =
+    Boolean(data) && !data?.built_in && data?.owner_password !== false && !reset;
+  const showForm = Boolean(data?.built_in) || Boolean(reset) || ownerForm;
 
   return (
     <section
@@ -172,14 +177,25 @@ export default function SignInPage() {
                   <a href={data.oidc_url}>{providerLabel}</a>
                 </Button>
               )}
-              {hasProvider && data.built_in && (
+              {hasProvider && (data.built_in || ownerForm) && (
                 <div className="text-muted-foreground text-meta my-6 flex items-center gap-4">
                   <span className="flex-1 border-t" />
                   <span>or use your email</span>
                   <span className="flex-1 border-t" />
                 </div>
               )}
-              {(data?.built_in || reset) && (
+              {hasProvider && ownerCanUsePassword && !ownerForm && (
+                <p className="text-muted-foreground text-meta mt-6">
+                  <button
+                    type="button"
+                    className="text-link min-h-11 underline underline-offset-4"
+                    onClick={() => setOwnerForm(true)}
+                  >
+                    Owner? Sign in with your password
+                  </button>
+                </p>
+              )}
+              {showForm && (
                 <form
                   className="space-y-5"
                   aria-busy={login.isPending}
