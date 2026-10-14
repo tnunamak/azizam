@@ -1322,3 +1322,61 @@ test("Usage changing person resets a previously selected source in picker and re
   });
   expect(screen.getByRole("combobox", { name: "App or connection" })).toHaveTextContent("All apps and connections");
 });
+
+test("NUMBERS totals reconcile complete model rows with task and month totals", async () => {
+  const models = [
+    { model: "first", capability: "chat", requests: 1001, cost_usd: 0.014 },
+    { model: "second", capability: "image", requests: 7, cost_usd: 0.125 },
+    { model: "third", capability: "chat", requests: 23, cost_usd: 0.028 },
+  ];
+  const requests = models.reduce((sum, row) => sum + row.requests, 0);
+  const spend = models.reduce((sum, row) => sum + row.cost_usd, 0);
+  renderUsage({ requests, remote_spend: spend, by_model: models });
+  const tasks = await screen.findByRole("table", { name: "By task" });
+  const cells = within(tasks).getAllByRole("row").slice(1)
+    .map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent!));
+  expect(cells).toEqual([
+    ["Chat", "1,024 requests", "99.3%", "$0.042"],
+    ["Make a picture", "7 requests", "0.7%", "$0.125"],
+  ]);
+  const month = screen.getByLabelText("This month");
+  const renderedRequests = cells.reduce((sum, row) => sum + Number(row[1].replaceAll(",", "").split(" ")[0]), 0);
+  const renderedSpend = cells.reduce((sum, row) => sum + Number(row[3].slice(1)), 0);
+  expect(renderedRequests).toBe(requests);
+  expect(renderedSpend).toBeCloseTo(spend, 8);
+  expect(within(month).getByText("1,031 requests")).toBeVisible();
+  expect(within(month).getByText("$0.167")).toBeVisible();
+});
+
+test("NUMBERS USD spend preserves sub-cent precision in summary and model rows", async () => {
+  renderUsage({
+    requests: 3, remote_spend: 0.0042,
+    by_model: [
+      { model: "tiny", capability: "chat", requests: 2, cost_usd: 0.0042 },
+      { model: "free", capability: "image", requests: 1, cost_usd: 0 },
+    ],
+  });
+  const month = await screen.findByLabelText("This month");
+  expect(within(month).getByText("Spend this month (USD)")).toBeVisible();
+  expect(within(month).getByText("$0.0042")).toBeVisible();
+  const models = screen.getByRole("table", { name: "Models" });
+  expect(within(models).getByRole("columnheader", { name: "Spend (USD)" })).toBeVisible();
+  const rows = within(models).getAllByRole("row").slice(1);
+  expect(within(rows[0]).getAllByRole("cell").at(-1)).toHaveTextContent(/^\$0\.0042$/);
+  expect(within(rows[1]).getAllByRole("cell").at(-1)).toHaveTextContent(/^\$0\.00$/);
+});
+
+test("NUMBERS busiest models sort numerically before top-five truncation and expansion", async () => {
+  const counts = [2, 10, 3, 100, 1, 20, 0];
+  renderUsage({ requests: 136, by_model: counts.map((requests, index) => ({
+    model: `model-${index}`, capability: "chat", requests, cost_usd: 100 - requests,
+  })) });
+  const table = await screen.findByRole("table", { name: "Models" });
+  const visibleCounts = () => within(table).getAllByRole("row").slice(1)
+    .map((row) => within(row).getAllByRole("cell")[1].textContent);
+  expect(visibleCounts()).toEqual(["100 requests", "20 requests", "10 requests", "3 requests", "2 requests"]);
+  await userEvent.setup().click(screen.getByRole("button", { name: "View all 7 models" }));
+  expect(visibleCounts()).toEqual(["100 requests", "20 requests", "10 requests", "3 requests", "2 requests", "1 request", "0 requests"]);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Show top 5 models" }));
+  expect(visibleCounts()).toEqual(["100 requests", "20 requests", "10 requests", "3 requests", "2 requests"]);
+});
