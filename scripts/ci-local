@@ -328,12 +328,12 @@ if ((browser_ready)); then
   # outside the tree first, so e2e-tree-unchanged still proves that nothing
   # else, and no browser test, writes into the shared build tree.
   for cache in .next/cache/eslint node_modules/.cache; do
-    target="$run/static-cache/${cache//\//_}"
-    mkdir -p "$target" "$(dirname "$work/web/$cache")"
+    cache_dir="$run/static-cache/${cache//\//_}"
+    mkdir -p "$cache_dir" "$(dirname "$work/web/$cache")"
     if [[ -e $work/web/$cache && ! -L $work/web/$cache ]]; then
-      cp -a "$work/web/$cache/." "$target/" && rm -rf "$work/web/$cache"
+      cp -a "$work/web/$cache/." "$cache_dir/" && rm -rf "$work/web/$cache"
     fi
-    ln -sfn "$target" "$work/web/$cache"
+    ln -sfn "$cache_dir" "$work/web/$cache"
   done
   touch "$run/browser-start"
   for i in 0 1 2; do
