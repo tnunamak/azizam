@@ -488,10 +488,10 @@ describe("search, price and Details", () => {
     expect(screen.getByRole("button", { name: "provider/image-fast" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "chat" })).toBeNull();
     await user.click(screen.getByRole("combobox", { name: "Price" }));
-    await user.click(screen.getByRole("option", { name: "No provider charge" }));
+    await user.click(screen.getByRole("option", { name: "No provider charge (0)" }));
     expect(screen.getByText("No models match")).toBeVisible();
     await user.click(screen.getByRole("combobox", { name: "Price" }));
-    await user.click(screen.getByRole("option", { name: "Paid" }));
+    await user.click(screen.getByRole("option", { name: "Paid (2)" }));
     const sheet = openDetails("image");
     expect(sheet.getByText("Example for app setup")).toBeVisible();
     expect(sheet.getByText(/\/v1\/images\/generations/)).toBeVisible();
