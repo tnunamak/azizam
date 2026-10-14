@@ -61,7 +61,7 @@ new models and wants apps to route to it. Traced: **~35–40% self-serve.**
 | B4 | "Test access — would app X reach model Y? why/why not?" | ✅ (policy simulator surfaced as Test access) |
 | B5 | "See per-key last-used, so I can spot stale keys." | 🟡 last_used_at exists; surfaced on key rows but not consistently per-key in the app view (audit SEV-list). |
 | B6 | "Change a user's role (grant a teammate admin)." | 🔴 No PATCH /users; roles come from OIDC/provisioning. UI now SAYS so (honesty fix) — but no in-UI grant path for local users. |
-| B7 | "Map OIDC groups → access plans for auto-access." | ✅ (groups_claim wired end-to-end) |
+| B7 | "Map OIDC groups → access plans for auto-access." | 🔴 Not built: the migration drops `runtime_profile_mappings`; `gateway/admin_api.py` has no mapping routes. `groups_claim` configuration does not provide auto-assignment. UNVERIFIED in the scoped source review: group-claim storage in `user_identity_claims` and readership outside these two modules. |
 
 ---
 
