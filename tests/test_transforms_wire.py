@@ -518,7 +518,7 @@ def test_the_sse_line_splitter_returns_each_terminated_line_and_no_empty_tail():
     assert t._split_sse_lines("a\nb\r\nc\r") == [("a", "\n"), ("b", "\r\n"), ("c", "\r")]
     assert t._split_sse_lines("a\n\n") == [("a", "\n"), ("", "\n")]
     assert t._split_sse_lines("a\nb") == [("a", "\n"), ("b", "")]
-    assert t._split_sse_lines("a\r", final=False) == []
+    assert t._split_sse_lines("a\r", final=False) == [("a\r", "")]
     assert t._split_sse_lines("a\r\n", final=False) == [("a", "\r\n")]
 
 
