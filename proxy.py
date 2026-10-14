@@ -166,6 +166,7 @@ from gateway.admin_runtime import (
     create_admin_service_account_key,
     identity_from_access_row,
     is_human_user_record,
+    person_for_app_credential,
     runtime_identity_for_app_credential_hash,
     runtime_identity_for_session_app,
     runtime_identity_for_trusted_address,
@@ -14958,21 +14959,47 @@ def _app_access(app_id: str) -> EffectiveAccess | None:
     return identity_from_access_row(row, key_hash="", name="", person_id=None).access
 
 
-async def _access_preview(access: EffectiveAccess, *, full_detail: bool = True) -> dict[str, Any]:
+def _app_identity(app_id: str | None) -> tuple[str | None, str | None]:
+    """The ``(app_id, person_id)`` a request from this App carries, for Check access.
+
+    A request carries its App. It carries a person only when the App is a
+    personal App and its owner made the key (``person_for_app_credential``);
+    the owner's own key is the one Check access shows. Category rules that
+    govern a person or an App by name read these two ids.
+    """
+    if not app_id:
+        return None, None
+    with admin_store.runtime_auth_connection(ADMIN_STORE.path) as conn:
+        row = admin_store.runtime_access_row(conn, app_id=app_id)
+    if row is None:
+        return None, None
+    owner = row.get("owner_user_id")
+    person_id = person_for_app_credential({"kind": row.get("app_kind"), "owner_user_id": owner},
+                                          {"created_by": owner})
+    return str(row["app_id"]), person_id
+
+
+async def _access_preview(access: EffectiveAccess, *, full_detail: bool = True,
+                          app_id: str | None = None) -> dict[str, Any]:
     """Every Models page entry with what ``access`` can and cannot use (admin Check access).
 
     Decided by the discovery policy view (``_capability_for_access``), so the
     preview cannot drift from what the Models page and requests enforce. That
     view runs ``evaluate`` and the category gate, the code a request runs.
     ``full_detail`` is the owner's view; an administrator is not told the name
-    of a restricted category (only the owner may open Categories).
+    of a restricted category (only the owner may open Categories). For an App
+    the identity carries the App's id and person, as its requests do, so a
+    category rule that governs them by name judges the preview as it judges a
+    request. A plan alone has no person or App.
     """
     from gateway.access_preview import build_access_preview
 
-    auth_context = AuthContext(identity=AuthIdentity(name="access-preview", key_hash="", access=access))
     plans = (access.person_plan, access.app_plan)
 
     def assemble() -> dict[str, Any]:
+        who_app, who_person = _app_identity(app_id)
+        auth_context = AuthContext(identity=AuthIdentity(
+            name="access-preview", key_hash="", access=access, app_id=who_app, person_id=who_person))
         viewed = _viewed_gateway_capabilities(auth_context)
         permitted = [cap for cap in viewed if cap.policy_available is not False]
         denied = [cap for cap in viewed if cap.policy_available is False]

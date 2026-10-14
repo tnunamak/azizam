@@ -2999,7 +2999,8 @@ def create_admin_router(
         except _RouteError as exc:
             return exc.as_response()
         try:
-            preview = await access_preview(access, full_detail="owner" in ctx.roles)
+            preview = await access_preview(access, full_detail="owner" in ctx.roles,
+                                           app_id=str(body["app"]) if body.get("app") else None)
         except Exception:  # A failed preview must never look like a plan that allows nothing.
             return _RouteError(status.HTTP_503_SERVICE_UNAVAILABLE, "access_preview_unavailable",
                                "What this plan can use could not be read.").as_response()

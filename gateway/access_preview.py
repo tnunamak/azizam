@@ -60,22 +60,25 @@ _CATEGORY_HIDDEN = "CATEGORY_HIDDEN"
 _POLICY_UNAVAILABLE = "POLICY_UNAVAILABLE"
 _GENERIC_REASON = "This access plan doesn't include it."
 _HIDDEN_SENTENCE = "It is in a restricted category that this plan can't see."
+# An administrator may not open Categories: the sentence names no category and does not say one is restricted.
+_LIMITED_HIDDEN_SENTENCE = "Blocked by a category rule"
 _UNAVAILABLE_SENTENCE = "The category rules couldn't be read just now, so access is refused until they can be."
 _NO_GRANT_SENTENCE = "The category rules don't give this plan access to it."
 
 
-def plain_reason(reason: str) -> str:
+def plain_reason(reason: str, *, full: bool = True) -> str:
     """A recorded decision reason as a sentence an owner can read.
 
     Used when a decision recorded text but no rule. Plan reasons are already
     sentences. Category-rule reasons carry a code and ids; say what happened
-    without them.
+    without them. ``full`` is False for an administrator, who is not told that
+    a restricted category exists.
     """
     text = str(reason).strip()
     if not text.startswith(_CATEGORY_PREFIX):
         return text
     if _CATEGORY_HIDDEN in text:
-        return _HIDDEN_SENTENCE
+        return _HIDDEN_SENTENCE if full else _LIMITED_HIDDEN_SENTENCE
     if _POLICY_UNAVAILABLE in text:
         return _UNAVAILABLE_SENTENCE
     return _NO_GRANT_SENTENCE
@@ -144,6 +147,8 @@ def _sentence(rule: DecidingRule, words: _Words, kind_label: str | None, item: s
         return f"{_capital(words.plan(rule))} allows it."
     if code == RULE_CATEGORY_HIDDEN:
         name = words.category(rule)
+        if not words.full:
+            return _LIMITED_HIDDEN_SENTENCE
         return f"It is in the {name} category, which this plan can't see." if name else _HIDDEN_SENTENCE
     if code == RULE_CATEGORY_NO_GRANT:
         return _NO_GRANT_SENTENCE
@@ -256,7 +261,7 @@ def _kind(
         rule, text = _decision_for(row, blocked_intents, denied)
         state = UNKNOWN if rule is not None and rule.code in CANNOT_TELL_RULES else BLOCKED
         view = _rule_view(rule, words, label, item) if rule is not None else None
-        reason = view["plain_reason"] if view else (plain_reason(text) if text else _GENERIC_REASON)
+        reason = view["plain_reason"] if view else (plain_reason(text, full=words.full) if text else _GENERIC_REASON)
         return {"kind": kind, "label": label, "allowed": False, "state": state, "reason": reason, "rule": view}
     rule, _text = _decision_for(row, intents, allowed)
     view = _rule_view(rule, words, label, item) if rule is not None else None
