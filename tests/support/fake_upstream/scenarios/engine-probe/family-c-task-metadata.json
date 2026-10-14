@@ -1,0 +1,217 @@
+{
+  "protocol": "engine-probe",
+  "name": "family-c-task-metadata",
+  "description": "Family C. A speech-to-text server marks its model with task asr. It answers both audio routes with 500 before reading the body, which is no evidence.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "~/Documents/azizam/ux-findings/add-engine-probe-table.md (measured 2026-10-14): stt-nemotron :8012/v1"
+  },
+  "exchanges": [
+    {
+      "id": "baseline-get",
+      "match": {
+        "method": "GET",
+        "path": "/v1/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "unknown endpoint: /v1/zz-not-a-route",
+            "type": "not_found"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "baseline-post",
+      "match": {
+        "method": "POST",
+        "path": "/v1/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "unknown endpoint: /v1/zz-not-a-route",
+            "type": "not_found"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "models",
+      "match": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "response": {
+        "status": 200,
+        "json": {
+          "object": "list",
+          "data": [
+            {
+              "id": "nemotron-3.5-asr-streaming-0.6b",
+              "object": "model",
+              "owned_by": "engine",
+              "family": "nemotron_asr",
+              "task": "asr",
+              "mode": "offline",
+              "loaded": true
+            }
+          ]
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "openapi",
+      "match": {
+        "method": "GET",
+        "path": "/openapi.json"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "unknown endpoint: /openapi.json",
+            "type": "not_found"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "capability-document",
+      "match": {
+        "method": "GET",
+        "path": "/v1/models/capabilities"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "unknown endpoint: /v1/models/capabilities",
+            "type": "not_found"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "chat",
+      "match": {
+        "method": "POST",
+        "path": "/v1/chat/completions"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "unknown endpoint: /v1/chat/completions",
+            "type": "not_found"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "embeddings",
+      "match": {
+        "method": "POST",
+        "path": "/v1/embeddings"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "unknown endpoint: /v1/embeddings",
+            "type": "not_found"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "images",
+      "match": {
+        "method": "POST",
+        "path": "/v1/images/generations"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "unknown endpoint: /v1/images/generations",
+            "type": "not_found"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "rerank",
+      "match": {
+        "method": "POST",
+        "path": "/v1/rerank"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "unknown endpoint: /v1/rerank",
+            "type": "not_found"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "speech",
+      "match": {
+        "method": "POST",
+        "path": "/v1/audio/speech"
+      },
+      "response": {
+        "status": 500,
+        "json": {
+          "error": {
+            "message": "missing required json key: model",
+            "type": "server_error"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "transcriptions",
+      "match": {
+        "method": "POST",
+        "path": "/v1/audio/transcriptions"
+      },
+      "response": {
+        "status": 500,
+        "json": {
+          "error": {
+            "message": "missing required json key: model",
+            "type": "server_error"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    }
+  ]
+}

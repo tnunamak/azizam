@@ -710,11 +710,10 @@ def _seed_with_provisioned() -> dict:
     )
 
 
-def test_service_form_to_raw_parses_base_url_and_applies_preset() -> None:
+def test_service_form_to_raw_parses_base_url() -> None:
     raw = service_registry.service_form_to_raw(
         {
-            "name": "My vLLM",
-            "preset": "vllm",
+            "name": "My server",
             "base_url": "http://10.0.0.5:8000/v1",
             "role": "required",
         }
@@ -722,9 +721,6 @@ def test_service_form_to_raw_parses_base_url_and_applies_preset() -> None:
     assert raw["host"] == "10.0.0.5"
     assert raw["port"] == 8000
     assert raw["base_path"] == "/v1"
-    # The vLLM preset supplies default capabilities when the form omits them.
-    assert raw["capabilities"] == ["chat", "completions"]
-    assert raw["native_passthrough"] is True
 
 
 def test_service_form_to_raw_keeps_secret_as_env_ref_only() -> None:
@@ -739,7 +735,7 @@ def test_service_form_to_raw_keeps_secret_as_env_ref_only() -> None:
 def test_upsert_creates_ui_service_and_rejects_duplicate() -> None:
     reg = _seed_with_provisioned()
     raw = service_registry.service_form_to_raw(
-        {"name": "My vLLM", "preset": "vllm", "base_url": "http://h:8000/v1"}
+        {"name": "My vLLM", "base_url": "http://h:8000/v1"}
     )
     reg2, rec = service_registry.upsert_service_in_registry(
         reg, service_id="my-vllm", raw=raw, source="ui"
@@ -860,31 +856,17 @@ def test_set_service_enabled_toggles_any_source() -> None:
     assert reg["services"]["tabby"]["enabled"] is True
 
 
-def test_provider_presets_have_a_custom_escape_hatch() -> None:
-    ids = [p["id"] for p in service_registry.PROVIDER_PRESETS]
-    assert "openai-compatible" in ids
-    assert service_registry.provider_preset("vllm")["default_port"] == 8000
-    assert service_registry.provider_preset("nope") is None
-
-
 # ---------------------------------------------------------------------------
 # Model/deployment mapping: an OpenAI-compatible service added via the form
 # must produce a routable LiteLLM model_list entry (the SLVP gap fix).
 # ---------------------------------------------------------------------------
 
 
-def test_openai_compatible_preset_sets_routing_protocol() -> None:
-    raw = service_registry.service_form_to_raw(
-        {"name": "tgw", "preset": "openai-compatible", "base_url": "http://h:7860/v1"}
-    )
-    assert raw["protocol"] == "openai-compatible"
-
-
 def test_form_models_become_deployment_records() -> None:
     raw = service_registry.service_form_to_raw(
         {
             "name": "tgw",
-            "preset": "openai-compatible",
+            "protocol": "openai-compatible",
             "base_url": "http://h:7860/v1",
             "models": [{"public": "my-llama", "upstream": "TheBloke_Llama"}],
         }
@@ -898,7 +880,7 @@ def test_form_model_row_defaults_public_to_upstream() -> None:
     raw = service_registry.service_form_to_raw(
         {
             "name": "tgw",
-            "preset": "openai-compatible",
+            "protocol": "openai-compatible",
             "base_url": "http://h:7860/v1",
             "models": [{"upstream": "only-upstream"}, {"public": "only-public"}],
         }
@@ -917,7 +899,7 @@ def test_added_openai_service_with_model_is_routable() -> None:
     raw = service_registry.service_form_to_raw(
         {
             "name": "text-generation-webui",
-            "preset": "openai-compatible",
+            "protocol": "openai-compatible",
             "base_url": "http://127.0.0.1:7860/v1",
             "capabilities": ["chat", "completions"],
             "models": [{"public": "my-llama", "upstream": "TheBloke_Llama-3-8B"}],
@@ -976,7 +958,7 @@ def test_added_service_without_models_is_inert() -> None:
     from gateway import litellm_substrate
 
     raw = service_registry.service_form_to_raw(
-        {"name": "bare", "preset": "openai-compatible", "base_url": "http://h:7860/v1"}
+        {"name": "bare", "protocol": "openai-compatible", "base_url": "http://h:7860/v1"}
     )
     svc = service_registry.service_from_backend_config("bare", raw, source="ui")
     registry = {
@@ -1371,7 +1353,7 @@ def test_models_list_round_trips_through_form_to_raw_to_litellm(tmp_path: Path) 
     # Simulate what the PATCH route does: form -> raw -> upsert.
     form = {
         "name": "my-tgw",
-        "preset": "openai-compatible",
+        "protocol": "openai-compatible",
         "base_url": "http://127.0.0.1:7860/v1",
         "models": [
             {"public": "llama-3-8b", "upstream": "Meta-Llama-3-8B-Instruct"},
@@ -1417,13 +1399,6 @@ def test_provisioned_service_is_editable_true_after_editability_law() -> None:
     reg = _seed_with_provisioned()
     assert reg["services"]["tabby"]["source"] == "provisioned"
     assert reg["services"]["tabby"]["editable"] is True
-
-
-def test_provider_presets_custom_is_first() -> None:
-    """The custom/openai-compatible preset must be the first entry."""
-    presets = service_registry.PROVIDER_PRESETS
-    assert presets[0]["id"] == "openai-compatible"
-    assert presets[0]["label"].lower().startswith("openai")
 
 
 # ---------------------------------------------------------------------------
@@ -1613,12 +1588,6 @@ def test_comfyui_protocol_fields_stored_in_config() -> None:
 # ---------------------------------------------------------------------------
 # Capability vocabulary — generations and videos
 # ---------------------------------------------------------------------------
-
-def test_capability_choices_includes_generations_and_videos() -> None:
-    """_CAPABILITY_CHOICES must include generations and videos (honesty H2)."""
-    assert "generations" in service_registry._CAPABILITY_CHOICES
-    assert "videos" in service_registry._CAPABILITY_CHOICES
-
 
 def test_unknown_config_key_survives_form_to_raw_passthrough() -> None:
     """An unknown config key present in the form dict passes through unchanged.

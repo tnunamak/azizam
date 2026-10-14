@@ -1,0 +1,56 @@
+{
+  "protocol": "engine-probe",
+  "name": "custom-path-speech-to-text",
+  "description": "A speech-to-text server with its own path answers an empty POST with 400 \"no file provided\"; a made-up path answers 404.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "~/Documents/azizam/ux-findings/add-engine-probe-table.md (measured 2026-10-14): stt :5092 (POST /v1/audio/transcriptions answered 400 \"No file part in the request\"); custom path per spec section 1"
+  },
+  "exchanges": [
+    {
+      "id": "baseline-get",
+      "match": {
+        "method": "GET",
+        "path": "/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "baseline-post",
+      "match": {
+        "method": "POST",
+        "path": "/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "inference",
+      "match": {
+        "method": "POST",
+        "path": "/inference"
+      },
+      "response": {
+        "status": "{{inference_status}}",
+        "json": {
+          "error": "no file provided"
+        }
+      },
+      "repeat": true,
+      "required": false
+    }
+  ]
+}

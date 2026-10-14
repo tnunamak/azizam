@@ -16,6 +16,10 @@ baseline's paths and its own. Only these differences are allowed:
 * the MCP authorization server's paths are new (/.well-known/oauth-authorization-server,
   /oauth/..., /me/api/mcp/...): each answers with its own route or that route's
   405; in r18 they fell to the catch-all;
+* Add engine replaced the engine preset list: /admin/api/engine-definitions and
+  /admin/api/engines/... are new admin routes (tests/test_engine_admin_routes.py
+  covers them), and /admin/api/operator/service-presets is deleted and falls to
+  the catch-all or a 405;
 * GET and HEAD with an HTML Accept on a first segment no route registers get
   the web app's 404 page (503 here: the sandbox has no web build). The same
   requests without HTML in Accept keep their r18 answer.
@@ -51,6 +55,8 @@ ACCESS_PLAN_API_PREFIXES = (
     "/admin/api/policy/", "/admin/api/settings/lan-placeholder-keys", "/admin/api/operator/user-access-defaults",
 )
 MCP_OAUTH_PREFIXES = ("/.well-known/oauth-authorization-server", "/oauth", "/me/api/mcp/")
+ENGINE_PATHS = ("/admin/api/engine-definitions", "/admin/api/engines/")
+DELETED_PRESETS = "/admin/api/operator/service-presets"
 THUMBNAIL_PATH, THUMBNAIL_SIBLING = "/v1/assets/sample/thumbnail", "/v1/assets/sample/content"
 
 
@@ -99,6 +105,8 @@ def _deliberate(key: str) -> str | None:
         return "trusted-addresses"  # owner routes added after the baseline (gateway/trusted_addresses.py)
     if path == "/admin/api/signin" or path.startswith("/admin/api/signin/"):
         return "signin"  # owner routes added after the baseline (gateway/signin_api.py)
+    if path.startswith(ENGINE_PATHS) or path == DELETED_PRESETS:
+        return "engines"  # Add engine (gateway/engine_admin.py) replaced the preset list
     if ui_routes.classify(path) is not None:
         return "ui"
     if path in DELETED_PATHS or ui_routes.first_segment(path) in DELETED_SEGMENTS:
@@ -170,6 +178,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new owner routes; tests/test_trusted_addresses.py covers them
         if kind == "signin":
             continue  # new owner routes; tests/test_signin_settings_api.py and test_signin_test_flow.py cover them
+        if kind == "engines" and (key not in old or route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
+            continue  # new Add engine routes, or the deleted preset list falling through
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
@@ -204,7 +214,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines"}:
             continue
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue

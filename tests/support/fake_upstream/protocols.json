@@ -92,5 +92,35 @@
     ],
     "framing": "ndjson",
     "stream_media_type": "application/x-ndjson"
+  },
+  "engine-probe": {
+    "paths": [
+      "/v1/models",
+      "/models",
+      "/api/tags",
+      "/openapi.json",
+      "/v1/models/capabilities",
+      "/models/capabilities",
+      "/system_stats",
+      "/object_info",
+      "/v1/zz-not-a-route-{token}",
+      "/zz-not-a-route-{token}",
+      "/v1/chat/completions",
+      "/v1/embeddings",
+      "/v1/images/generations",
+      "/v1/rerank",
+      "/v1/audio/transcriptions",
+      "/v1/audio/speech",
+      "/chat/completions",
+      "/embeddings",
+      "/images/generations",
+      "/rerank",
+      "/audio/transcriptions",
+      "/audio/speech",
+      "/inference",
+      "/api/tts",
+      "/prompt"
+    ],
+    "framing": "none"
   }
 }

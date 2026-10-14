@@ -605,32 +605,32 @@ NOT_APPLICABLE = ('[[cell]]\nprotocol = "ollama"\nset = "chat-text"\nstatus = "n
                   'upstream_protocol = "ollama"\nreason = "no local engine speaks it upstream"\n')
 
 
-def _local_presets(root: Path, *protocols: str | None) -> None:
-    (root / "gateway").mkdir(parents=True, exist_ok=True)
-    rows = ", ".join(f'{{"id": "p{i}", "protocol": {protocol!r}}}' for i, protocol in enumerate(protocols))
-    (root / replay_scan.LOCAL_PRESETS).write_text(f"PROVIDER_PRESETS: tuple = ({rows},)\n", encoding="utf-8")
+def _local_definitions(root: Path, *protocols: str | None) -> None:
+    (root / "registry").mkdir(parents=True, exist_ok=True)
+    rows = [{"definition": f"d{i}", "record": {"protocol": protocol} if protocol else {}} for i, protocol in enumerate(protocols)]
+    (root / replay_scan.LOCAL_DEFINITIONS).write_text(json.dumps({"definitions": rows}), encoding="utf-8")
 
 
-def test_the_shipped_local_presets_are_read_as_data() -> None:
-    assert replay_scan.local_upstream_protocols(ROOT) == {"openai-compatible"}
+def test_the_shipped_engine_definitions_are_read_as_data() -> None:
+    assert replay_scan.local_upstream_protocols(ROOT) == {"openai-compatible", "comfyui"}
 
 
-def test_a_not_applicable_cell_holds_only_while_no_local_preset_speaks_its_protocol(tmp_path: Path) -> None:
+def test_a_not_applicable_cell_holds_only_while_no_engine_definition_speaks_its_protocol(tmp_path: Path) -> None:
     absent = _cells_root(tmp_path / "absent", NOT_APPLICABLE)
-    _local_presets(absent, None)
+    _local_definitions(absent, None)
     assert replay_scan.check_cells(absent, TODAY) == []
     present = _cells_root(tmp_path / "present", NOT_APPLICABLE)
-    _local_presets(present, None, "ollama")
+    _local_definitions(present, None, "ollama")
     assert replay_scan.check_cells(present, TODAY) == [
-        "replay cell ollama/chat-text: a local engine preset speaks ollama upstream; record it (status recorded or pending)"]
+        "replay cell ollama/chat-text: an engine definition speaks ollama upstream; record it (status recorded or pending)"]
     bare = _cells_root(tmp_path / "bare", NOT_APPLICABLE.replace('upstream_protocol = "ollama"\n', ""))
-    _local_presets(bare, None)
+    _local_definitions(bare, None)
     assert replay_scan.check_cells(bare, TODAY) == ["replay cell ollama/chat-text: not-applicable needs upstream_protocol and reason"]
 
 
 def test_a_local_upstream_protocol_without_a_request_set_fails(tmp_path: Path) -> None:
     root = _cells_root(tmp_path / "uncovered", NOT_APPLICABLE)
-    _local_presets(root, "openai-compatible")
+    _local_definitions(root, "openai-compatible")
     assert replay_scan.check_cells(root, TODAY) == [
-        "replay: a local engine preset speaks openai-compatible upstream, but no request set covers it"]
+        "replay: an engine definition speaks openai-compatible upstream, but no request set covers it"]
 

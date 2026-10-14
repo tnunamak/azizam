@@ -1,0 +1,194 @@
+{
+  "protocol": "engine-probe",
+  "name": "openapi-lists-a-disabled-route",
+  "description": "The API description lists chat and a realtime path. The chat route answers 501 \"is disabled\", so chat is not supported; realtime comes from the description alone. There is no model list.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "~/Documents/azizam/ux-findings/add-engine-probe-table.md (measured 2026-10-14): realtime :8022"
+  },
+  "exchanges": [
+    {
+      "id": "baseline-get",
+      "match": {
+        "method": "GET",
+        "path": "/v1/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "baseline-post",
+      "match": {
+        "method": "POST",
+        "path": "/v1/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "models",
+      "match": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "openapi",
+      "match": {
+        "method": "GET",
+        "path": "/openapi.json"
+      },
+      "response": {
+        "status": 200,
+        "json": {
+          "openapi": "3.1.0",
+          "info": {
+            "title": "FastAPI",
+            "version": "0.1.0"
+          },
+          "paths": {
+            "/v1/chat/completions": {
+              "post": {
+                "summary": "Unavailable Endpoint"
+              }
+            },
+            "/v1/responses": {},
+            "/v1/realtime/calls": {
+              "post": {}
+            }
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "capability-document",
+      "match": {
+        "method": "GET",
+        "path": "/v1/models/capabilities"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "chat",
+      "match": {
+        "method": "POST",
+        "path": "/v1/chat/completions"
+      },
+      "response": {
+        "status": 501,
+        "json": {
+          "error": {
+            "message": "The LLM proxy is disabled. Start the server with --enable_llm_proxy to enable it.",
+            "type": "not_implemented"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "embeddings",
+      "match": {
+        "method": "POST",
+        "path": "/v1/embeddings"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "images",
+      "match": {
+        "method": "POST",
+        "path": "/v1/images/generations"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "rerank",
+      "match": {
+        "method": "POST",
+        "path": "/v1/rerank"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "speech",
+      "match": {
+        "method": "POST",
+        "path": "/v1/audio/speech"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "transcriptions",
+      "match": {
+        "method": "POST",
+        "path": "/v1/audio/transcriptions"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    }
+  ]
+}

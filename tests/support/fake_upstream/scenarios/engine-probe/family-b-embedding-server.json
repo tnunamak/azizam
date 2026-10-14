@@ -1,0 +1,237 @@
+{
+  "protocol": "engine-probe",
+  "name": "family-b-embedding-server",
+  "description": "Family B. An embedding-only server lists one model whose capabilities say only \"completion\", validates an empty chat request with 400, and refuses rerank and audio with 501.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "~/Documents/azizam/ux-findings/add-engine-probe-table.md (measured 2026-10-14): embeddings :5061/v1"
+  },
+  "exchanges": [
+    {
+      "id": "baseline-get",
+      "match": {
+        "method": "GET",
+        "path": "/v1/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "File Not Found",
+            "type": "not_found_error",
+            "code": 404
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "baseline-post",
+      "match": {
+        "method": "POST",
+        "path": "/v1/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "File Not Found",
+            "type": "not_found_error",
+            "code": 404
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "models",
+      "match": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "response": {
+        "status": 200,
+        "json": {
+          "models": [
+            {
+              "name": "nomic-embed-text-v1.5.f16.gguf",
+              "model": "nomic-embed-text-v1.5.f16.gguf",
+              "type": "model",
+              "capabilities": [
+                "completion"
+              ]
+            }
+          ],
+          "object": "list",
+          "data": [
+            {
+              "id": "nomic-embed-text-v1.5.f16.gguf",
+              "object": "model",
+              "owned_by": "llamacpp",
+              "meta": {
+                "n_ctx_train": 2048,
+                "n_embd": 768
+              }
+            }
+          ]
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "openapi",
+      "match": {
+        "method": "GET",
+        "path": "/openapi.json"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "File Not Found",
+            "type": "not_found_error",
+            "code": 404
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "capability-document",
+      "match": {
+        "method": "GET",
+        "path": "/v1/models/capabilities"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "File Not Found",
+            "type": "not_found_error",
+            "code": 404
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "chat",
+      "match": {
+        "method": "POST",
+        "path": "/v1/chat/completions"
+      },
+      "response": {
+        "status": 400,
+        "json": {
+          "error": {
+            "code": 400,
+            "message": "'messages' is required",
+            "type": "invalid_request_error"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "embeddings",
+      "match": {
+        "method": "POST",
+        "path": "/v1/embeddings"
+      },
+      "response": {
+        "status": 400,
+        "json": {
+          "error": {
+            "code": 400,
+            "message": "\"input\" or \"content\" must be provided",
+            "type": "invalid_request_error"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "images",
+      "match": {
+        "method": "POST",
+        "path": "/v1/images/generations"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "File Not Found",
+            "type": "not_found_error",
+            "code": 404
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "rerank",
+      "match": {
+        "method": "POST",
+        "path": "/v1/rerank"
+      },
+      "response": {
+        "status": 501,
+        "json": {
+          "error": {
+            "code": 501,
+            "message": "This server does not support reranking. Start it with '--reranking'",
+            "type": "not_supported_error"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "speech",
+      "match": {
+        "method": "POST",
+        "path": "/v1/audio/speech"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "File Not Found",
+            "type": "not_found_error",
+            "code": 404
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "transcriptions",
+      "match": {
+        "method": "POST",
+        "path": "/v1/audio/transcriptions"
+      },
+      "response": {
+        "status": 501,
+        "json": {
+          "error": {
+            "code": 501,
+            "message": "The current model does not support audio input.",
+            "type": "not_supported_error"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    }
+  ]
+}

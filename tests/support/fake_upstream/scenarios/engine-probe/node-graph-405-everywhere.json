@@ -1,0 +1,271 @@
+{
+  "protocol": "engine-probe",
+  "name": "node-graph-405-everywhere",
+  "description": "A node-graph server answers every POST with 405, the made-up path too, and lists model folders (strings) at /models. Read as an OpenAI-compatible server, nothing may look possible.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "~/Documents/azizam/ux-findings/add-engine-probe-table.md (measured 2026-10-14): comfyui :7890"
+  },
+  "exchanges": [
+    {
+      "id": "baseline-get",
+      "match": {
+        "method": "GET",
+        "path": "/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "body": [
+          {
+            "text": ""
+          }
+        ]
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "baseline-post",
+      "match": {
+        "method": "POST",
+        "path": "/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 405,
+        "body": [
+          {
+            "text": "405: Method Not Allowed"
+          }
+        ]
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "models",
+      "match": {
+        "method": "GET",
+        "path": "/models"
+      },
+      "response": {
+        "status": 200,
+        "json": [
+          "checkpoints",
+          "configs",
+          "loras",
+          "vae",
+          "text_encoders",
+          "diffusion_models"
+        ]
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "openapi",
+      "match": {
+        "method": "GET",
+        "path": "/openapi.json"
+      },
+      "response": {
+        "status": 404,
+        "body": [
+          {
+            "text": ""
+          }
+        ]
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "capability-document",
+      "match": {
+        "method": "GET",
+        "path": "/models/capabilities"
+      },
+      "response": {
+        "status": 404,
+        "body": [
+          {
+            "text": ""
+          }
+        ]
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "system-stats",
+      "match": {
+        "method": "GET",
+        "path": "/system_stats"
+      },
+      "response": {
+        "status": 200,
+        "json": {
+          "system": {
+            "os": "linux",
+            "ram_total": 134140788736,
+            "comfyui_version": "0.38.0",
+            "python_version": "3.12.3"
+          },
+          "devices": [
+            {
+              "name": "cuda:0 NVIDIA GeForce RTX 4090 : cudaMallocAsync",
+              "type": "cuda",
+              "index": 0,
+              "vram_total": 25393692672
+            }
+          ]
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "object-info",
+      "match": {
+        "method": "GET",
+        "path": "/object_info"
+      },
+      "response": {
+        "status": 200,
+        "json": "{{object_info}}"
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "chat",
+      "match": {
+        "method": "POST",
+        "path": "/chat/completions"
+      },
+      "response": {
+        "status": 405,
+        "body": [
+          {
+            "text": "405: Method Not Allowed"
+          }
+        ]
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "embeddings",
+      "match": {
+        "method": "POST",
+        "path": "/embeddings"
+      },
+      "response": {
+        "status": 405,
+        "body": [
+          {
+            "text": "405: Method Not Allowed"
+          }
+        ]
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "images",
+      "match": {
+        "method": "POST",
+        "path": "/images/generations"
+      },
+      "response": {
+        "status": 405,
+        "body": [
+          {
+            "text": "405: Method Not Allowed"
+          }
+        ]
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "rerank",
+      "match": {
+        "method": "POST",
+        "path": "/rerank"
+      },
+      "response": {
+        "status": 405,
+        "body": [
+          {
+            "text": "405: Method Not Allowed"
+          }
+        ]
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "speech",
+      "match": {
+        "method": "POST",
+        "path": "/audio/speech"
+      },
+      "response": {
+        "status": 405,
+        "body": [
+          {
+            "text": "405: Method Not Allowed"
+          }
+        ]
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "transcriptions",
+      "match": {
+        "method": "POST",
+        "path": "/audio/transcriptions"
+      },
+      "response": {
+        "status": 405,
+        "body": [
+          {
+            "text": "405: Method Not Allowed"
+          }
+        ]
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "status": 400,
+        "json": {
+          "error": {
+            "type": "prompt_outputs_failed_validation",
+            "message": "Prompt outputs failed validation"
+          },
+          "node_errors": {
+            "3": {
+              "errors": [
+                {
+                  "type": "value_smaller_than_min",
+                  "message": "Value smaller than min",
+                  "details": "seed: -1 < 0"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    }
+  ]
+}

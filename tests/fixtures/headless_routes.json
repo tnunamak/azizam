@@ -297,6 +297,46 @@
   },
   {
     "method": "GET",
+    "path": "/admin/api/engine-definitions",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.engine_admin.get_engine_definitions",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/engines/check",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.engine_admin.check_engine",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/engines/test",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.engine_admin.test_engine",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/engines/workflow",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.engine_admin.read_engine_workflow",
+    "schema": true
+  },
+  {
+    "method": "GET",
+    "path": "/admin/api/engines/{service_id}",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.engine_admin.get_engine",
+    "schema": true
+  },
+  {
+    "method": "GET",
     "path": "/admin/api/extensions",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
@@ -413,14 +453,6 @@
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.update_service_availability_overrides",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/operator/service-presets",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.get_service_presets",
     "schema": true
   },
   {
