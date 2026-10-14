@@ -142,6 +142,12 @@ describe("WorkflowsPage empathy copy", () => {
     vi.restoreAllMocks();
   });
 
+  test("names the page with exactly one level-one heading", async () => {
+    renderWorkflows();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1, name: /^Workflows/ })).toBeVisible();
+  });
+
   test("rows expose required inputs and honest missing-input summaries before opening details", async () => {
     serve([
       { ...workflows[0], inputs: [{ name: "optional", type: "number", accepted: true, required: false }] },

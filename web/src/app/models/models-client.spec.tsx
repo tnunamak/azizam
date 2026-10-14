@@ -197,6 +197,12 @@ afterEach(() => {
 });
 
 describe("the list of model names", () => {
+  it("names the page with exactly one level-one heading", async () => {
+    renderModels(catalog([]));
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1, name: "Models" })).toBeVisible();
+  });
+
   it("shows every model name under its task, with counts, and nothing to expand", async () => {
     renderModels(
       catalog(
