@@ -368,7 +368,7 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
               waiting={test.waiting}
               tested={tested || liveUnchanged || savedTested}
               testedWhen={testedWhen ?? ""}
-              changedSinceLastTest={live}
+              changedSinceLastTest={live && !unchanged}
               result={test.result}
               verdict={
                 test.result?.kind === "pass" && test.result.testId === testId

@@ -209,7 +209,8 @@ export function testCaption(a: {
     return `Finish signing in at ${n} in the new window. Waiting up to 5 minutes.`;
   if (a.addressBad) return "Fix the provider address first.";
   if (!a.ready) return "Fill in the fields above first.";
-  if (a.tested) return `Passed ${a.testedWhen}. Opens ${n} in a new window.`;
+  if (a.tested && a.testedWhen)
+    return `Passed ${a.testedWhen}. Opens ${n} in a new window.`;
   if (a.changedSinceLastTest)
     return `Changed since the last test. Opens ${n} in a new window.`;
   return `Sign in once at ${n} to check that it works. Opens a new window.`;

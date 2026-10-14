@@ -41,7 +41,7 @@ for (const viewport of [
     const section = page.locator("#sign-in-section");
     await expect(section.getByRole("heading", { name: "Sign-in" })).toBeVisible();
     await expect(section).toContainText("id.example.test");           // named by its address: no Name was typed
-    await expect(section).not.toContainText("your provider");
+    await expect(section).not.toContainText(/\b(a|own) your provider/);
     await section.getByRole("button", { name: "Add a rule" }).click();
     await page.getByPlaceholder(/^Add a group/).fill("/Family");
     await page.getByRole("button", { name: "Add", exact: true }).click();

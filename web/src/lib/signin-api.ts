@@ -223,8 +223,6 @@ export interface Discovery {
   jwks_uri: string;
 }
 
-const JSON_HEADERS = { "Content-Type": "application/json" };
-
 export const signInKeys = { snapshot: ["settings", "signin"] as const };
 
 export const getSignIn = () => adminFetch<SignInSnapshot>("/admin/api/signin");
@@ -232,15 +230,13 @@ export const getSignIn = () => adminFetch<SignInSnapshot>("/admin/api/signin");
 export const discoverProvider = (address: string) =>
   adminFetch<Discovery>("/admin/api/signin/discover", {
     method: "POST",
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ address }),
+    body: { address },
   });
 
 export const previewSignIn = (proposal: SignInProposal, testId: string | null) =>
   adminFetch<Preview>("/admin/api/signin/preview", {
     method: "POST",
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ proposal, test_id: testId }),
+    body: { proposal, test_id: testId },
   });
 
 export const startSignInTest = (provider: ProviderConnection) =>
@@ -248,8 +244,7 @@ export const startSignInTest = (provider: ProviderConnection) =>
     "/admin/api/signin/test",
     {
       method: "POST",
-      headers: JSON_HEADERS,
-      body: JSON.stringify({ provider }),
+      body: { provider },
     },
   );
 
@@ -265,15 +260,14 @@ export const cancelSignInTest = (testId: string) =>
 export const linkOwner = (testId: string) =>
   adminFetch<SignInSnapshot>("/admin/api/signin/link-owner", {
     method: "POST",
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ test_id: testId }),
+    body: { test_id: testId },
   });
 
 export const saveSignIn = (revision: string, request: SaveRequest) =>
   adminFetch<SaveResult>("/admin/api/signin", {
     method: "PUT",
-    headers: { ...JSON_HEADERS, "If-Match": revision },
-    body: JSON.stringify(request),
+    headers: { "If-Match": revision },
+    body: request,
   });
 
 export const dismissNotice = () =>
@@ -284,6 +278,5 @@ export const dismissNotice = () =>
 export const setOwnerPassword = (password: string) =>
   adminFetch<SignInSnapshot>("/admin/api/signin/owner-password", {
     method: "POST",
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ password }),
+    body: { password },
   });

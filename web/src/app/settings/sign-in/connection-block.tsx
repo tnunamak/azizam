@@ -83,7 +83,8 @@ export function ConnectionBlock({
               <>
                 <span className="font-medium">{label.name || "Your provider"}</span>{" "}
                 <span className="text-muted-foreground text-meta">
-                  · {hostOr(label)} · client {connection.client_id.trim()}
+                  {label.typed ? ` · ${hostOr(label)}` : ""} · client{" "}
+                  {connection.client_id.trim()}
                   {testedWhen ? ` · tested ${testedWhen}` : ""}
                 </span>
               </>

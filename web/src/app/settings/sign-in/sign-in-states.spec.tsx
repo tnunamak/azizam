@@ -548,6 +548,31 @@ describe("state f: the test failed", () => {
   });
 });
 
+describe("a live provider nobody has tested through this page", () => {
+  const untested = () => {
+    const base = liveSnapshot();
+    return liveSnapshot({
+      provider: { ...base.provider, name: "", effective_name: "id.vivid.fish", tested_at: null },
+    });
+  };
+
+  it("does not claim a pass, and says how to check it", async () => {
+    await mountSignIn(untested(), { preview: emptyPreview() });
+    expect(document.body.textContent).not.toMatch(/Passed\s*\./);
+    expect(document.body.textContent).toContain(
+      "Sign in once at id.vivid.fish to check that it works. Opens a new window.",
+    );
+    expect(document.body.textContent).not.toContain("tested ");
+  });
+
+  it("names the host once in the connection summary when no Name was typed", async () => {
+    await mountSignIn(untested(), { preview: emptyPreview() });
+    const summary = screen.getByRole("button", { name: /client azizam/ });
+    expect(summary.textContent).toContain("id.vivid.fish");
+    expect(summary.textContent?.match(/id\.vivid\.fish/g)).toHaveLength(1);
+  });
+});
+
 describe("N3: the provider's name is the typed Name, else the host", () => {
   // Fixed help text from the mockup that talks about providers in general. It
   // never names the provider, so it is not part of the name rule.
