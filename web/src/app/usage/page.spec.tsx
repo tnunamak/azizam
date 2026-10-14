@@ -1226,6 +1226,7 @@ test.each([
 test("HONEST-3 Money keeps other pages' default formatting", () => {
   const { container } = render(<><Money amount={0.014} /><Money amount={0.0000001} /></>);
   expect(container.textContent).toBe("$0.01$0.00");
+});
 
 test("Usage reconciles an unexplained daily remainder into Other without changing the total", async () => {
   renderUsage({ requests: 9, by_day: [{ date: "2026-10-01", total: 9, chat: 2, image: 3 }] });
@@ -1245,7 +1246,7 @@ test("Usage receipt duration changes units at one second and precision at ten se
     request_id: `duration-${duration_ms}`, capability: "chat", duration_ms,
   })) });
   await userEvent.setup().click(await screen.findByRole("button", { name: "View recent requests" }));
-  const receipts = screen.getAllByRole("button", { name: "Receipt details for Chat request" });
+  const receipts = screen.getAllByRole("button", { name: /^Receipt details for Chat request/ });
   for (const [index, duration] of ["999 ms", "1.0 s", "1.3 s", "10 s"].entries()) {
     expect(within(receipts[index]).getByText(duration, { exact: true })).toBeVisible();
   }

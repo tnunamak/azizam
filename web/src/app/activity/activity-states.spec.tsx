@@ -524,6 +524,7 @@ it.each([undefined, null, -1])("records unknown duration in row and details (%s)
   await userEvent.click(row);
   const label = within(screen.getByRole("dialog")).getByText("Time taken");
   expect(label.nextElementSibling).toHaveTextContent("Duration not recorded");
+});
 
 it("resets a source-only empty result to all sources from its empty-state action", async () => {
   const { requestUrls } = mountActivity({

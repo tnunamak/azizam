@@ -455,6 +455,7 @@ it("does not claim a failed activation was definitely unsaved", async () => {
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("We could not confirm that this change was saved. Reload the categories before trying again.");
   expect(posted).toHaveLength(2);
+});
 
 it.each(["", "   "])("refuses an empty category name %j even on direct form submission", async (name) => {
   const { posted } = mount();
@@ -543,7 +544,7 @@ it("retains every category edit after activation fails and retries the same draf
   expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
   await user.click(within(dialog).getByRole("checkbox", { name: "Guest" }));
   await user.click(within(dialog).getByRole("button", { name: "Save" }));
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent("The change was not saved. Try again.");
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("We could not confirm that this change was saved. Reload the categories before trying again.");
   expect(name).toHaveValue("Preview");
   expect(description).toHaveValue("Keep this carefully edited meaning.");
   expect(within(dialog).getByRole("radio", { name: /Me and chosen access plans/ })).toBeChecked();
