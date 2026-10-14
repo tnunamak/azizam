@@ -176,9 +176,10 @@ def create_signin_api(
     signing_key_provider: Callable[[], bytes | None],
     end_provider_access: Callable[[str], None],
     revoke_person_sessions: Callable[[str], None],
-    fetch_json: Callable[[str], Mapping[str, Any]] = default_fetch_json,
+    fetch_json: Callable[[str], Mapping[str, Any]] | None = None,
 ) -> "SignInApi":
     router = APIRouter(route_class=_SignInRoute, tags=["sign-in"])
+    get_json = fetch_json or (lambda url: default_fetch_json(url))
 
     def owner_ctx(request: Request) -> AdminContext | JSONResponse:
         ctx = _require_admin(auth, request)
@@ -241,7 +242,7 @@ def create_signin_api(
                     "token_endpoint": "", "jwks_uri": ""}
         url = address.rstrip("/") + DISCOVERY_PATH
         try:
-            doc = fetch_json(url)
+            doc = get_json(url)
             issuer = str(doc.get("issuer") or "")
             found = {key: str(doc.get(key) or "") for key in ("authorization_endpoint", "token_endpoint", "jwks_uri")}
             if norm_issuer(issuer) != norm_issuer(address) or not all(found.values()):
