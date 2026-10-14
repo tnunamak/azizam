@@ -398,7 +398,8 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
           label={label}
           plans={snapshot.plans}
           seen={snapshot.seen}
-          ruleMatches={snapshot.rule_matches}
+          ruleMatches={preview?.rule_matches ?? snapshot.rule_matches}
+          matchesAreForForm={Boolean(preview)}
           groupsMissingSince={groupsMissingSince}
           showNotice={snapshot.notice === "removed_owner_rule" && !readOnly}
           disabled={readOnly}

@@ -243,6 +243,11 @@ def create_signin_api(
     def saved_signature(saved: OIDCConfig) -> str:
         return signin_test.connection_signature(signature_key(), saved, saved.client_secret)
 
+    def tested_before(path: Path, signature: str) -> bool:
+        """This exact connection already passed a test (the saved one, or one saved for later)."""
+        last = signin_admin.load_status(path).get("last_test")
+        return isinstance(last, dict) and last.get("sig") == signature
+
     def discover(address: str) -> dict[str, Any]:
         address = address.strip()
         if not _valid_address(address):
@@ -341,7 +346,7 @@ def create_signin_api(
         if after.provider and _valid_address(provider.address) and provider.client_id.strip():
             typed, secret = typed_config(request, saved_cfg, provider, enabled=False)
             sig = signin_test.connection_signature(signature_key(), typed, secret)
-            unchanged = saved.provider and sig == saved_signature(saved_cfg)
+            unchanged = (saved.provider and sig == saved_signature(saved_cfg)) or tested_before(path, sig)
             if not unchanged and signin_test.passed_for(test_id, user_id, sig) is None:
                 found.append({"code": "test_required", "message": "Test sign-in first."})
         elif after.provider:
@@ -380,6 +385,7 @@ def create_signin_api(
             "blockers": blockers_for(request, path, cfg, saved, after, body.proposal, after.rules,
                                      body.test_id, ctx.audit_actor_id),
             "test_verdict": verdict,
+            "rule_matches": signin_admin.rule_matches(path, after.rules, with_names=True),
         }
 
     @router.post("/admin/api/signin/preview")
@@ -524,17 +530,16 @@ def create_signin_api(
             raise SignInError("address_invalid", "Fix the provider address first.", 409)
         typed, secret = typed_config(request, cfg, provider, enabled=False)
         sig = signin_test.connection_signature(signature_key(), typed, secret)
-        run = None
         issuer = provider.address.strip()
+        run = signin_test.passed_for(body.test_id, ctx.audit_actor_id, sig)
+        if run is not None:
+            issuer = run.cfg.issuer
         if after.provider:
             if not provider.client_id.strip() or not secret:
                 raise SignInError("connection_incomplete", "Enter the client ID and secret first.", 409)
-            unchanged = saved.provider and sig == saved_signature(cfg)
-            run = signin_test.passed_for(body.test_id, ctx.audit_actor_id, sig)
+            unchanged = (saved.provider and sig == saved_signature(cfg)) or tested_before(path, sig)
             if not unchanged and run is None:
                 raise SignInError("test_required", "Test sign-in first.", 409)
-            if run is not None:
-                issuer = run.cfg.issuer
         elif body.save_for_later and not (provider.address.strip() and provider.client_id.strip()):
             raise SignInError("connection_incomplete", "Enter the address and client ID first.", 409)
 
@@ -575,9 +580,9 @@ def create_signin_api(
         else:
             write_mode()
         status = signin_admin.load_status(path)
-        if after.provider and run is not None:
+        if run is not None:
             status["last_test"] = {"at": run.passed_at, "sig": sig, "groups_missing": not run.groups_seen}
-        elif not after.provider or sig != saved_signature(cfg):
+        elif not tested_before(path, sig):
             status.pop("last_test", None)
         signin_admin.write_status(path, status, updated_by=ctx.audit_actor_id)
         # The world after the write is what the sign-in code now reads.

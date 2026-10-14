@@ -33,6 +33,7 @@ export function RulesEditor({
   plans,
   seen,
   ruleMatches,
+  matchesAreForForm,
   groupsMissingSince,
   showNotice,
   disabled,
@@ -46,6 +47,8 @@ export function RulesEditor({
   plans: PlanRef[];
   seen: SignInSnapshot["seen"];
   ruleMatches: SignInSnapshot["rule_matches"];
+  /** True when `ruleMatches` was computed for the rules in the form (the preview), not the saved ones. */
+  matchesAreForForm: boolean;
   /** "today" or a date, when the provider last sent no groups. */
   groupsMissingSince: string | null;
   showNotice: boolean;
@@ -124,7 +127,11 @@ export function RulesEditor({
               seen={valuesFor(rule.field)}
               plans={plans}
               label={label}
-              matches={unchanged ? (ruleMatches[rule.id] ?? null) : null}
+              matches={
+                matchesAreForForm || unchanged
+                  ? (ruleMatches[rule.id] ?? null)
+                  : null
+              }
               isNew={!savedRule}
               planPriority={rule.plan && plan.length > 1 ? at + 1 : null}
               canMoveUp={at > 0}

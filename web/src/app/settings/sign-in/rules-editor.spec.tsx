@@ -229,6 +229,30 @@ describe("the rule editor", () => {
     );
   });
 
+  it("shows who an edited rule matches from the server's preview of the form, not the saved rules", async () => {
+    const { user } = await mountSignIn(liveSnapshot(), {
+      preview: (p) =>
+        emptyPreview({
+          rule_matches: Object.fromEntries(
+            p.rules.rules.map((r) => [
+              r.id,
+              r.field === "everyone"
+                ? { count: 2, names: ["Simon Agent", "Tim ODL"] }
+                : { count: 1, names: ["Simon Agent"] },
+            ]),
+          ),
+        }),
+    });
+    await pick(user, within(rule(1)).getByRole("combobox", { name: "Rule applies to" }), "Everyone");
+
+    await user.click(
+      await within(rule(1)).findByRole("button", {
+        name: "Matches 2 people who have signed in",
+      }),
+    );
+    expect(within(rule(1)).getByText("Simon Agent, Tim ODL")).toBeInTheDocument();
+  });
+
   it("gives a plan by name, never by id", async () => {
     const { user } = await mountSignIn(liveSnapshot(), { preview: server });
     await user.click(screen.getByRole("button", { name: "Add a rule" }));

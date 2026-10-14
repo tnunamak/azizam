@@ -590,6 +590,55 @@ def test_turning_the_provider_on_for_the_first_time_needs_a_pass_and_then_adds_t
     assert sg.client().get("/auth/api/options").json()["oidc"] is True
 
 
+def test_a_connection_saved_for_later_after_a_pass_turns_on_without_testing_again(sg):
+    owner = owner_client(sg)
+    provider_off(sg)
+    snapshot = get_snapshot(owner)
+    test = begin(owner, snapshot)
+    finish(sg, owner, test)
+    assert save(owner, snapshot, proposal(snapshot), test_id=test["test_id"], save_for_later=True).status_code == 200
+    snapshot = get_snapshot(owner)
+    assert snapshot["methods"]["provider"] is False and snapshot["provider"]["tested_at"] is not None
+    on = proposal(snapshot, methods={"password": True, "provider": True})
+    assert preview(owner, on)["blockers"] == []
+
+    saved = save(owner, snapshot, on)
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["applied"]["provider_turned_on"] is True
+
+
+def test_changing_a_saved_for_later_connection_makes_the_old_pass_stop_counting(sg):
+    owner = owner_client(sg)
+    provider_off(sg)
+    snapshot = get_snapshot(owner)
+    test = begin(owner, snapshot)
+    finish(sg, owner, test)
+    save(owner, snapshot, proposal(snapshot), test_id=test["test_id"], save_for_later=True)
+    snapshot = get_snapshot(owner)
+
+    changed = save(owner, snapshot, proposal(snapshot, client_id="other-client"), save_for_later=True).json()["snapshot"]
+
+    assert changed["provider"]["tested_at"] is None
+    on = proposal(changed, methods={"password": True, "provider": True})
+    assert "test_required" in [b["code"] for b in preview(owner, on)["blockers"]]
+
+
+def test_the_preview_says_who_has_signed_in_and_matches_each_rule_in_the_form(sg):
+    owner = owner_client(sg)
+    helper_client(sg)
+    snapshot = get_snapshot(owner)
+    wider = {"fallback": "closed", "rules": [*snapshot["rules"]["rules"],
+                                             rule("domain", ["example.test"], admit=True, id="domain"),
+                                             rule("group", ["/Nobody"], admit=True, id="nobody")]}
+
+    matches = preview(owner, proposal(snapshot, rules=wider))["rule_matches"]
+
+    assert matches["trusted"] == {"count": 1, "names": [HELPER]}
+    assert matches["domain"]["count"] == 2 and set(matches["domain"]["names"]) == {OWNER, HELPER}
+    assert matches["nobody"] == {"count": 0, "names": []}
+
+
 def test_an_address_change_is_saved_with_a_passed_test_and_the_old_accounts_are_not_signed_out_as_members(sg):
     sg.set_rules([TRUSTED, domain_rule("example.test")])
     owner = owner_client(sg)

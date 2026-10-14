@@ -151,11 +151,13 @@ export interface Preview {
       | "test_required"
       | "address_invalid"
       | "incomplete_rule"
-      | "owner_not_linked";
+      | "owner_needs_password";
     message: string;
   }[];
   /** Present when `test_id` was sent and that test passed. */
   test_verdict: TestVerdict | null;
+  /** Who has signed in and matches each rule in the form, by rule id. */
+  rule_matches: Record<string, { count: number; names: string[] }>;
 }
 
 export type TestFailureCause =

@@ -90,8 +90,8 @@ describe("Save is off, with the reason, while the server says it cannot run", ()
       "Test sign-in again before you save. Keycloak keeps working with the old settings until then.",
     ],
     [
-      "owner_not_linked",
-      "You are not linked yet, so your own Keycloak sign-in would be turned away. Link first.",
+      "owner_needs_password",
+      "Keep one way to sign in on.",
     ],
     ["both_methods_off", "Keep one way to sign in on."],
   ] as const)("%s", async (code, expected) => {

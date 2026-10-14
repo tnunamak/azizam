@@ -549,8 +549,7 @@ export function blockerCaption(
       return a.live
         ? `Test sign-in again before you save.${keepsWorking}`
         : "Test sign-in first";
-    case "owner_not_linked":
-      return unlinkedNote(a.p).trim();
+    case "owner_needs_password":
     case "both_methods_off":
       return fallbackMessage;
   }
@@ -562,8 +561,8 @@ export function leadingBlocker(
   live: boolean,
 ): Preview["blockers"][number] | undefined {
   const order = live
-    ? ["incomplete_rule", "address_invalid", "test_required", "owner_not_linked", "both_methods_off"]
-    : ["incomplete_rule", "test_required", "address_invalid", "owner_not_linked", "both_methods_off"];
+    ? ["incomplete_rule", "address_invalid", "test_required", "owner_needs_password", "both_methods_off"]
+    : ["incomplete_rule", "test_required", "address_invalid", "owner_needs_password", "both_methods_off"];
   return [...blockers].sort(
     (x, y) => order.indexOf(x.code) - order.indexOf(y.code),
   )[0];

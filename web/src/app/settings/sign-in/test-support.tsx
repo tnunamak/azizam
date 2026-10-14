@@ -143,6 +143,7 @@ export function emptyPreview(over: Partial<Preview> = {}): Preview {
     issuer_change: null,
     settings: [],
     blockers: [],
+    rule_matches: {},
     test_verdict: null,
     ...over,
   };
