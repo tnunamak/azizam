@@ -212,16 +212,19 @@ it("lists disabled engines as turned off, never as ready", async () => {
 });
 
 it("uses the registry display name and excludes providers from the engine table", async () => {
-  mount(undefined, registry);
+  mount(undefined, {
+    ...registry,
+    services: { ...registry.services, realtime: { ...registry.services.realtime, display_name: "realtime_voice" } },
+  });
   expect(
-    await screen.findByRole("button", { name: "Realtime voice" }),
+    await screen.findByRole("button", { name: "Realtime Voice" }),
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Speech To Speech" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Remote provider" })).toBeNull();
   expect(screen.queryByText("Capabilities unavailable")).toBeNull();
   // Realtime voice has no health record: it says Unknown, never Ready.
   const realtime = screen
-    .getByRole("button", { name: "Realtime voice" })
+    .getByRole("button", { name: "Realtime Voice" })
     .closest("tr")!;
   expect(within(realtime).getByText("Unknown")).toBeVisible();
   expect(within(realtime).queryByText("Ready")).toBeNull();
@@ -469,6 +472,7 @@ it("groups engines with the same problem into one action row", async () => {
   expect(
     within(attention).getByRole("link", { name: "Inspect engines" }),
   ).toHaveAttribute("href", "/engines/");
+  expect(within(attention).getByText("Check the engine address, or start the engine.")).toBeVisible();
 });
 
 it.each(["loading", "error"])(
@@ -720,6 +724,7 @@ it.each(["pending", "error"])("does not turn %s activity into no failures", asyn
   providerState.providers = [{ id: "remote", name: "Data provider", enabled: true, reachable: false, keyState: "set", spendText: "" }];
   mount();
   await screen.findByRole("heading", { name: "Data provider is down" });
+  expect(screen.getByText("Open Providers to check its address and key, then try the connection again.")).toBeVisible();
   expect(document.body.textContent).not.toMatch(/None in the latest/);
   expect(screen.getAllByText(state === "pending" ? "Checking recent requests…" : /Recent requests couldn’t load/).length).toBeGreaterThan(0);
   if (state === "error") {
@@ -737,6 +742,7 @@ it("uses the loaded request count and distinguishes a missing key from an outage
   expect(screen.getByText(/1 of the latest 2 requests/)).toBeVisible();
   expect(screen.queryByText("Data provider is down")).toBeNull();
   expect(screen.getByRole("link", { name: "Add provider key" })).toBeVisible();
+  expect(screen.getByText("Add this provider’s key in Providers, then check its connection.")).toBeVisible();
 });
 
 it("opens provider spend and cap details and restores focus", async () => {
@@ -868,11 +874,11 @@ it.each([
     capability_labels: [label],
   }), serviceRegistry);
   const title = await screen.findByRole("heading", {
-    name: new RegExp(`^${label} (requests may fail|is unavailable) right now$`),
+    name: new RegExp(`^${label} (requests may be slow or fail|is unavailable) right now$`),
   });
   if (observation === "degraded") {
     expect(title).not.toHaveTextContent(/unavailable/i);
-    expect(title).toHaveTextContent(`${label} requests may fail right now`);
+    expect(title).toHaveTextContent(`${label} requests may be slow or fail right now`);
   } else {
     expect(title).toHaveTextContent(`${label} is unavailable right now`);
   }
@@ -918,6 +924,8 @@ it("does not let an old refusal override a currently healthy engine", async () =
   const row = await visibleChatRow();
   expect(within(row).getByText("Ready", { exact: true })).toBeVisible();
   expect(within(row).queryByText("Not running")).toBeNull();
+  await userEvent.click(within(row).getByRole("button", { name: "Local chat" }));
+  expect(within(screen.getByRole("dialog", { name: "Local chat" })).queryByText("Next step")).toBeNull();
 });
 
 it("does not turn unavailable observations into idle or connection-failure claims", async () => {
@@ -989,8 +997,8 @@ it("gives a stale unchecked engine an honest next step instead of diagnosing an 
   mount(engineSnapshot({ observation: "unknown", tone: "neutral" }, Date.now() / 1000 - 86400));
   const title = await screen.findByRole("heading", { name: /Local chat has not answered a check in/ });
   const card = title.closest("article")!;
-  expect(within(card).getByText("Its capabilities read Unknown until it answers.")).toBeVisible();
-  expect(within(card).getByText("Check that the engine is running and its health address answers.")).toBeVisible();
+  expect(within(card).getByText("We cannot confirm what this engine can do until a new check succeeds.")).toBeVisible();
+  expect(within(card).getByText("Check that the engine is running and its health address answers, then refresh status.")).toBeVisible();
   expect(within(card).getByRole("link", { name: "Inspect Local chat" })).toHaveAttribute("href", "/engines/?service=chat");
   expect(within(card).queryByText(/unavailable right now|is not running/)).toBeNull();
   const row = await visibleChatRow();
