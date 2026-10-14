@@ -89,7 +89,6 @@ from gateway.http_tls import tls_context
 from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails
 from gateway import video_job_records, prompt_metadata_migration
-from gateway.showcase import build_showcase_router, is_public_showcase_path
 from gateway import realtime_proxy
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
@@ -1929,9 +1928,7 @@ def active_app_credential_count() -> int:
 
 
 def is_public_path(path: str) -> bool:
-    """Health checks and the showcase only: they never run anything."""
-    if is_public_showcase_path(path):
-        return True
+    """Health checks only: they never run anything."""
     for public_path in AUTH_PUBLIC_PATHS:
         public_path = str(public_path)
         if public_path.endswith("*") and path.startswith(public_path[:-1]):
@@ -1970,7 +1967,7 @@ def access_error(code: str) -> Response:
 def authenticate_request(request: Request, request_path: str) -> AuthContext | Response:
     """Resolve the App key of a data-plane request (design §2.5 step 1).
 
-    Public paths (health, showcase) return an empty context that can run
+    Public paths (health) return an empty context that can run
     nothing. Every other request needs a key of an enabled App whose
     accountable person exists and is enabled. The one keyless way in is a
     trusted address the owner mapped to an App (``trusted_address_candidate``);
@@ -13645,61 +13642,6 @@ async def _gateway_resource_lister(*, audience: str) -> list:
         audience=audience,
         runtime_facts=runtime_facts,
     )
-
-
-_SHOWCASE_STATIC_DIR = Path(__file__).resolve().parent / "showcase"
-_SHOWCASE_EXAMPLES_DIR = Path(
-    get_env("AZIZAM_SHOWCASE_EXAMPLES_DIR")
-    or Path(__file__).resolve().parent / "data" / "showcase" / "examples"
-)
-
-
-async def _showcase_status() -> dict[str, Any]:
-    """Backend state for the /showcase status strip.
-
-    Reports engine resources, the ComfyUI queue and whether the LLM is
-    generating, so a visitor can tell "busy" from "broken". Every probe is
-    best effort and bounded; a failed probe reports ``None``, never an error.
-    """
-    async def _probe(url: str) -> Any:
-        try:
-            async with httpx.AsyncClient(timeout=1.5, verify=tls_context()) as client:
-                resp = await client.get(url)
-            return resp.json() if resp.status_code == 200 else None
-        except Exception:  # noqa: BLE001
-            return None
-
-    resources, queue, slots = await asyncio.gather(
-        _gateway_resource_lister(audience="client"),
-        _probe(f"{COMFY_HOST}/queue") if COMFY_ENABLED else asyncio.sleep(0),
-        _probe(f"{KOBOLD_HOST}/slots"),
-        return_exceptions=True,
-    )
-    engines = [
-        {"id": r.get("id"), "name": r.get("name"), "status": r.get("status"),
-         "capabilities": r.get("capabilities") or []}
-        for r in (resources if isinstance(resources, list) else [])
-        if isinstance(r, Mapping) and r.get("kind") != "llm-substrate"
-    ]
-    comfy = None
-    if isinstance(queue, Mapping):
-        comfy = {"running": len(queue.get("queue_running") or []),
-                 "pending": len(queue.get("queue_pending") or [])}
-    llm = None
-    if isinstance(slots, list):
-        llm = {"processing": any(isinstance(s, Mapping) and s.get("is_processing")
-                                 for s in slots)}
-    return {"engines": engines, "comfyui": comfy, "llm": llm}
-
-
-app.include_router(
-    build_showcase_router(
-        static_dir=_SHOWCASE_STATIC_DIR,
-        examples_dir=_SHOWCASE_EXAMPLES_DIR,
-        authenticate=lambda request, path: authenticate_request(request, path),
-        status_provider=_showcase_status,
-    )
-)
 
 
 def _gateway_aliases_provider(operation: str | None = None) -> dict[str, Any]:
@@ -29156,7 +29098,7 @@ app.openapi = _gateway_openapi  # type: ignore[method-assign]
 
 # A public path never calls the evaluator, so it may only name routes that run
 # nothing (design §2.8). Startup refuses an entry that reaches any other route.
-_PUBLIC_ROUTE_FAMILIES = ("/health", "/showcase", "/.well-known")
+_PUBLIC_ROUTE_FAMILIES = ("/health", "/.well-known")
 
 
 def public_path_conflicts(public_paths: Iterable[Any], route_paths: Iterable[str]) -> list[str]:

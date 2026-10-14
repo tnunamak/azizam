@@ -186,7 +186,7 @@ def test_visibility_must_be_unique_plan_ids(bad):
         policy.Category("c", "C", values=("included",), visible_to=bad).validate()
 
 
-# --- over HTTP: the lists other apps and the showcase read -------------------
+# --- over HTTP: the lists other apps read -------------------
 
 def _workflow_entry():
     """A model-list entry that is a workflow, and the workflow ids that exist."""

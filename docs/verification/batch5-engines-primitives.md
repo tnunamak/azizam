@@ -54,7 +54,7 @@ rg -n 'vf-.*\$\{|`vf-|"vf-"' web/src --glob '!*.css' --glob '!*.spec.*' --glob '
 
 The base `.vf-button`, `.vf-button-ghost` and `.vf-button-sm` remain consumed
 by `operational.tsx`; their rules remain. The global stylesheet remains imported.
-Gallery, Showcase and server-rendered pages are unchanged.
+Gallery and server-rendered pages are unchanged.
 
 ## Behavioral evidence
 
@@ -106,7 +106,7 @@ After screenshots are under `web/test-results/screens/`:
 These captures use the same fixture seed as the before captures.
 
 Not checked: live backends, operator data, the complete Python suite, or
-Gallery/Showcase/server-rendered browser journeys. Those surfaces are unchanged.
+Gallery/server-rendered browser journeys. Those surfaces are unchanged.
 
 ## Round 2 verification (2026-10-10)
 
@@ -157,4 +157,4 @@ Limits: Chromium with emulated viewport widths and root-font scaling, not physic
 phones, browser zoom or other browser engines. Clipboard fallback was tested
 with component mocks, not the operating-system clipboard. Live backends,
 operator data and the complete Python suite remain untested. No push, live
-restart, Gallery/Showcase edit or server-rendered page edit was performed.
+restart, Gallery edit or server-rendered page edit was performed.

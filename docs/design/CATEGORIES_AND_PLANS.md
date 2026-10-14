@@ -4,7 +4,7 @@
 
 A category is a group of models and workflows with one rule: who may see what is in it. You decide what a category means. The gateway does not know what "Adult" or "Experimental" means. It only follows the rule you set. Nothing is filed automatically; an item is in a category only when you put it there.
 
-A category can be visible to everyone, to you alone, or to you and the people and apps on the access plans you choose. Someone who cannot see a category does not find its items in model lists, workflow lists or the showcase, and cannot run them. You see everything when you use your own key or this console. An app you run for other people is treated like any other app.
+A category can be visible to everyone, to you alone, or to you and the people and apps on the access plans you choose. Someone who cannot see a category does not find its items in model lists or workflow lists, and cannot run them. You see everything when you use your own key or this console. An app you run for other people is treated like any other app.
 
 Items in no category are unaffected. Move an item out of its category and it is available again.
 

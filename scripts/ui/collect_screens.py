@@ -49,7 +49,6 @@ ROUTE_COVERAGE = {
     "/providers": {"groups": ("providers",), "states": STATES, "note": "Canonical Providers route."},
     "/settings": {"groups": ("settings",), "states": STATES, "note": "Canonical Settings route."},
     "/setup": {"groups": ("public-setup",), "states": STATES, "note": "Public setup route matrix."},
-    "/showcase": {"groups": ("public-showcase",), "states": STATES, "note": "Public showcase route matrix."},
     "/sign-in": {"groups": ("public-sign-in",), "states": STATES, "note": "Public sign-in route matrix."},
     "/status": {"groups": ("status",), "states": STATES, "note": "Canonical Status route."},
     "/try": {"groups": ("try",), "states": ("empty", "error", "result"), "note": "Try uses result as seeded success."},

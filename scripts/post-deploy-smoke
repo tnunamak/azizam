@@ -52,9 +52,6 @@ if [ -z "$chunk" ]; then check "static chunk" "no /_next/static/ asset found in 
   [ "$ok" = ok ] && { printf '%s\n' "$hdr" | grep -qi '^cache-control:.*immutable' || ok="not immutable ($chunk)"; }
   check "static chunk immutable" "$ok"
 fi
-# The public product page is the gateway's static showcase/, not a web app page.
-out=$(curl -s -w '\n%{http_code} %{content_type}' --max-time 30 "$BASE/showcase/")
-check "product page /showcase/" "$(case "$out" in *'<title>Azizam: your own AI gateway</title>'*$'\n'"200 text/html"*) echo ok;; *) echo "got ${out##*$'\n'}";; esac)"
 out=$(curl -s -w '\n%{http_code} %{content_type}' --max-time 30 "$BASE/v1/models")
 verdict=$(printf '%s' "$out" | python3 -c 'import json,sys
 raw=sys.stdin.read()

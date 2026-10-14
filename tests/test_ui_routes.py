@@ -114,7 +114,7 @@ def test_ui_route_never_matches_partially_or_websockets():
 
 
 def test_registered_segments_come_from_the_app_and_must_be_literal():
-    assert {"v1", "mcp", "admin", "me", "auth", "setup", "status", "showcase", "api", "ollama"} <= (
+    assert {"v1", "mcp", "admin", "me", "auth", "setup", "status", "api", "ollama"} <= (
         proxy.WEB_UI_ROUTE.registered_segments)
     assert not {"ui", "r", "firehose"} & proxy.WEB_UI_ROUTE.registered_segments
 
@@ -276,7 +276,7 @@ def test_hashed_assets_are_immutable_and_html_revalidates(export, client):
 
 # -- API errors stay API errors (design test 5) ---------------------------------------------
 
-HTML_ALLOWED = {"/docs", "/redoc", "/status/raw", "/status/raw/", "/auth/logout-confirm", "/setup/console", "/showcase/",
+HTML_ALLOWED = {"/docs", "/redoc", "/status/raw", "/status/raw/", "/auth/logout-confirm", "/setup/console",
                 "/setup/claim", "/setup/local-owner", "/setup/local-login", "/setup/first-app"}
 
 

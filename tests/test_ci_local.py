@@ -90,7 +90,6 @@ if [[ ${1:-} != --compose && -n ${FAKE_DURING_RUN:-} ]]; then eval "$FAKE_DURING
     "tests/requirements-hermetic.lock": "",
     "tests/compat/node/probe-gates.test.mjs": "",
     "integrations/pi/test/a.test.ts": "",
-    "tests/showcase/core.test.mjs": "",
     "web/package.json": "{}\n",
     "web/vitest.config.ts": "export default { test: { retry: 0 } };\n",
     "web/playwright.config.ts": "export default { retries: 0 };\n",
@@ -212,7 +211,7 @@ def test_signoff_posts_to_the_tested_sha_then_writes_the_receipt(world: World) -
     assert receipt["steps"].split(",") == sorted([
         "cases", "compat-node", "e2e-browser", "e2e-household", "e2e-live-data", "e2e-main", "e2e-tree-unchanged", "e2e-venv",
         "fresh-compose", "fresh-native", "fresh-venv", "mcp-conformance", "pi-unit", "policy", "python-hermetic",
-        "showcase-core", "web-build", "web-check", "web-npm-ci", "web-unit"])
+        "web-build", "web-check", "web-npm-ci", "web-unit"])
     assert receipt["policy"].startswith("policy: ok:")
     assert world.run_dirs() == []  # a passed run removes its directory
 

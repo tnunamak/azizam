@@ -10,16 +10,6 @@ baseline's paths and its own. Only these differences are allowed:
   dashboard and its aliases, /firehose, /r/{id}, old login/logout aliases)
   now fall to the unchanged catch-all, or to the 405 of a route that remains;
 * GET /setup/console is the server setup console's new path;
-* GET and HEAD /showcase/ serve the static product page, and GET and HEAD
-  /showcase answer 308 to it (r18: GET /showcase served the page, GET
-  /showcase/ redirected to it, HEAD was 405). Other methods keep their answers;
-* /showcase/examples/ is a public, read-only Examples page: GET and HEAD serve
-  HTML, and /showcase/examples redirects to it with 308. The supplemental
-  route baseline records both paths and preserves all non-read responses.
-  tests/test_showcase.py checks public access, cache/CSP and redirect queries;
-* /showcase/docs and /showcase/docs/{path} are new: GET and HEAD serve the
-  static product docs; every other method falls to the catch-all and answers
-  exactly as it does for an unknown /showcase/ path;
 * /v1/assets/{asset_id}/thumbnail is new (signed WebP preview). Every method
   must answer exactly as the sibling /v1/assets/{asset_id}/content route does:
   GET is the one route, every other method is the same 405 or catch-all;
@@ -62,18 +52,15 @@ ACCESS_PLAN_API_PREFIXES = (
 )
 MCP_OAUTH_PREFIXES = ("/.well-known/oauth-authorization-server", "/oauth", "/me/api/mcp/")
 THUMBNAIL_PATH, THUMBNAIL_SIBLING = "/v1/assets/sample/thumbnail", "/v1/assets/sample/content"
-SHOWCASE_PAGES = {"/showcase/": "/showcase/ showcase_page", "/showcase": "/showcase showcase_page_slashless"}
-DOCS_ROUTES = {"/showcase/docs": "/showcase/docs docs_root", "/showcase/docs/sample/x": "/showcase/docs/{path:path} docs_page"}
 
 
 SHARDS = 4
-SHOWCASE_UNKNOWN = f"/showcase/{route_matrix.UNKNOWN}"
 
 
 def _group(path: str) -> str:
-    """Rows that one comparison reads together (a thumbnail with the content route, a docs path with the unknown
-    showcase path) form one group, and a group is never split between shards."""
-    return THUMBNAIL_SIBLING if path == THUMBNAIL_PATH else SHOWCASE_UNKNOWN if path in DOCS_ROUTES else path
+    """Rows that one comparison reads together (a thumbnail with the content route) form one group, and a group
+    is never split between shards."""
+    return THUMBNAIL_SIBLING if path == THUMBNAIL_PATH else path
 
 
 def _shard_map(current: dict) -> dict[str, int]:
@@ -122,10 +109,6 @@ def _deliberate(key: str) -> str | None:
         return "thumbnail"
     if path.startswith(MCP_OAUTH_PREFIXES):
         return "mcp_oauth"
-    if path in SHOWCASE_PAGES and _method in {"GET", "HEAD"}:
-        return "showcase"
-    if path in DOCS_ROUTES:
-        return "docs"
     if _method in {"GET", "HEAD"} and ui_routes.first_segment(path) not in proxy.WEB_UI_ROUTE.registered_segments:
         return "html404"
     return None
@@ -192,8 +175,6 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
                 f"{m} /setup/console" for m in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS")}:
             continue
-        if kind == "showcase" and outcome == SHOWCASE_PAGES[key.split(" ", 1)[1]]:
-            continue
         if kind == "thumbnail" and key not in old:
             same_as_content = new.get(_thumbnail_sibling(key), "").replace("/content", "/thumbnail").replace(
                 "assets_content", "assets_thumbnail")
@@ -202,10 +183,6 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
         if kind == "mcp_oauth" and (key not in old or route_matrix.is_catch_all(old[key])) and (
                 not route_matrix.is_catch_all(outcome) or key not in old):
             continue
-        if kind == "docs" and key not in old:
-            route = DOCS_ROUTES[key.split(" ", 1)[1]]
-            if outcome == route if _method_of(key) in {"GET", "HEAD"} else route_matrix.is_catch_all(outcome):
-                continue
         unexpected[key] = (old.get(key), outcome)
     assert unexpected == {}
 
@@ -233,12 +210,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
             continue
         if kind == "html404" and _now_needs_a_key_any(old.get(key), new.get(key)):
             continue
-        if kind == "showcase" and key not in new:
-            continue
         if kind == "thumbnail" and key not in old and new.get(key) == new.get(_thumbnail_sibling(key)) is not None:
-            continue
-        unknown = f"{_method_of(key)} {SHOWCASE_UNKNOWN}"
-        if kind == "docs" and key not in old and new.get(key) == new.get(unknown) is not None:
             continue
         unexpected[key] = (old.get(key), new.get(key))
     assert unexpected == {}
@@ -252,7 +224,6 @@ def test_every_baseline_and_current_live_row_belongs_to_exactly_one_shard(curren
     assert all(owned)
     # A pair that one comparison reads together is never split.
     assert owner[THUMBNAIL_PATH] == owner[THUMBNAIL_SIBLING]
-    assert {owner[path] for path in (*DOCS_ROUTES, SHOWCASE_UNKNOWN)} == {owner[SHOWCASE_UNKNOWN]}
 
 
 def test_deliberate_head_changes():

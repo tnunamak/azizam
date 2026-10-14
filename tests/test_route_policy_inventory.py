@@ -288,7 +288,7 @@ def _member_model_path(path, route):
 def _model_path(path, route):
     parts = [part for part in path.split("/") if part]
     if not parts or parts[0] in {
-        "health", "healthz", "admin", "account", "accounts", "auth", "ui", "static", "showcase",
+        "health", "healthz", "admin", "account", "accounts", "auth", "ui", "static",
     }:
         return False
     # Includes /v1, /openai/v1, /anthropic/v1 and any proxy namespace /.../v1.

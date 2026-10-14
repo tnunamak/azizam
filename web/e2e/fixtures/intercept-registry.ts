@@ -196,16 +196,6 @@ const REQUIRED: Record<string, string[]> = {
   ],
   "/me/api/workflows": ["/workflows"],
   "/setup/api/state": ["/owner_exists"],
-  "/showcase/examples/index.json": ["/data", "/object"],
-  "/showcase/static/sections.json": [
-    "/sections",
-    "/sections/[]/fallback",
-    "/sections/[]/id",
-    "/sections/[]/match",
-    "/sections/[]/match/intent",
-    "/sections/[]/source",
-    "/sections/[]/title",
-  ],
 };
 
 const get = (path: string) => (api: APIRequestContext) => read(api, path);
@@ -262,15 +252,6 @@ export const REGISTRY: Endpoint[] = [
   }),
   reads("/setup/api/state", { required: ["/owner_exists"] }),
   reads("/health", { required: ["/status"] }),
-  reads("/showcase/static/sections.json", {
-    required: [
-      "/sections",
-      "/sections/[]/id",
-      "/sections/[]/match/intent",
-      "/sections/[]/title",
-    ],
-  }),
-  reads("/showcase/examples/index.json", { required: ["/data", "/object"] }),
   reads("/admin/api/activity/requests", {
     required: [
       "/next_cursor",

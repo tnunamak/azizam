@@ -20,7 +20,7 @@ READS = (
     "/gateway/v1/receipts", "/me/api/session", "/me/api/usage/summary",
     "/me/api/media", "/admin/api/operator/service-registry", "/admin/api/people",
     "/typesafe/v1/models", "/status/raw", "/docs", "/openapi.json",
-    "/showcase/", "/showcase/api/status", "/", "/settings/", "/ui/home/", "/mcp",
+    "/", "/settings/", "/ui/home/", "/mcp",
     "/v1/assets/exposure-probe-missing/content",
     "/v1/images/exposure-probe-missing/content",
     "/v1/videos/exposure-probe-missing/content",

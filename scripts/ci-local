@@ -274,7 +274,7 @@ web_pid=$last_pid
 # The Node tests that run offline: probe-gates.test.mjs proves the opted-out
 # live probes start no provider work. The live probes themselves stay with the
 # scheduled tier (tests/suites.toml). Each package has its own install, which
-# keeps them out of web/. The Pi unit tests and the showcase script tests run
+# keeps them out of web/. The Pi unit tests run
 # here too, and a missing Node fails the step; it never skips.
 start_job "$work" bash -c '
   failed=0
@@ -282,7 +282,6 @@ start_job "$work" bash -c '
   cleanup_step compat-node tests/compat/node/node_modules
   step pi-unit env CASE_RECEIPTS_FILE="$receipts/raw/compat-node.cases.jsonl" scripts/ci/pi-unit "$PWD/scripts/ci/node-case-receipts.mjs"
   cleanup_step pi-unit integrations/pi/node_modules
-  step showcase-core env CASE_RECEIPTS_FILE="$receipts/raw/compat-node.cases.jsonl" node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter="$PWD/scripts/ci/node-case-receipts.mjs" --test-reporter-destination=stderr tests/showcase/core.test.mjs
   # The official MCP conformance suite (pinned in tests/conformance) against
   # the production MCP router and authorization server on a loopback port.
   step mcp-conformance scripts/ci/mcp-conformance "$receipts/raw/mcp-conformance"
