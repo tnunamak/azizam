@@ -157,7 +157,7 @@ function outcomeCause(receipt: Receipt) {
     return "This request was rejected because it did not have permission. Check this person's access plan and the app's access.";
   if (status === 429) return "A request limit refused this request. The receipt does not identify which limit. Wait before trying again; if it happens again, ask the owner to check the request limits.";
   if (status >= 500 && status < 600)
-    return "A server error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner.";
+    return "An error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner.";
   return outcome(receipt.status) === "Rejected"
     ? "The receipt does not identify the rule that refused this request. Share the request ID from Technical details with the owner to check before trying again."
     : null;

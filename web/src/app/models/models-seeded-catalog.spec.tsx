@@ -473,7 +473,7 @@ describe("seeded catalog", () => {
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     const speech = openDetails("tts");
     expect(speech.queryByText("Unknown", { exact: true })).toBeNull();
-    expect(speech.getByText("Read text aloud when a speech service is connected.")).toBeVisible();
+    expect(speech.getByText("Read text aloud when a speech engine or provider is connected.")).toBeVisible();
     expect(speech.queryByText(/backend/)).toBeNull();
   });
 });

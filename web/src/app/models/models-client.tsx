@@ -212,7 +212,7 @@ function engineLabel(row: CatalogRow): string {
 
 function localityLabel(row: CatalogRow): string | undefined {
   if (row.locality === "local") return "On your equipment";
-  if (row.locality === "remote") return providerLabel(row) ?? "Online service";
+  if (row.locality === "remote") return providerLabel(row) ?? "Online provider";
   return undefined;
 }
 
@@ -373,7 +373,7 @@ function itemMatches(row: CatalogRow, query: string): boolean {
 /** Rewrite only known catalog prose; custom text and identifiers stay intact. */
 export function modelDescription(description: string | null | undefined) {
   return description === "Speech synthesis when a backend is configured."
-    ? "Read text aloud when a speech service is connected."
+    ? "Read text aloud when a speech engine or provider is connected."
     : description;
 }
 
