@@ -146,6 +146,106 @@ describe("LibraryPage batch J provenance", () => {
     cleanup();
   });
 
+
+  test("only the newest tile media plays across video and audio", async () => {
+    vi.mocked(fetch).mockResolvedValue(Response.json({ assets: [
+      { ...assetWithReceipt, asset_id: "video-a", kind: "video", prompt: "Video A" },
+      { ...assetWithReceipt, asset_id: "video-b", kind: "video", prompt: "Video B" },
+      { ...audioAsset, prompt: "Audio C" },
+    ], models: [], next_cursor: null }));
+    const paused: HTMLMediaElement[] = [];
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(function (this: HTMLMediaElement) {
+      paused.push(this);
+      this.dispatchEvent(new Event("pause"));
+    });
+    try {
+      const { container } = renderLibrary();
+      await screen.findByRole("button", { name: "Play Video A" });
+      const [a, b] = Array.from(container.querySelectorAll("video"));
+      const c = container.querySelector("audio")!;
+      fireEvent.play(a);
+      paused.length = 0;
+      fireEvent.play(b);
+      expect(paused).toContain(a);
+      expect(paused).not.toContain(b);
+      expect(screen.getByRole("button", { name: "Play Video A" })).toBeVisible();
+      paused.length = 0;
+      fireEvent.play(c);
+      expect(paused).toContain(b);
+      expect(paused).not.toContain(c);
+      expect(screen.getByRole("button", { name: "Play Video B" })).toBeVisible();
+    } finally { pause.mockRestore(); }
+  });
+
+  test.each(["image", "audio", "video"])("opening the %s viewer pauses grid media", async (kind) => {
+    const target = { ...assetWithReceipt, asset_id: "target", kind, prompt: "Viewer target" };
+    vi.mocked(fetch).mockImplementation(async (input) => String(input).startsWith("/me/api/media?")
+      ? Response.json({ assets: [{ ...assetWithReceipt, kind: "video", prompt: "Grid video" }, target], models: [], next_cursor: null })
+      : Response.json({ download_url: "/fresh-target" }));
+    const paused: HTMLMediaElement[] = [];
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(function (this: HTMLMediaElement) {
+      paused.push(this);
+    });
+    try {
+      const { container } = renderLibrary();
+      await screen.findByRole("button", { name: "Open Viewer target" });
+      const gridVideo = container.querySelector("video")!;
+      fireEvent.play(gridVideo);
+      paused.length = 0;
+      fireEvent.click(screen.getByRole("button", { name: "Open Viewer target" }));
+      await screen.findByRole("dialog");
+      expect(paused).toContain(gridVideo);
+    } finally { pause.mockRestore(); }
+  });
+
+  test("audio retry renews its signed link once and keeps it for subsequent playback", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => String(input).startsWith("/me/api/media?")
+      ? Response.json({ assets: [{ ...audioAsset, prompt: "Renew audio", download_url: "/expired-audio" }], models: [], next_cursor: null })
+      : Response.json({ download_url: "/fresh-audio" }));
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const load = vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    try {
+      const { container } = renderLibrary();
+      const button = await screen.findByRole("button", { name: "Play Renew audio" });
+      const audio = container.querySelector("audio")!;
+      fireEvent.click(button);
+      await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+      fireEvent.error(audio);
+      fireEvent.click(screen.getByRole("button", { name: "Play Renew audio" }));
+      await waitFor(() => expect(audio).toHaveAttribute("src", "/fresh-audio"));
+      expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/me/api/media/asset_audio_1/download?scope=me")).toHaveLength(1);
+      expect(play).toHaveBeenCalledTimes(2);
+      fireEvent.pause(audio);
+      fireEvent.click(screen.getByRole("button", { name: "Play Renew audio" }));
+      await waitFor(() => expect(play).toHaveBeenCalledTimes(3));
+      expect(audio).toHaveAttribute("src", "/fresh-audio");
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally { play.mockRestore(); pause.mockRestore(); load.mockRestore(); }
+  });
+
+  test("Load more focuses the first new creation and persistently announces its count", async () => {
+    const first = { ...assetWithReceipt, prompt: "First creation" };
+    const second = { ...assetWithReceipt, asset_id: "second", prompt: "Second creation" };
+    const third = { ...assetWithReceipt, asset_id: "third", prompt: "Third creation" };
+    vi.mocked(fetch).mockImplementation(async (input) => Response.json(String(input).includes("cursor=next")
+      ? { assets: [second, third], models: [], next_cursor: null }
+      : { assets: [first], models: [], next_cursor: "next" }));
+    const { queryClient } = renderLibrary();
+    const more = await screen.findByRole("button", { name: "Load more" });
+    const status = screen.getByRole("status");
+    more.focus();
+    fireEvent.click(more);
+    const next = await screen.findByRole("button", { name: "Open Second creation" });
+    await waitFor(() => expect(next).toHaveFocus());
+    expect(status).toHaveTextContent("2 more creations loaded");
+    expect(status).toBeInTheDocument();
+    const firstButton = screen.getByRole("button", { name: "Open First creation" });
+    firstButton.focus();
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["library"] }); });
+    expect(firstButton).toHaveFocus();
+    expect(status).toHaveTextContent("2 more creations loaded");
+  });
   test("resets failed media on the first source-change commit", async () => {
     const commits: Array<string | null> = [];
     let capture = false;
