@@ -65,7 +65,11 @@ export function WaysToSignIn({
           wrapDescription
           controlClassName="flex-wrap justify-end max-sm:w-full max-sm:justify-between"
           label="Email and password"
-          description="For people you invite by email. You, the owner, can always use your password."
+          description={
+            owner.has_password
+              ? "For people you invite by email. You, the owner, can always use your password."
+              : "For people you invite by email."
+          }
           control={
             <>
               {passwordWhy && (

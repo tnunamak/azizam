@@ -139,7 +139,7 @@ export function ValuePicker({
                 <button
                   type="button"
                   aria-label={`Remove ${v}`}
-                  className="inline-flex size-5 items-center justify-center rounded-sm hover:bg-black/10 max-sm:size-8"
+                  className="relative inline-flex size-5 items-center justify-center rounded-sm after:absolute after:-inset-1.5 hover:bg-black/10 max-sm:size-8"
                   onClick={() => onChange(values.filter((x) => x !== v))}
                 >
                   <X aria-hidden="true" className="size-3.5" />

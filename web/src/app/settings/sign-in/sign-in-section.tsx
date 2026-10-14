@@ -17,7 +17,12 @@ export function SignInSection() {
     refetchOnWindowFocus: false,
   });
   return (
-    <section id="sign-in-section" aria-labelledby="sign-in" className="min-w-0">
+    <section
+      id="sign-in-section"
+      data-slot="settings-section"
+      aria-labelledby="sign-in"
+      className="min-w-0"
+    >
       <div className="mb-(--space-heading)">
         <h2 id="sign-in" className="text-heading">
           Sign-in

@@ -146,6 +146,8 @@ export function providerStatus(a: {
   formOn: boolean;
   tested: boolean;
   liveUnchanged: boolean;
+  /** Off, and the saved connection passed its last test. */
+  savedTested: boolean;
   testedAt: number | null;
   liveBefore: boolean;
   hasConnection: boolean;
@@ -157,7 +159,8 @@ export function providerStatus(a: {
           text: a.testedAt ? `On, tested ${formatWhen(a.testedAt)}` : "On",
         }
       : { tone: "warn", text: "Changed, not tested" };
-  if (a.liveBefore) return { tone: "off", text: "Off" };
+  if (a.liveBefore || (a.savedTested && !a.tested))
+    return { tone: "off", text: "Off" };
   if (a.tested) return { tone: "ok", text: "Passed, not on yet" };
   if (a.hasConnection) return { tone: "off", text: "Off, not tested" };
   return { tone: "warn", text: "Needs setup" };
@@ -516,12 +519,18 @@ export const NOTHING_TO_SAVE = "Nothing to save.";
 export const APPLY_NEXT = "Changes apply to the next sign-in. You stay signed in.";
 
 export const unlinkedNote = (p: ProviderLabel) =>
-  ` You are not linked yet, so your own ${mid(p)} sign-in would be turned away. Link first.`;
+  ` You are not linked yet, so your own ${p.name ? `${p.name} sign-in` : "sign-in"} would be turned away. Link first.`;
 export const unlinkedNoteShort = " Not linked yet. Link first.";
 export const relinkNote = " You will need to link your account again.";
 
 export const turnOnCaption = (p: ProviderLabel) =>
-  `The test passed. Turning it on adds a ${mid(p)} button to the sign-in page.`;
+  `The test passed. Turning it on adds a ${
+    p.typed
+      ? p.typed
+      : p.host
+        ? `“Sign in with ${p.host}”`
+        : "sign-in"
+  } button to the sign-in page.`;
 
 export function blockerCaption(
   code: Preview["blockers"][number]["code"],

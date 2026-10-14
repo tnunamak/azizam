@@ -69,7 +69,6 @@ const REQUIRED: Record<string, string[]> = {
     "/extension_packages/packages",
   ],
   "/admin/api/invites": ["/access_plans", "/invites"],
-  "/admin/api/oidc-config": ["/oidc_config", "/revision"],
   "/admin/api/operator/overrides": [
     "/overrides",
     "/overrides/media_job_admission",
@@ -80,13 +79,6 @@ const REQUIRED: Record<string, string[]> = {
     "/service_registry",
     "/service_registry/schema_version",
     "/service_registry/services",
-  ],
-  "/admin/api/operator/sign-in": [
-    "/built_in",
-    "/mode",
-    "/oidc",
-    "/oidc_label",
-    "/revision",
   ],
   "/admin/api/people": ["/access_plans", "/people"],
   "/admin/api/access-plans/editor": [
@@ -107,6 +99,31 @@ const REQUIRED: Record<string, string[]> = {
     "/providers/[]/protocol",
   ],
   "/admin/api/providers/openrouter/reconciliation": ["/reconciliations"],
+  "/admin/api/signin": [
+    "/methods",
+    "/methods/password",
+    "/methods/provider",
+    "/owner",
+    "/owner/has_password",
+    "/plans",
+    "/provider",
+    "/provider/address",
+    "/provider/client_id",
+    "/provider/client_secret_saved",
+    "/provider/host",
+    "/provider/name",
+    "/provider/redirect_uri",
+    "/recovery_command",
+    "/revision",
+    "/rule_matches",
+    "/rules",
+    "/rules/fallback",
+    "/rules/rules",
+    "/seen",
+    "/viewer",
+    "/viewer/can_edit",
+    "/viewer/role",
+  ],
   "/admin/api/settings/defaults": [
     "/aliases",
     "/defaults",
@@ -294,7 +311,6 @@ export const REGISTRY: Endpoint[] = [
     open: ["/extension_packages/packages"],
   }),
   reads("/admin/api/invites", { required: ["/access_plans", "/invites"] }),
-  reads("/admin/api/oidc-config", { required: ["/oidc_config", "/revision"] }),
   reads("/admin/api/operator/overrides", {
     required: [
       "/overrides",
@@ -312,8 +328,10 @@ export const REGISTRY: Endpoint[] = [
     open: ["/service_registry/services"],
     free: ["/service_registry/services/*/config"],
   }),
-  reads("/admin/api/operator/sign-in", {
-    required: ["/built_in", "/mode", "/oidc", "/oidc_label", "/revision"],
+  reads("/admin/api/signin", {
+    // `rule_matches` is keyed by data (rule ids), so a stub may carry any keys
+    // inside it.
+    open: ["/rule_matches"],
   }),
   reads("/admin/api/people", { required: ["/access_plans", "/people"] }),
   reads("/admin/api/access-plans", { free: ["/access_plans/[]/plan"] }),
@@ -479,6 +497,9 @@ export const REGISTRY: Endpoint[] = [
       "/entries/[]/reason",
       "/entries/[]/kinds",
     ],
+  }),
+  executed("POST", "/admin/api/signin/preview", {
+    required: ["/people", "/unaffected", "/settings", "/blockers", "/test_verdict"],
   }),
   executed("POST", "/auth/api/invite/accept"),
   executed("POST", "/auth/api/login", { required: ["/next"] }),

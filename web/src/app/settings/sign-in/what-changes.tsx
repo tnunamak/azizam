@@ -28,9 +28,12 @@ export function WhatChanges({
   label,
   keep,
   disabled,
+  pending,
   onKeep,
 }: {
   preview: Preview;
+  /** The shown answer is for an older form; a new one is on its way. */
+  pending: boolean;
   label: ProviderLabel;
   keep: Record<string, boolean>;
   disabled: boolean;
@@ -46,7 +49,11 @@ export function WhatChanges({
       id="sign-in-changes"
       role="region"
       aria-label="What changes"
-      className="border-info/30 bg-info-tint rounded-panel scroll-mt-4 border p-4"
+      aria-busy={pending}
+      className={cn(
+        "border-info/30 bg-info-tint rounded-panel scroll-mt-4 border p-4 transition-opacity",
+        pending && "opacity-60",
+      )}
     >
       <h3 className="text-heading text-info flex items-center gap-2">
         <Info aria-hidden="true" className="size-4" />

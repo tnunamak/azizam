@@ -36,6 +36,8 @@ export function usePreview(
     enabled,
     placeholderData: keepPreviousData,
     staleTime: 0,
+    // The key holds what the owner typed, a secret included: do not keep it.
+    gcTime: 0,
     retry: false,
   });
   return {

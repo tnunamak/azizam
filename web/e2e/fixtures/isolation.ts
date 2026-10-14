@@ -92,13 +92,46 @@ export const GLOBAL_SETTINGS: GlobalSetting[] = [
   {
     name: "sign-in",
     read: async (owner) => {
-      const body = await owner.get("/admin/api/operator/sign-in");
-      return { value: body.mode, revision: body.revision as string };
+      const body = await owner.get("/admin/api/signin");
+      const p = body.provider as Json;
+      return {
+        value: {
+          methods: body.methods,
+          rules: body.rules,
+          provider: {
+            name: p.name,
+            address: p.address,
+            client_id: p.client_id,
+            scopes: p.scopes,
+            groups_claim: p.groups_claim,
+            authorization_endpoint: p.authorization_endpoint,
+            token_endpoint: p.token_endpoint,
+            jwks_uri: p.jwks_uri,
+            clock_skew_seconds: p.clock_skew_seconds,
+          },
+        },
+        revision: body.revision as string,
+      };
     },
-    // The admin API refuses the seeded mode "both" while no identity provider
-    // is enabled, so the fixture gateway's restore route writes it back.
-    write: async (owner, value) => {
-      await owner.send("PUT", "/fixture/operator-settings/sign_in", { mode: value });
+    // A provider that was off is written back off ("save for later", which
+    // needs no test). The saved client secret is never read or sent.
+    write: async (owner, value, revision) => {
+      const saved = value as { methods: { provider: boolean }; rules: unknown; provider: Json };
+      await owner.send(
+        "PUT",
+        "/admin/api/signin",
+        {
+          proposal: {
+            methods: saved.methods,
+            provider: { ...saved.provider, client_secret: "" },
+            rules: saved.rules,
+          },
+          test_id: null,
+          keep_admin_keys: [],
+          save_for_later: !saved.methods.provider,
+        },
+        revision,
+      );
     },
   },
   {

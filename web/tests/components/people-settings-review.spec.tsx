@@ -15,6 +15,8 @@ import { ViewerContext } from "@/components/shell/session";
 import PeoplePage from "@/app/people/page";
 import SettingsPage from "@/app/settings/page";
 import { PlanEditor } from "@/app/people/plans";
+import { signInKeys } from "@/lib/signin-api";
+import { emptyPreview, liveSnapshot } from "@/app/settings/sign-in/test-support";
 
 vi.mock("@/lib/api", async (original) => ({
   ...(await original<typeof import("@/lib/api")>()),
@@ -57,16 +59,6 @@ const invite = {
   created_at: 1,
   used_at: null,
   revoked_at: null,
-};
-const oidc = {
-  enabled: false,
-  issuer: "https://id.example.test",
-  client_id: "client",
-  redirect_uri: "",
-  scopes: ["openid"],
-  admin_emails: [],
-  admin_groups: [],
-  admin_roles: [],
 };
 let responses: Record<string, unknown>;
 let client: QueryClient;
@@ -120,13 +112,8 @@ beforeEach(() => {
       },
       revision: "7",
     },
-    "/admin/api/oidc-config": { oidc_config: oidc, revision: "7" },
-    "/admin/api/operator/sign-in": {
-      mode: "built-in",
-      revision: "7",
-      built_in: true,
-      oidc: false,
-    },
+    "/admin/api/signin": liveSnapshot(),
+    "/admin/api/signin/preview": emptyPreview(),
     "/admin/api/settings/defaults": {
       defaults: { invite_access_plan: null },
       aliases: {},
@@ -227,7 +214,7 @@ describe("People and Settings red-team regressions", () => {
     for (const path of [
       "/admin/api/settings/instance",
       "/admin/api/settings/defaults",
-      "/admin/api/operator/sign-in",
+      "/admin/api/signin",
       "/admin/api/settings/prompt-memory",
     ])
       responses[path] = new ApiError("owner_required", "Owner required", 403);
@@ -240,14 +227,19 @@ describe("People and Settings red-team regressions", () => {
       screen.queryByRole("switch", { name: "Let people create their own apps" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Save sign-in" }),
+      screen.queryByRole("button", { name: "Save changes" }),
     ).not.toBeInTheDocument();
   });
   it("hides owner-only settings forms even when administrator queries contain cached success data", async () => {
+    responses["/admin/api/signin"] = liveSnapshot({
+      viewer: { role: "admin", can_edit: false },
+    });
     mount(<SettingsPage />, "admin");
-    await edit("Sign-in");
     expect(
-      screen.queryByRole("button", { name: "Save sign-in choice" }),
+      await screen.findByText("Only the owner can change sign-in."),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Save changes" }),
     ).not.toBeInTheDocument();
     await edit("Instance");
     expect(
@@ -286,83 +278,60 @@ describe("People and Settings red-team regressions", () => {
       ),
     );
   });
-  it("names independently loading sign-in forms for assistive technology", async () => {
+  it("names the loading sign-in section for assistive technology", async () => {
     let resolveSignIn!: (value: unknown) => void;
     const pending = new Promise((resolve) => {
       resolveSignIn = resolve;
     });
     vi.mocked(adminFetch).mockImplementation(async (path) =>
-      path === "/admin/api/operator/sign-in"
+      path === "/admin/api/signin"
         ? ((await pending) as never)
         : (responses[path] as never),
     );
     mount(<SettingsPage />);
     expect(
-      await screen.findByRole("status", { name: "Loading sign-in choices" }),
+      await screen.findByRole("status", { name: "Loading sign-in" }),
     ).toHaveAttribute("aria-busy", "true");
     expect(
-      screen.getAllByRole("status", { name: "Loading sign-in choices" }),
+      screen.getAllByRole("status", { name: "Loading sign-in" }),
     ).toHaveLength(1);
     await act(async () => {
-      resolveSignIn(responses["/admin/api/operator/sign-in"]);
+      resolveSignIn(responses["/admin/api/signin"]);
     });
     await waitFor(() =>
       expect(
-        screen.queryByRole("status", { name: "Loading sign-in choices" }),
+        screen.queryByRole("status", { name: "Loading sign-in" }),
       ).not.toBeInTheDocument(),
     );
   });
-  it("explains email sign-in exceptions and first-owner bootstrap", async () => {
+  it("keeps a typed connection draft when the saved sign-in settings refresh", async () => {
     mount(<SettingsPage />);
-    await edit("Sign-in");
-    expect(screen.getByLabelText("Sign-in email exceptions")).toHaveAttribute(
-      "aria-describedby",
-      "oidc-admin_emails-help",
-    );
-    expect(
-      screen.getByText(/Once any grant exists, this list grants no role/),
-    ).toHaveTextContent("Use Admin groups or Admin roles");
-    expect(screen.queryByLabelText("Admin emails")).not.toBeInTheDocument();
-  });
-  it("preserves identity-provider drafts when sign-in choice saves and refetches", async () => {
-    mount(<SettingsPage />);
-    await edit("Sign-in");
-    await userEvent.clear(screen.getByLabelText("Client ID"));
-    await userEvent.type(screen.getByLabelText("Client ID"), "unsaved-client");
     await userEvent.click(
-      screen.getByRole("button", { name: "Save sign-in choice" }),
+      await screen.findByRole("button", { name: /Keycloak · id\.vivid\.fish/ }),
     );
+    const clientId = screen.getByLabelText("Client ID");
+    await userEvent.clear(clientId);
+    await userEvent.type(clientId, "unsaved-client");
+    const refreshed = liveSnapshot({ revision: "rev-2" });
+    refreshed.provider.client_id = "external-client";
     await act(async () => {
-      client.setQueryData(["settings", "oidc"], {
-        oidc_config: { ...oidc, client_id: "external-client", enabled: true },
-        revision: "8",
-      });
+      client.setQueryData(signInKeys.snapshot, refreshed);
     });
-    expect(
-      screen.queryByText(/Identity provider enabled/),
-    ).not.toBeInTheDocument();
     expect(screen.getByLabelText("Client ID")).toHaveValue("unsaved-client");
-    expect(
-      screen.getByRole("switch", { name: "Enable identity provider" }),
-    ).not.toBeChecked();
   });
-  it("preserves a dirty sign-in choice when the provider saves", async () => {
+  it("adopts refreshed sign-in settings while the form is untouched", async () => {
     mount(<SettingsPage />);
-    await edit("Sign-in");
-    await userEvent.click(screen.getByLabelText("Available sign-in methods"));
-    await userEvent.click(
-      screen.getByRole("option", { name: "Built-in accounts and OIDC" }),
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Save sign-in" }));
+    await screen.findByRole("radio", { name: /Keep them out unless I invite them/ });
+    const refreshed = liveSnapshot({ revision: "rev-2" });
+    refreshed.rules = { ...refreshed.rules, fallback: "open" };
+    await act(async () => {
+      client.setQueryData(signInKeys.snapshot, refreshed);
+    });
     await waitFor(() =>
-      expect(adminFetch).toHaveBeenCalledWith(
-        "/admin/api/oidc-config",
-        expect.objectContaining({ method: "PUT" }),
-      ),
+      expect(
+        screen.getByRole("radio", { name: /Let them in, but with no access/ }),
+      ).toBeChecked(),
     );
-    expect(
-      screen.getByLabelText("Available sign-in methods"),
-    ).toHaveTextContent("Built-in accounts and OIDC");
   });
   it("keeps a dirty invitation-plan draft across a refresh", async () => {
     mount(<SettingsPage />);

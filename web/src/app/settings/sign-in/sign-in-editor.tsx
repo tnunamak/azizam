@@ -93,7 +93,10 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
   const label = providerLabel(form.provider.name, form.provider.address);
   const dirty = formSig(form) !== formSig(baseForm);
   const signature = connectionSig(form.provider);
-  const liveUnchanged = live && signature === connectionSig(baseForm.provider);
+  const unchanged = signature === connectionSig(baseForm.provider);
+  const liveUnchanged = live && unchanged;
+  // Saved, off, and the saved connection passed its last test: nothing new to prove.
+  const savedTested = !live && unchanged && snapshot.provider.tested_at !== null;
 
   const discovery = useDiscovery(
     form.provider.address,
@@ -126,7 +129,7 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
   const testId = tested ? (test.passed?.testId ?? null) : null;
   const testedAt = tested
     ? (test.passed?.at ?? null)
-    : liveUnchanged
+    : liveUnchanged || savedTested
       ? snapshot.provider.tested_at
       : null;
 
@@ -148,7 +151,7 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
     client.setQueryData(signInKeys.snapshot, next);
 
   const link = useMutation({
-    mutationFn: linkOwner,
+    mutationFn: (id: string) => linkOwner(id),
     onSuccess: (next, id) => {
       replaceSnapshot(next);
       setLinkedTestId(id);
@@ -159,7 +162,7 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
       toast.error(error instanceof Error ? error.message : "Could not link."),
   });
   const dismiss = useMutation({
-    mutationFn: dismissNotice,
+    mutationFn: () => dismissNotice(),
     onSuccess: replaceSnapshot,
   });
 
@@ -323,6 +326,7 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
             formOn: form.methods.provider,
             tested,
             liveUnchanged,
+            savedTested,
             testedAt,
             liveBefore: live,
             hasConnection: hasSavedConnection(snapshot),
@@ -330,7 +334,7 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
           hasAddress={
             discovery.state === "ok" || hasSavedConnection(snapshot)
           }
-          canTurnOnProvider={tested || liveUnchanged}
+          canTurnOnProvider={tested || liveUnchanged || savedTested}
           owner={snapshot.owner}
           recoveryCommand={snapshot.recovery_command}
           onPassword={(password) =>
@@ -362,7 +366,7 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
               ready={ready}
               addressBad={discovery.state === "bad"}
               waiting={test.waiting}
-              tested={tested || liveUnchanged}
+              tested={tested || liveUnchanged || savedTested}
               testedWhen={testedWhen ?? ""}
               changedSinceLastTest={live}
               result={test.result}
@@ -405,6 +409,7 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
         {showChanges && preview && (
           <WhatChanges
             preview={preview}
+            pending={!settled}
             label={label}
             keep={keep}
             disabled={readOnly}
