@@ -244,7 +244,9 @@ def test_the_migration_converts_the_live_shaped_lists_into_rules(tmp_path):
     # /Trusted becomes "Make administrator when group is /Trusted"; the owner's own email is dropped.
     assert document == {"fallback": "closed", "rules": [
         {"id": "rule_1", "field": "group", "values": ["/Trusted"], "admit": True, "admin": True, "plan": None}]}
-    assert setting(path, "signin_status") == {"notice": "removed_owner_rule"}
+    assert setting(path, "signin_status") == {
+        "notice": "removed_owner_rule",
+        "database_lists": ["admin_emails", "admin_groups", "admin_roles", "allowed_email_domains"]}
     assert admin_store.schema_version(path) == admin_store.SCHEMA_VERSION == 9
 
 
@@ -314,7 +316,8 @@ def test_an_instance_that_let_everyone_in_keeps_letting_everyone_in(tmp_path):
 
     # Both lists were empty and the provider was on, so the old code admitted anyone.
     assert setting(path, "signin_rules")["fallback"] == "open"
-    assert setting(path, "signin_status") == {"notice": None}
+    assert setting(path, "signin_status") == {
+        "notice": None, "database_lists": ["admin_emails", "admin_groups", "allowed_email_domains"]}
 
 
 def test_an_instance_with_the_provider_off_starts_closed(tmp_path):

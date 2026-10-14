@@ -272,7 +272,7 @@ def test_an_unverified_email_is_named(sg):
 
 def test_an_address_that_cannot_be_reached_fails_at_once_and_the_popup_just_closes(sg):
     owner = owner_client(sg)
-    test = begin(owner, get_snapshot(owner), address="https://down.example/realms/home",
+    test = begin(owner, get_snapshot(owner), address="https://down.example/realms/home", client_secret="typed-again",
                  authorization_endpoint="", token_endpoint="", jwks_uri="")
 
     result = status(owner, test)
@@ -439,10 +439,10 @@ def test_an_unverified_invitation_email_does_not_count(sg):
 def test_a_new_address_makes_everyone_a_new_person_and_the_owners_old_link_stale(sg):
     owner = owner_client(sg)
     snapshot = get_snapshot(owner)
-    test = begin(owner, snapshot, address=OTHER_ISSUER)
+    test = begin(owner, snapshot, address=OTHER_ISSUER, client_secret="typed-again")
     finish(sg, owner, test, sub="owner-at-id2", email=OWNER)
     as_owner = verdict(owner, snapshot, test, address=OTHER_ISSUER)
-    mum = begin(owner, snapshot, address=OTHER_ISSUER)
+    mum = begin(owner, snapshot, address=OTHER_ISSUER, client_secret="typed-again")
     finish(sg, owner, mum, sub="mum", email="mum@example.test")
     as_mum = verdict(owner, snapshot, mum, address=OTHER_ISSUER)
 
@@ -689,10 +689,11 @@ def test_an_address_change_is_saved_with_a_passed_test_and_the_old_accounts_are_
     owner = owner_client(sg)
     member, _ = signed_in(sg, sub="member", email="member@example.test")
     snapshot = get_snapshot(owner)
-    test = begin(owner, snapshot, address=OTHER_ISSUER)
+    test = begin(owner, snapshot, address=OTHER_ISSUER, client_secret="typed-again")
     finish(sg, owner, test, sub="owner-at-id2", email=OWNER)
 
-    saved = save(owner, snapshot, proposal(snapshot, address=OTHER_ISSUER), test_id=test["test_id"])
+    saved = save(owner, snapshot, proposal(snapshot, address=OTHER_ISSUER, client_secret="typed-again"),
+                 test_id=test["test_id"])
 
     assert saved.status_code == 200, saved.text
     assert saved.json()["snapshot"]["provider"]["address"] == OTHER_ISSUER
