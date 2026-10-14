@@ -228,7 +228,8 @@ function AppsContents() {
   const planAllows = ownPlanLimits
     ? new Set(
         (planPreview?.entries ?? [])
-          .filter((entry) => entry.state !== "blocked")
+          // A row the check could not tell is refused by the gateway too: do not suggest it.
+          .filter((entry) => entry.state === "allowed" || entry.state === "partial")
           .map((entry) => entry.id),
       )
     : null;

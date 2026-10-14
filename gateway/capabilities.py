@@ -37,7 +37,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping
 
 from gateway.discovery import WorkflowRecord
-from gateway.policy import ALLOWED, EffectiveAccess, PolicyDecision, PolicyRequest
+from gateway.policy import ALLOWED, DecidingRule, EffectiveAccess, PolicyDecision, PolicyRequest
 
 VALID_AUDIENCES = ("client", "admin", "internal")
 
@@ -118,6 +118,8 @@ class Capability:
     caveats: tuple[str, ...] = ()
     policy_sources: tuple[str, ...] = ()
     policy_reasons: tuple[str, ...] = ()
+    # The rule that decided the policy view (allow or deny); owner-only, never summarized.
+    policy_rule: DecidingRule | None = None
     # Published numeric/string limits as (name, value) pairs (kept a tuple so the record stays
     # hashable). Video capabilities carry ``max_total_seconds`` and ``segment_seconds`` here.
     limits: tuple[tuple[str, Any], ...] = ()
@@ -212,6 +214,7 @@ class Capability:
             policy_available=decision.decision == ALLOWED,
             policy_sources=tuple(decision.sources),
             policy_reasons=tuple(decision.reasons),
+            policy_rule=decision.rule,
         )
 
     def with_caveats(self, *extra: str) -> "Capability":

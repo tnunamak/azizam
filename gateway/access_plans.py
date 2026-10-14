@@ -81,8 +81,18 @@ class CapabilityGrant:
         if model is None and workflow is None and requested is None:
             # Not resolved yet: the check after resolution names the item.
             return bool(self.models or self.workflows)
-        return any(name is not None and name in self.models for name in (model, requested)) or (
-            workflow is not None and workflow in self.workflows)
+        return self.listed_name(model=model, workflow=workflow, requested=requested) is not None
+
+    def listed_name(self, *, model: str | None, workflow: str | None, requested: str | None = None) -> str | None:
+        """The name this grant lists that lets a request through, else None.
+
+        The name the client sent is named before the model it resolved to. Only
+        a listing grant has one: ``all_items`` lists nothing by name.
+        """
+        for name in (requested, model):
+            if name is not None and name in self.models:
+                return name
+        return workflow if workflow is not None and workflow in self.workflows else None
 
 
 @dataclass(frozen=True)

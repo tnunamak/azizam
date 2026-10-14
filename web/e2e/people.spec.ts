@@ -350,7 +350,7 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   expect(writes[2]).toEqual({ method: "DELETE", body: null });
 });
 
-test("people lane editing sends the whole plan document, and Check access lists what the plan can and cannot use", async ({
+test("people lane editing sends the whole plan document", async ({
   page,
 }) => {
   await open(page, "plans", "seeded");
@@ -365,44 +365,90 @@ test("people lane editing sends the whole plan document, and Check access lists 
   await page.getByLabel("Name", { exact: true }).fill("Family access");
   await page.getByRole("button", { name: "Save access plan" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.route("**/admin/api/access/preview", (route) => {
-    expect(route.request().postDataJSON()).toEqual({ plan: plan.id });
-    return fulfilJson(route, {
-      plan_ids: [plan.id],
-      summary: { usable: 1, total: 2 },
-      entries: [
-        {
-          id: "demo-chat",
-          name: "Demo chat",
-          alias: false,
-          group: "chat",
-          group_label: "Chat",
-          state: "allowed",
-          reason: null,
-          kinds: [],
-        },
-        {
-          id: "demo-video",
-          name: "Demo video",
-          alias: false,
-          group: "video",
-          group_label: "Video",
-          state: "blocked",
-          reason: "demo-video isn't in your access plan.",
-          kinds: [],
-        },
-      ],
+});
+
+// Check access names the rule behind each row and leads to the page that edits it.
+// The display states (filters, counts, cannot tell) belong to the component spec.
+const planRule = (code: string, plain_reason: string) => ({
+  code, kind: "plan", id: plan.id, name: plan.name, plain_reason,
+});
+const checkAccessPreview = {
+  plan_ids: [plan.id],
+  summary: { usable: 1, total: 3, blocked: 2, unknown: 0 },
+  groups: [
+    { group: "chat", label: "Chat", total: 2, usable: 1, blocked: 1, unknown: 0 },
+    { group: "video", label: "Video", total: 1, usable: 0, blocked: 1, unknown: 0 },
+  ],
+  entries: [
+    {
+      id: "demo-chat", name: "Demo chat", alias: false, group: "chat", group_label: "Chat",
+      state: "allowed", reason: null, points_to: [], kinds: [],
+      rule: planRule("plan.allows_all", "The Local creative plan includes every chat item, now and as they are added."),
+    },
+    {
+      id: "demo-secret", name: "Demo secret", alias: false, group: "chat", group_label: "Chat",
+      state: "blocked", points_to: [], kinds: [],
+      reason: "It is in the Adult category, which this plan can't see.",
+      rule: {
+        code: "category.hidden", kind: "category", id: "adult", name: "Adult",
+        plain_reason: "It is in the Adult category, which this plan can't see.",
+      },
+    },
+    {
+      id: "demo-video", name: "Demo video", alias: false, group: "video", group_label: "Video",
+      state: "blocked", points_to: [], kinds: [],
+      reason: "The Local creative plan doesn't include video.",
+      rule: planRule("plan.capability_not_granted", "The Local creative plan doesn't include video."),
+    },
+  ],
+};
+for (const width of [1280, 390])
+  test(`Check access names the rule behind a row, explains why, and leads to its editor at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await open(page, "plans", "seeded");
+    await page.route("**/admin/api/access/preview", (route) => {
+      expect(route.request().postDataJSON()).toEqual({ plan: plan.id });
+      return fulfilJson(route, checkAccessPreview);
     });
+    if (width === 390) {
+      // The row's own button is hidden on a phone; the actions menu has it.
+      await page.getByRole("button", { name: `Actions for ${plan.name}` }).click();
+      await page.getByRole("menuitem", { name: "Check access", exact: true }).click();
+    } else {
+      await page.getByRole("button", { name: "Check access", exact: true }).click();
+    }
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("Can use 1 of 3")).toBeVisible();
+    await expect(dialog.getByRole("textbox")).toHaveCount(0);
+    await expect(dialog.getByRole("heading", { name: "Video" }).locator("..")).toContainText("0 of 1 usable · 1 blocked");
+    // The blocked row says which rule decided it, in plain words, with no internal id.
+    const video = dialog.getByRole("listitem").filter({ hasText: "Demo video" });
+    await expect(video).toContainText("Blocked: The Local creative plan doesn't include video.");
+    await expect(video).not.toContainText(plan.id);
+    // A category is named, and its link goes to that category.
+    const secret = dialog.getByRole("listitem").filter({ hasText: "Demo secret" });
+    await expect(secret.getByRole("link", { name: "Edit the Adult category" })).toHaveAttribute(
+      "href", "/categories/?category=adult",
+    );
+    // An allowed row explains itself when it is opened.
+    const chat = dialog.getByRole("listitem").filter({ hasText: "Demo chat" });
+    await expect(chat).not.toContainText("Why allowed");
+    await chat.getByRole("button", { name: "Why Demo chat" }).click();
+    await expect(chat).toContainText("Why allowed: The Local creative plan includes every chat item");
+    // Nothing spills sideways on a phone.
+    expect(await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+    // The plan link opens the plan editor in place.
+    await video.getByRole("link", { name: "Edit the Local creative plan" }).click();
+    await expect(page.getByRole("heading", { name: "Edit access plan" })).toBeVisible();
+    await expect(page.getByLabel("Name", { exact: true })).toHaveValue(plan.name);
+    await expect(page.getByRole("heading", { name: `Check access · ${plan.name}` })).toHaveCount(0);
   });
-  await page.getByRole("button", { name: "Check access", exact: true }).click();
-  const dialog = page.getByRole("dialog");
-  // The answer is there without typing anything.
-  await expect(dialog.getByText("Can use 1 of 2")).toBeVisible();
-  await expect(dialog.getByRole("textbox")).toHaveCount(0);
-  const blocked = dialog.getByRole("listitem").filter({ hasText: "Demo video" });
-  await expect(blocked).toContainText("Blocked");
-  await expect(blocked).toContainText("demo-video isn't in your access plan.");
-  await expect(dialog.getByRole("listitem").filter({ hasText: "Demo chat" })).toContainText("Allowed");
+
+test("the plan link of Check access also works as an address", async ({ page }) => {
+  await mock(page, "seeded");
+  await page.goto(`/people/?plan=${plan.id}`);
+  await expect(page.getByRole("heading", { name: "Edit access plan" })).toBeVisible();
+  await expect(page.getByLabel("Name", { exact: true })).toHaveValue(plan.name);
 });
 
 test("people lane account acceptance reveals a key once, then lands on Home", async ({

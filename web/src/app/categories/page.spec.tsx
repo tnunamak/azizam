@@ -106,6 +106,22 @@ it("lists each category with its meaning, who can see it and what is in it", asy
   expect(within(adult).getByText("Nothing in Adult yet")).toBeVisible();
 });
 
+it("opens the category named in the address, where Check access links to it, and ignores one that is gone", async () => {
+  window.history.pushState({}, "", "/categories/?category=adult");
+  try {
+    mount();
+    expect(await screen.findByRole("heading", { name: "Edit Adult" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: /Name/ })).toHaveValue("Adult");
+    cleanup();
+    window.history.pushState({}, "", "/categories/?category=gone");
+    mount();
+    await screen.findByRole("region", { name: "Adult" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  } finally {
+    window.history.pushState({}, "", "/");
+  }
+});
+
 it("explains what categories are based on without jargon", async () => {
   mount();
   await screen.findByRole("region", { name: "Adult" });

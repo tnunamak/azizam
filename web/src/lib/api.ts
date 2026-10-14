@@ -308,12 +308,29 @@ export interface PresetsResponse {
 // ---------------------------------------------------------------------------
 // Check access
 
+/**
+ * The rule that decided a row, allowed or not. `code` is stable (branch on it,
+ * never on the sentence). `id` and `name` say what to edit: a plan, or a category
+ * (an administrator is not given a category's id or name).
+ */
+export interface AccessRule {
+  code: string;
+  kind: "plan" | "category" | "provider";
+  id: string | null;
+  name: string | null;
+  /** The rule in plain English; never an internal id. */
+  plain_reason: string;
+}
+
 /** One kind of work (Chat, Images) an entry offers, and whether the plan allows it. */
 export interface AccessPreviewKind {
   kind: string;
   label: string;
   allowed: boolean;
+  /** "unknown" means the answer depends on something that could not be read. */
+  state: "allowed" | "blocked" | "unknown";
   reason: string | null;
+  rule: AccessRule | null;
 }
 
 /** One Models page entry (a model, an alias or a workflow) and what the plan decides for it. */
@@ -323,16 +340,29 @@ export interface AccessPreviewEntry {
   alias: boolean;
   group: string;
   group_label: string;
-  state: "allowed" | "partial" | "blocked";
-  /** Plain-language reason from the decision; null when nothing is blocked. */
+  /** "unknown" is a cannot-tell: enforcement refuses it, and the reason says what could not be read. */
+  state: "allowed" | "partial" | "blocked" | "unknown";
+  /** The sentence for a blocked or cannot-tell row; null when nothing is blocked. */
   reason: string | null;
-  /** Set only when the entry is allowed for some kinds of work and not others. */
+  /** The deciding rule: why it is blocked, or why it is allowed. */
+  rule: AccessRule | null;
+  /** The model an alias reaches; empty for anything else. */
+  points_to: { id: string; name: string }[];
+  /** Set only when the entry is allowed for some kinds of work and not others, or the kinds differ. */
   kinds: AccessPreviewKind[];
+}
+
+export interface AccessPreviewCounts {
+  total: number;
+  usable: number;
+  blocked: number;
+  unknown: number;
 }
 
 export interface AccessPreview {
   plan_ids: string[];
-  summary: { usable: number; total: number };
+  summary: AccessPreviewCounts;
+  groups: ({ group: string; label: string } & AccessPreviewCounts)[];
   entries: AccessPreviewEntry[];
 }
 

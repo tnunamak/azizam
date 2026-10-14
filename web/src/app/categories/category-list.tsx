@@ -51,6 +51,15 @@ export function CategoryList({ active, catalog, presets, catalogLoading, catalog
 }) {
   const { data: plans, isError: plansError, refetch: plansRefetch } = useQuery({ queryKey: queryKeys.accessPlans, queryFn: api.accessPlans.list });
   const [dialog, setDialog] = useState<Dialogs>(null);
+  // Check access links to /categories?category=<id>: open that category's editor once,
+  // when the rules have loaded. The requested id is held in state, read from the address once.
+  const [requested, setRequested] = useState<string | null>(
+    () => (typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("category")),
+  );
+  if (requested && active) {
+    setRequested(null);
+    if (active.snapshot.categories[requested]) setDialog({ kind: "category", id: requested });
+  }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const snapshot = active?.snapshot ?? emptySnapshot();

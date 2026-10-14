@@ -40,12 +40,28 @@ from gateway import category_policy as kernel, request_connections
 from gateway.category_store import (
     CategoryStore, CorruptSnapshotError, NoActiveSnapshotError,
 )
-from gateway.policy import DENIED, PolicyDecision, PolicyRequest
+from gateway.policy import (
+    DENIED,
+    RULE_CATEGORY_HIDDEN as RULE_HIDDEN,
+    RULE_CATEGORY_NO_GRANT as RULE_NO_GRANT,
+    RULE_CATEGORY_NOT_ALLOWED as RULE_NOT_ALLOWED,
+    RULE_CATEGORY_UNAVAILABLE as RULE_UNAVAILABLE,
+    DecidingRule,
+    PolicyDecision,
+    PolicyRequest,
+)
 
 log = logging.getLogger(__name__)
 
 SOURCE = "policy:categories"
 HIDDEN = "CATEGORY_HIDDEN"  # The reason code of a restricted category (see ``visible_to``).
+UNAVAILABLE = "POLICY_UNAVAILABLE"
+
+# The rule codes (``RULE_*``) are defined in gateway.policy beside the others.
+
+
+def _rule(code: str, category: str = "") -> DecidingRule:
+    return DecidingRule(code, "category", category or None)
 
 
 def _stem(service_id: str) -> str:
@@ -180,13 +196,15 @@ class CategoryGate:
         version, unavailable = self._active()
         if unavailable:
             return PolicyDecision(decision=DENIED, sources=(SOURCE,),
-                                  reasons=("category rules: POLICY_UNAVAILABLE",))
+                                  reasons=(f"category rules: {UNAVAILABLE}",),
+                                  rule=_rule(RULE_UNAVAILABLE))
         if version is None:
             return None
         hidden = self._hidden_category(version, identity, request)
         if hidden:
             return PolicyDecision(decision=DENIED, sources=(SOURCE,),
-                                  reasons=(f"category rules: {HIDDEN} {hidden}",))
+                                  reasons=(f"category rules: {HIDDEN} {hidden}",),
+                                  rule=_rule(RULE_HIDDEN, hidden))
         person = getattr(identity, "person_id", None) or ""
         app = getattr(identity, "app_id", None) or ""
         if person not in version.people and app not in version.apps:
@@ -205,14 +223,16 @@ class CategoryGate:
             if not decisions:
                 return PolicyDecision(
                     decision=DENIED, sources=(SOURCE,),
-                    reasons=(f"category rules: NO_GRANT (no service grants {capability or 'this request'})",))
+                    reasons=(f"category rules: NO_GRANT (no service grants {capability or 'this request'})",),
+                    rule=_rule(RULE_NO_GRANT))
             decision = decisions[0]
         else:
             service = next((key for key in version.services if _stem(key) == target), "")
             if not service:
                 return PolicyDecision(
                     decision=DENIED, sources=(SOURCE,),
-                    reasons=(f"category rules: NO_GRANT (no service for {target})",))
+                    reasons=(f"category rules: NO_GRANT (no service for {target})",),
+                    rule=_rule(RULE_NO_GRANT))
             decision = kernel.decision_for(version, {
                 "person": person, "app": app, "service": service, "capability": capability,
             })
@@ -220,7 +240,9 @@ class CategoryGate:
                 return None
         detail = " ".join(part for part in (decision.rule, decision.category, decision.member) if part)
         return PolicyDecision(decision=DENIED, sources=(SOURCE,),
-                              reasons=(f"category rules: {decision.reason} {detail}".strip(),))
+                              reasons=(f"category rules: {decision.reason} {detail}".strip(),),
+                              rule=_rule(RULE_UNAVAILABLE if decision.reason == UNAVAILABLE else RULE_NOT_ALLOWED,
+                                         "" if decision.reason == UNAVAILABLE else decision.category))
 
 
 _GATE: CategoryGate | None = None
@@ -245,7 +267,8 @@ def apply(identity: Any, request: PolicyRequest, decision: PolicyDecision) -> Po
         return decision
     # The access plan's allow reasons do not explain a denial; callers show reasons[0].
     return PolicyDecision(decision=DENIED, sources=decision.sources + denial.sources,
-                          reasons=denial.reasons, visibility_level=decision.visibility_level)
+                          reasons=denial.reasons, visibility_level=decision.visibility_level,
+                          rule=denial.rule)
 
 
 def visible(identity: Any, request: PolicyRequest) -> bool:
@@ -259,3 +282,18 @@ def is_hidden(reasons: Any) -> bool:
     Discovery lists drop such items instead of showing them as unavailable.
     """
     return any(f"category rules: {HIDDEN}" in str(reason) for reason in reasons or ())
+
+
+def category_labels() -> dict[str, str]:
+    """Category id -> the label the owner gave it, from the active rules.
+
+    Empty when the gate is off, no rules are active or they cannot be read:
+    a label is a courtesy for Check access, and an unreadable store is already
+    reported by the decisions themselves (``category.rules_unavailable``).
+    """
+    if _GATE is None:
+        return {}
+    version, unavailable = _GATE._active()
+    if unavailable or version is None:
+        return {}
+    return {key: category.label for key, category in version.categories.items()}
