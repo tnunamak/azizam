@@ -16,21 +16,23 @@ Keep your favorite frontend. Point Open WebUI, a coding agent, or your own app a
 - **Choose paid access explicitly.** Remote models require provider permission and pass spend checks. Unresolved charges remain visible and block capped spending. See [remote providers](docs/REMOTE_PROVIDERS.md).
 - **Make more than chat.** Discover media workflows, run typed decisions, and inspect request receipts where supported. See [workflow contracts](docs/EXTENSION_ARCHITECTURE.md) and [decisions](docs/ops/DECISIONS.md).
 
-Available capabilities depend on your engines and access plan. A registered route does not establish full vendor compatibility. Start with [the docs index](docs/README.md) for the guide that matches your task.
+Available capabilities depend on your engines and access plan. A registered route does not establish full vendor compatibility. Visit [azizam.dev](https://azizam.dev) for the public site and documentation, or browse [the repository docs index](docs/README.md).
 
 ## Quickstart
 
-The first image build and any model downloads take the longest. You need Docker with Compose, this repository, and a reachable OpenAI-compatible chat engine. Compose includes the gateway and its LiteLLM execution sidecar; it does not download an inference model.
+You need Docker with Compose, this repository, and a reachable OpenAI-compatible chat engine. Compose builds the gateway and starts its LiteLLM execution sidecar; it does not include an inference engine or download a model. No `.env` file is required.
 
-1. Download or clone this repository. Open a terminal in its root. Use the tested recipe from [First-Run Setup](docs/FIRST_RUN_SETUP.md#docker-compose-quick-start) exactly:
+1. Download or clone this repository, open a terminal in its root, and start the services:
 
    ```bash
    docker compose up -d
    ```
 
-2. Open `http://127.0.0.1:5000/setup`. Create the first owner account. Continue to Home, choose your app, and use **Create key for** that app. Save the value when it appears; it is shown once. No `.env` file is required.
+2. Open `http://127.0.0.1:5000/setup`. Create the first owner account. Continue to Home, choose your app, and use **Create key for** that app. Save the value when it appears; it is shown once.
 3. Open **Gateway → Engines**. Add your chat engine's OpenAI-compatible base URL as reachable from the gateway container. Set its health endpoint to `/v1/models`. Map a public name such as `my-llama` to the engine's actual model ID.
 4. Open Home and connect an app with base URL `http://127.0.0.1:5000/openai/v1`, your App key, and `my-llama`. Use **Gateway check** to make a real gateway request, then send a message from your app to check its settings.
+
+Compose publishes the gateway only on `127.0.0.1`, using port `5000` by default. If you set `AZIZAM_PORT`, use that port in the URLs above. State and cache use the named volumes `gateway-data` and `gateway-cache`. See [First-Run Setup](docs/FIRST_RUN_SETUP.md#docker-compose-quick-start) for more detail.
 
 On Linux, Compose provides `host.docker.internal` for the host. For example, an engine with a reachable port 8080 can use `http://host.docker.internal:8080/v1`. A host engine bound only to loopback is not reachable from the container; use a reachable host address and restrict access with your firewall.
 
