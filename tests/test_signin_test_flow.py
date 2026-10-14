@@ -9,7 +9,7 @@ from dataclasses import replace
 import httpx
 import pytest
 
-from gateway import accounts, admin_store, signin_api, signin_test
+from gateway import accounts, admin_store, signin_api, signin_trial
 from tests.support.access import store_plan
 from tests.test_signin_settings_api import (  # noqa: F401  (sg is a fixture)
     HELPER, ISSUER, csrf_for, get_snapshot, helper_client, owner_client, preview, proposal, provider_off, rule, save, sg,
@@ -203,7 +203,7 @@ def test_the_callback_of_a_test_needs_the_session_of_the_owner_who_started_it(sg
     sg.monkeypatch.setattr(sg.proxy, "_oidc_exchange_code", exchange)
     owner.get("/admin/oidc/callback", params={"state": state, "code": "c"}, follow_redirects=False)
 
-    run = signin_test.peek(test["test_id"])
+    run = signin_trial.peek(test["test_id"])
     assert run.status == "failed" and run.cause == "refused"
 
 

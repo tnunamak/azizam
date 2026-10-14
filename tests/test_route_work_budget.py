@@ -19,7 +19,7 @@ import httpx
 import pytest
 
 import proxy
-from gateway import accounts, admin_store, media_jobs, receipt_store, signin_test
+from gateway import accounts, admin_store, media_jobs, receipt_store, signin_trial
 from gateway.receipts import RouteReceipt
 from gateway.runtime_auth import hash_api_key
 from gateway.signin_rules import Claims
@@ -50,9 +50,9 @@ MEASURED = [route for route in ROUTES if ("{" not in route or route in SEEDED) a
 
 @pytest.fixture(autouse=True)
 def no_test_runs():
-    signin_test.clear()
+    signin_trial.clear()
     yield
-    signin_test.clear()
+    signin_trial.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -102,7 +102,7 @@ def _seed(route: str, household: "Household") -> str:
     """The concrete path of ``route``: made-up ids, or the id of a record the fixture creates."""
     if route == "/admin/api/signin/test/{test_id}":
         # A finished test sign-in by the owner: the status answer then asks the rules who would get in.
-        run = signin_test.create(household.owner["id"], proxy.ADMIN_OIDC_CONFIG, "sig")
+        run = signin_trial.create(household.owner["id"], proxy.ADMIN_OIDC_CONFIG, "sig")
         run.status, run.passed_at, run.subject = "passed", int(time.time()), "walk-subject"
         run.claims = Claims(email="walk@example.com")
         return route.replace("{test_id}", run.id)

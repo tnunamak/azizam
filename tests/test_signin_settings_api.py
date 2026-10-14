@@ -7,7 +7,7 @@ from dataclasses import replace
 
 import pytest
 
-from gateway import accounts, admin_store, signin_admin, signin_test
+from gateway import accounts, admin_store, signin_admin, signin_trial
 from tests.support.access import store_plan
 from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
     OWNER, SIGNING_KEY, TRUSTED, domain_rule, gateway, roles_of, signed_in,
@@ -27,9 +27,9 @@ def sg(gateway, monkeypatch):
     """The sign-in tests' gateway: sessions keep one signing key after the settings are saved."""
     monkeypatch.setattr(gateway.proxy, "ADMIN_SESSION_SIGNING_KEY", SIGNING_KEY)
     monkeypatch.setattr(accounts, "_SCRYPT_N", 2 ** 10)       # a real password hash, at a test's cost
-    signin_test.clear()
+    signin_trial.clear()
     yield gateway
-    signin_test.clear()
+    signin_trial.clear()
 
 
 def owner_client(g, **claims):

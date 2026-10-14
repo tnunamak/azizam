@@ -18,7 +18,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from gateway import accounts, admin_store, secret_store, signin_admin, signin_rules, signin_test
+from gateway import accounts, admin_store, secret_store, signin_admin, signin_rules, signin_trial
 from gateway.accounts_api import signin_options
 from gateway.admin_api import AdminContext, _require_admin
 from gateway.admin_oidc import OIDCConfig, OIDCConfigError, StateRecord
@@ -261,7 +261,7 @@ def create_signin_api(
         return key
 
     def saved_signature(saved: OIDCConfig) -> str:
-        return signin_test.connection_signature(signature_key(), saved, saved.client_secret)
+        return signin_trial.connection_signature(signature_key(), saved, saved.client_secret)
 
     def instance_owner(path: Path) -> "signin_admin.PersonFacts | None":
         """The person who is the owner. Keys and passwords answer to a person, not to a key's account."""
@@ -371,9 +371,9 @@ def create_signin_api(
             found.append({"code": "secret_needed", "message": "Enter the client secret again for the new address."})
         if after.provider and _valid_address(provider.address) and provider.client_id.strip():
             typed, secret = typed_config(request, saved_cfg, provider, enabled=False)
-            sig = signin_test.connection_signature(signature_key(), typed, secret)
+            sig = signin_trial.connection_signature(signature_key(), typed, secret)
             unchanged = (saved.provider and sig == saved_signature(saved_cfg)) or tested_before(path, sig)
-            if not unchanged and signin_test.passed_for(test_id, user_id, sig) is None:
+            if not unchanged and signin_trial.passed_for(test_id, user_id, sig) is None:
                 found.append({"code": "test_required", "message": "Test sign-in first."})
         elif after.provider:
             found.append({"code": "test_required", "message": "Test sign-in first."})
@@ -398,11 +398,11 @@ def create_signin_api(
             settings.append("name_changed")
         if saved.provider and after.provider and not result["issuer_change"]:
             typed, secret = typed_config(request, cfg, proposed, enabled=False)
-            if signin_test.connection_signature(signature_key(), typed, secret) != saved_signature(cfg):
+            if signin_trial.connection_signature(signature_key(), typed, secret) != saved_signature(cfg):
                 settings.append("connection_changed")
         verdict = None
         if body.test_id:
-            run = signin_test.get(body.test_id, ctx.audit_actor_id)
+            run = signin_trial.get(body.test_id, ctx.audit_actor_id)
             if run is not None and run.status == "passed":
                 verdict = signin_admin.test_verdict(path, run, after, saved, plans)
         return {
@@ -435,7 +435,7 @@ def create_signin_api(
         typed, secret = typed_config(request, saved, provider, enabled=False)
         if not secret:
             raise SignInError("client_secret_required", "Enter the client secret first.")
-        signature = signin_test.connection_signature(signature_key(), typed, secret)
+        signature = signin_trial.connection_signature(signature_key(), typed, secret)
         found = discover(provider.address)
         cfg = replace(
             typed,
@@ -445,21 +445,21 @@ def create_signin_api(
             jwks_uri=typed.jwks_uri or found["jwks_uri"],
             issuer=found["issuer"] or typed.issuer,
         )
-        run = signin_test.create(ctx.audit_actor_id, cfg, signature)
+        run = signin_trial.create(ctx.audit_actor_id, cfg, signature)
         if not (cfg.authorization_endpoint and cfg.token_endpoint and cfg.jwks_uri):
-            signin_test.fail(run, "unreachable", "no sign-in endpoints were found")
+            signin_trial.fail(run, "unreachable", "no sign-in endpoints were found")
         return {"test_id": run.id, "start_url": f"/admin/api/signin/test/{run.id}/start"}
 
     @router.get("/admin/api/signin/test/{test_id}/start")
     def begin_test(request: Request, test_id: str, ctx: AdminContext = Depends(owner_ctx)):
-        run = signin_test.get(test_id, ctx.audit_actor_id)
+        run = signin_trial.get(test_id, ctx.audit_actor_id)
         if run is None:
             raise SignInError("test_not_found", "That test is over. Start a new one.", 404)
         if run.status != "waiting":
             return HTMLResponse(_CLOSE_PAGE, headers={"cache-control": "no-store"})
         return begin_browser_login(run.cfg, states(), return_to="/settings/", test_id=run.id)
 
-    def test_status(path: Path, ctx: AdminContext, run: signin_test.TestRun) -> dict[str, Any]:
+    def test_status(path: Path, ctx: AdminContext, run: signin_trial.TestRun) -> dict[str, Any]:
         if run.status == "waiting":
             return {"status": "waiting"}
         if run.status == "failed":
@@ -475,26 +475,26 @@ def create_signin_api(
                 "groups": list(run.claims.groups), "roles": list(run.claims.roles),
                 "claims": list(run.claim_names), "groups_claim": run.cfg.groups_claim,
             },
-            "warnings": [] if run.groups_seen else [signin_test.GROUPS_WARNING],
+            "warnings": [] if run.groups_seen else [signin_trial.GROUPS_WARNING],
             "can_link": verdict["kind"] == "owner_unlinked",
             "details": run.details,
         }
 
     @router.get("/admin/api/signin/test/{test_id}")
     def get_test(request: Request, test_id: str, ctx: AdminContext = Depends(owner_ctx)):
-        run = signin_test.get(test_id, ctx.audit_actor_id)
+        run = signin_trial.get(test_id, ctx.audit_actor_id)
         if run is None:
             raise SignInError("test_not_found", "That test is over. Start a new one.", 404)
         return test_status(path_provider(), ctx, run)
 
     @router.delete("/admin/api/signin/test/{test_id}")
     def cancel_test(request: Request, test_id: str, ctx: AdminContext = Depends(owner_ctx)):
-        return {"cancelled": signin_test.cancel(test_id, ctx.audit_actor_id)}
+        return {"cancelled": signin_trial.cancel(test_id, ctx.audit_actor_id)}
 
     @router.post("/admin/api/signin/link-owner")
     def link_owner(request: Request, body: LinkBody, ctx: AdminContext = Depends(owner_ctx)):
         path = path_provider()
-        run = signin_test.get(body.test_id, ctx.audit_actor_id)
+        run = signin_trial.get(body.test_id, ctx.audit_actor_id)
         if run is None or run.status != "passed":
             raise SignInError("test_not_passed", "Run a passing test sign-in first.", 409)
         saved = saved_world(path, oidc_config_provider())
@@ -560,8 +560,8 @@ def create_signin_api(
             # Whatever the provider switch says: a saved secret goes only to the host it was entered for.
             raise SignInError("connection_incomplete", "Enter the client secret again for the new address.", 409)
         typed, secret = typed_config(request, cfg, provider, enabled=False)
-        sig = signin_test.connection_signature(signature_key(), typed, secret)
-        run = signin_test.passed_for(body.test_id, ctx.audit_actor_id, sig)
+        sig = signin_trial.connection_signature(signature_key(), typed, secret)
+        run = signin_trial.passed_for(body.test_id, ctx.audit_actor_id, sig)
         last = signin_admin.load_status(path).get("last_test")
         remembered = last.get("issuer") if isinstance(last, dict) and last.get("sig") == sig else None
         # The exact issuer the provider names (it may end in a slash); a sign-in checks it character for character.
@@ -680,12 +680,12 @@ def create_signin_api(
         verify_id_token: Callable[..., Any],
     ) -> Response:
         """The provider's redirect for a test sign-in. Signs no one in; shows a closing page."""
-        run = signin_test.peek(state.test_id)
+        run = signin_trial.peek(state.test_id)
         if run is not None and run.status == "waiting":
             if session_user_id != run.user_id:
-                signin_test.fail(run, "refused", "the test was opened in another browser session")
+                signin_trial.fail(run, "refused", "the test was opened in another browser session")
             else:
-                await signin_test.finish(
+                await signin_trial.finish(
                     run, code=code, error=error, error_description=error_description, nonce=state.nonce,
                     pkce_verifier=state.pkce_verifier, exchange_code=exchange_code, verify_id_token=verify_id_token)
             if run.status == "passed":
