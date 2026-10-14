@@ -1030,3 +1030,50 @@ it.each([
   expect(screen.queryByRole("heading", { name: "Engine health couldn’t load" })).toBeNull();
   expect(within(await visibleChatRow()).getByText("Ready", { exact: true })).toBeVisible();
 });
+
+it("honesty: an intentionally off engine is Off despite a failed last observation", async () => {
+  const disabledRegistry = {
+    ...chatRegistry,
+    services: { chat: { ...chatRegistry.services.chat, enabled: false } },
+  };
+  mount(engineSnapshot({ observation: "down", tone: "bad", last_error: "Connection refused" }), disabledRegistry);
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Off", { exact: true })).toBeVisible();
+  expect(row).not.toHaveTextContent(/Down|Not running|Ready|Degraded/);
+  expect(screen.queryByRole("heading", { name: "Needs attention" })).toBeNull();
+});
+
+it("honesty: a failed engine reports Down and its unavailable capability", async () => {
+  mount(engineSnapshot({ observation: "down", tone: "bad", last_error: null }));
+  expect(await screen.findByRole("heading", { name: "Chat is unavailable right now" })).toBeVisible();
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Down", { exact: true })).toBeVisible();
+  expect(row).not.toHaveTextContent(/Ready|Off|Degraded/);
+});
+
+it("honesty: a failed refresh removes stale ready state and recovers after retry", async () => {
+  const status = engineSnapshot();
+  mount(status);
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Ready", { exact: true })).toBeVisible();
+  vi.mocked(api.status).mockRejectedValue(new Error("offline"));
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  const heading = await screen.findByRole("heading", { name: "Engine health couldn’t load" });
+  expect(screen.getByRole("status")).toHaveTextContent("Couldn’t check status");
+  const refreshed = await visibleChatRow();
+  expect(within(refreshed).getByText("Unknown", { exact: true })).toBeVisible();
+  expect(within(refreshed).getByText("Last checked: not recorded")).toBeVisible();
+  expect(within(refreshed).queryByText("Ready", { exact: true })).toBeNull();
+  vi.mocked(api.status).mockResolvedValue(status);
+  await userEvent.click(within(heading.closest("article")!).getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(within(screen.getByRole("button", { name: "Local chat" }).closest("tr")!).getByText("Ready", { exact: true })).toBeVisible());
+  expect(screen.queryByRole("heading", { name: "Engine health couldn’t load" })).toBeNull();
+});
+
+it("honesty: a slow engine stays degraded without claiming its capability is unavailable", async () => {
+  mount(engineSnapshot({ observation: "degraded", tone: "warn", last_error: null }));
+  const row = await visibleChatRow();
+  expect(within(row).getByText("Degraded", { exact: true })).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("Chat degraded");
+  expect(screen.queryByRole("heading", { name: /Chat is unavailable right now/ })).toBeNull();
+});
