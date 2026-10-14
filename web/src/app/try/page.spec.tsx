@@ -938,3 +938,62 @@ test("a long completed chat keeps every character including the tail", async () 
   expect(output?.textContent).toBe(answer);
   expect(screen.queryByRole("heading", { name: "Reply cut off" })).toBeNull();
 });
+
+function serveImageRun(reply: (url: string) => Response) {
+  mocks.params = new URLSearchParams("capability=image");
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url === "/me/api/models/catalog") return response({
+      aliases: [], models: [{ id: "picture-a", name: "Picture model", capability: "image" }],
+    });
+    if (url === "/me/api/workflows") return response(workflows);
+    return reply(url);
+  });
+}
+
+test.each([
+  ["url", { url: "/pictures/result.webp" }, "/pictures/result.webp"],
+  ["base64", { b64_json: "cGljdHVyZQ==" }, "data:image/png;base64,cGljdHVyZQ=="],
+])("image %s result shows bounded preview, download, model and run time", async (_kind, item, url) => {
+  serveImageRun((path) => path.endsWith("/content")
+    ? tryJson({ data: [item] })
+    : tryJson({ object: "media.job", id: "picture-job", status: "completed" }));
+  render(<TryPage />);
+  await pressRun();
+  const preview = await screen.findByRole("img", { name: "Generated result" });
+  expect(preview).toHaveAttribute("src", url);
+  expect(preview).toHaveClass("max-h-96", "object-contain");
+  expect(preview.parentElement?.parentElement).toHaveClass("max-w-2xl");
+  const download = screen.getByRole("link", { name: "Download picture" });
+  expect(download).toHaveAttribute("href", url);
+  expect(download).toHaveAttribute("download", "generated-picture");
+  expect(screen.getByText("Run time").nextElementSibling?.textContent).toMatch(/^\d+ ms$/);
+  expect(screen.getByText("Model", { selector: "dt" }).nextElementSibling).toHaveTextContent("Picture model");
+  fireEvent.error(preview);
+  expect(screen.getByText("The picture couldn’t be loaded.")).toBeVisible();
+  expect(download).toBeVisible();
+});
+
+test.each(["http", "job"])("image %s failure uses plain recovery copy", async (kind) => {
+  serveImageRun(() => kind === "http"
+    ? tryJson({ error: { message: "upstream_trace_internal_failure" } }, 500)
+    : tryJson({ object: "media.job", id: "picture-job", status: "failed" }));
+  render(<TryPage />);
+  await pressRun();
+  expect(await screen.findByText(kind === "http"
+    ? "We couldn’t make this picture. Try again, or choose another model."
+    : "The gateway could not make this picture.")).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Download picture" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Image result" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+});
+
+test("image blocked by a plan keeps its explanation and offers another run", async () => {
+  const reason = "Your Starter plan does not include this model. Choose a model on your plan.";
+  serveImageRun(() => tryJson({ error: { message: reason, details: { layer: "account" } } }, 403));
+  render(<TryPage />);
+  await pressRun();
+  expect(await screen.findByText(reason)).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Your account stopped this request" })).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Download picture" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+});

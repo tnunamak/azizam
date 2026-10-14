@@ -179,6 +179,7 @@ type Result = {
   missing?: string;
   request: RequestInfo;
   imageUrl?: string;
+  imageModel?: string;
   audioUrl?: string;
   downloadUrl?: string;
   downloadName?: string;
@@ -1988,6 +1989,9 @@ export default function TryPage() {
             request,
           ),
           receiptLookup: receipt.receiptLookup,
+          imageModel: tab === "image"
+            ? runCatalog.image?.find((option) => option.id === selectedModel.image)?.label ?? selectedModel.image
+            : undefined,
           checkingReceipt: tab === "chat",
           runId,
           promptNotSaved,
@@ -2014,13 +2018,18 @@ export default function TryPage() {
           ...(lost ? { ...lost, lost: true } : {}),
           message:
             lost?.message ??
+            (tab === "image" && error instanceof PublicRequestError
+              ? error.status === 403 && error.message !== UNKNOWN_FAILURE
+                ? error.message
+                : "We couldn’t make this picture. Try again, or choose another model."
+              :
             (error instanceof ApiError &&
             tab === "decide" &&
             error.status === 404
               ? "Decisions not enabled on this gateway"
               : error instanceof Error
                 ? error.message
-                : "This request could not be completed."),
+                : "This request could not be completed.")),
           ...(error instanceof PublicRequestError
             ? {
                 layer: error.layer,
@@ -2852,7 +2861,14 @@ function ResultView({
           </p>
         )}
         {result.imageUrl && (
-          <ResultMedia kind="image" url={result.imageUrl} />
+          <div className="max-w-2xl space-y-2">
+            <ResultMedia key={result.imageUrl} kind="image" url={result.imageUrl} />
+            <Button asChild variant="outline">
+              <a href={result.imageUrl} download="generated-picture" target="_blank" rel="noopener noreferrer">
+                Download picture
+              </a>
+            </Button>
+          </div>
         )}
         {result.audioUrl && (
           <ResultMedia kind="audio" url={result.audioUrl} label="Generated audio" />
@@ -2966,8 +2982,9 @@ function ResultView({
         </div>
       )}
       <dl className="grid gap-3 text-sm sm:grid-cols-3">
+        {result.imageModel && <Fact label="Model" value={result.imageModel} />}
         <Fact
-          label={job ? "Request time" : "Time"}
+          label={result.imageModel ? "Run time" : job ? "Request time" : "Time"}
           value={`${result.elapsedMs} ms`}
         />
         {result.cost && <Fact label="Cost" value={result.cost} />}
