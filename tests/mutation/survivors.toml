@@ -194,17 +194,23 @@ id = "gateway/transforms.py:826:int-const:1->2"
 class = "equivalent"
 reason = "ASCII-fold table range end: the extra or missing character is not a letter of either think tag."
 
-[[mutant]]
-id = "gateway/transforms.py:869:arith:-->+"
-class = "equivalent"
-reason = "The scan starts at length 8 instead of 7 or 9; a full tag is not a proper prefix, so the result is the same."
 
 [[mutant]]
-id = "gateway/transforms.py:888:cmp:<-><=#2"
+id = "gateway/transforms.py:837:break->continue:break->continue"
+class = "equivalent"
+reason = "The skipped match is a CR that ends the text, so it is the last match. `break` and `continue` both leave `start` before it, and the code after the loop adds the same unterminated tail."
+
+[[mutant]]
+id = "gateway/transforms.py:883:arith:-->+"
+class = "equivalent"
+reason = "The scan starts at length 9 (or the text length) instead of 7. No tag is longer than 8 characters, so a suffix of length 8 or 9 is never a proper prefix of a tag, and the result is the same."
+
+[[mutant]]
+id = "gateway/transforms.py:902:cmp:<-><=#2"
 class = "equivalent"
 reason = "`idx_close < idx` becomes `<=`. The close tag and the opener are different strings, so they cannot start at the same index: idx_close == idx never holds, and `<` and `<=` agree on every reachable input."
 
 [[mutant]]
-id = "gateway/transforms.py:979:str-const:\"\"->\"XXXX\""
-class = "killable"
-reason = "The else branch is reached only by a data line that ends in a lone CR (or another str.splitlines separator). The current code then drops the terminator and glues the next line onto the data line (verified: b'data: {...}\\r:ping\\n' gives b'data: {...}:ping\\n'), and process_chunk carries unfinished lines at LF only (:956-:962). A test would pin that corruption. The fix needs a CR-aware reader, not a minimal change: open finding in lanes/mut4-REPORT.md."
+id = "gateway/transforms.py:975:int-const:0->1#2"
+class = "equivalent"
+reason = "The `else 0` of `cut` is read only when the last line ends in a terminator, or the data is empty. With 1 the tail is the last byte, which is a CR or LF, and lstrip() empties it. No carry starts, and `cut` is unused outside the carry branch."
