@@ -46,7 +46,6 @@
   <section id="evidence" class="evidence" tabindex="-1" aria-labelledby="evidence-title">
     <div class="evidence-heading">
       <h2 id="evidence-title">Recorded examples</h2>
-      <p class="lede">Each example is a real request recorded through the gateway: the input, the output, the model name, the date and the run time. Open Try it live to run your own. What you can run depends on your key.</p>
       <p class="meta"><span id="stats"></span></p>
       <nav id="nav" class="nav capability-filter" aria-label="Filter capabilities"></nav>
     </div>
@@ -55,65 +54,6 @@
     <div id="sections"></div>
   </section>
 
-  <section id="how" class="band" aria-labelledby="how-title">
-    <h2 id="how-title">How it fits together</h2>
-    <div class="cols">
-      <div class="col">
-        <h3>You run the gateway</h3>
-        <p>Install Azizam on a computer you control. Add the engines you run, and paid providers only if you want them. Engines and model names are settings, not code, so you can swap them when better ones come out.</p>
-      </div>
-      <div class="col">
-        <h3>People get their own access</h3>
-        <p>Invite family or friends with a link. Each person gets their own key and an access plan that sets which models they can use and how much they can spend. Their requests, creations and receipts are tied to their own apps.</p>
-      </div>
-      <div class="col">
-        <h3>Apps and agents connect</h3>
-        <p>Point an OpenAI-compatible app at <code>/openai/v1</code> with its key. Anthropic and Ollama clients have their own routes, and agents can use the MCP server at <code>/mcp</code>. Home in the gateway has connection recipes.</p>
-      </div>
-    </div>
-  </section>
-
-  <section id="privacy" class="band" aria-labelledby="privacy-title">
-    <h2 id="privacy-title">Know where requests go</h2>
-    <ul class="facts">
-      <li><strong>Local engines.</strong> A request to an engine you run goes from the gateway to that engine, on hardware you control.</li>
-      <li><strong>Paid providers.</strong> A request to a paid model goes to that provider, under its terms, and only when the access plan allows paid use. If a local engine is down, the request does not move to a paid provider unless you set that up.</li>
-      <li><strong>Keys.</strong> Every request needs a key by default, on your home network too. Give each app its own key so you can revoke one without breaking the others. Keep admin keys out of apps.</li>
-      <li><strong>Download links.</strong> A signed link to a creation works for anyone who has the full link until it expires. Share it as carefully as a key.</li>
-    </ul>
-  </section>
-
-  <section id="get-started" class="band" tabindex="-1" aria-labelledby="start-title">
-    <h2 id="start-title">Get started</h2>
-    <p class="lede">You need Docker with Compose, and an engine that serves an OpenAI-compatible chat API with a model already loaded. Azizam connects to engines; it does not download models.</p>
-    <ol class="steps">
-      <li>
-        <h3>Start the gateway</h3>
-        <p>In a copy of the repository, run:</p>
-        <pre class="cmd"><code>docker compose up -d</code></pre>
-        <p>The first build takes the longest. Then open <code>http://127.0.0.1:5000/setup</code> on the same computer.</p>
-      </li>
-      <li>
-        <h3>Add your engine and a key</h3>
-        <p>Create the owner account. In <strong>Gateway → Engines</strong>, add your engine's address and map a model name, such as <code>my-model</code>, to the engine's own model. On <strong>Home</strong>, create a key for your app and save it; it is shown once.</p>
-      </li>
-      <li>
-        <h3>Send the first request</h3>
-        <p>In your app, set the base URL to <code>http://127.0.0.1:5000/openai/v1</code>, paste the key and choose <code>my-model</code>. Send a short message. A reply in your app means it works. Then invite people from <strong>Gateway → People</strong>.</p>
-      </li>
-    </ol>
-    <p class="next"><a href="/showcase/docs/start/install/">Read the setup guide</a> for other ports and engines on the same computer, then <a href="/showcase/docs/operate/security/">Security</a> before other devices connect.</p>
-  </section>
-
-  <section id="limits" class="band" aria-labelledby="limits-title">
-    <h2 id="limits-title">Before you rely on it</h2>
-    <ul class="facts">
-      <li>What you can make depends on the engines and model files you connect. The examples above show what this gateway did when they were recorded.</li>
-      <li>A route that accepts a vendor's API format does not mean every feature of that API works. Each <a href="/showcase/docs/api/">API page</a> lists what works and what does not.</li>
-      <li>Paid use is estimated and reserved before a request, then settled after. A final cost can stay unknown until it is reconciled, and requests already running can take spend past a cap. Set a credit limit with the provider too.</li>
-      <li>You run the computer: updates, backups and HTTPS for access from other devices are yours to set up.</li>
-    </ul>
-  </section>
 </main>
 
 <footer class="foot">

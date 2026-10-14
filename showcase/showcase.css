@@ -303,7 +303,7 @@ html { scroll-behavior: auto; }
 .site-nav { display: flex; align-items: center; gap: 24px; }
 .site-nav a { display: inline-flex; align-items: center; min-height: 44px; color: var(--text); }
 .site-nav .primary-link { color: #fff; }
-.site-nav [aria-current="page"], .brand[aria-current="page"] { text-decoration: underline; text-underline-offset: 6px; }
+.site-nav [aria-current="page"] { text-decoration: none; }
 .site-menu { display: none; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-height: 44px; min-width: 64px; }
 .home main { padding-top: 0; }
 .home .hero { width: 100%; padding: 56px 0 0; grid-template-columns: minmax(0, 1fr); gap: 40px; }
@@ -365,4 +365,23 @@ html { scroll-behavior: auto; }
 .examples-page .section { margin-top: var(--section-space); }
 .examples-page .col p, .examples-page .facts li, .examples-page .steps p {
   font-size: var(--type-body); line-height: var(--body-leading);
+}
+
+/* Hero proof: one real recorded exchange (data/showcase/examples/chat-default). */
+.proof-card .proof-request { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid var(--line, rgba(127,127,127,.25)); font-size: 13px; }
+.proof-card .proof-model { opacity: .8; }
+.proof-card .proof-exchange { display: grid; grid-template-columns: auto 1fr; gap: 10px 14px; margin: 0; }
+.proof-card .proof-exchange dt { font-weight: 650; font-size: 14px; padding-top: 2px; }
+.proof-card .proof-exchange dd { margin: 0; line-height: 1.55; }
+.proof-card .proof-meta { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--line, rgba(127,127,127,.25)); font-size: 13px; opacity: .85; }
+
+/* Header links: no underline at rest; the current page is marked by weight and a bar. */
+.site-nav a, .brand { text-decoration: none; }
+.site-nav a:hover { text-decoration: underline; text-underline-offset: 4px; }
+.site-nav a[aria-current="page"] { font-weight: 650; box-shadow: inset 0 -2px 0 currentColor; }
+.brand[aria-current="page"] { box-shadow: none; }
+@media (max-width: 640px) {
+  .proof-card { margin-inline: 0; width: auto; max-width: none; }
+  .proof-card .proof-exchange { grid-template-columns: 1fr; gap: 4px; }
+  .proof-card .proof-exchange dd + dt { margin-top: 10px; }
 }

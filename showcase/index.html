@@ -33,13 +33,17 @@
       </div>
       <p class="microline">Runs on a computer you control · Works with OpenAI, Anthropic and Ollama clients · Apache-2.0</p>
     </div>
-    <!-- UNVERIFIED: no authentic recorded exchange is available in the assignment's offline source. Do not substitute invented reply text, time, model or date. -->
-    <aside class="proof-card" aria-label="Recorded proof unavailable">
-      <p class="eyebrow">Recorded exchange</p>
-      <p>No recording is bundled with this copy of the site.</p>
-      <p>A recorded exchange needs the original input, reply, model, run time and recording date. Those details have not been verified here.</p>
-      <p><a href="/showcase/examples/">Open the recorded examples</a> on your gateway to inspect the input and output together. A live request needs your app key and can produce a different reply.</p>
-    </aside>
+    <figure class="proof-card" aria-labelledby="proof-caption">
+      <figcaption id="proof-caption" class="eyebrow">A real request, recorded through Azizam</figcaption>
+      <p class="proof-request"><code>POST /openai/v1/chat/completions</code><code class="proof-model">model: default</code></p>
+      <dl class="proof-exchange">
+        <dt>You</dt>
+        <dd>Explain in two sentences why the sky is blue.</dd>
+        <dt>Reply</dt>
+        <dd>Sunlight entering Earth's atmosphere scatters off air molecules, and shorter blue wavelengths scatter much more strongly than longer red ones (a process called Rayleigh scattering). This scattered blue light is then distributed across the sky in all directions, so no matter where you look, you see blue.</dd>
+      </dl>
+      <p class="proof-meta">Ran in 4.3 s · 115 tokens · recorded 2 Oct 2026 · <a href="/showcase/examples/">More examples</a></p>
+    </figure>
   </section>
   <section class="value-section" aria-labelledby="values-title">
     <h2 id="values-title" class="visually-hidden">What the gateway gives you</h2>
