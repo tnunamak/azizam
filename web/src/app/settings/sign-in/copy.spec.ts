@@ -347,6 +347,7 @@ describe("setting sentences and the change count", () => {
       settings: ["provider_off", "name_changed"],
       blockers: [],
       test_verdict: null,
+      rule_matches: {},
     };
     expect(changeCount(preview)).toBe(5);
     expect(changeCount(undefined)).toBe(0);

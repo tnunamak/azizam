@@ -217,7 +217,7 @@ export async function mountSignIn(
   mocked.discover.mockImplementation(async () =>
     found ?? { ...discovery(), ok: false },
   );
-  mocked.cancel.mockResolvedValue(undefined);
+  mocked.cancel.mockResolvedValue({ cancelled: true });
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
