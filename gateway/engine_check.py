@@ -103,12 +103,12 @@ class Fetch(Protocol):
     ) -> Awaitable[Answer]: ...
 
 
-Resolve = Callable[[str], Awaitable[list[str]]]
+Resolve = Callable[..., Awaitable[list[str]]]
 
 
-async def _default_resolve(host: str) -> list[str]:
+async def _default_resolve(host: str, port: int | None = None) -> list[str]:
     loop = asyncio.get_running_loop()
-    infos = await asyncio.wait_for(loop.getaddrinfo(host, None, type=socket.SOCK_STREAM), timeout=3)
+    infos = await asyncio.wait_for(loop.getaddrinfo(host, port, type=socket.SOCK_STREAM), timeout=3)
     return sorted({info[4][0] for info in infos})
 
 
@@ -154,8 +154,12 @@ async def blocked_reason(
         addresses = [ipaddress.ip_address(host)]
     except ValueError:
         try:
-            addresses = [ipaddress.ip_address(value.split("%")[0]) for value in await resolve(host)]
-        except (OSError, asyncio.TimeoutError, ValueError):
+            try:
+                found = await resolve(host, port)
+            except TypeError:
+                found = await resolve(host)
+            addresses = [ipaddress.ip_address(value.split("%")[0]) for value in found]
+        except Exception:  # noqa: BLE001 - an unresolvable name is reported by the request itself
             return None
     ports = set(gateway_ports)
     for address in addresses:
@@ -214,6 +218,8 @@ def make_http_fetch(*, resolve: Resolve = _default_resolve, gateway_ports: Itera
         except httpx.ConnectError as exc:
             answer.transport, answer.detail = _connect_failure(exc)
         except httpx.HTTPError as exc:
+            answer.transport, answer.detail = "refused", str(exc) or type(exc).__name__
+        except Exception as exc:  # noqa: BLE001 - a check reports a failure; it never crashes the route
             answer.transport, answer.detail = "refused", str(exc) or type(exc).__name__
         finally:
             answer.seconds = round(time.perf_counter() - started, 2)

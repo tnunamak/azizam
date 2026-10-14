@@ -177,3 +177,21 @@ def test_the_check_sends_only_gets_and_empty_posts_with_short_caps():
             assert cap == 1024 * 1024, "the API description and a long model list get a larger cap"
         else:
             assert cap == 64 * 1024
+
+
+def test_a_resolver_or_connection_that_raises_gives_a_finding_not_a_crash():
+    async def resolve(host, port=None):
+        raise RuntimeError("name resolution is not allowed here")
+    result = _check("http://name.invalid:8080/v1", fetch=make_http_fetch(resolve=resolve))
+    assert result["outcome"] == "error"
+    assert result["findings"][0]["field"] == "address"
+
+
+def test_the_resolver_is_asked_for_the_port_it_will_connect_to():
+    asked: list = []
+
+    async def resolve(host, port=None):
+        asked.append((host, port))
+        return ["192.0.2.30"]
+    asyncio.run(blocked_reason("http://lan-box.example:8188", resolve=resolve))
+    assert asked == [("lan-box.example", 8188)]
