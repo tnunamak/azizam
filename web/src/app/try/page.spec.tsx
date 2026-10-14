@@ -997,3 +997,45 @@ test("image blocked by a plan keeps its explanation and offers another run", asy
   expect(screen.queryByRole("link", { name: "Download picture" })).toBeNull();
   expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
 });
+
+test("chat length limit retains the partial reply and marks it as cut", async () => {
+  serveTryRun({ choices: [{ message: { content: "Visible partial reply" }, finish_reason: "length" }] });
+  render(<TryPage />);
+  await pressRun();
+  expect(await screen.findByText("Visible partial reply")).toBeVisible();
+  expect(screen.getByText("This answer stopped early because it reached its length limit.")).toBeVisible();
+  expect(screen.queryByText("The gateway returned no reply.")).toBeNull();
+});
+
+test.each(["", "   \n\t"])("empty chat prompt %j is refused with a clear message before a request", async (prompt) => {
+  serveTryRun({ choices: [{ message: { content: "Should not run" } }] });
+  render(<TryPage />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+  fireEvent.change(screen.getByRole("textbox", { name: "Prompt" }), { target: { value: prompt } });
+  await pressRun();
+  expect(await screen.findByText("Enter a prompt before running chat.")).toBeVisible();
+  expect(mocks.tryKey).not.toHaveBeenCalled();
+  expect(fetchMock.mock.calls.filter(([url]) => url === "/openai/v1/chat/completions")).toHaveLength(0);
+});
+
+test("chat network drop offers an explicit retry without automatically repeating the request", async () => {
+  let attempts = 0;
+  serveChat(() => {
+    if (++attempts === 1) throw new TypeError("Failed to fetch");
+    return chatReply({ choices: [{ message: { content: "Recovered reply" }, finish_reason: "stop" }] });
+  });
+  render(<TryPage />);
+  const prompt = screen.getByRole("textbox", { name: "Prompt" });
+  fireEvent.change(prompt, { target: { value: "Keep my question" } });
+  await pressRun();
+  expect(await screen.findByRole("heading", { name: "The connection dropped" })).toBeVisible();
+  expect(screen.getByText("The answer did not come back. Edit and run again when you are back online.")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Edit and run again" }));
+  expect(prompt).toHaveFocus();
+  expect(prompt).toHaveValue("Keep my question");
+  expect(attempts).toBe(1);
+  await pressRun();
+  expect(await screen.findByText("Recovered reply")).toBeVisible();
+  expect(attempts).toBe(2);
+  expect(screen.queryByRole("heading", { name: "The connection dropped" })).toBeNull();
+});

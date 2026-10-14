@@ -1793,6 +1793,13 @@ export default function TryPage() {
 
   async function run(tab: TryTab, event: FormEvent) {
     event.preventDefault();
+    if (tab === "chat" && !prompt.chat.trim()) {
+      setErrors((current) => ({
+        ...current,
+        chat: { message: "Enter a prompt before running chat." },
+      }));
+      return;
+    }
     // A sign-out or unmount (both advance keyGeneration) ends the identity
     // this run started under.
     const runGeneration = keyGeneration.current;
