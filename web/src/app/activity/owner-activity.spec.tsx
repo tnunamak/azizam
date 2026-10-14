@@ -679,3 +679,42 @@ it("announces final request pagination and keeps focus on the end message", asyn
   expect(status).toHaveAttribute("aria-live", "polite");
   expect(status).toHaveAttribute("aria-atomic", "true");
 });
+
+it("recognizes fallback_model without fallback reasons in the receipt sheet", async () => {
+  serveCopyReceipt({
+    intent: "chat", status: "success",
+    requested_model: "primary-chat", resolved_model: "backup-chat",
+    fallback_model: "backup-chat",
+  });
+  await userEvent.setup().click(await screen.findByRole("button", { name: "Request details: Chat by Sam" }));
+  const sheet = within(screen.getByRole("dialog"));
+  expect(sheet.queryByText("A different model was used.")).toBeVisible();
+  expect(sheet.getByText("Requested model").nextElementSibling).toHaveTextContent(/primary/i);
+  expect(sheet.getByText("Served model").nextElementSibling).toHaveTextContent(/backup/i);
+  expect(sheet.queryByText("Name used")).toBeNull();
+});
+
+it("does not claim a substitution when fallback metadata records the same served model", async () => {
+  serveCopyReceipt({
+    intent: "chat", status: "success",
+    requested_model: "primary-chat", resolved_model: "primary-chat",
+    fallback_model: "primary-chat", fallback_reasons: ["retry after timeout"],
+  });
+  await userEvent.setup().click(await screen.findByRole("button", { name: "Request details: Chat by Sam" }));
+  const sheet = within(screen.getByRole("dialog"));
+  expect(sheet.queryByText("A different model was used.")).toBeNull();
+  expect(sheet.queryByText("Requested model")).toBeNull();
+  expect(sheet.queryByText("Served model")).toBeNull();
+  expect(sheet.getByText("Model", { exact: true })).toBeVisible();
+});
+
+it("renders backend_failed as failed in both the request row and its opened sheet", async () => {
+  serveCopyReceipt({ intent: "chat", status: "backend_failed" });
+  const row = await screen.findByRole("button", { name: "Request details: Chat by Sam" });
+  expect(within(row).getByText("Failed")).toBeVisible();
+  expect(row).not.toHaveTextContent("Outcome not recorded");
+  await userEvent.setup().click(row);
+  const sheet = within(screen.getByRole("dialog"));
+  expect(sheet.getByText("Failed", { exact: true })).toBeVisible();
+  expect(sheet.getByText("We couldn't tell where this stopped. Try again.")).toBeVisible();
+});
