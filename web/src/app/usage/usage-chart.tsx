@@ -26,7 +26,8 @@ export default function UsageChart({ rows }: UsageChartProps) {
           tick={{ fill: "var(--subtle-foreground)", fontSize: 12 }}
         />
         <YAxis
-          width={32}
+          width={100}
+          tickFormatter={(value: number) => `${value.toLocaleString("en-US")} ${value === 1 ? "request" : "requests"}`}
           allowDecimals={false}
           tickLine={false}
           axisLine={false}
