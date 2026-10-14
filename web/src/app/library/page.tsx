@@ -282,15 +282,15 @@ class LibraryFailure extends Error {
     super(reason === "unknown"
       ? "We couldn't tell where this stopped. Try again."
       : reason === "unreadable"
-        ? "The gateway returned an unreadable response. Try again."
+        ? "We couldn't read the response. Try again."
         : stage === "library"
-          ? "The gateway couldn't load your library. Try again."
+          ? "We couldn't load your library. Try again."
           : stage === "prepare"
-            ? "The gateway couldn't prepare this file. Try again."
+            ? "We couldn't prepare this file. Try again."
             : stage === "download"
               ? "The file couldn't be downloaded. Try again."
               : stage === "delete"
-                ? "The gateway couldn't delete this creation. Try again."
+                ? "We couldn't delete this creation. Try again."
                 : "This browser couldn't share the file. Use Download.");
   }
 }
@@ -1599,12 +1599,12 @@ function MoreFilters({
           </Select>
         </div>
         <div className="space-y-1.5">
-          <p className="text-label">Date</p>
+          <p className="text-label">Date created</p>
           <Select
             value={date}
             onValueChange={(value) => setDate(value as DateFilter)}
           >
-            <SelectTrigger aria-label="Date" className="w-full">
+            <SelectTrigger aria-label="Date created" className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1619,7 +1619,7 @@ function MoreFilters({
           <div className="space-y-1.5">
             <p className="text-label">App</p>
             <Select value={source} onValueChange={setSource}>
-              <SelectTrigger aria-label="Source" className="w-full">
+              <SelectTrigger aria-label="App" className="w-full">
                 <SelectValue placeholder="All apps" />
               </SelectTrigger>
               <SelectContent>
@@ -1690,7 +1690,7 @@ function QueryFeedback({ label, query }: {
   if (!query.isError) return null;
   return (
     <p role="status" className="text-meta">
-      The gateway couldn’t load {label}.{" "}
+      We couldn’t load {label}.{" "}
       <Button variant="link" disabled={query.isFetching} onClick={() => void query.refetch()}>
         {query.isFetching ? "Loading…" : `Retry ${label}`}
       </Button>
@@ -1879,7 +1879,7 @@ function CreationViewer({
                   </>
                 ) : null}
                 {renewing ? <p role="status">Opening your file…</p> : renewalFailed ? (
-                  <p role="status">The gateway couldn’t prepare this file. <button className="text-link min-h-11 px-3 underline" onClick={() => void renew()}>Try again</button></p>
+                  <p role="status">We couldn’t prepare this file. <button type="button" className="text-link min-h-11 px-3 underline" onClick={() => void renew()}>Try again</button></p>
                 ) : renewed ? <Preview
                   key={`${asset.asset_id}-${renewed.download_url}`}
                   asset={{ ...asset, download_url: renewed.download_url, available: true, unavailable_reason: null }}
@@ -1998,7 +1998,7 @@ function CreationViewer({
               {asset.available === false && !fileAvailable ? (
                 <p className="bg-muted rounded-control text-meta p-3">
                   {confirmedGone(asset.unavailable_reason)
-                    ? "The gateway no longer stores this file."
+                    ? "This file is no longer stored."
                     : "This file is unavailable."}
                   {remains ? ` ${remains}` : ""}
                 </p>
@@ -2061,7 +2061,7 @@ function CreationViewer({
                   </Button>
                 ) : null}
               </div>
-              {receiptFailed ? <p role="status">The gateway couldn’t load the receipt. <Button variant="link" disabled={receiptFetching} onClick={() => void retryReceipt()}>{receiptFetching ? "Loading…" : "Retry receipt"}</Button></p> : null}
+              {receiptFailed ? <p role="status">We couldn’t load the receipt. <Button variant="link" disabled={receiptFetching} onClick={() => void retryReceipt()}>{receiptFetching ? "Loading…" : "Retry receipt"}</Button></p> : null}
               {maker && !prompt ? <QueryFeedback label="prompt settings" query={{ isError: promptMemoryError, isFetching: promptMemoryFetching, refetch: refetchPromptMemory }} /> : null}
               <KeyValueList
                 className="figures"
@@ -2077,23 +2077,23 @@ function CreationViewer({
                       : "",
                   ],
                   [
-                    "Size",
+                    "Dimensions",
                     asset.width && asset.height
-                      ? `${asset.width} × ${asset.height}`
+                      ? `${asset.width} × ${asset.height} px`
                       : "",
                   ],
                   [
-                    "Length",
+                    "Duration",
                     asset.duration_s != null &&
                     Number.isFinite(asset.duration_s)
-                      ? formatDuration(asset.duration_s)
+                      ? `${asset.duration_s} seconds`
                       : "",
                   ],
                   [
-                    "Made in",
+                    "Generation time",
                     asset.generation_ms == null
                       ? ""
-                      : `${(asset.generation_ms / 1000).toFixed(1)} s`,
+                      : `${(asset.generation_ms / 1000).toFixed(1)} seconds`,
                   ],
                   ["Charge", charge],
                 ])}
@@ -2867,7 +2867,7 @@ export default function LibraryPage() {
           <div className="mb-4">
             <ErrorState
               heading="That creation is unavailable"
-              message="The gateway couldn’t open this creation. Try again or return to your library."
+              message="We couldn’t open this creation. Try again or return to your library."
               onRetry={() => void refetchDeepLinkedAsset()}
               retrying={deepLinkedAssetFetching}
             />
@@ -2909,8 +2909,8 @@ export default function LibraryPage() {
             title={activeFilters ? "No matching creations" : "No creations yet"}
             description={
               activeFilters
-                ? "Your generated images, video and audio appear here; no creations match these filters."
-                : "Images, video and audio made through the gateway appear here."
+                ? "No creations match your search or filters. Clear the filters to see more."
+                : "Images, videos and audio you create appear here."
             }
             action={
               activeFilters ? (
@@ -3004,8 +3004,8 @@ export default function LibraryPage() {
         >
           <span>
             {isFetchNextPageError
-              ? "The gateway couldn’t load more library items. Try again."
-              : "The gateway couldn’t refresh your library. Try again."}
+              ? "We couldn’t load more library items. Try again."
+              : "We couldn’t refresh your library. Try again."}
           </span>
           <Button
             variant="outline"
@@ -3015,7 +3015,7 @@ export default function LibraryPage() {
             {isFetchingNextPage
               ? "Loading more…"
               : isFetchNextPageError
-                ? "Load more / Retry"
+                ? "Retry loading more"
                 : "Retry"}
           </Button>
         </div>

@@ -108,6 +108,10 @@ function titleize(value: string): string {
     .replace(/[._-]/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
+function displayName(value: string): string {
+  // Keep human-written names; turn identifier-shaped fallbacks into words.
+  return /^\S+[._-]\S+$/.test(value) ? titleize(value) : value;
+}
 function valueText(value: unknown): string {
   if (value == null || value === "") return "";
   if (typeof value === "number")
@@ -184,15 +188,15 @@ function enginesFrom(
         service,
         health: h,
         backend,
-        name: engineDisplayName(service, display),
-        shortName: engineShortName(service, display),
+        name: displayName(engineDisplayName(service, display)),
+        shortName: displayName(engineShortName(service, display)),
         // People's names for capabilities (VOICE glossary): Speech is Voice.
         label:
           display?.capability_labels
             ?.filter((label) => !/\((?:speech|transcription)\)/i.test(label))
             .map((label) => (label === "Speech" ? "Voice" : label))
             .join(", ") || "",
-        role: service.role || h?.role || titleize(service.kind || "engine"),
+        role: titleize(service.role || h?.role || service.kind || "engine"),
         state: healthPresentation.label,
         tone: healthPresentation.tone,
         endpoint: endpoint(service, backend),
@@ -239,7 +243,7 @@ function EngineSheet({
               ...(engine.models.length
                 ? [["Served models", engine.models.join(", ")]]
                 : []),
-              ...(engine.lastError
+              ...(["down", "degraded"].includes(engineStateKey(engine))
                 ? [
                     ["Symptom", engineStateWord(engine).word],
                     ["Next step", "Check the engine address and that it is running, then refresh."],
@@ -531,7 +535,7 @@ function unexplainedProblems(
       facts: [],
       body: [
         unknown[0].detail ?? "No recent check has answered for them.",
-        "The gateway does not say which engine serves them.",
+        "Open Engines to check which engine serves them, then refresh status.",
       ],
       href: "/engines/",
       action: "Open Engines",
@@ -673,7 +677,7 @@ function engineProblems(
       // The verdict line above carries the state word, so the title says
       // what it means for people, or the fault when nothing is exposed.
       title: consequence
-        ? `${joinNames([exposed[0], ...exposed.slice(1).map((label) => label.toLowerCase())])} ${failed.length ? "requests have failed" : key === "degraded" ? "requests may fail right now" : `${exposed.length === 1 ? "is" : "are"} unavailable right now`}`
+        ? `${joinNames([exposed[0], ...exposed.slice(1).map((label) => label.toLowerCase())])} ${failed.length ? "requests have failed" : key === "degraded" ? "requests may be slow or fail right now" : `${exposed.length === 1 ? "is" : "are"} unavailable right now`}`
         : single
           ? symptomOf(first).replace(/\.$/, "")
           : `${affected.length} engines ${symptomOf(first)
@@ -691,7 +695,7 @@ function engineProblems(
       facts,
       evidence,
       history,
-      body: single ? [engineRemedy(first.lastError)] : undefined,
+      body: [engineRemedy(first.lastError)],
       href: single
         ? `/engines/?service=${encodeURIComponent(first.service.id)}`
         : "/engines/",
@@ -1193,7 +1197,9 @@ export function StatusClient() {
               title: provider.keyState === "missing" ? `${provider.name} needs a key.` : `${provider.name} is down`,
               headline: provider.keyState === "missing" ? `${provider.name} needs a key.` : `${provider.name} down`,
               facts,
-              body: provider.keyState === "missing" ? [] : ["The last connection check failed."],
+              body: provider.keyState === "missing"
+                ? ["Add this provider’s key in Providers, then check its connection."]
+                : ["The last connection check failed.", "Open Providers to check its address and key, then try the connection again."],
               href: "/providers",
               action: provider.keyState === "missing" ? "Add provider key" : `Open ${provider.name}`,
             } satisfies Problem,
@@ -1262,8 +1268,8 @@ export function StatusClient() {
               [string, ReactNode]
             >,
             body: [
-              "Its capabilities read Unknown until it answers.",
-              "Check that the engine is running and its health address answers.",
+              "We cannot confirm what this engine can do until a new check succeeds.",
+              "Check that the engine is running and its health address answers, then refresh status.",
             ],
             href: `/engines/?service=${encodeURIComponent(engine.service.id)}`,
             action: `Inspect ${engine.shortName}`,

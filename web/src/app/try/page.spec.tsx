@@ -75,6 +75,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
+test("names the page with exactly one level-one heading", async () => {
+  render(<TryPage />);
+  expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+  expect(screen.getByRole("heading", { level: 1, name: "Try" })).toBeVisible();
+});
+
 test.each([false, true])(
   "recording retry does not mutate credentials (key present: %s)",
   async (withKey) => {

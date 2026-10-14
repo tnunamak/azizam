@@ -732,13 +732,13 @@ describe("Library honesty and access", () => {
     routeFetch((path) => path.startsWith("/me/api/media?") ? list([]) : undefined);
     renderLibrary();
     const empty = await screen.findByRole("region", { name: "No creations yet" });
-    expect(empty).toHaveAccessibleDescription("Images, video and audio made through the gateway appear here.");
+    expect(empty).toHaveAccessibleDescription("Images, videos and audio you create appear here.");
     expect(within(empty).getAllByRole("link")).toHaveLength(1);
     expect(within(empty).getByRole("link", { name: "Make an image" })).toHaveAttribute("href", "/try?capability=image");
 
     fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
     const filtered = await screen.findByRole("region", { name: "No matching creations" });
-    expect(filtered).toHaveAccessibleDescription("Your generated images, video and audio appear here; no creations match these filters.");
+    expect(filtered).toHaveAccessibleDescription("No creations match your search or filters. Clear the filters to see more.");
     expect(within(filtered).getAllByRole("button")).toHaveLength(1);
     expect(within(filtered).queryByRole("link")).toBeNull();
     await userEvent.setup().click(within(filtered).getByRole("button", { name: "Clear filters" }));
@@ -913,14 +913,14 @@ describe("Library honesty and access", () => {
     expect(
       within(dialog).getByText("This file is unavailable. The prompt and receipt are below."),
     ).toBeVisible();
-    expect(within(dialog).queryByText(/no longer stores/)).toBeNull();
+    expect(within(dialog).queryByText(/file is no longer stored/)).toBeNull();
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     fireEvent.click(screen.getByRole("button", { name: "Open A lost owl" }));
     dialog = await screen.findByRole("dialog");
     expect(
-      within(dialog).getByText("The gateway no longer stores this file. The prompt is below."),
+      within(dialog).getByText("This file is no longer stored. The prompt is below."),
     ).toBeVisible();
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -1545,7 +1545,7 @@ describe("Library response and media boundaries", () => {
         : Response.json(kind === "null" ? null : { assets: [{}] })
       : undefined);
     const { queryClient } = renderLibrary();
-    expect(await screen.findByText("The gateway returned an unreadable response. Try again.")).toBeVisible();
+    expect(await screen.findByText("We couldn't read the response. Try again.")).toBeVisible();
     const query = queryClient.getQueryCache().findAll().find((query) => query.queryKey[0] === "library" && typeof query.queryKey[1] === "object");
     expect(query?.state.error).toMatchObject({ stage: "library", reason: "unreadable" });
     queryClient.clear();
@@ -1563,7 +1563,7 @@ describe("Library response and media boundaries", () => {
     });
     const { queryClient } = renderLibrary();
     expect(await screen.findByText("That creation is unavailable")).toBeVisible();
-    expect(screen.getByText("The gateway couldn’t open this creation. Try again or return to your library.")).toBeVisible();
+    expect(screen.getByText("We couldn’t open this creation. Try again or return to your library.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("dialog", { name: "Second try works" })).toBeVisible();
     expect(screen.queryByText("That creation is unavailable")).toBeNull();
@@ -1579,7 +1579,7 @@ describe("Library response and media boundaries", () => {
       : undefined);
     renderLibrary();
     expect(await screen.findByText("Couldn’t load your library")).toBeVisible();
-    expect(screen.getByText("The gateway couldn't load your library. Try again.")).toBeVisible();
+    expect(screen.getByText("We couldn't load your library. Try again.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open Recovered list" })).not.toBeNull(), { onTimeout: (error) => error });
     expect(screen.queryByText("Couldn’t load your library")).toBeNull();
@@ -1635,7 +1635,7 @@ describe("Library response and media boundaries", () => {
   test("a creation dialog is named by its prompt and shows a text workflow in Details", async () => {
     routeFetch((path) =>
       path.startsWith("/me/api/media?")
-        ? list([picture("lamp", "A teal desk lamp on a walnut table", { workflow: "workflow.image.lamp" })])
+        ? list([picture("lamp", "A teal desk lamp on a walnut table", { workflow: "workflow.image.lamp", width: 1024, height: 768, duration_s: 125, generation_ms: 1500 })])
         : undefined,
     );
     renderLibrary();
@@ -1643,6 +1643,9 @@ describe("Library response and media boundaries", () => {
     const dialog = await screen.findByRole("dialog", { name: "A teal desk lamp on a walnut table" });
     fireEvent.click(within(dialog).getByText("Details"));
     expect(within(dialog).getByText("workflow.image.lamp")).toBeVisible();
+    expect(factValue(dialog, "Dimensions")).toHaveTextContent("1024 × 768 px");
+    expect(factValue(dialog, "Duration")).toHaveTextContent("125 seconds");
+    expect(factValue(dialog, "Generation time")).toHaveTextContent("1.5 seconds");
   });
 
   test("deep link opens, becomes unavailable, and can return to the library", async () => {
@@ -1679,7 +1682,7 @@ describe("Library response and media boundaries", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Open Recovered image" }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByRole("img", { name: "Recovered image" })).toBeVisible();
-    expect(within(dialog).queryByText(/no longer stores this file/)).toBeNull();
+    expect(within(dialog).queryByText(/file is no longer stored/)).toBeNull();
     expect(within(dialog).getByRole("button", { name: "Download" })).toBeEnabled();
     queryClient.clear();
   });

@@ -213,13 +213,14 @@ it("never shows a stored action name as the change title (PF-140)", async () => 
   mount(async () => ({
     records: [
       { ...recordedChange, id: "a", action: "runtime_profile_mapping.create" },
-      { ...recordedChange, id: "b", action: "operator.widget_registry.frobnicate" },
+      { ...recordedChange, id: "b", action: "operator.widget_registry.frobnicate", target_kind: "opaque_kind", target_id: "internal-target-17", metadata: {} },
     ],
     next_cursor: null,
   }));
   expect(await screen.findByRole("button", { name: "Details: Added an access assignment by Sam" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Details: Recorded a change by Sam" })).toBeVisible();
-  expect(screen.queryByText(/frobnicate|widget registry/i)).toBeNull();
+  expect(screen.queryByText(/frobnicate|widget registry|opaque_kind|internal-target-17/i)).toBeNull();
+  expect(screen.getByRole("button", { name: "Details: Recorded a change by Sam" })).toHaveTextContent("Sam · Item");
 });
 
 it("announces loading changes without claiming that an empty list is ready", () => {
@@ -390,6 +391,7 @@ it("shows newest receipts first with person and app despite a source label, and 
   // The request ID is a technical detail (PF-045); it still identifies the receipt.
   expect(within(receipt).getByText("Request ID: newer")).toBeInTheDocument();
   expect(within(receipt).getByText("Studio")).toBeVisible();
+  expect(within(receipt).getByText("Time taken").nextElementSibling).toHaveTextContent("1.3 s");
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   await waitFor(() => expect(buttons[0]).toHaveFocus());

@@ -52,7 +52,7 @@ test("an old /ui URL in a browser gets the app's 404 page", async ({
   await expect(
     page.getByRole("heading", { name: "Page not found" }),
   ).toBeVisible();
-  await page.getByRole("link", { name: "Go home", exact: true }).click();
+  await page.getByRole("main").getByRole("link", { name: "Home", exact: true }).click();
   await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
 });
 

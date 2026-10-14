@@ -76,9 +76,9 @@ test("usage light at 1440px has no serious axe violation", async ({ page }) => {
   );
   await page.goto("/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
-  await expect(page.getByText("Spend (USD)", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Spend this month (USD)", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "View recent requests" }).click();
-  await expect(page.getByText("Receipts", { exact: true })).toBeVisible();
+  await expect(page.getByText("Recent request receipts", { exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await expectNoSeriousAxeViolations(page);
 });
@@ -90,9 +90,9 @@ test("usage dark at 390px fits the phone and has no serious axe violation", asyn
   );
   await page.goto("/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
-  await expect(page.getByText("Spend (USD)", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Spend this month (USD)", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "View recent requests" }).click();
-  await expect(page.getByText("Receipts", { exact: true })).toBeVisible();
+  await expect(page.getByText("Recent request receipts", { exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await expectNoSeriousAxeViolations(page);
 });
@@ -113,7 +113,7 @@ test("usage empty dark at 390px fits the phone and has no serious axe violation"
   );
   await page.goto("/usage/");
   await expect(
-    page.getByText("No requests in this period", { exact: true }),
+    page.getByText("No requests this month", { exact: true }),
   ).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await expectNoSeriousAxeViolations(page);
@@ -218,7 +218,7 @@ test("usage fits a 390 px phone with long model names", async ({ page }) => {
     fulfilJson(route, phoneSummary),
   );
   await page.goto("/usage/");
-  await expect(page.getByText("Top models by requests")).toBeVisible();
+  await expect(page.getByText("Request counts and recorded spend this month, busiest models first")).toBeVisible();
   await expectNoHorizontalOverflow(page);
 
   // The tab bar is not cut off: its right edge is inside the viewport.
@@ -278,8 +278,8 @@ test("usage Source list stays on screen, scrolls inside itself and never widens 
     fulfilJson(route, { ...phoneSummary, sources: manySources }),
   );
   await page.goto("/usage/");
-  await expect(page.getByText("Top models by requests")).toBeVisible();
-  await page.getByRole("combobox", { name: "Source" }).click();
+  await expect(page.getByText("Request counts and recorded spend this month, busiest models first")).toBeVisible();
+  await page.getByRole("combobox", { name: "App or connection" }).click();
   const list = page.getByRole("listbox");
   await expect(list).toBeVisible();
   // Radix parks an unplaced popper at translate(0, -200%) until it has

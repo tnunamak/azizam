@@ -307,7 +307,7 @@ test("Usage sorts top models by requests and model name before slicing", async (
   expect(models()).toEqual(top);
   fireEvent.click(screen.getByRole("button", { name: "View all 7 models" }));
   expect(models()).toEqual([...top, "tail", "low"]);
-  fireEvent.click(screen.getByRole("button", { name: "Show top 5" }));
+  fireEvent.click(screen.getByRole("button", { name: "Show top 5 models" }));
   expect(models()).toEqual(top);
   client.clear();
 });
@@ -326,7 +326,7 @@ test.each([
   });
   const table = await screen.findByRole("table", { name: "Requests by day and task" });
   const row = within(table).getByRole("rowheader", { name: "2026-10-07" }).closest("tr") as HTMLTableRowElement;
-  const values = within(row).getAllByRole("cell").map((cell) => Number(cell.textContent));
+  const values = within(row).getAllByRole("cell").map((cell) => Number(cell.textContent?.replace(/ requests?$/, "")));
   expect(values).toEqual(expected);
   expect(values.slice(0, -1).reduce((sum, value) => sum + value, 0)).toBe(values[values.length - 1]);
   if (total !== undefined)
@@ -343,8 +343,8 @@ test("Usage keeps recorded counts on an overfull day and says the counts disagre
   const table = await screen.findByRole("table", { name: "Requests by day and task" });
   const row = within(table).getByRole("rowheader", { name: "2026-10-07" }).closest("tr") as HTMLTableRowElement;
   const cells = within(row).getAllByRole("cell").map((cell) => cell.textContent);
-  expect(cells.slice(0, 2)).toEqual(["4", "3"]);
-  expect(cells[cells.length - 1]).toBe("5 (task counts add to 7)");
+  expect(cells.slice(0, 2)).toEqual(["4 requests", "3 requests"]);
+  expect(cells[cells.length - 1]).toBe("5 requests (task counts add to 7 requests)");
   expect(
     screen.getByText(/On 1 day the task counts add to more than the recorded total/),
   ).toBeVisible();
@@ -355,23 +355,23 @@ test.each([
   {
     name: "explicit Other over the total",
     day: { total: 10, capabilities: { chat: 8, other: 5 } },
-    cells: ["8", "5", "10 (task counts add to 13)"],
+    cells: ["8 requests", "5 requests", "10 requests (task counts add to 13 requests)"],
   },
   {
     name: "an unrecognised capability joins Other",
     day: { total: 2, capabilities: { chat: 2, future: 3 } },
-    cells: ["2", "3", "2 (task counts add to 5)"],
+    cells: ["2 requests", "3 requests", "2 requests (task counts add to 5 requests)"],
   },
   {
     name: "aliases on a flat day row, without its date or total",
     day: { total: 3, chat: 1, "image-edit": 2 },
-    cells: ["1", "2", "3"],
+    cells: ["1 request", "2 requests", "3 requests"],
   },
   {
     // An unreadable count is not zero: the day's total becomes unknown.
     name: "negative and absurd counts leave the total unknown",
     day: { capabilities: { chat: -2, image: 1e308, video: 3 } },
-    cells: ["3", "Unknown"],
+    cells: ["3 requests", "Unknown"],
   },
 ])("Usage never reduces or invents daily counts: $name", async ({ day, cells }) => {
   const client = renderUsageSummary({

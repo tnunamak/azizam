@@ -66,11 +66,12 @@
 <ol>
 <li>Open <strong>Engines</strong>, in the <strong>Gateway</strong> group of the menu, and select <strong>Add engine</strong>.</li>
 <li>Enter a name and your engine's OpenAI-compatible base URL. Use an <code>http://</code> address that the gateway can reach. For an engine on the same computer, see <a href="/showcase/docs/start/install/#connect-to-an-engine-on-the-same-computer">Connect to an engine on the same computer</a>.</li>
-<li>If the engine needs a key, first make sure its credential environment variable is available to the process that connects to the engine. Enter that variable's name in Key environment variable. Do not paste the key itself. If the variable has not been configured, stop here and complete credential setup before testing the connection.</li>
+<li>If the engine needs a key, first <a href="/showcase/docs/start/install/#configure-engine-credentials">configure engine credentials</a> for both the gateway and execution sidecar. Enter that variable's name in <strong>Key environment variable</strong>. Do not paste the key itself.</li>
 <li>Select <strong>Test connection</strong>, then add the engine.</li>
-<li>On the engine, select <strong>Detect models</strong> to read the engine's models, and give the chat model a model name.</li>
+<li>On the engine, select <strong>Detect models</strong> to read the engine's models. Map the model name apps will send to the engine's actual model ID. For example, map the public name <code>my-chat</code> to the exact ID returned by your engine; do not substitute <code>my-chat</code> for that ID unless it really is the engine's ID.</li>
 </ol>
 <p>This tutorial uses <code>my-chat</code> as the model name. It is an example, not a built-in model. Use your own name in the steps below if you chose a different one.</p>
+<p>Check the engine's health settings as well. For an OpenAI-compatible engine, a models endpoint such as <code>http://host.docker.internal:8080/v1/models</code> can provide positive health evidence when it returns a non-empty model list. Use your engine's real address and port, and avoid adding <code>/v1</code> twice. An unknown health status is not a successful connection; see <a href="/showcase/docs/operate/engines/#read-health-status">Read health status</a>. A real chat reply is still the end-to-end test.</p>
 <p>The engine and its model names are settings. You can change or replace them later without changing the gateway.</p>
 <h2 id="3-create-an-app-key">3. Create an app key <a class="anchor" href="#3-create-an-app-key" aria-label="Link to 3. Create an app key">#</a></h2>
 <p>Open <strong>Home</strong>. Choose the app you want to connect, then select <strong>Create key for</strong> that app.</p>
@@ -83,7 +84,7 @@
 <li>API key: the app key you saved</li>
 <li>Model: <code>my-chat</code></li>
 </ul>
-<p>On <strong>Home</strong>, select <strong>Check connection</strong> to check the key against the gateway. Then send a short message from your app. A reply in your app means that the app, the key, the gateway and the engine all work.</p>
+<p>Send a short message from your app, or use the curl request below. A reply means that the app key, gateway, model mapping and engine work together; a gateway health check alone does not establish this.</p>
 <h3 id="send-the-same-request-with-curl">Send the same request with curl <a class="anchor" href="#send-the-same-request-with-curl" aria-label="Link to Send the same request with curl">#</a></h3>
 <p>Run this example in Bash on the gateway computer. If your terminal uses another shell, run bash first. It reads the key without echoing it and asks for a streamed reply. Your curl must support --fail-with-body.</p>
 <div class="codeblock"><div class="code-bar"><span class="code-lang"></span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nb">read</span><span class="w"> </span>-r<span class="w"> </span>-s<span class="w"> </span>-p<span class="w"> </span><span class="s1">'App key: '</span><span class="w"> </span>AZIZAM_API_KEY<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">printf</span><span class="w"> </span><span class="s1">'\n'</span><span class="w"> </span><span class="o">&amp;&amp;</span>

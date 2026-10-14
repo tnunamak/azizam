@@ -25,11 +25,13 @@ Create the owner account. The owner can configure the gateway and invite other p
 
 1. Open **Engines**, in the **Gateway** group of the menu, and select **Add engine**.
 2. Enter a name and your engine's OpenAI-compatible base URL. Use an `http://` address that the gateway can reach. For an engine on the same computer, see [Connect to an engine on the same computer](install.md#connect-to-an-engine-on-the-same-computer).
-3. If the engine needs a key, first make sure its credential environment variable is available to the process that connects to the engine. Enter that variable's name in Key environment variable. Do not paste the key itself. If the variable has not been configured, stop here and complete credential setup before testing the connection.
+3. If the engine needs a key, first [configure engine credentials](install.md#configure-engine-credentials) for both the gateway and execution sidecar. Enter that variable's name in **Key environment variable**. Do not paste the key itself.
 4. Select **Test connection**, then add the engine.
-5. On the engine, select **Detect models** to read the engine's models, and give the chat model a model name.
+5. On the engine, select **Detect models** to read the engine's models. Map the model name apps will send to the engine's actual model ID. For example, map the public name `my-chat` to the exact ID returned by your engine; do not substitute `my-chat` for that ID unless it really is the engine's ID.
 
 This tutorial uses `my-chat` as the model name. It is an example, not a built-in model. Use your own name in the steps below if you chose a different one.
+
+Check the engine's health settings as well. For an OpenAI-compatible engine, a models endpoint such as `http://host.docker.internal:8080/v1/models` can provide positive health evidence when it returns a non-empty model list. Use your engine's real address and port, and avoid adding `/v1` twice. An unknown health status is not a successful connection; see [Read health status](../operate/engines.md#read-health-status). A real chat reply is still the end-to-end test.
 
 The engine and its model names are settings. You can change or replace them later without changing the gateway.
 
@@ -49,7 +51,7 @@ In your app, use these settings:
 - API key: the app key you saved
 - Model: `my-chat`
 
-On **Home**, select **Check connection** to check the key against the gateway. Then send a short message from your app. A reply in your app means that the app, the key, the gateway and the engine all work.
+Send a short message from your app, or use the curl request below. A reply means that the app key, gateway, model mapping and engine work together; a gateway health check alone does not establish this.
 
 ### Send the same request with curl
 

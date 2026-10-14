@@ -193,7 +193,7 @@ export default function UsagePage() {
     <div className="space-y-8">
       <PageHeader
         title="Usage"
-        subtitle="Current month usage"
+        subtitle="Usage this month"
         primaryAction={
           data && hasUsage ? (
             <Button
@@ -224,7 +224,7 @@ export default function UsagePage() {
                   htmlFor="usage-source"
                   className="sr-only"
                 >
-                  Source
+                  App or connection
                 </label>
                 <Select
                   value={source}
@@ -236,7 +236,7 @@ export default function UsagePage() {
                     size="sm"
                     className="w-52 max-w-full"
                   >
-                    <SelectValue placeholder="All sources" />
+                    <SelectValue placeholder="All apps and connections" />
                   </SelectTrigger>
                   <SelectContent
                     position="popper"
@@ -244,7 +244,7 @@ export default function UsagePage() {
                     collisionPadding={8}
                     className="max-w-[calc(100vw-1rem)]"
                   >
-                    <SelectItem value="all">All sources</SelectItem>
+                    <SelectItem value="all">All apps and connections</SelectItem>
                     {sources.active.map((item) => (
                       <SelectItem key={item.id} value={item.id}>
                         {item.label}
@@ -314,13 +314,13 @@ export default function UsagePage() {
           icon={Activity}
           title={
             filtersActive
-              ? "No matching requests"
-              : "No requests in this period"
+              ? "No requests match these filters this month"
+              : "No requests this month"
           }
           description={
             data.retentionDays
-              ? `Requests, generated media and ${data.retentionDays}-day receipts appear here after a gateway app makes a request.`
-              : "Requests, generated media and receipts appear here after a gateway app makes a request."
+              ? `Use a connected app to see its requests and generated media here. Request receipts are kept for ${data.retentionDays} days.`
+              : "Use a connected app to see its requests, generated media and request receipts here."
           }
           action={
             filtersActive ? (
@@ -389,7 +389,7 @@ function PersonFilter({
         className="sr-only"
         htmlFor="usage-person"
       >
-        Person
+        Whose usage
       </label>
       <Select value={value} onValueChange={onChange} disabled={disabled}>
         <SelectTrigger
@@ -429,7 +429,7 @@ function failedFigure(summary: UsageSummary): string {
     summary.requests > 0
       ? `${Math.round((summary.failedRequests / summary.requests) * 1000) / 10}%`
       : "Unknown";
-  return `${formatNumber(summary.failedRequests)} · ${share}`;
+  return `${formatRequests(summary.failedRequests)} · ${share === "Unknown" ? "share unknown" : `${share} of requests`}`;
 }
 
 function SummaryRow({ summary }: { summary: UsageSummary }) {
@@ -440,11 +440,11 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
     <StatStrip label="This month">
       <Stat
         label="Requests"
-        value={formatNumber(summary.requests)}
+        value={formatRequests(summary.requests)}
         note="This month"
       />
       <Stat
-        label="Spend (USD)"
+        label="Spend this month (USD)"
         value={
           noPaidRequests ? (
             "No paid requests"
@@ -457,13 +457,14 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
         note={<><span>{spendCoverageDetail(summary)}</span><CoverageNote summary={summary} /></>}
       />
       <Stat
-        label="Media made"
-        value={formatNumber(summary.mediaCount)}
-        note="Images, video and audio"
+        label="Generated media"
+        value={`${formatNumber(summary.mediaCount)} media ${summary.mediaCount === 1 ? "item" : "items"}`}
+        note="Images, videos and audio this month"
       />
       <Stat
-        label="Failed"
+        label="Failed requests"
         value={failedFigure(summary)}
+        note="This month"
       />
     </StatStrip>
   );
@@ -516,7 +517,7 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
       <CardHeader>
         <CardTitle>Requests by day</CardTitle>
         <CardDescription>
-          Total requests
+          Daily request totals this month
           {overfullDays > 0 &&
             `. On ${overfullDays} ${overfullDays === 1 ? "day" : "days"} the ${memberTerms.task} counts add to more than the recorded total; the bars show the recorded totals and the daily table keeps the recorded task counts.`}
         </CardDescription>
@@ -546,7 +547,7 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
                         {capabilityLabels[capability]}
                       </th>
                     ))}
-                    <th scope="col">Total</th>
+                    <th scope="col">Daily total</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -554,12 +555,12 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
                     <tr key={day.date}>
                       <th scope="row">{day.date}</th>
                       {active.map((capability) => (
-                        <td key={capability}>{day.byCapability[capability] ?? "Unknown"}</td>
+                        <td key={capability}>{formatRequests(day.byCapability[capability])}</td>
                       ))}
                       <td>
-                        {day.total ?? "Unknown"}
+                        {formatRequests(day.total)}
                         {day.countsExceedTotal !== null &&
-                          ` (${memberTerms.task} counts add to ${day.countsExceedTotal})`}
+                          ` (${memberTerms.task} counts add to ${formatRequests(day.countsExceedTotal)})`}
                       </td>
                     </tr>
                   ))}
@@ -571,13 +572,13 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
           <h2 className="text-heading font-semibold">By task</h2>
           {tasks.length ? (
             <>
-              <p className="text-muted-foreground text-meta">Recorded model totals · share of this month’s requests</p>
+              <p className="text-muted-foreground text-meta">Request counts and recorded spend this month · share of this month’s requests</p>
               <Table dense aria-label="By task">
                 <TableHeader>
                   <TableRow>
                     <TableHead scope="col" className="max-sm:px-2">Task</TableHead>
                     <TableHead scope="col" numeric className="max-sm:px-2">Requests</TableHead>
-                    <TableHead scope="col" numeric className="max-sm:px-2">Share</TableHead>
+                    <TableHead scope="col" numeric className="max-sm:px-2">Share of requests (%)</TableHead>
                     <TableHead scope="col" numeric className="max-sm:px-2">Spend (USD)</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -585,11 +586,11 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
                   {tasks.map((task) => (
                     <TableRow key={task.capability} className="max-sm:h-(--row-phone-2)">
                       <TableCell rowName className="max-sm:px-2 max-sm:whitespace-normal">{capabilityLabels[task.capability]}</TableCell>
-                      <TableCell numeric className="max-sm:px-2">{formatNumber(task.requests)}</TableCell>
+                      <TableCell numeric className="max-sm:px-2">{formatRequests(task.requests)}</TableCell>
                       <TableCell numeric className="max-sm:px-2">{requests > 0 && task.requests !== null ? `${Math.round(task.requests / requests * 1000) / 10}%` : "Unknown"}</TableCell>
                       <TableCell numeric className="max-sm:px-2 max-sm:whitespace-normal">
                         {task.unavailable ? "Cost not recorded" : <Money amount={task.costUsd} summary precise />}
-                        {!task.unavailable && task.incomplete ? <span className="text-muted-foreground ml-1 text-meta">partial</span> : null}
+                        {!task.unavailable && task.incomplete ? <span className="text-muted-foreground ml-1 text-meta">Some costs missing</span> : null}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -623,7 +624,7 @@ function ModelTable({
     <Card>
       <CardHeader>
         <CardTitle>Models</CardTitle>
-        <CardDescription>Top models by requests</CardDescription>
+        <CardDescription>Request counts and recorded spend this month, busiest models first</CardDescription>
       </CardHeader>
       <CardContent>
         {rows.length ? (
@@ -661,7 +662,7 @@ function ModelTable({
                         </div>
                       </TableCell>
                       <TableCell numeric>
-                        {formatNumber(row.requests)}
+                        {formatRequests(row.requests)}
                       </TableCell>
                       {/* On a phone "Cost not recorded" wraps instead of clipping. */}
                       <TableCell numeric className="max-sm:whitespace-normal">
@@ -674,7 +675,7 @@ function ModelTable({
             </Table>
             {rows.length > 5 ? (
               <Button variant="ghost" className="min-h-11 min-w-11" aria-expanded={showAll} aria-controls={modelsId} onClick={onToggle}>
-                {showAll ? "Show top 5" : `View all ${rows.length} models`}
+                {showAll ? "Show top 5 models" : `View all ${rows.length} models`}
               </Button>
             ) : null}
           </div>
@@ -709,7 +710,7 @@ function ModelCost({ row }: { row: UsageModel }) {
     <>
       <Money amount={row.costUsd} summary precise />
       {kind === "partial" ? (
-        <span className="text-muted-foreground ml-1 text-meta">partial</span>
+        <span className="text-muted-foreground ml-1 text-meta">Some costs missing</span>
       ) : null}
     </>
   );
@@ -731,9 +732,9 @@ function ReceiptsList({
   return (
     <Card id="usage-receipts">
       <CardHeader>
-        <CardTitle>Receipts</CardTitle>
+        <CardTitle>Recent request receipts</CardTitle>
         <CardDescription>
-          Open one to see what happened to a request.
+          Open a receipt to see what happened to a recent request.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -1286,6 +1287,10 @@ function sumCounts(counts: Record<UsageCapability, number | null>) {
 function formatNumber(value: number | null) {
   if (value === null) return "Unknown";
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+function formatRequests(value: number | null) {
+  return value === null ? "Unknown" : `${formatNumber(value)} ${value === 1 ? "request" : "requests"}`;
 }
 
 function formatDuration(value: number | null) {

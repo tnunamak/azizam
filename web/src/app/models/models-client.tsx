@@ -358,6 +358,7 @@ function itemMatches(row: CatalogRow, query: string): boolean {
     row.title,
     row.recommended_model,
     row.description,
+    modelDescription(row.description),
     taskLabel(row),
     ...(row.use_names ?? []),
     providerLabel(row),
@@ -367,6 +368,13 @@ function itemMatches(row: CatalogRow, query: string): boolean {
     .join(" ")
     .toLowerCase();
   return haystack.includes(query.toLowerCase());
+}
+
+/** Rewrite only known catalog prose; custom text and identifiers stay intact. */
+export function modelDescription(description: string | null | undefined) {
+  return description === "Speech synthesis when a backend is configured."
+    ? "Read text aloud when a speech service is connected."
+    : description;
 }
 
 function shellSingleQuote(value: string): string {
@@ -481,7 +489,7 @@ function ModelRow({
   // Facts on one line are joined by " · ", so a sentence drops its full stop.
   const description =
     row.description && !sharedDescriptions.has(row.description)
-      ? row.description.replace(/\.$/, "")
+      ? modelDescription(row.description)?.replace(/\.$/, "")
       : undefined;
   const provider = providerLabel(row);
   const tags = (row.tags ?? []).map((tag) => tagLabels[tag]).join(", ");
@@ -668,7 +676,7 @@ function DetailSheet({
             <SheetHeader className="border-b pr-12">
               <SheetTitle className="min-w-0 font-mono [overflow-wrap:anywhere]">{row.id}</SheetTitle>
               <SheetDescription>
-                {[title, row.description].filter(Boolean).join(". ")}
+                {[title, modelDescription(row.description)].filter(Boolean).join(". ")}
               </SheetDescription>
             </SheetHeader>
             <div className="space-y-6 p-4">

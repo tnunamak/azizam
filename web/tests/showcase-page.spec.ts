@@ -92,6 +92,47 @@ afterEach(() => {
 });
 
 describe("Examples page", () => {
+  it("pairs request and reply with quiet details below the output", async () => {
+    await mountExamples(() => [{ ...answer, chips: ["42 tokens"] }]);
+    await screen.findByText("Air scatters blue light.");
+    const example = document.querySelector(".example")!;
+    const row = example.querySelector(".io-row")!;
+    expect(example.firstElementChild).toHaveClass("ex-title");
+    expect(Array.from(row.children, (el) => el.className)).toEqual(["io-col in", "io-col out"]);
+    expect(Array.from(row.querySelectorAll(".col-head"), (el) => el.textContent)).toEqual(["Request", "Reply"]);
+    const meta = row.querySelector(".out")!.lastElementChild!;
+    expect(meta).toHaveClass("ex-meta");
+    expect(meta).toHaveTextContent("Model name: local-chat");
+    expect(meta).toHaveTextContent("42 tokens");
+    expect(meta).toHaveTextContent("Ran in 1.2 s");
+    expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
+  });
+
+  it("repeatedly expands long Markdown and JSON without changing recorded text", async () => {
+    const text = Array.from({ length: 10 }, (_, i) => "Line " + i).join("\n");
+    await mountExamples(() => [recorded("long", {
+      outputs: [{ kind: "text", text }, { kind: "json", text }],
+    })]);
+    const buttons = await screen.findAllByRole("button", { name: "Show all" });
+    expect(buttons).toHaveLength(2);
+    expect(new Set(buttons.map((b) => b.getAttribute("aria-controls"))).size).toBe(2);
+    for (const button of buttons) {
+      const body = document.getElementById(button.getAttribute("aria-controls")!)!;
+      expect(body).toHaveClass("is-clamped");
+      expect(body.textContent).toContain("Line 9");
+      for (let repeat = 0; repeat < 2; repeat++) {
+        fireEvent.click(button);
+        expect(button).toHaveAttribute("aria-expanded", "true");
+        expect(button).toHaveTextContent("Show less");
+        expect(body).not.toHaveClass("is-clamped");
+        fireEvent.click(button);
+        expect(button).toHaveAttribute("aria-expanded", "false");
+        expect(button).toHaveTextContent("Show all");
+        expect(body).toHaveClass("is-clamped");
+      }
+    }
+  });
+
   it("renders the page shell and a recorded answer without app navigation", async () => {
     await mountExamples(() => [answer]);
     expect(await screen.findByText("Air scatters blue light.")).toBeInTheDocument();

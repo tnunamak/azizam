@@ -301,7 +301,7 @@ test("library filters dates and everyone, pages forward and preserves prior item
   expect(requests.at(-1)).toContain("cursor=cursor_next");
   // Model, date and app live in Filters; the owner filter is "Person".
   await page.getByRole("button", { name: /^Filters/ }).click();
-  await page.getByRole("combobox", { name: "Date", exact: true }).click();
+  await page.getByRole("combobox", { name: "Date created", exact: true }).click();
   await page.getByRole("option", { name: "Last 7 days" }).click();
   await expect.poll(() => requests.at(-1) ?? "").toContain("start=");
   await page.keyboard.press("Escape");
@@ -473,13 +473,13 @@ for (const width of [390, 1440]) {
     await page.getByRole("button", { name: "Load more", exact: true }).click();
     await expect(
       page.getByRole("alert").filter({
-        hasText: "The gateway couldn’t load more library items. Try again.",
+        hasText: "We couldn’t load more library items. Try again.",
       }),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: `Open ${prompt}` }),
     ).toBeVisible();
-    await page.getByRole("button", { name: /Load more|Retry/i }).click();
+    await page.getByRole("button", { name: "Retry loading more", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "Open Second saved image" }),
     ).toBeVisible();

@@ -4,7 +4,7 @@ import { JobNotices } from "@/components/jobs/job-notices";
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ThemeProvider, useTheme } from "next-themes";
 import {
@@ -313,7 +313,9 @@ function dotClass(tone: StateTone): string {
   }
 }
 
-function HealthLink({ compact = false }: { compact?: boolean }) {
+/** The gateway pill's state. Shell reads it once, so the polite announcement
+ *  and both responsive copies of the pill come from the same render. */
+function useGatewayHealth() {
   const viewer = useViewer();
   const {
     data: gatewayData,
@@ -360,11 +362,63 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
                 : model.verdict.tone === "off"
                   ? { label: "Nothing turned on", tone: "off" as const }
                   : { label: "All working", tone: "ok" as const };
-  const visibleLabel = label;
-  const dot = dotClass(tone);
+  const checking = label === "Checking";
   // The capabilities behind the count: tapping the pill must explain it.
   const listed = signedIn && currentCapabilities;
-  const reasons = listed ? listedProblems : [];
+  return {
+    label,
+    tone,
+    checking,
+    gatewayData,
+    gatewayError,
+    gatewayCheckedAt,
+    model,
+    ownerAlert,
+    listed,
+    reasons: listed ? listedProblems : [],
+  };
+}
+
+type GatewayHealth = ReturnType<typeof useGatewayHealth>;
+
+const GatewayHealthContext = createContext<GatewayHealth | null>(null);
+
+/** Reads the pill's state once and shares it: both responsive copies of the
+ *  pill and the single polite announcement come from the same render. */
+function GatewayHealthProvider({ children }: { children: React.ReactNode }) {
+  const health = useGatewayHealth();
+  return (
+    <GatewayHealthContext.Provider value={health}>
+      {children}
+      <span
+        role="status"
+        aria-label="Gateway status announcement"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {health.checking ? "" : `Gateway status: ${health.label}`}
+      </span>
+    </GatewayHealthContext.Provider>
+  );
+}
+
+function HealthLink({ compact = false }: { compact?: boolean }) {
+  const health = useContext(GatewayHealthContext);
+  if (!health) throw new Error("HealthLink needs GatewayHealthProvider");
+  const {
+    label: visibleLabel,
+    tone,
+    checking,
+    gatewayData,
+    gatewayError,
+    gatewayCheckedAt,
+    model,
+    ownerAlert,
+    listed,
+    reasons,
+  } = health;
+  const dot = dotClass(tone);
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -376,6 +430,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
               : "shell-nav-footer"
           }
           aria-label={`Gateway status: ${visibleLabel}`}
+          aria-busy={checking}
         >
           <span
             aria-hidden="true"
@@ -792,148 +847,150 @@ function Shell({ children }: { children: React.ReactNode }) {
             </main>
           </div>
         ) : (
-          <div className="min-h-dvh">
-            <aside className="shell-sidebar">
-              <Link prefetch={false}
-                href="/"
-                className="rounded-control mb-5 flex min-h-11 items-center gap-2.5 px-2.5"
-                aria-label={`${PRODUCT_NAME}${instanceSubtitle ? ` ${instanceSubtitle}` : ""} Home`}
-              >
-                <BrandMark />
-                <span className="shell-nav-label min-w-0">
-                  <span className="block text-base leading-tight font-semibold tracking-tight">
-                    {PRODUCT_NAME}{" "}
-                  </span>
-                  {instanceSubtitle && (
-                    <span className="text-chrome-muted block truncate text-xs">
-                      {instanceSubtitle}
-                    </span>
-                  )}
-                </span>
-              </Link>
-              <button
-                type="button"
-                onClick={() => setCommandOpen(true)}
-                aria-label="Go to"
-                // A jump list, not a search field: pages search their own
-                // content (Library searches creations), so this reads as a
-                // navigation row with its shortcut.
-                className="text-chrome-muted hover:text-chrome-foreground hover:bg-chrome-raised rounded-control mb-4 flex min-h-11 items-center justify-center gap-2.5 px-2.5 text-sm transition-colors lg:min-h-8 lg:justify-start"
-              >
-                <CornerDownRight
-                  className="size-4 shrink-0"
-                  aria-hidden="true"
-                />
-                <span className="shell-nav-label flex-1 text-left">Go to…</span>
-                <kbd
-                  aria-hidden="true"
-                  className="shell-nav-label font-sans text-xs"
-                >
-                  {shortcut}
-                </kbd>
-              </button>
-              <Button
-                variant="ghost"
-                onClick={(event) => {
-                  navigationInvoker.current = event.currentTarget;
-                  setRailOpen(true);
-                }}
-                aria-label="Expand navigation"
-                aria-haspopup="dialog"
-                aria-expanded={railOpen}
-                className="text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground mb-3 lg:hidden"
-              >
-                <Menu />
-              </Button>
-              <Nav />
-              <div className="border-chrome-border mt-auto flex flex-col gap-1 border-t pt-3">
-                <HealthLink />
-                <div className="flex items-center gap-1 max-lg:flex-col">
-                  <div className="min-w-0 flex-1 max-lg:w-full">
-                    <AccountMenu />
-                  </div>
-                  <ThemeToggle chrome />
-                </div>
-              </div>
-            </aside>
-            <div className="sm:ml-(--rail-width) lg:ml-(--sidebar-width)">
-              <header className="bg-chrome text-chrome-foreground border-chrome-border sticky top-0 z-30 flex h-14 items-center justify-between border-b pr-2 pl-4 sm:hidden">
+          <GatewayHealthProvider>
+            <div className="min-h-dvh">
+              <aside className="shell-sidebar">
                 <Link prefetch={false}
                   href="/"
+                  className="rounded-control mb-5 flex min-h-11 items-center gap-2.5 px-2.5"
                   aria-label={`${PRODUCT_NAME}${instanceSubtitle ? ` ${instanceSubtitle}` : ""} Home`}
-                  className="flex min-h-11 min-w-0 items-center gap-2.5"
                 >
                   <BrandMark />
-                  <span className="min-w-0">
+                  <span className="shell-nav-label min-w-0">
                     <span className="block text-base leading-tight font-semibold tracking-tight">
-                      {PRODUCT_NAME}
+                      {PRODUCT_NAME}{" "}
                     </span>
                     {instanceSubtitle && (
-                      <span className="text-chrome-muted block max-w-44 truncate text-xs">
+                      <span className="text-chrome-muted block truncate text-xs">
                         {instanceSubtitle}
                       </span>
                     )}
                   </span>
                 </Link>
-                <div className="flex items-center">
-                  {/* Home and Status open with their own verdict; the
-                      header pill would say it a third time (D1.5). */}
-                  {/^\/(home|status)?\/?$/.test(pathname ?? "") ? null : (
-                    <HealthLink compact />
-                  )}
-                  <AccountMenu compact />
+                <button
+                  type="button"
+                  onClick={() => setCommandOpen(true)}
+                  aria-label="Go to"
+                  // A jump list, not a search field: pages search their own
+                  // content (Library searches creations), so this reads as a
+                  // navigation row with its shortcut.
+                  className="text-chrome-muted hover:text-chrome-foreground hover:bg-chrome-raised rounded-control mb-4 flex min-h-11 items-center justify-center gap-2.5 px-2.5 text-sm transition-colors lg:min-h-8 lg:justify-start"
+                >
+                  <CornerDownRight
+                    className="size-4 shrink-0"
+                    aria-hidden="true"
+                  />
+                  <span className="shell-nav-label flex-1 text-left">Go to…</span>
+                  <kbd
+                    aria-hidden="true"
+                    className="shell-nav-label font-sans text-xs"
+                  >
+                    {shortcut}
+                  </kbd>
+                </button>
+                <Button
+                  variant="ghost"
+                  onClick={(event) => {
+                    navigationInvoker.current = event.currentTarget;
+                    setRailOpen(true);
+                  }}
+                  aria-label="Expand navigation"
+                  aria-haspopup="dialog"
+                  aria-expanded={railOpen}
+                  className="text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground mb-3 lg:hidden"
+                >
+                  <Menu />
+                </Button>
+                <Nav />
+                <div className="border-chrome-border mt-auto flex flex-col gap-1 border-t pt-3">
+                  <HealthLink />
+                  <div className="flex items-center gap-1 max-lg:flex-col">
+                    <div className="min-w-0 flex-1 max-lg:w-full">
+                      <AccountMenu />
+                    </div>
+                    <ThemeToggle chrome />
+                  </div>
                 </div>
-              </header>
-              <AlertSlot />
-              <main id="main-content" className="shell-content pb-28 sm:pb-12">
-                <JobNotices />
-                {content}
-              </main>
-            </div>
-            <nav
-              aria-label="Phone navigation"
-              className={`bg-background/95 fixed inset-x-0 bottom-0 z-30 grid backdrop-blur ${viewer?.serviceAdmin ? "grid-cols-3" : "grid-cols-4"} border-t pb-[env(safe-area-inset-bottom)] sm:hidden`}
-            >
-              {destinations
-                .filter((d) =>
-                  viewer?.serviceAdmin
-                    ? ["Home", "Status"].includes(d.title)
-                    : ["Home", "Library", "Apps & keys"].includes(d.title),
-                )
-                .map((d) => {
-                  const Icon = icons[d.title];
-                  return (
-                    <Link prefetch={false}
-                      key={d.href}
-                      href={d.href}
-                      className="mobile-tab"
-                      aria-current={
-                        canonicalDestinationPath(pathname) ===
-                        canonicalDestinationPath(d.href)
-                          ? "page"
-                          : undefined
-                      }
-                    >
-                      <Icon aria-hidden="true" />
-                      {d.title === "Apps & keys" ? "Apps" : d.title}
-                    </Link>
-                  );
-                })}
-              <button
-                type="button"
-                className="mobile-tab"
-                aria-haspopup="dialog"
-                aria-expanded={moreOpen}
-                onClick={(event) => {
-                  navigationInvoker.current = event.currentTarget;
-                  setMoreOpen(true);
-                }}
+              </aside>
+              <div className="sm:ml-(--rail-width) lg:ml-(--sidebar-width)">
+                <header className="bg-chrome text-chrome-foreground border-chrome-border sticky top-0 z-30 flex h-14 items-center justify-between border-b pr-2 pl-4 sm:hidden">
+                  <Link prefetch={false}
+                    href="/"
+                    aria-label={`${PRODUCT_NAME}${instanceSubtitle ? ` ${instanceSubtitle}` : ""} Home`}
+                    className="flex min-h-11 min-w-0 items-center gap-2.5"
+                  >
+                    <BrandMark />
+                    <span className="min-w-0">
+                      <span className="block text-base leading-tight font-semibold tracking-tight">
+                        {PRODUCT_NAME}
+                      </span>
+                      {instanceSubtitle && (
+                        <span className="text-chrome-muted block max-w-44 truncate text-xs">
+                          {instanceSubtitle}
+                        </span>
+                      )}
+                    </span>
+                  </Link>
+                  <div className="flex items-center">
+                    {/* Home and Status open with their own verdict; the
+                        header pill would say it a third time (D1.5). */}
+                    {/^\/(home|status)?\/?$/.test(pathname ?? "") ? null : (
+                      <HealthLink compact />
+                    )}
+                    <AccountMenu compact />
+                  </div>
+                </header>
+                <AlertSlot />
+                <main id="main-content" className="shell-content pb-28 sm:pb-12">
+                  <JobNotices />
+                  {content}
+                </main>
+              </div>
+              <nav
+                aria-label="Phone navigation"
+                className={`bg-background/95 fixed inset-x-0 bottom-0 z-30 grid backdrop-blur ${viewer?.serviceAdmin ? "grid-cols-3" : "grid-cols-4"} border-t pb-[env(safe-area-inset-bottom)] sm:hidden`}
               >
-                <Menu aria-hidden="true" />
-                More
-              </button>
-            </nav>
-          </div>
+                {destinations
+                  .filter((d) =>
+                    viewer?.serviceAdmin
+                      ? ["Home", "Status"].includes(d.title)
+                      : ["Home", "Library", "Apps & keys"].includes(d.title),
+                  )
+                  .map((d) => {
+                    const Icon = icons[d.title];
+                    return (
+                      <Link prefetch={false}
+                        key={d.href}
+                        href={d.href}
+                        className="mobile-tab"
+                        aria-current={
+                          canonicalDestinationPath(pathname) ===
+                          canonicalDestinationPath(d.href)
+                            ? "page"
+                            : undefined
+                        }
+                      >
+                        <Icon aria-hidden="true" />
+                        {d.title === "Apps & keys" ? "Apps" : d.title}
+                      </Link>
+                    );
+                  })}
+                <button
+                  type="button"
+                  className="mobile-tab"
+                  aria-haspopup="dialog"
+                  aria-expanded={moreOpen}
+                  onClick={(event) => {
+                    navigationInvoker.current = event.currentTarget;
+                    setMoreOpen(true);
+                  }}
+                >
+                  <Menu aria-hidden="true" />
+                  More
+                </button>
+              </nav>
+            </div>
+          </GatewayHealthProvider>
         )}
         <Sheet
           open={!showPublicShell && (moreOpen || railOpen)}

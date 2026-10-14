@@ -1,12 +1,12 @@
 // What the manual capture scripts (d1-*, household-capture, prompt-memory-capture)
 // wait on instead of timers or network quiet: loading placeholders gone, fonts
 // ready, every finite animation finished, two frames painted.
-const shown = el => {
-  const style = getComputedStyle(el);
-  return style.display !== "none" && style.visibility !== "hidden" && el.getBoundingClientRect().width > 0;
-};
+// Runs inside the page, so it must not close over module-level helpers.
 export const skeletonsGone = () =>
-  ![...document.querySelectorAll('[aria-busy="true"], [data-slot="skeleton"]')].some(shown);
+  ![...document.querySelectorAll('[aria-busy="true"], [data-slot="skeleton"]')].some(el => {
+    const style = getComputedStyle(el);
+    return style.display !== "none" && style.visibility !== "hidden" && el.getBoundingClientRect().width > 0;
+  });
 
 export async function quiet(page, { timeout = 20_000 } = {}) {
   await page.waitForFunction(skeletonsGone, null, { timeout });

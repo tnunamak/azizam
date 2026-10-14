@@ -15,6 +15,106 @@ from gateway import receipt_store as rs
 
 ROOT = Path(__file__).resolve().parent.parent
 
+def test_crashed_writer_keeps_begun_receipt_and_stale_reads_do_not_terminalize(db):
+    code = (
+        f"import sys; sys.path.insert(0, {str(ROOT)!r}); "
+        "import os; from pathlib import Path; from gateway import receipt_store as rs; "
+        f"rs.begin({accepted(request_id='crashed')!r}, now_ms=1000, path=Path({str(db)!r})); "
+        "os._exit(23)"
+    )
+    child = subprocess.run([sys.executable, "-I", "-c", code],
+                           capture_output=True, text=True, timeout=30)
+    assert child.returncode == 23, child.stderr
+    rs.init_db(db)
+    original = raw(db, "SELECT * FROM receipts")
+    assert len(original) == 1 and original[0]["status"] == "in_progress"
+    for read in (
+        rs.get("crashed", path=db, now_ms=301000),
+        rs.get_many(["crashed"], path=db, now_ms=301000)["crashed"],
+        rs.recent(path=db, now_ms=301000)[0],
+    ):
+        assert read["status"] == "stale_incomplete"
+        assert read["accepted_at_ms"] == 1000
+        assert read.get("finished_at_ms") is None
+    assert raw(db, "SELECT * FROM receipts") == original
+
+
+def test_two_simultaneous_finalizers_keep_exactly_one_complete_winner(db):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    rs.begin(accepted(), now_ms=1000, path=db)
+    barrier = Barrier(2)
+    outcomes = [
+        {"request_id": "r1", "status": "succeeded", "updated_at_ms": 2000,
+         "metadata": {"outcome": "first"}, "usage": {"output_tokens": 7}},
+        {"request_id": "r1", "status": "failed", "updated_at_ms": 3000,
+         "metadata": {"outcome": "second"}, "usage": {"output_tokens": 11}},
+    ]
+
+    def finish(data):
+        barrier.wait(timeout=10)
+        return rs.finalize(data, path=db)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        won = list(pool.map(finish, outcomes))
+    assert sorted(won) == [False, True]
+    winner = outcomes[won.index(True)]
+    stored = rs.get("r1", path=db)
+    assert rs.count(db) == 1
+    for key in ("status", "updated_at_ms", "metadata", "usage"):
+        assert stored[key] == winner[key]
+    before = raw(db, "SELECT * FROM receipts")
+    assert rs.finalize(outcomes[won.index(False)], path=db) is False
+    assert raw(db, "SELECT * FROM receipts") == before
+
+
+def test_megabyte_metadata_round_trips_begin_finalize_and_reopen(db):
+    metadata = {"diagnostic": "x" * (1024 * 1024), "tail_marker": "complete"}
+    rs.begin(accepted(metadata=metadata), now_ms=1000, path=db)
+    assert rs.get("r1", now_ms=1000, path=db)["metadata"] == metadata
+    assert rs.finalize({"request_id": "r1", "status": "succeeded",
+                        "updated_at_ms": 2000, "metadata": metadata}, path=db)
+    rs.init_db(db)
+    assert rs.get("r1", path=db)["metadata"] == metadata
+    assert rs.get_many(["r1"], path=db)["r1"]["metadata"] == metadata
+    assert rs.recent(path=db)[0]["metadata"] == metadata
+    assert "metadata" not in rs.get("r1", audience="admin", path=db)
+    assert "metadata" not in rs.get("r1", audience="client", path=db)
+
+
+def test_unicode_names_remain_distinct_across_lifecycle_and_source_projection(db):
+    names = ["Café 東京 👩🏽‍💻", "Cafe\u0301 東京 👩🏽‍💻"]
+    for index, name in enumerate(names):
+        rid = f"unicode-{index}"
+        rs.begin(accepted(request_id=rid, app_id=f"app-{name}", api_key_name=name),
+                 now_ms=1000 + index, path=db)
+        assert rs.finalize({"request_id": rid, "status": "succeeded",
+                            "updated_at_ms": 2000, "api_key_name": "replacement"}, path=db)
+    rs.init_db(db)
+    for index, name in enumerate(names):
+        rid = f"unicode-{index}"
+        for audience in ("internal", "admin", "client"):
+            view = rs.get(rid, audience=audience, path=db)
+            assert view["source_label"] == name and view["source"]["label"] == name
+        assert [row["request_id"] for row in rs.recent(app_ids=[f"app-{name}"], path=db)] == [rid]
+    assert rs.count(db) == 2
+
+
+def test_member_store_view_excludes_same_named_foreign_and_unattributed_receipts(db):
+    # Store scoping and audience projection only; HTTP authorization is elsewhere.
+    for rid, app_id in (("mine", "member-app"), ("foreign", "other-app"), ("legacy", None)):
+        rs.record(accepted(request_id=rid, app_id=app_id, api_key_name="Same name",
+                           metadata={"internal_note": "operator-only"}), created_at=1000, path=db)
+    member = rs.recent(app_ids=["member-app"], audience="client", path=db)
+    owner = rs.recent(audience="internal", path=db)
+    assert [row["request_id"] for row in member] == ["mine"]
+    assert {row["request_id"] for row in owner} == {"mine", "foreign", "legacy"}
+    assert "metadata" not in member[0] and "api_key_name" not in member[0]
+    assert all(row["metadata"] == {"internal_note": "operator-only"} for row in owner)
+    assert rs.recent(app_ids=[], audience="client", path=db) == []
+
+
 
 @pytest.fixture
 def db(tmp_path):

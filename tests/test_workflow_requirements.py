@@ -133,3 +133,35 @@ class TestWorkflowRequirements(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_model_requirement_rejects_matching_location_with_wrong_role():
+    manifest = {"requires": {"models": [{"role": "checkpoint", "path": "same.safetensors"}]}}
+    wrong = validate_workflow_requirements(manifest, {"models": [
+        {"role": "controlnet", "path": "same.safetensors"},
+    ]})
+    assert not wrong.ok
+    assert wrong.missing[0].name == "checkpoint:same.safetensors"
+    right = validate_workflow_requirements(manifest, {"models": [
+        {"role": "checkpoint", "path": "/models/same.safetensors"},
+    ]})
+    assert right.ok
+
+
+def test_model_requirement_hash_rejects_mismatch_and_missing_then_accepts_casefold():
+    manifest = {"requires": {"models": [
+        {"role": "checkpoint", "path": "model.safetensors", "sha256": " AbC123 "},
+    ]}}
+    for artifact_hash in ("wrong", None):
+        artifact = {"role": "checkpoint", "path": "/private/models/model.safetensors"}
+        if artifact_hash is not None:
+            artifact["sha256"] = artifact_hash
+        result = validate_workflow_requirements(manifest, {"models": [artifact]})
+        assert not result.ok
+        assert result.missing[0].reason == (
+            "matching model artifact with expected hash is not present in backend inventory"
+        )
+        assert "/private/" not in str(result.as_dict())
+    assert validate_workflow_requirements(manifest, {"models": [
+        {"role": "checkpoint", "path": "/models/model.safetensors", "sha256": "ABC123"},
+    ]}).ok

@@ -67,7 +67,7 @@ test("Usage shows no host path in the table, receipts or details", async () => {
       </QueryClientProvider>
     </ViewerContext.Provider>,
   );
-  expect(await screen.findByText("Top models by requests")).toBeVisible();
+  expect(await screen.findByText("Request counts and recorded spend this month, busiest models first")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "View recent requests" }));
   expectNoHostPath(expect, "usage");
   await user.click(

@@ -152,18 +152,25 @@ function outcomeCause(receipt: Receipt) {
       : {};
   const status = Number(metadata.status_code ?? receipt.status_code);
   if (status === 401)
-    return "This request was rejected because it had no valid sign-in or app key. Check the app's access key for this person.";
+    return "The sign-in or app-key check refused this request. Check the app's access key for this person, then try again.";
   if (status === 403)
     return "This request was rejected because it did not have permission. Check this person's access plan and the app's access.";
-  if (status === 429) return "This request was rate-limited.";
+  if (status === 429) return "A request limit refused this request. The receipt does not identify which limit. Wait before trying again; if it happens again, ask the owner to check the request limits.";
   if (status >= 500 && status < 600)
-    return "The gateway could not complete this request.";
-  return null;
+    return "A server error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner.";
+  return outcome(receipt.status) === "Rejected"
+    ? "The receipt does not identify the rule that refused this request. Share the request ID from Technical details with the owner to check before trying again."
+    : null;
 }
 function outcomeSummary(receipt: Receipt) {
   const label = outcome(receipt.status);
   if (label === "Completed") return "";
-  if (label === "Rejected") return "The gateway rejected this request.";
+  if (label === "Rejected") {
+    const metadata = isObject(receipt.metadata) ? receipt.metadata : {};
+    return Number(metadata.status_code ?? receipt.status_code) === 403
+      ? "Access check: the receipt does not identify the specific rule."
+      : "The gateway rejected this request.";
+  }
   if (label === "Failed") return "We couldn't tell where this stopped. Try again.";
   // Only media lands in Library; a chat or embedding result cannot be found there.
   const media = ["image", "video", "speech", "sfx", "music", "audio"].includes(

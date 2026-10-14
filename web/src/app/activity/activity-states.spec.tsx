@@ -454,12 +454,14 @@ it("empty changes reveal existing automated records instead of claiming there ar
       automated_count: 1,
     }),
   });
+  expect(await screen.findByText("1 automated change hidden")).toBeVisible();
   const region = await screen.findByRole("region", { name: "No visible changes" });
   expect(region).toHaveAccessibleDescription("Changes to apps, keys and access plans appear here; automated changes are currently hidden.");
   expect(within(region).getAllByRole("button")).toHaveLength(1);
   await userEvent.setup().click(within(region).getByRole("button", { name: "Show automated changes" }));
   expect(await screen.findByRole("button", { name: /Created an app/ })).toBeVisible();
   expect(screen.queryByRole("region", { name: "No visible changes" })).toBeNull();
+  expect(screen.getByText("Showing 1 automated change")).toBeVisible();
 });
 
 function mountOutcome(receipt: Record<string, unknown>) {
@@ -471,15 +473,16 @@ function mountOutcome(receipt: Record<string, unknown>) {
 }
 
 it.each([
-  [401, "This request was rejected because it had no valid sign-in or app key. Check the app's access key for this person."],
+  [401, "The sign-in or app-key check refused this request. Check the app's access key for this person, then try again."],
   [403, "This request was rejected because it did not have permission. Check this person's access plan and the app's access."],
-  [429, "This request was rate-limited."],
-  [500, "The gateway could not complete this request."],
-  [599, "The gateway could not complete this request."],
+  [429, "A request limit refused this request. The receipt does not identify which limit. Wait before trying again; if it happens again, ask the owner to check the request limits."],
+  [500, "A server error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner."],
+  [599, "A server error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner."],
 ])("describes stored rejection %s in the past tense", async (statusCode, message) => {
   mountOutcome({ status: "rejected", metadata: { status_code: statusCode } });
   await userEvent.click(await screen.findByRole("button", { name: /Request details:/ }));
   expect(within(screen.getByRole("dialog")).getByText(message)).toBeVisible();
+  if (statusCode === 403) expect(screen.getByRole("dialog")).toHaveTextContent("Access check: the receipt does not identify the specific rule.");
   expect(screen.getByRole("dialog")).not.toHaveTextContent("Sign in to continue.");
   expect(screen.getByRole("dialog")).not.toHaveTextContent("Your account does not have permission");
 });
@@ -488,7 +491,8 @@ it.each([400, 404, 600])("does not invent a cause for stored status %s", async (
   mountOutcome({ status: "rejected", status_code });
   await userEvent.click(await screen.findByRole("button", { name: /Request details:/ }));
   const summary = within(screen.getByRole("dialog")).getByText("The gateway rejected this request.").parentElement;
-  expect(summary?.querySelectorAll("p")).toHaveLength(2);
+  expect(summary?.querySelectorAll("p")).toHaveLength(3);
+  expect(summary).toHaveTextContent("The receipt does not identify the rule that refused this request. Share the request ID from Technical details with the owner to check before trying again.");
 });
 
 it.each([

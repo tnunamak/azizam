@@ -195,3 +195,126 @@ def test_erasure_reaches_a_job_whose_id_sorts_before_any_sentinel_text(db, job_i
     assert mj.erase_prompt_derivatives({principal_key("app", "app-1")}, before=2**40, path=db) == 1
     (raw,) = _raw(db, "SELECT job_json FROM media_jobs WHERE job_id = ?", (job_id,))[0]
     assert json.loads(raw)["input_hash"] is None
+
+
+# Risk gaps: race ordering and atomic persisted outcomes, rather than only replies.
+def test_cancel_after_dispatch_race_retains_running_reservation(db, monkeypatch):
+    job = _seed(db, "cancel-dispatch-race", app_id="app-race")
+    real_update = mj.update_status
+    raced = False
+
+    def dispatch_before_cancel(job_id, status, **kwargs):
+        nonlocal raced
+        if not raced and status == "canceled":
+            raced = True
+            real_update(job_id, "running", now=100, path=db)
+        return real_update(job_id, status, **kwargs)
+
+    monkeypatch.setattr(mj, "update_status", dispatch_before_cancel)
+    monkeypatch.setattr(mj, "_now", lambda: 200)
+    result = mj.request_cancel(job.job_id, path=db)
+    assert raced
+    assert result["status"] == "running"
+    assert result["started_at"] == 100 and result["finished_at"] is None
+    assert result["metadata"]["cancel_requested_at"] == 200
+    assert mj.active_count(app_id="app-race", intents=["image.generate"], path=db) == 1
+    assert mj.get(job.job_id, path=db) == result
+
+
+def test_cancel_after_completion_race_cannot_reopen_or_rewrite_job(db, monkeypatch):
+    job = _seed(db, "cancel-complete-race", status="running")
+    real_update = mj.update_status
+    completed = []
+
+    def complete_before_cancel(job_id, status, **kwargs):
+        if status == "canceled" and not completed:
+            completed.append(real_update(job_id, "succeeded", now=123,
+                                         add_assets=[{"asset_id": "img_done"}], path=db))
+        return real_update(job_id, status, **kwargs)
+
+    monkeypatch.setattr(mj, "update_status", complete_before_cancel)
+    with pytest.raises(ValueError):
+        mj.request_cancel(job.job_id, reason="too late", path=db)
+    assert len(completed) == 1
+    assert mj.get(job.job_id, path=db) == completed[0]
+
+
+def test_every_terminal_state_rejects_cancel_and_other_transitions_atomically(db):
+    for terminal in ("failed", "canceled", "succeeded"):
+        job = _seed(db, "terminal-lock-" + terminal, status=terminal)
+        before = mj.get(job.job_id, path=db)
+        with pytest.raises(ValueError, match="already finished"):
+            mj.request_cancel(job.job_id, reason="late cancel", path=db)
+        assert mj.get(job.job_id, path=db) == before
+        for target in ("queued", "running", "succeeded", "failed", "canceled"):
+            if target == terminal:
+                continue
+            with pytest.raises(ValueError, match="illegal status transition"):
+                mj.update_status(job.job_id, target, progress=41,
+                                 error="must not persist", metadata_patch={"changed": True},
+                                 add_assets=[{"asset_id": "img_late"}], now=999, path=db)
+            assert mj.get(job.job_id, path=db) == before
+
+
+def test_cancel_pending_success_rejects_all_output_writes_atomically(db, monkeypatch):
+    job = _seed(db, "cancel-output-rollback", status="running",
+                metadata={"keep": 1}, assets=[{"asset_id": "img_first"}])
+    monkeypatch.setattr(mj, "_now", lambda: 300)
+    mj.request_cancel(job.job_id, path=db)
+    before = mj.get(job.job_id, path=db)
+    with pytest.raises(mj.CancellationPending):
+        mj.update_status(job.job_id, "succeeded", progress=100, error="late",
+                         add_assets=[{"asset_id": "img_late"}],
+                         metadata_patch={"keep": 2}, now=400, path=db)
+    assert mj.get(job.job_id, path=db) == before
+    assert mj.events(job.job_id, path=db) == []
+
+
+def test_cancel_reservation_is_released_only_when_worker_reaches_terminal(db, monkeypatch):
+    limit = mj.OutstandingLimit("app", 1, "risk-mode", "risk-app")
+
+    def submit(request_id):
+        return mj.create(mj.MediaJob(intent="image.generate", request_id=request_id,
+                                    app_id="risk-app", metadata={"mode": "risk-mode"}),
+                         outstanding_limits=[limit], path=db)
+
+    job = submit("reserved-first")
+    mj.update_status(job.job_id, "running", path=db)
+    monkeypatch.setattr(mj, "_now", lambda: 100)
+    mj.request_cancel(job.job_id, path=db)
+    with pytest.raises(mj.OutstandingLimitReached):
+        submit("reserved-second")
+    assert mj.count(db) == 1
+    assert [row["job_id"] for row in mj.unfinished(path=db)] == [job.job_id]
+    mj.update_status(job.job_id, "canceled", now=200, path=db)
+    next_job = submit("reserved-second")
+    assert next_job.job_id != job.job_id
+    assert mj.active_count(app_id="risk-app", intents=["image.generate"], path=db) == 1
+    # An unstarted cancellation releases its slot immediately.
+    mj.request_cancel(next_job.job_id, path=db)
+    assert submit("reserved-third").status == "queued"
+
+
+def test_receipt_link_and_prior_attempt_survive_retry_then_cancel(db, monkeypatch):
+    job = _seed(db, "receipt-retry-cancel", creating_receipt_id="receipt-original",
+                parent_request_id="parent-original")
+    mj.update_status(job.job_id, "running", now=100,
+                     add_assets=[{"asset_id": "img_partial"}], path=db)
+    before = mj.get(job.job_id, path=db)
+    retry = mj.begin_attempt(job.job_id, now=200, path=db)
+    assert retry["creating_receipt_id"] == "receipt-original"
+    assert retry["parent_request_id"] == "parent-original"
+    assert retry["attempt_number"] == 2
+    assert retry["previous_attempts"] == [
+        {"attempt_number": 1, **{name: before[name] for name in mj.PHASE_FIELDS}}
+    ]
+    assert retry["queued_at"] is None and retry["first_output_at"] is None
+    monkeypatch.setattr(mj, "_now", lambda: 250)
+    mj.request_cancel(job.job_id, path=db)
+    final = mj.update_status(job.job_id, "canceled", now=300, path=db)
+    assert final["creating_receipt_id"] == "receipt-original"
+    assert final["parent_request_id"] == "parent-original"
+    assert final["started_at"] == 200 and final["finished_at"] == 300
+    assert final["previous_attempts"] == retry["previous_attempts"]
+    assert mj.get(job.job_id, path=db) == final
+
