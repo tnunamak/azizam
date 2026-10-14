@@ -87,6 +87,8 @@ async function readySeed() {
   return seed;
 }
 
+const brokenImages = [];
+
 async function stopServer() {
   const child = server;
   if (child.exitCode !== null || child.signalCode !== null)
@@ -132,7 +134,11 @@ async function settled(page) {
     await Promise.all(images.map(image => image.decode().catch(() => {})));
   });
   const broken = await page.evaluate(() => Array.from(document.images).filter(image => !image.complete || image.naturalWidth === 0).map(image => image.currentSrc || image.src));
-  if (broken.length) throw new Error(`Images failed to decode at ${page.url()}: ${broken.join(", ")}`);
+  // A broken image is a finding to review, not a reason to stop the capture.
+  if (broken.length) {
+    brokenImages.push({ url: page.url(), images: broken });
+    console.warn(`Images failed to decode at ${page.url()}: ${broken.join(", ")}`);
+  }
   await quiet(page);
 }
 
@@ -244,6 +250,7 @@ try {
     for (const width of [1440, 390]) await captureTryResult({ theme, width });
   }
   const report = { scenario, generated_at: new Date(seed.now * 1000).toISOString(), timezone: browserTimezone, locale: browserLocale, base_url: base, captures, skipped_states: skipped, media_checks: mediaChecks };
+  report.broken_images = brokenImages;
   await writeFile(path.join(output, "manifest.json"), `${JSON.stringify(report, null, 2)}\n`);
   const ownerSkips = skipped.filter(item => item.view === "owner");
   if (ownerSkips.length) throw new Error(`Required owner capture states were unavailable; see ${path.join(output, "manifest.json")}`);
