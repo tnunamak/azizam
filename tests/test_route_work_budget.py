@@ -19,9 +19,10 @@ import httpx
 import pytest
 
 import proxy
-from gateway import accounts, admin_store, media_jobs, receipt_store
+from gateway import accounts, admin_store, media_jobs, receipt_store, signin_test
 from gateway.receipts import RouteReceipt
 from gateway.runtime_auth import hash_api_key
+from gateway.signin_rules import Claims
 from tests.support.work import count_work
 from tests.test_event_loop_guard import ROUTES, _concrete, gateway  # noqa: F401 - fixture
 
@@ -41,7 +42,17 @@ NOT_MEASURABLE = {
     "/admin/api/activity/requests": "500 in some orders: its router keeps the receipts path the app was imported with, "
                                     "not the fixture's (scripts/perf/api_bench.py measures it on real data)",
 }
-MEASURED = [route for route in ROUTES if "{" not in route and route not in NOT_MEASURABLE]
+# Routes with a path parameter that the walk can still answer, because the fixture
+# makes the thing the parameter names (see ``_seed``).
+SEEDED = ("/admin/api/signin/test/{test_id}",)
+MEASURED = [route for route in ROUTES if ("{" not in route or route in SEEDED) and route not in NOT_MEASURABLE]
+
+
+@pytest.fixture(autouse=True)
+def no_test_runs():
+    signin_test.clear()
+    yield
+    signin_test.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -87,15 +98,26 @@ class Household:
             self.jobs += 1
 
 
-def _get(route: str, gateway) -> tuple[int, object]:
+def _seed(route: str, household: "Household") -> str:
+    """The concrete path of ``route``: made-up ids, or the id of a record the fixture creates."""
+    if route == "/admin/api/signin/test/{test_id}":
+        # A finished test sign-in by the owner: the status answer then asks the rules who would get in.
+        run = signin_test.create(household.owner["id"], proxy.ADMIN_OIDC_CONFIG, "sig")
+        run.status, run.passed_at, run.subject = "passed", int(time.time()), "walk-subject"
+        run.claims = Claims(email="walk@example.com")
+        return route.replace("{test_id}", run.id)
+    return _concrete(route)
+
+
+def _get(route: str, gateway, path: str) -> tuple[int, object]:
     async def call():
         transport = httpx.ASGITransport(app=proxy.app, client=("127.0.0.1", 50000), raise_app_exceptions=False)
         async with httpx.AsyncClient(transport=transport, base_url="http://t", cookies=gateway["cookies"],
                                      timeout=60) as client:
             for _ in range(2):  # fill the once-per-process caches and the few-second ones
-                await client.get(_concrete(route), headers=gateway["bearer"])
+                await client.get(path, headers=gateway["bearer"])
             with count_work() as work:
-                response = await client.get(_concrete(route), headers=gateway["bearer"])
+                response = await client.get(path, headers=gateway["bearer"])
             return response.status_code, work
 
     return asyncio.run(call())
@@ -110,10 +132,11 @@ def test_the_walk_measures_most_of_the_read_routes() -> None:
 def test_route_work_does_not_grow_with_the_data(gateway, media_store, route):  # noqa: F811
     household = Household(media_store)
     household.grow_to(SMALL)
-    status, small = _get(route, gateway)
+    path = _seed(route, household)
+    status, small = _get(route, gateway, path)
     assert status == 200, f"{route} answers {status}; fix the fixture or list the route in NOT_MEASURABLE with the reason"
     household.grow_to(LARGE)
-    _, large = _get(route, gateway)
+    _, large = _get(route, gateway, path)
     assert small.processes == large.processes == 0, f"{route} started {small.commands + large.commands}"
     assert large.statements <= MAX_STATEMENTS, f"{route} ran {large.statements} statements at {LARGE} apps"
     if route in KNOWN_TO_GROW:
