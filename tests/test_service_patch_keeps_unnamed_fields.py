@@ -5,7 +5,10 @@ The edit path rebuilds a record from flat form fields. ``secret_refs``,
 used to drop a key held in ``secret_refs`` and turn a managed lifecycle back
 into ``external``. Both break a running service without any error.
 """
-from gateway import admin_store, service_registry
+import json
+import sqlite3
+
+from gateway import service_registry
 from gateway.litellm_substrate import compile_litellm_substrate_config
 from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
     csrf_for,
@@ -17,7 +20,7 @@ LIFECYCLE = {"type": "systemd", "managed": True, "service_name": "engine.service
 
 
 def _install(gateway):
-    registry = service_registry.load_service_registry(path=gateway.path)
+    registry = {"services": {}}
     registry["services"]["engine"] = {
         "id": "engine", "name": "Engine", "kind": "provider", "source": "ui", "capabilities": ["openai"],
         "config": {"protocol": "openai-compatible", "host": "192.168.1.60", "port": 8000,
@@ -26,12 +29,10 @@ def _install(gateway):
         "lifecycle": dict(LIFECYCLE),
         "provenance": {"imported_from": "fixture"},
     }
-    current = admin_store.get_service_registry_with_generation(path=gateway.path)
-    admin_store.write_service_registry_with_audit(
-        service_registry.normalize_service_registry(registry),
-        expected_generation=current["operator_settings_generation"], updated_by="test", audit_action="test.install",
-        audit_actor_kind="test", audit_actor_id="test", audit_actor_label="test",
-        audit_target_kind="service", audit_target_id="engine", path=gateway.path)
+    with sqlite3.connect(gateway.path) as conn:
+        conn.execute("INSERT OR REPLACE INTO operator_settings VALUES ('service_registry', ?, 123, 'fixture')",
+                     (json.dumps(service_registry.normalize_service_registry(registry)),))
+        conn.execute("INSERT OR REPLACE INTO operator_settings_generations VALUES ('service_registry', 5)")
 
 
 def _engine(gateway):
