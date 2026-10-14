@@ -1,8 +1,11 @@
 # Reverse Proxy and Deployment Security Guide
 
-Azizam binds to `127.0.0.1:5000` by default. The expectation
-for LAN or internet exposure is that a TLS-terminating reverse proxy (Nginx,
-Caddy, Traefik, HAProxy) sits in front.
+The Compose quickstart publishes the gateway on host loopback. Other launch modes
+can listen on other interfaces: the checked-in configuration sets `proxy.host` to `0.0.0.0`.
+Before LAN or internet exposure, check the effective listener, published ports,
+setup networks and trusted proxies. Put a TLS-terminating reverse proxy such as
+Nginx, Caddy, Traefik or HAProxy in front, and stop untrusted clients from reaching
+the gateway port directly. See the [configuration reference](../CONFIG.md).
 
 ## Health Checks
 
