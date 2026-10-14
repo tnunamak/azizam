@@ -22,7 +22,7 @@ For the operator-facing first-run story this model implies, see
   provisioning input only — the things the gateway needs to start safely or
   import initial service records.
 - **`admin.db` and the dashboard** own runtime product state — owner/admin
-  roles, Apps, Access plans, App API keys, identity/access-plan mappings, role/model
+  roles, Apps, Access plans, App API keys, role/model
   bindings, admission caps, runtime routing toggles, OIDC provider settings,
   and the service/provider registry.
 - **A read-only service-registry export is shipped.** Authenticated
@@ -33,10 +33,9 @@ For the operator-facing first-run story this model implies, see
   the instance name, public base URL and default theme in the existing
   `admin.db` operator settings table. Bootstrap branding and public URL values
   provide defaults until the first save. Saving does not change listener or
-  TLS configuration. Default access-plan edits atomically replace only the
-  universal `all_users` runtime Access plan mapping; specific identity mappings
-  retain their existing priority and grants. Model aliases remain read-only
-  bootstrap data.
+  TLS configuration. The former universal `all_users` runtime mapping is not
+  a current access-default mechanism: schema 7 drops the runtime mapping table.
+  Model aliases remain read-only bootstrap data.
 - **Advanced export is a redacted snapshot.** Owner-only
   `GET /admin/api/settings/effective/export` exports the current configuration,
   resolved OIDC provider, registry and runtime overrides. It is for inspection,
@@ -68,20 +67,19 @@ For the operator-facing first-run story this model implies, see
   page there, including its query string. Local accounts use the requested
   relative page on the host where sign-in started. Invalid return paths fall
   back to `/`.
-- **Full provisioning / as-code reconciliation is deferred.** Default Access plans
-  and user-access defaults are seeded into `admin.db` on startup; once seeded,
-  the dashboard is authoritative. No YAML "policy file" exists for those
-  settings, and no full bundle restore or file-wins reconciliation exists.
+- **Full provisioning / as-code reconciliation is deferred.** Access plans live
+  in `admin.db`. The old user-access defaults are not a current seeded setting:
+  schema 7 deletes `operator_settings.user_access_defaults` and its generation
+  record. No full bundle restore or file-wins reconciliation is specified here.
 
-> **Implementation invariant.** The first-run access path is DB-backed:
-> `/setup/` and the web app create Apps, App keys, Access plans, identity/access-plan
-> mappings, and user access defaults in `admin.db`. `admin.user_defaults` in
-> `proxy_config.yml` is a bootstrap seed only; after startup, dashboard/API
-> state is authoritative. The legacy `AZIZAM_USER_SELF_SERVICE` and
-> `AZIZAM_AUTO_CREATE_PERSONAL_APP` env vars are also bootstrap seed
-> inputs, not live overrides after the setting exists in `admin.db`.
-> Services/providers follow the same rule: YAML/env can seed or provision
-> records, but the DB/UI registry is the live operator surface.
+> **Access-plan migration boundary.** `gateway/access_plan_migration.py`
+> removes `profiles`, `runtime_profile_mappings`, and `user_access_defaults`.
+> `gateway/admin_api.py` exposes access-plan CRUD; it does not register the
+> legacy profile, runtime-mapping, or user-default write routes. Do not treat
+> `admin.user_defaults`, `AZIZAM_USER_SELF_SERVICE`, or
+> `AZIZAM_AUTO_CREATE_PERSONAL_APP` as a supported way to recreate them.
+> UNVERIFIED: current bootstrap handling of those legacy inputs outside these
+> two reviewed modules.
 
 ## Ownership planes
 
@@ -95,8 +93,7 @@ Concretely:
    Restart to apply. Provisioning bundles never carry secrets.
 2. **Dashboard plane** — `admin.db`, edited through the web app (and the
    `/admin/api/*` JSON surface). Runtime access policy: the admin user list,
-   role grants, Access plans, Apps, App API keys, user access defaults,
-   identity/access-plan mappings, role→model bindings, admission caps, throttles,
+   role grants, Access plans, Apps, App API keys, role→model bindings, admission caps, throttles,
    runtime routing overrides, OIDC provider settings, and service/provider
    records — anything an operator should legitimately be able to change after
    boot without touching a file. Audited, applies live unless the apply_mode
@@ -139,7 +136,7 @@ pins the mapping; if you change one side you must change the other.
 | `resource admission` | dashboard   | caps, throttles, reserved tokens                | nothing                                          |
 | `workflow manifests` | provisioned | nothing                                         | the manifest files themselves                    |
 | `model compatibility`| bootstrap   | nothing                                         | the compatibility table file                     |
-| `auth/admin`         | dashboard   | instance presentation, OIDC provider settings, App trusted addresses, admin user list, roles, Access plans, Apps, App keys, user access defaults, identity/access-plan mappings | explicit session keys, trust roots, optional OIDC bootstrap fallback |
+| `auth/admin`         | dashboard   | instance presentation, OIDC provider settings, App trusted addresses, admin user list, roles, Access plans, Apps, App keys | explicit session keys, trust roots, optional OIDC bootstrap fallback |
 
 Implications:
 
@@ -162,11 +159,6 @@ Implications:
   a plaintext `client_secret` left in that setting into the store. Operators
   who require an external secret store should use the `client_secret_env`
   bootstrap fallback.
-- `admin.user_defaults` and the user-access env flags are bootstrap seeds, not
-  ongoing runtime policy. On startup, the gateway imports self-service defaults
-  and identity Access plan mappings into `admin.db` when they are not already
-  present. Disabled dashboard mappings are not re-enabled by the bootstrap
-  seed.
 - Runtime Apps, Access plans, and keys live in `admin.db`. Bootstrap config stays
   in YAML/env, but runtime authorization decisions do not read a key file.
 - Service/provider availability is read from the registry. `proxy_config.yml`
