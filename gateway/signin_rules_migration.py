@@ -40,6 +40,8 @@ LEGACY_LISTS = ("allowed_email_domains", "admin_emails", "admin_groups", "admin_
 LEGACY_GRANT_SOURCE = "oidc-trusted-group"
 AUDIT_ACTION = "operator.signin_rules.migrate"
 NOTICE_REMOVED_OWNER_RULE = "removed_owner_rule"
+# An upgrade that kept the old open door: everyone with a provider account can still get in.
+NOTICE_OPEN_DOOR = "open_door"
 
 
 def _setting(conn: sqlite3.Connection, key: str) -> dict[str, Any] | None:
@@ -130,7 +132,8 @@ def migrate(conn: sqlite3.Connection) -> dict[str, Any]:
         if _setting(conn, SIGNIN_STATUS_KEY) is None:
             _write_setting(
                 conn, SIGNIN_STATUS_KEY,
-                {"notice": NOTICE_REMOVED_OWNER_RULE if dropped else None,
+                {"notice": NOTICE_REMOVED_OWNER_RULE if dropped
+                 else NOTICE_OPEN_DOOR if doc["fallback"] == "open" else None,
                  # The lists the database already answered for: the config file's copies never apply to them.
                  "database_lists": sorted(key for key in LEGACY_LISTS if oidc and key in oidc)}, now,
             )
@@ -201,6 +204,9 @@ def adopt_bootstrap_lists(path, bootstrap, env) -> bool:
                      for part in chunk.split(",")]
         return _strings(value if isinstance(value, (list, str)) else [])
 
+    # ``database_lists`` is written only by ``migrate``, so it marks a database that held sign-in data before
+    # schema 9. A new database has none: the door stays closed there whatever the config file enables.
+    upgraded = "database_lists" in status
     answered = set(status.get("database_lists", []))
     lists = {key: ([] if key in answered else listed(key))
              for key in ("allowed_email_domains", "admin_emails", "admin_groups", "admin_roles")}
@@ -218,13 +224,18 @@ def adopt_bootstrap_lists(path, bootstrap, env) -> bool:
                  for i, r in enumerate(r for r in proposed["rules"]
                                        if (r["field"], tuple(r["values"]), r["admin"]) not in have)]
         fallback = current.get("fallback", "closed")
-        if not door_decided and not current.get("rules") and fallback == "closed" and proposed["fallback"] == "open":
+        opened = False
+        if upgraded and not door_decided and not current.get("rules") and fallback == "closed" \
+                and proposed["fallback"] == "open":
             fallback = "open"
+            opened = True
         if added or fallback != current.get("fallback"):
             admin_store.put_operator_setting(
                 SIGNIN_RULES_KEY, {"fallback": fallback, "rules": [*current.get("rules", []), *added]},
                 updated_by="migration", path=path)
             changed = True
+            if opened and not status.get("notice"):
+                status["notice"] = NOTICE_OPEN_DOOR
     status["bootstrap_lists_adopted"] = True
     admin_store.put_operator_setting(SIGNIN_STATUS_KEY, status, updated_by="migration", path=path)
     return changed

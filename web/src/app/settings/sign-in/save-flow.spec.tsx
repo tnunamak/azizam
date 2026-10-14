@@ -544,7 +544,7 @@ describe("linking the owner", () => {
       discovery: discovery("id2.vivid.fish"),
       preview: (_p, testId) =>
         emptyPreview({
-          issuer_change: { old_host: "id.vivid.fish", new_host: "id2.vivid.fish", people: 3 },
+          issuer_change: { old_host: "id.vivid.fish", new_host: "id2.vivid.fish", people: 3, signed_out: 2 },
           settings: [],
           test_verdict: testId
             ? linked
@@ -564,6 +564,9 @@ describe("linking the owner", () => {
     );
     expect(region).toHaveTextContent(
       "link yourself again after you save. They are checked by your rules again when they sign in.",
+    );
+    expect(region).toHaveTextContent(
+      "2 of them are signed out when you save, and their keys pause until they sign in again.",
     );
     await vi.waitFor(() =>
       expect(caption()).toBe(

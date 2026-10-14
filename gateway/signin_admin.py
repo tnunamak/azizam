@@ -394,6 +394,7 @@ def preview(path: Path, before: World, after: World, plans: Mapping[str, str]) -
     issuer_moved = issuer_changes(before, after)
     changed: list[dict[str, Any]] = []
     unaffected: list[str] = []
+    signed_out = 0
     people = people_facts(path)
     for person in people:
         ob = person_outcome(before, person, plans)
@@ -423,6 +424,8 @@ def preview(path: Path, before: World, after: World, plans: Mapping[str, str]) -
         touched = (can_b != can_a) or (admin_b != admin_a) or (plan_b != plan_a)
         if issuer_moved and norm_issuer(person.issuer) == before.issuer:
             touched = False  # the issuer line covers them
+            if can_b and not person.is_owner:
+                signed_out += 1
         if touched:
             changed.append(line)
         else:
@@ -432,7 +435,9 @@ def preview(path: Path, before: World, after: World, plans: Mapping[str, str]) -
         "unaffected": unaffected,
         "issuer_change": (
             {"old_host": _host(before.issuer), "new_host": _host(after.issuer),
-             "people": sum(1 for p in people if norm_issuer(p.issuer) == before.issuer)}
+             "people": sum(1 for p in people if norm_issuer(p.issuer) == before.issuer),
+             # Of those, the ones who lose their sessions and whose keys pause until they sign in again.
+             "signed_out": signed_out}
             if issuer_moved else None
         ),
     }
@@ -541,7 +546,10 @@ def apply_changes(
         elif lost_admin:
             # The owner is not an administrator by rule; a grant left from before goes quietly.
             admin_store.reconcile_oidc_admin_roles_in(conn, person.id, set())
-        if kept_out:
+        # A link to the old issuer no longer proves who anyone is: its members, like people the rules now
+        # keep out, lose their sessions, MCP connections and (until they sign in again) their personal keys.
+        # The owner signs in with a password and keeps working.
+        if kept_out or (moved and can_b and not person.is_owner):
             end_provider_access(tx, person.id)
         if not moved and person.provider_issuers:
             sync_rule_plan_in(conn, person.id, oa if can_a else _no_plan(oa))

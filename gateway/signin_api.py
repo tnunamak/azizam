@@ -230,6 +230,12 @@ def create_signin_api(
                  (body.token_endpoint, saved.token_endpoint), (body.jwks_uri, saved.jwks_uri))
         return all(not typed.strip() or typed.strip() == kept for typed, kept in pairs)
 
+    def _secret_would_travel(saved: OIDCConfig, body: ConnectionBody) -> bool:
+        """A save that keeps the saved secret (none typed) while the address moves to another host or endpoints."""
+        wants = bool(body.address.strip() or body.client_id.strip())
+        return bool(wants and saved.client_secret and not body.client_secret.strip()
+                    and not same_destination(saved, body))
+
     def typed_config(request: Request, saved: OIDCConfig, body: ConnectionBody, *, enabled: bool) -> tuple[OIDCConfig, str]:
         """The connection as typed (overrides only, no discovery), and its secret.
 
@@ -361,6 +367,8 @@ def create_signin_api(
             found.append({"code": "address_invalid", "message": "Fix the provider address first."})
         if rules.incomplete():
             found.append({"code": "incomplete_rule", "message": "Finish or remove the new rule first."})
+        if _secret_would_travel(saved_cfg, provider):
+            found.append({"code": "secret_needed", "message": "Enter the client secret again for the new address."})
         if after.provider and _valid_address(provider.address) and provider.client_id.strip():
             typed, secret = typed_config(request, saved_cfg, provider, enabled=False)
             sig = signin_test.connection_signature(signature_key(), typed, secret)
@@ -548,6 +556,9 @@ def create_signin_api(
         wants_connection = bool(provider.address.strip() or provider.client_id.strip() or after.provider)
         if wants_connection and not _valid_address(provider.address):
             raise SignInError("address_invalid", "Fix the provider address first.", 409)
+        if _secret_would_travel(cfg, provider):
+            # Whatever the provider switch says: a saved secret goes only to the host it was entered for.
+            raise SignInError("connection_incomplete", "Enter the client secret again for the new address.", 409)
         typed, secret = typed_config(request, cfg, provider, enabled=False)
         sig = signin_test.connection_signature(signature_key(), typed, secret)
         run = signin_test.passed_for(body.test_id, ctx.audit_actor_id, sig)

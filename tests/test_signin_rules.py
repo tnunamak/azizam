@@ -9,7 +9,7 @@ import sqlite3
 
 import pytest
 
-from gateway import admin_store, signin_rules
+from gateway import admin_store, signin_admin, signin_rules
 from gateway.signin_rules import Claims, Rules, Standing, evaluate, parse_rules
 
 
@@ -316,8 +316,20 @@ def test_an_instance_that_let_everyone_in_keeps_letting_everyone_in(tmp_path):
 
     # Both lists were empty and the provider was on, so the old code admitted anyone.
     assert setting(path, "signin_rules")["fallback"] == "open"
+    # The owner is told once that this is still so, because it is the opposite of the new default.
     assert setting(path, "signin_status") == {
-        "notice": None, "database_lists": ["admin_emails", "admin_groups", "allowed_email_domains"]}
+        "notice": "open_door", "database_lists": ["admin_emails", "admin_groups", "allowed_email_domains"]}
+
+
+def test_an_instance_that_closed_the_door_gets_no_open_door_notice(tmp_path):
+    legacy = {"enabled": True, "issuer": ISSUER, "client_id": "azizam", "admin_emails": [],
+              "allowed_email_domains": ["family.test"], "admin_groups": []}
+    path, _, _ = legacy_database(tmp_path, oidc=legacy)
+
+    admin_store.init_db(path)
+
+    assert setting(path, "signin_rules")["fallback"] == "closed"
+    assert setting(path, "signin_status")["notice"] is None
 
 
 def test_an_instance_with_the_provider_off_starts_closed(tmp_path):
@@ -449,12 +461,37 @@ def test_lists_in_the_config_file_become_rules_once_on_the_first_start(tmp_path)
     assert setting(path, "signin_rules")["rules"] == []
 
 
-def test_a_config_file_that_listed_nothing_and_enabled_the_provider_keeps_the_door_open(tmp_path):
+def test_a_config_file_that_listed_nothing_and_enabled_the_provider_keeps_the_door_open_for_an_upgrade(tmp_path):
     path = fresh_with_migration(tmp_path)
 
     assert adopt(path, {"enabled": True}) is True
 
     assert setting(path, "signin_rules") == {"fallback": "open", "rules": []}
+    assert setting(path, "signin_status")["notice"] == "open_door"
+
+
+def test_a_new_database_stays_deny_by_default_whatever_the_config_file_enables(tmp_path):
+    """No sign-in data came before, so there is no old open door to keep."""
+    path = tmp_path / "new.db"
+    admin_store.init_db(path)
+
+    changed = adopt(path, {"enabled": True})
+
+    assert changed is False
+    assert signin_admin.load_rules(path).fallback == "closed"
+    assert (setting(path, "signin_rules") or {"fallback": "closed"})["fallback"] == "closed"
+    assert setting(path, "signin_status").get("notice") is None
+
+
+def test_a_new_database_still_adopts_the_lists_in_the_config_file_as_rules_and_stays_closed(tmp_path):
+    path = tmp_path / "new.db"
+    admin_store.init_db(path)
+
+    assert adopt(path, {"enabled": True, "allowed_email_domains": ["family.test"]}) is True
+
+    rules = setting(path, "signin_rules")
+    assert rules["fallback"] == "closed"
+    assert [(r["field"], r["values"]) for r in rules["rules"]] == [("domain", ["family.test"])]
 
 
 def test_what_the_database_already_answered_is_not_overridden_by_the_config_file(tmp_path):

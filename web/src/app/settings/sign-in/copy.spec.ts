@@ -6,6 +6,7 @@ import {
   headline,
   leadingBlocker,
   nameHelp,
+  noticeText,
   personChange,
   providerLabel,
   rowLabel,
@@ -120,6 +121,8 @@ describe("the provider's name (round 3, N3)", () => {
     savedToast({ p, turnedOn: false, forLater: true, removed: [] }),
     blockerCaption("test_required", "", { live: true, p }),
     blockerCaption("address_invalid", "", { live: true, p }),
+    noticeText("open_door", p),
+    noticeText("removed_owner_rule", p),
     personChange(person({ sign_in: { before: true, after: false, via: "provider" } }), p)!
       .clauses.flat()
       .map((c) => c.text)
@@ -318,11 +321,21 @@ describe("what changes, per person", () => {
 
 describe("issuer change (P7)", () => {
   it("adds that people are checked by the rules again when they sign in", () => {
-    const l = issuerLine({ old_host: "id.a.test", new_host: "id.b.test", people: 3 });
+    const l = issuerLine({ old_host: "id.a.test", new_host: "id.b.test", people: 3, signed_out: 2 });
     expect(l.who).toBe("Everyone who signed in at id.a.test (3 people):");
     expect(l.what).toBe("become new people at id.b.test");
     expect(l.rest).toContain("link yourself again after you save.");
     expect(l.rest).toContain("They are checked by your rules again when they sign in.");
+  });
+  it("says who is signed out and that their keys pause, counting only the people who lose a session", () => {
+    const base = { old_host: "id.a.test", new_host: "id.b.test", people: 3 };
+    expect(issuerLine({ ...base, signed_out: 2 }).rest).toContain(
+      "2 of them are signed out when you save, and their keys pause until they sign in again.",
+    );
+    expect(issuerLine({ ...base, signed_out: 1 }).rest).toContain(
+      "1 of them is signed out when you save, and their keys pause until they sign in again.",
+    );
+    expect(issuerLine({ ...base, signed_out: 0 }).rest).not.toContain("signed out");
   });
 });
 
@@ -343,7 +356,7 @@ describe("setting sentences and the change count", () => {
     const preview: Preview = {
       people: [person({}), person({ id: "x" })],
       unaffected: [],
-      issuer_change: { old_host: "a", new_host: "b", people: 1 },
+      issuer_change: { old_host: "a", new_host: "b", people: 1, signed_out: 0 },
       settings: ["provider_off", "name_changed"],
       blockers: [],
       test_verdict: null,
@@ -363,6 +376,13 @@ describe("blockers", () => {
     ];
     expect(leadingBlocker(blockers, true)?.code).toBe("address_invalid");
     expect(leadingBlocker(blockers, false)?.code).toBe("test_required");
+    // A secret that must be typed again comes before the test it would make fail.
+    expect(
+      leadingBlocker([...blockers, { code: "secret_needed", message: "s" }], false)?.code,
+    ).toBe("secret_needed");
+    expect(blockerCaption("secret_needed", "Enter the client secret again for the new address.", { live: false, p })).toBe(
+      "Enter the client secret again for the new address.",
+    );
     expect(
       leadingBlocker(
         [...blockers, { code: "incomplete_rule", message: "z" }],

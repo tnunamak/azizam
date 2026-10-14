@@ -684,10 +684,14 @@ def test_the_preview_says_who_has_signed_in_and_matches_each_rule_in_the_form(sg
     assert matches["nobody"] == {"count": 0, "names": []}
 
 
-def test_an_address_change_is_saved_with_a_passed_test_and_the_old_accounts_are_not_signed_out_as_members(sg):
+def test_an_address_change_is_saved_with_a_passed_test_and_signs_out_the_members_of_the_old_address(sg, monkeypatch):
     sg.set_rules([TRUSTED, domain_rule("example.test")])
     owner = owner_client(sg)
     member, _ = signed_in(sg, sub="member", email="member@example.test")
+    member_id = user_id(sg, "member@example.test")
+    ended = []
+    monkeypatch.setattr(sg.proxy.MCP_OAUTH.deps.store, "revoke_person_grants",
+                        lambda person_id, reason: ended.append((person_id, reason)))
     snapshot = get_snapshot(owner)
     test = begin(owner, snapshot, address=OTHER_ISSUER, client_secret="typed-again")
     finish(sg, owner, test, sub="owner-at-id2", email=OWNER)
@@ -697,7 +701,12 @@ def test_an_address_change_is_saved_with_a_passed_test_and_the_old_accounts_are_
 
     assert saved.status_code == 200, saved.text
     assert saved.json()["snapshot"]["provider"]["address"] == OTHER_ISSUER
-    assert member.get("/me/api/session").json()["authenticated"] is True
+    # Their links to the old address prove nothing now: no session, no MCP connection, personal keys paused.
+    assert member.get("/me/api/session").json()["authenticated"] is False
+    assert ended == [(member_id, "sign_in_refused")]
+    assert sg.rows("SELECT user_id FROM account_signin_refusals") == [{"user_id": member_id}]
+    # The owner is not cut off: their password is how they sign in now.
+    assert owner.get("/admin/api/signin").status_code == 200
     # The old accounts stay as people, but nobody at the new address matches them.
     assert admin_store.find_oidc_user(ISSUER, "member", path=sg.path) is not None
     assert admin_store.find_oidc_user(OTHER_ISSUER, "member", path=sg.path) is None

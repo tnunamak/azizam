@@ -84,8 +84,11 @@ export interface SignInSnapshot {
   /** The command the owner runs on the gateway host to get back in. */
   recovery_command: string;
   /** A one-time note from the upgrade. Dismissed with dismissNotice. */
-  notice: "removed_owner_rule" | null;
+  notice: SignInNotice | null;
 }
+
+/** The one-time notes an upgrade can leave: a rule that only named the owner was removed, or everyone with a provider account can still sign in. */
+export type SignInNotice = "removed_owner_rule" | "open_door";
 
 export interface SignInProposal {
   methods: { password: boolean; provider: boolean };
@@ -142,7 +145,13 @@ export interface Preview {
   /** Names of people who have signed in before and are not affected. */
   unaffected: string[];
   /** Set only when the address changes and the provider stays on. */
-  issuer_change: { old_host: string; new_host: string; people: number } | null;
+  issuer_change: {
+    old_host: string;
+    new_host: string;
+    people: number;
+    /** Of those, the people who lose their sessions and whose keys pause (not the owner). */
+    signed_out: number;
+  } | null;
   settings: PreviewSetting[];
   /** Why Save cannot run. Empty when it can. */
   blockers: {
@@ -151,6 +160,7 @@ export interface Preview {
       | "test_required"
       | "address_invalid"
       | "incomplete_rule"
+      | "secret_needed"
       | "owner_needs_password";
     message: string;
   }[];

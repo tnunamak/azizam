@@ -195,6 +195,11 @@ describe("an administrator sees the page read-only", () => {
     expect(mocked.discover).not.toHaveBeenCalled();
   });
 
+  it("does not offer the open-door note to an administrator", async () => {
+    await mountSignIn({ ...adminSnapshot(), notice: "open_door" });
+    expect(screen.queryByText(/can still sign in, as before this update/)).toBeNull();
+  });
+
   it("does not offer the one-time owner note to an administrator", async () => {
     await mountSignIn({ ...adminSnapshot(), notice: "removed_owner_rule" });
     expect(screen.queryByText(/Removed a rule that only named you/)).toBeNull();
@@ -212,6 +217,20 @@ describe("the one-time note about a removed rule (P6)", () => {
     // It is not unsaved work.
     expect(caption()).toBe("Nothing to save.");
     expect(screen.queryByRole("button", { name: "Discard changes" })).toBeNull();
+    mocked.dismiss.mockResolvedValue(liveSnapshot({ notice: null }));
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(mocked.dismiss).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(note).not.toBeInTheDocument());
+  });
+
+  it("tells the owner once that an upgrade kept the door open, and dismisses it on the server", async () => {
+    const { user } = await mountSignIn(
+      liveSnapshot({ notice: "open_door" }),
+      { preview: emptyPreview() },
+    );
+    const note = screen.getByText(/^Everyone with an account at id\.vivid\.fish can still sign in/);
+    expect(note).toHaveTextContent("Keep them out unless I invite them");
+    expect(caption()).toBe("Nothing to save.");
     mocked.dismiss.mockResolvedValue(liveSnapshot({ notice: null }));
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(mocked.dismiss).toHaveBeenCalledTimes(1);

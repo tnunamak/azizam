@@ -762,6 +762,15 @@ administrator may `GET /admin/api/signin`, and every other route is owner-only
 | `POST /admin/api/signin/notice/dismiss` | Dismiss the one-time note from the upgrade |
 | `POST /admin/api/signin/owner-password` | Set the owner's own password |
 
+`PUT /admin/api/signin` is one SQLite transaction: the rules, the switches, the connection (and its secret),
+and every grant removed, session ended and key revoked for the people they touch commit together or not at
+all. What a rollback cannot undo (a person's MCP connections) runs after the commit. A save that moves the
+provider to another host, or to other endpoints, must carry the client secret typed again
+(`409 connection_incomplete`; the preview names it as the `secret_needed` blocker), so a saved secret goes only
+to the host it was entered for. A save that changes the issuer of a live provider ends the sessions of
+everyone linked to the old issuer (not the owner) and pauses their personal keys until they sign in again;
+`issuer_change.signed_out` in the preview counts them.
+
 ### GET /admin/api/extensions
 
 ```json

@@ -12,6 +12,7 @@ import type {
   PreviewSetting,
   ProviderConnection,
   RuleField,
+  SignInNotice,
   SignInRule,
   TestFailureCause,
   TestOutcome,
@@ -407,6 +408,14 @@ export const everyoneAdminWarning = (p: ProviderLabel) =>
   `Anyone who signs in with ${mid(p)} becomes an administrator, including people who have not signed in yet.`;
 export const openFallbackWarning = (p: ProviderLabel) =>
   `Anyone with an account at ${hostOr(p)} can sign in. They can use nothing until you give them a plan.`;
+/** The one-time notes from an upgrade (see SignInNotice). */
+export const noticeText = (
+  notice: SignInNotice,
+  p: ProviderLabel,
+): string =>
+  notice === "open_door"
+    ? `Everyone with an account at ${hostOr(p)} can still sign in, as before this update, because your old settings did not list anyone. To change that, choose “Keep them out unless I invite them” under Everyone else.`
+    : "Removed a rule that only named you. You are always let in.";
 export const onlyInvitedNote = (p: ProviderLabel) =>
   `Only people you invite can sign in with ${mid(p)}.`;
 
@@ -477,7 +486,11 @@ export const issuerLine = (
 ): { who: string; what: string; rest: string } => ({
   who: `Everyone who signed in at ${i.old_host} (${people(i.people)}):`,
   what: `become new people at ${i.new_host}`,
-  rest: ". Their roles, plans and your own link stay with the old accounts, so link yourself again after you save. They are checked by your rules again when they sign in.",
+  rest:
+    ". Their roles, plans and your own link stay with the old accounts, so link yourself again after you save. They are checked by your rules again when they sign in." +
+    (i.signed_out
+      ? ` ${i.signed_out === 1 ? "1 of them is" : `${i.signed_out} of them are`} signed out when you save, and their keys pause until they sign in again.`
+      : ""),
 });
 
 export function settingSentence(
@@ -550,6 +563,7 @@ export function blockerCaption(
       return a.live
         ? `Test sign-in again before you save.${keepsWorking}`
         : "Test sign-in first";
+    case "secret_needed":
     case "owner_needs_password":
     case "both_methods_off":
       return fallbackMessage;
@@ -562,8 +576,8 @@ export function leadingBlocker(
   live: boolean,
 ): Preview["blockers"][number] | undefined {
   const order = live
-    ? ["incomplete_rule", "address_invalid", "test_required", "owner_needs_password", "both_methods_off"]
-    : ["incomplete_rule", "test_required", "address_invalid", "owner_needs_password", "both_methods_off"];
+    ? ["incomplete_rule", "address_invalid", "secret_needed", "test_required", "owner_needs_password", "both_methods_off"]
+    : ["incomplete_rule", "secret_needed", "test_required", "address_invalid", "owner_needs_password", "both_methods_off"];
   return [...blockers].sort(
     (x, y) => order.indexOf(x.code) - order.indexOf(y.code),
   )[0];

@@ -15,6 +15,7 @@ import {
   connectionIntro,
   DEFAULTS,
   hostOr,
+  mid,
   nameHelp,
   type ProviderLabel,
 } from "./copy";
@@ -67,7 +68,7 @@ export function ConnectionBlock({
   const setUp = Boolean(connection.address.trim() && connection.client_id.trim());
   return (
     <Block
-      title="Connect your provider"
+      title={`Connect ${mid(label)}`}
       description={connectionIntro(label)}
       id="sign-in-connect"
     >
@@ -105,12 +106,12 @@ export function ConnectionBlock({
           <div className="flex flex-col gap-5 px-4 py-5">
             <div>
               <CopyField
-                label="Copy this into your provider"
+                label={`Copy this into ${mid(label)}`}
                 buttonLabel="Copy redirect address"
                 value={redirectUri}
               />
               <p className="text-muted-foreground text-meta mt-1">
-                Your provider may call it Redirect URI or callback URL.
+                In {mid(label)}, it may be called Redirect URI or callback URL.
               </p>
             </div>
             <Field
@@ -156,7 +157,7 @@ export function ConnectionBlock({
                 help={
                   secretSaved && !connection.client_secret
                     ? "Leave blank to keep the saved secret."
-                    : "Paste the secret from your provider."
+                    : `Paste the secret from ${mid(label)}.`
                 }
               >
                 <Input
@@ -191,6 +192,7 @@ export function ConnectionBlock({
           </div>
           {advancedOpen && (
             <AdvancedFields
+              label={label}
               id={advanced}
               connection={connection}
               found={found}
@@ -208,6 +210,7 @@ export function ConnectionBlock({
 
 function AdvancedFields({
   id,
+  label,
   connection,
   found,
   discovered,
@@ -215,6 +218,7 @@ function AdvancedFields({
   onChange,
 }: {
   id: string;
+  label: ProviderLabel;
   connection: ProviderConnection;
   found: Discovery | null;
   discovered: boolean;
@@ -226,8 +230,8 @@ function AdvancedFields({
   return (
     <div id={id} className="flex flex-col gap-4 px-4 pt-1 pb-5">
       <p className="text-muted-foreground text-meta">
-        Filled in from your provider. Change one only if your provider tells
-        you to.
+        Filled in from {mid(label)}. Change one only if {mid(label)} tells you
+        to.
       </p>
       <div className="grid gap-4 sm:grid-cols-2">
         <AdvancedField

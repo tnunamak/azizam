@@ -115,7 +115,7 @@ describe("state a: live and configured", () => {
   it("reveals the connection form with a read-only redirect address and tags", async () => {
     const { user } = await mountSignIn(liveSnapshot());
     await user.click(screen.getByRole("button", { name: /Keycloak · id\.vivid\.fish/ }));
-    const redirect = screen.getByLabelText("Copy this into your provider");
+    const redirect = screen.getByLabelText("Copy this into Keycloak");
     expect(redirect).toHaveValue("https://ai.example.test/admin/oidc/callback");
     expect(redirect).toHaveAttribute("readonly");
     expect(screen.getByRole("button", { name: "Copy redirect address" })).toBeEnabled();
@@ -574,18 +574,6 @@ describe("a live provider nobody has tested through this page", () => {
 });
 
 describe("N3: the provider's name is the typed Name, else the host", () => {
-  // Fixed help text from the mockup that talks about providers in general. It
-  // never names the provider, so it is not part of the name rule.
-  const generic = [
-    "Connect your provider",
-    "Copy this into your provider",
-    "Your provider may call it Redirect URI or callback URL.",
-    "Paste the secret from your provider.",
-    "Filled in from your provider. Change one only if your provider tells you to.",
-  ];
-  const withoutGenericPhrases = () =>
-    generic.reduce((t, g) => t.replaceAll(g, ""), text());
-
   async function withHostOnly() {
     const { user } = await mountSignIn(firstRunSnapshot(), {
       preview: newProvider(),
@@ -631,7 +619,7 @@ describe("N3: the provider's name is the typed Name, else the host", () => {
 
   it("never reads 'your provider' or 'a your' once an address exists", async () => {
     await withHostOnly();
-    const body = withoutGenericPhrases();
+    const body = text();
     expect(body).not.toMatch(/your provider/i);
     expect(body).not.toMatch(/\ba your\b/i);
     expect(body).not.toMatch(/your own your/i);
@@ -652,7 +640,7 @@ describe("N3: the provider's name is the typed Name, else the host", () => {
       screen.getByText("Shown on the sign-in page as “Sign in with Family account”."),
     ).toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: "id.example.com" })).toBeNull();
-    const body = withoutGenericPhrases();
+    const body = text();
     expect(body).not.toMatch(/your provider/i);
     expect(body).not.toMatch(/Sign-in with id\.example\.com works/);
   });

@@ -8,6 +8,7 @@ import type {
   RuleField,
   SeenValue,
   SignInRule,
+  SignInNotice,
   SignInRules,
   SignInSnapshot,
 } from "@/lib/signin-api";
@@ -17,6 +18,7 @@ import {
   isComplete,
   letsIn,
   noGroupsRuleNote,
+  noticeText,
   onlyInvitedNote,
   openFallbackWarning,
   type ProviderLabel,
@@ -35,7 +37,7 @@ export function RulesEditor({
   ruleMatches,
   previewMatches,
   groupsMissingSince,
-  showNotice,
+  notice,
   disabled,
   phone,
   onChange,
@@ -51,7 +53,8 @@ export function RulesEditor({
   previewMatches: SignInSnapshot["rule_matches"] | null;
   /** "today" or a date, when the provider last sent no groups. */
   groupsMissingSince: string | null;
-  showNotice: boolean;
+  /** A one-time note from the upgrade, or null. */
+  notice: SignInNotice | null;
   disabled: boolean;
   phone: boolean;
   onChange: (rules: SignInRules) => void;
@@ -100,14 +103,14 @@ export function RulesEditor({
       {rules.fallback === "closed" && !anyLetsIn && (
         <Band tone="info">{onlyInvitedNote(label)}</Band>
       )}
-      {showNotice && (
+      {notice && (
         <Band
-          tone="info"
+          tone={notice === "open_door" ? "warn" : "info"}
           action={
             <LinkButton onClick={onDismissNotice}>Dismiss</LinkButton>
           }
         >
-          Removed a rule that only named you. You are always let in.
+          {noticeText(notice, label)}
         </Band>
       )}
       {groupsMissingSince && list.some((r) => r.field === "group") && (

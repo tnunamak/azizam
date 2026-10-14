@@ -294,9 +294,11 @@ def test_a_new_address_with_the_provider_on_is_an_issuer_change_not_a_list_of_pe
     helper_client(sg)
     snapshot = get_snapshot(owner)
 
-    result = preview(owner, proposal(snapshot, address="https://id2.example/realms/home"))
+    result = preview(owner, proposal(snapshot, address="https://id2.example/realms/home", client_secret="typed-again"))
 
-    assert result["issuer_change"] == {"old_host": "id.example", "new_host": "id2.example", "people": 2}
+    # Two people signed in at the old address; the owner keeps working, the other is signed out.
+    assert result["issuer_change"] == {"old_host": "id.example", "new_host": "id2.example", "people": 2,
+                                       "signed_out": 1}
     assert result["people"] == []
     assert "connection_changed" not in result["settings"]
     assert [b["code"] for b in result["blockers"]] == ["test_required"]
