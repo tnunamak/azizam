@@ -607,7 +607,7 @@ const filterRow = (id: string, name = id) => entry({
 async function pickChangeFilter(label: string, option: string) {
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: label }));
-  await user.click(await screen.findByRole("option", { name: option, exact: true }));
+  await user.click(await screen.findByRole("option", { name: option }));
 }
 
 it("filter regression: change-type pick-list sends each category and restores all changes", async () => {
