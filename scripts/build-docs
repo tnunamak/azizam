@@ -265,7 +265,31 @@ def toc_html(page: Page) -> str:
     return f'<ul>{"".join(items)}</ul>' if len(items) >= 2 else ""
 
 
+def site_chrome() -> tuple[str, str]:
+    """Reuse Home chrome; native mobile disclosure needs no site.js."""
+    home = (ROOT / "showcase" / "index.html").read_text(encoding="utf-8")
+    header_match = re.search(r'<header class="site-header">.*?</header>', home, re.S)
+    footer_match = re.search(r'<footer class="foot">.*?</footer>', home, re.S)
+    if not header_match or not footer_match:
+        raise BuildError("Home must supply the shared site header and footer")
+    header = header_match.group().replace(' aria-current="page"', "")
+    header = header.replace('href="/showcase/docs/"', 'href="/showcase/docs/" aria-current="page"')
+    header = re.sub(r'  <button class="site-menu"[^>]*>Menu</button>\n', "", header)
+    nav = re.search(r'<nav id="site-nav".*?</nav>', header, re.S)
+    if not nav:
+        raise BuildError("Home must supply the Site navigation")
+    mobile_nav = nav.group().replace(' id="site-nav"', "")
+    disclosure = (
+        '  <details class="site-disclosure">\n'
+        '    <summary>Menu</summary>\n'
+        f'    {mobile_nav}\n'
+        '  </details>\n'
+    )
+    return header.replace("</header>", disclosure + "</header>"), footer_match.group()
+
+
 def layout(*, title: str, description: str, nav: str, main: str, canonical: str, here: str) -> str:
+    header, footer = site_chrome()
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -281,21 +305,20 @@ def layout(*, title: str, description: str, nav: str, main: str, canonical: str,
 </head>
 <body class="docs" data-page="{html.escape(canonical, quote=True)}">
 <a class="skip-link" href="#content">Skip to content</a>
-<header class="docs-top">
+{header}
+<div class="docs-toolbar">
   <div class="docs-top-inner">
-    <a class="brand" href="/showcase/"><span class="mark" aria-hidden="true"></span>Azizam</a>
-    <a class="docs-home" href="{BASE}">Docs</a>
     <div class="docs-top-actions">
-      <button class="search-open js-only" type="button" aria-haspopup="dialog" aria-controls="search">
+      <button class="search-open js-only" type="button" aria-label="Search the docs" aria-haspopup="dialog" aria-controls="search">
         <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         <span>Search</span><kbd aria-hidden="true">/</kbd>
       </button>
       <a class="api-link" href="/openapi.json">API reference</a>
     </div>
   </div>
-</header>
+</div>
 <details class="docs-menu">
-  <summary><span class="docs-menu-label">Menu</span> <span class="docs-menu-here">{html.escape(here)}</span></summary>
+  <summary><span class="docs-menu-label">Documentation</span> <span class="docs-menu-here">{html.escape(here)}</span></summary>
   <nav aria-label="Documentation (menu)">{nav}</nav>
 </details>
 <div class="docs-shell">
@@ -304,6 +327,7 @@ def layout(*, title: str, description: str, nav: str, main: str, canonical: str,
   </nav>
   {main}
 </div>
+{footer}
 <dialog id="search" class="search" aria-labelledby="search-title">
   <form method="dialog" class="search-form" role="search">
     <h2 id="search-title" class="visually-hidden">Search the docs</h2>
