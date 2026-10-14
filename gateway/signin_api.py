@@ -180,7 +180,7 @@ def create_signin_api(
     auth: Any,
     store: Any,
     oidc_config_provider: Callable[[], OIDCConfig],
-    states: dict[str, StateRecord],
+    states: Callable[[], dict[str, StateRecord]],
     public_base_provider: Callable[[Request], str],
     signing_key_provider: Callable[[], bytes | None],
     end_provider_access: Callable[[str], None],
@@ -424,7 +424,7 @@ def create_signin_api(
             raise SignInError("test_not_found", "That test is over. Start a new one.", 404)
         if run.status != "waiting":
             return HTMLResponse(_CLOSE_PAGE, headers={"cache-control": "no-store"})
-        return begin_browser_login(run.cfg, states, return_to="/settings/", test_id=run.id)
+        return begin_browser_login(run.cfg, states(), return_to="/settings/", test_id=run.id)
 
     def test_status(path: Path, ctx: AdminContext, run: signin_test.TestRun) -> dict[str, Any]:
         if run.status == "waiting":

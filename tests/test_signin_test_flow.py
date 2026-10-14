@@ -16,10 +16,15 @@ from tests.test_signin_settings_api import (  # noqa: F401  (sg is a fixture)
     user_id,
 )
 from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
-    OWNER, TRUSTED, csrf_for, domain_rule, gateway, signed_in,
+    OWNER, TRUSTED, domain_rule, gateway, signed_in,
 )
 
 OTHER_ISSUER = "https://id2.example/realms/home"
+
+
+def csrf_for(client):
+    """The token of whoever is signed in: with the provider or with a password."""
+    return {"x-azizam-csrf": client.get("/admin/api/session").json()["actor"]["csrf_token"]}
 
 
 @pytest.fixture(autouse=True)
