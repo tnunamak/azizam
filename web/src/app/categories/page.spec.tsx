@@ -334,3 +334,50 @@ it("makes a unique id for a new category and leaves the others alone", () => {
   expect(Object.keys(first.snapshot.categories)).toEqual(["adult", "experimental", "adult-2"]);
   expect(deleteBlocker(rules(), "adult")).toBeNull();
 });
+
+it("retains every category edit after activation fails and retries the same draft", async () => {
+  const { posted, fetchCategory } = mount();
+  const serve = fetchCategory.getMockImplementation()!;
+  let activationFailed = false;
+  fetchCategory.mockImplementation((async (path: string, init?: AdminFetchInit) => {
+    if (path.endsWith("/activate") && !activationFailed) {
+      activationFailed = true;
+      posted.push({ path, body: init!.body as Posted["body"] });
+      throw new ApiError("save_failed", "Activation failed", 503);
+    }
+    return serve(path, init);
+  }) as never);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Edit Adult" }));
+  const dialog = await screen.findByRole("dialog", { name: "Edit Adult" });
+  const name = within(dialog).getByLabelText(/Name/);
+  const description = within(dialog).getByLabelText("What it is for");
+  await user.clear(name);
+  await user.type(name, "   ");
+  expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
+  expect(posted).toHaveLength(0);
+  await user.clear(name);
+  await user.type(name, "Preview");
+  await user.clear(description);
+  await user.type(description, "Keep this carefully edited meaning.");
+  await user.click(within(dialog).getByRole("radio", { name: /Me and chosen access plans/ }));
+  expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
+  await user.click(within(dialog).getByRole("checkbox", { name: "Guest" }));
+  await user.click(within(dialog).getByRole("button", { name: "Save" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("The change was not saved. Try again.");
+  expect(name).toHaveValue("Preview");
+  expect(description).toHaveValue("Keep this carefully edited meaning.");
+  expect(within(dialog).getByRole("radio", { name: /Me and chosen access plans/ })).toBeChecked();
+  expect(within(dialog).getByRole("checkbox", { name: "Guest" })).toBeChecked();
+  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Save" })).toBeEnabled());
+  expect(posted).toHaveLength(2);
+  await user.click(within(dialog).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit Adult" })).toBeNull());
+  expect(posted).toHaveLength(4);
+  expect(posted[2].body.snapshot).toEqual(posted[0].body.snapshot);
+  expect(posted[2].body.snapshot?.categories.adult).toMatchObject({
+    label: "Preview", description: "Keep this carefully edited meaning.", visible_to: ["plan_guest"],
+  });
+  expect(posted[3].body.expected_active_revision).toBe(4);
+});
+
