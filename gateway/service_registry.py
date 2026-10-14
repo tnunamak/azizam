@@ -1260,6 +1260,34 @@ def upsert_service_in_registry(
     return out, out["services"][sid]
 
 
+# Top-level record fields a service edit form has no widget for. A partial edit
+# must carry them over unless the caller names them.
+_LIFECYCLE_FORM_KEYS = {"lifecycle_type": "type", "managed": "managed", "service_name": "service_name"}
+
+
+def carry_unnamed_record_fields(
+    existing: Mapping[str, Any], updated: dict[str, Any], *, named: Mapping[str, Any]
+) -> None:
+    """Keep what a partial edit did not name: ``secret_refs``, ``lifecycle``, ``kind``, ``provenance``.
+
+    The edit path rebuilds the record from flat form fields, and those blocks
+    are not form fields. Without this, a note edit drops a key held in
+    ``secret_refs`` and turns a managed lifecycle back into ``external``.
+    ``updated`` changes in place. A field the caller names keeps the caller's value.
+    """
+    if isinstance(existing.get("secret_refs"), Mapping):
+        updated["secret_refs"] = {**copy.deepcopy(dict(existing["secret_refs"])), **updated.get("secret_refs", {})}
+    if isinstance(existing.get("lifecycle"), Mapping) and "lifecycle" not in named:
+        kept = copy.deepcopy(dict(existing["lifecycle"]))
+        for form_key, block_key in _LIFECYCLE_FORM_KEYS.items():
+            if form_key in named:
+                kept[block_key] = updated["lifecycle"][block_key]
+        updated["lifecycle"] = kept
+    for field in ("kind", "provenance"):
+        if field in existing and field not in named:
+            updated[field] = copy.deepcopy(existing[field])
+
+
 def remove_service_from_registry(
     registry: Mapping[str, Any], service_id: str
 ) -> dict[str, Any]:
