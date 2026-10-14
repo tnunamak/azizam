@@ -508,3 +508,24 @@ def test_a_rename_changes_nothing_about_how_the_gateway_talks_to_an_older_engine
     assert after["capabilities"] == before["capabilities"] == ["chat"]
     assert after["config"].get("protocol") == before["config"].get("protocol")
     assert after["config"]["native_passthrough"] is False
+
+
+def test_an_older_record_with_models_as_a_mapping_keeps_them_through_the_page(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    _silent(fake_upstreams, "mapped.fk.test")
+    registry = _registry(gateway)
+    record = service_registry.service_from_backend_config("mapped", {
+        "name": "Mapped", "host": "mapped.fk.test", "port": 80, "base_path": "/v1", "protocol": "openai-compatible",
+        "capabilities": ["chat"]}, source="ui")
+    record["config"]["models"] = {"existing-chat": {"upstream_model": "existing-upstream", "routing_hint": "keep-me"},
+                                  "slot": {"model_group": "public", "deployment": "real", "routing_hint": "keep-slot"}}
+    registry.setdefault("services", {})["mapped"] = record
+    _put_registry(gateway, registry)
+    view = owner.get("/admin/api/engines/mapped").json()["engine"]
+    assert [(m["id"], m["public_name"]) for m in view["models"]] == [("existing-upstream", "existing-chat"), ("real", "public")]
+    saved = _edit(owner, "mapped", {"definition": "openai-compatible", "name": "Mapped, renamed",
+                                    "models": view["models"], "values": {}})
+    assert saved.status_code == 200, saved.text
+    rows = {row["model_group"]: row for row in _record(gateway, "mapped")["config"]["models"]}
+    assert rows["existing-chat"]["upstream_model"] == "existing-upstream" and rows["existing-chat"]["routing_hint"] == "keep-me"
+    assert rows["public"]["upstream_model"] == "real" and rows["public"]["routing_hint"] == "keep-slot"
