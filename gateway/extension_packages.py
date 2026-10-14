@@ -161,6 +161,20 @@ def review_git_package_source(
         return _source_error(source, str(exc))
 
 
+def source_reads_gateway_host(source: Mapping[str, Any]) -> bool:
+    """True when a package source can read files on the gateway host.
+
+    A directory path does, and so does a git URL that is not plain ``https://``
+    (a local path, ``file://``, ``ssh://``). Only the owner may name those.
+    """
+    source_type = str(source.get("type") or source.get("kind") or "local_directory")
+    if source_type == "local_directory":
+        return True
+    if source_type in {"git", "github", "git_url"}:
+        return not git_url_is_https(_git_source_url(source))
+    return False
+
+
 def _git_source_url(source: Mapping[str, Any]) -> str:
     url = str(source.get("url") or source.get("repo_url") or "").strip()
     if url:
@@ -173,11 +187,26 @@ def _git_source_url(source: Mapping[str, Any]) -> str:
     return f"https://github.com/{repo}.git"
 
 
+def git_url_is_https(url: str) -> bool:
+    """True for a plain ``https://`` URL: the only kind that cannot reach the gateway host's files."""
+    return url.lower().startswith("https://") and "::" not in url
+
+
+def _check_git_arguments(url: str, ref: str) -> None:
+    """Refuse a URL or ref that git would read as an option or as a remote helper."""
+    for label, value in (("url", url), ("ref", ref)):
+        if value.startswith("-"):
+            raise ValueError(f"git extension package {label} cannot start with '-'")
+    if "::" in url:
+        raise ValueError("git extension package url cannot name a remote helper")
+
+
 def _clone_git_source(url: str, ref: str, target: Path) -> str:
+    _check_git_arguments(url, ref)
     target.parent.mkdir(parents=True, exist_ok=True)
-    _run_git(["git", "clone", "--depth", "1", url, str(target)])
+    _run_git(["git", "clone", "--depth", "1", "--", url, str(target)])
     if ref:
-        _run_git(["git", "-C", str(target), "fetch", "--depth", "1", "origin", ref])
+        _run_git(["git", "-C", str(target), "fetch", "--depth", "1", "origin", "--", ref])
         _run_git(["git", "-C", str(target), "checkout", "--detach", "FETCH_HEAD"])
     return _run_git(["git", "-C", str(target), "rev-parse", "HEAD"]).strip()
 

@@ -13,6 +13,7 @@ It intentionally keeps two planes separate:
 
 from __future__ import annotations
 
+import copy
 import functools
 import secrets
 import json
@@ -26,7 +27,7 @@ from fastapi import Request, status
 
 from gateway import admin_store, extension_packages, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
-from gateway.admin_api import AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
+from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
     CookieConfig,
     OIDCConfigError,
@@ -417,6 +418,10 @@ class AdminSQLiteStore:
             return None
         if "access_plan" in data or "owner_user_id" in data:
             self._require_owner_or_accountable(actor, str(before.get("owner_user_id") or ""))
+        self._require_actor_not_outranked(
+            actor, self._app_holder_roles(before),
+            "This App answers to the owner or to someone with more access than you, "
+            "so only a person with at least their access can change it.")
 
         name = None
         if "name" in data:
@@ -476,6 +481,10 @@ class AdminSQLiteStore:
         before = admin_store.get_app(app_id, path=self.path)
         if before is None:
             return None
+        self._require_actor_not_outranked(
+            actor, self._app_holder_roles(before),
+            "This App answers to the owner or to someone with more access than you, "
+            "so only a person with at least their access can turn it back on.")
         record = admin_store.enable_app(app_id, path=self.path)
         admin_store.record_audit(
             "app.enable",
@@ -579,6 +588,12 @@ class AdminSQLiteStore:
     def delete_trusted_address(
         self, *, app_id: str, entry_id: str, actor: AdminContext
     ) -> dict[str, Any] | None:
+        app = admin_store.get_app(app_id, path=self.path)
+        if app is not None:
+            self._require_actor_not_outranked(
+                actor, self._app_holder_roles(app),
+                "This App answers to the owner or to someone with more access than you, "
+                "so only a person with at least their access can remove its trusted addresses.")
         record = admin_store.delete_trusted_address(app_id, entry_id, path=self.path)
         if record is None:
             return None
@@ -790,11 +805,33 @@ class AdminSQLiteStore:
             base_dir=self.path.parent,
         )
 
+    def _settle_credential_bindings(
+        self, registry: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        """Normalize a registry about to be written; keep credential changes for the owner.
+
+        A credential reference names a secret the gateway holds, and the host of
+        its record decides where that secret is sent. An administrator may manage
+        services, but may not attach a credential to one, nor move a service that
+        carries one, nor give one a lifecycle driver (a driver runs commands or sends a
+        stored key to the record's host). When the owner does, the host the key is for
+        is recorded with it.
+        """
+        value = service_registry.normalize_service_registry(registry)
+        changed = service_registry.credential_binding_changes(self.get_service_registry(), value)
+        if not changed:
+            return value
+        if "owner" not in actor.roles:
+            raise PermissionError(
+                "Only the owner can attach a key to a service, move a service that has one, "
+                "or set a lifecycle driver on a service.")
+        return service_registry.bind_credential_origins(value, changed)
+
     def update_service_registry(
         self, *, data: Mapping[str, Any], actor: AdminContext,
         expected_generation: int,
     ) -> dict[str, Any]:
-        value = service_registry.normalize_service_registry(data)
+        value = self._settle_credential_bindings(data, actor)
         record = admin_store.write_service_registry_with_audit(
             value,
             expected_generation=expected_generation,
@@ -850,7 +887,7 @@ class AdminSQLiteStore:
         expected_generation: int,
         extra: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        value = service_registry.normalize_service_registry(registry)
+        value = self._settle_credential_bindings(registry, actor)
         record = admin_store.write_service_registry_with_audit(
             value,
             expected_generation=expected_generation,
@@ -931,6 +968,16 @@ class AdminSQLiteStore:
             for cfg_key, cfg_val in existing_config.items():
                 if cfg_key not in form_base:
                     form_base[cfg_key] = cfg_val
+            # A lifecycle driver kept only on the record (not in its config) must
+            # survive a partial edit: dropping it would count as removing a driver,
+            # which only the owner may do.
+            existing_lifecycle = existing.get("lifecycle")
+            if (
+                "lifecycle" not in form_base
+                and isinstance(existing_lifecycle, Mapping)
+                and existing_lifecycle.get("driver")
+            ):
+                form_base["lifecycle"] = copy.deepcopy(dict(existing_lifecycle))
             # Drop None values so they don't override defaults downstream, then
             # overlay the caller-supplied partial data.
             merged: dict[str, Any] = {
@@ -940,13 +987,15 @@ class AdminSQLiteStore:
         else:
             merged = dict(data)
         raw = service_registry.service_form_to_raw(merged)
-        registry, _record = service_registry.upsert_service_in_registry(
+        registry, record = service_registry.upsert_service_in_registry(
             current_registry,
             service_id=service_id,
             raw=raw,
             source="ui",
             replace=True,
         )
+        if existing is not None and not service_registry.is_litellm_service_record(sid, existing):
+            service_registry.carry_unnamed_record_fields(existing, record, named=data)
         return self._persist_service_registry(
             registry,
             action="operator.service.updated",
@@ -997,13 +1046,21 @@ class AdminSQLiteStore:
     def validate_extension_package_source(
         self, *, source: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
-        del actor
+        self._require_owner_for_host_source(source, actor)
         return extension_packages.validate_extension_package_source(source)
+
+    @staticmethod
+    def _require_owner_for_host_source(source: Mapping[str, Any], actor: AdminContext) -> None:
+        """A package source that reads files on the gateway host is for the owner only."""
+        if "owner" not in actor.roles and extension_packages.source_reads_gateway_host(source):
+            raise PermissionError(
+                "Only the owner can name a directory or a non-https git url as a package source.")
 
     def enable_extension_package(
         self, *, source: Mapping[str, Any], actor: AdminContext,
         expected_generation: int,
     ) -> dict[str, Any]:
+        self._require_owner_for_host_source(source, actor)
         review = extension_packages.validate_extension_package_source(
             source,
             install_root=self.path.parent / "extensions" / "installed",
@@ -1024,7 +1081,9 @@ class AdminSQLiteStore:
             workflows=imported["workflows"],
             capabilities=imported["capabilities"],
         )
-        registry = service_registry.normalize_service_registry(registry)
+        # A package is data the administrator picked, not the owner: it gets the
+        # same credential and lifecycle checks as a registry edit.
+        registry = self._settle_credential_bindings(registry, actor)
         package_index = extension_packages.merge_package_index(
             self.get_extension_package_index(),
             review,
@@ -1261,7 +1320,7 @@ class AdminSQLiteStore:
         their own power.
         """
         if self._role_rank(holder_roles) > self._role_rank(actor.roles):
-            raise PermissionError(message)
+            raise ActorOutranked(message)
 
     def _app_holder_roles(self, app: Mapping[str, Any] | None) -> frozenset[str]:
         """Control-plane roles of the person an App answers to."""

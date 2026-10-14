@@ -37,7 +37,7 @@ def _auth(request: Request) -> AdminContext:
     token = request.headers.get("authorization", "")
     if token != "Bearer admin":
         raise AdminAuthError()
-    return AdminContext(subject="usr_admin", roles=frozenset({"admin"}))
+    return AdminContext(subject="usr_owner", roles=frozenset({"owner"}))
 
 
 def _member_auth(request: Request) -> AdminContext:

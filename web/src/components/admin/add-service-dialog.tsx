@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { api, ApiError, queryKeys, type ServiceRegistry } from "@/lib/api";
+import { useViewer } from "@/components/shell/session";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -60,13 +61,17 @@ function emptyFormState(): ServiceFormState {
   return { name: "", preset: "", base_url: "", api_key_env: "" };
 }
 
-function formToApiBody(state: ServiceFormState): Record<string, unknown> {
+function formToApiBody(
+  state: ServiceFormState,
+  canAttachKey: boolean,
+): Record<string, unknown> {
   const body: Record<string, unknown> = {
     name: state.name.trim(),
     preset: state.preset,
     base_url: state.base_url.trim(),
   };
-  if (state.api_key_env.trim()) body.api_key_env = state.api_key_env.trim();
+  if (canAttachKey && state.api_key_env.trim())
+    body.api_key_env = state.api_key_env.trim();
   return body;
 }
 
@@ -114,6 +119,9 @@ export function AddServiceDialogContent({
     queryFn: api.services.presets,
   });
   const presets = data?.presets ?? [];
+  // Attaching a key to a service sends the owner's secret to its host.
+  const viewer = useViewer();
+  const canAttachKey = !(viewer.admin && viewer.role !== "owner");
   const [form, setForm] = useState<ServiceFormState>(emptyFormState);
   const [formError, setFormError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<
@@ -132,7 +140,7 @@ export function AddServiceDialogContent({
   }, [formError]);
 
   const save = useMutation({
-    mutationFn: () => api.services.add(formToApiBody(form)),
+    mutationFn: () => api.services.add(formToApiBody(form, canAttachKey)),
     onSuccess: onSaved,
     onError: (err) => {
       setFormError(errorMessage(err));
@@ -377,13 +385,17 @@ export function AddServiceDialogContent({
             </Field>
             <Field
               label="Key environment variable"
-              help="Enter the gateway's environment variable name, not the key."
+              help={
+                canAttachKey
+                  ? "Enter the gateway's environment variable name, not the key."
+                  : "Only the owner can change this."
+              }
             >
               <Input
-                value={form.api_key_env}
+                value={canAttachKey ? form.api_key_env : ""}
                 onChange={set("api_key_env")}
                 placeholder="e.g. SERVICE_API_KEY"
-                disabled={save.isPending}
+                disabled={save.isPending || !canAttachKey}
               />
             </Field>
             <Button

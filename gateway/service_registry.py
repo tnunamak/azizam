@@ -22,7 +22,7 @@ import hashlib
 import json
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -30,6 +30,7 @@ from typing import Any
 import yaml
 
 from gateway import admin_store
+from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
 from gateway.manifests import manifest_identity, validate_manifest
@@ -156,7 +157,7 @@ def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, An
             },
         )
 
-    return normalize_service_registry({
+    seeded = normalize_service_registry({
         "schema_version": SERVICE_REGISTRY_SCHEMA_VERSION,
         "services": services,
         "protocol_frontends": catalogs.get("protocol_frontends") or {},
@@ -171,6 +172,8 @@ def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, An
         ),
         "updated_at": int(time.time()),
     })
+    # The seed comes from the operator's own files, so a key it names is meant for the host it names.
+    return bind_credential_origins(seeded, seeded["services"])
 
 
 def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -871,6 +874,198 @@ def is_remote_provider_config(config: Mapping[str, Any]) -> bool:
     )
 
 
+# -- where a record's credential goes ---------------------------------------
+# A credential reference is a name the compiler turns into a secret
+# (``os.environ/NAME``). Whoever can attach one, or move the host that holds
+# one, decides where that secret is sent. These helpers find both so a caller
+# can hold them back for the owner. They name no engine.
+
+CREDENTIAL_REFERENCE_KEYS = ("api_key_env", "api_key_ref", "api_key_secret_id")
+_ENV_REFERENCE_PREFIX = "os.environ/"
+_ENDPOINT_KEYS = (
+    "base_url", "api_base", "default_base_url", "host", "port", "scheme", "base_path",
+)
+LIFECYCLE_BASE_KEY = "gateway_lifecycle_base_url"
+
+
+def service_base_url(config: Mapping[str, Any]) -> str:
+    raw = str(
+        config.get("base_url")
+        or config.get("api_base")
+        or config.get("default_base_url")
+        or ""
+    ).strip()
+    if raw:
+        return raw.rstrip("/")
+    host = str(config.get("host") or "").strip()
+    port = config.get("port")
+    if not host or port is None:
+        return ""
+    scheme = str(config.get("scheme") or "http").strip() or "http"
+    base_path = str(config.get("base_path") or "/v1").strip() or "/v1"
+    return f"{scheme}://{host}:{port}/{base_path.strip('/')}".rstrip("/")
+
+
+def origin_of(url: str) -> str:
+    """Scheme, host and port of a URL, or ``""`` when it is not an HTTP(S) URL."""
+    try:
+        return credential_origin_from_url(url)
+    except Exception:  # noqa: BLE001 - an unreadable URL has no origin
+        return ""
+
+
+_REFERENCE_KEY_SUFFIXES = ("_env", "_ref", "_secret_id")
+_EXTERNAL_DRIVER = "external"
+
+
+def _names_credential(key: str) -> bool:
+    """Deny by default: a key that looks like it names a secret is treated as one.
+
+    Matches ``credential_origin``, ``api_key`` and any key ending in ``_env``,
+    ``_ref`` or ``_secret_id``, at any depth and in any block of the record.
+    """
+    lowered = key.strip().lower()
+    return (
+        lowered in ("credential_origin", "api_key")
+        or lowered.endswith(_REFERENCE_KEY_SUFFIXES)
+        or (is_secret_key(lowered) and is_secret_reference_key(lowered))
+    )
+
+
+def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
+    """Every field of a service record that names a credential, keyed by its path.
+
+    The whole record is scanned (``config``, ``secret_refs``, the ``lifecycle``
+    block and anything else), so a new block cannot become a place to hide a
+    key reference.
+    """
+    found: dict[str, str] = {}
+
+    def walk(value: Any, path: str) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                here = f"{path}.{key}" if path else str(key)
+                if _names_credential(str(key)) or path == "secret_refs":
+                    found[here] = repr(item)
+                else:
+                    walk(item, here)
+        elif isinstance(value, (list, tuple)):
+            for index, item in enumerate(value):
+                walk(item, f"{path}[{index}]")
+        elif isinstance(value, str) and value.strip().lower().startswith(_ENV_REFERENCE_PREFIX):
+            found[path] = repr(value)
+
+    walk(record, "")
+    return found
+
+
+def _driven_lifecycle_blocks(record: Mapping[str, Any]) -> frozenset[str]:
+    """The record's lifecycle blocks that name a driver, as comparable text.
+
+    Looks at the record's ``lifecycle`` block and at the copy the form path keeps
+    in ``config``. Blocks that name no driver (or ``external``) are left out.
+    """
+    config = record.get("config")
+    blocks = [record.get("lifecycle"), config.get("lifecycle") if isinstance(config, Mapping) else None]
+    return frozenset(json.dumps(block, sort_keys=True, default=str) for block in blocks if _is_driven(block))
+
+
+def _is_driven(block: Any) -> bool:
+    """True when a lifecycle block names a driver other than ``external``."""
+    if not isinstance(block, Mapping):
+        return False
+    for field in ("driver", "type"):
+        name = str(block.get(field) or "").strip().lower()
+        if name and name != _EXTERNAL_DRIVER:
+            return True
+    return False
+
+
+def lifecycle_driver_changed(before: Mapping[str, Any], after: Mapping[str, Any]) -> bool:
+    """Whether a lifecycle block that names a driver was created, changed or removed.
+
+    A driver other than ``external`` runs commands on the host or sends a stored
+    key to the record's host, so only the owner may set, change or remove one.
+    A block that stays as it is, and an ``external`` block, are not changes.
+    """
+    return _driven_lifecycle_blocks(before) != _driven_lifecycle_blocks(after)
+
+
+# Config fields whose value makes the gateway touch the host's files or processes.
+# ``config_path`` is where the compiled LiteLLM config is written.
+OWNER_ONLY_CONFIG_KEYS = ("config_path",)
+
+
+def _reads_process_command_lines(config: Mapping[str, Any]) -> bool:
+    """True when ``aux`` asks the gateway to read the command lines of host processes."""
+    aux = config.get("aux")
+    return isinstance(aux, Mapping) and aux.get("probe") == "process-cmdline"
+
+
+def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[str, str]:
+    url = service_base_url(config)
+    return (origin_of(url) or url, str(config.get(LIFECYCLE_BASE_KEY) or ""))
+
+
+def credential_binding_changes(
+    old_registry: Mapping[str, Any], new_registry: Mapping[str, Any]
+) -> dict[str, list[str]]:
+    """Services whose credential or credential host differs between two registries.
+
+    A service is listed when it gains or changes a credential reference, when it
+    sets the base of the gateway's own internal key, when it already carries a
+    credential and its origin moves, when its lifecycle driver is set, changed
+    or removed (a driver runs commands or sends a stored key), or when it sets a
+    field that makes the gateway write a file or read process command lines.
+    The value says which.
+    """
+    old = (normalize_service_registry(old_registry).get("services")) or {}
+    new = (normalize_service_registry(new_registry).get("services")) or {}
+    changed: dict[str, list[str]] = {}
+    for service_id, record in new.items():
+        before = old.get(service_id) or {}
+        refs, prior = credential_references(record), credential_references(before)
+        reasons = [path for path, value in refs.items() if prior.get(path) != value]
+        config = record.get("config") or {}
+        before_config = before.get("config") or {}
+        if config.get(LIFECYCLE_BASE_KEY) and config.get(LIFECYCLE_BASE_KEY) != before_config.get(LIFECYCLE_BASE_KEY):
+            reasons.append(f"config.{LIFECYCLE_BASE_KEY}")
+        if prior and _endpoint_fingerprint(config) != _endpoint_fingerprint(before_config):
+            reasons.append("host")
+        if lifecycle_driver_changed(before, record):
+            reasons.append("lifecycle")
+        for key in OWNER_ONLY_CONFIG_KEYS:
+            if config.get(key) and config.get(key) != before_config.get(key):
+                reasons.append(f"config.{key}")
+        if _reads_process_command_lines(config) and config.get("aux") != before_config.get("aux"):
+            reasons.append("config.aux")
+        if reasons:
+            changed[service_id] = reasons
+    return changed
+
+
+def bind_credential_origins(
+    registry: Mapping[str, Any], service_ids: Iterable[str]
+) -> dict[str, Any]:
+    """Record, for each named service, the origin its credential was attached for.
+
+    Only the owner reaches this: it states "this key goes to this host". The
+    compiler sends a local service's key only to the origin recorded here.
+    """
+    out = normalize_service_registry(registry)
+    for service_id in service_ids:
+        record = out["services"].get(service_id)
+        if record is None:
+            continue
+        config = record["config"]
+        if is_remote_provider_config(config) or not any(config.get(key) for key in CREDENTIAL_REFERENCE_KEYS):
+            continue
+        origin = origin_of(str(config.get(LIFECYCLE_BASE_KEY) or "") or service_base_url(config))
+        if origin:
+            config["credential_origin"] = origin
+    return out
+
+
 def is_litellm_service_record(raw_id: Any, service: Mapping[str, Any]) -> bool:
     """Return whether a service record declares the LiteLLM execution substrate."""
     service_id = str(service.get("id") or raw_id or "").strip().lower()
@@ -1063,6 +1258,34 @@ def upsert_service_in_registry(
     out["updated_at"] = int(time.time())
     out = normalize_service_registry(out)
     return out, out["services"][sid]
+
+
+# Top-level record fields a service edit form has no widget for. A partial edit
+# must carry them over unless the caller names them.
+_LIFECYCLE_FORM_KEYS = {"lifecycle_type": "type", "managed": "managed", "service_name": "service_name"}
+
+
+def carry_unnamed_record_fields(
+    existing: Mapping[str, Any], updated: dict[str, Any], *, named: Mapping[str, Any]
+) -> None:
+    """Keep what a partial edit did not name: ``secret_refs``, ``lifecycle``, ``kind``, ``provenance``.
+
+    The edit path rebuilds the record from flat form fields, and those blocks
+    are not form fields. Without this, a note edit drops a key held in
+    ``secret_refs`` and turns a managed lifecycle back into ``external``.
+    ``updated`` changes in place. A field the caller names keeps the caller's value.
+    """
+    if isinstance(existing.get("secret_refs"), Mapping):
+        updated["secret_refs"] = {**copy.deepcopy(dict(existing["secret_refs"])), **updated.get("secret_refs", {})}
+    if isinstance(existing.get("lifecycle"), Mapping) and "lifecycle" not in named:
+        kept = copy.deepcopy(dict(existing["lifecycle"]))
+        for form_key, block_key in _LIFECYCLE_FORM_KEYS.items():
+            if form_key in named:
+                kept[block_key] = updated["lifecycle"][block_key]
+        updated["lifecycle"] = kept
+    for field in ("kind", "provenance"):
+        if field in existing and field not in named:
+            updated[field] = copy.deepcopy(existing[field])
 
 
 def remove_service_from_registry(
@@ -1567,7 +1790,7 @@ def split_secret_refs(raw: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str,
     secret_refs: dict[str, Any] = {}
     for key, value in raw.items():
         key_str = str(key)
-        if is_secret_key(key_str) and not is_secret_reference_key(key_str):
+        if is_secret_key(key_str) and not is_secret_reference_key(key_str) and key_str != "credential_origin":
             secret_refs[key_str] = "<external-secret>"
             continue
         safe[key_str] = copy.deepcopy(value)

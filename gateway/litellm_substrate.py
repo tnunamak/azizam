@@ -33,10 +33,13 @@ from gateway.service_registry import (
     is_remote_provider_config,
     normalize_service_record,
     normalize_string_list,
+    origin_of,
+    service_base_url,
 )
 
 OPENAI_COMPATIBLE_PROTOCOLS = frozenset({"openai", "openai-compatible"})
 SECRET_PLACEHOLDER = "<external-secret>"
+LOCAL_NO_AUTH_API_KEY = "sk-local"
 DEFAULT_GATEWAY_LIFECYCLE_BASE_URL = "http://127.0.0.1:5000/internal/litellm/local"
 DEFAULT_GATEWAY_CURRENT_BASE_URL = "http://127.0.0.1:5000/internal/litellm/current/v1"
 DEFAULT_GATEWAY_LIFECYCLE_API_KEY_REF = "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"
@@ -395,7 +398,7 @@ def _model_list_entries(
     secret_refs = (
         service.get("secret_refs") if isinstance(service.get("secret_refs"), Mapping) else {}
     )
-    base_url = _service_base_url(config)
+    base_url = service_base_url(config)
 
     out: list[dict[str, Any]] = []
     for deployment in deployments:
@@ -416,10 +419,7 @@ def _model_list_entries(
                 config,
                 backend=gateway_backend,
             )
-            litellm_params["api_key"] = str(
-                config.get("gateway_lifecycle_api_key_ref")
-                or DEFAULT_GATEWAY_LIFECYCLE_API_KEY_REF
-            )
+            litellm_params["api_key"] = _lifecycle_api_key(config, litellm_params["api_base"])
             model_info.update(
                 {
                     "gateway_lifecycle": True,
@@ -430,7 +430,7 @@ def _model_list_entries(
         else:
             if is_remote_provider_config(config) and not base_url:
                 raise ValueError("remote provider requires an explicit api_base")
-            api_key_ref = _api_key_ref(config, secret_refs)
+            api_key_ref = _api_key_ref(config, secret_refs, base_url)
             if base_url:
                 litellm_params["api_base"] = base_url
             if api_key_ref:
@@ -438,7 +438,7 @@ def _model_list_entries(
             elif base_url:
                 # The OpenAI SDK requires a key even for no-auth custom endpoints.
                 # Container DNS and LAN addresses are as valid as loopback here.
-                litellm_params["api_key"] = "sk-local"
+                litellm_params["api_key"] = LOCAL_NO_AUTH_API_KEY
             if is_remote_provider_config(config):
                 litellm_params["num_retries"] = 0
                 litellm_params["max_retries"] = 0
@@ -567,25 +567,33 @@ def _litellm_model_name(upstream_model: str, *, provider: str = "") -> str:
     return f"openai/{upstream_model}"
 
 
-def _service_base_url(config: Mapping[str, Any]) -> str:
-    raw = str(
-        config.get("base_url")
-        or config.get("api_base")
-        or config.get("default_base_url")
-        or ""
-    ).strip()
-    if raw:
-        return raw.rstrip("/")
-    host = str(config.get("host") or "").strip()
-    port = config.get("port")
-    if not host or port is None:
+def _credential_bound_to(config: Mapping[str, Any], api_base: str) -> bool:
+    """True when the origin recorded for this record's credential is the origin of ``api_base``.
+
+    Only the owner records an origin (see ``service_registry.bind_credential_origins``).
+    A record written any other way has none, so its credential reference is not emitted.
+    """
+    recorded = origin_of(str(config.get("credential_origin") or "").strip())
+    return bool(recorded) and recorded == origin_of(api_base)
+
+
+def _lifecycle_api_key(config: Mapping[str, Any], api_base: str) -> str:
+    """The key for a gateway-lifecycle deployment: the gateway's own, only for the gateway's own base."""
+    if (
+        origin_of(api_base) == origin_of(DEFAULT_GATEWAY_LIFECYCLE_BASE_URL)
+        or _credential_bound_to(config, api_base)
+    ):
+        return str(
+            config.get("gateway_lifecycle_api_key_ref")
+            or DEFAULT_GATEWAY_LIFECYCLE_API_KEY_REF
+        )
+    return LOCAL_NO_AUTH_API_KEY
+
+
+def _api_key_ref(config: Mapping[str, Any], secret_refs: Mapping[str, Any], api_base: str = "") -> str:
+    if not is_remote_provider_config(config) and not _credential_bound_to(config, api_base):
+        # A local record names a key; send it only to the host it was attached for.
         return ""
-    scheme = str(config.get("scheme") or "http").strip() or "http"
-    base_path = str(config.get("base_path") or "/v1").strip() or "/v1"
-    return f"{scheme}://{host}:{port}/{base_path.strip('/')}".rstrip("/")
-
-
-def _api_key_ref(config: Mapping[str, Any], secret_refs: Mapping[str, Any]) -> str:
     env_name = config.get("api_key_env") or config.get("api_key_ref")
     if env_name:
         if is_remote_provider_config(config):

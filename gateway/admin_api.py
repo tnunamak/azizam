@@ -90,6 +90,10 @@ class AdminKeyNameTaken(ValueError):
     """The name of a new admin key is already in use."""
 
 
+class ActorOutranked(PermissionError):
+    """The App or key belongs to someone with more access than the administrator acting on it."""
+
+
 class AdminAuthError(Exception):
     """Raised by an injected auth callable to deny a request.
 
@@ -1130,6 +1134,10 @@ def _auth_error_response(exc: AdminAuthError) -> JSONResponse:
     )
 
 
+def _app_outranks_you(exc: Exception) -> JSONResponse:
+    return _RouteError(status.HTTP_403_FORBIDDEN, "app_outranks_you", str(exc)).as_response()
+
+
 def _owner_required(exc: Exception) -> JSONResponse:
     return _RouteError(status.HTTP_403_FORBIDDEN, "owner_required", str(exc)).as_response()
 
@@ -1896,6 +1904,8 @@ def create_admin_router(
                 ).as_response()
         try:
             record = store.update_app(app_id=app_id, data=body, actor=ctx)
+        except ActorOutranked as exc:
+            return _app_outranks_you(exc)
         except PermissionError as exc:
             return _owner_required(exc)
         except ValueError as exc:
@@ -1922,9 +1932,7 @@ def create_admin_router(
         try:
             record = store.disable_app(app_id=app_id, actor=ctx)
         except PermissionError as exc:
-            return _RouteError(
-                status.HTTP_403_FORBIDDEN, "app_outranks_you", str(exc),
-            ).as_response()
+            return _app_outranks_you(exc)
         if record is None:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND,
@@ -1947,7 +1955,10 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        record = store.enable_app(app_id=app_id, actor=ctx)
+        try:
+            record = store.enable_app(app_id=app_id, actor=ctx)
+        except PermissionError as exc:
+            return _app_outranks_you(exc)
         if record is None:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND,
@@ -2001,7 +2012,10 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        record = store.delete_trusted_address(app_id=app_id, entry_id=entry_id, actor=ctx)
+        try:
+            record = store.delete_trusted_address(app_id=app_id, entry_id=entry_id, actor=ctx)
+        except PermissionError as exc:
+            return _app_outranks_you(exc)
         if record is None:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND, "trusted_address_not_found", "That trusted address was not found.",
@@ -2393,6 +2407,8 @@ def create_admin_router(
             )
         except _RouteError as exc:
             return exc.as_response()
+        except PermissionError as exc:
+            return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
         except ValueError as exc:
@@ -2470,6 +2486,8 @@ def create_admin_router(
             )
         except _RouteError as exc:
             return exc.as_response()
+        except PermissionError as exc:
+            return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
         except ValueError as exc:
@@ -2499,6 +2517,8 @@ def create_admin_router(
             )
         except _RouteError as exc:
             return exc.as_response()
+        except PermissionError as exc:
+            return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
         except ValueError as exc:
@@ -2775,6 +2795,8 @@ def create_admin_router(
             )
         except _RouteError as exc:
             return exc.as_response()
+        except PermissionError as exc:
+            return _owner_required(exc)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"review": review},
@@ -2821,6 +2843,8 @@ def create_admin_router(
                 "extension_package_conflict",
                 str(exc),
             ).as_response()
+        except PermissionError as exc:
+            return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
         except ValueError as exc:

@@ -47,9 +47,12 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 # Schema 7 replaced profiles with access plans (gateway.access_plan_migration).
 _PRE_ACCESS_PLANS_VERSION = 6
+_ACCESS_PLANS_VERSION = 7
+# Schema 8 records the host each existing service credential was configured for
+# (gateway.credential_origin_migration).
 # The OIDC client secret lives in the encrypted secret store; the
 # oidc_provider_config setting holds only this reference to it.
 OIDC_CLIENT_SECRET_REF = "client_secret_ref"
@@ -350,7 +353,7 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         raise sqlite3.DatabaseError(
             f"admin_store schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
         )
-    elif int(row[0]) < SCHEMA_VERSION:
+    elif int(row[0]) < _ACCESS_PLANS_VERSION:
         # SQLite does not add columns through CREATE TABLE IF NOT EXISTS.
         # Keep the event-time actor label available to upgraded installations.
         columns = {row[1] for row in conn.execute("PRAGMA table_info(audit_events)")}
@@ -406,6 +409,13 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         from gateway import stt_chunk_transform_migration
 
         stt_chunk_transform_migration.migrate_registry(conn)
+    if row is not None and int(row[0]) < 8:
+        from gateway import credential_origin_migration
+
+        credential_origin_migration.migrate_registry(conn)
+        if int(row[0]) >= _ACCESS_PLANS_VERSION:
+            # Older databases reach SCHEMA_VERSION when they move to access plans below.
+            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()
     _backfill_credential_creators(conn)
     current = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()

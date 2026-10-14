@@ -988,3 +988,21 @@ it("does not offer 'Change access plan' to a member", async () => {
   await screen.findByRole("menuitem", { name: "Create another key" });
   expect(screen.queryByRole("menuitem", { name: "Change access plan" })).toBeNull();
 });
+
+it("offers an administrator no way to enable, rename or trust an address on an App", async () => {
+  // The page lists the signed-in person's own Apps. Re-enabling, renaming and trusted
+  // addresses on other people's Apps (the owner's included) answer 403 for an
+  // administrator, so none of those actions may appear here.
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    user: person("admin"),
+    apps: [planAccountApp],
+  });
+  renderApps({ ...owner, name: "Helper", role: "admin" });
+  await screen.findByRole("heading", { name: "Guide app" });
+  openMenu("Guide app");
+  await screen.findByRole("menuitem", { name: "Create another key" });
+  for (const name of [/enable/i, /rename/i, /trusted address/i, /undo/i]) {
+    expect(screen.queryByRole("menuitem", { name })).toBeNull();
+  }
+});
