@@ -235,29 +235,23 @@ def _person_with_app(owner, kind):
     return plan, person, app
 
 
-def test_a_person_the_category_rules_govern_by_name_gets_the_answer_a_request_gets(owner, category_gate):
-    """The preview carries the app's person, so a rule keyed to that person refuses here as it does there."""
-    plan, person, app = _person_with_app(owner, "personal")
-    _governing(category_gate, people=[person["id"]])
+@pytest.mark.parametrize("governed, kind", [
+    ("person", "personal"),  # rules name the app's person only: a request is refused for all of it
+    ("app", "service"),      # rules name the app only
+    ("both", "personal"),    # rules name both: only what they grant is allowed
+])
+def test_a_person_or_app_the_category_rules_govern_by_name_gets_the_answer_a_request_gets(owner, category_gate, governed, kind):
+    """The preview carries the app's id and person as a request does, so a rule keyed to either refuses here too."""
+    plan, person, app = _person_with_app(owner, kind)
+    _governing(category_gate, people=[person["id"]] if governed != "app" else [],
+               apps=[app["id"]] if governed != "person" else [])
     with fixture_catalog(CATALOG, VIEWS, REGISTRY):
         response = _post(owner, {"app": app["id"]})
     assert response.status_code == 200, response.text
     preview = response.json()
     entries = {e["id"]: e for e in preview["entries"]}
-    assert entries["chat-a"]["state"] == "allowed", entries["chat-a"]["rule"]
-    assert entries["chat-b"]["state"] == "blocked" and entries["chat-b"]["rule"]["kind"] == "category"
+    assert entries["chat-b"]["state"] == "blocked" and entries["chat-b"]["rule"]["kind"] == "category", entries["chat-b"]
+    if governed == "both":
+        assert entries["chat-a"]["state"] == "allowed", entries["chat-a"]["rule"]
     _compare(preview, EffectiveAccess(_plan_of(owner, plan), _plan_of(owner, plan)),
-             person_id=person["id"], app_id=app["id"])
-
-
-def test_an_app_the_category_rules_govern_by_name_gets_the_answer_a_request_gets(owner, category_gate):
-    plan, person, app = _person_with_app(owner, "service")
-    _governing(category_gate, apps=[app["id"]])
-    with fixture_catalog(CATALOG, VIEWS, REGISTRY):
-        response = _post(owner, {"app": app["id"]})
-    assert response.status_code == 200, response.text
-    preview = response.json()
-    entries = {e["id"]: e for e in preview["entries"]}
-    assert entries["chat-a"]["state"] == "allowed", entries["chat-a"]["rule"]
-    assert entries["chat-b"]["state"] == "blocked" and entries["chat-b"]["rule"]["kind"] == "category"
-    _compare(preview, EffectiveAccess(_plan_of(owner, plan), _plan_of(owner, plan)), app_id=app["id"])
+             person_id=person["id"] if kind == "personal" else None, app_id=app["id"])
