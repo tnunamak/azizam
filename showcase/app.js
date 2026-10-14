@@ -783,12 +783,44 @@
     return box;
   }
 
+  let replySequence = 0;
+  const replyObservers = [];
+
+  function expandableReply(content, text) {
+    content.id = "recorded-reply-" + (++replySequence);
+    content.classList.add("reply-body", "is-clamped");
+    const toggle = h("button", { class: "mini reply-toggle", type: "button",
+      text: "Show all", "aria-expanded": "false", "aria-controls": content.id,
+      hidden: String(text).split(/\r\n?|\n/).length <= 8 });
+    toggle.addEventListener("click", () => {
+      const expanded = toggle.getAttribute("aria-expanded") !== "true";
+      toggle.setAttribute("aria-expanded", String(expanded));
+      toggle.textContent = expanded ? "Show less" : "Show all";
+      content.classList.toggle("is-clamped", !expanded);
+    });
+    const box = h("div", { class: "recorded-reply" },
+      h("div", { class: "reply-surface" }, content), toggle);
+    // Measure wrapped lines too, including after filtering or changing width.
+    // Keep the expanded control available so the reader can always collapse it.
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(() => {
+        if (!content.getClientRects().length) return;
+        const limit = parseFloat(getComputedStyle(content).lineHeight) * 8;
+        toggle.hidden = toggle.getAttribute("aria-expanded") !== "true"
+          && content.scrollHeight <= limit + 1;
+      });
+      observer.observe(content);
+      replyObservers.push(observer);
+    }
+    return box;
+  }
+
   function outputBlock(o, ex) {
     const label = o.label ? h("div", { class: "io-label", text: o.label }) : null;
     if (o.kind === "text" || o.kind === "json") {
       const text = typeof o.text === "string" ? o.text : JSON.stringify(o.value ?? o.text, null, 2);
-      return h("div", { class: "io" }, label, o.kind === "text"
-        ? recordedText(text) : h("pre", { class: "out-text", text }));
+      return h("div", { class: "io" }, label, expandableReply(o.kind === "text"
+        ? recordedText(text) : h("pre", { class: "out-text", text }), text));
     }
     return h("div", { class: "io" }, label, recordedMedia(o.kind, ex.base + o.file, { loop: o.kind === "video" && ex.loop }));
   }
@@ -802,22 +834,22 @@
     const meta = [];
     const day = recordedDay(ex.recorded_at);
     if (day) meta.push(h("span", { class: "chip", text: "Recorded " + day }));
-    if (ex.seconds != null) meta.push(h("span", { class: "chip time", title: "Wall time of this request through the gateway, when it was recorded", text: "Ran in " + (ex.seconds < 90 ? ex.seconds.toFixed(1) + " s" : Math.round(ex.seconds) + " s") }));
     if (ex.model) meta.push(h("span", { class: "chip model", text: "Model name: " + ex.model }));
     for (const c of ex.chips || []) meta.push(h("span", { class: "chip", text: c }));
+    if (ex.seconds != null) meta.push(h("span", { class: "chip time", title: "Wall time of this request through the gateway, when it was recorded", text: "Ran in " + (ex.seconds < 90 ? ex.seconds.toFixed(1) + " s" : Math.round(ex.seconds) + " s") }));
     const parts = C.recordedParts(ex);
     const load = form && form._load && parts.inputs.some((i) => i.name)
       ? h("button", { class: "mini", type: "button", text: "Load into Try it", onclick: () => { const panel = form.closest("details"); panel._returnFocus = load; panel.open = true; form._load(ex); focusPanel(panel); } })
       : null;
     return h("div", { class: "example" },
-      h("div", { class: "io-row" },
-        h("div", { class: "io-col in" }, h("div", { class: "col-head", text: "Input" }),
-          parts.inputs.length ? parts.inputs.map((i) => inputBlock(i, ex)) : h("p", { class: "io-none", text: "Input was not recorded." })),
-        h("div", { class: "io-arrow", "aria-hidden": "true", text: "\u2192" }),
-        h("div", { class: "io-col out" }, h("div", { class: "col-head", text: "Output" }),
-          parts.outputs.map((o) => (o ? outputBlock(o, ex) : loadFailed(loadAll))))),
       ex.title ? h("div", { class: "ex-title", text: ex.title }) : null,
-      h("div", { class: "ex-meta" }, meta, load));
+      h("div", { class: "io-row" },
+        h("div", { class: "io-col in" }, h("div", { class: "col-head", text: "Request" }),
+          parts.inputs.length ? parts.inputs.map((i) => inputBlock(i, ex)) : h("p", { class: "io-none", text: "Input was not recorded." })),
+        h("div", { class: "io-col out" }, h("div", { class: "col-head", text: "Reply" }),
+          parts.outputs.map((o) => (o ? outputBlock(o, ex) : loadFailed(loadAll))),
+          meta.length ? h("div", { class: "ex-meta", "aria-label": "Recording details" }, meta) : null)),
+      load ? h("div", { class: "ex-actions" }, load) : null);
   }
 
   // --------------------------------------------------------------------- cards
@@ -937,6 +969,7 @@
   let selectedCapability = "all";
 
   function renderPage() {
+    replyObservers.splice(0).forEach((observer) => observer.disconnect());
     const sections = C.buildSections({
       sectionsDoc: state.data.sectionsDoc, workflows: state.data.workflows.workflows,
       openapi: state.data.openapi, capabilities: state.data.capabilities, aliases: state.data.aliases,
