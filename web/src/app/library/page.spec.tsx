@@ -1570,13 +1570,66 @@ describe("Library response and media boundaries", () => {
     queryClient.clear();
   });
 
-  test("a library load failure says what failed in the body", async () => {
-    routeFetch((path) =>
-      path.startsWith("/me/api/media?") ? Response.json({ error: { message: "boom" } }, { status: 503 }) : undefined,
-    );
+  test("a library load failure explains itself and retries the list", async () => {
+    let attempts = 0;
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? ++attempts === 1
+        ? Response.json({ error: { message: "boom" } }, { status: 503 })
+        : list([picture("recovered-list", "Recovered list")])
+      : undefined);
     renderLibrary();
     expect(await screen.findByText("Couldn’t load your library")).toBeVisible();
     expect(screen.getByText("The gateway couldn't load your library. Try again.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open Recovered list" })).not.toBeNull(), { onTimeout: (error) => error });
+    expect(screen.queryByText("Couldn’t load your library")).toBeNull();
+    expect(attempts).toBe(2);
+  });
+
+  test("appends a long second page using its opaque cursor and stops at the end", async () => {
+    const requests: URLSearchParams[] = [];
+    const first = Array.from({ length: 60 }, (_, i) => picture(`first-${i}`, `First ${i}`));
+    const second = Array.from({ length: 60 }, (_, i) => picture(`second-${i}`, `Second ${i}`));
+    routeFetch((path) => {
+      if (!path.startsWith("/me/api/media?")) return undefined;
+      const params = new URL(path, "https://test.invalid").searchParams;
+      requests.push(params);
+      return params.has("cursor") ? list(second) : list(first, { next_cursor: "next/+ &=" });
+    });
+    renderLibrary();
+    await screen.findByRole("button", { name: "Open First 59" });
+    expect(screen.queryByRole("button", { name: "Open Second 0" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await screen.findByRole("button", { name: "Open Second 59" });
+    const grid = screen.getByRole("group", { name: "Creations" });
+    expect(within(grid).getAllByRole("button", { name: /^Open / })).toHaveLength(120);
+    expect(within(grid).getByRole("button", { name: "Open First 0" })).toBeVisible();
+    expect(requests.map((params) => params.get("cursor"))).toEqual([null, "next/+ &="]);
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  test("changing kind after paging starts fresh and replaces the old pages", async () => {
+    const requests: URLSearchParams[] = [];
+    routeFetch((path) => {
+      if (!path.startsWith("/me/api/media?")) return undefined;
+      const params = new URL(path, "https://test.invalid").searchParams;
+      requests.push(params);
+      if (params.get("kind") === "image") return list([picture("filtered", "Filtered picture")]);
+      return params.has("cursor")
+        ? list([picture("old-second", "Old second page")])
+        : list([picture("old-first", "Old first page")], { next_cursor: "old-cursor" });
+    });
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    await screen.findByRole("button", { name: "Open Old second page" });
+    fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open Filtered picture" })).not.toBeNull(), { onTimeout: (error) => error });
+    expect(screen.queryByRole("button", { name: "Open Old first page" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open Old second page" })).toBeNull();
+    expect(requests.map((params) => [params.get("kind"), params.get("cursor")])).toEqual([
+      [null, null], [null, "old-cursor"], ["image", null],
+    ]);
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
   test("a creation dialog is named by its prompt and shows a text workflow in Details", async () => {
