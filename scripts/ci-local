@@ -323,6 +323,18 @@ if ((browser_ready)); then
   mkdir -p "$run/browser-results" "$run/state"
   rm -rf "$work/web/test-results"  # nothing before this point writes there
   ln -s "$run/browser-results" "$work/web/test-results"
+  # The static checks (lint and react-doctor) run beside the browsers and keep
+  # tool caches under web/. Route those two cache directories to scratch
+  # outside the tree first, so e2e-tree-unchanged still proves that nothing
+  # else, and no browser test, writes into the shared build tree.
+  for cache in .next/cache/eslint node_modules/.cache; do
+    target="$run/static-cache/${cache//\//_}"
+    mkdir -p "$target" "$(dirname "$work/web/$cache")"
+    if [[ -e $work/web/$cache && ! -L $work/web/$cache ]]; then
+      cp -a "$work/web/$cache/." "$target/" && rm -rf "$work/web/$cache"
+    fi
+    ln -sfn "$target" "$work/web/$cache"
+  done
   touch "$run/browser-start"
   for i in 0 1 2; do
     start_job "$work/web" bash -c '
