@@ -26,7 +26,7 @@ from fastapi import Request, status
 
 from gateway import admin_store, extension_packages, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
-from gateway.admin_api import AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
+from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
     CookieConfig,
     OIDCConfigError,
@@ -417,6 +417,10 @@ class AdminSQLiteStore:
             return None
         if "access_plan" in data or "owner_user_id" in data:
             self._require_owner_or_accountable(actor, str(before.get("owner_user_id") or ""))
+        self._require_actor_not_outranked(
+            actor, self._app_holder_roles(before),
+            "This App answers to the owner or to someone with more access than you, "
+            "so only a person with at least their access can change it.")
 
         name = None
         if "name" in data:
@@ -476,6 +480,10 @@ class AdminSQLiteStore:
         before = admin_store.get_app(app_id, path=self.path)
         if before is None:
             return None
+        self._require_actor_not_outranked(
+            actor, self._app_holder_roles(before),
+            "This App answers to the owner or to someone with more access than you, "
+            "so only a person with at least their access can turn it back on.")
         record = admin_store.enable_app(app_id, path=self.path)
         admin_store.record_audit(
             "app.enable",
@@ -579,6 +587,12 @@ class AdminSQLiteStore:
     def delete_trusted_address(
         self, *, app_id: str, entry_id: str, actor: AdminContext
     ) -> dict[str, Any] | None:
+        app = admin_store.get_app(app_id, path=self.path)
+        if app is not None:
+            self._require_actor_not_outranked(
+                actor, self._app_holder_roles(app),
+                "This App answers to the owner or to someone with more access than you, "
+                "so only a person with at least their access can remove its trusted addresses.")
         record = admin_store.delete_trusted_address(app_id, entry_id, path=self.path)
         if record is None:
             return None
@@ -790,11 +804,30 @@ class AdminSQLiteStore:
             base_dir=self.path.parent,
         )
 
+    def _settle_credential_bindings(
+        self, registry: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        """Normalize a registry about to be written; keep credential changes for the owner.
+
+        A credential reference names a secret the gateway holds, and the host of
+        its record decides where that secret is sent. An administrator may manage
+        services, but may not attach a credential to one, nor move a service that
+        carries one. When the owner does, the host the key is for is recorded with it.
+        """
+        value = service_registry.normalize_service_registry(registry)
+        changed = service_registry.credential_binding_changes(self.get_service_registry(), value)
+        if not changed:
+            return value
+        if "owner" not in actor.roles:
+            raise PermissionError(
+                "Only the owner can attach a key to a service or move a service that has one.")
+        return service_registry.bind_credential_origins(value, changed)
+
     def update_service_registry(
         self, *, data: Mapping[str, Any], actor: AdminContext,
         expected_generation: int,
     ) -> dict[str, Any]:
-        value = service_registry.normalize_service_registry(data)
+        value = self._settle_credential_bindings(data, actor)
         record = admin_store.write_service_registry_with_audit(
             value,
             expected_generation=expected_generation,
@@ -850,7 +883,7 @@ class AdminSQLiteStore:
         expected_generation: int,
         extra: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        value = service_registry.normalize_service_registry(registry)
+        value = self._settle_credential_bindings(registry, actor)
         record = admin_store.write_service_registry_with_audit(
             value,
             expected_generation=expected_generation,
@@ -1243,7 +1276,7 @@ class AdminSQLiteStore:
         their own power.
         """
         if self._role_rank(holder_roles) > self._role_rank(actor.roles):
-            raise PermissionError(message)
+            raise ActorOutranked(message)
 
     def _app_holder_roles(self, app: Mapping[str, Any] | None) -> frozenset[str]:
         """Control-plane roles of the person an App answers to."""

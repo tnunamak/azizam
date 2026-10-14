@@ -169,6 +169,15 @@ def create_provider_admin_router(
     def _guard(request: Request) -> AdminContext | JSONResponse:
         return _require_admin(auth, request)
 
+    def _owner_guard(request: Request) -> AdminContext | JSONResponse:
+        """Admit only the owner: every write here moves the owner's money or provider keys."""
+        ctx = _require_admin(auth, request)
+        if isinstance(ctx, AdminContext) and "owner" not in ctx.roles:
+            return _RouteError(
+                status.HTTP_403_FORBIDDEN, "owner_required", "Only the owner can change this.",
+            ).as_response()
+        return ctx
+
     @router.get("")
     def list_providers(request: Request) -> JSONResponse:
         ctx = _guard(request)
@@ -195,7 +204,7 @@ def create_provider_admin_router(
 
     @router.post("")
     async def add_provider(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = _owner_guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -300,7 +309,7 @@ def create_provider_admin_router(
         provider_id: str,
         reservation_id: int,
     ) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = _owner_guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -340,7 +349,7 @@ def create_provider_admin_router(
 
     @router.put("/{provider_id}/key")
     async def set_provider_key(request: Request, provider_id: str) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = _owner_guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -369,7 +378,7 @@ def create_provider_admin_router(
 
     @router.delete("/{provider_id}/key")
     def delete_provider_key(request: Request, provider_id: str) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = _owner_guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -386,7 +395,7 @@ def create_provider_admin_router(
 
     @router.post("/-/test")
     async def test_unsaved_provider(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = _owner_guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -405,7 +414,7 @@ def create_provider_admin_router(
 
     @router.post("/{provider_id}/test")
     async def test_provider(request: Request, provider_id: str) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = _owner_guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         provider = _one_provider_payload(store, effective_spending_provider, provider_id)
@@ -448,7 +457,7 @@ def create_provider_admin_router(
 
     @router.put("/{provider_id}/models")
     async def update_provider_models(request: Request, provider_id: str) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = _owner_guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -493,7 +502,7 @@ def create_provider_admin_router(
 
     @router.delete("/{provider_id}")
     async def remove_provider(request: Request, provider_id: str) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = _owner_guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -526,7 +535,7 @@ def create_provider_admin_router(
 
     @router.put("/{provider_id}/caps")
     async def set_provider_caps(request: Request, provider_id: str) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = _owner_guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -544,7 +553,7 @@ def create_provider_admin_router(
 
     @router.delete("/{provider_id}/caps")
     def clear_provider_caps(request: Request, provider_id: str) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = _owner_guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -561,7 +570,7 @@ def create_provider_admin_router(
 
     @router.put("/-/global-caps")
     async def set_global_caps(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = _owner_guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -579,7 +588,7 @@ def create_provider_admin_router(
 
     @router.delete("/-/global-caps")
     def clear_global_caps(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = _owner_guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         with secret_store.provider_mutation_lock(_admin_db_path(store)):

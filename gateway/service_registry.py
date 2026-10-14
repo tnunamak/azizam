@@ -22,7 +22,7 @@ import hashlib
 import json
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -30,6 +30,7 @@ from typing import Any
 import yaml
 
 from gateway import admin_store
+from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
 from gateway.manifests import manifest_identity, validate_manifest
@@ -156,7 +157,7 @@ def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, An
             },
         )
 
-    return normalize_service_registry({
+    seeded = normalize_service_registry({
         "schema_version": SERVICE_REGISTRY_SCHEMA_VERSION,
         "services": services,
         "protocol_frontends": catalogs.get("protocol_frontends") or {},
@@ -171,6 +172,8 @@ def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, An
         ),
         "updated_at": int(time.time()),
     })
+    # The seed comes from the operator's own files, so a key it names is meant for the host it names.
+    return bind_credential_origins(seeded, seeded["services"])
 
 
 def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -864,6 +867,130 @@ def is_remote_provider_config(config: Mapping[str, Any]) -> bool:
         or bool_from_config(config.get("remote_provider"), False)
         or bool_from_config(config.get("paid_remote"), False)
     )
+
+
+# -- where a record's credential goes ---------------------------------------
+# A credential reference is a name the compiler turns into a secret
+# (``os.environ/NAME``). Whoever can attach one, or move the host that holds
+# one, decides where that secret is sent. These helpers find both so a caller
+# can hold them back for the owner. They name no engine.
+
+CREDENTIAL_REFERENCE_KEYS = ("api_key_env", "api_key_ref", "api_key_secret_id")
+_ENV_REFERENCE_PREFIX = "os.environ/"
+_ENDPOINT_KEYS = (
+    "base_url", "api_base", "default_base_url", "host", "port", "scheme", "base_path",
+)
+_LIFECYCLE_BASE_KEY = "gateway_lifecycle_base_url"
+
+
+def service_base_url(config: Mapping[str, Any]) -> str:
+    raw = str(
+        config.get("base_url")
+        or config.get("api_base")
+        or config.get("default_base_url")
+        or ""
+    ).strip()
+    if raw:
+        return raw.rstrip("/")
+    host = str(config.get("host") or "").strip()
+    port = config.get("port")
+    if not host or port is None:
+        return ""
+    scheme = str(config.get("scheme") or "http").strip() or "http"
+    base_path = str(config.get("base_path") or "/v1").strip() or "/v1"
+    return f"{scheme}://{host}:{port}/{base_path.strip('/')}".rstrip("/")
+
+
+def origin_of(url: str) -> str:
+    """Scheme, host and port of a URL, or ``""`` when it is not an HTTP(S) URL."""
+    try:
+        return credential_origin_from_url(url)
+    except Exception:  # noqa: BLE001 - an unreadable URL has no origin
+        return ""
+
+
+def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
+    """Every field of a service record that names a credential, keyed by its path."""
+    found: dict[str, str] = {}
+
+    def walk(value: Any, path: str) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                here = f"{path}.{key}" if path else str(key)
+                if str(key) == "credential_origin" or (
+                    is_secret_key(str(key)) and is_secret_reference_key(str(key))
+                ):
+                    found[here] = repr(item)
+                else:
+                    walk(item, here)
+        elif isinstance(value, (list, tuple)):
+            for index, item in enumerate(value):
+                walk(item, f"{path}[{index}]")
+        elif isinstance(value, str) and value.strip().lower().startswith(_ENV_REFERENCE_PREFIX):
+            found[path] = repr(value)
+
+    config = record.get("config")
+    walk(config if isinstance(config, Mapping) else {}, "config")
+    refs = record.get("secret_refs")
+    if isinstance(refs, Mapping):
+        for key, item in refs.items():
+            if str(key) != "credential_origin":
+                found[f"secret_refs.{key}"] = repr(item)
+    return found
+
+
+def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[str, str]:
+    url = service_base_url(config)
+    return (origin_of(url) or url, str(config.get(_LIFECYCLE_BASE_KEY) or ""))
+
+
+def credential_binding_changes(
+    old_registry: Mapping[str, Any], new_registry: Mapping[str, Any]
+) -> dict[str, list[str]]:
+    """Services whose credential or credential host differs between two registries.
+
+    A service is listed when it gains or changes a credential reference, when it
+    sets the base of the gateway's own internal key, or when it already carries a
+    credential and its origin moves. The value says which.
+    """
+    old = (normalize_service_registry(old_registry).get("services")) or {}
+    new = (normalize_service_registry(new_registry).get("services")) or {}
+    changed: dict[str, list[str]] = {}
+    for service_id, record in new.items():
+        before = old.get(service_id) or {}
+        refs, prior = credential_references(record), credential_references(before)
+        reasons = [path for path, value in refs.items() if prior.get(path) != value]
+        config = record.get("config") or {}
+        before_config = before.get("config") or {}
+        if config.get(_LIFECYCLE_BASE_KEY) and config.get(_LIFECYCLE_BASE_KEY) != before_config.get(_LIFECYCLE_BASE_KEY):
+            reasons.append(f"config.{_LIFECYCLE_BASE_KEY}")
+        if prior and _endpoint_fingerprint(config) != _endpoint_fingerprint(before_config):
+            reasons.append("host")
+        if reasons:
+            changed[service_id] = reasons
+    return changed
+
+
+def bind_credential_origins(
+    registry: Mapping[str, Any], service_ids: Iterable[str]
+) -> dict[str, Any]:
+    """Record, for each named service, the origin its credential was attached for.
+
+    Only the owner reaches this: it states "this key goes to this host". The
+    compiler sends a local service's key only to the origin recorded here.
+    """
+    out = normalize_service_registry(registry)
+    for service_id in service_ids:
+        record = out["services"].get(service_id)
+        if record is None:
+            continue
+        config = record["config"]
+        if is_remote_provider_config(config) or not any(config.get(key) for key in CREDENTIAL_REFERENCE_KEYS):
+            continue
+        origin = origin_of(str(config.get(_LIFECYCLE_BASE_KEY) or "") or service_base_url(config))
+        if origin:
+            config["credential_origin"] = origin
+    return out
 
 
 def is_litellm_service_record(raw_id: Any, service: Mapping[str, Any]) -> bool:
@@ -1562,7 +1689,7 @@ def split_secret_refs(raw: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str,
     secret_refs: dict[str, Any] = {}
     for key, value in raw.items():
         key_str = str(key)
-        if is_secret_key(key_str) and not is_secret_reference_key(key_str):
+        if is_secret_key(key_str) and not is_secret_reference_key(key_str) and key_str != "credential_origin":
             secret_refs[key_str] = "<external-secret>"
             continue
         safe[key_str] = copy.deepcopy(value)

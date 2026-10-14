@@ -2289,6 +2289,7 @@ class AdminOperatorOverrideTests(unittest.TestCase):
                         "protocol": "openai-compatible",
                         "base_url": "http://127.0.0.1:8081/v1",
                         "api_key_env": "LOCAL_LLM_KEY",
+                        "credential_origin": "http://127.0.0.1:8081",
                         "models": [
                             {
                                 "id": "assistant-default",
