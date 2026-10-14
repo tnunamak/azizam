@@ -314,10 +314,14 @@ fi
 # outside the tree; e2e-tree-unchanged fails if anything else in web/ changes.
 # Ports: the main pool +10 and its global-state server +20 (one invocation
 # with --browser-workers workers over --browser-servers servers; extra pool
-# servers at +50 and +60), live-data +30, household +40.
+# servers at +50 and +60; a second global-state server at +70), live-data +30,
+# household +40.
 browser_names=(e2e-main e2e-live-data e2e-household)
 browser_configs=(playwright.config.ts playwright.live-data.config.ts playwright.household.config.ts)
 browser_ports=($((port + 10)) $((port + 30)) $((port + 40)))
+# The main suite splits its @global-state tests over two serial servers
+# (web/playwright.config.ts, second server at its port +60, so +70 here).
+browser_globals=(2 1 1)
 if ((browser_ready)); then
   mkdir -p "$run/browser-results" "$run/state"
   rm -rf "$work/web/test-results"  # nothing before this point writes there
@@ -330,6 +334,7 @@ if ((browser_ready)); then
       step "$name" "$@"
       exit "$failed"
     ' _ "${browser_names[i]}" env UI_E2E_PORT="${browser_ports[i]}" UI_E2E_WORKERS="$browser_workers" UI_E2E_POOL="$browser_servers" \
+      UI_E2E_GLOBAL="${browser_globals[i]}" \
       UI_E2E_STATE_ROOT="$run/state/${browser_names[i]}" UI_E2E_RUN_ID="$seed" UI_E2E_PYTHON="$work/venv/bin/python" \
       CASE_RECEIPTS_FILE="$receipts/raw/${browser_names[i]}.cases.jsonl" \
       ./node_modules/.bin/playwright test --config "${browser_configs[i]}"
