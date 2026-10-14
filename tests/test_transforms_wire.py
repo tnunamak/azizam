@@ -511,3 +511,20 @@ def test_a_final_lone_cr_is_flushed_as_a_rewritten_data_line_terminator(monkeypa
     assert oversized.process_chunk(raw) == expected[:-1]
     assert oversized._raw_carry == b"\r"
     assert oversized.finish() == b"\r"
+
+
+def test_the_sse_line_splitter_returns_each_terminated_line_and_no_empty_tail():
+    assert t._split_sse_lines("") == []
+    assert t._split_sse_lines("a\nb\r\nc\r") == [("a", "\n"), ("b", "\r\n"), ("c", "\r")]
+    assert t._split_sse_lines("a\n\n") == [("a", "\n"), ("", "\n")]
+    assert t._split_sse_lines("a\nb") == [("a", "\n"), ("b", "")]
+    assert t._split_sse_lines("a\r", final=False) == []
+    assert t._split_sse_lines("a\r\n", final=False) == [("a", "\r\n")]
+
+
+@pytest.mark.parametrize("chunk", [b": data: x\n", b": data: x\r\n", b"xdata: x\r", b""])
+def test_a_complete_line_that_only_contains_data_is_passed_on_at_once(chunk):
+    transform = StreamingThinkSplitTransform()
+    expected = chunk[:-1] if chunk.endswith(b"\r") else chunk
+    assert transform.process_chunk(chunk) == expected
+    assert transform._raw_carry == (b"\r" if chunk.endswith(b"\r") else b"")
