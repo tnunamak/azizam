@@ -551,3 +551,47 @@ it("resets a source-only empty result to all sources from its empty-state action
   expect(screen.getByRole("combobox", { name: "Person" })).toHaveFocus();
   expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
 });
+
+it("groups receipt facts and hides raw fields until Technical details is opened", async () => {
+  mountOutcome({ status: "success", latency_ms: 1250, error_code: "private-reason" });
+  await userEvent.click(await screen.findByRole("button", { name: /Request details:/ }));
+  const dialog = screen.getByRole("dialog");
+  const sheet = within(dialog);
+  expect(sheet.getAllByRole("heading").map((heading) => heading.textContent)).toEqual([
+    "Chat", "Request", "Model and where it ran", "Time and cost", "Outcome",
+  ]);
+  const request = sheet.getByRole("heading", { name: "Request" }).closest("section")!;
+  expect(within(request).getByText("Person").nextElementSibling).toHaveTextContent("Mira");
+  expect(within(request).getByText("App").nextElementSibling).toHaveTextContent("Notes");
+  const model = sheet.getByRole("heading", { name: "Model and where it ran" }).closest("section")!;
+  expect(within(model).getByText("Where it ran").nextElementSibling)
+    .toHaveTextContent("See Technical details for recorded routing, when available.");
+  const timing = sheet.getByRole("heading", { name: "Time and cost" }).closest("section")!;
+  expect(within(timing).getByText("Time taken").nextElementSibling).toHaveTextContent("1.3 s");
+  expect(within(timing).getByText("Spend").nextElementSibling).toHaveTextContent("Cost not recorded");
+  expect(sheet.getAllByText("Completed")).toHaveLength(1);
+  const details = sheet.getByText("Technical details").closest("details")!;
+  expect(details).not.toHaveAttribute("open");
+  expect(within(details).getByLabelText("Technical request details")).not.toBeVisible();
+  const summary = dialog.cloneNode(true) as HTMLElement;
+  summary.querySelectorAll("details").forEach((node) => node.remove());
+  expect(summary.textContent).not.toContain("private-reason");
+  await userEvent.click(sheet.getByText("Technical details"));
+  expect(details).toHaveAttribute("open");
+  expect(within(details).getByLabelText("Technical request details")).toHaveTextContent("private-reason");
+  await userEvent.click(sheet.getByText("Technical details"));
+  expect(details).not.toHaveAttribute("open");
+});
+
+it.each([
+  [0, "0 ms"],
+  [125, "125 ms"],
+  [1000, "1.0 s"],
+  [null, "Duration not recorded"],
+] as const)("keeps duration units and missing values in Time and cost (%s)", async (latency_ms, expected) => {
+  mountOutcome({ status: "success", latency_ms });
+  await userEvent.click(await screen.findByRole("button", { name: /Request details:/ }));
+  const section = within(screen.getByRole("dialog"))
+    .getByRole("heading", { name: "Time and cost" }).closest("section")!;
+  expect(within(section).getByText("Time taken").nextElementSibling).toHaveTextContent(expected);
+});
