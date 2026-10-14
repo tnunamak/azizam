@@ -420,7 +420,8 @@ it("empty request filters have one reset action that restores the unfiltered sta
   expect(region).toHaveAccessibleDescription("Receipts show request outcomes from your apps and devices; none match these filters.");
   expect(within(region).getAllByRole("button")).toHaveLength(1);
   expect(within(region).queryByRole("link")).toBeNull();
-  await user.click(within(region).getByRole("button", { name: "Clear filters" }));
+  expect(screen.getByRole("button", { name: "Clear filters" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Clear filters and show all requests" }));
   expect(await screen.findByRole("region", { name: "No request receipts yet" })).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Everyone");
 });
@@ -545,7 +546,8 @@ it("resets a source-only empty result to all sources from its empty-state action
   expect(region).toHaveAccessibleDescription("Receipts show request outcomes from your apps and devices; none match these filters.");
   await waitFor(() => expect(requestUrls.at(-1)).toContain("source=reader-app"));
   expect(requestUrls.at(-1)).not.toContain("person_id");
-  await user.click(within(region).getByRole("button", { name: "Clear filters" }));
+  expect(screen.getByRole("button", { name: "Clear filters" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Clear filters and show all requests" }));
   expect(await screen.findByRole("region", { name: "No request receipts yet" })).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Source" })).toHaveTextContent("All sources");
   expect(screen.getByRole("combobox", { name: "Person" })).toHaveFocus();
