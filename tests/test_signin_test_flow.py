@@ -722,3 +722,68 @@ def test_the_one_time_note_from_the_upgrade_can_be_dismissed_and_stays_dismissed
 
     assert dismissed.status_code == 200 and dismissed.json()["notice"] is None
     assert get_snapshot(owner)["notice"] is None
+
+
+# ---------------------------------------------------------------------------
+# The same address written another way is the same provider
+# ---------------------------------------------------------------------------
+
+SAME_PROVIDER = [ISSUER + "/", "HTTPS://ID.Example/realms/home", "https://id.example/realms/home/ "]
+
+
+@pytest.mark.parametrize("written", SAME_PROVIDER)
+def test_an_address_that_differs_only_by_a_slash_or_host_case_is_the_same_provider(sg, written):
+    sg.set_rules([TRUSTED])
+    owner = owner_client(sg)
+    snapshot = get_snapshot(owner)
+    wider = {"fallback": "closed", "rules": [*snapshot["rules"]["rules"], rule("domain", ["example.test"], admit=True, id="d")]}
+    body = proposal(snapshot, address=written, rules=wider)
+
+    result = preview(owner, body)
+
+    # No new secret, no new test, nobody signed out.
+    assert result["issuer_change"] is None and result["blockers"] == []
+    saved = save(owner, snapshot, body)
+    assert saved.status_code == 200, saved.text
+    # The issuer a sign-in compares character for character is the one already stored.
+    stored = sg.proxy.ADMIN_STORE.get_oidc_config_setting_raw()
+    assert stored["issuer"] == ISSUER
+    assert owner.get("/admin/api/signin").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# A password sign-in lifts the pause an address change put on personal keys
+# ---------------------------------------------------------------------------
+
+def test_a_member_of_the_old_address_with_a_password_gets_their_keys_back_by_signing_in_with_it(sg):
+    from gateway import admin_runtime
+    from gateway.runtime_auth import hash_api_key
+
+    sg.set_rules([TRUSTED, domain_rule("example.test")])
+    owner = owner_client(sg)
+    signed_in(sg, sub="member", email="member@example.test")
+    member_id = user_id(sg, "member@example.test")
+    password = "a sufficiently long password"
+    admin_store.set_local_password_verifier(member_id, accounts.hash_password(password), path=sg.path)
+    app = admin_store.ensure_personal_app_for_user(member_id, name="personal", path=sg.path)
+    key_hash = hash_api_key("opk_member")
+    admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=key_hash,
+                                       prefix="opk_membe", created_by=member_id, path=sg.path)
+    snapshot = get_snapshot(owner)
+    test = begin(owner, snapshot, address=OTHER_ISSUER, client_secret="typed-again")
+    finish(sg, owner, test, sub="owner-at-id2", email=OWNER)
+    saved = save(owner, snapshot, proposal(snapshot, address=OTHER_ISSUER, client_secret="typed-again"),
+                 test_id=test["test_id"])
+    assert saved.status_code == 200, saved.text
+    paused = admin_runtime.runtime_identity_for_app_credential_hash(key_hash, path=sg.path)
+    assert paused is not None and paused.denial == "person_signin_refused"
+
+    wrong = sg.client().post("/auth/api/login", json={"email": "member@example.test", "password": "not the password"})
+    assert wrong.status_code == 401
+    assert admin_runtime.runtime_identity_for_app_credential_hash(key_hash, path=sg.path).denial == "person_signin_refused"
+    login = sg.client().post("/auth/api/login", json={"email": "member@example.test", "password": password})
+
+    assert login.status_code == 200, login.text
+    again = admin_runtime.runtime_identity_for_app_credential_hash(key_hash, path=sg.path)
+    assert again is not None and again.denial is None
+    assert sg.rows("SELECT user_id FROM account_signin_refusals") == []
