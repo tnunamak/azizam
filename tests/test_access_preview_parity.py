@@ -188,7 +188,8 @@ def test_an_app_is_judged_by_both_of_its_plans_exactly_as_a_request_is(owner):
 
 
 def test_when_the_rules_cannot_be_read_enforcement_refuses_and_check_access_says_it_cannot_tell(owner, category_gate):
-    plan = store_plan("Everything", path=owner.db)
+    # A plan that passes every item, so the category rules are what decide each one.
+    plan = store_plan("Everything", path=owner.db, paid=[PAID], engines="all", operations=["*"])
     activate(category_gate, rules(adult_visible_to=[]))
     with sqlite3.connect(category_gate) as conn:
         conn.execute("DROP TRIGGER IF EXISTS policy_snapshots_no_update")
