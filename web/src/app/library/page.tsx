@@ -2252,7 +2252,7 @@ export default function LibraryPage() {
   const [closedDeepLinkId, setClosedDeepLinkId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
   const [deleteAnnouncement, setDeleteAnnouncement] = useState("");
-  const loadMoreRequest = useRef<{ path: string; ids: Set<string>; pages: number } | null>(null);
+  const [loadMoreRequest, setLoadMoreRequest] = useState<{ path: string; ids: Set<string>; pages: number } | null>(null);
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
     null,
   );
@@ -2475,29 +2475,36 @@ export default function LibraryPage() {
     [goneAssets],
   );
   const [goneOpen, setGoneOpen] = useState(false);
+  const [loadMoreFocus, setLoadMoreFocus] = useState<string | null>(null);
   function loadMore() {
-    if (isFetchingNextPage || loadMoreRequest.current) return;
-    loadMoreRequest.current = { path: mediaPath, ids: new Set(assets.map((asset) => asset.asset_id)), pages: mediaPages.length };
+    if (isFetchingNextPage || loadMoreRequest) return;
+    setLoadMoreRequest({ path: mediaPath, ids: new Set(assets.map((asset) => asset.asset_id)), pages: mediaPages.length });
     setDeleteAnnouncement("");
     void fetchNextPage();
   }
-  useEffect(() => {
-    const request = loadMoreRequest.current;
-    if (!request) return;
-    if (request.path !== mediaPath || isFetchNextPageError) {
-      loadMoreRequest.current = null;
-      return;
-    }
-    if (isFetchingNextPage || mediaPages.length <= request.pages) return;
-    const added = assets.filter((asset) => !request.ids.has(asset.asset_id));
-    if (added[0]?.available === false && !goneOpen) {
+  // A finished "Load more" announces what it added and moves focus to the first new tile.
+  // When the first new tile is a removed creation, the removed section opens first so the
+  // tile is visible. All of this is adjusted during render; only the focus move is an effect.
+  const loadMoreStale = loadMoreRequest && (loadMoreRequest.path !== mediaPath || isFetchNextPageError);
+  if (loadMoreStale) setLoadMoreRequest(null);
+  const loadedMore = useMemo(
+    () => loadMoreRequest && !loadMoreStale && !isFetchingNextPage && mediaPages.length > loadMoreRequest.pages
+      ? assets.filter((asset) => !loadMoreRequest.ids.has(asset.asset_id))
+      : null,
+    [assets, loadMoreRequest, loadMoreStale, mediaPages.length, isFetchingNextPage],
+  );
+  if (loadedMore) {
+    if (loadedMore[0]?.available === false && !goneOpen) {
       setGoneOpen(true);
-      return;
+    } else {
+      setLoadMoreRequest(null);
+      setDeleteAnnouncement(`${loadedMore.length} more creations loaded`);
+      setLoadMoreFocus(loadedMore[0]?.asset_id ?? null);
     }
-    loadMoreRequest.current = null;
-    setDeleteAnnouncement(`${added.length} more creations loaded`);
-    if (added[0]) focusTile(added[0].asset_id, removedAssetIds.current, headingRef.current);
-  }, [assets, mediaPath, mediaPages.length, isFetchingNextPage, isFetchNextPageError, goneOpen]);
+  }
+  useEffect(() => {
+    if (loadMoreFocus) focusTile(loadMoreFocus, removedAssetIds.current, headingRef.current);
+  }, [loadMoreFocus]);
   const visiblePeople = useMemo(
     () => instanceView
       ? Array.from(

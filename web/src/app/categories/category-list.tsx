@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Layers, Plus } from "lucide-react";
 import { adminFetch, ApiError, api, queryKeys } from "@/lib/api";
@@ -70,13 +70,13 @@ export function CategoryList({ active, catalog, presets, catalogLoading, catalog
   const planName = (id: string) => !plans ? "…" : plans.find((plan) => plan.id === id)?.name ?? "a removed access plan";
   const categoryDialog = adding ? { kind: "category" as const, id: null } : dialog;
 
-  useEffect(() => {
-    if (error === staleMessage && categoryDialog?.kind === "category" && categoryDialog.id && !snapshot.categories[categoryDialog.id]) {
-      setDialog(null);
-      setError("");
-      setStatus("This category was deleted while you were editing.");
-    }
-  }, [categoryDialog, snapshot.categories, error]);
+  // The category being edited was deleted elsewhere: leave its editor and say why.
+  // Adjusted during render, so the stale editor never paints.
+  if (error === staleMessage && categoryDialog?.kind === "category" && categoryDialog.id && !snapshot.categories[categoryDialog.id]) {
+    setDialog(null);
+    setError("");
+    setStatus("This category was deleted while you were editing.");
+  }
 
   function close() {
     setDialog(null);
@@ -182,8 +182,10 @@ function CategoryDialog({ category, recovery, plans, plansUnavailable, onRetryPl
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [recoveredCategory, setRecoveredCategory] = useState(category);
   const [appliedRecovery, setAppliedRecovery] = useState(recovery);
-  useEffect(() => {
-    if (!recovery) return;
+  // After a stale-save recovery the latest saved values replace the form. The recovered
+  // category and applied counter record what the form last took, so this runs once per
+  // recovery or category change, during render.
+  if (recovery && (recoveredCategory !== category || appliedRecovery !== recovery)) {
     setLabel(category?.label ?? "");
     setDescription(category?.description ?? "");
     setVisibility(category ? visibilityOf(category) : "owner");
@@ -191,11 +193,11 @@ function CategoryDialog({ category, recovery, plans, plansUnavailable, onRetryPl
     setConfirmDelete(false);
     setRecoveredCategory(category);
     setAppliedRecovery(recovery);
-  }, [category, recovery]);
+  }
   const changed = label !== (category?.label ?? "") || description !== (category?.description ?? "")
     || visibility !== (category ? visibilityOf(category) : "owner")
     || (visibility === "plans" && (chosen.length !== (category?.visible_to ?? []).length || chosen.some((id) => !category?.visible_to?.includes(id))));
-  const valid = (!recovery || (appliedRecovery === recovery && recoveredCategory === category && changed)) && label.trim().length > 0 && (visibility !== "plans" || chosen.length > 0);
+  const valid = (!recovery || changed) && label.trim().length > 0 && (visibility !== "plans" || chosen.length > 0);
   return <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
     <DialogContent>
       <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); if (valid && !busy) void onSubmit({ label, description, visibility, plans: chosen }); }}>
