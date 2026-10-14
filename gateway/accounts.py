@@ -241,8 +241,10 @@ def login(email: str, password: str, ip: str, *, path: Path) -> dict:
     throttle(ip, email, path=path)
     email = email.strip().lower()
     with connection(path) as conn:
+        # A password row exists only for people who may use it: people the owner invited
+        # by password, and the owner, who can set one whatever provider made their account.
         row = conn.execute("SELECT u.*,p.verifier FROM users u JOIN local_password_credentials p "
-                           "ON p.user_id=u.id WHERE LOWER(u.email)=? AND u.issuer='local'", (email,)).fetchone()
+                           "ON p.user_id=u.id WHERE LOWER(u.email)=? ORDER BY u.created_at LIMIT 1", (email,)).fetchone()
     valid = verify_password(password, row["verifier"] if row else _DUMMY_VERIFIER)
     state = access(row["id"], path=path) if row else None
     if not valid or not row or (state and (state["disabled_at"] is not None or state["removed_at"] is not None)):
@@ -342,7 +344,11 @@ def accept_invite(token: str, email: str, name: str, password: str | None, *, pa
             if not user or (user["email"] or "").lower() != email:
                 raise AccountError("identity_mismatch", "Sign in with the invited account.", 403)
             state = conn.execute("SELECT * FROM account_access WHERE user_id=?", (oidc_user_id,)).fetchone()
-            if state and (state["plan_id"] or state["removed_at"] is not None):
+            rule_plan = bool(state and state["plan_id"] and conn.execute(
+                "SELECT 1 FROM signin_rule_plans WHERE user_id=? AND plan_id=?",
+                (oidc_user_id, state["plan_id"])).fetchone())
+            # A plan only a sign-in rule gave does not count: the invitation's plan beats it.
+            if state and ((state["plan_id"] and not rule_plan) or state["removed_at"] is not None):
                 raise AccountError("account_exists", "This account already has an access plan.", 409)
             user_id = oidc_user_id
         else:
@@ -354,6 +360,8 @@ def accept_invite(token: str, email: str, name: str, password: str | None, *, pa
         # The invitation's plan was previewed when it was sent (design §2.12).
         conn.execute("INSERT INTO account_access(user_id,plan_id) VALUES(?,?) ON CONFLICT(user_id) "
                      "DO UPDATE SET plan_id=excluded.plan_id", (user_id, link["plan_id"]))
+        # The invitation's plan beats any sign-in rule from now on.
+        conn.execute("DELETE FROM signin_rule_plans WHERE user_id=?", (user_id,))
         app_id, credential_id = _id("app"), _id("cred")
         conn.execute("INSERT INTO apps(id,kind,name,owner_user_id,access_plan,created_at) VALUES(?,?,?,?,'person',?)",
                      (app_id, "personal", "My first app", user_id, ts))
@@ -440,6 +448,8 @@ def change_person(user_id: str, actor: str, *, path: Path, plan_id: Any = _UNCHA
             if plan_id is not None:
                 _valid_plan(conn, plan_id)
             conn.execute("UPDATE account_access SET plan_id=? WHERE user_id=?", (plan_id, user_id))
+            # A plan set by hand is the owner's, not a sign-in rule's: rules never touch it.
+            conn.execute("DELETE FROM signin_rule_plans WHERE user_id=?", (user_id,))
         if disabled is not None or remove:
             conn.execute("UPDATE account_access SET disabled_at=?,removed_at=?,require_registered_session=1 WHERE user_id=?",
                          (ts if disabled or remove else None, ts if remove else None, user_id))

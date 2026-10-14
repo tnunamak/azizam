@@ -1474,10 +1474,6 @@ _OIDC_CONFIG_FIELDS = frozenset(
         "client_secret",
         "redirect_uri",
         "scopes",
-        "allowed_email_domains",
-        "admin_emails",
-        "admin_groups",
-        "admin_roles",
         "authorization_endpoint",
         "token_endpoint",
         "jwks_uri",
@@ -1499,15 +1495,7 @@ _OIDC_STRING_FIELDS = frozenset(
         "display_name",
     }
 )
-_OIDC_LIST_FIELDS = frozenset(
-    {
-        "scopes",
-        "allowed_email_domains",
-        "admin_emails",
-        "admin_groups",
-        "admin_roles",
-    }
-)
+_OIDC_LIST_FIELDS = frozenset({"scopes"})
 
 
 def _validate_oidc_config_payload(payload: Mapping[str, Any]) -> dict[str, Any]:

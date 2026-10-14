@@ -175,9 +175,12 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
     @router.post("/auth/api/login")
     def login(request: Request, body: Login):
         same_origin(request)
-        if not options()["built_in"]:
-            raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
         user = accounts.login(body.email, body.password, client_ip(request), path=path_provider())
+        # The owner's own password always works. For everyone else the switch decides,
+        # and only a correct password learns that it is off.
+        if not options()["built_in"] and "owner" not in admin_store.effective_admin_roles(
+                "user", user["id"], path=path_provider()):
+            raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
         return issue(user, {"next": safe_browser_return_to(body.return_to)})
 
     @router.post("/auth/api/invite")

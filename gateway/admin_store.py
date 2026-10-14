@@ -47,12 +47,17 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 # Schema 7 replaced profiles with access plans (gateway.access_plan_migration).
 _PRE_ACCESS_PLANS_VERSION = 6
 _ACCESS_PLANS_VERSION = 7
 # Schema 8 records the host each existing service credential was configured for
 # (gateway.credential_origin_migration).
+_CREDENTIAL_ORIGIN_VERSION = 8
+# Schema 9 moves the sign-in allow-lists into sign-in rules and marks the
+# administrator grants the identity provider gave
+# (gateway.signin_rules_migration).
+_SIGNIN_RULES_VERSION = 9
 # The OIDC client secret lives in the encrypted secret store; the
 # oidc_provider_config setting holds only this reference to it.
 OIDC_CLIENT_SECRET_REF = "client_secret_ref"
@@ -245,6 +250,32 @@ CREATE TABLE IF NOT EXISTS audit_events (
 CREATE INDEX IF NOT EXISTS audit_created_at ON audit_events(created_at);
 CREATE INDEX IF NOT EXISTS audit_target ON audit_events(target_kind, target_id);
 
+-- Sign-in rules (gateway.signin_rules). A person's plan is rule-given while
+-- this row names it; a plan set by hand or carried by an invitation has no row.
+CREATE TABLE IF NOT EXISTS signin_rule_plans (
+  user_id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL,
+  set_at INTEGER NOT NULL
+);
+-- A provider identity the owner linked to an existing person, so the same
+-- person signs in with a password and with the provider.
+CREATE TABLE IF NOT EXISTS oidc_identity_links (
+  issuer TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  linked_at INTEGER NOT NULL,
+  linked_by TEXT,
+  PRIMARY KEY(issuer, subject)
+);
+-- Group, role and email values a test sign-in saw for an identity that is not
+-- a person yet. Real sign-ins are in user_identity_claims.
+CREATE TABLE IF NOT EXISTS signin_seen_values (
+  kind TEXT NOT NULL,
+  value TEXT NOT NULL,
+  seen_at INTEGER NOT NULL,
+  PRIMARY KEY(kind, value)
+);
+
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """
 
@@ -409,12 +440,18 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         from gateway import stt_chunk_transform_migration
 
         stt_chunk_transform_migration.migrate_registry(conn)
-    if row is not None and int(row[0]) < 8:
+    if row is not None and int(row[0]) < _CREDENTIAL_ORIGIN_VERSION:
         from gateway import credential_origin_migration
 
         credential_origin_migration.migrate_registry(conn)
         if int(row[0]) >= _ACCESS_PLANS_VERSION:
             # Older databases reach SCHEMA_VERSION when they move to access plans below.
+            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+    if row is not None and int(row[0]) < _SIGNIN_RULES_VERSION:
+        from gateway import signin_rules_migration
+
+        signin_rules_migration.migrate(conn)
+        if int(row[0]) >= _ACCESS_PLANS_VERSION:
             conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()
     _backfill_credential_creators(conn)
@@ -796,7 +833,9 @@ def upsert_oidc_user(
 
     Updates ``email``/``display_name``/``last_login_at`` while preserving the
     generated ``id`` so downstream references (apps, credentials, role
-    assignments) stay intact.
+    assignments) stay intact. An identity the owner linked to an existing
+    person signs in as that person, and changes only their last sign-in time:
+    the provider does not get to rename or re-email an account it did not create.
     """
     if not issuer or not subject:
         raise ValueError("issuer and subject are required")
@@ -806,7 +845,17 @@ def upsert_oidc_user(
             "SELECT id FROM users WHERE issuer = ? AND subject = ?",
             (issuer, subject),
         ).fetchone()
+        linked = None
         if row is None:
+            linked = conn.execute(
+                "SELECT user_id FROM oidc_identity_links WHERE issuer = ? AND subject = ?",
+                (issuer, subject),
+            ).fetchone()
+        if linked is not None:
+            user_id = linked["user_id"]
+            conn.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (ts, user_id))
+            _insert_account_access(conn, user_id)
+        elif row is None:
             user_id = _gen_id("usr")
             conn.execute(
                 "INSERT INTO users(id, issuer, subject, email, display_name, "
@@ -841,11 +890,19 @@ def get_user(user_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
 
 
 def find_oidc_user(issuer: str, subject: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
-    """The person with this ``(issuer, subject)``, or None. Never creates one."""
+    """The person with this ``(issuer, subject)``, or None. Never creates one.
+
+    An identity the owner linked to a person finds that person.
+    """
     with _conn(path) as conn:
         row = conn.execute(
             "SELECT * FROM users WHERE issuer = ? AND subject = ?", (issuer, subject)
         ).fetchone()
+        if row is None:
+            row = conn.execute(
+                "SELECT u.* FROM oidc_identity_links l JOIN users u ON u.id = l.user_id "
+                "WHERE l.issuer = ? AND l.subject = ?", (issuer, subject),
+            ).fetchone()
     return _row_to_dict(row)
 
 
@@ -894,6 +951,24 @@ def find_user_by_email(
     sql += " ORDER BY created_at ASC LIMIT 1"
     with _conn(path) as conn:
         row = conn.execute(sql, params).fetchone()
+    return _row_to_dict(row)
+
+
+def find_password_user_by_email(email: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """The person with this email who has a local password, whatever their issuer.
+
+    The owner may have been made by the identity provider and later set a
+    password so they can always get in; a password row exists only for people
+    who can use it.
+    """
+    needle = (email or "").strip().lower()
+    if not needle:
+        return None
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT u.* FROM users u JOIN local_password_credentials p ON p.user_id = u.id "
+            "WHERE LOWER(u.email) = ? ORDER BY u.created_at ASC LIMIT 1", (needle,),
+        ).fetchone()
     return _row_to_dict(row)
 
 
@@ -1323,13 +1398,24 @@ def delete_access_plan(plan_id: str, *, path: Path = DB_PATH) -> dict[str, Any] 
                          f"({', '.join(users['apps'][:5])})")
         if users["invites"]:
             parts.append(f"{users['invites']} open invitation{'' if users['invites'] == 1 else 's'}")
+        rules_row = conn.execute("SELECT value_json FROM operator_settings WHERE key = 'signin_rules'").fetchone()
+        given: list = []
+        if rules_row is not None:
+            try:
+                given = [r for r in json.loads(rules_row[0]).get("rules", []) if r.get("plan") == plan_id]
+            except (TypeError, ValueError, AttributeError):
+                given = []
+            if given:
+                parts.append(f"{len(given)} sign-in rule{'' if len(given) == 1 else 's'}")
         if parts:
             conn.rollback()
-            raise ValueError(f"{row['name']} is used by {' and '.join(parts)}. Move them to another plan first.")
+            move = "Move them to another plan first." if len(parts) > (1 if given else 0) else "Choose another plan in the rule first."
+            raise ValueError(f"{row['name']} is used by {' and '.join(parts)}. {move}")
         # Closed invitations and removed people keep no claim on the plan.
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone():
             conn.execute("UPDATE account_links SET plan_id = NULL WHERE plan_id = ?", (plan_id,))
             conn.execute("UPDATE account_access SET plan_id = NULL WHERE plan_id = ?", (plan_id,))
+        conn.execute("DELETE FROM signin_rule_plans WHERE plan_id = ?", (plan_id,))
         conn.execute("DELETE FROM access_plans WHERE id = ?", (plan_id,))
         conn.commit()
     return _plan_row_to_dict(row)

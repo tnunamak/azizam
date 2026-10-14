@@ -66,10 +66,6 @@ OIDC_PROVIDER_FIELDS: tuple[str, ...] = (
     "client_secret",
     "redirect_uri",
     "scopes",
-    "allowed_email_domains",
-    "admin_emails",
-    "admin_groups",
-    "admin_roles",
     "authorization_endpoint",
     "token_endpoint",
     "jwks_uri",
@@ -79,9 +75,7 @@ OIDC_PROVIDER_FIELDS: tuple[str, ...] = (
 )
 
 OIDC_SECRET_FIELDS: frozenset[str] = frozenset({"client_secret"})
-OIDC_LIST_FIELDS: frozenset[str] = frozenset({
-    "scopes", "allowed_email_domains", "admin_emails", "admin_groups", "admin_roles",
-})
+OIDC_LIST_FIELDS: frozenset[str] = frozenset({"scopes"})
 _OIDC_SECRET_REDACTED = "<redacted>"
 # The actor of an audit row that names no account: a change made by a tool,
 # not a person (Activity → Changes says "Automatic", never "Unknown user").

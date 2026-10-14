@@ -128,6 +128,7 @@ from gateway import category_presets
 from gateway.category_api import create_category_router
 from gateway.setup_api import build_setup_api_router
 from gateway.admin_oidc import (
+    AdminRole,
     IDTokenClaimsError,
     OIDCConfigError,
     PKCEPair,
@@ -135,7 +136,6 @@ from gateway.admin_oidc import (
     SignInRefused,
     StateRecord,
     access_names_from_oidc_claims,
-    admin_role_from_oidc_claims,
     bootstrap_admin_role,
     csrf_token_for_session,
     decode_session_cookie,
@@ -155,6 +155,8 @@ from gateway.local_owner import (
     load_or_create_signing_key as local_load_signing_key,
 )
 from gateway.setup_render import render_setup_page
+from gateway import signin_admin
+from gateway.signin_api import create_signin_api
 from gateway.admin_runtime import (
     ADMIN_CONTROL_ROLES,
     AdminAuthenticator,
@@ -14749,7 +14751,7 @@ def _end_provider_access_after_refusal(issuer: str, claims: Mapping[str, Any]) -
     """Revoke what the identity provider gave a person whose sign-in was refused.
 
     Removing someone from the admin group makes their next sign-in fail the
-    email allow-list, and that check runs before roles are reconciled. Without
+    sign-in rules, and that check runs before roles are reconciled. Without
     this, their grant and their sessions would last until they expire. Grants
     the owner gave by hand stay; the provider's grants, every session and every
     MCP connection end, and their personal keys pause until a sign-in succeeds.
@@ -14758,7 +14760,11 @@ def _end_provider_access_after_refusal(issuer: str, claims: Mapping[str, Any]) -
     user = admin_store.find_oidc_user(issuer, str(claims.get("sub") or ""), path=ADMIN_STORE.path)
     if user is None:
         return
-    person_id = str(user["id"])
+    _end_provider_access(str(user["id"]))
+
+
+def _end_provider_access(person_id: str) -> None:
+    """End what the rules gave a person who is now kept out (see the refusal above)."""
     # First, so a failure in any later step cannot leave the refusal unrecorded.
     # Their personal keys pause until a sign-in succeeds (reversible).
     accounts.record_signin_refusal(person_id, path=ADMIN_STORE.path)
@@ -15135,6 +15141,19 @@ app.include_router(create_account_router(
     # A removed person's MCP connections end; re-adding them does not revive any.
     on_person_removed=lambda person_id: MCP_OAUTH.deps.store.revoke_person_grants(person_id, "person_removed"),
 ))
+
+SIGNIN_API = create_signin_api(
+    path_provider=lambda: ADMIN_STORE.path,
+    auth=ADMIN_AUTH,
+    store=ADMIN_STORE,
+    oidc_config_provider=lambda: _resolved_admin_oidc_config()[0],
+    states=ADMIN_OIDC_STATES,
+    public_base_provider=lambda request: instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
+    signing_key_provider=_browser_admin_session_signing_key,
+    end_provider_access=_end_provider_access,
+    revoke_person_sessions=lambda person_id: accounts.revoke_person_sessions(person_id, path=ADMIN_STORE.path),
+)
+app.include_router(SIGNIN_API.router)
 
 
 @app.middleware("http")
@@ -15796,10 +15815,6 @@ def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
         "display_name": cfg.display_name,
         "redirect_uri": cfg.redirect_uri,
         "scopes": list(cfg.scopes),
-        "allowed_email_domains": sorted(cfg.allowed_email_domains),
-        "admin_emails": sorted(cfg.admin_emails),
-        "admin_groups": sorted(cfg.admin_groups),
-        "admin_roles": sorted(cfg.admin_roles),
         "authorization_endpoint": cfg.authorization_endpoint,
         "token_endpoint": cfg.token_endpoint,
         "jwks_uri": cfg.jwks_uri,
@@ -16526,8 +16541,7 @@ async def setup_local_login(request: Request):
         )
 
     from gateway.accounts_api import signin_options
-    if not signin_options(ADMIN_STORE.path, {"enabled": _resolved_admin_oidc_config()[0].enabled})["built_in"]:
-        return JSONResponse({"error": {"code": "builtin_disabled", "message": "Use the identity provider to sign in."}}, status_code=403)
+    built_in = signin_options(ADMIN_STORE.path, {"enabled": _resolved_admin_oidc_config()[0].enabled})["built_in"]
     try:
         accounts.initialize(ADMIN_STORE.path)
         client_ip = resolve_real_client_ip(request)
@@ -16538,7 +16552,7 @@ async def setup_local_login(request: Request):
         return JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status)
     user = admin_store.find_user_by_email(
         email, issuer=_LOCAL_OWNER_ISSUER, path=ADMIN_STORE.path
-    )
+    ) or admin_store.find_password_user_by_email(email, path=ADMIN_STORE.path)
     if user is None:
         return await _setup_page_response(
             request,
@@ -16561,6 +16575,9 @@ async def setup_local_login(request: Request):
     role_names = admin_store.effective_admin_roles(
         "user", str(user["id"]), path=ADMIN_STORE.path,
     )
+    if not built_in and "owner" not in role_names:
+        # Only the owner's password works while built-in sign-in is off.
+        return JSONResponse({"error": {"code": "builtin_disabled", "message": "Use the identity provider to sign in."}}, status_code=403)
     if "owner" in role_names:
         role = "owner"
     elif "admin" in role_names or "superadmin" in role_names:
@@ -16724,11 +16741,13 @@ def _browser_signin_failure(request: Request, *, return_to: str | None = None):
 
 @app.get("/admin/oidc/callback", include_in_schema=False)
 async def admin_oidc_callback(request: Request):
-    if not _effective_admin_oidc_config().enabled:
-        return Response(status_code=404)
     error = request.query_params.get("error")
     code = request.query_params.get("code")
     state_value = request.query_params.get("state")
+    pending = ADMIN_OIDC_STATES.get(state_value or "")
+    # A test from Settings runs before the provider is turned on.
+    if not (pending and pending.test_id) and not _effective_admin_oidc_config().enabled:
+        return Response(status_code=404)
     if not state_value or not (code or error):
         return _browser_signin_failure(request) or Response(
             content="OIDC callback missing code or state",
@@ -16738,6 +16757,15 @@ async def admin_oidc_callback(request: Request):
     state = None
     try:
         state = consume_browser_state(request, ADMIN_OIDC_STATES, state_value)
+        if state.test_id:
+            session = await asyncio.to_thread(_oidc_session_from_request, request)
+            page = await SIGNIN_API.finish_test(
+                state,
+                session_user_id=session.subject if session else None,
+                code=code, error=error, error_description=request.query_params.get("error_description"),
+                exchange_code=_oidc_exchange_code, verify_id_token=_oidc_verify_id_token,
+            )
+            return clear_browser_binding(page, state)
         if error:
             raise ValueError("identity provider declined sign-in")
         cfg = await _admin_oidc_config_with_discovery()
@@ -16757,6 +16785,9 @@ async def admin_oidc_callback(request: Request):
         claims = await _oidc_verify_id_token(id_token, config=cfg)
         try:
             validate_id_token_claims(claims, config=cfg, expected_nonce=state.nonce)
+            decision, bootstrap_owner = await _decide_oidc_signin(cfg, claims)
+            if not decision.outcome.admitted:
+                raise SignInRefused("sign-in rules do not let this person in")
         except SignInRefused:
             # A refused person keeps nothing the identity provider gave them.
             await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
@@ -16783,24 +16814,25 @@ async def admin_oidc_callback(request: Request):
             oidc_access_names,
             path=ADMIN_STORE.path,
         )
-        bootstrap_role = bootstrap_admin_role(
-            str(claims.get("email") or ""),
-            config=cfg,
-            existing_roles={},
-            issuer=str(claims.get("iss") or ""),
-            email_verified=claims.get("email_verified") is True,
-        )
         # Whether an owner already exists is decided inside the write's own
         # transaction, so two first sign-ins cannot both become owner.
-        if bootstrap_role == "owner" and admin_store.claim_first_owner(
+        if bootstrap_owner and admin_store.claim_first_owner(
             str(user["id"]), granted_by="oidc-bootstrap", path=ADMIN_STORE.path,
         ):
             admin_store.seed_first_owner_plan(str(user["id"]), path=ADMIN_STORE.path)
-        claim_role = admin_role_from_oidc_claims(claims, config=cfg)
+        elif bootstrap_owner:
+            # Another first sign-in won the owner role; this person is an ordinary one.
+            decision, _ = await _decide_oidc_signin(cfg, claims, bootstrap_owner=False)
+            if not decision.outcome.admitted:
+                await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
+                raise SignInRefused("sign-in rules do not let this person in")
+        # Rule-derived grants are re-derived at every sign-in; a grant no rule
+        # supports any more ends here. Grants the owner gave by hand stay.
         effective_grants = admin_store.reconcile_oidc_admin_roles(
-            str(user["id"]), {claim_role} if claim_role in {"owner", "admin"} else set(),
+            str(user["id"]), {"admin"} if decision.outcome.admin else set(),
             path=ADMIN_STORE.path,
         )
+        signin_admin.sync_rule_plan(ADMIN_STORE.path, str(user["id"]), decision.outcome)
         effective_roles = {grant["role"] for grant in effective_grants}
         role = "owner" if "owner" in effective_roles else "admin" if "admin" in effective_roles else "none"
         label = user.get("email") or user.get("display_name") or user["id"]
@@ -16851,6 +16883,27 @@ async def admin_oidc_callback(request: Request):
             media_type="text/plain; charset=utf-8",
         )
         return clear_browser_binding(response, state) if state else response
+
+
+async def _decide_oidc_signin(cfg, claims: Mapping[str, Any], *, bootstrap_owner: bool | None = None):
+    """The one sign-in decision: owner, invitation or rules (gateway.signin_rules)."""
+    if bootstrap_owner is None:
+        # Only the very first owner may be named by the bootstrap email, and
+        # only while no owner grant has ever existed.
+        never_owned = AdminRole.OWNER not in set(
+            _existing_admin_grants(include_revoked=True).values())
+        bootstrap_owner = never_owned and bootstrap_admin_role(
+            str(claims.get("email") or ""),
+            config=cfg,
+            existing_roles={},
+            issuer=str(claims.get("iss") or ""),
+            email_verified=claims.get("email_verified") is True,
+        ) == AdminRole.OWNER
+    decision = await asyncio.to_thread(
+        signin_admin.decide, ADMIN_STORE.path, claims, issuer=cfg.issuer, client_id=cfg.client_id,
+        groups_claim=cfg.groups_claim, bootstrap_owner=bool(bootstrap_owner),
+    )
+    return decision, bool(bootstrap_owner)
 
 
 @app.get("/auth/logout-confirm", include_in_schema=False)

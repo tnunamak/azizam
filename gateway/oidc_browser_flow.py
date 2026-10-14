@@ -33,6 +33,7 @@ def begin_browser_login(
     store: MutableMapping[str, StateRecord],
     *,
     return_to: str,
+    test_id: str = "",
 ) -> Response:
     """Issue a separate host-only cookie for each ten-minute sign-in flow."""
     state_value = generate_state()
@@ -46,6 +47,7 @@ def begin_browser_login(
         return_to=return_to, redirect_uri=config.redirect_uri,
         browser_cookie_name=cookie_name,
         browser_binding_hash=hashlib.sha256(binding.encode()).hexdigest(),
+        test_id=test_id,
     )
     response = RedirectResponse(
         authorization_url(config, state=state.state, nonce=nonce, pkce=pkce),

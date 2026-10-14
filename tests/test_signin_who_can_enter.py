@@ -3,8 +3,8 @@
 These tests run the real callback, invite and admin routes against a fake
 identity provider (the token exchange and ID-token verification are replaced;
 everything after them is the production code). The configuration has the same
-shape as the live instance: one listed owner email, the group ``/Trusted`` as an
-admin group, no allowed domains, no admin roles.
+shape as the live instance: one bootstrap owner email and one sign-in rule that
+makes the group ``/Trusted`` administrators, no other rules.
 
 Each answer in the owner's question "Can any of my Keycloak users log in, and
 what access do they get?" is one test below.
@@ -20,14 +20,18 @@ from tests.support.access import store_plan
 
 OWNER = "owner@example.test"
 SIGNING_KEY = b"s" * 32
+TRUSTED = {"id": "trusted", "field": "group", "values": ["/Trusted"], "admit": True, "admin": True, "plan": None}
+
+
+def domain_rule(*domains):
+    return {"id": "domain", "field": "domain", "values": list(domains), "admit": True, "admin": False, "plan": None}
 
 
 def live_shaped_config(**overrides) -> OIDCConfig:
     base = dict(
         enabled=True, issuer="https://id.example/realms/home", client_id="gateway", client_secret="test-secret",
         redirect_uri="https://ai.example/admin/oidc/callback", scopes=("openid", "email"),
-        allowed_email_domains=frozenset(), admin_emails=frozenset({OWNER}),
-        admin_groups=frozenset({"/Trusted"}), admin_roles=frozenset(),
+        admin_emails=frozenset({OWNER}),
         signing_key=SIGNING_KEY, cookie=CookieConfig(secure=False),
         authorization_endpoint="https://id.example/authorize", token_endpoint="https://id.example/token",
         jwks_uri="https://id.example/jwks",
@@ -48,6 +52,10 @@ class Gateway:
         self.monkeypatch.setattr(self.proxy, "ADMIN_OIDC_CONFIG", config)
         self.monkeypatch.setattr(self.proxy.ADMIN_AUTH, "signing_key", config.signing_key)
         self.monkeypatch.setattr(self.proxy.ADMIN_AUTH, "cookie", config.cookie)
+
+    def set_rules(self, rules=(), fallback="closed"):
+        admin_store.put_operator_setting(
+            "signin_rules", {"fallback": fallback, "rules": list(rules)}, path=self.path)
 
     def client(self) -> TestClient:
         return TestClient(self.proxy.app, base_url="https://ai.example", client=("127.0.0.1", 50000))
@@ -105,6 +113,7 @@ def gateway(tmp_path, monkeypatch):
     admin_store.put_operator_setting("instance_presentation", {"base_url": "https://ai.example"}, path=path)
     clients = []
     gw = Gateway(proxy, path, monkeypatch, live_shaped_config())
+    gw.set_rules([TRUSTED])
     original = gw.client
     gw.client = lambda: clients.append(original()) or clients[-1]
     try:
@@ -148,16 +157,37 @@ def test_q1_uninvited_unlisted_keycloak_user_is_turned_away_and_leaves_no_accoun
     assert client.get("/me/api/session").json()["authenticated"] is False
 
 
-def test_q1_even_an_open_invitation_does_not_get_a_keycloak_user_past_the_email_list(gateway):
+def test_q1_an_invitation_that_names_their_verified_email_lets_them_finish_signing_in(gateway):
+    """People you invite can always finish signing in, whatever the rules say."""
     plan = store_plan("Family", path=gateway.path, caps=("chat",))
     accounts.create_link("invite", "owner", plan_id=plan["id"], email="friend@example.test", path=gateway.path)
 
     client, response = signed_in(gateway, sub="friend", email="friend@example.test")
 
-    # The invitation is accepted AFTER sign-in, and sign-in is checked first.
+    assert response.status_code == 302
+    assert gateway.user("friend@example.test") is not None
+    # Signing in is not accepting: the plan still arrives only with the invitation.
+    assert admin_store.person_plan_id(gateway.user("friend@example.test")["id"], path=gateway.path) is None
+
+
+def test_q1_an_invitation_for_another_email_lets_a_stranger_in_nowhere(gateway):
+    plan = store_plan("Family", path=gateway.path, caps=("chat",))
+    accounts.create_link("invite", "owner", plan_id=plan["id"], email="friend@example.test", path=gateway.path)
+
+    _, response = signed_in(gateway, sub="stranger", email="stranger@example.test")
+
+    assert response.headers["location"].startswith("/sign-in/?error=provider")
+    assert gateway.user("stranger@example.test") is None
+
+
+def test_q1_an_invitation_does_not_help_when_the_provider_does_not_vouch_for_the_email(gateway):
+    plan = store_plan("Family", path=gateway.path, caps=("chat",))
+    accounts.create_link("invite", "owner", plan_id=plan["id"], email="friend@example.test", path=gateway.path)
+
+    response = gateway.sign_in(gateway.client(), sub="friend", email="friend@example.test", email_verified=None)
+
     assert response.headers["location"].startswith("/sign-in/?error=provider")
     assert gateway.user("friend@example.test") is None
-    assert gateway.rows("SELECT used_at FROM account_links WHERE kind='invite'")[0]["used_at"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +249,7 @@ def accept(client, token, email):
 
 def test_q3_invited_keycloak_person_gets_the_invitations_plan_when_the_email_list_lets_them_sign_in(gateway):
     # Same instance, but the owner also allows the friend's email domain.
-    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"friends.test"})))
+    gateway.set_rules([TRUSTED, domain_rule("friends.test")])
     plan = store_plan("Family", path=gateway.path, caps=("chat",))
     _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], email="friend@friends.test",
                                     path=gateway.path)
@@ -236,10 +266,10 @@ def test_q3_invited_keycloak_person_gets_the_invitations_plan_when_the_email_lis
     assert roles_of(gateway, "friend@friends.test") == set()
 
 
-def test_q3_invitation_does_not_widen_the_email_list_so_listed_domain_is_what_matters(gateway):
-    # Live-shaped config: only OWNER is listed. A friend whose email matches an invite is still refused.
+def test_q3_a_revoked_or_used_invitation_no_longer_lets_anyone_in(gateway):
     plan = store_plan("Family", path=gateway.path, caps=("chat",))
-    accounts.create_link("invite", "owner", plan_id=plan["id"], email="friend@friends.test", path=gateway.path)
+    link, _ = accounts.create_link("invite", "owner", plan_id=plan["id"], email="friend@friends.test", path=gateway.path)
+    accounts.revoke_invite(link["id"], "owner", path=gateway.path)
     _, response = signed_in(gateway, sub="friend", email="friend@friends.test")
     assert response.status_code == 303
     assert gateway.user("friend@friends.test") is None
@@ -250,7 +280,7 @@ def test_q3_invitation_does_not_widen_the_email_list_so_listed_domain_is_what_ma
 # ---------------------------------------------------------------------------
 
 def test_q4_a_newly_admitted_keycloak_person_has_no_plan_when_the_list_is_open(gateway):
-    gateway.set_config(replace(gateway.config, admin_emails=frozenset(), admin_groups=frozenset()))
+    gateway.set_rules([], fallback="open")
     store_plan("Family", path=gateway.path, caps=("chat",))
 
     client, response = signed_in(gateway, sub="anyone", email="anyone@example.test")
@@ -460,7 +490,7 @@ def bearer_status(gateway, api_key, path="/admin/api/access-plans"):
 
 def test_q5_an_admin_key_minted_by_a_trusted_admin_stops_when_they_leave_the_group(gateway):
     """An admin-scoped key works only while the person who minted it still holds a permitting role."""
-    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
+    gateway.set_rules([TRUSTED, domain_rule("example.test")])
     signed_in(gateway, sub="owner", email=OWNER)
     admin, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
     api_key = mint_admin_key(admin)
@@ -474,7 +504,7 @@ def test_q5_an_admin_key_minted_by_a_trusted_admin_stops_when_they_leave_the_gro
 
 
 def test_a_key_minted_by_another_key_stops_with_the_person_at_the_root(gateway):
-    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
+    gateway.set_rules([TRUSTED, domain_rule("example.test")])
     signed_in(gateway, sub="owner", email=OWNER)
     admin, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
     first = mint_admin_key(admin, name="first")
@@ -525,13 +555,14 @@ def test_first_signin_by_a_trusted_member_on_a_fresh_instance_does_not_block_the
 def test_owner_bootstrap_does_not_apply_once_an_owner_exists(gateway):
     other = "second@example.test"
     gateway.set_config(replace(gateway.config, admin_emails=frozenset({OWNER, other})))
+    gateway.set_rules([TRUSTED, domain_rule("example.test")])
     signed_in(gateway, sub="owner", email=OWNER)
     signed_in(gateway, sub="second", email=other)
     assert not any(role == "owner" for role, _ in roles_of(gateway, other))
 
 
 def test_a_disabled_person_cannot_sign_in_through_keycloak(gateway):
-    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
+    gateway.set_rules([TRUSTED, domain_rule("example.test")])
     signed_in(gateway, sub="owner", email=OWNER)
     signed_in(gateway, sub="friend", email="friend@example.test")
     friend = gateway.user("friend@example.test")
@@ -573,8 +604,11 @@ def test_password_invitations_are_refused_when_the_owner_chose_keycloak_only(gat
     assert refused.json()["error"]["code"] == "builtin_disabled"
 
 
-def test_group_to_plan_mapping_is_gone_group_claims_are_stored_but_never_grant_a_plan(gateway):
-    """The old runtime-profile-mappings (group, role, email, domain -> plan) no longer exist."""
+def test_group_to_plan_mapping_is_gone_group_claims_grant_a_plan_only_through_a_rule(gateway):
+    """The old runtime-profile-mappings table (group, role, email, domain -> plan) no longer exists.
+
+    A plan rule in sign-in rules is the only way a claim gives a plan, and there is none here.
+    """
     signed_in(gateway, sub="owner", email=OWNER)
 
     tables = {row["name"] for row in gateway.rows("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -594,7 +628,7 @@ def test_self_service_keys_never_exceed_the_persons_own_plan(gateway):
     """A signed-in person can make apps and keys, but each is "Same as my access plan"."""
     from gateway.runtime_auth import hash_api_key
 
-    gateway.set_config(replace(gateway.config, admin_emails=frozenset(), admin_groups=frozenset()))
+    gateway.set_rules([], fallback="open")
     client, response = signed_in(gateway, sub="friend", email="friend@example.test")
     assert response.status_code == 302
     friend = gateway.user("friend@example.test")
@@ -624,7 +658,7 @@ def test_a_missing_email_verified_claim_is_not_treated_as_unverified(gateway):
     The invitation path stays safe because it needs a stored verified=True fact,
     which only an explicit true claim records.
     """
-    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
+    gateway.set_rules([TRUSTED, domain_rule("example.test")])
     plan = store_plan("Family", path=gateway.path, caps=("chat",))
     _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], email="friend@example.test",
                                     path=gateway.path)
@@ -640,7 +674,7 @@ def test_a_missing_email_verified_claim_is_not_treated_as_unverified(gateway):
 
 
 def test_q5_a_listed_person_removed_from_trusted_loses_admin_on_next_sign_in(gateway):
-    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
+    gateway.set_rules([TRUSTED, domain_rule("example.test")])
     _, response = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
     assert response.status_code == 302
     assert roles_of(gateway, "helper@example.test") == {("admin", "oidc")}
@@ -651,7 +685,7 @@ def test_q5_a_listed_person_removed_from_trusted_loses_admin_on_next_sign_in(gat
 
 
 def test_a_person_who_loses_the_group_while_still_allowed_loses_their_other_sessions(gateway):
-    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
+    gateway.set_rules([TRUSTED, domain_rule("example.test")])
     old, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
     assert old.get("/admin/api/access-plans").status_code == 200
     signed_in(gateway, sub="helper", email="helper@example.test", groups=[])
@@ -850,7 +884,7 @@ def test_a_refused_sign_in_pauses_personal_keys_until_a_sign_in_succeeds(gateway
     paused = admin_runtime.runtime_identity_for_app_credential_hash(key_hash, path=gateway.path)
     assert paused is not None and paused.denial == "person_signin_refused"
 
-    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
+    gateway.set_rules([TRUSTED, domain_rule("example.test")])
     signed_in(gateway, sub="helper", email="helper@example.test", groups=[])
     again = admin_runtime.runtime_identity_for_app_credential_hash(key_hash, path=gateway.path)
     assert again is not None and again.denial is None
@@ -1095,7 +1129,7 @@ def test_a_local_password_sign_in_does_not_lift_the_refusal_of_the_providers_acc
         "token": token, "email": "helper@example.test", "name": "Helper", "password": "a sufficiently long password"})
     assert accepted.status_code == 200, accepted.text
 
-    gateway.set_config(replace(gateway.config, allowed_email_domains=frozenset({"example.test"})))
+    gateway.set_rules([TRUSTED, domain_rule("example.test")])
     signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
     oidc_user = gateway.rows("SELECT * FROM users WHERE issuer != 'local' AND email = 'helper@example.test'")[0]
     app = admin_store.ensure_personal_app_for_user(oidc_user["id"], name="personal", path=gateway.path)
