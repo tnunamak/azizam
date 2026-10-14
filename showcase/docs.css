@@ -8,9 +8,12 @@ html:has(body.docs) { scroll-padding-top: calc(var(--top-h, 56px) + 16px); }
 .docs .site-disclosure { display: none; }
 @media (max-width: 639px) {
   .docs .site-header > .site-nav { display: none; }
-  .docs .site-disclosure { display: block; flex-basis: 100%; border: 0; padding: 0; }
-  .docs .site-disclosure > summary { min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
-  .docs .site-disclosure .site-nav { padding-top: 8px; }
+  /* Menu sits beside the brand, as on Home; the opened list drops below the header. */
+  .docs .site-header { position: relative; }
+  .docs .site-disclosure { display: block; margin-left: auto; border: 0; padding: 0; }
+  .docs .site-disclosure > summary { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); list-style: none; cursor: pointer; }
+  .docs .site-disclosure > summary::-webkit-details-marker { display: none; }
+  .docs .site-disclosure[open] .site-nav { position: absolute; left: 0; right: 0; top: 100%; z-index: 30; display: flex; flex-direction: column; gap: 4px; padding: 8px var(--page-pad, 24px) 16px; background: var(--bg); border-bottom: 1px solid var(--line); }
 }
 
 /* Sticky docs search toolbar, below the shared header. */
