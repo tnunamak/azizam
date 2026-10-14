@@ -129,22 +129,19 @@ rm -rf "$receipts/steps" "$receipts/test-results" "$receipts/raw"
 mkdir -p "$receipts/steps" "$receipts/raw"
 # Receipts: old runs keep only their verdicts (scripts/ci/prune_receipts.py).
 python3 "$repo/scripts/ci/prune_receipts.py" "$receipts_root" --keep "$receipts" || true
-# A run directory holds worktrees and dependency copies (about 7 GB). Exit
-# removes it, except that the latest failed run's directory is kept for
-# debugging, named in $kept. With the lock held, no other run is live, so any
-# other marked directory was left by a killed run and is removed here.
-kept=$scratch/azizam-ci-local.kept
+# Only receipts/logs survive a run, including failures. With the host lock
+# held, marked scratch directories are abandoned and can be removed.
+# Do not follow the legacy .kept file: sweep only our marked children.
 remove_run_dir() { rm -rf -- "$1"; git -C "$repo" worktree prune; }
 for directory in "$scratch"/azizam-ci-local.*/; do
   directory=${directory%/}
-  if [[ -f $directory/.ci-local-run && $directory != "$(cat "$kept" 2>/dev/null)" ]]; then
+  if [[ -d $directory && ! -L $directory && -O $directory && -f $directory/.ci-local-run ]]; then
     remove_run_dir "$directory"
   fi
 done
 run=$(mktemp -d "$scratch/azizam-ci-local.XXXXXXXX")
 run=$(cd "$run" && pwd)
 : > "$run/.ci-local-run"
-keep_run=0
 work=$run/web-build
 worktrees=()
 pids=()
@@ -166,16 +163,10 @@ cleanup() {
   pkill -KILL -f -- "$run/" 2>/dev/null || true
   rm -f "$receipts/signoff-$sha.tsv.partial"
   cd "$repo"
-  if ((keep_run)); then
-    if [[ -f $kept && $(cat "$kept") != "$run" ]]; then remove_run_dir "$(cat "$kept")"; fi
-    echo "$run" > "$kept"
-    echo "kept the failed run's directory for debugging: $run"
-    return
-  fi
   for directory in "${worktrees[@]}"; do
     git worktree remove --force "$directory" >/dev/null 2>&1 || true
   done
-  rm -rf "$run"
+  remove_run_dir "$run"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -204,8 +195,18 @@ step() {
   if ((rc)); then failed=1; echo "   FAILED (exit $rc): $receipts/logs/$name.log"; fi
   return 0
 }
+# npm, uv and Playwright retain their shared download caches across runs.
+# Keep installed environments private; fresh-venv uses copy-on-write clones
+# instead of forced copies. Other installers retain their existing link mode.
+cleanup_step() {
+  local name=$1; shift
+  # Only private, finished installs may go; all diagnostic logs live in receipts.
+  if [[ $(cut -f2 "$receipts/steps/$name.tsv") == 0 ]]; then
+    rm -rf -- "$@"
+  fi
+}
 export receipts work skip_compose py_workers run seed
-export -f step
+export -f step cleanup_step
 start_job() {
   local directory=$1; shift
   setsid bash -c 'cd "$1" || exit; shift; "$@"' _ "$directory" "$@" &
@@ -243,7 +244,7 @@ start_job "$run/python" bash -c '
 # after Compose keeps the two from racing for the same free ports.
 start_job "$run/fresh" bash -c '
   failed=0
-  step fresh-venv bash -c "uv venv -q --python 3.12.13 .ci-fresh-venv && uv pip sync -q --no-build --strict --require-hashes --link-mode copy --python .ci-fresh-venv/bin/python tests/requirements-hermetic.lock"
+  step fresh-venv bash -c "uv venv -q --python 3.12.13 .ci-fresh-venv && uv pip sync -q --no-build --strict --require-hashes --link-mode clone --python .ci-fresh-venv/bin/python tests/requirements-hermetic.lock"
   if ((skip_compose)); then
     printf "fresh-compose\tskipped\t0\n" > "$receipts/steps/fresh-compose.tsv"
     failed=1
@@ -277,11 +278,14 @@ web_pid=$last_pid
 start_job "$work" bash -c '
   failed=0
   step compat-node env CASE_RECEIPTS_FILE="$receipts/raw/compat-node.cases.jsonl" bash -c "cd tests/compat/node && npm ci --no-audit --no-fund && node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=\"\$1\" --test-reporter-destination=stderr probe-gates.test.mjs" _ "$PWD/scripts/ci/node-case-receipts.mjs"
+  cleanup_step compat-node tests/compat/node/node_modules
   step pi-unit env CASE_RECEIPTS_FILE="$receipts/raw/compat-node.cases.jsonl" scripts/ci/pi-unit "$PWD/scripts/ci/node-case-receipts.mjs"
+  cleanup_step pi-unit integrations/pi/node_modules
   step showcase-core env CASE_RECEIPTS_FILE="$receipts/raw/compat-node.cases.jsonl" node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter="$PWD/scripts/ci/node-case-receipts.mjs" --test-reporter-destination=stderr tests/showcase/core.test.mjs
   # The official MCP conformance suite (pinned in tests/conformance) against
   # the production MCP router and authorization server on a loopback port.
   step mcp-conformance scripts/ci/mcp-conformance "$receipts/raw/mcp-conformance"
+  cleanup_step mcp-conformance tests/conformance/node_modules .ci-conformance-venv
   exit "$failed"
 '
 compat_pid=$last_pid
@@ -342,6 +346,13 @@ if ((browser_ready)); then
     [[ -z $changed ]] || { echo "browser tests wrote into the shared build tree:"; echo "$changed"; exit 1; }' _ "$work" "$run/browser-start"
 fi
 
+# The native journey was the last fresh-tree consumer. Capture signoff
+# metadata before removing its venv and checkout.
+if ((signoff && !failed)); then
+  python_fresh=$("$run/fresh/.ci-fresh-venv/bin/python" --version)
+fi
+git worktree remove --force "$run/fresh"
+
 # Case receipts: one cases.jsonl from every framework's report, then the
 # test policy over it and the clean tree (docs/design/TEST_STRATEGY.md 3, 6).
 merge_args=(--pytest "$receipts/raw/pytest.xml" "$run/python" --receipts "$receipts/raw/vitest.cases.jsonl" "$work")
@@ -363,23 +374,27 @@ if [[ -n ${target_tip:-} ]] && git cat-file -e "$target_tip:tests/budgets.toml" 
 fi
 step policy "$run/python/scripts/ci/policy.py" --root "$run/python" --cases "$receipts/cases.jsonl" "${policy_args[@]}"
 
+# Aggregation and policy need the Python sources; the shared web tree must
+# survive the unchanged-tree check. Release both at their last consumer.
+if ((signoff && !failed)); then
+  python_e2e=$("$work/venv/bin/python" --version)
+  chromium=$(cd "$work/web" && node -e 'console.log(require("playwright-core").chromium.executablePath())')
+  chromium_version=$("$chromium" --version)
+fi
+git worktree remove --force "$run/python"
+git worktree remove --force "$work"
+
 cat "$receipts"/steps/*.tsv > "$receipts/steps.tsv"
 # Missing/truncated receipts or skipped/nonzero steps can never produce PASS.
 if ! awk -F '\t' -v expected="$((browser_steps + 15))" '
   NF != 3 || $2 != "0" || $3 !~ /^[0-9]+$/ { bad=1 }
   END { exit (bad || NR != expected) }
 ' "$receipts/steps.tsv"; then failed=1; fi
-if ((failed)); then
-  # Keep the browser evidence: traces, screenshots, reports and auth files.
-  if [[ -d $run/browser-results ]]; then
-    mkdir -p "$receipts/test-results"
-    cp -a "$run/browser-results/." "$receipts/test-results/"
-  fi
-fi
+# Failed runs retain textual logs and case/step receipts, not duplicate
+# browser traces, auth files, builds, environments or mutable test state.
 printf 'finished\t%s\n' "$(date -u +%FT%TZ)" >> "$receipts/run.tsv"
 column -t "$receipts/steps.tsv"
 if ((failed)); then
-  keep_run=1
   echo "ci-local FAILED for $sha; receipts: $receipts"
   exit 1
 fi
@@ -398,7 +413,6 @@ head_now=$(git rev-parse HEAD)
 [[ $head_now == "$sha" ]] || refuse "the checkout moved from $sha to $head_now during the run"
 check_nightly_red
 user=$(git config user.name) || refuse "git user.name is not set"
-chromium=$(cd "$work/web" && node -e 'console.log(require("playwright-core").chromium.executablePath())')
 receipt=$receipts/signoff-$sha.tsv
 {
   printf 'sha\t%s\ntree\t%s\ntarget\t%s\ntarget_tip\t%s\nseed\t%s\n' "$sha" "$tree" "$target" "$target_tip" "$seed"
@@ -406,10 +420,10 @@ receipt=$receipts/signoff-$sha.tsv
   printf 'steps\t%s\n' "$(cut -f1 "$receipts/steps.tsv" | sort | paste -sd, -)"
   printf 'policy\t%s\n' "$(tail -n 1 "$receipts/logs/policy.log")"
   printf 'nightly_red_closed\t%s\n' "${closes_nightly_red:-none}"
-  printf 'python_fresh\t%s\n' "$("$run/fresh/.ci-fresh-venv/bin/python" --version)"
-  printf 'python_e2e\t%s\n' "$("$work/venv/bin/python" --version)"
+  printf 'python_fresh\t%s\n' "$python_fresh"
+  printf 'python_e2e\t%s\n' "$python_e2e"
   printf 'node\t%s\n' "$(node --version)"
-  printf 'chromium\t%s\n' "$("$chromium" --version)"
+  printf 'chromium\t%s\n' "$chromium_version"
   printf 'ffmpeg\t%s\n' "$(ffmpeg -version | head -n 1)"
 } > "$receipt.partial"
 # The same status `gh signoff create` posts, bound to $sha.
