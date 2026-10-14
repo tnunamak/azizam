@@ -151,12 +151,13 @@ def clear() -> None:
     _RUNS.clear()
 
 
-def fail(run: TestRun, cause: str, detail: str = "") -> None:
+def fail(run: TestRun, cause: str, detail: str = "", raw: str = "") -> None:
+    """End the test with one named cause. ``detail`` is a short phrase; ``raw`` is for Show details."""
     detail = " ".join(detail.split())[:200] or "no reason given"
     run.status, run.cause = "failed", cause
     run.message = CAUSES[cause].format(name=run.provider_name, host=_host(run.cfg.issuer) or run.cfg.issuer,
                                        detail=detail.rstrip("."))
-    run.details = detail
+    run.details = raw or detail
 
 
 def _says_redirect(*texts: str) -> bool:
@@ -176,7 +177,7 @@ def _describe_http_error(exc: httpx.HTTPStatusError) -> tuple[str, str]:
         return "redirect_not_allowed", detail
     if exc.response.status_code == 401 or error in {"invalid_client", "unauthorized_client"}:
         return "wrong_secret", detail
-    return "refused", detail
+    return "refused", description or error or f"the provider answered {exc.response.status_code}"
 
 
 async def finish(
@@ -196,10 +197,9 @@ async def finish(
 
     cfg = run.cfg
     if error:
-        if _says_redirect(error, error_description or ""):
-            fail(run, "redirect_not_allowed", f"{error} {error_description or ''}")
-        else:
-            fail(run, "refused", f"{error} {error_description or ''}")
+        raw = f"error={error}" + (f"\nerror_description={error_description}" if error_description else "")
+        cause = "redirect_not_allowed" if _says_redirect(error, error_description or "") else "refused"
+        fail(run, cause, error_description or error, raw)
         return
     try:
         tokens = await exchange_code(code, config=cfg, pkce=PKCEPair(verifier=pkce_verifier, challenge="already-sent"))
