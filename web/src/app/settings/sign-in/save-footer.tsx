@@ -56,7 +56,7 @@ export function SaveFooter({
         >
           {caption}
         </p>
-        <div className="flex flex-wrap gap-2 max-sm:w-full max-sm:[&>*]:flex-1">
+        <div className="flex flex-wrap gap-2 max-sm:w-full max-sm:[&>*]:flex-auto">
           {showDiscard && (
             <Button variant="ghost" size="md" onClick={onDiscard}>
               Discard changes

@@ -375,6 +375,8 @@ async function settingsJourney(page: Page) {
   );
   // Sign-in is on the page, not behind an Edit button. This journey reads it;
   // the writes are covered by the component specs against the same contract.
+  // The fixture has no provider yet, so the connection form is open (the
+  // design opens it whenever the provider is not live) and its secret is empty.
   const signIn = page.getByRole("region", { name: "Sign-in", exact: true });
   await expect(
     signIn.getByRole("heading", { name: "Ways to sign in" }),
@@ -382,7 +384,8 @@ async function settingsJourney(page: Page) {
   await expect(
     signIn.getByRole("switch", { name: "Email and password" }),
   ).toBeChecked();
-  await expect(signIn.getByLabel("Client secret", { exact: true })).toHaveCount(0);
+  await expect(signIn.getByText("Not set up", { exact: true })).toBeVisible();
+  await expect(signIn.getByLabel("Client secret", { exact: true })).toHaveValue("");
   await editSection(page, "Advanced");
   await page
     .getByText("Effective configuration and export", { exact: true })

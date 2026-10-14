@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -103,8 +103,11 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
     snapshot.provider.address,
     !readOnly,
   );
-  // A found provider fills the two plain defaults the owner left blank.
-  useEffect(() => {
+  // A found provider fills the two plain defaults the owner left blank. This
+  // runs before the browser can dispatch another event: a Test sign-in click
+  // between the render and a later effect would test (and sign) the form
+  // without them, and the passed test would not match the form on the page.
+  useLayoutEffect(() => {
     if (!discovery.found || readOnly) return;
     setDraft((d) =>
       d.form.provider.scopes && d.form.provider.groups_claim
