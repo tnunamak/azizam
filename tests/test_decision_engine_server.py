@@ -927,9 +927,39 @@ def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body
     monkeypatch.setattr(server, "time", clock)
     got_eof = threading.Event()
     body_started = threading.Event()
+    connections: list[socket.socket] = []
+
+    class DeadlineResponse(server.http.client.HTTPResponse):
+        def __init__(self, sock, *args, **kwargs):
+            # Only the stepped deadline should end this real socket read.
+            sock.settimeout(None)
+            super().__init__(sock, *args, **kwargs)
+
+        def read(self, amt=None):
+            if body_started.is_set() or amt == 0:
+                return super().read(amt)
+            first = super().read(1)
+            assert first == b" "
+            # Receiving a body byte proves headers have been consumed and the
+            # Connection: close response owns the socket, unlike peer sendall.
+            clock.now += 1000
+            body_started.set()
+            remaining = amt if amt is None or amt < 0 else amt - 1
+            return first + super().read(remaining)
+
+    class DeadlineConnection(server.http.client.HTTPConnection):
+        response_class = DeadlineResponse
+
+        def __init__(self, *args, **kwargs):
+            # A frozen logical 50 ms budget is not a real-time socket timeout.
+            kwargs["timeout"] = None
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(server.http.client, "HTTPConnection", DeadlineConnection)
 
     def serve(listener):
         conn, _addr = listener.accept()
+        connections.append(conn)
         with conn:
             conn.recv(4096)
             conn.sendall(
@@ -939,19 +969,15 @@ def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body
                 b"Content-Type: application/json\r\n"
                 b"\r\n"
             )
-            conn.settimeout(2)
             try:
+                conn.sendall(b" ")
                 while True:
-                    conn.sendall(b" ")
-                    body_started.set()
-                    try:
-                        data = conn.recv(4096)
-                    except socket.timeout:
-                        return
+                    # Stay open until the client closes; a peer-side timeout
+                    # must not manufacture EOF before the deadline is observed.
+                    data = conn.recv(4096)
                     if data == b"":
                         got_eof.set()
                         return
-                    time.sleep(0.02)
             except (BrokenPipeError, ConnectionResetError, OSError):
                 got_eof.set()
 
@@ -977,18 +1003,26 @@ def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body
     caller = threading.Thread(target=call, daemon=True)
     try:
         caller.start()
-        # The deadline ends only after the response body is already dripping.
+        # These are failure watchdogs, not events that cause the deadline.
         assert body_started.wait(timeout=5)
-        clock.now += 1000
         caller.join(timeout=5)
+        assert not caller.is_alive()
+        assert len(outcome) == 1 and isinstance(outcome[0], server.DecisionDeadlineExceeded), outcome
+        assert got_eof.wait(timeout=2)
     finally:
         listener.close()
+        # Clean up even if the deadline watchdog fails. Assertions above must
+        # observe client-initiated EOF, never EOF manufactured by this teardown.
+        for conn in connections:
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            conn.close()
         thread.join(timeout=2)
         caller.join(timeout=5)
 
-    assert not caller.is_alive()
-    assert len(outcome) == 1 and isinstance(outcome[0], server.DecisionDeadlineExceeded)
-    assert got_eof.is_set()
+    assert not thread.is_alive()
 
 
 def test_decision_http_server_uses_daemon_request_threads() -> None:
