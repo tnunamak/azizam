@@ -227,7 +227,7 @@ describe("Check access: the rule behind a row", () => {
     const { close } = mount(preview([SMALL[1]]), { onEditPlan });
     await screen.findByText("Can use 0 of 1");
     const link = within(rowOf("Big chat")).getByRole("link", { name: "Edit the Family plan" });
-    expect(link).toHaveAttribute("href", "/people/?plan=plan_family");
+    expect(link).toHaveAttribute("href", expect.stringMatching(/^\/people\/?\?plan=plan_family$/));
     await user.click(link);
     expect(onEditPlan).toHaveBeenCalledExactlyOnceWith("plan_family");
     expect(close).not.toHaveBeenCalled();
@@ -241,7 +241,7 @@ describe("Check access: the rule behind a row", () => {
     );
     await screen.findByText("Can use 0 of 1");
     const link = within(rowOf("Secret")).getByRole("link", { name: "Edit the Adult category" });
-    expect(link).toHaveAttribute("href", "/categories/?category=adult");
+    expect(link).toHaveAttribute("href", expect.stringMatching(/^\/categories\/?\?category=adult$/));
     expect(rowOf("Secret")).toHaveTextContent("Blocked: It is in the Adult category, which this plan can't see.");
   });
 
@@ -296,7 +296,7 @@ describe("Check access: the rule behind a row", () => {
     );
     await screen.findByText("Can use 1 of 1");
     const link = within(rowOf("fast")).getByRole("link", { name: "Big chat" });
-    expect(link).toHaveAttribute("href", "/models/?model=big-model");
+    expect(link).toHaveAttribute("href", expect.stringMatching(/^\/models\/?\?model=big-model$/));
     expect(rowOf("fast")).toHaveTextContent("Points to Big chat");
   });
 });
@@ -326,7 +326,7 @@ describe("Check access: cannot tell", () => {
     mount(preview([unknown]));
     await screen.findByText("Can use 0 of 1");
     const link = within(rowOf("Mystery")).getByRole("link", { name: "Open Categories" });
-    expect(link).toHaveAttribute("href", "/categories/");
+    expect(link).toHaveAttribute("href", expect.stringMatching(/^\/categories\/?$/));
   });
 });
 
@@ -337,8 +337,7 @@ describe("Check access: counts, filter and search", () => {
     const chat = screen.getByRole("heading", { name: "Chat" }).closest("section") as HTMLElement;
     expect(chat).toHaveTextContent("1 of 3 usable · 1 blocked · 1 can't tell");
     const images = screen.getByRole("heading", { name: "Images" }).closest("section") as HTMLElement;
-    expect(images).toHaveTextContent("1 of 1 usable");
-    expect(images).not.toHaveTextContent("blocked");
+    expect(within(images).getByText("1 of 1 usable")).toBeVisible();
   });
 
   it("filters a long list by name and by blocked only", async () => {

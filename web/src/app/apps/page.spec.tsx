@@ -904,12 +904,48 @@ it("fills the guide only with names the new app's own plan allows", async () => 
     .mockResolvedValue({ ...snapshot, user: person("owner"), apps: [narrowed] });
   vi.mocked(accountApi.createApp).mockResolvedValue(narrowed);
   vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(minted("OpenWhispr laptop"));
-  const entry = (id: string, state: "allowed" | "blocked") =>
-    ({ id, name: id, alias: true, group: "chat", group_label: "Chat", state, reason: null, kinds: [] });
+  const entry = (id: string, state: "allowed" | "blocked" | "unknown") =>
+    ({ id, name: id, alias: true, group: "chat", group_label: "Chat", state, reason: null, rule: null, points_to: [], kinds: [] });
+  const counts = { usable: 1, total: 2, blocked: 1, unknown: 0 };
   vi.spyOn(api.accessPlans, "preview").mockResolvedValue({
     plan_ids: ["plan_local"],
-    summary: { usable: 1, total: 2 },
+    summary: counts,
+    groups: [{ group: "chat", label: "Chat", ...counts }],
     entries: [entry("house-chat", "blocked"), entry("house-whisper", "allowed")],
+  });
+  renderApps(owner);
+  await openNewApp("OpenWhispr laptop");
+  fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Connect OpenWhispr laptop" }));
+  // The person's catalog has house-chat; the app's plan does not, so the guide must not suggest it.
+  expect(await dialog.findByText(/needs a .* model, and none is available/)).toBeVisible();
+  expect(api.accessPlans.preview).toHaveBeenCalledWith("plan_local");
+  const models = dialog.getAllByLabelText("Model").map((el) => (el as HTMLInputElement).value);
+  expect(models).toContain("house-whisper");
+  expect(models).not.toContain("house-chat");
+});
+
+it("does not suggest a name the check could not tell is allowed", async () => {
+  const narrowed: AccountApp = {
+    ...app,
+    id: "guide",
+    name: "OpenWhispr laptop",
+    access_plan: { id: "plan_local", name: "Local only", summary: null, same_as_person: false },
+  };
+  // No apps at first; the refresh after creating one lists it with its narrower plan.
+  vi.mocked(accountApi.session)
+    .mockResolvedValueOnce({ ...snapshot, user: person("owner") })
+    .mockResolvedValue({ ...snapshot, user: person("owner"), apps: [narrowed] });
+  vi.mocked(accountApi.createApp).mockResolvedValue(narrowed);
+  vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(minted("OpenWhispr laptop"));
+  const entry = (id: string, state: "allowed" | "blocked" | "unknown") =>
+    ({ id, name: id, alias: true, group: "chat", group_label: "Chat", state, reason: null, rule: null, points_to: [], kinds: [] });
+  const counts = { usable: 1, total: 2, blocked: 1, unknown: 0 };
+  vi.spyOn(api.accessPlans, "preview").mockResolvedValue({
+    plan_ids: ["plan_local"],
+    summary: { ...counts, blocked: 0, unknown: 1 },
+    groups: [{ group: "chat", label: "Chat", ...counts, blocked: 0, unknown: 1 }],
+    entries: [entry("house-chat", "unknown"), entry("house-whisper", "allowed")],
   });
   renderApps(owner);
   await openNewApp("OpenWhispr laptop");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Layers, Plus } from "lucide-react";
 import { adminFetch, ApiError, api, queryKeys } from "@/lib/api";
@@ -51,6 +51,16 @@ export function CategoryList({ active, catalog, presets, catalogLoading, catalog
 }) {
   const { data: plans, isError: plansError, refetch: plansRefetch } = useQuery({ queryKey: queryKeys.accessPlans, queryFn: api.accessPlans.list });
   const [dialog, setDialog] = useState<Dialogs>(null);
+  // Check access links to /categories?category=<id>: open that category's editor once.
+  const requested = useRef(
+    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("category"),
+  );
+  useEffect(() => {
+    const id = requested.current;
+    if (!id) return;
+    requested.current = null;
+    if (active?.snapshot.categories[id]) setDialog({ kind: "category", id });
+  }, [active]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const snapshot = active?.snapshot ?? emptySnapshot();

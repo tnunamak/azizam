@@ -335,7 +335,9 @@ from gateway.openai_media_schemas import (
     VIDEOS_STATUS_OPENAPI,
     VOICES_LIST_OPENAPI,
 )
-from gateway.policy import DENIED, NO_ACCESS, EffectiveAccess, PolicyDecision, evaluate
+from gateway.policy import (
+    DENIED, NO_ACCESS, RULE_PROVIDER_UNAVAILABLE, DecidingRule, EffectiveAccess, PolicyDecision, evaluate,
+)
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt, new_request_id
 from gateway.runtime_auth import (
     RuntimeIdentity,
@@ -13188,7 +13190,9 @@ def _capability_for_access(
     provider = provider_lookup(registry if registry is not None else ADMIN_STORE.get_service_registry(), capability.backend)
     if "remote" in capability.tags or (provider is not None and service_registry.is_remote_provider_config(provider.config)):
         if provider is None:
-            return replace(capability, policy_available=False, policy_reasons=("Provider configuration is unavailable.",))
+            return replace(capability, policy_available=False,
+                           policy_reasons=("Provider configuration is unavailable.",),
+                           policy_rule=DecidingRule(RULE_PROVIDER_UNAVAILABLE, "provider", capability.backend))
         remote_provider_id = provider.id
     # A name that points at a model is judged on that model, like a request is;
     # a plan may also grant the name itself (requested_model).
@@ -14954,15 +14958,19 @@ def _app_access(app_id: str) -> EffectiveAccess | None:
     return identity_from_access_row(row, key_hash="", name="", person_id=None).access
 
 
-async def _access_preview(access: EffectiveAccess) -> dict[str, Any]:
+async def _access_preview(access: EffectiveAccess, *, full_detail: bool = True) -> dict[str, Any]:
     """Every Models page entry with what ``access`` can and cannot use (admin Check access).
 
     Decided by the discovery policy view (``_capability_for_access``), so the
-    preview cannot drift from what the Models page and requests enforce.
+    preview cannot drift from what the Models page and requests enforce. That
+    view runs ``evaluate`` and the category gate, the code a request runs.
+    ``full_detail`` is the owner's view; an administrator is not told the name
+    of a restricted category (only the owner may open Categories).
     """
     from gateway.access_preview import build_access_preview
 
     auth_context = AuthContext(identity=AuthIdentity(name="access-preview", key_hash="", access=access))
+    plans = (access.person_plan, access.app_plan)
 
     def assemble() -> dict[str, Any]:
         viewed = _viewed_gateway_capabilities(auth_context)
@@ -14971,13 +14979,17 @@ async def _access_preview(access: EffectiveAccess) -> dict[str, Any]:
         # A decision always records why it denied. A denial with no reason is the
         # gateway alias projection (never served; the catalog rebuilds aliases
         # from their targets), so nothing offers it and a plan cannot be blocked from it.
-        offered = [replace(cap, policy_available=True, policy_reasons=())
+        offered = [replace(cap, policy_available=True, policy_reasons=(), policy_rule=None)
                    for cap in viewed if cap.policy_available is not False or cap.policy_reasons]
         service_records = _workflow_availability_services(ADMIN_STORE.get_service_registry())
         return build_access_preview(
             offered=_models_catalog_from([offered], service_records=service_records),
             permitted=_models_catalog_from([permitted], service_records=service_records),
             denied=denied,
+            allowed=permitted,
+            plan_names={plan.id: plan.name for plan in plans if plan is not None},
+            category_names=category_enforcement.category_labels(),
+            detail="full" if full_detail else "limited",
         )
 
     return await asyncio.to_thread(assemble)

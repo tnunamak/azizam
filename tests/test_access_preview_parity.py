@@ -40,6 +40,7 @@ CATALOG = [
     _cap("chat.completions", "chat-secret", **TEXT),  # in the restricted category below
     _alias("fast", "chat-a"),
     _alias("slow", "chat-b"),
+    _alias("hush", "chat-secret"),  # a name for the restricted model: the category hides it under every name
     _cap("chat.completions", "multi", **TEXT),
     _cap("image.generate", "multi", input_modalities=("text",), output_modalities=("image",)),
     _cap("image.generate", "img-a", input_modalities=("text",), output_modalities=("image",)),
@@ -47,7 +48,8 @@ CATALOG = [
     _cap("audio.speech", "tts-a", input_modalities=("text",), output_modalities=("audio",)),
 ]
 VIEWS = {"chat": {"stable": [{"alias": "fast", "resolves_to": "chat-a", "service": "svc"},
-                             {"alias": "slow", "resolves_to": "chat-b", "service": "svc"}]}}
+                             {"alias": "slow", "resolves_to": "chat-b", "service": "svc"},
+                             {"alias": "hush", "resolves_to": "chat-secret", "service": "svc"}]}}
 
 # What each plan lists. ``None`` means every capability; a list narrows what each listed capability grants.
 PLANS = {
@@ -127,6 +129,9 @@ def test_a_plan_listed_for_the_restricted_category_is_allowed_into_it(owner, cat
     assert unseen["chat-secret"]["rule"]["code"] == "category.hidden"
     # A restricted category hides the model under every name; the alias is judged on the model it reaches.
     assert unseen["chat-secret"]["rule"]["name"] == "Adult"
+    assert unseen["hush"]["state"] == "blocked" and unseen["hush"]["rule"]["code"] == "category.hidden"
+    assert unseen["hush"]["points_to"] == [{"id": "chat-secret", "name": unseen["chat-secret"]["name"]}]
+    assert seen["hush"]["state"] == "allowed"
 
 
 def test_an_app_is_judged_by_both_of_its_plans_exactly_as_a_request_is(owner):

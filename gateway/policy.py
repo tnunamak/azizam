@@ -38,6 +38,29 @@ NO_ACCESS_PLAN = "no_access_plan"
 NOT_IN_ACCESS_PLAN = "not_in_access_plan"
 CANNOT_START_MODEL = "cannot_start_model"
 
+# Rule codes: which rule decided a request. They are stable names for scripts and
+# the UI to branch on (never on a sentence), and they never reach a data-plane
+# caller: the wire keeps its one generic sentence.
+RULE_NO_PLAN = "plan.none"
+RULE_CAPABILITY_NOT_GRANTED = "plan.capability_not_granted"
+RULE_ITEM_NOT_LISTED = "plan.item_not_listed"
+RULE_DIRECT_ENGINE = "plan.direct_engine_not_granted"
+RULE_PROVIDER = "plan.provider_not_granted"
+RULE_FALLBACK = "plan.fallback_not_granted"
+RULE_ALLOWS_ALL = "plan.allows_all"
+RULE_LISTS_ITEM = "plan.lists_item"
+RULE_ALLOWS = "plan.allows"
+# The owner's category rules (gateway/category_enforcement.py).
+RULE_CATEGORY_HIDDEN = "category.hidden"
+RULE_CATEGORY_NO_GRANT = "category.no_grant"
+RULE_CATEGORY_NOT_ALLOWED = "category.not_allowed"
+RULE_CATEGORY_UNAVAILABLE = "category.rules_unavailable"
+# No plan decided: the provider the item runs on could not be read.
+RULE_PROVIDER_UNAVAILABLE = "provider.config_unavailable"
+# The answer depends on something Check access could not read. Enforcement refuses
+# these too (fail closed), so "not allowed" is true; the cause is what the owner must fix.
+CANNOT_TELL_RULES = frozenset({RULE_CATEGORY_UNAVAILABLE, RULE_PROVIDER_UNAVAILABLE})
+
 
 def _canonical_provider_id(value: object) -> str:
     from gateway.service_registry import canonical_provider_id
@@ -86,8 +109,29 @@ class PolicyRequest:
 
 
 @dataclass(frozen=True)
+class DecidingRule:
+    """The rule that made a decision, for the owner's Check access view.
+
+    ``code`` is one of the stable ``RULE_*`` or ``category.*`` / ``provider.*``
+    codes. ``kind`` says where the rule is edited (``plan``, ``category`` or
+    ``provider``). ``id`` is that plan's or category's id when the rule has one.
+    ``side`` is ``person`` or ``app`` for a plan rule. ``subject`` is what the
+    rule talks about: a capability id, an item name, a provider or an engine.
+    """
+
+    code: str
+    kind: str
+    id: str | None = None
+    side: str | None = None
+    subject: str | None = None
+
+
+@dataclass(frozen=True)
 class PolicyDecision:
-    """Receipt-compatible decision. ``code`` and ``side`` name a denial."""
+    """Receipt-compatible decision. ``code`` and ``side`` name a denial.
+
+    ``rule`` names the deciding rule, allow or deny. It is not a receipt field.
+    """
 
     decision: str
     sources: tuple[str, ...] = ()
@@ -95,6 +139,7 @@ class PolicyDecision:
     visibility_level: str = "basic"
     code: str | None = None
     side: str | None = None
+    rule: DecidingRule | None = None
 
     @property
     def allowed(self) -> bool:
@@ -184,6 +229,7 @@ def _decision(
     *,
     code: str | None = None,
     side: str | None = None,
+    rule: DecidingRule | None = None,
 ) -> PolicyDecision:
     return PolicyDecision(
         decision=outcome,
@@ -192,6 +238,7 @@ def _decision(
         visibility_level=access.receipt_detail,
         code=code,
         side=side,
+        rule=rule,
     )
 
 
@@ -249,30 +296,51 @@ def _not_in_plan(side: str, what: str) -> str:
     )
 
 
-def _check_plan(plan: AccessPlan, request: PolicyRequest, side: str) -> tuple[str, str] | None:
-    """Return (code, reason) for the first rule ``plan`` fails, else None."""
+def _check_plan(
+    plan: AccessPlan, request: PolicyRequest, side: str,
+) -> tuple[str, str, DecidingRule] | None:
+    """Return (code, reason, rule) for the first rule ``plan`` fails, else None."""
     intent = request.intent
+
+    def refuse(rule_code: str, what: str, subject: str | None) -> tuple[str, str, DecidingRule]:
+        return NOT_IN_ACCESS_PLAN, _not_in_plan(side, what), DecidingRule(rule_code, "plan", plan.id, side, subject)
+
     if request.native_passthrough or intent == DIRECT_ENGINE_INTENT:
         direct = plan.direct_engine_access
         engine = request.native_backend or request.backend
         if not direct.allows_engine(engine) or not direct.granted:
-            return NOT_IN_ACCESS_PLAN, _not_in_plan(side, f"Direct engine access to {engine or 'this engine'}")
+            return refuse(RULE_DIRECT_ENGINE, f"Direct engine access to {engine or 'this engine'}", engine)
         if request.native_operation is not None and not matches_operation(request.native_operation, direct.operations):
-            return NOT_IN_ACCESS_PLAN, _not_in_plan(
-                side, f"{request.native_operation} on {engine or 'this engine'}")
+            return refuse(RULE_DIRECT_ENGINE, f"{request.native_operation} on {engine or 'this engine'}", engine)
     elif intent is not None and intent not in DISCOVERY_INTENTS and intent not in UNSUPPORTED_INTENTS:
         capability = capability_for_intent(intent)
         grant = plan.can_use.get(capability) if capability else None
-        if grant is None or not grant.allows(
-                model=request.model, workflow=request.workflow, requested=request.requested_model):
-            return NOT_IN_ACCESS_PLAN, _not_in_plan(side, _item_label(request, capability))
+        if grant is None:
+            return refuse(RULE_CAPABILITY_NOT_GRANTED, _item_label(request, capability), capability)
+        if not grant.allows(model=request.model, workflow=request.workflow, requested=request.requested_model):
+            return refuse(RULE_ITEM_NOT_LISTED, _item_label(request, capability),
+                          request.workflow or request.requested_model or request.model)
     if request.remote_provider is not None:
         provider = _canonical_provider_id(request.remote_provider)
         if provider not in plan.paid_providers:
-            return NOT_IN_ACCESS_PLAN, _not_in_plan(side, f"The paid provider {provider}")
+            return refuse(RULE_PROVIDER, f"The paid provider {provider}", provider)
     if (request.requires_cloud_fallback or request.remote_paid_fallback) and not plan.provider_fallback:
-        return NOT_IN_ACCESS_PLAN, _not_in_plan(side, "Using a paid provider when the engine is unavailable")
+        return refuse(RULE_FALLBACK, "Using a paid provider when the engine is unavailable", None)
     return None
+
+
+def _allowing_rule(plan: AccessPlan, request: PolicyRequest, side: str) -> DecidingRule:
+    """Which grant of ``plan`` lets a request that ``_check_plan`` passed through."""
+    intent = request.intent
+    capability = capability_for_intent(intent)
+    grant = plan.can_use.get(capability) if capability else None
+    direct = request.native_passthrough or intent == DIRECT_ENGINE_INTENT
+    if grant is None or direct or intent in DISCOVERY_INTENTS or intent in UNSUPPORTED_INTENTS:
+        return DecidingRule(RULE_ALLOWS, "plan", plan.id, side)
+    if grant.all_items:
+        return DecidingRule(RULE_ALLOWS_ALL, "plan", plan.id, side, capability)
+    return DecidingRule(RULE_LISTS_ITEM, "plan", plan.id, side, grant.listed_name(
+        model=request.model, workflow=request.workflow, requested=request.requested_model))
 
 
 def evaluate(access: EffectiveAccess, request: PolicyRequest) -> PolicyDecision:
@@ -285,20 +353,22 @@ def evaluate(access: EffectiveAccess, request: PolicyRequest) -> PolicyDecision:
     if access.person_plan is None:
         return _decision(access, DENIED, [
             "You don't have an access plan yet. Ask the gateway owner to choose one.",
-        ], code=NO_ACCESS_PLAN, side=PERSON_SIDE)
+        ], code=NO_ACCESS_PLAN, side=PERSON_SIDE, rule=DecidingRule(RULE_NO_PLAN, "plan", None, PERSON_SIDE))
     if access.app_plan is None:
         return _decision(access, DENIED, [
             "This app has no access plan. Ask the gateway owner to choose one.",
-        ], code=NO_ACCESS_PLAN, side=APP_SIDE)
+        ], code=NO_ACCESS_PLAN, side=APP_SIDE, rule=DecidingRule(RULE_NO_PLAN, "plan", None, APP_SIDE))
     sides = [(PERSON_SIDE, access.person_plan)]
     if access.app_plan.id != access.person_plan.id:
         sides.append((APP_SIDE, access.app_plan))
     for side, plan in sides:
         failure = _check_plan(plan, request, side)
         if failure is not None:
-            code, reason = failure
-            return _decision(access, DENIED, [reason], code=code, side=side)
-    return _decision(access, ALLOWED, ["allowed by your access plan"])
+            code, reason, rule = failure
+            return _decision(access, DENIED, [reason], code=code, side=side, rule=rule)
+    # Both plans allow it; name the grant of the plan checked last (the app's, when it differs).
+    side, plan = sides[-1]
+    return _decision(access, ALLOWED, ["allowed by your access plan"], rule=_allowing_rule(plan, request, side))
 
 
 def cannot_start_model(access: EffectiveAccess, item: str) -> PolicyDecision:

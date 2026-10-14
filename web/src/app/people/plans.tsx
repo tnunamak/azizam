@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useId, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   api,
@@ -7,6 +8,7 @@ import {
   type PlanCaps,
   type AccessPlan,
   type AccessPreviewEntry,
+  type AccessRule,
   type AccessPlanDocument,
   type AccessPlanEditorContract,
   type CapabilityId,
@@ -560,18 +562,59 @@ function PlanForm({
   );
 }
 
+/** Where a rule is edited, if this viewer may edit it. Plans open in place when the page says how. */
+function editLink(rule: AccessRule | null, canEdit: boolean): { href: string; label: string; planId?: string } | null {
+  if (!rule || !canEdit) return null;
+  if (rule.kind === "plan")
+    return rule.id
+      ? {
+          href: `/people/?plan=${encodeURIComponent(rule.id)}`,
+          label: rule.name ? `Edit the ${rule.name} plan` : "Edit the plan",
+          planId: rule.id,
+        }
+      : null;
+  if (rule.kind === "category")
+    return rule.id
+      ? {
+          href: `/categories/?category=${encodeURIComponent(rule.id)}`,
+          label: rule.name ? `Edit the ${rule.name} category` : "Edit the category",
+        }
+      : { href: "/categories/", label: "Open Categories" };
+  return { href: "/providers/", label: "Open Providers" };
+}
+
+const stateWord = (state: "allowed" | "blocked" | "unknown") =>
+  state === "allowed" ? "Why allowed" : state === "unknown" ? "Can't tell" : "Blocked";
+
+function groupCounts(counts: { total: number; usable: number; blocked: number; unknown: number }) {
+  return [
+    `${counts.usable} of ${counts.total} usable`,
+    counts.blocked ? `${counts.blocked} blocked` : null,
+    counts.unknown ? `${counts.unknown} can't tell` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 /** Check access (design §3.1): everything this plan can and cannot use, without running anything. */
 export function CheckAccess({
   plan,
   close,
   restoreFocus,
+  canEdit = false,
+  onEditPlan,
 }: {
   plan: AccessPlan;
   restoreFocus?: (event: Event) => void;
   close: () => void;
+  /** The owner may edit the plan and the rules behind a row; an administrator may only read. */
+  canEdit?: boolean;
+  /** Open the plan editor in place instead of following the link. */
+  onEditPlan?: (planId: string) => void;
 }) {
   const [filter, setFilter] = useState("");
   const [blockedOnly, setBlockedOnly] = useState(false);
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const { data, isPending, isError, error, refetch, isFetching } = useQuery({
     queryKey: queryKeys.accessPreview(plan.id),
     queryFn: () => api.accessPlans.preview(plan.id),
@@ -583,7 +626,7 @@ export function CheckAccess({
     (entry) =>
       (!blockedOnly || entry.state !== "allowed") &&
       (!needle ||
-        `${entry.name} ${entry.id} ${entry.group_label}`
+        `${entry.name} ${entry.id} ${entry.group_label} ${entry.points_to.map((target) => target.name).join(" ")}`
           .toLowerCase()
           .includes(needle)),
   );
@@ -596,6 +639,12 @@ export function CheckAccess({
     },
     [],
   );
+  const toggle = (key: string) =>
+    setOpen((current) => {
+      const next = new Set(current);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
   return (
     <Dialog open onOpenChange={(open) => !open && close()}>
       <DialogContent onCloseAutoFocus={restoreFocus} className="sm:max-w-2xl">
@@ -623,9 +672,23 @@ export function CheckAccess({
           </p>
         ) : (
           <div className="space-y-4">
-            <p className="text-body font-medium">
-              Can use {data.summary.usable} of {data.summary.total}
-            </p>
+            <div className="space-y-1">
+              <p className="text-body font-medium">
+                Can use {data.summary.usable} of {data.summary.total}
+              </p>
+              {(data.summary.blocked > 0 || data.summary.unknown > 0) && (
+                <p className="text-muted-foreground text-meta">
+                  {data.summary.blocked > 0 && <span>{data.summary.blocked} blocked</span>}
+                  {data.summary.blocked > 0 && data.summary.unknown > 0 && " · "}
+                  {data.summary.unknown > 0 && <span>{data.summary.unknown} can&apos;t tell</span>}
+                </p>
+              )}
+              <p className="text-muted-foreground text-meta">
+                This list shows what the plan allows. It does not check that an
+                engine is running, that a spending cap has room, or that a
+                stopped model could be started.
+              </p>
+            </div>
             {entries.length > 6 && (
               <div className="flex flex-wrap items-center gap-2">
                 <Input
@@ -650,18 +713,36 @@ export function CheckAccess({
               {groups.length === 0 ? (
                 <p className="text-muted-foreground text-meta">Nothing matches.</p>
               ) : (
-                groups.map((group) => (
-                  <section key={group.key} aria-labelledby={`access-group-${group.key}`}>
-                    <h3 id={`access-group-${group.key}`} className="text-meta font-medium">
-                      {group.label}
-                    </h3>
-                    <ul className="divide-y">
-                      {group.entries.map((entry) => (
-                        <AccessEntryRow key={`${entry.alias}:${entry.id}`} entry={entry} />
-                      ))}
-                    </ul>
-                  </section>
-                ))
+                groups.map((group) => {
+                  const counts = data.groups.find((item) => item.group === group.key);
+                  return (
+                    <section key={group.key} aria-labelledby={`access-group-${group.key}`}>
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                        <h3 id={`access-group-${group.key}`} className="text-meta font-medium">
+                          {group.label}
+                        </h3>
+                        {counts && (
+                          <span className="text-muted-foreground text-meta">{groupCounts(counts)}</span>
+                        )}
+                      </div>
+                      <ul className="divide-y">
+                        {group.entries.map((entry) => {
+                          const key = `${entry.alias}:${entry.id}`;
+                          return (
+                            <AccessEntryRow
+                              key={key}
+                              entry={entry}
+                              expanded={open.has(key)}
+                              toggle={() => toggle(key)}
+                              canEdit={canEdit}
+                              onEditPlan={onEditPlan}
+                            />
+                          );
+                        })}
+                      </ul>
+                    </section>
+                  );
+                })
               )}
             </div>
           </div>
@@ -676,43 +757,173 @@ export function CheckAccess({
   );
 }
 
-function AccessEntryRow({ entry }: { entry: AccessPreviewEntry }) {
-  const blocked = entry.kinds.filter((kind) => !kind.allowed);
+const linkClass =
+  "text-meta inline-flex min-h-8 items-center underline underline-offset-4 max-sm:min-h-11";
+
+function RuleLink({
+  rule,
+  canEdit,
+  onEditPlan,
+}: {
+  rule: AccessRule | null;
+  canEdit: boolean;
+  onEditPlan?: (planId: string) => void;
+}) {
+  const link = editLink(rule, canEdit);
+  if (!link) return null;
   return (
-    <li className="flex items-start justify-between gap-3 py-2">
-      <div className="min-w-0 space-y-1">
-        <p className="text-body font-medium break-words">{entry.name}</p>
-        {entry.id !== entry.name && (
-          <p className="text-muted-foreground text-meta break-all">{entry.id}</p>
-        )}
-        {entry.kinds.length > 0 && (
-          <p className="text-meta">
-            {entry.kinds.map((kind, index) => (
-              <span key={kind.kind}>
-                {index > 0 && " · "}
-                {kind.label}{" "}
-                <span aria-hidden="true">{kind.allowed ? "✓" : "✗"}</span>
-                <span className="sr-only">{kind.allowed ? "allowed" : "blocked"}</span>
-              </span>
+    <Link
+      prefetch={false}
+      href={link.href}
+      className={linkClass}
+      onClick={(event) => {
+        if (link.planId && onEditPlan) {
+          event.preventDefault();
+          onEditPlan(link.planId);
+        }
+      }}
+    >
+      {link.label}
+    </Link>
+  );
+}
+
+/** What one kind of work (or the whole row) decided: its state, sentence and rule. */
+interface Verdict {
+  label: string | null;
+  state: "allowed" | "blocked" | "unknown";
+  /** The sentence; a decision that recorded none reads as the plain default. */
+  text: string | null | undefined;
+  rule: AccessRule | null;
+}
+
+const sentenceOf = (item: Verdict) =>
+  item.text ?? (item.state === "allowed" ? "This plan allows it." : "This plan doesn't include it.");
+
+function verdicts(entry: AccessPreviewEntry): Verdict[] {
+  if (entry.kinds.length > 0)
+    return entry.kinds.map((kind) => ({
+      label: kind.label,
+      state: kind.state,
+      text: kind.allowed ? kind.rule?.plain_reason : kind.reason,
+      rule: kind.rule,
+    }));
+  const state = entry.state === "allowed" ? "allowed" : entry.state === "unknown" ? "unknown" : "blocked";
+  return [
+    {
+      label: null,
+      state,
+      text: state === "allowed" ? entry.rule?.plain_reason : entry.reason,
+      rule: entry.rule,
+    },
+  ];
+}
+
+function AccessEntryRow({
+  entry,
+  expanded,
+  toggle,
+  canEdit,
+  onEditPlan,
+}: {
+  entry: AccessPreviewEntry;
+  expanded: boolean;
+  toggle: () => void;
+  canEdit: boolean;
+  onEditPlan?: (planId: string) => void;
+}) {
+  const detailId = useId();
+  const all = verdicts(entry);
+  const shut = all.filter((item) => item.state !== "allowed");
+  return (
+    <li className="py-2">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <p className="text-body font-medium break-words">{entry.name}</p>
+          {entry.id !== entry.name && (
+            <p className="text-muted-foreground text-meta break-all">{entry.id}</p>
+          )}
+          {entry.points_to.length > 0 && (
+            <p className="text-meta">
+              Points to{" "}
+              {entry.points_to.map((target, index) => (
+                <span key={target.id}>
+                  {index > 0 && ", "}
+                  <Link
+                    prefetch={false}
+                    href={`/models/?model=${encodeURIComponent(target.id)}`}
+                    className="underline underline-offset-4"
+                  >
+                    {target.name}
+                  </Link>
+                </span>
+              ))}
+            </p>
+          )}
+          {entry.kinds.length > 0 && (
+            <p className="text-meta">
+              {entry.kinds.map((kind, index) => (
+                <span key={kind.kind}>
+                  {index > 0 && " · "}
+                  {kind.label}{" "}
+                  <span aria-hidden="true">
+                    {kind.state === "allowed" ? "✓" : kind.state === "unknown" ? "?" : "✗"}
+                  </span>
+                  <span className="sr-only">
+                    {kind.state === "allowed" ? "allowed" : kind.state === "unknown" ? "can't tell" : "blocked"}
+                  </span>
+                </span>
+              ))}
+            </p>
+          )}
+          {!expanded &&
+            shut.map((item) => (
+              <div key={item.label ?? "row"} className="space-y-0.5">
+                <p className="text-muted-foreground text-meta break-words">
+                  {item.label ? `${item.label}: ${sentenceOf(item)}` : `${stateWord(item.state)}: ${sentenceOf(item)}`}
+                </p>
+                <RuleLink rule={item.rule} canEdit={canEdit} onEditPlan={onEditPlan} />
+              </div>
             ))}
-          </p>
-        )}
-        {blocked.length > 0
-          ? blocked.map((kind) => (
-              <p key={kind.kind} className="text-muted-foreground text-meta break-words">
-                {kind.label}: {kind.reason}
-              </p>
-            ))
-          : entry.reason && (
-              <p className="text-muted-foreground text-meta break-words">{entry.reason}</p>
-            )}
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          {entry.state === "allowed" ? (
+            <StateBadge state="ready" word="Allowed" />
+          ) : entry.state === "partial" ? (
+            <StateBadge state="degraded" word="Partly allowed" />
+          ) : entry.state === "unknown" ? (
+            <StateBadge state="unknown" word="Can't tell" />
+          ) : (
+            <StateBadge state="blocked" word="Blocked" />
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label={`Why ${entry.name}`}
+            aria-expanded={expanded}
+            aria-controls={detailId}
+            onClick={toggle}
+          >
+            Why
+          </Button>
+        </div>
       </div>
-      {entry.state === "allowed" ? (
-        <StateBadge state="ready" word="Allowed" />
-      ) : entry.state === "partial" ? (
-        <StateBadge state="degraded" word="Partly allowed" />
-      ) : (
-        <StateBadge state="blocked" word="Blocked" />
+      {expanded && (
+        <div id={detailId} className="bg-muted/40 mt-2 space-y-3 rounded-md p-3">
+          {all.map((item) => (
+            <div key={item.label ?? "row"} className="space-y-1">
+              <p className="text-meta break-words">
+                {item.label ? `${item.label}: ` : ""}
+                {stateWord(item.state)}: {sentenceOf(item)}
+              </p>
+              {item.rule && (
+                <p className="text-muted-foreground font-mono text-xs break-all">{item.rule.code}</p>
+              )}
+              <RuleLink rule={item.rule} canEdit={canEdit} onEditPlan={onEditPlan} />
+            </div>
+          ))}
+        </div>
       )}
     </li>
   );

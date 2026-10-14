@@ -605,7 +605,31 @@ evaluates that plan on both sides.
 ### POST /admin/api/access/preview
 
 Request: `{ "plan": "<plan ID>" }` or `{ "app": "<app ID>" }`.
-Returns `plan_ids` plus the injected preview's `summary` and `entries`.
+Returns `plan_ids` plus the injected preview's `summary`
+(`usable`, `total`, `blocked`, `unknown`), `groups` (the same counts per group)
+and `entries`. An entry's `state` is `allowed`, `partial`, `blocked` or
+`unknown`. `unknown` is a cannot-tell: the answer depends on something the check
+could not read (the category rules, or a provider's setup). The gateway refuses
+such an item too, so it is never counted as usable.
+
+Each entry carries `rule`, the rule that decided it, allowed or not:
+`{ code, kind, id, name, plain_reason }`. Branch on `code`, never on the sentence.
+`kind` (`plan`, `category`, `provider`) says what to edit; `id` and `name` are
+that plan's or category's. `plain_reason` is the rule in plain English and never
+holds an internal id. Codes: `plan.none`, `plan.capability_not_granted`,
+`plan.item_not_listed`, `plan.direct_engine_not_granted`,
+`plan.provider_not_granted`, `plan.fallback_not_granted`, `plan.allows_all`,
+`plan.lists_item`, `plan.allows`, `category.hidden`, `category.no_grant`,
+`category.not_allowed`, `category.rules_unavailable`,
+`provider.config_unavailable`. `reason` repeats the sentence for a row that is not
+allowed. `points_to` names the model an alias reaches. `kinds` lists each kind of
+work when an entry is allowed for some and not others, or the kinds differ.
+
+The owner gets the full rule. An administrator gets the same list without the
+id and name of a restricted category (only the owner may open Categories).
+None of this reaches a data-plane caller: a refused request keeps its one
+generic sentence.
+
 A missing or failed preview returns `503 access_preview_unavailable`.
 
 The router no longer registers `/admin/api/profiles` (including item routes),

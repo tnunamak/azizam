@@ -264,7 +264,8 @@ class AdminStore(Protocol):
 AdminAuth = Callable[[Request], AdminContext]
 # app_id -> the access an App runs under right now (both plans), or None.
 AccessResolver = Callable[[str], "EffectiveAccess | None"]
-AccessPreview = Callable[["EffectiveAccess"], Awaitable[dict[str, Any]]]
+# async (access, full_detail=bool) -> the Check access list; ``full_detail`` is the owner's view.
+AccessPreview = Callable[..., Awaitable[dict[str, Any]]]
 # async (host, port, path) -> {ok, status, error, url}
 ServiceProbe = Callable[[str, "int | None", str], "Awaitable[Mapping[str, Any]]"]
 StatusProvider = Callable[[], "Awaitable[Mapping[str, Any]]"]
@@ -1581,8 +1582,8 @@ def create_admin_router(
     must raise :class:`AdminAuthError` for unauthenticated or forbidden
     callers. ``access_resolver`` lets Check access evaluate an App exactly as
     the runtime does (its two plans, from the admin store). ``access_preview``
-    is an optional ``async (EffectiveAccess) -> {summary, entries}`` that lists
-    every Models page entry with what that access can and cannot use; it is
+    is an optional ``async (EffectiveAccess, full_detail=...) -> {summary, groups, entries}``
+    that lists every Models page entry with what that access can and cannot use; it is
     injected so this router stays decoupled from ``proxy.py``. ``service_probe`` is
     an optional ``async (host, port, path) -> {ok, status, error, url}`` used by
     the backend "Test connection" control; when absent that route reports the
@@ -2975,11 +2976,16 @@ def create_admin_router(
         """Everything one plan (or an App's two plans) can and cannot use.
 
         ``{"plan": plan_id}`` or ``{"app": app_id}``. Returns ``plan_ids``,
-        ``summary`` (``usable`` of ``total`` entries) and ``entries``: one per
-        Models page entry with ``state`` (allowed, partial, blocked), a plain
-        ``reason`` when something is blocked, and ``kinds`` when one entry is
-        allowed for some kinds of work and not others. It makes no model
-        request and costs nothing.
+        ``summary`` (``usable`` of ``total`` entries, and how many are
+        ``blocked`` or ``unknown``), ``groups`` (the same counts per group)
+        and ``entries``: one per Models page entry with ``state`` (allowed,
+        partial, blocked, unknown), ``rule`` (the code, kind, id, name and plain
+        sentence of the rule that decided it, allowed or not), ``reason`` (the
+        sentence, when something is blocked or cannot be told), ``points_to``
+        (the model an alias reaches) and ``kinds`` when one entry is allowed for
+        some kinds of work and not others. The owner gets the full rule; an
+        administrator gets it without the name of a restricted category. It makes
+        no model request and costs nothing.
         """
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
@@ -2993,7 +2999,7 @@ def create_admin_router(
         except _RouteError as exc:
             return exc.as_response()
         try:
-            preview = await access_preview(access)
+            preview = await access_preview(access, full_detail="owner" in ctx.roles)
         except Exception:  # A failed preview must never look like a plan that allows nothing.
             return _RouteError(status.HTTP_503_SERVICE_UNAVAILABLE, "access_preview_unavailable",
                                "What this plan can use could not be read.").as_response()

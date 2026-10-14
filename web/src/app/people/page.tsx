@@ -201,6 +201,20 @@ export default function PeoplePage() {
   const linkNeedsPublicBase = link && !/^https?:\/\//i.test(link.url);
   const [editor, setEditor] = useState<AccessPlan | "new" | null>(null);
   const [testing, setTesting] = useState<AccessPlan | null>(null);
+  // Check access links to /people?plan=<id>: open that plan's editor once, for the owner.
+  const requestedPlan = useRef(
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search).get("plan"),
+  );
+  useEffect(() => {
+    if (!owner || !requestedPlan.current || !plansData) return;
+    const found = plansData.find((item) => item.id === requestedPlan.current);
+    requestedPlan.current = null;
+    if (!found) return;
+    setTab("plans");
+    setEditor(found);
+  }, [owner, plansData]);
   const refresh = async () => {
     await Promise.all([
       client.invalidateQueries({ queryKey: peopleKey }),
@@ -853,6 +867,13 @@ export default function PeoplePage() {
           restoreFocus={restoreFocus}
           plan={testing}
           close={() => setTesting(null)}
+          canEdit={owner}
+          onEditPlan={(planId) => {
+            const found = plansData?.find((item) => item.id === planId);
+            if (!found) return;
+            setTesting(null);
+            setEditor(found);
+          }}
         />
       )}
     </div>
