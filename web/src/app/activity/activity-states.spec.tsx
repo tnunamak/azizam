@@ -477,8 +477,8 @@ it.each([
   [401, "The sign-in or app-key check refused this request. Check the app's access key for this person, then try again."],
   [403, "This request was rejected because it did not have permission. Check this person's access plan and the app's access."],
   [429, "A request limit refused this request. The receipt does not identify which limit. Wait before trying again; if it happens again, ask the owner to check the request limits."],
-  [500, "A server error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner."],
-  [599, "A server error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner."],
+  [500, "An error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner."],
+  [599, "An error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner."],
 ])("describes stored rejection %s in the past tense", async (statusCode, message) => {
   mountOutcome({ status: "rejected", metadata: { status_code: statusCode } });
   await userEvent.click(await screen.findByRole("button", { name: /Request details:/ }));

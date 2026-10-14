@@ -295,17 +295,17 @@ describe("the list of model names", () => {
     await screen.findByRole("button", { name: "alpha" });
     expect(screen.queryByText("Shared by two rows.")).toBeNull();
     // On one line of facts a sentence drops its full stop.
-    expect(rowHas("gamma", "Read text aloud when a speech service is connected")).toBe(true);
+    expect(rowHas("gamma", "Read text aloud when a speech engine or provider is connected")).toBe(true);
     // A task's only name needs no description beside the task's own sentence.
     expect(screen.queryByText("The only image name.")).toBeNull();
     // Details still carries the description.
     fireEvent.click(nameButton("alpha"));
     expect(dialog().getByText("Shared by two rows.")).toBeVisible();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    fireEvent.change(search(), { target: { value: "speech service" } });
+    fireEvent.change(search(), { target: { value: "speech engine or provider" } });
     expect(nameButton("gamma")).toBeVisible();
     fireEvent.click(nameButton("gamma"));
-    expect(dialog().getByText("Read text aloud when a speech service is connected.")).toBeVisible();
+    expect(dialog().getByText("Read text aloud when a speech engine or provider is connected.")).toBeVisible();
     expect(dialog().queryByText(/backend/)).toBeNull();
   });
 
