@@ -208,6 +208,15 @@ function assetTitle(asset: MediaAsset) {
   return prompt || untitledName(asset);
 }
 
+function assetOpenLabel(asset: MediaAsset): string {
+  const date = toDateValue(asset.created_at)?.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }) ?? "Date unavailable";
+  return `Open ${assetTitle(asset)}, ${kindLabel(asset.kind)}, ${date}`;
+}
+
 /** A heading-length title: the prompt's first clause, or its first words. */
 function shortTitle(asset: MediaAsset): string {
   const prompt = typeof asset.prompt === "string" ? asset.prompt.trim() : "";
@@ -1419,7 +1428,7 @@ const AssetTile = memo(function AssetTile({
         data-asset-open={asset.asset_id}
         onClick={() => onOpen(asset)}
         className="rounded-media absolute inset-0 z-10 min-h-6 min-w-6 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        aria-label={`Open ${assetTitle(asset)}`}
+        aria-label={assetOpenLabel(asset)}
         aria-describedby={
           everyone && person && makerTooltip ? `maker-${asset.asset_id}` : undefined
         }

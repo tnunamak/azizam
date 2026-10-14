@@ -16,7 +16,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from gateway import admin_store, request_connections, sqlite_startup
 from gateway.admin_runtime import generate_app_api_key, is_human_user_record
@@ -29,13 +29,13 @@ _SCHEMA = admin_store.ACCOUNT_SCHEMA
 
 
 class AccountError(ValueError):
-    def __init__(self, code: str, message: str, status: int = 400):
+    def __init__(self, code: str, message: str, status: int = 400) -> None:
         super().__init__(message)
         self.code, self.message, self.status = code, message, status
 
 
 @contextmanager
-def connection(path: Path):
+def connection(path: Path) -> Iterator[sqlite3.Connection]:
     if request_connections.active():
         # Share the request's admin-store connection: this is the same database.
         with admin_store._conn(path) as conn, conn:
@@ -110,7 +110,7 @@ def _audit(conn, action: str, actor: str, target: str, now: int, metadata=None,
     )
 
 
-def _valid_plan(conn, plan_id: str | None):
+def _valid_plan(conn: sqlite3.Connection, plan_id: str | None) -> None:
     if not plan_id or not conn.execute("SELECT id FROM access_plans WHERE id=?", (plan_id,)).fetchone():
         raise AccountError("plan_not_found", "Access plan not found.", 404)
 
@@ -126,7 +126,7 @@ def plan_for_user(user_id: str, *, path: Path) -> str | None:
     return admin_store.person_plan_id(user_id, path=path)
 
 
-def ensure_access_row(conn, user_id: str) -> None:
+def ensure_access_row(conn: sqlite3.Connection, user_id: str) -> None:
     """Every person has an account_access row; a missing row denies (design §2.13)."""
     conn.execute("INSERT OR IGNORE INTO account_access(user_id) VALUES(?)", (user_id,))
 

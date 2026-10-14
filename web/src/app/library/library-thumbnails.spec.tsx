@@ -76,7 +76,7 @@ describe("Library tiles load small previews", () => {
     const requested = renderLibrary([
       item("clip", "video", { thumbnail_url: "/signed/clip/thumb", poster_asset_id: "poster", duration_s: 4 }),
     ]);
-    fireEvent.click(await screen.findByRole("button", { name: "Open Prompt clip" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Prompt clip, ") }));
     const dialog = await screen.findByRole("dialog");
     await waitFor(() => expect(dialog.querySelector("video")).not.toBeNull());
     const thumbnailProbe = dialog.querySelector('img[src="/signed/clip/thumb"]');
@@ -120,7 +120,7 @@ describe("Library tiles load small previews", () => {
     ]);
     await screen.findByAltText("Prompt other");
     const otherRenders = imageRenders.filter((src) => src === "/signed/other/thumb").length;
-    fireEvent.click(screen.getByRole("button", { name: "Open Prompt pic" }));
+    fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open Prompt pic, ") }));
     await waitFor(() => {
       const original = document.querySelector('img[src="/signed/pic/original"]');
       expect(original).toHaveAttribute("width", "1536");

@@ -8,8 +8,111 @@ import UsagePage from "./page";
 import { Requests } from "../activity/requests";
 import WorkflowsPage from "../workflows/page";
 import { Money } from "@/components/product/money";
-import { sourceGroups } from "./source-options";
+import { sourceGroups, usageCsv } from "./source-options";
 
+
+test("Usage CSV preserves exact values and quotes commas, quotes and newlines", () => {
+  expect(usageCsv([{
+    date: "2026-10-01",
+    app: 'Writer, "team"',
+    modelName: "Model\nName",
+    requests: 2,
+    spendUsd: 0.000123,
+  }])).toBe('date,app,model name,requests,spend in USD\r\n2026-10-01,"Writer, ""team""","Model\nName",2,0.000123\r\n');
+});
+
+test("Usage CSV distinguishes missing costs from zero and supports empty views", () => {
+  expect(usageCsv([])).toBe("date,app,model name,requests,spend in USD\r\n");
+  expect(usageCsv([
+    { date: "", app: "", modelName: "", requests: 1, spendUsd: null },
+    { date: "", app: "", modelName: "", requests: 1, spendUsd: 0 },
+  ])).toContain(",,,1,\r\n,,,1,0\r\n");
+});
+
+test("Usage CSV makes spreadsheet formulas inert", () => {
+  expect(usageCsv([{ date: "", app: "=1+1", modelName: "@SUM(A1)", requests: 1, spendUsd: 0 }]))
+    .toContain(",'=1+1,'@SUM(A1),1,0\r\n");
+});
+
+test("Usage downloads only loaded receipts with display names and no extra fetch", async () => {
+  const blobs: Blob[] = [];
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL(blob: Blob) { blobs.push(blob); return "blob:usage"; }
+    static revokeObjectURL = vi.fn();
+  });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  try {
+    renderUsage({
+      requests: 100,
+      truncated: true,
+      receipts: [{
+        request_id: "csv-one", created_at: "2026-10-01T12:00:00Z",
+        source_label: 'Writer, "team"', resolved_model: "chat-model",
+        cost_usd: 0.000123,
+      }],
+    });
+    const button = await screen.findByRole("button", { name: "Download CSV" });
+    expect(screen.getByText(/Recent receipts only; excludes requests not loaded/)).toBeVisible();
+    await waitFor(() => expect(button).toBeEnabled());
+    const calls = vi.mocked(fetch).mock.calls.length;
+    await userEvent.setup().click(button);
+    expect(fetch).toHaveBeenCalledTimes(calls);
+    expect(click).toHaveBeenCalledOnce();
+    expect(blobs).toHaveLength(1);
+    const csv = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(blobs[0]);
+    });
+    expect(csv).toContain('2026-10-01T12:00:00.000Z,"Writer, ""team""",');
+    expect(csv).toContain(",1,0.000123\r\n");
+    expect(csv).not.toContain(",100,");
+    expect(document.querySelector('a[download="usage-loaded-receipts.csv"]')).toBeNull();
+  } finally {
+    click.mockRestore();
+  }
+});
+
+
+test("Usage CSV follows the selected app rather than the previous loaded view", async () => {
+  const blobs: Blob[] = [];
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL(blob: Blob) { blobs.push(blob); return "blob:filtered"; }
+    static revokeObjectURL = vi.fn();
+  });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  let request = 0;
+  try {
+    renderUsage({}, async () => Response.json({
+      requests: 1, media_count: 0,
+      sources: [{ id: "app-two", label: "Second app", kind: "app", requests: 1 }],
+      receipts: [{
+        request_id: String(++request),
+        source_label: request === 1 ? "Old app" : "Second app",
+        resolved_model: "friendly-model", cost_usd: 0,
+      }],
+    }));
+    await screen.findByRole("button", { name: "Download CSV" });
+    const user = userEvent.setup();
+    screen.getByRole("combobox", { name: "App or connection" }).focus();
+    await user.keyboard(" ");
+    await user.keyboard("{ArrowDown}{Enter}");
+    await waitFor(() => expect(request).toBe(2));
+    const button = await screen.findByRole("button", { name: "Download CSV" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    const csv = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(blobs[0]);
+    });
+    expect(csv).toContain(",Second app,");
+    expect(csv).not.toContain("Old app");
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("source=app-two"))).toBe(true);
+  } finally {
+    click.mockRestore();
+  }
+});
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <>{children}</>,
   Bar: ({ dataKey, stackId, fill }: { dataKey: string; stackId?: string; fill: string }) =>
@@ -1321,4 +1424,62 @@ test("Usage changing person resets a previously selected source in picker and re
     expect(params.get("source")).toBeNull();
   });
   expect(screen.getByRole("combobox", { name: "App or connection" })).toHaveTextContent("All apps and connections");
+});
+
+test("NUMBERS totals reconcile complete model rows with task and month totals", async () => {
+  const models = [
+    { model: "first", capability: "chat", requests: 1001, cost_usd: 0.014 },
+    { model: "second", capability: "image", requests: 7, cost_usd: 0.125 },
+    { model: "third", capability: "chat", requests: 23, cost_usd: 0.028 },
+  ];
+  const requests = models.reduce((sum, row) => sum + row.requests, 0);
+  const spend = models.reduce((sum, row) => sum + row.cost_usd, 0);
+  renderUsage({ requests, remote_spend: spend, by_model: models });
+  const tasks = await screen.findByRole("table", { name: "By task" });
+  const cells = within(tasks).getAllByRole("row").slice(1)
+    .map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent!));
+  expect(cells).toEqual([
+    ["Chat", "1,024 requests", "99.3%", "$0.042"],
+    ["Make a picture", "7 requests", "0.7%", "$0.125"],
+  ]);
+  const month = screen.getByLabelText("This month");
+  const renderedRequests = cells.reduce((sum, row) => sum + Number(row[1].replaceAll(",", "").split(" ")[0]), 0);
+  const renderedSpend = cells.reduce((sum, row) => sum + Number(row[3].slice(1)), 0);
+  expect(renderedRequests).toBe(requests);
+  expect(renderedSpend).toBeCloseTo(spend, 8);
+  expect(within(month).getByText("1,031 requests")).toBeVisible();
+  expect(within(month).getByText("$0.167")).toBeVisible();
+});
+
+test("NUMBERS USD spend preserves sub-cent precision in summary and model rows", async () => {
+  renderUsage({
+    requests: 3, remote_spend: 0.0042,
+    by_model: [
+      { model: "tiny", capability: "chat", requests: 2, cost_usd: 0.0042 },
+      { model: "free", capability: "image", requests: 1, cost_usd: 0 },
+    ],
+  });
+  const month = await screen.findByLabelText("This month");
+  expect(within(month).getByText("Spend this month (USD)")).toBeVisible();
+  expect(within(month).getByText("$0.0042")).toBeVisible();
+  const models = screen.getByRole("table", { name: "Models" });
+  expect(within(models).getByRole("columnheader", { name: "Spend (USD)" })).toBeVisible();
+  const rows = within(models).getAllByRole("row").slice(1);
+  expect(within(rows[0]).getAllByRole("cell").at(-1)).toHaveTextContent(/^\$0\.0042$/);
+  expect(within(rows[1]).getAllByRole("cell").at(-1)).toHaveTextContent(/^\$0\.00$/);
+});
+
+test("NUMBERS busiest models sort numerically before top-five truncation and expansion", async () => {
+  const counts = [2, 10, 3, 100, 1, 20, 0];
+  renderUsage({ requests: 136, by_model: counts.map((requests, index) => ({
+    model: `model-${index}`, capability: "chat", requests, cost_usd: 100 - requests,
+  })) });
+  const table = await screen.findByRole("table", { name: "Models" });
+  const visibleCounts = () => within(table).getAllByRole("row").slice(1)
+    .map((row) => within(row).getAllByRole("cell")[1].textContent);
+  expect(visibleCounts()).toEqual(["100 requests", "20 requests", "10 requests", "3 requests", "2 requests"]);
+  await userEvent.setup().click(screen.getByRole("button", { name: "View all 7 models" }));
+  expect(visibleCounts()).toEqual(["100 requests", "20 requests", "10 requests", "3 requests", "2 requests", "1 request", "0 requests"]);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Show top 5 models" }));
+  expect(visibleCounts()).toEqual(["100 requests", "20 requests", "10 requests", "3 requests", "2 requests"]);
 });

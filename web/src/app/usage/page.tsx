@@ -17,7 +17,7 @@ import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { memberTerms, taskNames } from "@/lib/terms";
 import { RequestReceiptSheet } from "../activity/requests";
 import { useModelName } from "@/lib/use-model-name";
-import { sourceGroups, type UsageSource } from "./source-options";
+import { sourceGroups, usageCsv, type UsageSource } from "./source-options";
 import { normalizeCapability, type UsageCapability } from "./usage-capability";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -189,6 +189,33 @@ export default function UsagePage() {
   const filtersActive =
     effectivePerson !== (owner ? "all" : "self") || source !== "all";
 
+  function downloadCsv() {
+    if (!data || isFetching) return;
+    const csv = usageCsv(data.receipts.map((receipt) => {
+      const date = receipt.createdAt === null ? null : new Date(receipt.createdAt);
+      return {
+        date: date && !Number.isNaN(date.getTime()) ? date.toISOString() : "",
+        app: receipt.sourceLabel ?? nullableString(object(receipt.raw).app_label) ?? "",
+        modelName: receipt.model ? nameModel(receipt.model) : "",
+        requests: 1,
+        spendUsd: receipt.costUsd ?? (object(receipt.raw).remote === false ? 0 : null),
+      };
+    }));
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "usage-loaded-receipts.csv";
+    document.body.appendChild(link);
+    try {
+      link.click();
+    } finally {
+      link.remove();
+      // Give the browser time to consume the object URL before releasing it.
+      const revoke = URL.revokeObjectURL.bind(URL);
+      window.setTimeout(() => revoke(url), 1000);
+    }
+  }
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -282,6 +309,20 @@ export default function UsagePage() {
         ) : null}
       </PageHeader>
       <ReceiptDeepLink />
+      {data ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" disabled={isFetching} onClick={downloadCsv}
+            aria-describedby="usage-csv-scope">
+            Download CSV
+          </Button>
+          <p id="usage-csv-scope" className="text-muted-foreground text-xs">
+            Exports {data.receipts.length} loaded request receipts for these filters.
+            {data.truncated || data.requests > data.receipts.length
+              ? " Recent receipts only; excludes requests not loaded."
+              : ""}
+          </p>
+        </div>
+      ) : null}
       {isError && data ? (
         <Callout
           severity="attention"

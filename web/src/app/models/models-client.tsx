@@ -212,7 +212,7 @@ function engineLabel(row: CatalogRow): string {
 
 function localityLabel(row: CatalogRow): string | undefined {
   if (row.locality === "local") return "On your equipment";
-  if (row.locality === "remote") return providerLabel(row) ?? "Online service";
+  if (row.locality === "remote") return providerLabel(row) ?? "Online provider";
   return undefined;
 }
 
@@ -373,7 +373,7 @@ function itemMatches(row: CatalogRow, query: string): boolean {
 /** Rewrite only known catalog prose; custom text and identifiers stay intact. */
 export function modelDescription(description: string | null | undefined) {
   return description === "Speech synthesis when a backend is configured."
-    ? "Read text aloud when a speech service is connected."
+    ? "Read text aloud when a speech engine or provider is connected."
     : description;
 }
 
@@ -916,6 +916,14 @@ export default function ModelsClient() {
     allRows.some((row) => costKind(row) === kind),
   );
   const tasksPresent = taskOrder.filter((task) => allRows.some((row) => rowTask(row) === task));
+  // Facet counts respect search and the other filter, not their own selection.
+  const searched = allRows.filter((row) => itemMatches(row, query.trim()));
+  const taskCandidates = searched.filter((row) => price === "all" || costKind(row) === price);
+  const priceCandidates = searched.filter((row) => taskFilter === "all" || rowTask(row) === taskFilter);
+  const taskCount = (task: TaskFilter) =>
+    task === "all" ? taskCandidates.length : taskCandidates.filter((row) => rowTask(row) === task).length;
+  const priceCount = (kind: PriceFilter) =>
+    kind === "all" ? priceCandidates.length : priceCandidates.filter((row) => costKind(row) === kind).length;
   const visible = allRows.filter(
     (row) =>
       itemMatches(row, query.trim()) &&
@@ -995,10 +1003,10 @@ export default function ModelsClient() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All tasks</SelectItem>
+                  <SelectItem value="all">All tasks ({taskCount("all")})</SelectItem>
                   {tasksPresent.map((task) => (
                     <SelectItem key={task} value={task}>
-                      {taskLabels[task]}
+                      {taskLabels[task]} ({taskCount(task)})
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1012,7 +1020,7 @@ export default function ModelsClient() {
                 <SelectContent>
                   {(["all", ...priceKinds] as PriceFilter[]).map((value) => (
                     <SelectItem key={value} value={value}>
-                      {priceFilterLabels[value]}
+                      {priceFilterLabels[value]} ({priceCount(value)})
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1028,7 +1036,7 @@ export default function ModelsClient() {
             <EmptyState
               icon={Search}
               title="No models match"
-              description="Try another name, or clear the search."
+              description="Try another name, or clear the filters."
               action={
                 <Button
                   variant="outline"
@@ -1039,7 +1047,7 @@ export default function ModelsClient() {
                     setTaskFilter("all");
                   }}
                 >
-                  Clear search
+                  Clear filters
                 </Button>
               }
             />

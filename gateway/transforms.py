@@ -187,6 +187,49 @@ def _del_nested(obj: dict[str, Any], dotted_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _validate_primitive_config(cfg: dict[str, Any], kind: str) -> None:
+    """Reject malformed primitive configuration before request mutation."""
+    if not isinstance(cfg, Mapping):
+        raise ValueError(f"{kind} config must be a mapping")
+
+    def error(field: str, expected: str) -> None:
+        raise ValueError(f"{kind} config '{field}' {expected}")
+
+    required = {
+        "value-map": ("param",), "param-map": ("from", "to"),
+        "clamp": ("param",),
+    }.get(kind, ())
+    for field in required:
+        if field not in cfg:
+            error(field, "is required")
+        if not isinstance(cfg[field], str):
+            error(field, "must be a string")
+
+    # Missing/null collections retain the existing empty/no-op defaults.
+    for field in ({"value-map": ("map",), "default-params": ("set",)}.get(kind, ())):
+        value = cfg.get(field)
+        if value is not None and not isinstance(value, Mapping):
+            error(field, "must be a mapping or null")
+        if field == "set" and value is not None:
+            if any(not isinstance(key, str) for key in value):
+                error(field, "must have string paths")
+    if kind == "drop-params":
+        value = cfg.get("drop")
+        if value is not None and (
+            not isinstance(value, list) or any(not isinstance(key, str) for key in value)
+        ):
+            error("drop", "must be a list of strings or null")
+    if kind == "message-inject":
+        for field in ("role", "text", "mode"):
+            if field in cfg and not isinstance(cfg[field], str):
+                error(field, "must be a string")
+    if kind == "clamp":
+        for field in ("min", "max"):
+            value = cfg.get(field)
+            if value is not None and not isinstance(value, (int, float)):
+                error(field, "must be a number or null")
+
+
 class _Primitive:
     """Shared base for all declarative primitives."""
 
@@ -230,6 +273,7 @@ class ValueMapTransform(_Primitive):
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
+        _validate_primitive_config(cfg, "value-map")
         super().__init__(cfg)
         self._param: str = cfg["param"]
         self._map: dict[str, Any] = cfg.get("map") or {}
@@ -260,6 +304,7 @@ class DropParamsTransform(_Primitive):
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
+        _validate_primitive_config(cfg, "drop-params")
         super().__init__(cfg)
         self._drop: list[str] = cfg.get("drop") or []
 
@@ -286,6 +331,7 @@ class DefaultParamsTransform(_Primitive):
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
+        _validate_primitive_config(cfg, "default-params")
         super().__init__(cfg)
         self._set: dict[str, Any] = cfg.get("set") or {}
         # only_if_absent is the documented semantic; we always honour it (setdefault).
@@ -326,6 +372,7 @@ class ParamMapTransform(_Primitive):
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
+        _validate_primitive_config(cfg, "param-map")
         super().__init__(cfg)
         self._from: str = cfg["from"]
         self._to: str = cfg["to"]
@@ -373,6 +420,7 @@ class MessageInjectTransform(_Primitive):
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
+        _validate_primitive_config(cfg, "message-inject")
         super().__init__(cfg)
         self._role: str = cfg.get("role", "system")
         self._text: str = cfg.get("text", "")
@@ -427,6 +475,7 @@ class ClampTransform(_Primitive):
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
+        _validate_primitive_config(cfg, "clamp")
         super().__init__(cfg)
         self._param: str = cfg["param"]
         self._min: float | None = cfg.get("min")

@@ -188,11 +188,11 @@ describe("LibraryPage batch J provenance", () => {
     });
     try {
       const { container } = renderLibrary();
-      await screen.findByRole("button", { name: "Open Viewer target" });
+      await screen.findByRole("button", { name: (name) => name.startsWith("Open Viewer target, ") });
       const gridVideo = container.querySelector("video")!;
       fireEvent.play(gridVideo);
       paused.length = 0;
-      fireEvent.click(screen.getByRole("button", { name: "Open Viewer target" }));
+      fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open Viewer target, ") }));
       await screen.findByRole("dialog");
       expect(paused).toContain(gridVideo);
     } finally { pause.mockRestore(); }
@@ -236,11 +236,11 @@ describe("LibraryPage batch J provenance", () => {
     const status = screen.getByRole("status");
     more.focus();
     fireEvent.click(more);
-    const next = await screen.findByRole("button", { name: "Open Second creation" });
+    const next = await screen.findByRole("button", { name: (name) => name.startsWith("Open Second creation, ") });
     await waitFor(() => expect(next).toHaveFocus());
     expect(status).toHaveTextContent("2 more creations loaded");
     expect(status).toBeInTheDocument();
-    const firstButton = screen.getByRole("button", { name: "Open First creation" });
+    const firstButton = screen.getByRole("button", { name: (name) => name.startsWith("Open First creation, ") });
     firstButton.focus();
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["library"] }); });
     expect(firstButton).toHaveFocus();
@@ -422,7 +422,7 @@ describe("LibraryPage batch J provenance", () => {
 
     (
       await screen.findByRole("button", {
-        name: "Open A saved image with no request receipt",
+        name: (name) => name.startsWith("Open A saved image with no request receipt, "),
       })
     ).click();
     fireEvent.click(await screen.findByText("Details"));
@@ -496,7 +496,7 @@ describe("LibraryPage batch J provenance", () => {
 
     // The audio tile is quiet: the prompt is the tile's name and lives in
     // the viewer, not as text on the face.
-    const open = await screen.findByRole("button", { name: `Open ${audioAsset.prompt}` });
+    const open = await screen.findByRole("button", { name: (name) => name.startsWith(`Open ${audioAsset.prompt}, `) });
     expect(screen.queryByText(/^Warm synth loop with brushed percussion/)).toBeNull();
     expect(open.closest("article")!.querySelectorAll("p.line-clamp-2")).toHaveLength(0);
     // The tile carries no model name or id; the viewer's facts do.
@@ -504,7 +504,7 @@ describe("LibraryPage batch J provenance", () => {
     expect(screen.queryByText("audio.generate.test-model")).toBeNull();
     expect(screen.queryByText("Untitled generation")).not.toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: `Open ${audioAsset.prompt}` }),
+      screen.getByRole("button", { name: (name) => name.startsWith(`Open ${audioAsset.prompt}, `) }),
     );
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Sound model")).toBeVisible();
@@ -752,7 +752,7 @@ describe("Library honesty and access", () => {
       ? list([picture("song", "My song", { kind: "audio", model: "audio.generate.yue2-song", request_id: "song-receipt" })])
       : path.includes("/receipts/") ? Response.json({ resolved_model: "yue2-song", resolved_workflow: "audio.generate.yue2-song" }) : undefined);
     renderLibrary();
-    fireEvent.click(await screen.findByRole("button", { name: "Open My song" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open My song, ") }));
     const dialog = await screen.findByRole("dialog");
     await waitFor(() => expect(factValue(dialog, "Model")).toHaveTextContent("YuE2 Song"));
     expect(dialog).not.toHaveTextContent("First music model");
@@ -765,7 +765,7 @@ describe("Library honesty and access", () => {
     routeFetch((path) => path.startsWith("/me/api/media?") ? list([picture("retry", "Retry picture")])
       : path.includes("/download?") ? ++attempts === 1 ? new Response("failed", { status: 503 }) : Response.json({ download_url: "/fresh?expires=2000000000" }) : undefined);
     renderLibrary();
-    fireEvent.click(await screen.findByRole("button", { name: "Open Retry picture" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Retry picture, ") }));
     const dialog = await screen.findByRole("dialog");
     fireEvent.click(await within(dialog).findByRole("button", { name: "Try again" }));
     expect(await within(dialog).findByRole("img", { name: "Retry picture" })).toHaveAttribute("src", "/fresh?expires=2000000000");
@@ -777,7 +777,7 @@ describe("Library honesty and access", () => {
     session.viewer = { role: "member", name: "Alex", id: "alex" };
     routeFetch((path) => path.startsWith("/me/api/media?") ? list([picture("opened", "Opened picture")]) : undefined);
     renderLibrary();
-    fireEvent.click(await screen.findByRole("button", { name: "Open Opened picture" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Opened picture, ") }));
     await screen.findByRole("dialog");
     await waitFor(() => expect(JSON.parse(sessionStorage.getItem("azizam:opened-creations:v1:alex") ?? "[]")).toContain("opened"));
     sessionStorage.clear();
@@ -809,7 +809,7 @@ describe("Library honesty and access", () => {
     );
     renderLibrary();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open Sam's lighthouse" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Sam's lighthouse, ") }));
     let dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Sam")).toBeVisible();
     expect(within(dialog).queryByText("Alex")).toBeNull();
@@ -817,13 +817,13 @@ describe("Library honesty and access", () => {
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    fireEvent.click(screen.getByRole("button", { name: "Open Nobody's field" }));
+    fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open Nobody's field, ") }));
     dialog = await screen.findByRole("dialog");
     expect(within(dialog).queryByRole("button", { name: /^Actions for/ })).toBeNull();
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    fireEvent.click(screen.getByRole("button", { name: "Open Alex's harbour" }));
+    fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open Alex's harbour, ") }));
     dialog = await screen.findByRole("dialog");
     expect(
       within(dialog).getByRole("button", { name: "Actions for Alex's harbour" }),
@@ -861,16 +861,16 @@ describe("Library honesty and access", () => {
       return list([picture("sam1", "Sam's lighthouse", { owner_name: "Sam" })]);
     });
     renderLibrary();
-    await screen.findByRole("button", { name: "Open Sam's lighthouse" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Sam's lighthouse, ") });
 
     await choosePerson("Alex (you)");
     await waitFor(() => expect(finish).toBeTypeOf("function"));
     // Sam's result belongs to the previous filter: it is not shown or openable.
-    expect(screen.queryByRole("button", { name: "Open Sam's lighthouse" })).toBeNull();
+    expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Sam's lighthouse, ") })).toBeNull();
     expect(screen.getByRole("status", { name: "Loading library" })).toBeVisible();
 
     finish();
-    fireEvent.click(await screen.findByRole("button", { name: "Open My own kite" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open My own kite, ") }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Alex")).toBeVisible();
     expect(
@@ -908,7 +908,7 @@ describe("Library honesty and access", () => {
     expect(screen.getAllByText("This file is unavailable.")).toHaveLength(2);
     expect(screen.getAllByText("File no longer stored")).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Open A lost fox" }));
+    fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open A lost fox, ") }));
     let dialog = await screen.findByRole("dialog");
     expect(
       within(dialog).getByText("This file is unavailable. The prompt and receipt are below."),
@@ -917,7 +917,7 @@ describe("Library honesty and access", () => {
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    fireEvent.click(screen.getByRole("button", { name: "Open A lost owl" }));
+    fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open A lost owl, ") }));
     dialog = await screen.findByRole("dialog");
     expect(
       within(dialog).getByText("This file is no longer stored. The prompt is below."),
@@ -953,7 +953,7 @@ describe("Library honesty and access", () => {
     );
     renderLibrary();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open A paid picture" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open A paid picture, ") }));
     let dialog = await screen.findByRole("dialog");
     expect(factValue(dialog, "Charge")).toHaveTextContent("Checking…");
     expect(within(dialog).queryByText("Cost not recorded")).toBeNull();
@@ -964,7 +964,7 @@ describe("Library honesty and access", () => {
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    fireEvent.click(screen.getByRole("button", { name: "Open A broken receipt" }));
+    fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open A broken receipt, ") }));
     dialog = await screen.findByRole("dialog");
     await waitFor(() =>
       expect(factValue(dialog, "Charge")).toHaveTextContent("Couldn’t load the receipt"),
@@ -973,7 +973,7 @@ describe("Library honesty and access", () => {
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    fireEvent.click(screen.getByRole("button", { name: "Open No request recorded" }));
+    fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open No request recorded, ") }));
     dialog = await screen.findByRole("dialog");
     expect(factValue(dialog, "Charge")).toBeUndefined();
     expect(within(dialog).queryByText("Cost not recorded")).toBeNull();
@@ -995,7 +995,7 @@ describe("Library honesty and access", () => {
     );
     renderLibrary();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open First clip" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open First clip, ") }));
     const dialog = await screen.findByRole("dialog");
     const position = await within(dialog).findByRole("slider", { name: "Position" });
     fireEvent.keyDown(position, { key: "ArrowRight" });
@@ -1041,7 +1041,7 @@ describe("Library honesty and access", () => {
       .spyOn(HTMLMediaElement.prototype, "play")
       .mockResolvedValue(undefined);
     renderLibrary();
-    fireEvent.click(await screen.findByRole("button", { name: "Open A short film" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open A short film, ") }));
     const dialog = await screen.findByRole("dialog");
     await waitFor(() => expect(dialog.querySelector("video")).not.toBeNull());
     const video = dialog.querySelector("video")!;
@@ -1058,7 +1058,7 @@ describe("Library honesty and access", () => {
       ? list([picture("expired", "An old picture", { download_url: "/expired?expires=1" })])
       : path.includes("/download?") ? new Promise<Response>((resolve) => { renew = resolve; }) : undefined);
     renderLibrary();
-    fireEvent.click(await screen.findByRole("button", { name: "Open An old picture" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open An old picture, ") }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog.querySelector('img[src="/expired?expires=1"]')).toBeNull();
     await waitFor(() => expect(renew).toBeTypeOf("function"));
@@ -1074,7 +1074,7 @@ describe("Library honesty and access", () => {
         : undefined,
     );
     renderLibrary();
-    const first = await screen.findByRole("button", { name: "Open First picture" });
+    const first = await screen.findByRole("button", { name: (name) => name.startsWith("Open First picture, ") });
     first.focus();
     fireEvent.click(first);
     const dialog = await screen.findByRole("dialog");
@@ -1084,7 +1084,7 @@ describe("Library honesty and access", () => {
     await within(dialog).findByRole("heading", { name: "Second picture" });
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Open Second picture" })).toHaveFocus(),
+      expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Second picture, ") })).toHaveFocus(),
     );
   });
 
@@ -1102,7 +1102,7 @@ describe("Library honesty and access", () => {
     Object.assign(navigator, { share, canShare: () => true });
     try {
       renderLibrary();
-      fireEvent.click(await screen.findByRole("button", { name: "Open A birthday cake" }));
+      fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open A birthday cake, ") }));
       const dialog = await screen.findByRole("dialog");
       fireEvent.click(await within(dialog).findByRole("button", { name: "Share" }));
       await waitFor(() => expect(share).toHaveBeenCalledOnce());
@@ -1131,7 +1131,7 @@ describe("Library honesty and access", () => {
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => undefined);
     renderLibrary();
-    fireEvent.click(await screen.findByRole("button", { name: "Open A picture to keep" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open A picture to keep, ") }));
     const dialog = await screen.findByRole("dialog");
     const download = within(dialog).getByRole("button", { name: "Download" });
     expect(download.tagName).toBe("BUTTON");
@@ -1172,14 +1172,14 @@ describe("Library honesty and access", () => {
     );
     renderLibrary();
     const today = (
-      await screen.findByRole("button", { name: "Open Made today" })
+      await screen.findByRole("button", { name: (name) => name.startsWith("Open Made today, ") })
     ).closest("article")!;
     // The first tile of a day shows its day once, on the chip; the hover
     // caption does not repeat it (PF-073).
     expect(today).toHaveTextContent(/^Today\s*Made today$/);
     expect(within(today).getAllByText("Today")).toHaveLength(1);
     const old = screen
-      .getByRole("button", { name: "Open Made long ago" })
+      .getByRole("button", { name: (name) => name.startsWith("Open Made long ago, ") })
       .closest("article")!;
     expect(old).toHaveTextContent(/Made long ago$/);
     // D1.6: one continuous grid (no date headers); the day rides on the
@@ -1206,7 +1206,7 @@ describe("Library honesty and access", () => {
           : undefined,
     );
     renderLibrary();
-    const tile = await screen.findByRole("button", { name: "Open A swimming fish" });
+    const tile = await screen.findByRole("button", { name: (name) => name.startsWith("Open A swimming fish, ") });
     expect(screen.queryByRole("button", { name: /^Open Picture, / })).toBeNull();
     expect(document.querySelectorAll("article")).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^Library1$/);
@@ -1327,9 +1327,9 @@ describe("Library media identity and tile playback", () => {
         ])
       : undefined);
     renderLibrary();
-    await screen.findByRole("button", { name: "Open Maker picture" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Maker picture, ") });
     for (const [title, person] of [["Maker picture", "Sam"], ["Maker audio", "Sam"], ["Maker video", "Alex"]]) {
-      const open = screen.getByRole("button", { name: `Open ${title}` });
+      const open = screen.getByRole("button", { name: (name) => name.startsWith(`Open ${title}, `) });
       const tile = open.closest("article")!;
       expect(within(tile).getByRole("img", { name: person })).toHaveAttribute("data-slot", "person-mark");
       expect(within(tile).queryByRole("tooltip")).toBeNull();
@@ -1365,7 +1365,7 @@ describe("Library media identity and tile playback", () => {
     expect(key.closest("section")).toHaveAccessibleName("Library filters");
     fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
     await waitFor(() => expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull());
-    expect(screen.getByRole("button", { name: "Open Sam image" })).toBeVisible();
+    expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Sam image, ") })).toBeVisible();
     fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "All" }));
     expect(await screen.findByRole("group", { name: "Creation makers" })).toBeVisible();
     await choosePerson("Alex (you)");
@@ -1381,7 +1381,7 @@ describe("Library media identity and tile playback", () => {
         ])
       : undefined);
     renderLibrary();
-    await screen.findByRole("button", { name: "Open Stored picture" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Stored picture, ") });
     expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull();
     fireEvent.click(screen.getByText("Show them"));
     expect(await screen.findByRole("group", { name: "Creation makers" })).toBeVisible();
@@ -1396,8 +1396,8 @@ describe("Library media identity and tile playback", () => {
     ];
     routeFetch((path) => path.startsWith("/me/api/media?") ? list(assets) : undefined);
     renderLibrary();
-    const first = (await screen.findByRole("button", { name: "Open Morning birds" })).closest("article")!;
-    const second = screen.getByRole("button", { name: "Open Evening rain" }).closest("article")!;
+    const first = (await screen.findByRole("button", { name: (name) => name.startsWith("Open Morning birds, ") })).closest("article")!;
+    const second = screen.getByRole("button", { name: (name) => name.startsWith("Open Evening rain, ") }).closest("article")!;
     expect(within(first).queryByText("Morning birds")).toBeNull();
     expect(within(second).queryByText("Evening rain")).toBeNull();
     expect(within(first).getByRole("button", { name: "Play Morning birds" })).toHaveTextContent("0:12");
@@ -1416,7 +1416,7 @@ describe("Library media identity and tile playback", () => {
     ];
     routeFetch((path) => path.startsWith("/me/api/media?") ? list(assets) : undefined);
     renderLibrary();
-    await screen.findByRole("button", { name: "Open Morning birds" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Morning birds, ") });
     for (const [title, duration, icon] of [["Morning birds", "2:05", "lucide-audio-lines"], ["Short film", "0:09", "lucide-video"]] as const) {
       const button = screen.getByRole("button", { name: `Play ${title}` });
       expect(button).toBeVisible();
@@ -1433,7 +1433,7 @@ describe("Library media identity and tile playback", () => {
       expect(tile.querySelector('[data-tile-cue="playback"]')).toBe(button);
       expect(within(tile).getByLabelText("Sam")).toHaveClass("opacity-0", "group-focus-within:opacity-100");
     }
-    const still = screen.getByRole("button", { name: "Open Still picture" }).closest("article")!;
+    const still = screen.getByRole("button", { name: (name) => name.startsWith("Open Still picture, ") }).closest("article")!;
     expect(within(still).queryByRole("button", { name: /^Play / })).toBeNull();
     expect(still.querySelector(".lucide-play")).toBeNull();
     expect(still.querySelectorAll("[data-tile-cue]")).toHaveLength(1);
@@ -1450,7 +1450,7 @@ describe("Library media identity and tile playback", () => {
     const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
     const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
     renderLibrary();
-    const open = await screen.findByRole("button", { name: `Open ${title}` });
+    const open = await screen.findByRole("button", { name: (name) => name.startsWith(`Open ${title}, `) });
     const button = await screen.findByRole("button", { name: `Play ${title}` });
     const href = window.location.href;
     open.focus();
@@ -1581,7 +1581,7 @@ describe("Library response and media boundaries", () => {
     expect(await screen.findByText("Couldn’t load your library")).toBeVisible();
     expect(screen.getByText("We couldn't load your library. Try again.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Open Recovered list" })).not.toBeNull(), { onTimeout: (error) => error });
+    await waitFor(() => expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Recovered list, ") })).not.toBeNull(), { onTimeout: (error) => error });
     expect(screen.queryByText("Couldn’t load your library")).toBeNull();
     expect(attempts).toBe(2);
   });
@@ -1597,13 +1597,13 @@ describe("Library response and media boundaries", () => {
       return params.has("cursor") ? list(second) : list(first, { next_cursor: "next/+ &=" });
     });
     renderLibrary();
-    await screen.findByRole("button", { name: "Open First 59" });
-    expect(screen.queryByRole("button", { name: "Open Second 0" })).toBeNull();
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open First 59, ") });
+    expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Second 0, ") })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
-    await screen.findByRole("button", { name: "Open Second 59" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Second 59, ") });
     const grid = screen.getByRole("group", { name: "Creations" });
     expect(within(grid).getAllByRole("button", { name: /^Open / })).toHaveLength(120);
-    expect(within(grid).getByRole("button", { name: "Open First 0" })).toBeVisible();
+    expect(within(grid).getByRole("button", { name: (name) => name.startsWith("Open First 0, ") })).toBeVisible();
     expect(requests.map((params) => params.get("cursor"))).toEqual([null, "next/+ &="]);
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
@@ -1621,11 +1621,11 @@ describe("Library response and media boundaries", () => {
     });
     renderLibrary();
     fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
-    await screen.findByRole("button", { name: "Open Old second page" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Old second page, ") });
     fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Open Filtered picture" })).not.toBeNull(), { onTimeout: (error) => error });
-    expect(screen.queryByRole("button", { name: "Open Old first page" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Open Old second page" })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Filtered picture, ") })).not.toBeNull(), { onTimeout: (error) => error });
+    expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Old first page, ") })).toBeNull();
+    expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Old second page, ") })).toBeNull();
     expect(requests.map((params) => [params.get("kind"), params.get("cursor")])).toEqual([
       [null, null], [null, "old-cursor"], ["image", null],
     ]);
@@ -1639,7 +1639,7 @@ describe("Library response and media boundaries", () => {
         : undefined,
     );
     renderLibrary();
-    fireEvent.click(await screen.findByRole("button", { name: "Open A teal desk lamp on a walnut table" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open A teal desk lamp on a walnut table, ") }));
     const dialog = await screen.findByRole("dialog", { name: "A teal desk lamp on a walnut table" });
     fireEvent.click(within(dialog).getByText("Details"));
     expect(within(dialog).getByText("workflow.image.lamp")).toBeVisible();
@@ -1668,7 +1668,7 @@ describe("Library response and media boundaries", () => {
       ? list([picture("zero", "Zero charge", { request_id: "zero-receipt" })])
       : path.includes("/receipts/") ? Response.json({ cost: { usd }, remote: true }) : undefined);
     const { queryClient } = renderLibrary();
-    fireEvent.click(await screen.findByRole("button", { name: "Open Zero charge" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Zero charge, ") }));
     const dialog = await screen.findByRole("dialog");
     await waitFor(() => expect(factValue(dialog, "Charge")).toHaveTextContent(usd === 0 || usd === "0" ? "USD 0.00" : "Cost not recorded"));
     queryClient.clear();
@@ -1679,7 +1679,7 @@ describe("Library response and media boundaries", () => {
       ? list([picture("recovered", "Recovered image", { available: false, unavailable_reason: "missing_or_expired" })])
       : undefined);
     const { queryClient } = renderLibrary();
-    fireEvent.click(await screen.findByRole("button", { name: "Open Recovered image" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Recovered image, ") }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByRole("img", { name: "Recovered image" })).toBeVisible();
     expect(within(dialog).queryByText(/file is no longer stored/)).toBeNull();
@@ -1701,7 +1701,7 @@ describe("Library response and media boundaries", () => {
     Object.assign(navigator, { share, canShare: () => true });
     try {
       renderLibrary();
-      fireEvent.click(await screen.findByRole("button", { name: "Open Octet cake" }));
+      fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Octet cake, ") }));
       const dialog = await screen.findByRole("dialog");
       fireEvent.click(await within(dialog).findByRole("button", { name: "Share" }));
       await waitFor(() => expect(share).toHaveBeenCalledOnce());
@@ -1728,7 +1728,7 @@ describe("Library response and media boundaries", () => {
       ? list([picture("share", "Share image", { workflow_download_url: "/workflow" })])
       : path === "/renewed-media" ? new Promise<Response>((resolve) => { finish = resolve; }) : undefined);
     const { queryClient } = renderLibrary();
-    fireEvent.click(await screen.findByRole("button", { name: "Open Share image" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Share image, ") }));
     const dialog = await screen.findByRole("dialog");
     const button = await within(dialog).findByRole("button", { name: "Share" });
     fireEvent.click(button);
@@ -1752,7 +1752,7 @@ describe("Library response and media boundaries", () => {
         ? Response.json({ error: { message: "internal exception" } }, { status: 500 })
         : Response.json({ cost: { usd: 0 } }) : undefined);
     const { queryClient } = renderLibrary();
-    fireEvent.click(await screen.findByRole("button", { name: "Open Receipt retry" }));
+    fireEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Receipt retry, ") }));
     const dialog = await screen.findByRole("dialog");
     fireEvent.click(await within(dialog).findByRole("button", { name: "Retry receipt" }));
     await waitFor(() => expect(factValue(dialog, "Charge")).toHaveTextContent("USD 0.00"));
@@ -1804,6 +1804,26 @@ describe("Library accessibility", () => {
     else Reflect.deleteProperty(navigator, "share");
   });
 
+  test.each(["image", "audio", "video"])("names %s tiles with their title, kind and creation date", async (kind) => {
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([{ ...assetWithReceipt, kind, prompt: "  Named creation  " }]) : undefined);
+    renderLibrary();
+    const date = new Date(assetWithReceipt.created_at * 1000).toLocaleDateString("en-US", {
+      year: "numeric", month: "long", day: "numeric",
+    });
+    const label = `Open Named creation, ${kind[0].toUpperCase() + kind.slice(1)}, ${date}`;
+    expect(await screen.findByRole("button", { name: label })).toHaveAccessibleName(label);
+  });
+
+  test.each([null, "invalid-date"])("names tiles honestly when their creation date is %s", async (created_at) => {
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([{ ...assetWithReceipt, prompt: "Undated creation", created_at }]) : undefined);
+    renderLibrary();
+    expect(await screen.findByRole("button", {
+      name: "Open Undated creation, Image, Date unavailable",
+    })).toBeEnabled();
+  });
+
   test("names images and open buttons from the permitted prompt, never the file path", async () => {
     routeFetch((path) => path.startsWith("/me/api/media?")
       ? list([
@@ -1813,7 +1833,7 @@ describe("Library accessibility", () => {
       : undefined);
     renderLibrary();
     expect(await screen.findByRole("img", { name: "A red kite over the sea" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Open A red kite over the sea" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: (name) => name.startsWith("Open A red kite over the sea, ") })).toBeEnabled();
     expect(screen.getByRole("img", { name: /^Picture, / })).toBeVisible();
     expect(screen.getByRole("button", { name: /^Open Picture, / })).toBeEnabled();
     expect(screen.queryByRole("img", { name: /opaque-file-name|hidden-prompt/ })).toBeNull();
@@ -1860,7 +1880,7 @@ describe("Library accessibility", () => {
       ? list([{ ...audioAsset, prompt: "Keyboard audio" }, picture("next", "Next picture")])
       : undefined);
     renderLibrary();
-    const open = await screen.findByRole("button", { name: "Open Keyboard audio" });
+    const open = await screen.findByRole("button", { name: (name) => name.startsWith("Open Keyboard audio, ") });
     const play = screen.getByRole("button", { name: "Play Keyboard audio" });
     open.focus();
     await userEvent.tab();
@@ -1869,7 +1889,7 @@ describe("Library accessibility", () => {
     expect(play.dispatchEvent(event)).toBe(true);
     expect(play).toHaveFocus();
     await userEvent.tab();
-    expect(screen.getByRole("button", { name: "Open Next picture" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Next picture, ") })).toHaveFocus();
   });
 
   test("also navigates the expanded unavailable group", async () => {
@@ -1894,7 +1914,7 @@ describe("Library accessibility", () => {
     routeFetch((path) => path.startsWith("/me/api/media?")
       ? list([picture("focus", "Focus picture")]) : undefined);
     renderLibrary();
-    const open = await screen.findByRole("button", { name: "Open Focus picture" });
+    const open = await screen.findByRole("button", { name: (name) => name.startsWith("Open Focus picture, ") });
     for (let i = 0; i < 2; i += 1) {
       await userEvent.click(open);
       const dialog = await screen.findByRole("dialog", { name: "Focus picture" });
@@ -1919,7 +1939,7 @@ describe("Library accessibility", () => {
     routeFetch((path) => path.startsWith("/me/api/media?")
       ? list([picture("menu1", "Menu one"), picture("menu2", "Menu two")]) : undefined);
     renderLibrary();
-    await userEvent.click(await screen.findByRole("button", { name: "Open Menu one" }));
+    await userEvent.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Menu one, ") }));
     const dialog = await screen.findByRole("dialog", { name: "Menu one" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Actions for Menu one" }));
     const remove = await screen.findByRole("menuitem", { name: "Delete" });
@@ -1939,18 +1959,122 @@ describe("Library accessibility", () => {
     renderLibrary();
     const dialog = await screen.findByRole("dialog", { name: "Hidden picture" });
     await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Open Visible picture" })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Visible picture, ") })).toHaveFocus());
     expect(dialog).not.toBeInTheDocument();
   });
 
   test("provides reduced-motion overrides on the viewer and hover captions", async () => {
     routeFetch((path) => path.startsWith("/me/api/media?") ? list([picture("motion", "Still picture")]) : undefined);
     renderLibrary();
-    const open = await screen.findByRole("button", { name: "Open Still picture" });
+    const open = await screen.findByRole("button", { name: (name) => name.startsWith("Open Still picture, ") });
     expect(open.closest("article")!.querySelector(".transition-opacity")).toHaveClass("motion-reduce:transition-none");
     fireEvent.click(open);
     const dialog = await screen.findByRole("dialog", { name: "Still picture" });
     expect(dialog).toHaveClass("motion-reduce:animate-none");
     expect(document.querySelector(".bg-overlay")).toHaveClass("motion-reduce:animate-none");
+  });
+});
+
+describe("Library paging regressions", () => {
+  beforeEach(() => {
+    navigation.searchParams = new URLSearchParams();
+    session.viewer = { role: "member", name: "Alex" };
+    session.home = { receipts: [] };
+    window.history.replaceState(null, "", "/library/");
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  test("paging retention keeps earlier tiles while pending and after append", async () => {
+    let finish!: (response: Response) => void;
+    routeFetch((path) => {
+      if (!path.startsWith("/me/api/media?")) return undefined;
+      const cursor = new URL(path, "https://test.invalid").searchParams.get("cursor");
+      return cursor
+        ? new Promise<Response>((resolve) => { finish = resolve; })
+        : list([picture("kept", "Kept first page")], { next_cursor: "page/+ two" });
+    });
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Kept first page, ") })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Loading more…" })).toBeDisabled();
+    await act(async () => finish(list([picture("added", "Added second page")])));
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Added second page, ") });
+    expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Kept first page, ") })).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Creations" })).getAllByRole("button", { name: /^Open / })).toHaveLength(2);
+  });
+
+  test("paging failure retains tiles and exposes Retry loading more in an alert", async () => {
+    routeFetch((path) => {
+      if (!path.startsWith("/me/api/media?")) return undefined;
+      return new URL(path, "https://test.invalid").searchParams.has("cursor")
+        ? Response.json({}, { status: 503 })
+        : list([picture("kept-error", "Kept after error")], { next_cursor: "failed-page" });
+    });
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("We couldn’t load more library items. Try again.");
+    expect(within(alert).getByRole("button", { name: "Retry loading more" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Kept after error, ") })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  test("paging retry requests the failed cursor and appends each tile exactly once", async () => {
+    const cursors: (string | null)[] = [];
+    let nextAttempts = 0;
+    routeFetch((path) => {
+      if (!path.startsWith("/me/api/media?")) return undefined;
+      const cursor = new URL(path, "https://test.invalid").searchParams.get("cursor");
+      cursors.push(cursor);
+      if (!cursor) return list([picture("retry-first", "Retry first")], { next_cursor: "retry/+ &=cursor" });
+      return ++nextAttempts === 1
+        ? Response.json({}, { status: 503 })
+        : list([picture("retry-second", "Retry second")]);
+    });
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry loading more" }));
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Retry second, ") });
+    const grid = screen.getByRole("group", { name: "Creations" });
+    expect(within(grid).getAllByRole("button", { name: (name) => name.startsWith("Open Retry first, ") })).toHaveLength(1);
+    expect(within(grid).getAllByRole("button", { name: (name) => name.startsWith("Open Retry second, ") })).toHaveLength(1);
+    expect(within(grid).getAllByRole("button", { name: /^Open / })).toHaveLength(2);
+    expect(cursors).toEqual([null, "retry/+ &=cursor", "retry/+ &=cursor"]);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  test("paging filter reset starts at page one then uses only the new cursor", async () => {
+    const requests: (string | null)[][] = [];
+    routeFetch((path) => {
+      if (!path.startsWith("/me/api/media?")) return undefined;
+      const params = new URL(path, "https://test.invalid").searchParams;
+      const kind = params.get("kind");
+      const cursor = params.get("cursor");
+      requests.push([kind, cursor]);
+      if (kind === "image") return cursor
+        ? list([picture("new-two", "New two")])
+        : list([picture("new-one", "New one")], { next_cursor: "new-cursor" });
+      return cursor
+        ? list([picture("old-two", "Old two")])
+        : list([picture("old-one", "Old one")], { next_cursor: "old-cursor" });
+    });
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Old two, ") });
+    fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open New one, ") });
+    expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Old one, ") })).toBeNull();
+    expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Old two, ") })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open New two, ") });
+    expect(screen.getByRole("button", { name: (name) => name.startsWith("Open New one, ") })).toBeVisible();
+    expect(requests).toEqual([[null, null], [null, "old-cursor"], ["image", null], ["image", "new-cursor"]]);
+    expect(within(screen.getByRole("group", { name: "Creations" })).getAllByRole("button", { name: /^Open / })).toHaveLength(2);
   });
 });

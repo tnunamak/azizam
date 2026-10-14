@@ -157,7 +157,7 @@ function outcomeCause(receipt: Receipt) {
     return "This request was rejected because it did not have permission. Check this person's access plan and the app's access.";
   if (status === 429) return "A request limit refused this request. The receipt does not identify which limit. Wait before trying again; if it happens again, ask the owner to check the request limits.";
   if (status >= 500 && status < 600)
-    return "A server error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner.";
+    return "An error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner.";
   return outcome(receipt.status) === "Rejected"
     ? "The receipt does not identify the rule that refused this request. Share the request ID from Technical details with the owner to check before trying again."
     : null;
@@ -381,7 +381,7 @@ export function Requests() {
                 size="sm"
                 onClick={clearFilters}
               >
-                Clear filters
+                Clear filters and show all requests
               </Button>
             ) : (
               <Button asChild size="sm">
@@ -572,7 +572,61 @@ export function RequestReceiptSheet({ record, onOpenChange, title, description, 
                 </SheetDescription>
               </SheetHeader>
               <div className="min-w-0 space-y-6 px-4 pb-8">
+                <section className="space-y-3">
+                  <h3 className="text-meta font-medium">Request</h3>
+                  <dl className="space-y-4 text-meta">
+                    {[["Person", record.person_label], ["App", record.app_label]].map(([label, value]) => (
+                      <div key={label}>
+                        <dt className="text-muted-foreground">{label}</dt>
+                        <dd className="mt-1 break-words">{value || "Not recorded"}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+                <section className="space-y-3">
+                  <h3 className="text-meta font-medium">Model and where it ran</h3>
+                {fellBack && <p className="text-meta">A different model was used.</p>}
+                <dl className="space-y-4 text-meta">
+                  {[
+                    ...(fellBack ? [
+                      ["Requested model", nameModel(requested!)],
+                      ["Served model", nameModel(served!)],
+                    ] : different ? [
+                      ["Name used", nameModel(requested!)],
+                      ["Model", nameModel(served!)],
+                    ] : [["Model", served || requested ? nameModel((served || requested)!) : "Model not recorded"]]),
+                  ].filter(([, value]) => value != null && value !== "").map(([label, value]) => (
+                    <div key={label}>
+                      <dt className="text-muted-foreground">{label}</dt>
+                      <dd className="mt-1 flex min-w-0 items-center gap-2 break-words">
+                        <span className="min-w-0 break-all">{value}</span>
+                      </dd>
+                    </div>
+                  ))}
+                  <div>
+                    <dt className="text-muted-foreground">Where it ran</dt>
+                    <dd className="mt-1">See Technical details for recorded routing, when available.</dd>
+                  </div>
+                </dl>
+                </section>
+                <section className="space-y-3">
+                  <h3 className="text-meta font-medium">Time and cost</h3>
+                  <dl className="space-y-4 text-meta">
+                  <div>
+                    <dt className="text-muted-foreground">Time taken</dt>
+                    <dd className="mt-1">{duration(record.receipt.latency_ms)}</dd>
+                  </div>
+                  <div><dt className="text-muted-foreground">Spend</dt><dd className="mt-1">{cost ?? "Cost not recorded"}</dd></div>
+                  <div>
+                    <dt className="text-muted-foreground">When</dt>
+                    <dd className="mt-1">
+                      {record.created_at ? <RelativeTime ts={record.created_at} /> : "Time not recorded"}
+                    </dd>
+                  </div>
+                </dl>
+                </section>
                 <div className="rounded-panel border p-4 text-meta">
+                  <h3 className="mb-3 font-medium">Outcome</h3>
                   <p
                     className={`font-medium ${outcomeTone(record.receipt.status)}`}
                   >
@@ -589,35 +643,6 @@ export function RequestReceiptSheet({ record, onOpenChange, title, description, 
                     </p>
                   ) : null}
                 </div>
-                {fellBack && <p className="text-meta">A different model was used.</p>}
-                <dl className="space-y-4 text-meta">
-                  {[
-                    ["Person", record.person_label],
-                    ["App", record.app_label],
-                    ...(fellBack ? [
-                      ["Requested model", nameModel(requested!)],
-                      ["Served model", nameModel(served!)],
-                    ] : different ? [
-                      ["Name used", nameModel(requested!)],
-                      ["Model", nameModel(served!)],
-                    ] : [["Model", served || requested ? nameModel((served || requested)!) : "Model not recorded"]]),
-                    ["Time taken", duration(record.receipt.latency_ms)],
-                  ].filter(([, value]) => value != null && value !== "").map(([label, value]) => (
-                    <div key={label}>
-                      <dt className="text-muted-foreground">{label}</dt>
-                      <dd className="mt-1 flex min-w-0 items-center gap-2 break-words">
-                        <span className="min-w-0 break-all">{value}</span>
-                      </dd>
-                    </div>
-                  ))}
-                  {cost != null && <div><dt className="text-muted-foreground">Spend</dt><dd className="mt-1">{cost}</dd></div>}
-                  <div>
-                    <dt className="text-muted-foreground">When</dt>
-                    <dd className="mt-1">
-                      {record.created_at ? <RelativeTime ts={record.created_at} /> : "Time not recorded"}
-                    </dd>
-                  </div>
-                </dl>
                 <details>
                   <summary className="min-h-6 min-w-6 cursor-pointer content-center text-meta font-medium focus-visible:outline-ring focus-visible:outline-2">
                     Technical details

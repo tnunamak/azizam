@@ -397,7 +397,7 @@ export default function ActivityPage() {
                     size="sm"
                     onClick={clearFilters}
                   >
-                    Clear filters
+                    Clear filters and show all changes
                   </Button>
                 ) : automatedCount > 0 && !showAutomated ? (
                   <Button size="sm" onClick={() => setShowAutomated(true)}>

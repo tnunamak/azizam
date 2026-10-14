@@ -642,7 +642,7 @@ describe("WP-20 shared widgets", () => {
   it("keeps empty and invalid health samples as gaps", () => {
     expect(hourSlots([[1, Number.NaN]], 3600).every((slot) => slot.value === null)).toBe(true);
     render(<UptimeBar series={[]} end={86400} label="Engine" />);
-    expect(screen.getByRole("img")).toHaveAttribute("aria-label", "Engine: no checks recorded in the last 24 hours");
+    expect(screen.getByRole("group")).toHaveAttribute("aria-label", "Engine: no checks recorded in the last 24 hours");
   });
 });
 
@@ -657,4 +657,51 @@ it("keeps the status popover as unknown when owner health fails", async () => {
   const buttons = await screen.findAllByRole("button", { name: "Gateway status: Status unknown" });
   await userEvent.setup().click(buttons[0]);
   expect(screen.queryByText("Your AI")).toBeNull();
+});
+
+describe("Reduced motion", () => {
+  it("cancels animations, transitions and CSS scrolling for elements and pseudo-elements", async () => {
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync("src/app/globals.css", "utf8");
+    const rule = css.match(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/)?.[1];
+    expect(rule).toBeDefined();
+    expect(rule).toMatch(/\*,\s*\*::before,\s*\*::after\s*\{/);
+    expect(rule).toContain("animation: none !important");
+    expect(rule).toContain("transition: none !important");
+    expect(rule).toContain("scroll-behavior: auto !important");
+  });
+
+  it.each([false, true])("honors the current motion preference during Status navigation (reduce=%s)", async (reduce) => {
+    const original = vi.mocked(window.matchMedia).getMockImplementation()!;
+    let reduced = reduce;
+    vi.mocked(window.matchMedia).mockImplementation((query) => ({
+      ...original(query),
+      matches: query === "(prefers-reduced-motion: reduce)" ? reduced : false,
+    }));
+    pathname = "/status";
+    window.history.replaceState(null, "", "/status/#engines");
+    const { rerender, unmount } = render(<AppShell><h1>Status</h1></AppShell>);
+    await screen.findAllByRole("button", { name: "Account menu: Alex Owner" });
+    // A heading loaded after the route mounts must still be focused and scrolled.
+    rerender(<AppShell><h1>Status</h1><h2>Engines and providers</h2></AppShell>);
+    const heading = await screen.findByRole("heading", { name: "Engines and providers" });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(Element.prototype.scrollIntoView).toHaveBeenLastCalledWith({
+      block: "start", behavior: reduce ? "instant" : "auto",
+    });
+    const focus = vi.spyOn(heading, "focus");
+    reduced = !reduce;
+    vi.mocked(Element.prototype.scrollIntoView).mockClear();
+    window.history.replaceState(null, "", "/status/#providers");
+    act(() => window.dispatchEvent(new HashChangeEvent("hashchange")));
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(Element.prototype.scrollIntoView).toHaveBeenLastCalledWith({
+      block: "start", behavior: reduced ? "instant" : "auto",
+    });
+    unmount();
+    vi.mocked(Element.prototype.scrollIntoView).mockClear();
+    act(() => window.dispatchEvent(new HashChangeEvent("hashchange")));
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+    focus.mockRestore();
+  });
 });

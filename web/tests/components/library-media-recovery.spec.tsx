@@ -87,7 +87,7 @@ describe("Library media recovery", () => {
     mount();
     await screen.findByRole("img", { name: "Saved video" });
     await userEvent.click(
-      screen.getByRole("button", { name: "Open Saved video" }),
+      screen.getByRole("button", { name: (name) => name.startsWith("Open Saved video, ") }),
     );
     const dialog = screen.getByRole("dialog");
     await waitFor(() => expect(dialog.querySelector("video")).not.toBeNull());
@@ -212,7 +212,7 @@ describe("Library media recovery", () => {
     );
     await screen.findByRole("alert");
     expect(
-      screen.getByRole("button", { name: "Open Saved image" }),
+      screen.getByRole("button", { name: (name) => name.startsWith("Open Saved image, ") }),
     ).toBeVisible();
     const count = requests.filter(
       (path) => path.startsWith("/me/api/media?") && !path.includes("cursor="),
@@ -221,7 +221,7 @@ describe("Library media recovery", () => {
       screen.getByRole("button", { name: /Load more|Retry/i }),
     );
     expect(
-      await screen.findByRole("button", { name: "Open Second image" }),
+      await screen.findByRole("button", { name: (name) => name.startsWith("Open Second image, ") }),
     ).toBeVisible();
     expect(
       requests.filter(
@@ -239,14 +239,14 @@ describe("Library media recovery", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     const { client } = mount();
-    await screen.findByRole("button", { name: "Open Saved image" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Saved image, ") });
     fail = true;
     await act(async () => {
       await client.refetchQueries({ queryKey: ["library"] });
     });
     await screen.findByRole("alert");
     expect(
-      screen.getByRole("button", { name: "Open Saved image" }),
+      screen.getByRole("button", { name: (name) => name.startsWith("Open Saved image, ") }),
     ).toBeVisible();
     fail = false;
     await userEvent.click(
@@ -267,7 +267,7 @@ describe("Library media recovery", () => {
       ),
     );
     const { container } = mount();
-    await screen.findByRole("button", { name: "Open Saved video" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Saved video, ") });
     expect(container.querySelector("video")).toBeNull();
     resolvePoster(Response.json({ download_url: "/poster.png" }));
     expect(
@@ -286,7 +286,7 @@ describe("Library media recovery", () => {
       ),
     );
     mount();
-    await screen.findByRole("button", { name: "Open Saved image" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Saved image, ") });
     fireEvent.change(screen.getByPlaceholderText("Search your creations"), {
       target: { value: "unavailable search" },
     });
@@ -294,7 +294,7 @@ describe("Library media recovery", () => {
       "We couldn’t refresh your library. Try again.",
     );
     expect(
-      screen.getByRole("button", { name: "Open Saved image" }),
+      screen.getByRole("button", { name: (name) => name.startsWith("Open Saved image, ") }),
     ).toBeVisible();
   });
   it("HL-06 defers offscreen posterless video sources", async () => {
@@ -318,7 +318,7 @@ describe("Library media recovery", () => {
     );
     mockAssets([{ ...video, poster_asset_id: null }]);
     const { container } = mount();
-    await screen.findByRole("button", { name: "Open Saved video" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Saved video, ") });
     expect(container.querySelector("video[src]")).toBeNull();
     act(() =>
       enter(
@@ -383,7 +383,7 @@ describe("Library media recovery", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { container } = mount();
     // Off-screen, no poster request is in flight, so no loader is shown.
-    await screen.findByRole("button", { name: "Open Saved video" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Saved video, ") });
     expect(screen.queryByRole("status", { name: "Loading video poster" })).toBeNull();
     const cardWrapper = observed;
     expect(
@@ -423,7 +423,7 @@ describe("Library media recovery", () => {
       }),
     );
     mount();
-    await screen.findByRole("button", { name: "Open Saved image" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Saved image, ") });
     const input = screen.getByPlaceholderText("Search your creations");
     for (const value of ["a", "ab", "abc"])
       fireEvent.change(input, { target: { value } });
@@ -432,7 +432,7 @@ describe("Library media recovery", () => {
       expect(requests.filter((row) => row.path.includes("q="))).toHaveLength(1),
     );
     expect(
-      screen.getByRole("button", { name: "Open Saved image" }),
+      screen.getByRole("button", { name: (name) => name.startsWith("Open Saved image, ") }),
     ).toBeVisible();
     const stale = requests.find((row) => row.path.includes("q=abc"))!;
     fireEvent.change(input, { target: { value: "abcd" } });
@@ -449,13 +449,13 @@ describe("Library media recovery", () => {
     // A picture's hover title is a short whole-word title on up to two
     // lines; a playable audio tile carries no words of its own (PF-070).
     expect(
-      await screen.findByRole("button", { name: `Open ${prompt}` }),
+      await screen.findByRole("button", { name: (name) => name.startsWith(`Open ${prompt}, `) }),
     ).toBeVisible();
     expect(screen.getByText(`X${"x".repeat(55)}…`)).toHaveClass("line-clamp-2");
     expect(screen.queryByText(`Y${"y".repeat(55)}…`)).toBeNull();
-    expect(screen.getByRole("button", { name: `Open ${audioPrompt}` })).toBeVisible();
+    expect(screen.getByRole("button", { name: (name) => name.startsWith(`Open ${audioPrompt}, `) })).toBeVisible();
     await userEvent.click(
-      screen.getByRole("button", { name: `Open ${prompt}` }),
+      screen.getByRole("button", { name: (name) => name.startsWith(`Open ${prompt}, `) }),
     );
     for (const text of within(screen.getByRole("dialog")).getAllByText(prompt))
       expect(text).toHaveClass("break-words");

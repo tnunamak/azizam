@@ -618,8 +618,11 @@ function AlertSlot() {
       ).find((node) => node.textContent === section);
       if (!heading) return false;
       heading.tabIndex = -1;
-      heading.focus();
-      heading.scrollIntoView({ block: "start" });
+      heading.focus({ preventScroll: true });
+      heading.scrollIntoView({
+        block: "start",
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "auto",
+      });
       return true;
     };
     const observer = new MutationObserver(() => {

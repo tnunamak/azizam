@@ -295,17 +295,17 @@ describe("the list of model names", () => {
     await screen.findByRole("button", { name: "alpha" });
     expect(screen.queryByText("Shared by two rows.")).toBeNull();
     // On one line of facts a sentence drops its full stop.
-    expect(rowHas("gamma", "Read text aloud when a speech service is connected")).toBe(true);
+    expect(rowHas("gamma", "Read text aloud when a speech engine or provider is connected")).toBe(true);
     // A task's only name needs no description beside the task's own sentence.
     expect(screen.queryByText("The only image name.")).toBeNull();
     // Details still carries the description.
     fireEvent.click(nameButton("alpha"));
     expect(dialog().getByText("Shared by two rows.")).toBeVisible();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    fireEvent.change(search(), { target: { value: "speech service" } });
+    fireEvent.change(search(), { target: { value: "speech engine or provider" } });
     expect(nameButton("gamma")).toBeVisible();
     fireEvent.click(nameButton("gamma"));
-    expect(dialog().getByText("Read text aloud when a speech service is connected.")).toBeVisible();
+    expect(dialog().getByText("Read text aloud when a speech engine or provider is connected.")).toBeVisible();
     expect(dialog().queryByText(/backend/)).toBeNull();
   });
 
@@ -402,18 +402,18 @@ describe("price and status", () => {
     await user.click(screen.getByRole("combobox", { name: "Price" }));
     expect(
       screen.getAllByRole("option").map((option) => option.textContent),
-    ).toEqual(["Any price", "No provider charge", "Paid", "Cost not recorded"]);
-    await user.click(screen.getByRole("option", { name: "Paid" }));
+    ).toEqual(["Any price (3)", "No provider charge (1)", "Paid (1)", "Cost not recorded (1)"]);
+    await user.click(screen.getByRole("option", { name: /^Paid \(\d+\)$/ }));
     expect(screen.getByRole("button", { name: "paid" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "home" })).toBeNull();
     expect(screen.queryByRole("button", { name: "mystery" })).toBeNull();
     expect(screen.getByText(/^1 of 3 model names/)).toBeVisible();
     await user.click(screen.getByRole("combobox", { name: "Price" }));
-    await user.click(screen.getByRole("option", { name: "Cost not recorded" }));
+    await user.click(screen.getByRole("option", { name: /^Cost not recorded \(\d+\)$/ }));
     expect(screen.getByRole("button", { name: "mystery" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "paid" })).toBeNull();
     await user.click(screen.getByRole("combobox", { name: "Price" }));
-    await user.click(screen.getByRole("option", { name: "Any price" }));
+    await user.click(screen.getByRole("option", { name: /^Any price \(\d+\)$/ }));
     expect(screen.getAllByRole("listitem", { hidden: false }).length).toBeGreaterThanOrEqual(3);
     expect(screen.getByText(/^3 model names/)).toBeVisible();
   });
@@ -428,7 +428,7 @@ describe("price and status", () => {
     );
     await screen.findByRole("button", { name: "home" });
     await user.click(screen.getByRole("combobox", { name: "Price" }));
-    await user.click(screen.getByRole("option", { name: "Paid" }));
+    await user.click(screen.getByRole("option", { name: /^Paid \(\d+\)$/ }));
     expect(screen.getByRole("button", { name: "local-paid" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "home" })).toBeNull();
     cleanup();
@@ -468,12 +468,12 @@ describe("task filter", () => {
     await screen.findByRole("button", { name: "alpha" });
     await user.click(screen.getByRole("combobox", { name: "Task" }));
     expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
-      "All tasks",
-      "Chat",
-      "Images",
-      "Turn text into numbers",
+      "All tasks (3)",
+      "Chat (1)",
+      "Images (1)",
+      "Turn text into numbers (1)",
     ]);
-    await user.click(screen.getByRole("option", { name: "Turn text into numbers" }));
+    await user.click(screen.getByRole("option", { name: "Turn text into numbers (1)" }));
     expect(screen.getByRole("button", { name: "vec" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "alpha" })).toBeNull();
     expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(1);
@@ -533,11 +533,11 @@ describe("search", () => {
     );
     await screen.findByRole("button", { name: "home" });
     await user.click(screen.getByRole("combobox", { name: "Price" }));
-    await user.click(screen.getByRole("option", { name: "Paid" }));
+    await user.click(screen.getByRole("option", { name: /^Paid \(\d+\)$/ }));
     fireEvent.change(search(), { target: { value: "unmatched" } });
     expect(screen.getByText("No models match")).toBeVisible();
     expect(screen.queryByRole("region", { name: "Model names by task" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(search()).toHaveValue("");
     expect(screen.getByRole("combobox", { name: "Price" })).toHaveTextContent("Any price");
     expect(screen.getByRole("button", { name: "home" })).toBeVisible();
@@ -592,6 +592,65 @@ describe("copying", () => {
     vi.mocked(accountApi.discovery).mockRejectedValue(new Error("offline"));
     renderModels(catalog([row()]));
     expect(await screen.findByText(`${window.location.origin}/openai/v1`)).toBeVisible();
+  });
+});
+
+describe("Details mutation regressions", () => {
+  it("shows distinct Points to targets once without aliasing Same model as", async () => {
+    renderModels(catalog([row({ id: "route", resolves_to: { chat: "target-a", image: "target-a", audio: "target-b" }, same_model_as: ["sibling"] })], [exact("target-a"), exact("target-b")]));
+    fireEvent.click(await screen.findByRole("button", { name: "route" }));
+    expect(fact("Points to")).toBe("target-a, target-b");
+    expect(fact("Same model as")).toBe("sibling");
+  });
+
+  it("shows Same model as for an exact model without inventing Points to", async () => {
+    renderModels(catalog([], [exact("concrete", { resolves_to: { chat: "internal" }, same_model_as: ["nickname-a", "nickname-b"] })]));
+    fireEvent.click(await screen.findByRole("button", { name: "concrete" }));
+    expect(fact("Same model as")).toBe("nickname-a, nickname-b");
+    expect(fact("Points to")).toBeUndefined();
+  });
+
+  it("copies the selected name after closing Details, never its display title or target", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    renderModels(catalog([row({ id: "provider/name+v2", display_name: "Pretty title", resolves_to: { chat: "different-target" } })]));
+    fireEvent.click(await screen.findByRole("button", { name: "provider/name+v2" }));
+    expect(dialog().getByRole("heading", { name: "provider/name+v2" })).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.click(copyButton("provider/name+v2"));
+    await waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith("provider/name+v2"));
+    expect(await screen.findByText("provider/name+v2 copied")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("keeps the local no-provider-charge price in Details for unrecorded costs", async () => {
+    renderModels(catalog([row({ id: "local-price", locality: "local", cost: { kind: "unknown", price: null } })]));
+    fireEvent.click(await screen.findByRole("button", { name: "local-price" }));
+    expect(fact("Price")).toBe("Local · no provider charge");
+  });
+
+  it("keeps the paid numeric price in Details even on local equipment", async () => {
+    renderModels(catalog([row({ id: "paid-price", locality: "local", cost: { kind: "paid", price: 0.25 } })]));
+    fireEvent.click(await screen.findByRole("button", { name: "paid-price" }));
+    expect(fact("Price")).toBe("Paid · 0.25");
+  });
+
+  it("opens a category-hidden model by deep link without changing the category", async () => {
+    const previousUrl = window.location.href;
+    try {
+      window.history.replaceState(null, "", "?capability=image&model=hidden-chat");
+      renderModels(catalog([row({ id: "hidden-chat", same_model_as: ["draw"] }), task("draw", "image")]));
+      expect(await screen.findByRole("heading", { name: "hidden-chat" })).toBeVisible();
+      expect(fact("Task")).toBe("Chat");
+      expect(fact("Same model as")).toBe("draw");
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("Images");
+      expect(screen.queryByRole("button", { name: "hidden-chat" })).toBeNull();
+      expect(nameButton("draw")).toBeVisible();
+      expect(screen.getByText("1 of 2 model names.")).toBeVisible();
+    } finally {
+      window.history.replaceState(null, "", previousUrl);
+    }
   });
 });
 
@@ -871,9 +930,9 @@ describe("deep links", () => {
     expect(screen.queryByRole("button", { name: "chat" })).toBeNull();
     expect(search()).toHaveValue("");
     expect(screen.getByText(/^2 of 3 model names/)).toBeVisible();
-    // Clear search shows every task again.
+    // Clear filters shows every task again.
     fireEvent.change(search(), { target: { value: "unmatched" } });
-    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("All tasks");
     expect(screen.getByRole("button", { name: "chat" })).toBeVisible();
   });
@@ -990,12 +1049,12 @@ it("announces persistent result counts for search, task, price and zero matches"
   expect(count).toHaveTextContent(/^1 of 3 model names\.$/);
   fireEvent.change(search(), { target: { value: "" } });
   await user.click(screen.getByRole("combobox", { name: "Task" }));
-  await user.click(screen.getByRole("option", { name: "Images" }));
+  await user.click(screen.getByRole("option", { name: "Images (1)" }));
   expect(count).toHaveTextContent(/^1 of 3 model names\.$/);
   await user.click(screen.getByRole("combobox", { name: "Task" }));
-  await user.click(screen.getByRole("option", { name: "All tasks" }));
+  await user.click(screen.getByRole("option", { name: "All tasks (3)" }));
   await user.click(screen.getByRole("combobox", { name: "Price" }));
-  await user.click(screen.getByRole("option", { name: "Paid" }));
+  await user.click(screen.getByRole("option", { name: "Paid (1)" }));
   expect(count).toHaveTextContent(/^1 of 3 model names\.$/);
   fireEvent.change(search(), { target: { value: "nothing-matches" } });
   expect(count).toHaveTextContent("No models match. 0 of 3 model names.");
@@ -1008,4 +1067,70 @@ it("wraps an unbroken 100-character model title in its detail sheet", async () =
   renderModels(catalog([row({ id })]));
   await user.click(await screen.findByRole("button", { name: id }));
   expect(dialog().getByRole("heading", { name: id })).toHaveClass("min-w-0", "[overflow-wrap:anywhere]");
+});
+
+describe("filter option counts", () => {
+  function countedCatalog() {
+    return catalog([
+      row({ id: "local", cost: { kind: "unknown", price: null } }),
+      row({ id: "remote-free", locality: "remote" }),
+      task("draw", "image", { locality: "remote", cost: { kind: "paid", price: "$1" } }),
+      task("vec", "embed", { locality: "remote", cost: { kind: "unknown", price: null } }),
+    ], [exact("local"), exact("draw")]);
+  }
+
+  const optionNames = () => screen.getAllByRole("option").map((option) => option.textContent);
+
+  it("counts deduplicated names with the same task and cost rules as the list", async () => {
+    const user = userEvent.setup();
+    renderModels(countedCatalog());
+    await screen.findByRole("button", { name: "local" });
+    await user.click(screen.getByRole("combobox", { name: "Task" }));
+    expect(optionNames()).toEqual(["All tasks (4)", "Chat (2)", "Images (1)", "Turn text into numbers (1)"]);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    expect(optionNames()).toEqual(["Any price (4)", "No provider charge (2)", "Paid (1)", "Cost not recorded (1)"]);
+    expect(screen.getByRole("option", { name: "No provider charge (2)" })).toBeVisible();
+  });
+
+  it("updates each facet for search and the other selection while retaining zero-count alternatives", async () => {
+    const user = userEvent.setup();
+    renderModels(countedCatalog());
+    await screen.findByRole("button", { name: "local" });
+    await user.click(screen.getByRole("combobox", { name: "Task" }));
+    await user.click(screen.getByRole("option", { name: "Images (1)" }));
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    expect(optionNames()).toEqual(["Any price (1)", "No provider charge (0)", "Paid (1)", "Cost not recorded (0)"]);
+    await user.click(screen.getByRole("option", { name: "Paid (1)" }));
+    await user.click(screen.getByRole("combobox", { name: "Task" }));
+    expect(optionNames()).toEqual(["All tasks (1)", "Chat (0)", "Images (1)", "Turn text into numbers (0)"]);
+    await user.keyboard("{Escape}");
+    fireEvent.change(search(), { target: { value: "  unmatched  " } });
+    await user.click(screen.getByRole("combobox", { name: "Task" }));
+    expect(optionNames()).toEqual(["All tasks (0)", "Chat (0)", "Images (0)", "Turn text into numbers (0)"]);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    expect(optionNames()).toEqual(["Any price (0)", "No provider charge (0)", "Paid (0)", "Cost not recorded (0)"]);
+  });
+
+  it("recovers repeatedly from empty filters with and without a search by clearing every selection", async () => {
+    const user = userEvent.setup();
+    renderModels(countedCatalog());
+    await screen.findByRole("button", { name: "local" });
+    for (const query of ["", "unmatched"]) {
+      await user.click(screen.getByRole("combobox", { name: "Task" }));
+      await user.click(screen.getByRole("option", { name: "Images (1)" }));
+      await user.click(screen.getByRole("combobox", { name: "Price" }));
+      await user.click(screen.getByRole("option", { name: "No provider charge (0)" }));
+      fireEvent.change(search(), { target: { value: query } });
+      expect(screen.getByText("No models match")).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Clear filters" }));
+      expect(search()).toHaveValue("");
+      expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("All tasks (4)");
+      expect(screen.getByRole("combobox", { name: "Price" })).toHaveTextContent("Any price (4)");
+      expect(screen.getByText("4 model names.")).toBeVisible();
+      for (const id of ["local", "remote-free", "draw", "vec"]) expect(nameButton(id)).toBeVisible();
+      expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+    }
+  });
 });

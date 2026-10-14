@@ -420,7 +420,8 @@ it("empty request filters have one reset action that restores the unfiltered sta
   expect(region).toHaveAccessibleDescription("Receipts show request outcomes from your apps and devices; none match these filters.");
   expect(within(region).getAllByRole("button")).toHaveLength(1);
   expect(within(region).queryByRole("link")).toBeNull();
-  await user.click(within(region).getByRole("button", { name: "Clear filters" }));
+  expect(screen.getByRole("button", { name: "Clear filters" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Clear filters and show all requests" }));
   expect(await screen.findByRole("region", { name: "No request receipts yet" })).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Everyone");
 });
@@ -476,8 +477,8 @@ it.each([
   [401, "The sign-in or app-key check refused this request. Check the app's access key for this person, then try again."],
   [403, "This request was rejected because it did not have permission. Check this person's access plan and the app's access."],
   [429, "A request limit refused this request. The receipt does not identify which limit. Wait before trying again; if it happens again, ask the owner to check the request limits."],
-  [500, "A server error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner."],
-  [599, "A server error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner."],
+  [500, "An error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner."],
+  [599, "An error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner."],
 ])("describes stored rejection %s in the past tense", async (statusCode, message) => {
   mountOutcome({ status: "rejected", metadata: { status_code: statusCode } });
   await userEvent.click(await screen.findByRole("button", { name: /Request details:/ }));
@@ -545,9 +546,172 @@ it("resets a source-only empty result to all sources from its empty-state action
   expect(region).toHaveAccessibleDescription("Receipts show request outcomes from your apps and devices; none match these filters.");
   await waitFor(() => expect(requestUrls.at(-1)).toContain("source=reader-app"));
   expect(requestUrls.at(-1)).not.toContain("person_id");
-  await user.click(within(region).getByRole("button", { name: "Clear filters" }));
+  expect(screen.getByRole("button", { name: "Clear filters" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Clear filters and show all requests" }));
   expect(await screen.findByRole("region", { name: "No request receipts yet" })).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Source" })).toHaveTextContent("All sources");
   expect(screen.getByRole("combobox", { name: "Person" })).toHaveFocus();
   expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+});
+
+it("groups receipt facts and hides raw fields until Technical details is opened", async () => {
+  mountOutcome({ status: "success", latency_ms: 1250, error_code: "private-reason" });
+  await userEvent.click(await screen.findByRole("button", { name: /Request details:/ }));
+  const dialog = screen.getByRole("dialog");
+  const sheet = within(dialog);
+  expect(sheet.getAllByRole("heading").map((heading) => heading.textContent)).toEqual([
+    "Chat", "Request", "Model and where it ran", "Time and cost", "Outcome",
+  ]);
+  const request = sheet.getByRole("heading", { name: "Request" }).closest("section")!;
+  expect(within(request).getByText("Person").nextElementSibling).toHaveTextContent("Mira");
+  expect(within(request).getByText("App").nextElementSibling).toHaveTextContent("Notes");
+  const model = sheet.getByRole("heading", { name: "Model and where it ran" }).closest("section")!;
+  expect(within(model).getByText("Where it ran").nextElementSibling)
+    .toHaveTextContent("See Technical details for recorded routing, when available.");
+  const timing = sheet.getByRole("heading", { name: "Time and cost" }).closest("section")!;
+  expect(within(timing).getByText("Time taken").nextElementSibling).toHaveTextContent("1.3 s");
+  expect(within(timing).getByText("Spend").nextElementSibling).toHaveTextContent("Cost not recorded");
+  expect(sheet.getAllByText("Completed")).toHaveLength(1);
+  const details = sheet.getByText("Technical details").closest("details")!;
+  expect(details).not.toHaveAttribute("open");
+  expect(within(details).getByLabelText("Technical request details")).not.toBeVisible();
+  const summary = dialog.cloneNode(true) as HTMLElement;
+  summary.querySelectorAll("details").forEach((node) => node.remove());
+  expect(summary.textContent).not.toContain("private-reason");
+  await userEvent.click(sheet.getByText("Technical details"));
+  expect(details).toHaveAttribute("open");
+  expect(within(details).getByLabelText("Technical request details")).toHaveTextContent("private-reason");
+  await userEvent.click(sheet.getByText("Technical details"));
+  expect(details).not.toHaveAttribute("open");
+});
+
+it.each([
+  [0, "0 ms"],
+  [125, "125 ms"],
+  [1000, "1.0 s"],
+  [null, "Duration not recorded"],
+] as const)("keeps duration units and missing values in Time and cost (%s)", async (latency_ms, expected) => {
+  mountOutcome({ status: "success", latency_ms });
+  await userEvent.click(await screen.findByRole("button", { name: /Request details:/ }));
+  const section = within(screen.getByRole("dialog"))
+    .getByRole("heading", { name: "Time and cost" }).closest("section")!;
+  expect(within(section).getByText("Time taken").nextElementSibling).toHaveTextContent(expected);
+});
+
+const filterRow = (id: string, name = id) => entry({
+  id, action: "app.create", actor_id: "sam", actor_kind: "user",
+  actor_label: "Sam", target_kind: "app", target_id: id,
+  metadata: { name }, created_at: 1_760_000_000,
+});
+
+async function pickChangeFilter(label: string, option: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: label }));
+  await user.click(await screen.findByRole("option", { name: option }));
+}
+
+it("filter regression: change-type pick-list sends each category and restores all changes", async () => {
+  const { audit } = mountActivity({ tab: "Changes", audit: async () => ({
+    records: [filterRow("pick-list")], next_cursor: null,
+  }) });
+  await screen.findByRole("button", { name: /Details: Created an app/ });
+  for (const [label, prefix] of [
+    ["Apps", "app."], ["Keys", "credential."], ["Access plans", "profile."],
+    ["Gateway settings", "operator."], ["Access assignments", "runtime_profile_mapping."],
+    ["All changes", undefined],
+  ] as const) {
+    audit.mockClear();
+    await pickChangeFilter("Change type", label);
+    await waitFor(() => expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      limit: 50, action_prefix: prefix, actor_id: undefined, before: undefined,
+    })));
+    expect(screen.getByRole("combobox", { name: "Change type" })).toHaveTextContent(label);
+  }
+});
+
+it("filter regression: Clear filters resets both selectors and refetches the unfiltered list", async () => {
+  const { audit } = mountActivity({ tab: "Changes", audit: async (params) => ({
+    records: [filterRow(params?.action_prefix || params?.actor_id ? "filtered" : "unfiltered")],
+    next_cursor: null,
+  }) });
+  await screen.findByText("Sam · unfiltered");
+  await pickChangeFilter("Change type", "Apps");
+  await pickChangeFilter("Person", "Sam");
+  await screen.findByText("Sam · filtered");
+  audit.mockClear();
+  await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  expect(await screen.findByText("Sam · unfiltered")).toBeVisible();
+  await waitFor(() => expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+    limit: 50, action_prefix: undefined, actor_id: undefined,
+  })));
+  expect(screen.getByRole("combobox", { name: "Change type" })).toHaveTextContent("All changes");
+  expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Everyone");
+  expect(screen.getByRole("combobox", { name: "Change type" })).toHaveFocus();
+  expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+});
+
+it("filter regression: empty filtered changes explain no matches and can clear from that state", async () => {
+  mountActivity({ tab: "Changes", audit: async (params) => ({
+    records: params?.action_prefix ? [] : [filterRow("visible-before-filter")],
+    next_cursor: null,
+  }) });
+  await screen.findByText("Sam · visible-before-filter");
+  await pickChangeFilter("Change type", "Keys");
+  const empty = await screen.findByRole("region", { name: "No matching changes" });
+  expect(empty).toHaveAccessibleDescription("Changes to apps, keys and access plans appear here; none match these filters.");
+  expect(screen.queryByText("Sam · visible-before-filter")).toBeNull();
+  expect(screen.queryByRole("region", { name: "No changes yet" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  await userEvent.click(within(empty).getByRole("button", { name: "Clear filters and show all changes" }));
+  expect(await screen.findByText("Sam · visible-before-filter")).toBeVisible();
+  expect(screen.queryByRole("region", { name: "No matching changes" })).toBeNull();
+});
+
+it("filter regression: a 503 failure retries the same filtered changes and recovers", async () => {
+  let unavailable = true;
+  const { audit } = mountActivity({ tab: "Changes", audit: async (params) => {
+    if (params?.action_prefix && unavailable) {
+      throw Object.assign(new Error("Service Unavailable"), { status: 503 });
+    }
+    return { records: [filterRow(params?.action_prefix ? "recovered-filter" : "initial-row")], next_cursor: null };
+  } });
+  await screen.findByText("Sam · initial-row");
+  await pickChangeFilter("Change type", "Apps");
+  expect(await screen.findByText("Couldn't load changes")).toBeVisible();
+  expect(screen.queryByRole("region", { name: "No matching changes" })).toBeNull();
+  expect(screen.queryByText("Sam · initial-row")).toBeNull();
+  expect(screen.getByRole("combobox", { name: "Change type" })).toHaveTextContent("Apps");
+  audit.mockClear();
+  unavailable = false;
+  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("Sam · recovered-filter")).toBeVisible();
+  expect(audit).toHaveBeenCalledTimes(1);
+  expect(audit).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 50, action_prefix: "app." }));
+  expect(screen.queryByText("Couldn't load changes")).toBeNull();
+});
+
+it("filter regression: paging retains both filters and appends older matching changes", async () => {
+  const { audit } = mountActivity({ tab: "Changes", audit: async (params) => ({
+    records: [filterRow(params?.before ? "older-match" : "first-match")],
+    next_cursor: params?.before ? null : "older-filter-cursor",
+  }) });
+  await screen.findByText("Sam · first-match");
+  await pickChangeFilter("Change type", "Apps");
+  await pickChangeFilter("Person", "Sam");
+  await waitFor(() => expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+    limit: 50, action_prefix: "app.", actor_id: "sam", before: undefined,
+  })));
+  audit.mockClear();
+  await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+  expect(await screen.findByText("Sam · older-match")).toBeVisible();
+  expect(screen.getByText("Sam · first-match")).toBeVisible();
+  expect(audit).toHaveBeenCalledTimes(1);
+  expect(audit).toHaveBeenLastCalledWith({
+    limit: 50, action_prefix: "app.", actor_id: "sam",
+    before: "older-filter-cursor", exclude_access_audit: true, show_automated: false,
+  });
+  expect(screen.getByRole("combobox", { name: "Change type" })).toHaveTextContent("Apps");
+  expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Sam");
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  expect(screen.getByRole("status", { name: "Changes updates" })).toHaveTextContent("2 changes loaded. No more matching changes.");
 });

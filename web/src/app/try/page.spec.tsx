@@ -938,3 +938,104 @@ test("a long completed chat keeps every character including the tail", async () 
   expect(output?.textContent).toBe(answer);
   expect(screen.queryByRole("heading", { name: "Reply cut off" })).toBeNull();
 });
+
+function serveImageRun(reply: (url: string) => Response) {
+  mocks.params = new URLSearchParams("capability=image");
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url === "/me/api/models/catalog") return response({
+      aliases: [], models: [{ id: "picture-a", name: "Picture model", capability: "image" }],
+    });
+    if (url === "/me/api/workflows") return response(workflows);
+    return reply(url);
+  });
+}
+
+test.each([
+  ["url", { url: "/pictures/result.webp" }, "/pictures/result.webp"],
+  ["base64", { b64_json: "cGljdHVyZQ==" }, "data:image/png;base64,cGljdHVyZQ=="],
+])("image %s result shows bounded preview, download, model and run time", async (_kind, item, url) => {
+  serveImageRun((path) => path.endsWith("/content")
+    ? tryJson({ data: [item] })
+    : tryJson({ object: "media.job", id: "picture-job", status: "completed" }));
+  render(<TryPage />);
+  await pressRun();
+  const preview = await screen.findByRole("img", { name: "Generated result" });
+  expect(preview).toHaveAttribute("src", url);
+  expect(preview).toHaveClass("max-h-96", "object-contain");
+  expect(preview.parentElement?.parentElement).toHaveClass("max-w-2xl");
+  const download = screen.getByRole("link", { name: "Download picture" });
+  expect(download).toHaveAttribute("href", url);
+  expect(download).toHaveAttribute("download", "generated-picture");
+  expect(screen.getByText("Run time").nextElementSibling?.textContent).toMatch(/^\d+ ms$/);
+  expect(screen.getByText("Model", { selector: "dt" }).nextElementSibling).toHaveTextContent("Picture model");
+  fireEvent.error(preview);
+  expect(screen.getByText("The picture couldn’t be loaded.")).toBeVisible();
+  expect(download).toBeVisible();
+});
+
+test.each(["http", "job"])("image %s failure uses plain recovery copy", async (kind) => {
+  serveImageRun(() => kind === "http"
+    ? tryJson({ error: { message: "upstream_trace_internal_failure" } }, 500)
+    : tryJson({ object: "media.job", id: "picture-job", status: "failed" }));
+  render(<TryPage />);
+  await pressRun();
+  expect(await screen.findByText(kind === "http"
+    ? "We couldn’t make this picture. Try again, or choose another model."
+    : "The gateway could not make this picture.")).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Download picture" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Image result" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+});
+
+test("image blocked by a plan keeps its explanation and offers another run", async () => {
+  const reason = "Your Starter plan does not include this model. Choose a model on your plan.";
+  serveImageRun(() => tryJson({ error: { message: reason, details: { layer: "account" } } }, 403));
+  render(<TryPage />);
+  await pressRun();
+  expect(await screen.findByText(reason)).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Your account stopped this request" })).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Download picture" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+});
+
+test("chat length limit retains the partial reply and marks it as cut", async () => {
+  serveTryRun({ choices: [{ message: { content: "Visible partial reply" }, finish_reason: "length" }] });
+  render(<TryPage />);
+  await pressRun();
+  expect(await screen.findByText("Visible partial reply")).toBeVisible();
+  expect(screen.getByText("This answer stopped early because it reached its length limit.")).toBeVisible();
+  expect(screen.queryByText("The gateway returned no reply.")).toBeNull();
+});
+
+test.each(["", "   \n\t"])("empty chat prompt %j is refused with a clear message before a request", async (prompt) => {
+  serveTryRun({ choices: [{ message: { content: "Should not run" } }] });
+  render(<TryPage />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+  fireEvent.change(screen.getByRole("textbox", { name: "Prompt" }), { target: { value: prompt } });
+  await pressRun();
+  expect(await screen.findByText("Enter a prompt before running chat.")).toBeVisible();
+  expect(mocks.tryKey).not.toHaveBeenCalled();
+  expect(fetchMock.mock.calls.filter(([url]) => url === "/openai/v1/chat/completions")).toHaveLength(0);
+});
+
+test("chat network drop offers an explicit retry without automatically repeating the request", async () => {
+  let attempts = 0;
+  serveChat(() => {
+    if (++attempts === 1) throw new TypeError("Failed to fetch");
+    return chatReply({ choices: [{ message: { content: "Recovered reply" }, finish_reason: "stop" }] });
+  });
+  render(<TryPage />);
+  const prompt = screen.getByRole("textbox", { name: "Prompt" });
+  fireEvent.change(prompt, { target: { value: "Keep my question" } });
+  await pressRun();
+  expect(await screen.findByRole("heading", { name: "The connection dropped" })).toBeVisible();
+  expect(screen.getByText("The answer did not come back. Edit and run again when you are back online.")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Edit and run again" }));
+  expect(prompt).toHaveFocus();
+  expect(prompt).toHaveValue("Keep my question");
+  expect(attempts).toBe(1);
+  await pressRun();
+  expect(await screen.findByText("Recovered reply")).toBeVisible();
+  expect(attempts).toBe(2);
+  expect(screen.queryByRole("heading", { name: "The connection dropped" })).toBeNull();
+});

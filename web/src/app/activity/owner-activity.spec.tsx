@@ -88,9 +88,9 @@ it("offers human names from the people source beyond the recent audit window", a
   expect(screen.queryByRole("textbox", { name: /person id/i, hidden: true })).toBeNull();
   expect(screen.queryByText("Find a person")).toBeNull();
 });
-it.each([0, 1])(
-  "clears the category and named person with Clear filters button %s",
-  async (buttonIndex) => {
+it.each(["Clear filters", "Clear filters and show all changes"])(
+  "clears the category and named person with %s",
+  async (buttonName) => {
     const user = userEvent.setup();
     const audit = mount();
     await screen.findByText("No changes yet");
@@ -104,7 +104,7 @@ it.each([0, 1])(
     expect(screen.queryByRole("textbox", { name: /person id/i, hidden: true })).toBeNull();
     await screen.findByText("No matching changes");
     await user.click(
-      screen.getAllByRole("button", { name: "Clear filters" })[buttonIndex],
+      screen.getByRole("button", { name: buttonName }),
     );
     expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Everyone");
     expect(
@@ -480,7 +480,8 @@ it("COPY-10 filtered changes guidance", async () => {
   expect(await screen.findByText("No matching changes")).toBeVisible();
   expect(screen.getByText("Changes to apps, keys and access plans appear here; none match these filters.")).toBeVisible();
   expect(screen.queryByRole("link", { name: "Go to Home" })).toBeNull();
-  expect(screen.getAllByRole("button", { name: "Clear filters" })).toHaveLength(2);
+  expect(screen.getByRole("button", { name: "Clear filters" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Clear filters and show all changes" })).toBeVisible();
 });
 
 function serveCopyReceipt(receipt: Record<string, unknown>) {

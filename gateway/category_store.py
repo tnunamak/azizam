@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 SCHEMA_VERSION = 1
 
@@ -38,7 +38,7 @@ class SnapshotNotFoundError(LookupError):
 def _canonical(body: Any) -> str:
     # Reject Python-only values and key coercion rather than silently changing
     # the caller's document. This is deterministic JSON, not RFC 8785/JCS.
-    def validate(value):
+    def validate(value: object) -> None:
         if value is None or type(value) in (str, bool, int, float):
             return
         if type(value) is list:
@@ -65,7 +65,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _revision(value, *, optional=False):
+def _revision(value: object, *, optional: bool = False) -> None:
     if optional and value is None:
         return
     if type(value) is not int or value < 1:
@@ -144,7 +144,7 @@ class CategoryStore:
     sqlite3 operational errors propagate and never reset or delete policy data.
     """
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         if str(path) == ":memory:":
             raise ValueError("a persistent database path is required")
@@ -167,7 +167,7 @@ class CategoryStore:
             pass  # Empty initialization is allowed, but reads explicitly deny.
 
     @contextmanager
-    def _connection(self):
+    def _connection(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(str(self.path), timeout=5.0, isolation_level=None)
         conn.row_factory = sqlite3.Row
         try:
@@ -180,7 +180,7 @@ class CategoryStore:
             conn.close()
 
     @contextmanager
-    def _transaction(self):
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
         with self._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -190,7 +190,8 @@ class CategoryStore:
                 conn.rollback()
                 raise
 
-    def _get(self, conn, revision, counter=None):
+    def _get(self, conn: sqlite3.Connection, revision: int | None,
+             counter: int | None = None) -> Snapshot:
         row = conn.execute(
             "SELECT * FROM policy_snapshots WHERE revision=?", (revision,)
         ).fetchone()
