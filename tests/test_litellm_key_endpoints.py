@@ -21,6 +21,7 @@ from tests.test_admin_api import FakeAdminStore, _admin_auth
 MASTER_KEY = "fk-litellm-master-key"
 KEYS = "/admin/api/operator/litellm/keys"
 ADMIN = {"Authorization": "Bearer admin-token"}
+OWNER = {"Authorization": "Bearer owner-token"}
 CATALOG = frozenset({"gpt-4o", "claude-3-opus"})
 
 
@@ -90,10 +91,19 @@ def test_list_accepts_the_string_only_key_shape(sidecar) -> None:
     assert response.json() == {"keys": [{"token": "sk-..…wxyz", "key_name": "sk-...wxyz"}]}
 
 
+def test_create_is_owner_only_and_never_reaches_the_sidecar_for_an_administrator(sidecar) -> None:
+    gateway = sidecar.gateway()  # no scenario served: any sidecar call would fail
+
+    response = gateway.post(KEYS, headers=ADMIN, json={"key_alias": "batch"})
+
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "owner_required"
+
+
 def test_create_mints_key_and_returns_secret_once(sidecar) -> None:
     sidecar.serve("key-generate", spec={"key_alias": "batch", "max_budget": 10.0, "models": ["gpt-x"]})
 
-    response = sidecar.gateway().post(KEYS, headers=ADMIN, json={"key_alias": "batch", "max_budget": "10", "models": ["gpt-x", " "]})
+    response = sidecar.gateway().post(KEYS, headers=OWNER, json={"key_alias": "batch", "max_budget": "10", "models": ["gpt-x", " "]})
 
     assert response.status_code == 201, response.text
     assert response.json() == {"key": {"key": "sk-minted-secret", "key_name": "sk-...cret", "expires": None}}
@@ -107,7 +117,7 @@ def test_create_mints_key_and_returns_secret_once(sidecar) -> None:
     ids=["supplied-secret", "non-numeric-budget"],
 )
 def test_create_rejects_invalid_input_before_the_sidecar(sidecar, body, code) -> None:
-    response = sidecar.gateway().post(KEYS, headers=ADMIN, json=body)
+    response = sidecar.gateway().post(KEYS, headers=OWNER, json=body)
 
     assert response.status_code == 400, response.text
     assert response.json()["error"]["code"] == code
@@ -177,14 +187,14 @@ def test_sidecar_drop_maps_to_503_unreachable(sidecar) -> None:
 def test_known_models_pass_catalog_validation(sidecar, models) -> None:
     sidecar.serve("key-generate", spec={"models": models})
 
-    response = sidecar.gateway(known_models=CATALOG).post(KEYS, headers=ADMIN, json={"models": models})
+    response = sidecar.gateway(known_models=CATALOG).post(KEYS, headers=OWNER, json={"models": models})
 
     assert response.status_code == 201, response.text
     assert sidecar.fake.calls("generate")[0].json == {"models": models}
 
 
 def test_unknown_models_are_all_reported_and_never_reach_the_sidecar(sidecar) -> None:
-    response = sidecar.gateway(known_models=CATALOG).post(KEYS, headers=ADMIN, json={"models": ["gpt-x", "llama-99", "gpt-4o"]})
+    response = sidecar.gateway(known_models=CATALOG).post(KEYS, headers=OWNER, json={"models": ["gpt-x", "llama-99", "gpt-4o"]})
 
     assert response.status_code == 400, response.text
     error = response.json()["error"]
@@ -198,7 +208,7 @@ def test_unknown_models_are_all_reported_and_never_reach_the_sidecar(sidecar) ->
 def test_missing_catalog_skips_validation(sidecar, known_models) -> None:
     sidecar.serve("key-generate", spec={"models": ["totally-made-up-model"]})
 
-    response = sidecar.gateway(known_models=known_models).post(KEYS, headers=ADMIN, json={"models": ["totally-made-up-model"]})
+    response = sidecar.gateway(known_models=known_models).post(KEYS, headers=OWNER, json={"models": ["totally-made-up-model"]})
 
     assert response.status_code == 201, response.text
 
@@ -206,7 +216,7 @@ def test_missing_catalog_skips_validation(sidecar, known_models) -> None:
 def test_no_models_field_creates_an_unrestricted_key(sidecar) -> None:
     sidecar.serve("key-generate", spec={"key_alias": "unrestricted"})
 
-    response = sidecar.gateway(known_models=CATALOG).post(KEYS, headers=ADMIN, json={"key_alias": "unrestricted"})
+    response = sidecar.gateway(known_models=CATALOG).post(KEYS, headers=OWNER, json={"key_alias": "unrestricted"})
 
     assert response.status_code == 201, response.text
     assert sidecar.fake.calls("generate")[0].json == {"key_alias": "unrestricted"}
