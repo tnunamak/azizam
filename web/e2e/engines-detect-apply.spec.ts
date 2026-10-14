@@ -254,113 +254,57 @@ for (const theme of ["light", "dark"]) {
       }
       await card.getByRole("button", { name: /Actions|More/ }).click();
       await page
-        .getByRole("menuitem", { name: "Detect models", exact: true })
+        .getByRole("menuitem", { name: "Open engine", exact: true })
         .click();
-      const sheet = page.getByRole("dialog", {
-        name: "Edit engine",
-        exact: true,
-      });
+      await expect(
+        page.getByRole("heading", { level: 1, name: `Strict engine ${suffix}` }),
+      ).toBeVisible();
       if (width === 390) {
-        const toggleBox = await sheet
-          .getByRole("switch", { name: new RegExp("Toggle Strict engine") })
+        const toggleBox = await page
+          .getByRole("switch", { name: "Enabled" })
           .boundingBox();
         expect(toggleBox!.height).toBeGreaterThanOrEqual(44);
         expect(toggleBox!.width).toBeGreaterThanOrEqual(44);
       }
-      const originalEndpoint = await sheet
-        .getByLabel("Endpoint", { exact: true })
-        .inputValue();
-      await sheet
-        .getByLabel("Endpoint", { exact: true })
-        .fill("http://127.0.0.1:18990/v1");
-      await expect(
-        sheet.getByRole("button", { name: "Test", exact: true }),
-      ).toBeDisabled();
-      await expect(
-        sheet.getByRole("button", { name: "Detect", exact: true }),
-      ).toBeDisabled();
-      await expect(
-        sheet.getByText(
-          "Save configuration changes before testing or detecting models.",
-        ),
-      ).toBeVisible();
-      await sheet
-        .getByLabel("Endpoint", { exact: true })
-        .fill(originalEndpoint);
-      await sheet.getByLabel("Note").fill("Draft retained after model apply");
-      await sheet.getByRole("button", { name: "Detect", exact: true }).click();
-      await expect(
-        sheet.getByRole("heading", { name: "Preview detected models" }),
-      ).toBeVisible();
-      await sheet.getByRole("group", { name: /^Model \d+$/ }).filter({ hasText: "Engine model name: strict-chat" }).getByLabel("Model name").fill(publicName);
-      await expect(
-        sheet.getByRole("button", { name: "Apply models" }),
-      ).toBeDisabled();
-      await expect(sheet.getByText(/^Detected models:/)).toHaveCount(0);
-      await expect(sheet.getByText("Engine model name: strict-chat")).not.toBeVisible();
+      // An edited address makes the last check out of date; Save waits for a new one.
+      const address = page.getByLabel(/^Address/);
+      const originalAddress = await address.inputValue();
+      await address.fill("http://127.0.0.1:18990/v1");
+      await expect(page.getByText("Out of date. Check again.")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
+      await address.fill(originalAddress);
+      await expect(page.getByText("Out of date. Check again.")).toHaveCount(0);
+      await page.getByRole("button", { name: "Detect models again" }).click();
+      const offer = page.getByRole("checkbox", { name: "Offer strict-chat" });
+      await expect(offer).toBeVisible();
+      await offer.check();
+      const row = page.locator("div").filter({ has: offer }).filter({ has: page.getByLabel("Public name") }).last();
+      await row.getByLabel("Public name").fill(publicName);
       await checkVisuals(page, `engines-preview-${suffix}`);
-      if (width === 390) {
-        const consent = sheet.getByLabel(
-          "Use existing access rules for these models",
-        );
-        await consent.evaluate((element) =>
-          element.scrollIntoView({ block: "center" }),
-        );
-        expect(
-          await consent.evaluate((element) => {
-            const rect = element.getBoundingClientRect();
-            return (
-              document.elementFromPoint(
-                rect.x + rect.width / 2,
-                rect.y + rect.height / 2,
-              ) === element
-            );
-          }),
-        ).toBe(true);
-        await page.screenshot({
-          path: `test-results/screens/engines-consent-viewport-${suffix}.png`,
-        });
-      }
-      await sheet
-        .getByLabel("Use existing access rules for these models")
-        .check();
-      await sheet.getByRole("button", { name: "Apply models" }).click();
-      await expect(
-        sheet.getByText(`${serviceId}`, { exact: true }),
-      ).toHaveCount(0);
-      await expect(sheet.getByText(/models applied/)).toBeVisible();
-      await sheet.getByText("Advanced fields", { exact: true }).click();
-      await expect(sheet.getByLabel("Advanced JSON")).toHaveValue(
-        new RegExp(publicName),
+      const saved = page.waitForResponse(
+        (response) =>
+          response.request().method() === "PATCH" &&
+          response.url().endsWith(`/services/${serviceId}`),
       );
-      await expect(sheet.getByLabel("Note")).toHaveValue(
-        "Draft retained after model apply",
-      );
-      await sheet
-        .getByRole("button", { name: "Save engine", exact: true })
-        .click();
-      await expect(sheet).not.toBeVisible();
+      await page.getByRole("button", { name: "Save changes" }).click();
+      expect((await saved).status()).toBe(200);
+      await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
       const registry = (
         await (
           await page.request.get("/admin/api/operator/service-registry")
         ).json()
       ).service_registry;
       expect(registry.services[serviceId].config.models).toEqual([
-        {
-          id: publicName,
+        expect.objectContaining({
           model_group: publicName,
           upstream_model: "strict-chat",
-          transforms: [],
-        },
+        }),
       ]);
       expect(
         registry.services[serviceId].config.model_policy_schema_version,
       ).toBe(1);
       expect(registry.services[serviceId].config.custom_operator_field).toBe(
         "preserve",
-      );
-      expect(registry.services[serviceId].config.note).toBe(
-        "Draft retained after model apply",
       );
       expect(registry.services[serviceId].enabled).toBe(true);
       const unchanged = (
@@ -435,51 +379,35 @@ for (const theme of ["light", "dark"]) {
         (value) => localStorage.setItem("theme", value),
         theme,
       );
-      let failing = true;
-      await page.route("**/admin/api/operator/services/test", (route) =>
-        fulfilJson(route, {
-            probe: {
-              ok: !failing,
-              url: "http://127.0.0.1:18498/health",
-              status: failing ? 503 : 200,
-              error: failing ? "Engine unavailable" : "",
-            },
-          }),
-      );
-      await page.goto("/engines/?service=capture-engine");
-      const card = page.locator('tr[data-engine-id="capture-engine"]');
-      await card.getByRole("button", { name: /Actions|More/ }).click();
-      await page
-        .getByRole("menuitem", { name: "Test engine", exact: true })
-        .click();
-      const sheet = page.getByRole("dialog", { name: "Edit engine" });
-      await sheet.getByRole("button", { name: "Test", exact: true }).click();
-      const alert = sheet.getByRole("alert");
-      await expect(alert).toBeVisible();
-      const friendlyName = (await sheet
-        .locator("[data-slot='sheet-description']")
-        .textContent())!;
-      await expect(alert).toContainText(`${friendlyName}: connection failed`);
-      await expect(sheet.getByRole("alert")).not.toContainText("HTTP");
-      const technical = sheet.locator("details").filter({ hasText: "HTTP 503" });
-      await expect(technical).not.toHaveAttribute("open");
-      await technical.getByText("Technical details", { exact: true }).click();
-      await expect(technical).toContainText("http://127.0.0.1:18498/health (HTTP 503)");
-      await expect(sheet.getByRole("alert")).toContainText(
-        "reachable from the gateway",
-      );
+      await page.goto("/engines/?engine=capture-engine");
+      await expect(
+        page.getByRole("heading", { level: 1, name: "Local test engine" }),
+      ).toBeVisible();
+      const address = page.getByLabel(/^Address/);
+      const original = await address.inputValue();
+      // Nothing listens on this port: the check says so on the address, with what, why and what to do.
+      await address.fill("http://127.0.0.1:18997/v1");
+      await page.getByRole("button", { name: "Check again" }).click();
+      const finding = page.getByRole("alert").filter({ hasText: "Server not reachable" });
+      await expect(finding).toBeVisible();
+      await expect(finding).toContainText("Azizam could not reach the server.");
+      await expect(finding).toContainText("127.0.0.1:18997");
+      // As drawn: an error opens its Details, with the request to repeat.
+      const details = finding.locator("details");
+      await expect(details).toHaveAttribute("open");
+      await expect(details).toContainText("curl -i");
+      await expect(details).toContainText("http://127.0.0.1:18997/v1/models");
+      await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
       await checkVisuals(page, `engines-failed-${theme}-${width}`);
-      await sheet.getByRole("button", { name: "Edit endpoint" }).click();
-      await expect(sheet).toBeVisible();
-      failing = false;
-      await sheet.getByRole("button", { name: "Retry test" }).click();
-      await expect(sheet.getByText(/connection passed/)).toBeVisible();
-      await expect(sheet.getByRole("alert")).toHaveCount(0);
+      await address.fill(original);
+      await page.getByRole("button", { name: "Check again" }).click();
+      await expect(page.getByText(/Reached the server\./).first()).toBeVisible();
+      await expect(page.getByRole("alert").filter({ hasText: "Server not reachable" })).toHaveCount(0);
     });
   }
 }
 
-test("a registry conflict preserves the detected-model preview for retry", { tag: GLOBAL_STATE_TAG }, async ({
+test("a registry conflict keeps the typed model name for retry", { tag: GLOBAL_STATE_TAG }, async ({
   page,
 }) => {
   await page.route("**/admin/api/operator/services/capture-engine", (route) => {
@@ -492,23 +420,11 @@ test("a registry conflict preserves the detected-model preview for retry", { tag
         },
       }, { status: 412 });
   });
-  await page.goto("/engines/?service=capture-engine");
-  const card = page.locator('tr[data-engine-id="capture-engine"]');
-  await card.getByRole("button", { name: /Actions|More/ }).click();
-  await page
-    .getByRole("menuitem", { name: "Detect models", exact: true })
-    .click();
-  const sheet = page.getByRole("dialog", { name: "Edit engine", exact: true });
-  await sheet.getByRole("button", { name: "Detect", exact: true }).click();
-  await sheet.getByRole("group", { name: /^Model \d+$/ }).filter({ hasText: "Engine model name: demo-chat" }).getByLabel("Model name").fill("draft-chat");
-  await sheet.getByLabel("Use existing access rules for these models").check();
-  await sheet.getByRole("button", { name: "Apply models" }).click();
-  await expect(sheet.getByRole("alert")).toContainText("Engine settings changed elsewhere");
-  await expect(sheet.getByRole("group", { name: /^Model \d+$/ }).filter({ hasText: "Engine model name: demo-chat" }).getByLabel("Model name")).toHaveValue(
-    "draft-chat",
-  );
-  await expect(
-    sheet.getByRole("button", { name: "Apply models" }),
-  ).toBeEnabled();
-  await expect(sheet.getByText(/models applied/)).toHaveCount(0);
+  await page.goto("/engines/?engine=capture-engine");
+  const publicName = page.getByLabel("Public name").first();
+  await publicName.fill("draft-chat");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "changed elsewhere" })).toBeVisible();
+  await expect(publicName).toHaveValue("draft-chat");
+  await expect(page.getByRole("button", { name: "Save changes" })).toBeEnabled();
 });
