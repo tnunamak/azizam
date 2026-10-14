@@ -914,17 +914,38 @@ def origin_of(url: str) -> str:
         return ""
 
 
+_REFERENCE_KEY_SUFFIXES = ("_env", "_ref", "_secret_id")
+_EXTERNAL_DRIVER = "external"
+
+
+def _names_credential(key: str) -> bool:
+    """Deny by default: a key that looks like it names a secret is treated as one.
+
+    Matches ``credential_origin``, ``api_key`` and any key ending in ``_env``,
+    ``_ref`` or ``_secret_id``, at any depth and in any block of the record.
+    """
+    lowered = key.strip().lower()
+    return (
+        lowered in ("credential_origin", "api_key")
+        or lowered.endswith(_REFERENCE_KEY_SUFFIXES)
+        or (is_secret_key(lowered) and is_secret_reference_key(lowered))
+    )
+
+
 def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
-    """Every field of a service record that names a credential, keyed by its path."""
+    """Every field of a service record that names a credential, keyed by its path.
+
+    The whole record is scanned (``config``, ``secret_refs``, the ``lifecycle``
+    block and anything else), so a new block cannot become a place to hide a
+    key reference.
+    """
     found: dict[str, str] = {}
 
     def walk(value: Any, path: str) -> None:
         if isinstance(value, Mapping):
             for key, item in value.items():
                 here = f"{path}.{key}" if path else str(key)
-                if str(key) == "credential_origin" or (
-                    is_secret_key(str(key)) and is_secret_reference_key(str(key))
-                ):
+                if _names_credential(str(key)) or path == "secret_refs":
                     found[here] = repr(item)
                 else:
                     walk(item, here)
@@ -934,14 +955,36 @@ def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
         elif isinstance(value, str) and value.strip().lower().startswith(_ENV_REFERENCE_PREFIX):
             found[path] = repr(value)
 
-    config = record.get("config")
-    walk(config if isinstance(config, Mapping) else {}, "config")
-    refs = record.get("secret_refs")
-    if isinstance(refs, Mapping):
-        for key, item in refs.items():
-            if str(key) != "credential_origin":
-                found[f"secret_refs.{key}"] = repr(item)
+    walk(record, "")
     return found
+
+
+def _lifecycle_blocks(record: Mapping[str, Any]) -> list[Any]:
+    """The record's lifecycle block and the copy the form path keeps in ``config``."""
+    config = record.get("config")
+    return [record.get("lifecycle"), config.get("lifecycle") if isinstance(config, Mapping) else None]
+
+
+def _is_driven(block: Any) -> bool:
+    """True when a lifecycle block names a driver other than ``external``."""
+    if not isinstance(block, Mapping):
+        return False
+    for field in ("driver", "type"):
+        name = str(block.get(field) or "").strip().lower()
+        if name and name != _EXTERNAL_DRIVER:
+            return True
+    return False
+
+
+def lifecycle_driver_changed(before: Mapping[str, Any], after: Mapping[str, Any]) -> bool:
+    """Whether a record's lifecycle block with a driver was created, changed or removed.
+
+    A driver other than ``external`` runs commands on the host or sends a stored
+    key to the record's host, so only the owner may set, change or remove one.
+    A block that stays as it is, and an ``external`` block, are not changes.
+    """
+    old, new = _lifecycle_blocks(before), _lifecycle_blocks(after)
+    return old != new and (any(_is_driven(b) for b in old) or any(_is_driven(b) for b in new))
 
 
 def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[str, str]:
@@ -955,8 +998,9 @@ def credential_binding_changes(
     """Services whose credential or credential host differs between two registries.
 
     A service is listed when it gains or changes a credential reference, when it
-    sets the base of the gateway's own internal key, or when it already carries a
-    credential and its origin moves. The value says which.
+    sets the base of the gateway's own internal key, when it already carries a
+    credential and its origin moves, or when its lifecycle driver is set, changed
+    or removed (a driver runs commands or sends a stored key). The value says which.
     """
     old = (normalize_service_registry(old_registry).get("services")) or {}
     new = (normalize_service_registry(new_registry).get("services")) or {}
@@ -971,6 +1015,8 @@ def credential_binding_changes(
             reasons.append(f"config.{LIFECYCLE_BASE_KEY}")
         if prior and _endpoint_fingerprint(config) != _endpoint_fingerprint(before_config):
             reasons.append("host")
+        if lifecycle_driver_changed(before, record):
+            reasons.append("lifecycle")
         if reasons:
             changed[service_id] = reasons
     return changed

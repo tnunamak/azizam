@@ -13,6 +13,7 @@ It intentionally keeps two planes separate:
 
 from __future__ import annotations
 
+import copy
 import functools
 import secrets
 import json
@@ -812,7 +813,9 @@ class AdminSQLiteStore:
         A credential reference names a secret the gateway holds, and the host of
         its record decides where that secret is sent. An administrator may manage
         services, but may not attach a credential to one, nor move a service that
-        carries one. When the owner does, the host the key is for is recorded with it.
+        carries one, nor give one a lifecycle driver (a driver runs commands or sends a
+        stored key to the record's host). When the owner does, the host the key is for
+        is recorded with it.
         """
         value = service_registry.normalize_service_registry(registry)
         changed = service_registry.credential_binding_changes(self.get_service_registry(), value)
@@ -820,7 +823,8 @@ class AdminSQLiteStore:
             return value
         if "owner" not in actor.roles:
             raise PermissionError(
-                "Only the owner can attach a key to a service or move a service that has one.")
+                "Only the owner can attach a key to a service, move a service that has one, "
+                "or set a lifecycle driver on a service.")
         return service_registry.bind_credential_origins(value, changed)
 
     def update_service_registry(
@@ -964,6 +968,16 @@ class AdminSQLiteStore:
             for cfg_key, cfg_val in existing_config.items():
                 if cfg_key not in form_base:
                     form_base[cfg_key] = cfg_val
+            # A lifecycle driver kept only on the record (not in its config) must
+            # survive a partial edit: dropping it would count as removing a driver,
+            # which only the owner may do.
+            existing_lifecycle = existing.get("lifecycle")
+            if (
+                "lifecycle" not in form_base
+                and isinstance(existing_lifecycle, Mapping)
+                and existing_lifecycle.get("driver")
+            ):
+                form_base["lifecycle"] = copy.deepcopy(dict(existing_lifecycle))
             # Drop None values so they don't override defaults downstream, then
             # overlay the caller-supplied partial data.
             merged: dict[str, Any] = {
@@ -1057,7 +1071,9 @@ class AdminSQLiteStore:
             workflows=imported["workflows"],
             capabilities=imported["capabilities"],
         )
-        registry = service_registry.normalize_service_registry(registry)
+        # A package is data the administrator picked, not the owner: it gets the
+        # same credential and lifecycle checks as a registry edit.
+        registry = self._settle_credential_bindings(registry, actor)
         package_index = extension_packages.merge_package_index(
             self.get_extension_package_index(),
             review,
