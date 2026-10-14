@@ -218,7 +218,7 @@ test("usage fits a 390 px phone with long model names", async ({ page }) => {
     fulfilJson(route, phoneSummary),
   );
   await page.goto("/usage/");
-  await expect(page.getByText("Top models by requests")).toBeVisible();
+  await expect(page.getByText("Request counts and recorded spend this month, busiest models first")).toBeVisible();
   await expectNoHorizontalOverflow(page);
 
   // The tab bar is not cut off: its right edge is inside the viewport.
@@ -278,7 +278,7 @@ test("usage Source list stays on screen, scrolls inside itself and never widens 
     fulfilJson(route, { ...phoneSummary, sources: manySources }),
   );
   await page.goto("/usage/");
-  await expect(page.getByText("Top models by requests")).toBeVisible();
+  await expect(page.getByText("Request counts and recorded spend this month, busiest models first")).toBeVisible();
   await page.getByRole("combobox", { name: "App or connection" }).click();
   const list = page.getByRole("listbox");
   await expect(list).toBeVisible();

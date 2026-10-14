@@ -81,7 +81,7 @@ test("owner sees earlier keyless LAN and service app media and usage; keyless re
   await expect(page.getByText("No media yet")).toHaveCount(0);
   // Model, date and app live in the "Filters" popover since D1.
   await page.getByRole("button", { name: /^Filters/ }).click();
-  await page.getByRole("combobox", { name: "Source", exact: true }).click();
+  await page.getByRole("combobox", { name: "App", exact: true }).click();
   await page.getByRole("option", { name: "Daisy", exact: true }).click();
   await page.keyboard.press("Escape");
   await expect(page.locator("article")).toHaveCount(1);
