@@ -14,7 +14,7 @@ seven-surface and backend-specific UI descriptions.
   `last_used_at`, `revoked_at`, `disabled_at`, `expires_at`, `last_login_at`),
   or `null` when unset. Render via `<RelativeTime>` only.
 - **IDs** are prefixed strings: `usr_…`, `app_…`, `cred_…`, `svc_…`,
-  `prof_…`, `aud_…`, `map_…`. Render via `<EntityRef>` only.
+  `aud_…`. Render via `<EntityRef>` only; access-plan IDs are opaque.
 - **No raw key material** ever appears in list/read responses. The one-time
   full key appears exactly once, in the `201` response of a mint call, under
   `credential.api_key`.
@@ -30,15 +30,14 @@ Non-2xx responses are JSON:
 ```
 
 Statuses used: `400` (validation: `invalid_app`, `invalid_credential`,
-`invalid_profile`, `invalid_runtime_mapping`, `invalid_operator_override`,
+`invalid_access_plan`, `invalid_operator_override`,
 `invalid_oidc_config`, `invalid_service`, `invalid_service_registry`,
 `invalid_extension_package_source`, `invalid_extension_package`, `invalid_json`),
 `401 admin_unauthenticated`, `403` (`admin_forbidden`,
 `admin_csrf_required`, `admin_action_header_required`,
 `admin_role_forbidden`, `service_not_editable`),
-`404` (`app_not_found`, `credential_not_found`, `profile_not_found`,
-`runtime_mapping_not_found`),
-`409` (`profile_name_conflict`, `profile_in_use`, `service_conflict`,
+`404` (`app_not_found`, `credential_not_found`, `access_plan_not_found`),
+`409` (`access_plan_name_conflict`, `access_plan_in_use`, `service_conflict`,
 `extension_package_conflict`),
 `503 probe_unavailable`.
 
@@ -191,7 +190,6 @@ Single fetch that backs the entire Overview page. Returns:
   summary calculation).
 - `attention` — the "things that want a look" list (single source:
   `derive_admin_attention`).
-- `runtime_profile_mappings` — full list for the overview teaser.
 - `access_model` — vocabulary reference (nouns, relationships).
 
 The page also calls `GET /audit?limit=3` for the 3-row recent audit teaser;
@@ -208,8 +206,7 @@ that is a separate fetch, not embedded in the overview response.
     "users": 4,
     "service_principals": 1,
     "apps": 7,
-    "profiles": 3,
-    "runtime_profile_mappings": 2,
+    "access_plans": 3,
     "credentials": 12,
     "active_credentials": 9,
     "services_total": 3,
@@ -228,8 +225,7 @@ that is a separate fetch, not embedded in the overview response.
     }
   ],
   "current_health": { "…": "exact GET /admin/api/status.current_health shape" },
-  "runtime_profile_mappings": [ { "...": "..." } ],
-  "access_model": { "nouns": ["user", "app", "profile", "key", "runtime_mapping", "admin_role"], "..." : "..." }
+  "access_model": { "nouns": ["user", "app", "access_plan", "key", "admin_role"], "..." : "..." }
 }
 ```
 
@@ -458,50 +454,30 @@ diagnostic data; it is not a named-engine configuration surface.
 
 ### GET /admin/api/apps
 
-```json
-{ "apps": [ {
-  "id": "app_…",
-  "kind": "service" | "personal",
-  "name": "brother-laptop",
-  "owner_user_id": "usr_…" | null,
-  "owner_service_account_id": "svc_…" | null,
-  "default_profile_id": "prof_…" | null,
-  "created_at": 1765432100,
-  "disabled_at": null,
-  "effective_profile_id": "prof_… | default-local",
-  "effective_profile_name": "Trusted local",
-  "effective_profile_source": "app_default" | "fallback"
-} ] }
-```
+Returns `200` → `{ "apps": [ …store app records… ] }`.
 
-Notes:
-- **Owner name is a client-side join**: apps with `owner_user_id` resolve
-  against `GET /admin/api/users` (`id → display_name ?? email`). Apps with
-  `owner_service_account_id` are automation. They never resolve through Users
-  or render as a person; use the service-principal label/name available in the
-  Apps & keys credential context.
-- **Key count is a client-side derive**: count `GET /admin/api/credentials`
-  rows where `app_id === app.id && !revoked_at`. There is no per-app count
-  field; with both lists in React Query cache this is one selector.
-- **Profile** column: use `effective_profile_name` (already resolved
-  server-side; `effective_profile_source === "fallback"` means inherited
-  default).
-- **Apps include `default_profile_id`** so the Profiles surface can derive
-  "apps using this profile" as a client-side count.
+The access-plans migration removed `apps.default_profile_id` and
+`apps.owner_service_account_id`. Do not use the old profile/fallback payload
+or derive profile usage counts from it. The router's `access_model_summary`
+states that each app has an accountable person and one assignment: an access
+plan or the same plan as its person. It runs only what both plans allow.
+
+UNVERIFIED: the complete app record and assignment-write schemas require the
+store implementation; the router passes these records through.
 
 ### POST /admin/api/apps  (create app)
 
-Request: `{ "name": "required", "kind": "service" | "personal", "profile_id": "prof_…?", "owner_user_id": "usr_… (required when kind=personal)" }`
+The router requires a non-empty string `name` and passes the JSON body to
+`store.create_app`. `201` → `{ "app": { … } }`; `400 invalid_app`
+for an invalid name or a store validation error. Do not send legacy
+`profile_id` fields based on the retired profile contract.
 
-`201` → `{ "app": { …same shape as list… } }`. `400 invalid_app` on missing
-name / unknown profile / personal without owner.
+### PATCH /admin/api/apps/{app_id}  (edit app)
 
-### PATCH /admin/api/apps/{app_id}  (rename, change profile)
-
-Request: any subset of `{ "name": "…", "default_profile_id": "prof_… | default-local" }`
-(`profile_id` accepted as alias).
-
-`200` → `{ "app": { … } }`; `400 invalid_app` (unknown profile), `404 app_not_found`.
+The router validates `name` when supplied and passes the JSON body to
+`store.update_app`. `200` → `{ "app": { … } }`;
+`400 invalid_app`, `404 app_not_found`. Assignment-write fields are
+UNVERIFIED here; `default_profile_id` is not a current database column.
 
 ### DELETE /admin/api/apps/{app_id}  (disable — one-way soft delete)
 
@@ -531,7 +507,6 @@ client-side grouping).
   "subject_kind": "app" | "service_account" | "user",
   "subject_id": "app_… | svc_… | usr_…",
   "app_id": "app_…" | null,
-  "profile_id": "prof_…" | null,
   "prefix": "opk_AbC123…",
   "display_name": "first key",
   "scopes": [],
@@ -550,8 +525,10 @@ client-side grouping).
 
 ### POST /admin/api/apps/{app_id}/keys  (mint key)
 
-Request: `{ "label": "human name?", "profile_id": "prof_…?", "scopes": []? }`
-(`name` accepted as alias for `label`; defaults to `"API key"`).
+The router passes the JSON body to `store.create_credential`; its complete
+input schema is UNVERIFIED here. Keys carry no plan of their own
+(`access_model_summary`); the migration removed `credentials.profile_id`.
+Do not offer a per-key profile selector.
 
 `201` → `{ "credential": { …credential fields above…, "api_key": "opk_<full key>" } }`
 
@@ -575,142 +552,65 @@ idempotent: revoking an already-revoked key returns `200`.
 
 ---
 
-## Surface 5 — Profiles
+## Surface 5 — Access plans
 
-### GET /admin/api/policy/editor
+The schema-7 migration in `gateway/access_plan_migration.py` drops the
+`profiles` and `runtime_profile_mappings` tables and deletes the
+`user_access_defaults` operator setting. There is no profile compatibility
+layer. The following routes are registered in `gateway/admin_api.py`.
 
-Admin-only discovery contract for the Profiles and Users editors. It is
-intentionally separate from Overview and does not carry a registry revision or
-become a write precondition. `200` returns schema version `1`, a create policy
-document serialized from the runtime default, `omitted: "no_opinion"` / `empty:
-"deny_all"` set semantics, opaque policy choices, mapping source descriptors,
-and the helper-defined fallback profile descriptor. Dynamic choices are
-projected from normalized registry data; catalog data supplies only labels and
-descriptions. A saved identifier absent from the response is not invalid: the
-client renders it as **Not currently advertised** and retains it unless the
-operator removes it.
+### GET /admin/api/access-plans
 
-If registry or presentation projection fails, the endpoint returns `503`:
+`200` → `{ "access_plans": [ …store plan records… ] }`.
 
-```json
-{"error":{"code":"policy_editor_unavailable","message":"Policy editor choices could not be read."}}
-```
+### GET /admin/api/access-plans/editor
 
-Clients with no previous successful response present Unavailable and disable
-discovery controls. Clients retaining a previous response mark it Stale, do
-not add stale choices, and may still retain/remove saved values or edit
-name/description. Profile and mapping writes remain independent of the
-registry and accept opaque saved policy identifiers.
+Returns the contract from `admin_catalog.access_plan_editor_contract`.
+A failed projection returns `503 access_plan_editor_unavailable`, with
+message `Access plan choices could not be read.`. The full editor and plan
+record schemas are UNVERIFIED from this router alone; do not reuse the
+retired policy-editor shape or its mapping-source descriptors.
 
-### GET /admin/api/profiles
+### POST /admin/api/access-plans
 
-```json
-{ "profiles": [ {
-  "id": "prof_…",
-  "name": "Trusted local",
-  "description": "…" | null,
-  "created_at": 1765…,
-  "profile": { …policy document… },
-  "protocols": ["openai"],
-  "workflows": [],
-  "status_visibility": "basic"
-} ] }
-```
+Passes the JSON body to `store.create_access_plan`.
+`201` → `{ "access_plan": { …store plan record… } }`;
+`400 invalid_access_plan`, `409 access_plan_name_conflict`.
 
-Notes:
-- `protocols`, `workflows`, `status_visibility` are extracted from the nested
-  `profile` policy document by `_profile_summary` in `admin_runtime.py` — the
-  surface uses these for the "Access summary" column without parsing the full
-  policy document.
-- A fallback profile may be supplied separately by the API. The client must
-  not prepend or infer a static default selection.
-- **"Apps using it" count is client-side**: count `GET /admin/api/apps` rows
-  where `default_profile_id === profile.id`.
-- Each row carries `plan_spend`: spend against that plan's daily and monthly
-  caps, as the cap barrier counts it. See "Plan spend" under Member surfaces.
+### GET /admin/api/access-plans/{plan_id}
 
-### GET /admin/api/profiles/{profile_id}
+`200` → `{ "access_plan": { …store plan record… } }`;
+`404 access_plan_not_found`.
 
-`200` → `{ "profile": { …same shape as list item… } }`; `404 profile_not_found`.
+### PUT /admin/api/access-plans/{plan_id}
 
-### POST /admin/api/profiles  (create profile)
+Passes the JSON body to `store.update_access_plan`.
+`200` → `{ "access_plan": { …store plan record… } }`;
+`400 invalid_access_plan`, `404 access_plan_not_found`,
+`409 access_plan_name_conflict`. The method is PUT, not the retired profile
+PATCH route. Complete write-body semantics are UNVERIFIED here.
 
-Request:
-```json
-{
-  "name": "Family access",
-  "description": "Optional",
-  "profile": {
-    "id": "family",
-    "protocols": ["openai"],
-    "status_visibility": { "level": "basic" },
-    "allow": { "intents": ["chat.completions"] }
-  }
-}
-```
+### DELETE /admin/api/access-plans/{plan_id}
 
-`201` → `{ "profile": { … } }`. `400 invalid_profile` (bad policy doc).
-`409 profile_name_conflict` if name already taken.
+`200` → `{ "access_plan": { …store plan record… } }`;
+`404 access_plan_not_found`, `409 access_plan_in_use`.
 
-### PATCH /admin/api/profiles/{profile_id}  (edit profile)
+### POST /admin/api/access/check
 
-Request: any subset of `{ "name": "…", "description": "…", "profile": { … } }`.
+Request: `{ "app": "<app ID>", "request": { … } }` evaluates the app's
+two plans as the runtime does; `{ "plan": "<plan ID>", "request": { … } }`
+evaluates that plan on both sides.
+`200` → `{ "plan_ids": [ … ], "decision": { … } }`.
 
-`200` → `{ "profile": { … } }`; `400 invalid_profile`, `404 profile_not_found`,
-`409 profile_name_conflict`.
+### POST /admin/api/access/preview
 
-### DELETE /admin/api/profiles/{profile_id}  (delete profile)
+Request: `{ "plan": "<plan ID>" }` or `{ "app": "<app ID>" }`.
+Returns `plan_ids` plus the injected preview's `summary` and `entries`.
+A missing or failed preview returns `503 access_preview_unavailable`.
 
-`200` → `{ "profile": { … } }`; `404 profile_not_found`. `409 profile_in_use`
-when apps still reference this profile — the client must explain this in the
-`ConfirmDialog` and block the action until the apps are reassigned.
-
-### POST /admin/api/policy/simulate  (test access — "trust feature")
-
-Request:
-```json
-{
-  "profile": "prof_…" | { "id": "…", "protocols": ["openai"], "allow": { "intents": [] } },
-  "request": {
-    "protocol": "openai",
-    "intent": "chat.completions",
-    "workflow": null,
-    "model": "gpt-4o",
-    "backend": null,
-    "capability_exposure": "default",
-    "capability_trust_tier": "stable",
-    "capability_resource_tier": "interactive",
-    "capability_tags": ["coder"],
-    "requires_cloud_fallback": false,
-    "native_passthrough": false,
-    "native_operation": null,
-    "native_backend": null
-  }
-}
-```
-
-`profile` may be a stored `prof_…` id (requires a `profile_resolver` in the
-router — always present in the production gateway) **or** an inline policy dict
-(useful for previewing an unsaved edit before Save).
-
-All `request` fields are optional and default to `null`/`false`. Unknown fields
-return `400 invalid_request`.
-
-`200` →
-```json
-{
-  "profile_id": "prof_… | <inline>",
-  "decision": {
-    "decision": "allowed" | "denied",
-    "allowed": true | false,
-    "sources": ["protocols"],
-    "reasons": ["protocol openai is allowed"],
-    "visibility_level": "basic"
-  }
-}
-```
-
-`404 profile_not_found` when a stored `prof_…` id is supplied but not found.
+The router no longer registers `/admin/api/profiles` (including item routes),
+`/admin/api/policy/editor`, or `/admin/api/policy/simulate`. The access-plan
+routes above are not aliases accepting the old profile payloads.
 
 ---
 
@@ -741,65 +641,18 @@ service principal.
 **Apps count** for the Users table is client-side: count `GET /admin/api/apps`
 rows where `owner_user_id === user.id`.
 
-### GET /admin/api/operator/overrides  (user-access-defaults section)
+### Removed user-access defaults and identity mappings
 
-Returns the full operator overrides block. The Users surface renders
-`user_access_defaults` from it. Same endpoint used by the Services and Settings
-surfaces (different sub-keys).
+`GET /admin/api/operator/overrides` still exists, but the migration deletes
+the `user_access_defaults` setting. Do not render a defaults form from the
+retired payload. The router does not register
+`PUT /admin/api/operator/user-access-defaults` or the former
+GET/POST/DELETE `/admin/api/runtime-profile-mappings` routes.
 
-```json
-{
-  "overrides": {
-    "user_access_defaults": {
-      "self_service_apps": true,
-      "auto_create_personal_app": true
-    },
-    "service_availability": { "text-service": { "state": "degraded", "reason": "slow", "retry_after_seconds": null } },
-    "media_job_admission": {
-      "disabled_intents": [],
-      "disabled_resource_classes": [],
-      "reserved_tokens": [],
-      "max_queue_depth": null,
-      "retry_after_seconds": null
-    },
-    "extension_package_index": { "packages": {} }
-  }
-}
-```
-
-### PUT /admin/api/operator/user-access-defaults  (save defaults)
-
-Request: any subset of `{ "self_service_apps": true | false, "auto_create_personal_app": true | false }`.
-
-`200` → `{ "user_access_defaults": { "self_service_apps": true, "auto_create_personal_app": true } }`
-
-### GET /admin/api/runtime-profile-mappings  (default access mappings)
-
-```json
-{
-  "mappings": [ {
-    "id": "map_…",
-    "source_kind": "oidc_group" | "oidc_role" | "email" | "domain" | "gateway_role" | "all_users",
-    "source_value": "trusted-users",
-    "profile_id": "prof_… | default-local",
-    "created_at": 1765…,
-    "created_by": "usr_…",
-    "disabled_at": null
-  } ]
-}
-```
-
-Only active (non-disabled) mappings are returned by default.
-
-### POST /admin/api/runtime-profile-mappings  (create mapping)
-
-Request: `{ "source_kind": "oidc_group", "source_value": "trusted-users", "profile_id": "prof_… | default-local" }`
-
-`201` → `{ "mapping": { … } }`. `400 invalid_runtime_mapping` (unknown profile).
-
-### DELETE /admin/api/runtime-profile-mappings/{mapping_id}  (disable mapping)
-
-`200` → `{ "mapping": { …, "disabled_at": 1765… } }`; `404 runtime_mapping_not_found`.
+OIDC group-to-access-plan auto-assignment is **not built** on this router
+surface. Configuring a groups claim does not establish an access-plan mapping.
+UNVERIFIED: persistence in `user_identity_claims` and whether any other
+module reads those claims require source outside this review's two files.
 
 ---
 
@@ -840,6 +693,9 @@ with `next_cursor` to reach arbitrarily old events for any filter.
 ```
 
 Field notes:
+- Legacy `profile` / `runtime_profile_mapping` targets and profile,
+  mapping, or user-default actions below describe historical audit records,
+  not current writable resources or routes.
 - `action` is the raw event-type string (`"app.create"`, `"app.disable"`,
   `"app.enable"`, `"credential.create"`, `"credential.revoke"`,
   `"profile.create"`, `"profile.update"`, `"profile.delete"`,
@@ -919,26 +775,16 @@ secret. Returns `null` only when neither source configures OIDC.
 }
 ```
 
-`groups_claim` is the name of the ID-token claim that carries the user's group
-memberships (default `"groups"`). Change this when your IdP uses a different
-claim name — e.g. `"cognito:groups"` (AWS Cognito), `"roles"`, or a custom
-namespaced claim. The gateway reads this claim for two purposes:
-1. **Admin grant** — if the claim value intersects `admin_groups`, the user is
-   granted the `admin` role.
-2. **Profile mapping** — the claim values are stored as `oidc_group` access
-   names (see Users → runtime-profile-mappings) so operators can map groups
-   to gateway access profiles.
+`groups_claim` is an accepted OIDC configuration field in
+`gateway/admin_api.py`. Its presence is not evidence of OIDC
+group-to-access-plan auto-assignment: the legacy mapping table and routes
+have been removed. See B7 in `ADMIN_USER_STORIES.md`.
 
-`groups_claim` is returned plainly by GET (it is not a secret). `client_secret`
-is **always** redacted in GET responses; it is write-only.
+UNVERIFIED in this scoped review: live login claim handling, persistence in
+`user_identity_claims`, and readership elsewhere in the repository. The
+configuration field alone cannot establish those runtime behaviors.
 
-> **Runtime note**: the `groups_claim` field is fully wired — the live
-> OIDC auth path in `proxy.py` reads the configured claim name for both admin
-> role evaluation and profile mapping. Setting this field is immediately
-> effective for the next login/callback without a gateway restart. `apply_mode`
-> is `"live"` because the current runtime reads the effective setting on those
-> paths; session signing key and cookie settings are not editable through this
-> endpoint.
+`client_secret` is write-only and redacted in GET responses.
 
 ### PUT /admin/api/oidc-config  (save OIDC config)
 
@@ -1109,7 +955,12 @@ A receipt for a request that a spending limit refused carries:
   `/v1/decisions` path. The TypeSafe `/v1/decisions` receipts (a separate
   receipt type) carry `error_code: "budget_exceeded"` but no `limit`.
 
-### Plan spend (`plan_spend` on /me/api/home and on each /admin/api/profiles row)
+### Plan spend (member response; admin plan fields UNVERIFIED)
+
+The former admin profiles endpoint is removed. The current access-plan list
+passes store records through; the presence and shape of `plan_spend` on
+those records are UNVERIFIED from `gateway/admin_api.py` alone. The member
+description below was not revalidated in this scoped admin-route review.
 
 ```json
 { "plan_spend": [

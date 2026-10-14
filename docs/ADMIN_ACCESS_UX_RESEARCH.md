@@ -142,9 +142,10 @@ The admin UI should be organized around operator jobs, not storage tables:
   keys.
 - **Access plans**: reusable runtime access policies, created from named templates
   and summarized in plain language.
-- **Identity**: runtime Access plan mappings from OIDC groups/roles, exact emails,
-  domains, gateway admin roles, or all signed-in users. These mappings choose
-  defaults for self-service Apps; they do not grant admin access.
+- **Identity (unbuilt proposal)**: automatic Access plan assignment from identity
+  claims is not a current admin API capability. The migration removed the
+  legacy runtime mapping table; no replacement mapping route is registered in
+  `gateway/admin_api.py`.
 - **Workflows**: media workflow catalog, dependency/status checks, manifest
   controls.
 - **Activity**: receipts, jobs, denials, and audit events.
@@ -280,10 +281,16 @@ The operator-facing explanation should be:
 Current-loaded Access plans only see the active loaded LLM ids.
 ```
 
-### Map OIDC identities to runtime Access plans
+### Map OIDC identities to runtime Access plans (unbuilt proposal)
 
-Use when the admin wants signed-in users to create personal Apps and keys
-without hand-picking an access plan every time.
+This is historical design intent, not an implemented workflow. The schema-7
+migration drops `runtime_profile_mappings`, and `gateway/admin_api.py` has no
+mapping CRUD routes. The proposed fields and rules below are not a current
+contract. UNVERIFIED: identity-claim persistence and readers outside those
+reviewed source files.
+
+Proposed use: signed-in users create personal Apps and keys without
+hand-picking an access plan every time.
 
 Visible fields:
 
@@ -369,7 +376,8 @@ Ship:
 - task-shaped App API key creation
 - separate admin automation key creation
 - plain-language reusable Access plan creation
-- runtime Access plan mapping for OIDC groups/roles, emails, domains, and defaults
+- unbuilt requirement: automatic Access plan assignment from identity claims;
+  the former group/role/email/domain/default mapping implementation was removed
 - key creation/revocation with one-time key handling
 - readable summaries of what each App/access-plan can use
 - advanced escape hatches for the operator who needs exact control
