@@ -173,7 +173,7 @@ it("provides actions for the initial empty catalog and a search that matches not
   renderCatalog([row()]);
   const search = await screen.findByRole("searchbox");
   fireEvent.change(search, { target: { value: "unmatched" } });
-  fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+  fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
   expect(search).toHaveValue("");
   expect(screen.getByRole("button", { name: "chat" })).toBeVisible();
 });
