@@ -471,7 +471,10 @@ describe("seeded catalog", () => {
     await screen.findByRole("button", { name: "decide" });
     expect(openDetails("decide").getByText("Ready to start when you make a request.")).toBeVisible();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    expect(openDetails("tts").queryByText("Unknown", { exact: true })).toBeNull();
+    const speech = openDetails("tts");
+    expect(speech.queryByText("Unknown", { exact: true })).toBeNull();
+    expect(speech.getByText("Read text aloud when a speech service is connected.")).toBeVisible();
+    expect(speech.queryByText(/backend/)).toBeNull();
   });
 });
 
