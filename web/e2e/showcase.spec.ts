@@ -3,7 +3,7 @@ import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { fulfilJson } from "./fixtures/intercept";
 
-// /showcase/ is the gateway's static product page (showcase/ in the repo), not
+// /showcase/examples/ is the gateway's static product page (showcase/ in the repo), not
 // a web app page. These tests drive it through the real gateway.
 
 const sections = {
@@ -62,10 +62,10 @@ for (const [theme, width] of [
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
     await serveExamples(page, () => [answer]);
-    const response = await page.goto("/showcase/");
+    const response = await page.goto("/showcase/examples/");
     expect(response?.status()).toBe(200);
     expect(response?.headers()["cache-control"]).toBe("no-cache");
-    await expect(page).toHaveTitle("Azizam: your own AI gateway");
+    await expect(page).toHaveTitle("See it work · Azizam");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(page.getByText("Air scatters blue light.")).toBeVisible();
     await expect(

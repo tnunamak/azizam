@@ -102,7 +102,7 @@ class ShowcaseRouteTests(unittest.TestCase):
             self.assertIn(target, examples)
         for page in (home, examples):
             self.assertIn('class="site-header"', page)
-            self.assertIn('aria-label="Main navigation"', page)
+            self.assertIn('aria-label="Site"', page)
             self.assertIn('src="/showcase/static/site.js"', page)
         script = (STATIC / "site.js").read_text(encoding="utf-8")
         for network in ("fetch(", "XMLHttpRequest", "WebSocket", "sendBeacon"):

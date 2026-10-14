@@ -440,7 +440,15 @@
     if (!health) return { level: "warn", text: "Gateway unreachable" };
     if (!status) return { level: "unknown", text: "Gateway is up. Add a key to check engine status" };
     if ((status.comfyui && (status.comfyui.running || status.comfyui.pending)) ||
-        (status.llm && status.llm.processing)) return { level: "busy", text: "Busy" };
+        (status.llm && status.llm.processing)) {
+      // Lead with the plain state; retain queue detail for people waiting to run.
+      const details = [];
+      if (status.comfyui && (status.comfyui.running || status.comfyui.pending)) {
+        details.push((status.comfyui.running || 0) + " rendering, " + (status.comfyui.pending || 0) + " queued");
+      }
+      if (status.llm && status.llm.processing) details.push("chat processing");
+      return { level: "busy", text: "Busy · " + details.join("; ") };
+    }
     if ((status.engines || []).some((engine) => engine.status !== "available")) {
       return { level: "warn", text: "Some engines are off" };
     }
