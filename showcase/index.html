@@ -35,12 +35,12 @@
     </div>
     <figure class="proof-card" aria-labelledby="proof-caption">
       <figcaption id="proof-caption" class="eyebrow">A real request, recorded through Azizam</figcaption>
-      <p class="proof-request"><code>POST /openai/v1/chat/completions</code><code class="proof-model">model: default</code></p>
+      <p class="proof-request"><code>POST</code><code class="proof-path">/openai/v1/chat/completions</code><code class="proof-model">default</code></p>
       <dl class="proof-exchange">
         <dt>You</dt>
         <dd>Explain in two sentences why the sky is blue.</dd>
         <dt>Reply</dt>
-        <dd>Sunlight entering Earth's atmosphere scatters off air molecules, and shorter blue wavelengths scatter much more strongly than longer red ones (a process called Rayleigh scattering). This scattered blue light is then distributed across the sky in all directions, so no matter where you look, you see blue.</dd>
+        <dd><span id="proof-reply">Sunlight entering Earth's atmosphere scatters off air molecules, and shorter blue wavelengths scatter much more strongly than longer red ones (a process called Rayleigh scattering). This scattered blue light is then distributed across the sky in all directions, so no matter where you look, you see blue.</span><button id="proof-toggle" class="mini" type="button" aria-controls="proof-reply" aria-expanded="false" hidden>Show full reply</button></dd>
       </dl>
       <p class="proof-meta">Ran in 4.3 s · 115 tokens · recorded 2 Oct 2026 · <a href="/showcase/examples/">More examples</a></p>
     </figure>
@@ -51,22 +51,22 @@
       <article class="value-card">
         <h3>A key and a plan for everyone</h3>
         <p>Invite people with a link. Each person and app gets its own key, and a plan that sets which models it may use and how much it may spend.</p>
-        <p class="mini-visual"><span class="meta">Example plan</span><code>Family · chat, image · $5/month</code></p>
+        <div class="mini-visual mini-plan" role="group" aria-label="Example plan: Family, Chat and Image, $5 a month"><span class="mini-pill plan-name">Family</span><span class="mini-pill">Chat</span><span class="mini-pill">Image</span><span class="plan-price">$5 a month</span></div>
       </article>
       <article class="value-card">
         <h3>Your engines first</h3>
         <p>Requests go to the engines on your own hardware. A paid model is used only when the plan allows it, under a spend cap you set.</p>
-        <p class="mini-visual"><code>local → paid only if allowed</code></p>
+        <div class="mini-visual mini-path" role="group" aria-label="Your engine, then a paid provider only if allowed"><span>Your engine</span><span class="mini-arrow" aria-hidden="true">→</span><span>Paid provider <small>(only if allowed)</small></span></div>
       </article>
       <article class="value-card">
         <h3>A receipt for every request</h3>
         <p>See who asked, which model ran, where it ran and what it cost.</p>
-        <p class="mini-visual"><span class="meta">Receipt fields</span><code>Person · model · destination · cost</code></p>
+        <div class="mini-visual mini-receipt" role="group" aria-label="Receipt fields: Person, Model, Where it ran, Cost"><span>Person</span><span>Model</span><span>Where it ran</span><span>Cost</span></div>
       </article>
       <article class="value-card">
         <h3>Works with the apps you already use</h3>
         <p>OpenAI, Anthropic and Ollama API shapes, and an MCP server for agents, on one address.</p>
-        <p class="mini-visual code-chips"><code>/openai/v1</code> <code>/anthropic</code> <code>/ollama</code> <code>/mcp</code></p>
+        <p class="mini-visual code-chips" role="group" aria-label="Supported routes: OpenAI, Anthropic, Ollama and MCP"><code>/openai/v1</code> <code>/anthropic</code> <code>/ollama</code> <code>/mcp</code></p>
       </article>
     </div>
   </section>
@@ -75,15 +75,15 @@
   <figure class="flow" aria-labelledby="flow-caption">
     <figcaption id="flow-caption" >Azizam checks the key and plan, sends the request to an engine or provider the plan allows, and records a receipt.</figcaption>
     <div class="flow-step">
-      <p class="flow-title">Your apps, agents and people</p>
+      <p class="flow-title">Your apps and people</p>
       <p class="flow-detail">Chat apps, SDKs, coding agents, MCP clients, a phone</p>
     </div>
-    <div class="flow-link" aria-hidden="true"><span>one address, one key each</span></div>
+    <div class="flow-link"><span>one address, one key each</span></div>
     <div class="flow-step flow-gateway">
       <p class="flow-title">Azizam</p>
       <p class="flow-detail">Checks the key and access plan, routes the request, records a receipt</p>
     </div>
-    <div class="flow-link" aria-hidden="true"><span>only what the plan allows</span></div>
+    <div class="flow-link"><span>only what the plan allows</span></div>
     <div class="flow-ends">
       <div class="flow-step">
         <p class="flow-title">Engines you run</p>

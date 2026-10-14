@@ -40,6 +40,18 @@
       if (event.target.closest("a") && phone.matches) close();
     });
   }
+  const reply = document.getElementById("proof-reply");
+  const proofToggle = document.getElementById("proof-toggle");
+  if (reply && proofToggle) {
+    reply.classList.add("is-clamped");
+    proofToggle.hidden = false;
+    proofToggle.addEventListener("click", () => {
+      const expanded = proofToggle.getAttribute("aria-expanded") !== "true";
+      proofToggle.setAttribute("aria-expanded", String(expanded));
+      proofToggle.textContent = expanded ? "Show less" : "Show full reply";
+      reply.classList.toggle("is-clamped", !expanded);
+    });
+  }
   const tab = document.getElementById("compose-tab");
   if (tab) {
     // There is exactly one supported installation tab; storage failure is harmless.
