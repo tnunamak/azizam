@@ -788,8 +788,14 @@ class EngineService:
         clean = clean_values(definition, values)
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         clean = {**clean, "headers": self._headers_for_check(clean.get("headers") or [], record, clean["address"])}
-        return await run_check(catalog, definition, clean, key=key, fetch=self.fetch,
-                               existing=_existing_engines(registry, exclude=service_id),
+        existing = _existing_engines(registry, exclude=service_id)
+        if record is not None:
+            saved = engine_view(catalog, record, db_path=self.db_path)["values"]
+            if (comparable_address(clean["address"]) == comparable_address(saved.get("address") or "")
+                    and clean.get("path", "") == saved.get("path", "")):
+                # Checking an engine where it already is: the duplicate rule is for moving onto another's address.
+                existing = []
+        return await run_check(catalog, definition, clean, key=key, fetch=self.fetch, existing=existing,
                                viewer_role="owner" if _is_owner(ctx) else "admin")
 
     def _headers_for_check(self, headers: list[Mapping[str, Any]], record: Mapping[str, Any] | None, address: str) -> list[dict[str, Any]]:

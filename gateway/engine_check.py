@@ -220,6 +220,8 @@ def make_http_fetch(*, resolve: Resolve = _default_resolve, gateway_ports: Itera
         except httpx.HTTPError as exc:
             answer.transport, answer.detail = "refused", str(exc) or type(exc).__name__
         except Exception as exc:  # noqa: BLE001 - a check reports a failure; it never crashes the route
+            while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+                exc = exc.exceptions[0]  # the real failure, not "unhandled errors in a TaskGroup"
             answer.transport, answer.detail = "refused", str(exc) or type(exc).__name__
         finally:
             answer.seconds = round(time.perf_counter() - started, 2)

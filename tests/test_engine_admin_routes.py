@@ -529,3 +529,23 @@ def test_an_older_record_with_models_as_a_mapping_keeps_them_through_the_page(ga
     rows = {row["model_group"]: row for row in _record(gateway, "mapped")["config"]["models"]}
     assert rows["existing-chat"]["upstream_model"] == "existing-upstream" and rows["existing-chat"]["routing_hint"] == "keep-me"
     assert rows["public"]["upstream_model"] == "real" and rows["public"]["routing_hint"] == "keep-slot"
+
+
+def test_checking_an_engine_where_it_already_is_ignores_others_at_that_address(gateway, fake_upstreams):
+    """Two records may share a server; Check again on one must not say "Already added"."""
+    owner, *_ = owner_and_admin(gateway)
+    fake = _chat_server(fake_upstreams)
+    registry = _registry(gateway)
+    for sid in ("twin-a", "twin-b"):
+        registry.setdefault("services", {})[sid] = service_registry.service_from_backend_config(sid, {
+            "name": sid, "host": "chat.fk.test", "port": 80, "base_path": "/v1", "protocol": "openai-compatible",
+            "capabilities": ["chat"]}, source="ui")
+    _put_registry(gateway, registry)
+    again = owner.post("/admin/api/engines/check", headers=csrf_for(owner), json={
+        "definition": "openai-compatible", "service_id": "twin-a", "values": {"address": f"{fake.base_url}/v1"}})
+    assert again.status_code == 200, again.text
+    assert all(f["code"] != "dup" for f in again.json()["check"]["findings"])
+    assert again.json()["check"]["models"], "the check reached the server"
+    moved = owner.post("/admin/api/engines/check", headers=csrf_for(owner), json={
+        "definition": "openai-compatible", "values": {"address": f"{fake.base_url}/v1"}})
+    assert moved.json()["check"]["findings"][0]["code"] == "dup", "a new engine at that address is still a duplicate"
