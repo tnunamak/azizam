@@ -381,7 +381,7 @@ export function Requests() {
                 size="sm"
                 onClick={clearFilters}
               >
-                Clear filters
+                Clear filters and show all requests
               </Button>
             ) : (
               <Button asChild size="sm">
