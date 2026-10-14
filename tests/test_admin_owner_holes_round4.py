@@ -271,7 +271,9 @@ def test_a_git_source_cannot_pass_options_or_run_a_helper_to_git(monkeypatch, so
 
 def _litellm_registry_with_config_path(client, path):
     registry = client.get("/admin/api/operator/service-registry").json()["service_registry"]
-    registry["services"]["litellm"]["config"]["config_path"] = path
+    litellm = registry["services"].setdefault("litellm", {
+        "id": "litellm", "name": "LiteLLM", "kind": "llm-substrate", "config": {"execution_substrate": "litellm"}})
+    litellm["config"]["config_path"] = path
     return registry
 
 
