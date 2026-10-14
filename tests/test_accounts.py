@@ -364,7 +364,8 @@ def test_signin_mode_controls_public_options_and_builtin_routes(account_db, acco
     assert options["built_in"] is builtin
     assert options["oidc"] is oidc
     response = client.post("/auth/api/login", json={"email": "missing@example.test", "password": PASSWORD})
-    assert response.status_code == (401 if builtin else 403)
+    # Only a correct password learns that built-in sign-in is off (see the owner-password tests).
+    assert response.status_code == 401
     _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], path=path)
     accepted = client.post("/auth/api/invite/accept", json={"token": token, "email": "person@example.test", "name": "Person", "password": PASSWORD})
     assert accepted.status_code == (200 if builtin else 403)

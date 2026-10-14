@@ -803,7 +803,6 @@ class AdminOidcSettingsTests(unittest.TestCase):
                 "client_secret": "topsecret-A",
                 "redirect_uri": "https://gw.example.com/admin/oidc/callback",
                 "scopes": ["openid", "email", "profile"],
-                "admin_emails": ["owner@example.com"],
             },
         )
         self.assertEqual(resp.status_code, 200, resp.text)
@@ -852,26 +851,19 @@ class AdminOidcSettingsTests(unittest.TestCase):
         initial = {
             "enabled": False,
             "scopes": ["openid", "email"],
-            "allowed_email_domains": ["example.com"],
-            "admin_emails": ["owner@example.com"],
-            "admin_groups": ["owners"],
-            "admin_roles": ["operator"],
         }
         self.assertEqual(client.put("/admin/api/oidc-config", json=initial).status_code, 200)
-        clear = {
-            "scopes": [], "allowed_email_domains": [], "admin_emails": [],
-            "admin_groups": [], "admin_roles": [], "issuer": "",
-        }
+        clear = {"scopes": [], "issuer": ""}
         response = client.put("/admin/api/oidc-config", json=clear)
         self.assertEqual(response.status_code, 200, response.text)
         stored = self.store.get_oidc_config_setting_raw()
         self.assertIsNotNone(stored)
-        for field in ("scopes", "allowed_email_domains", "admin_emails", "admin_groups", "admin_roles"):
+        for field in ("scopes",):
             self.assertEqual(stored[field], [])  # type: ignore[index]
         self.assertEqual(stored["issuer"], "")  # type: ignore[index]
         self.assertEqual(client.put("/admin/api/oidc-config", json={"client_id": "changed"}).status_code, 200)
         preserved = self.store.get_oidc_config_setting_raw()
-        self.assertEqual(preserved["admin_emails"], [])  # type: ignore[index]
+        self.assertEqual(preserved["scopes"], [])  # type: ignore[index]
 
     def test_put_null_clears_scalar_fields_and_preserves_secret(self) -> None:
         admin_key, _, _ = create_admin_service_account_key("owner-cli", path=self.db)
