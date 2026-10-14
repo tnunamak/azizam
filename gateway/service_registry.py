@@ -959,10 +959,15 @@ def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
     return found
 
 
-def _lifecycle_blocks(record: Mapping[str, Any]) -> list[Any]:
-    """The record's lifecycle block and the copy the form path keeps in ``config``."""
+def _driven_lifecycle_blocks(record: Mapping[str, Any]) -> frozenset[str]:
+    """The record's lifecycle blocks that name a driver, as comparable text.
+
+    Looks at the record's ``lifecycle`` block and at the copy the form path keeps
+    in ``config``. Blocks that name no driver (or ``external``) are left out.
+    """
     config = record.get("config")
-    return [record.get("lifecycle"), config.get("lifecycle") if isinstance(config, Mapping) else None]
+    blocks = [record.get("lifecycle"), config.get("lifecycle") if isinstance(config, Mapping) else None]
+    return frozenset(json.dumps(block, sort_keys=True, default=str) for block in blocks if _is_driven(block))
 
 
 def _is_driven(block: Any) -> bool:
@@ -977,14 +982,13 @@ def _is_driven(block: Any) -> bool:
 
 
 def lifecycle_driver_changed(before: Mapping[str, Any], after: Mapping[str, Any]) -> bool:
-    """Whether a record's lifecycle block with a driver was created, changed or removed.
+    """Whether a lifecycle block that names a driver was created, changed or removed.
 
     A driver other than ``external`` runs commands on the host or sends a stored
     key to the record's host, so only the owner may set, change or remove one.
     A block that stays as it is, and an ``external`` block, are not changes.
     """
-    old, new = _lifecycle_blocks(before), _lifecycle_blocks(after)
-    return old != new and (any(_is_driven(b) for b in old) or any(_is_driven(b) for b in new))
+    return _driven_lifecycle_blocks(before) != _driven_lifecycle_blocks(after)
 
 
 def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[str, str]:
