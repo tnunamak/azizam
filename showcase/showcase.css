@@ -418,3 +418,20 @@ html { scroll-behavior: auto; }
 .recorded-text ul, .recorded-text ol { margin: 8px 0; padding-left: 24px; }
 .recorded-heading { margin-block: 8px 4px; }
 .recorded-line { white-space: pre-wrap; }
+
+/* A recording reads as one request/reply pair; details stay with the reply. */
+.example .ex-title { order: 0; }
+.ex-meta { margin-top: 12px; gap: 4px 12px; font-size: 12px; color: var(--muted); }
+.ex-meta .chip { border: 0; border-radius: 0; padding: 0; }
+.ex-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.reply-surface { min-width: 0; padding: 12px; background: var(--stage); border: 1px solid var(--line); border-radius: 6px; }
+.reply-surface .reply-body { margin: 0; padding: 0; border: 0; border-radius: 0; max-height: none; overflow: visible; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.reply-body.is-clamped { max-height: 12em; overflow: hidden; }
+.reply-body ul, .reply-body ol, .reply-body .recorded-heading { margin-block: 0; }
+.reply-toggle { margin-top: 8px; }
+.examples-page .io-row, .examples-page .io, .recorded-reply { min-width: 0; }
+@media (max-width: 639px) {
+  .examples-page .io-row { grid-template-columns: minmax(0, 1fr); }
+  .examples-page .capability-filter { flex-wrap: wrap; overflow-x: visible; }
+  .examples-page .capability-filter button { flex-shrink: 1; max-width: 100%; overflow-wrap: anywhere; }
+}
