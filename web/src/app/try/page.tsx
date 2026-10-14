@@ -166,6 +166,9 @@ type CatalogGroups = Partial<Record<TryTab, CatalogOption[]>>;
 type Result = {
   title: string;
   body: string;
+  answerNote?: string;
+  copyAnswer?: boolean;
+  runId?: number;
   elapsedMs: number;
   cost?: string;
   receiptId: string | null;
@@ -505,7 +508,11 @@ async function publicRequest(path: string, key: string, init: RequestInit) {
   });
   const contentType = response.headers.get("content-type") ?? "";
   const payload = contentType.includes("application/json")
-    ? await response.json().catch(() => null)
+    ? await response.json().catch((error: unknown) => {
+        if (isNetworkFailure(error)) throw error;
+        if (!response.ok) return null;
+        throw new Error("The gateway sent a reply we could not read. Try again.");
+      })
     : await response.blob();
   const elapsedMs = Math.round(performance.now() - started);
   if (!response.ok) {
@@ -614,6 +621,21 @@ async function checkReceipt(
     }
   }
   return failed ? { receiptId: null, receiptLookup: lookup } : { receiptId: null };
+}
+
+/** Bound receipt waiting even when a fetch does not settle. */
+async function timedReceipt(lookup: ReceiptLookup) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      checkReceipt(lookup),
+      new Promise<{ receiptId: string | null; receiptLookup: ReceiptLookup }>((resolve) => {
+        timer = setTimeout(() => resolve({ receiptId: null, receiptLookup: lookup }), 10_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** A media job's state in plain words (PF-006); the raw status is technical. */
@@ -1204,6 +1226,7 @@ export default function TryPage() {
   const explicitModelTabs = useRef<Set<TryTab>>(new Set());
   const initializedWorkflowId = useRef<string | null>(null);
   const chunks = useRef<Blob[]>([]);
+  const runIds = useRef<Partial<Record<TryTab, number>>>({});
   const [running, setRunning] = useState<TryTab | null>(null);
   const [results, setResults] = useState<Partial<Record<TryTab, Result>>>({});
   const [errors, setErrors] = useState<Partial<Record<TryTab, TryError>>>({});
@@ -1485,7 +1508,13 @@ export default function TryPage() {
       }
       stream.current = mediaStream;
       const acquiredStream = mediaStream;
-      const mediaRecorder = new MediaRecorder(mediaStream);
+      const mimeType = ["audio/webm", "audio/mp4", "audio/ogg"].find(
+        (type) => MediaRecorder.isTypeSupported?.(type),
+      );
+      const mediaRecorder = new MediaRecorder(
+        mediaStream,
+        mimeType ? { mimeType } : undefined,
+      );
       chunks.current = [];
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size) chunks.current.push(event.data);
@@ -1493,8 +1522,13 @@ export default function TryPage() {
       mediaRecorder.onstop = () => {
         acquiredStream.getTracks().forEach((track) => track.stop());
         stream.current = null;
-        const blob = new Blob(chunks.current, { type: "audio/webm" });
-        setFile(new File([blob], "recording.webm", { type: "audio/webm" }));
+        const type = mediaRecorder.mimeType || chunks.current[0]?.type || mimeType || "";
+        const extension = type.split(";")[0] === "audio/mp4"
+          ? "m4a"
+          : type.split(";")[0] === "audio/ogg" ? "ogg"
+          : type.split(";")[0] === "audio/webm" ? "webm" : "bin";
+        const blob = new Blob(chunks.current, { type });
+        setFile(new File([blob], `recording.${extension}`, { type }));
         setRecording(false);
       };
       recorder.current = mediaRecorder;
@@ -1639,6 +1673,7 @@ export default function TryPage() {
     tab: TryTab,
     selectedModel: Record<TryTab, string> = model,
     selectedCatalog: CatalogGroups = catalog,
+    requestWorkflow: WorkflowOption | undefined = selectedWorkflow,
   ): RequestInfo {
     if (tab === "chat") {
       return {
@@ -1692,23 +1727,23 @@ export default function TryPage() {
       };
     }
     if (tab === "workflow") {
-      const route = selectedWorkflow?.example_request?.path;
+      const route = requestWorkflow?.example_request?.path;
       if (!route) {
         throw new Error(
           "This workflow does not include a runnable example request yet.",
         );
       }
-      const multipart = requestIsMultipart(selectedWorkflow);
+      const multipart = requestIsMultipart(requestWorkflow);
       const values = parseWorkflowInputs(
         prompt.workflow || "{}",
-        selectedWorkflow.inputs,
-        selectedWorkflow.inputMapping,
+        requestWorkflow.inputs,
+        requestWorkflow.inputMapping,
       );
       const body = multipart ? {} : values;
       const formBody = multipart ? values : {};
       if (multipart) {
-        for (const input of selectedWorkflow.inputs) {
-          const mapping = selectedWorkflow.inputMapping?.[input.name];
+        for (const input of requestWorkflow.inputs) {
+          const mapping = requestWorkflow.inputMapping?.[input.name];
           if (
             mapping?.in !== "file+extension" ||
             !mapping.field ||
@@ -1734,13 +1769,13 @@ export default function TryPage() {
         body.model === undefined &&
         body.request === undefined
       ) {
-        body.model = selectedWorkflow.short_id ?? selectedWorkflow.id;
+        body.model = requestWorkflow.short_id ?? requestWorkflow.id;
       }
       return {
         path: route,
         body,
         form: formBody,
-        files: workflowFileSpecs(selectedWorkflow).map((file) => ({
+        files: workflowFileSpecs(requestWorkflow).map((file) => ({
           ...file,
           examplePath: workflowFiles[file.field]?.name ?? file.examplePath,
           type: workflowFiles[file.field]?.type || file.type,
@@ -1760,7 +1795,10 @@ export default function TryPage() {
     // A sign-out or unmount (both advance keyGeneration) ends the identity
     // this run started under.
     const runGeneration = keyGeneration.current;
-    const superseded = () => runGeneration !== keyGeneration.current;
+    const runId = (runIds.current[tab] ?? 0) + 1;
+    runIds.current[tab] = runId;
+    const superseded = () => !mounted.current ||
+      runGeneration !== keyGeneration.current || runIds.current[tab] !== runId;
     if (tab === "workflow" && workflowAvailability?.runnable === false) return;
     if (tab === "workflow" && selectedWorkflow?.example_request?.path) {
       // Nothing doomed goes to the gateway: say what is missing, on the field.
@@ -1791,6 +1829,25 @@ export default function TryPage() {
       preparedCatalog = prepared?.catalog ?? null;
       if (!runKey?.secret) return;
     }
+    if (superseded()) return;
+    const runCatalog = preparedCatalog ?? catalog;
+    const runWorkflow = runCatalog.workflow?.find(
+      (option) => option.id === model.workflow,
+    )?.workflow;
+    if (tab === "workflow" && (!runWorkflow ||
+      !workflowAvailabilityView(runWorkflow.availability, {
+        owner, engineBinding: runWorkflow.engine_binding,
+      }).runnable || !runWorkflow.example_request?.path)) {
+      setErrors((current) => ({
+        ...current,
+        workflow: { message: runWorkflow
+          ? workflowAvailabilityView(runWorkflow.availability, {
+              owner, engineBinding: runWorkflow.engine_binding,
+            }).text || "This workflow does not include a runnable example request yet."
+          : "This workflow is no longer available." },
+      }));
+      return;
+    }
     const selectedModel = preparedCatalog
       ? nextModelForCatalog(preparedCatalog, model)
       : model;
@@ -1805,7 +1862,7 @@ export default function TryPage() {
     if (tab === "workflow") setJobError(null);
     setErrors((current) => ({ ...current, [tab]: undefined }));
     try {
-      const built = buildRequest(tab, selectedModel, preparedCatalog ?? catalog);
+      const built = buildRequest(tab, selectedModel, runCatalog, runWorkflow);
       // Preserve the promise shown when Run was pressed, even if a refresh
       // finds that another tab has since enabled memory.
       let refreshedState = keepState;
@@ -1897,9 +1954,12 @@ export default function TryPage() {
           body: JSON.stringify(request.body),
         });
       }
-      const receipt = await checkReceipt(
-        receiptLookup(result.response, result.payload, result.requestId),
-      );
+      if (superseded()) return;
+      const lookup = receiptLookup(result.response, result.payload, result.requestId);
+      const receipt = tab === "chat"
+        ? { receiptId: null, receiptLookup: lookup }
+        : await checkReceipt(lookup);
+      if (superseded()) return;
       const oldUrls = [
         results[tab]?.audioUrl,
         ...(results[tab]?.media?.map((item) => item.url) ?? []),
@@ -1928,10 +1988,22 @@ export default function TryPage() {
             request,
           ),
           receiptLookup: receipt.receiptLookup,
+          checkingReceipt: tab === "chat",
+          runId,
           promptNotSaved,
         },
       }));
+      if (tab === "chat") {
+        void timedReceipt(lookup).then((checked) => {
+          if (superseded()) return;
+          setResults((current) => current[tab]?.runId === runId
+            ? { ...current, [tab]: { ...current[tab]!, ...checked,
+                receiptLookup: checked.receiptLookup, checkingReceipt: false } }
+            : current);
+        });
+      }
     } catch (error) {
+      if (superseded()) return;
       const lost =
         error instanceof LostRequestError || isNetworkFailure(error)
           ? lostCopy(tab)
@@ -2081,7 +2153,7 @@ export default function TryPage() {
           : current;
       });
     update({ checkingReceipt: true });
-    const receipt = await checkReceipt(lookup);
+    const receipt = await timedReceipt(lookup);
     if (!mounted.current) return;
     update({
       checkingReceipt: false,
@@ -2202,7 +2274,14 @@ export default function TryPage() {
     if (tab === "chat") {
       const text = textFromChat(payload);
       return text
-        ? { title: "Chat result", body: text, ...common }
+        ? { title: "Chat result", body: text, copyAnswer: true,
+            answerNote: (() => {
+              const reason = (payload as { choices?: Array<{ finish_reason?: string }> })?.choices?.[0]?.finish_reason;
+              return reason === "length"
+                ? "This answer stopped early because it reached its length limit."
+                : reason === "content_filter"
+                  ? "This answer was cut short by a content filter." : undefined;
+            })(), ...common }
         : nothing("Chat result", "reply");
     }
     if (tab === "image") {
@@ -2221,7 +2300,7 @@ export default function TryPage() {
     if (tab === "transcribe") {
       const text = (payload as { text?: unknown } | null)?.text;
       return typeof text === "string" && text.trim()
-        ? { title: "Transcription result", body: text, ...common }
+        ? { title: "Transcription result", body: text, copyAnswer: true, ...common }
         : nothing("Transcription result", "transcript");
     }
     if (tab === "decide") {
@@ -2742,6 +2821,7 @@ function ResultView({
   checkingJob: boolean;
   jobError: string | null;
 }) {
+  const { copied, failed, copy } = useCopied(JSON.stringify([result.runId, result.body]));
   const probabilityRows = result.probabilities?.filter(
     (row): row is { option: string; probability: number } =>
       row.probability !== null,
@@ -2876,6 +2956,15 @@ function ResultView({
             </pre>
           )}
       </div>
+      {result.answerNote && <p className="text-muted-foreground text-sm">{result.answerNote}</p>}
+      {result.copyAnswer && (
+        <div>
+          <Button type="button" variant="outline" onClick={() => void copy(result.body)}>
+            {copied ? "Copied" : "Copy answer"}
+          </Button>
+          {failed && <p role="alert" className="text-destructive text-sm">{"Couldn't copy. Select the text and copy it yourself."}</p>}
+        </div>
+      )}
       <dl className="grid gap-3 text-sm sm:grid-cols-3">
         <Fact
           label={job ? "Request time" : "Time"}
@@ -2885,7 +2974,9 @@ function ResultView({
         <Fact
           label="Receipt"
           value={
-            result.receiptId ? (
+            result.checkingReceipt ? (
+              "Checking receipt..."
+            ) : result.receiptId ? (
               <ReceiptLink id={result.receiptId} />
             ) : result.receiptLookup ? (
               // The check failed, which says nothing about the receipt.
@@ -2910,7 +3001,7 @@ function ResultView({
       <details className="space-y-2 border-t pt-3">
         <summary className="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium">
           <Copy aria-hidden="true" className="size-4" />
-          Copy as
+          Copy request as
         </summary>
         <SnippetBlock snippets={codeSnippets(result.request)} />
       </details>

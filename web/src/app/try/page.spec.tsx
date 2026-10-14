@@ -436,6 +436,177 @@ test("an empty decision catalog has no inferred model and cannot run", async () 
 // Run is disabled until the model list has loaded, and a click on a disabled
 // button does nothing. Wait for it to be enabled, which is the event that
 // the list arrived, before pressing it.
+
+function chatReply(body: unknown, requestId?: string) {
+  return {
+    ...response(body),
+    headers: new Headers({
+      "content-type": "application/json",
+      ...(requestId ? { "x-request-id": requestId } : {}),
+    }),
+  } as Response;
+}
+function serveChat(reply: () => Response | Promise<Response>) {
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url === "/me/api/models/catalog") return response(models);
+    if (url === "/me/api/workflows") return response(workflows);
+    if (url.startsWith("/me/api/receipts/")) return response({});
+    return reply();
+  });
+}
+test.each([
+  [new SyntaxError("invalid json"), "The gateway sent a reply we could not read. Try again."],
+  [new TypeError("Failed to fetch"), "The answer did not come back. Edit and run again when you are back online."],
+])("a rejected chat body is not an empty answer (%s)", async (error, message) => {
+  serveChat(() => ({ ...chatReply(null), json: async () => { throw error; } }) as Response);
+  render(<TryPage />);
+  await pressRun();
+  expect(await screen.findByText(message)).toBeVisible();
+  expect(screen.queryByText("The gateway returned no reply.")).toBeNull();
+});
+test.each([
+  ["length", "This answer stopped early because it reached its length limit."],
+  ["content_filter", "This answer was cut short by a content filter."],
+  ["stop", null],
+  ["tool_calls", null],
+  [undefined, null],
+])("chat finish reason %s is shown truthfully", async (finish_reason, note) => {
+  serveChat(() => chatReply({ choices: [{ message: { content: "Partial answer" }, finish_reason }] }));
+  render(<TryPage />);
+  await pressRun();
+  expect(await screen.findByText("Partial answer")).toBeVisible();
+  if (note) expect(screen.getByText(note)).toBeVisible();
+  else expect(screen.queryByText(/This answer (stopped early|was cut short)/)).toBeNull();
+});
+test("valid JSON without choices still shows no reply", async () => {
+  serveChat(() => chatReply({}));
+  render(<TryPage />);
+  await pressRun();
+  expect(await screen.findByText("The gateway returned no reply.")).toBeVisible();
+});
+test("Copy answer copies the body and labels request snippets", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  serveChat(() => chatReply({ choices: [{ message: { content: "Copy these words" } }] }));
+  render(<TryPage />);
+  await pressRun();
+  fireEvent.click(await screen.findByRole("button", { name: "Copy answer" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith("Copy these words"));
+  expect(await screen.findByRole("button", { name: "Copied" })).toBeVisible();
+  expect(screen.getByText("Copy request as")).toBeVisible();
+});
+test("pending receipts do not hide answers or attach to a newer run", async () => {
+  let finishOld!: (value: Response) => void;
+  let runs = 0;
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url === "/me/api/models/catalog") return response(models);
+    if (url === "/me/api/workflows") return response(workflows);
+    if (url === "/me/api/receipts/old") return new Promise<Response>((resolve) => { finishOld = resolve; });
+    if (url === "/me/api/receipts/new") return response({});
+    const id = ++runs === 1 ? "old" : "new";
+    return chatReply({ choices: [{ message: { content: `Answer ${id}` } }] }, id);
+  });
+  render(<TryPage />);
+  await pressRun();
+  expect(await screen.findByText("Answer old")).toBeVisible();
+  expect(screen.getByText("Checking receipt...")).toBeVisible();
+  await pressRun();
+  expect(await screen.findByText("Answer new")).toBeVisible();
+  await waitFor(() => expect(screen.getByRole("link", { name: /receipt/i })).toHaveAttribute("href", expect.stringContaining("new")));
+  await act(async () => finishOld(response({})));
+  expect(screen.getByRole("link", { name: /receipt/i })).toHaveAttribute("href", expect.stringContaining("new"));
+});
+test("receipt lookup times out after ten seconds and can be retried", async () => {
+  let receiptReads = 0;
+  serveChat(() => chatReply({ choices: [{ message: { content: "Ready answer" } }] }, "slow"));
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url === "/me/api/models/catalog") return response(models);
+    if (url === "/me/api/workflows") return response(workflows);
+    if (url.startsWith("/me/api/receipts/")) {
+      receiptReads += 1;
+      return receiptReads === 1 ? new Promise<Response>(() => {}) : response({});
+    }
+    return chatReply({ choices: [{ message: { content: "Ready answer" } }] }, "slow");
+  });
+  render(<TryPage />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+  vi.useFakeTimers();
+  try {
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Run" })));
+    expect(screen.getByText("Ready answer")).toBeVisible();
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Check again" })));
+    expect(screen.getByRole("link", { name: /receipt/i })).toBeVisible();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+test("recorded mp4 uploads its real type and filename", async () => {
+  mocks.params = new URLSearchParams("capability=transcribe");
+  const stt = { aliases: [], models: [{ id: "stt", name: "Words", capability: "transcribe" }] };
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url === "/me/api/models/catalog") return response(stt);
+    if (url === "/me/api/workflows") return response(workflows);
+    return chatReply({ text: "Recorded words" });
+  });
+  const original = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+  const constructed = vi.fn();
+  class FakeRecorder {
+    static isTypeSupported = (type: string) => type === "audio/mp4";
+    mimeType = "audio/mp4";
+    state = "inactive";
+    ondataavailable?: (event: { data: Blob }) => void;
+    onstop?: () => void;
+    constructor(_stream: MediaStream, options?: MediaRecorderOptions) { constructed(options); }
+    start() { this.state = "recording"; }
+    stop() {
+      this.state = "inactive";
+      this.ondataavailable?.({ data: new Blob(["sound"], { type: this.mimeType }) });
+      this.onstop?.();
+    }
+  }
+  vi.stubGlobal("MediaRecorder", FakeRecorder);
+  Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) } });
+  const view = render(<TryPage />);
+  try {
+    fireEvent.click(await screen.findByRole("button", { name: "Record" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Stop/ }));
+    await pressRun();
+    expect(await screen.findByText("Recorded words")).toBeVisible();
+    const call = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    const uploaded = (call?.[1].body as FormData).get("file") as File;
+    expect(uploaded.type).toBe("audio/mp4");
+    expect(uploaded.name).toMatch(/\.(m4a|mp4)$/);
+    expect(constructed).toHaveBeenCalledWith({ mimeType: "audio/mp4" });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    fireEvent.click(screen.getByRole("button", { name: "Copy answer" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Recorded words"));
+  } finally {
+    view.unmount();
+    if (original) Object.defineProperty(navigator, "mediaDevices", original);
+    else Reflect.deleteProperty(navigator, "mediaDevices");
+  }
+});
+test("a workflow removed during key refresh never posts its stale request", async () => {
+  mocks.params = new URLSearchParams("capability=workflow");
+  let reads = 0;
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url === "/me/api/workflows") {
+      const item = { id: "wf-a", title: "Working workflow", inputs: [], outputs: [],
+        example_request: { path: "/v1/workflow-test", body: {} } };
+      return response({ workflows: ++reads === 1 ? [item] : [{ ...item, id: "wf-b", title: "Replacement workflow" }] });
+    }
+    if (url === "/me/api/models/catalog") return response(models);
+    return chatReply({});
+  });
+  render(<TryPage />);
+  await pressRun();
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Replacement workflow"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+});
 async function pressRun() {
   const run = await screen.findByRole("button", { name: "Run" });
   await waitFor(() => expect(run).toBeEnabled());
