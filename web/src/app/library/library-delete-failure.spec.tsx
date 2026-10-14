@@ -161,7 +161,7 @@ describe("Library delete failure boundaries", () => {
       }));
       const view = renderLibrary();
       const user = userEvent.setup();
-      const tile = await screen.findByRole("button", { name: "Open Kept picture" });
+      const tile = await screen.findByRole("button", { name: (name) => name.startsWith("Open Kept picture, ") });
       await user.click(tile);
       await user.click(screen.getByRole("button", { name: "Actions for Kept picture" }));
       await user.click(screen.getByRole("menuitem", { name: "Delete" }));
@@ -181,7 +181,7 @@ describe("Library delete failure boundaries", () => {
 
       await user.click(confirm);
       await waitFor(() => expect(screen.queryByRole("dialog", { name: "Delete Kept picture?" })).toBeNull());
-      await waitFor(() => expect(screen.queryByRole("button", { name: "Open Kept picture" })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Kept picture, ") })).toBeNull());
       expect(sessionReads).toBe(2);
       expect(deleted).toBe(true);
       const last = deletes[deletes.length - 1];
