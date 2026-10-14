@@ -2000,11 +2000,11 @@ describe("Library paging regressions", () => {
     renderLibrary();
     fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
     await waitFor(() => expect(finish).toBeTypeOf("function"));
-    expect(screen.getByRole("button", { name: "Open Kept first page" })).toBeVisible();
+    expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Kept first page, ") })).toBeVisible();
     expect(screen.getByRole("button", { name: "Loading more…" })).toBeDisabled();
     await act(async () => finish(list([picture("added", "Added second page")])));
-    await screen.findByRole("button", { name: "Open Added second page" });
-    expect(screen.getByRole("button", { name: "Open Kept first page" })).toBeVisible();
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Added second page, ") });
+    expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Kept first page, ") })).toBeVisible();
     expect(within(screen.getByRole("group", { name: "Creations" })).getAllByRole("button", { name: /^Open / })).toHaveLength(2);
   });
 
@@ -2020,7 +2020,7 @@ describe("Library paging regressions", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("We couldn’t load more library items. Try again.");
     expect(within(alert).getByRole("button", { name: "Retry loading more" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Open Kept after error" })).toBeVisible();
+    expect(screen.getByRole("button", { name: (name) => name.startsWith("Open Kept after error, ") })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
@@ -2039,10 +2039,10 @@ describe("Library paging regressions", () => {
     renderLibrary();
     fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
     fireEvent.click(await screen.findByRole("button", { name: "Retry loading more" }));
-    await screen.findByRole("button", { name: "Open Retry second" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Retry second, ") });
     const grid = screen.getByRole("group", { name: "Creations" });
-    expect(within(grid).getAllByRole("button", { name: "Open Retry first" })).toHaveLength(1);
-    expect(within(grid).getAllByRole("button", { name: "Open Retry second" })).toHaveLength(1);
+    expect(within(grid).getAllByRole("button", { name: (name) => name.startsWith("Open Retry first, ") })).toHaveLength(1);
+    expect(within(grid).getAllByRole("button", { name: (name) => name.startsWith("Open Retry second, ") })).toHaveLength(1);
     expect(within(grid).getAllByRole("button", { name: /^Open / })).toHaveLength(2);
     expect(cursors).toEqual([null, "retry/+ &=cursor", "retry/+ &=cursor"]);
     expect(screen.queryByRole("alert")).toBeNull();
@@ -2066,14 +2066,14 @@ describe("Library paging regressions", () => {
     });
     renderLibrary();
     fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
-    await screen.findByRole("button", { name: "Open Old two" });
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open Old two, ") });
     fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
-    await screen.findByRole("button", { name: "Open New one" });
-    expect(screen.queryByRole("button", { name: "Open Old one" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Open Old two" })).toBeNull();
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open New one, ") });
+    expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Old one, ") })).toBeNull();
+    expect(screen.queryByRole("button", { name: (name) => name.startsWith("Open Old two, ") })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
-    await screen.findByRole("button", { name: "Open New two" });
-    expect(screen.getByRole("button", { name: "Open New one" })).toBeVisible();
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open New two, ") });
+    expect(screen.getByRole("button", { name: (name) => name.startsWith("Open New one, ") })).toBeVisible();
     expect(requests).toEqual([[null, null], [null, "old-cursor"], ["image", null], ["image", "new-cursor"]]);
     expect(within(screen.getByRole("group", { name: "Creations" })).getAllByRole("button", { name: /^Open / })).toHaveLength(2);
   });
