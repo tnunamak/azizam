@@ -89,6 +89,37 @@ class DocsBuildTests(unittest.TestCase):
         for path in [*SOURCES.rglob("*.md"), *DOCS.rglob("*.html"), DOCS / "search-index.json"]:
             self.assertNotIn("github.com", path.read_text(encoding="utf-8").lower(), path)
 
+    def test_every_generated_page_has_shared_site_navigation(self) -> None:
+        home = (STATIC / "index.html").read_text(encoding="utf-8")
+        home_nav = re.search(r'<nav id="site-nav".*?</nav>', home, re.S).group()
+        expected_nav = home_nav.replace(
+            'href="/showcase/docs/"', 'href="/showcase/docs/" aria-current="page"'
+        )
+        footer = re.search(r'<footer class="foot">.*?</footer>', home, re.S).group()
+        brand = re.search(r'<a class="brand".*?</a>', home, re.S).group()
+        brand = brand.replace(' aria-current="page"', "")
+        paths = sorted(DOCS.rglob("*.html"))
+        self.assertIn(DOCS / "404.html", paths)
+        self.assertEqual(len(paths), len(_page_urls()) + 1)
+        for path in paths:
+            with self.subTest(path=path):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn('<header class="site-header">', text)
+                self.assertIn(brand, text)
+                self.assertIn(expected_nav, text)
+                self.assertIn(footer, text)
+                menus = re.findall(r'<details class="site-disclosure">(.*?)</details>', text, re.S)
+                self.assertEqual(len(menus), 1)
+                self.assertIn("<summary>Menu</summary>", menus[0])
+                self.assertIn(expected_nav.replace(' id="site-nav"', ""), menus[0])
+                self.assertEqual(text.count('id="site-nav"'), 1)
+                self.assertNotIn('class="site-menu"', text)
+                self.assertIn('aria-label="Search the docs" aria-haspopup="dialog"', text)
+                self.assertIn('id="search-input"', text)
+                self.assertIn('src="/showcase/static/docs.js"', text)
+                self.assertIn('href="/showcase/static/showcase.css"', text)
+                self.assertIn('href="/showcase/static/docs.css"', text)
+
 
 class DocsServingTests(unittest.TestCase):
     @classmethod

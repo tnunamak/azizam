@@ -4,12 +4,18 @@ body.docs { --nav-w: 248px; --toc-w: 216px; --top-h: 56px; --code-bg: var(--pane
 @media (prefers-color-scheme: dark) { body.docs { --code-bg: #08181d; } }
 html:has(body.docs) { scroll-padding-top: calc(var(--top-h, 56px) + 16px); }
 
-/* Top bar */
-.docs-top { position: sticky; top: 0; z-index: 20; background: var(--bg); border-bottom: 1px solid var(--line); }
+/* Shared site chrome. Only the native mobile disclosure is docs-specific. */
+.docs .site-disclosure { display: none; }
+@media (max-width: 639px) {
+  .docs .site-header > .site-nav { display: none; }
+  .docs .site-disclosure { display: block; flex-basis: 100%; border: 0; padding: 0; }
+  .docs .site-disclosure > summary { min-height: 44px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  .docs .site-disclosure .site-nav { padding-top: 8px; }
+}
+
+/* Sticky docs search toolbar, below the shared header. */
+.docs-toolbar { position: sticky; top: 0; z-index: 20; background: var(--bg); border-bottom: 1px solid var(--line); }
 .docs-top-inner { display: flex; align-items: center; gap: 8px 16px; min-height: var(--top-h); padding-inline: var(--page-pad); max-width: 1440px; margin-inline: auto; }
-.docs-top .brand { margin: 0; color: var(--text); text-decoration: none; }
-.docs-home { color: var(--muted); text-decoration: none; font-weight: 500; padding-left: 16px; border-left: 1px solid var(--line); }
-.docs-home:hover, .docs-top .brand:hover { text-decoration: underline; }
 .docs-top-actions { display: flex; align-items: center; gap: 12px; margin-left: auto; }
 .search-open { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; min-width: 220px; padding: 6px 8px 6px 12px; background: var(--panel); color: var(--muted); border: 1px solid var(--line); border-radius: 6px; font-size: 14px; }
 .search-open:hover { border-color: var(--input); }
@@ -149,7 +155,6 @@ body.docs { --tok-key: #8a3ffc; --tok-str: #0a7a52; --tok-com: #5d6f74; --tok-nu
 @media (max-width: 639px) {
   .search-open { min-width: 44px; padding: 6px 10px; }
   .search-open span, .search-open kbd { display: none; }
-  .docs-home { padding-left: 12px; }
   .pager { grid-template-columns: 1fr; }
   .pager-next { grid-column: 1; }
   .prose h2 { margin-top: 40px; }
