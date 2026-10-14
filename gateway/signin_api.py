@@ -13,7 +13,7 @@ from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 from starlette.responses import HTMLResponse, JSONResponse, Response
@@ -34,6 +34,13 @@ DEFAULT_GROUPS_CLAIM = "groups"
 DEFAULT_CLOCK_SKEW = 60
 
 
+class _Reply(Exception):
+    """A response a dependency decided on (for example 401), returned as is."""
+
+    def __init__(self, response: Response):
+        self.response = response
+
+
 class _SignInRoute(APIRoute):
     def get_route_handler(self):
         handler = super().get_route_handler()
@@ -41,6 +48,8 @@ class _SignInRoute(APIRoute):
         async def guarded(request):
             try:
                 response = await handler(request)
+            except _Reply as exc:
+                response = exc.response
             except SignInError as exc:
                 response = JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status)
             except signin_rules.RulesError as exc:
@@ -181,14 +190,13 @@ def create_signin_api(
     router = APIRouter(route_class=_SignInRoute, tags=["sign-in"])
     get_json = fetch_json or (lambda url: default_fetch_json(url))
 
-    def owner_ctx(request: Request) -> AdminContext | JSONResponse:
+    def owner_ctx(request: Request) -> AdminContext:
+        """The owner, decided before the request body is looked at."""
         ctx = _require_admin(auth, request)
         if isinstance(ctx, JSONResponse):
-            return ctx
+            raise _Reply(ctx)
         if "owner" not in ctx.roles:
-            return JSONResponse(
-                {"error": {"code": "owner_required", "message": "Only the owner can change sign-in."}},
-                status_code=403)
+            raise SignInError("owner_required", "Only the owner can change sign-in.", 403)
         return ctx
 
     def callback_url(request: Request, cfg: OIDCConfig) -> str:
@@ -375,26 +383,17 @@ def create_signin_api(
         }
 
     @router.post("/admin/api/signin/preview")
-    def preview(request: Request, body: PreviewBody):
-        ctx = owner_ctx(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
+    def preview(request: Request, body: PreviewBody, ctx: AdminContext = Depends(owner_ctx)):
         return preview_json(request, ctx, body)
 
     # -- discover and test --------------------------------------------------
 
     @router.post("/admin/api/signin/discover")
-    def discover_route(request: Request, body: DiscoverBody):
-        ctx = owner_ctx(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
+    def discover_route(request: Request, body: DiscoverBody, ctx: AdminContext = Depends(owner_ctx)):
         return discover(body.address)
 
     @router.post("/admin/api/signin/test")
-    def start_test(request: Request, body: TestBody):
-        ctx = owner_ctx(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
+    def start_test(request: Request, body: TestBody, ctx: AdminContext = Depends(owner_ctx)):
         saved = oidc_config_provider()
         provider = body.provider
         if not _valid_address(provider.address):
@@ -419,10 +418,7 @@ def create_signin_api(
         return {"test_id": run.id, "start_url": f"/admin/api/signin/test/{run.id}/start"}
 
     @router.get("/admin/api/signin/test/{test_id}/start")
-    def begin_test(request: Request, test_id: str):
-        ctx = owner_ctx(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
+    def begin_test(request: Request, test_id: str, ctx: AdminContext = Depends(owner_ctx)):
         run = signin_test.get(test_id, ctx.audit_actor_id)
         if run is None:
             raise SignInError("test_not_found", "That test is over. Start a new one.", 404)
@@ -452,28 +448,19 @@ def create_signin_api(
         }
 
     @router.get("/admin/api/signin/test/{test_id}")
-    def get_test(request: Request, test_id: str):
-        ctx = owner_ctx(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
+    def get_test(request: Request, test_id: str, ctx: AdminContext = Depends(owner_ctx)):
         run = signin_test.get(test_id, ctx.audit_actor_id)
         if run is None:
             raise SignInError("test_not_found", "That test is over. Start a new one.", 404)
         return test_status(path_provider(), ctx, run)
 
     @router.delete("/admin/api/signin/test/{test_id}")
-    def cancel_test(request: Request, test_id: str):
-        ctx = owner_ctx(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
+    def cancel_test(request: Request, test_id: str, ctx: AdminContext = Depends(owner_ctx)):
         signin_test.cancel(test_id, ctx.audit_actor_id)
         return Response(status_code=204)
 
     @router.post("/admin/api/signin/link-owner")
-    def link_owner(request: Request, body: LinkBody):
-        ctx = owner_ctx(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
+    def link_owner(request: Request, body: LinkBody, ctx: AdminContext = Depends(owner_ctx)):
         path = path_provider()
         run = signin_test.get(body.test_id, ctx.audit_actor_id)
         if run is None or run.status != "passed":
@@ -505,10 +492,7 @@ def create_signin_api(
         return payload
 
     @router.put("/admin/api/signin")
-    def save(request: Request, body: SaveBody):
-        ctx = owner_ctx(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
+    def save(request: Request, body: SaveBody, ctx: AdminContext = Depends(owner_ctx)):
         revision = (request.headers.get("if-match") or "").strip('"')
         if not revision:
             raise SignInError("settings_revision_required",
@@ -611,10 +595,7 @@ def create_signin_api(
     # -- small actions ------------------------------------------------------
 
     @router.post("/admin/api/signin/notice/dismiss")
-    def dismiss_notice(request: Request):
-        ctx = owner_ctx(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
+    def dismiss_notice(request: Request, ctx: AdminContext = Depends(owner_ctx)):
         path = path_provider()
         status = signin_admin.load_status(path)
         status["notice"] = None
@@ -622,10 +603,7 @@ def create_signin_api(
         return build_snapshot(request, ctx)
 
     @router.post("/admin/api/signin/owner-password")
-    def owner_password(request: Request, body: PasswordBody):
-        ctx = owner_ctx(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
+    def owner_password(request: Request, body: PasswordBody, ctx: AdminContext = Depends(owner_ctx)):
         path = path_provider()
         if admin_store.get_user(ctx.audit_actor_id, path=path) is None:
             raise SignInError("owner_person_required", "Sign in as the owner to set a password.", 409)
