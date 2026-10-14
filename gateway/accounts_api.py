@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import hmac
-from typing import Callable, Literal
+from typing import Callable
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Request
@@ -75,10 +75,6 @@ class Person(_Body):
     disabled: StrictBool | None = None
 
 
-class SignInMode(_Body):
-    mode: Literal["built-in", "oidc", "both"]
-
-
 def _plan_choice(plan_id, path) -> dict | None:
     """A plan as pickers show it: name and one-line summary (design §3.4)."""
     from gateway.access_plans import PlanError, plan_from_document, plan_summary
@@ -98,16 +94,16 @@ def _plan_choices(path) -> list[dict]:
             if choice is not None]
 
 
-def signin_options(path, oidc: dict, *, include_revision: bool = False) -> dict:
+def signin_options(path, oidc: dict) -> dict:
     setting = admin_store.get_operator_setting("sign_in", path=path)
     mode = setting["value"].get("mode", "both") if setting else "both"
     result = {"mode": mode, "built_in": mode in {"built-in", "both"},
             "oidc": mode in {"oidc", "both"} and oidc["enabled"],
             "oidc_label": oidc.get("label") or "single sign-on",
+            # The owner's own password works whatever the switch says (see the login routes).
+            "owner_password": True,
             "oidc_url": "/login?return_to=%2Finvite%2F", "instance_name": "Azizam",
             "owner_name": "The gateway owner"}
-    if include_revision:
-        result["revision"] = admin_store.operator_setting_revision(setting)
     return result
 
 
@@ -133,8 +129,8 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             return JSONResponse({"error": {"code": "owner_required", "message": "Only the owner can manage people."}}, status_code=403)
         return ctx
 
-    def options(*, include_revision=False):
-        result = signin_options(path_provider(), oidc_provider(), include_revision=include_revision)
+    def options():
+        result = signin_options(path_provider(), oidc_provider())
         instance = instance_provider() if instance_provider else instance_settings(path_provider())
         result["instance_name"] = instance["name"]
         return result
@@ -175,9 +171,14 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
     @router.post("/auth/api/login")
     def login(request: Request, body: Login):
         same_origin(request)
-        if not options()["built_in"]:
-            raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
         user = accounts.login(body.email, body.password, client_ip(request), path=path_provider())
+        # The owner's own password always works. For everyone else the switch decides,
+        # and only a correct password learns that it is off.
+        if not options()["built_in"] and "owner" not in admin_store.effective_admin_roles(
+                "user", user["id"], path=path_provider()):
+            raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
+        # A good password is a good sign-in: it lifts the pause a refused provider sign-in put on their keys.
+        accounts.clear_signin_refusal(str(user["id"]), path=path_provider())
         return issue(user, {"next": safe_browser_return_to(body.return_to)})
 
     @router.post("/auth/api/invite")
@@ -302,34 +303,5 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             return ctx
         accounts.revoke_invite(link_id, ctx.audit_actor_id, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
         return {"ok": True}
-
-    @router.get("/admin/api/operator/sign-in")
-    def get_mode(request: Request):
-        ctx = owner(request)
-        return ctx if isinstance(ctx, JSONResponse) else options(include_revision=True)
-
-    @router.put("/admin/api/operator/sign-in")
-    def set_mode(request: Request, body: SignInMode):
-        ctx = owner(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        revision = request.headers.get("if-match")
-        if not revision:
-            raise accounts.AccountError("settings_revision_required", "Reload settings and supply the current revision in If-Match.", 428)
-        def validate_sign_in(conn):
-            # Hold the same write lock as OIDC configuration changes. "both" is the
-            # unset default and already reads as built-in only while no provider is
-            # enabled, so only the OIDC-only mode needs a provider.
-            if body.mode == "oidc" and not oidc_provider()["enabled"]:
-                raise accounts.AccountError("oidc_unavailable", "Configure an identity provider before enabling this sign-in option.", 409)
-        try:
-            admin_store.put_operator_setting_with_audit("sign_in", {"mode": body.mode}, updated_by=ctx.audit_actor_id, audit_action="operator.sign_in.update",
-                                                       audit_actor_kind=ctx.actor_kind, audit_actor_id=ctx.audit_actor_id,
-                                                       audit_actor_label=ctx.actor_label, audit_target_kind="operator_setting",
-                                                       audit_target_id="sign_in", expected_revision=revision.strip('"'),
-                                                       validate_in_transaction=validate_sign_in, path=path_provider())
-        except admin_store.SettingsConflictError:
-            raise accounts.AccountError("settings_conflict", "Settings changed elsewhere; reload to see the latest", 409)
-        return options(include_revision=True)
 
     return router

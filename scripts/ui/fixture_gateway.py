@@ -127,20 +127,29 @@ def _mount_settings_restore():
     cannot restore (web/e2e/fixtures/isolation.ts). The admin API refuses the
     seeded sign-in mode "both" while no identity provider is enabled, so a test
     that switches to built-in accounts could not otherwise undo its change.
-    Only non-secret settings on this allowlist are writable."""
+    It also sets up a connection that a test sign-in would otherwise have to
+    prove, and blanks one that was never configured (the Sign-in page's save
+    cannot). The connection goes through the store, so its secret is encrypted.
+    Only the settings on this allowlist are writable."""
     import proxy
     from fastapi import Request
     from fastapi.responses import JSONResponse
     from fastapi.routing import APIRoute
     from gateway import admin_store
 
-    restorable = {"sign_in"}
+    restorable = {"sign_in", "oidc_provider_config"}
 
     async def restore(key: str, request: Request):
         if key not in restorable or request.client is None or request.client.host != "127.0.0.1":
             return JSONResponse({"error": "not restorable"}, status_code=403)
         value = await request.json()
-        admin_store.put_operator_setting(key, value, updated_by="browser-fixture", path=proxy.ADMIN_DB_PATH)
+        if key == "oidc_provider_config":
+            from gateway.admin_api import AdminContext
+
+            proxy.ADMIN_STORE.update_oidc_config_setting(
+                data=value, actor=AdminContext(subject="browser-fixture", roles=frozenset({"owner"})))
+        else:
+            admin_store.put_operator_setting(key, value, updated_by="browser-fixture", path=proxy.ADMIN_DB_PATH)
         return {"ok": True}
 
     # First, ahead of the UI's catch-all routes.

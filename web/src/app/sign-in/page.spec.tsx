@@ -100,6 +100,46 @@ it("offers only single sign-on when passwords are disabled", async () => {
   await screen.findByRole("link", { name: "Continue with single sign-on" });
   expect(screen.queryByLabelText("Email")).toBeNull();
 });
+it("keeps the owner's password one click away while passwords are off for everyone else", async () => {
+  options.built_in = false;
+  options.oidc = true;
+  Object.assign(options, { owner_password: true });
+  const user = userEvent.setup();
+  mount();
+  await screen.findByRole("link", { name: "Continue with single sign-on" });
+  expect(screen.queryByLabelText("Email")).toBeNull();
+
+  await user.click(screen.getByRole("button", { name: "Owner? Sign in with your password" }));
+
+  expect(await screen.findByLabelText("Email")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Owner? Sign in with your password" })).toBeNull();
+  expect(screen.getByText("or use your email")).toBeVisible();
+});
+it("signs the owner in with the password form while passwords are off", async () => {
+  options.built_in = false;
+  options.oidc = true;
+  Object.assign(options, { owner_password: true });
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((input, init) =>
+    String(input) === "/auth/api/login"
+      ? json({ next: "/" })
+      : original(input, init),
+  );
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "Owner? Sign in with your password" }));
+  await submit();
+  expect(fetch).toHaveBeenCalledWith("/auth/api/login", expect.objectContaining({ method: "POST" }));
+  await waitFor(() => expect(continueTo).toHaveBeenCalledWith("/"));
+});
+it("offers no owner password link when the server does not offer one", async () => {
+  options.built_in = false;
+  options.oidc = true;
+  Object.assign(options, { owner_password: false });
+  mount();
+  await screen.findByRole("link", { name: "Continue with single sign-on" });
+  expect(screen.queryByRole("button", { name: "Owner? Sign in with your password" })).toBeNull();
+});
 it("sends the original return target to the server and follows its validated next destination", async () => {
   window.history.replaceState(
     null,

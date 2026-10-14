@@ -8,6 +8,8 @@ import { Label } from "@/components/ui/label";
 export interface CopyFieldProps {
   value: string;
   label?: string;
+  /** Names the copy button for assistive technology. Defaults to "Copy {label}". */
+  buttonLabel?: string;
   disabled?: boolean;
   loading?: boolean;
   error?: string;
@@ -15,6 +17,7 @@ export interface CopyFieldProps {
 export function CopyField({
   value,
   label = "Gateway address",
+  buttonLabel,
   disabled = false,
   loading = false,
   error,
@@ -61,7 +64,7 @@ export function CopyField({
           className="text-muted-foreground hover:text-foreground mr-0.5 size-9 max-sm:size-11"
           disabled={disabled || loading || !value}
           onClick={copy}
-          aria-label={`Copy ${label.toLowerCase()}`}
+          aria-label={buttonLabel ?? `Copy ${label.toLowerCase()}`}
         >
           {loading ? (
             <Loader2 className="animate-spin" />

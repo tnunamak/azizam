@@ -984,7 +984,7 @@ class MeMediaRouterTests(unittest.TestCase):
             proxy._image_url_signing_secret = None
             cfg = OIDCConfig(
                 enabled=True,
-                scopes=("openid", "email"), allowed_email_domains=(), admin_emails=(),
+                scopes=("openid", "email"), admin_emails=(),
                 issuer="issuer",
                 client_id="client",
                 client_secret="secret",

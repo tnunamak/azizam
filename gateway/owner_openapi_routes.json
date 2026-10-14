@@ -151,14 +151,6 @@
     "tag": "people and plans",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
   },
-  "GET /admin/api/oidc-config": {
-    "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
-  },
-  "PUT /admin/api/oidc-config": {
-    "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
-  },
   "GET /admin/api/operator/litellm-config": {
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
@@ -224,14 +216,6 @@
   "POST /admin/api/operator/services/{service_id}/enabled": {
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
-  },
-  "GET /admin/api/operator/sign-in": {
-    "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
-  },
-  "PUT /admin/api/operator/sign-in": {
-    "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
   },
   "GET /admin/api/overview": {
     "tag": "status",
@@ -409,6 +393,50 @@
   },
   "PUT /admin/api/access-plans/{plan_id}": {
     "tag": "people and plans",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+  },
+  "GET /admin/api/signin": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "POST /admin/api/signin/preview": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+  },
+  "POST /admin/api/signin/discover": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+  },
+  "POST /admin/api/signin/test": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+  },
+  "GET /admin/api/signin/test/{test_id}/start": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+  },
+  "GET /admin/api/signin/test/{test_id}": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+  },
+  "DELETE /admin/api/signin/test/{test_id}": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+  },
+  "POST /admin/api/signin/link-owner": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+  },
+  "PUT /admin/api/signin": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+  },
+  "POST /admin/api/signin/notice/dismiss": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+  },
+  "POST /admin/api/signin/owner-password": {
+    "tag": "settings",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
   }
 }

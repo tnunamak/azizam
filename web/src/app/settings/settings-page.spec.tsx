@@ -23,6 +23,11 @@ vi.mock("@/lib/toast", () => ({
 
 import { createQueryClient, resetSessionCache } from "@/lib/api";
 import SettingsPage from "@/app/settings/page";
+import {
+  emptyPreview,
+  firstRunSnapshot,
+  liveSnapshot,
+} from "@/app/settings/sign-in/test-support";
 
 type State = "seeded" | "empty" | "error";
 type Request = {
@@ -104,32 +109,10 @@ function seed(state: State) {
     }),
   );
   routes.set(
-    "/admin/api/oidc-config",
-    reply({
-      revision: "7",
-      oidc_config:
-        state === "empty"
-          ? null
-          : {
-              enabled: true,
-              issuer: "https://login.example.test",
-              client_id: "gateway",
-              client_secret_set: true,
-              redirect_uri: "https://gateway.example.test/auth/callback",
-              scopes: ["openid", "email", "profile"],
-            },
-    }),
+    "/admin/api/signin",
+    reply(state === "empty" ? firstRunSnapshot() : liveSnapshot()),
   );
-  routes.set(
-    "/admin/api/operator/sign-in",
-    reply({
-      revision: "7",
-      mode: state === "empty" ? "built-in" : "both",
-      built_in: true,
-      oidc: state !== "empty",
-      oidc_label: "Example identity",
-    }),
-  );
+  routes.set("/admin/api/signin/preview", () => ({ json: emptyPreview() }));
   routes.set(
     "/admin/api/operator/overrides",
     reply({
@@ -275,23 +258,25 @@ describe("settings page states", () => {
     expect(within(instance).getByLabelText("Instance name")).toHaveValue(
       "Our gateway",
     );
-    expect(screen.queryByText("Built-in accounts on")).not.toBeInTheDocument();
-    const { user, section: signIn } = await editSection("Sign-in");
-    expect(within(signIn).getByText("Built-in accounts on")).toBeVisible();
+    // Sign-in is not behind an Edit button: its three blocks are on the page.
+    const signIn = region("Sign-in");
     expect(
-      within(signIn).getByRole("combobox", {
-        name: "Available sign-in methods",
-      }),
-    ).toHaveTextContent("Built-in accounts and OIDC");
-    expect(screen.getByText("OIDC on")).toBeVisible();
-    await editSection("Advanced");
+      await within(signIn).findByRole("heading", { name: "Ways to sign in" }),
+    ).toBeVisible();
+    expect(
+      within(signIn).getByRole("switch", { name: "Keycloak" }),
+    ).toBeChecked();
+    expect(
+      within(signIn).queryByRole("button", { name: "Edit Sign-in" }),
+    ).not.toBeInTheDocument();
+    const { user } = await editSection("Advanced");
     await user.click(screen.getByText("Effective configuration and export"));
     expect(
       await screen.findByRole("link", { name: "Export redacted snapshot" }),
     ).toHaveAttribute("href", "/admin/api/settings/effective/export");
   });
 
-  it("shows built-in-only sign-in, no extensions and the connect-a-provider hint (empty)", async () => {
+  it("shows the first-run sign-in and no extensions (empty)", async () => {
     seed("empty");
     mount();
     expect(
@@ -300,17 +285,14 @@ describe("settings page states", () => {
       ).findByText("No extensions installed"),
     ).toBeVisible();
     await editSection("Instance");
-    const { user, section: signIn } = await editSection("Sign-in");
+    const signIn = region("Sign-in");
+    expect(await within(signIn).findByText("Not set up")).toBeVisible();
     expect(
-      within(signIn).getByRole("combobox", {
-        name: "Available sign-in methods",
-      }),
-    ).toHaveTextContent("Built-in accounts only");
-    expect(screen.getByText("OIDC off")).toBeVisible();
-    expect(
-      screen.getByText(/No identity provider is connected yet/),
+      within(signIn).getByText(
+        "People sign in with a password. To add another way to sign in, connect a provider below.",
+      ),
     ).toBeVisible();
-    await editSection("Extensions");
+    const { user } = await editSection("Extensions");
     expect(
       screen.getAllByText("No extensions installed").length,
     ).toBeGreaterThan(0);
@@ -334,7 +316,7 @@ describe("settings page states", () => {
     await user.click(screen.getByText("Effective configuration and export"));
     await waitFor(() =>
       expect(screen.getAllByRole("button", { name: "Try again" })).toHaveLength(
-        9,
+        8,
       ),
     );
     for (const name of ["People and access"]) {
@@ -348,26 +330,19 @@ describe("settings page states", () => {
 });
 
 describe("settings loading and failure", () => {
-  it("announces the sign-in choices as busy until they arrive", async () => {
+  it("announces the sign-in settings as busy until they arrive", async () => {
     seed("seeded");
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => (release = resolve));
-    routes.set("/admin/api/operator/sign-in", async () => {
+    routes.set("/admin/api/signin", async () => {
       await gate;
-      return {
-        json: {
-          mode: "both",
-          built_in: true,
-          oidc: true,
-          oidc_label: "Example identity",
-        },
-      };
+      return { json: liveSnapshot() };
     });
     mount();
     const status = await within(
       await screen.findByRole("region", { name: "Sign-in" }),
     ).findByRole("status", {
-      name: "Loading sign-in choices",
+      name: "Loading sign-in",
     });
     expect(status).toHaveAttribute("aria-busy", "true");
     release();
@@ -443,7 +418,7 @@ describe("settings roles", () => {
     mocks.role = "admin";
     seed("seeded");
     routes.set("/admin/api/settings/instance", () => ownerRequired);
-    routes.set("/admin/api/operator/sign-in", () => ownerRequired);
+    routes.set("/admin/api/signin", () => ownerRequired);
     mount({ keepClientRetry: true });
     const instance = await screen.findByRole("region", { name: "Instance" });
     await waitFor(() =>
@@ -452,8 +427,13 @@ describe("settings roles", () => {
     expect(
       within(instance).queryByRole("button", { name: "Try again" }),
     ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(region("Sign-in")).toHaveTextContent(
+        "Only the owner can change this.",
+      ),
+    );
     expect(
-      screen.queryByRole("button", { name: "Save sign-in" }),
+      screen.queryByRole("button", { name: "Save changes" }),
     ).not.toBeInTheDocument();
     const access = await screen.findByRole("region", {
       name: "People and access",
@@ -465,23 +445,24 @@ describe("settings roles", () => {
       within(access).queryByRole("button", { name: "Save" }),
     ).not.toBeInTheDocument();
     expect(sent("GET", "/admin/api/settings/instance")).toHaveLength(1);
-    expect(sent("GET", "/admin/api/operator/sign-in")).toHaveLength(1);
+    expect(sent("GET", "/admin/api/signin")).toHaveLength(1);
   });
 
   it("hides owner-only forms from an administrator even when owner data is cached", async () => {
     mocks.role = "admin";
     seed("seeded");
+    routes.set("/admin/api/signin", () => ({
+      json: liveSnapshot({ viewer: { role: "admin", can_edit: false } }),
+    }));
     mount();
-    const { section: signIn } = await editSection("Sign-in");
+    const signIn = region("Sign-in");
     await waitFor(() =>
-      expect(signIn).toHaveTextContent("Only the owner can change this."),
+      expect(signIn).toHaveTextContent("Only the owner can change sign-in."),
     );
     expect(
-      screen.queryByRole("button", { name: "Save sign-in choice" }),
+      screen.queryByRole("button", { name: "Save changes" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Save sign-in" }),
-    ).not.toBeInTheDocument();
+    expect(sent("POST", "/admin/api/signin/preview")).toHaveLength(0);
     await editSection("Instance");
     expect(
       screen.queryByRole("button", { name: "Save instance" }),
@@ -553,83 +534,57 @@ describe("extensions", () => {
 });
 
 describe("independent forms", () => {
-  it("keeps the other form's draft when the sign-in choice, provider and defaults save", async () => {
+  it("keeps the other form's draft when sign-in and defaults save", async () => {
     seed("seeded");
-    let modeRevision = "7";
-    let providerRevision = "7";
-    let clientId = "gateway";
-    routes.set("/admin/api/operator/sign-in", (request) => {
+    let revision = "rev-1";
+    routes.set("/admin/api/signin", (request) => {
       if (request.method === "PUT") {
-        expect(request.ifMatch).toBe(modeRevision);
-        modeRevision = "8";
-      }
-      return {
-        json: {
-          mode: "both",
-          built_in: true,
-          oidc: true,
-          revision: modeRevision,
-        },
-      };
-    });
-    routes.set("/admin/api/oidc-config", (request) => {
-      if (request.method === "PUT") {
-        expect(request.ifMatch).toBe(providerRevision);
-        clientId = (request.body as { client_id: string }).client_id;
-        providerRevision = "8";
-      }
-      return {
-        json: {
-          oidc_config: {
-            enabled: true,
-            issuer: "https://login.example.test",
-            client_id: clientId,
-            redirect_uri: "https://gateway.example.test/auth/callback",
+        expect(request.ifMatch).toBe(revision);
+        revision = "rev-2";
+        return {
+          json: {
+            snapshot: liveSnapshot({
+              revision,
+              rules: { fallback: "open", rules: liveSnapshot().rules.rules },
+            }),
+            applied: { provider_turned_on: false, admin_removed: [] },
           },
-          revision: providerRevision,
-        },
-      };
+        };
+      }
+      return { json: liveSnapshot({ revision }) };
     });
     mount();
-    const { user } = await editSection("Sign-in");
-    const clientField = await screen.findByLabelText("Client ID", {
-      exact: true,
-    });
-    await user.clear(clientField);
-    await user.type(clientField, "unsaved-provider");
-    await user.click(
-      screen.getByRole("button", { name: "Save sign-in choice" }),
-    );
-    await waitFor(() =>
-      expect(mocks.success).toHaveBeenCalledWith("Sign-in choice saved"),
-    );
-    expect(screen.getByLabelText("Client ID", { exact: true })).toHaveValue(
-      "unsaved-provider",
-    );
-    await chooseOption(
-      user,
-      "Available sign-in methods",
-      "Built-in accounts only",
-    );
-    await user.click(screen.getByRole("button", { name: "Save sign-in" }));
-    await waitFor(() =>
-      expect(mocks.success).toHaveBeenCalledWith("Identity provider saved"),
-    );
-    expect(sent("PUT", "/admin/api/oidc-config")[0].body).toMatchObject({
-      client_id: "unsaved-provider",
-    });
-    expect(
-      screen.getByRole("combobox", { name: "Available sign-in methods" }),
-    ).toHaveTextContent("Built-in accounts only");
-    await user.click(screen.getByText("Provider details and access rules"));
-    expect(
-      screen.getByLabelText("Sign-in email exceptions"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Once any grant exists, this list grants no role/),
-    ).toBeVisible();
+    const user = userEvent.setup();
 
-    // People and access: saving the invitation plan keeps the other form's state.
+    // A draft in People and access, not saved yet.
+    await screen.findByRole("combobox", {
+      name: "Access plan for new invitations",
+    });
+    await chooseOption(user, "Access plan for new invitations", "Ask each time");
+
+    // Save a sign-in change: the other draft stays.
+    const signIn = region("Sign-in");
+    await user.click(
+      await within(signIn).findByRole("radio", {
+        name: /Let them in, but with no access/,
+      }),
+    );
+    const save = await within(signIn).findByRole("button", {
+      name: "Save changes",
+    });
+    await waitFor(() => expect(save).toBeEnabled());
+    await user.click(save);
+    await waitFor(() =>
+      expect(mocks.success).toHaveBeenCalledWith(
+        "Saved. Changes apply to the next sign-in.",
+      ),
+    );
+    expect(sent("PUT", "/admin/api/signin")[0].ifMatch).toBe("rev-1");
+    expect(
+      screen.getByRole("combobox", { name: "Access plan for new invitations" }),
+    ).toHaveTextContent("Ask each time");
+
+    // People and access: saving the invitation plan keeps the sign-in state.
     const access = region("People and access");
     routes.set("/admin/api/settings/defaults", (request) =>
       request.method === "PUT"
@@ -641,7 +596,6 @@ describe("independent forms", () => {
             },
           },
     );
-    await chooseOption(user, "Access plan for new invitations", "Ask each time");
     await user.click(within(access).getByRole("button", { name: "Save" }));
     expect(
       await within(access).findByText("Access plan for new invitations saved"),
@@ -650,11 +604,10 @@ describe("independent forms", () => {
       invite_access_plan: null,
     });
     expect(
-      screen.getByRole("combobox", { name: "Available sign-in methods" }),
-    ).toHaveTextContent("Built-in accounts only");
-    expect(
-      screen.getByRole("combobox", { name: "Access plan for new invitations" }),
-    ).toHaveTextContent("Ask each time");
+      within(signIn).getByRole("radio", {
+        name: /Let them in, but with no access/,
+      }),
+    ).toBeChecked();
   });
 });
 
@@ -717,7 +670,7 @@ describe("default access choices", () => {
   });
 });
 
-// The four revision-guarded forms share one contract: a dirty form keeps its
+// The revision-guarded forms share one contract: a dirty form keeps its
 // draft across a background refresh, a clean form rebases onto it, a 409 asks
 // for a reload, and every PUT carries the revision the form was last rebased to.
 const revisionForms = [
@@ -731,28 +684,6 @@ const revisionForms = [
     draft: "Unsaved name",
     refreshed: "External name",
     saved: "Normalized name",
-  },
-  {
-    section: "Sign-in",
-    field: "Client ID",
-    save: "Save sign-in",
-    get: "/admin/api/oidc-config",
-    put: "/admin/api/oidc-config",
-    original: "original-client",
-    draft: "draft-client",
-    refreshed: "external-client",
-    saved: "normalized-client",
-  },
-  {
-    section: "Sign-in",
-    field: "Available sign-in methods",
-    save: "Save sign-in choice",
-    get: "/admin/api/operator/sign-in",
-    put: "/admin/api/operator/sign-in",
-    original: "Built-in accounts and OIDC",
-    draft: "Built-in accounts only",
-    refreshed: "OIDC only",
-    saved: "Built-in accounts and OIDC",
   },
   {
     section: "Media admission",
@@ -779,28 +710,6 @@ function revisionResponse(
       instance: { name: value, base_url: "", theme_default: "system" },
       revision,
     };
-  if (form.field === "Client ID")
-    return {
-      oidc_config: {
-        enabled: true,
-        issuer: "https://id.example.test",
-        client_id: value,
-        redirect_uri: "https://gateway.example.test/auth/callback",
-      },
-      revision,
-    };
-  if (form.field === "Available sign-in methods")
-    return {
-      mode:
-        value === "Built-in accounts only"
-          ? "built-in"
-          : value === "OIDC only"
-            ? "oidc"
-            : "both",
-      built_in: value !== "OIDC only",
-      oidc: true,
-      revision,
-    };
   const media = { max_queue_depth: Number(value) };
   return mutation
     ? { media_job_admission: media, revision }
@@ -816,25 +725,16 @@ async function changeField(
   form: RevisionForm,
   value: string,
 ) {
-  if (form.field === "Available sign-in methods")
-    return chooseOption(user, form.field, value);
   const input = screen.getByLabelText(form.field, { exact: true });
   await user.clear(input);
   await user.type(input, value);
 }
 async function expectField(form: RevisionForm, value: string) {
-  if (form.field === "Available sign-in methods")
-    await waitFor(() =>
-      expect(
-        screen.getByRole("combobox", { name: form.field }),
-      ).toHaveTextContent(value),
-    );
-  else
-    await waitFor(() =>
-      expect(
-        screen.getByLabelText(form.field, { exact: true }),
-      ).toHaveDisplayValue(value),
-    );
+  await waitFor(() =>
+    expect(
+      screen.getByLabelText(form.field, { exact: true }),
+    ).toHaveDisplayValue(value),
+  );
 }
 // React Query refetches stale queries when the tab becomes visible again.
 async function refresh(path: string) {

@@ -737,80 +737,39 @@ endpoint; the React client should prefer `/audit`.
 
 ## Surface 8 — Settings
 
-### GET /admin/api/oidc-config
+The identity provider connection is read and written only through the Sign-in
+routes below (`GET` and `PUT /admin/api/signin`). It has no route of its own.
+`client_secret` is write-only: the snapshot says only whether one is saved
+(`client_secret_saved`), and a save that leaves the secret blank keeps the
+stored one. A save that changes the connection while the provider is on must
+carry a passed test sign-in.
 
-Returns the **effective** runtime configuration: bootstrap OIDC configuration
-merged with non-blank database overrides. **Never returns raw secrets.**
-`client_secret` is replaced with `"<redacted>"` and the companion boolean
-`client_secret_set` indicates whether the effective configuration has a
-secret. Returns `null` only when neither source configures OIDC.
+### Sign-in rules and the Sign-in page (`/admin/api/signin*`)
 
-```json
-{
-  "oidc_config": {
-    "enabled": true,
-    "issuer": "https://accounts.google.com",
-    "client_id": "my-app.apps.googleusercontent.com",
-    "client_secret": "<redacted>",
-    "client_secret_set": true,
-    "redirect_uri": "https://gateway.example.com/auth/callback",
-    "scopes": ["openid", "email", "profile"],
-    "allowed_email_domains": ["example.com"],
-    "admin_emails": ["ops@example.com"],
-    "admin_groups": [],
-    "admin_roles": [],
-    "authorization_endpoint": "",
-    "token_endpoint": "",
-    "jwks_uri": "",
-    "clock_skew_seconds": 60,
-    "groups_claim": "groups",
-    "updated_at": 1765…,
-    "source": "bootstrap" | "database" | "merged" | "runtime_default",
-    "provenance": {
-      "summary": "bootstrap" | "database" | "merged" | "runtime_default",
-      "fields": { "issuer": "bootstrap", "client_id": "database" }
-    },
-    "apply_mode": "live"
-  } | null
-}
-```
+Who may sign in, and what they get, is a set of rules (`gateway/signin_rules.py`).
+The Settings > Sign-in page reads and writes them through these routes; an
+administrator may `GET /admin/api/signin`, and every other route is owner-only
+(`403 owner_required`). Types: `web/src/lib/signin-api.ts`.
 
-`groups_claim` is an accepted OIDC configuration field in
-`gateway/admin_api.py`. Its presence is not evidence of OIDC
-group-to-access-plan auto-assignment: the legacy mapping table and routes
-have been removed. See B7 in `ADMIN_USER_STORIES.md`.
+| Route | What it does |
+|---|---|
+| `GET /admin/api/signin` | One snapshot: the two sign-in switches, the provider connection (no secret), the rules, values past sign-ins carried, plans, and a revision |
+| `POST /admin/api/signin/preview` | `{proposal, test_id}` → who changes (by name), settings, blockers, who each rule matches, and the test verdict. Same evaluator as sign-in |
+| `PUT /admin/api/signin` | Save the proposal with `If-Match`; `keep_admin_keys` and `save_for_later`. `409` for `last_sign_in_method`, `test_required`, `incomplete_rule`, `owner_needs_password` |
+| `POST /admin/api/signin/discover` | `{address}` → the endpoints found at the provider address |
+| `POST /admin/api/signin/test` | Start a test sign-in for the connection as typed; `GET …/test/{id}/start` opens it in a pop-up; `GET …/test/{id}` polls; `DELETE …/test/{id}` cancels |
+| `POST /admin/api/signin/link-owner` | Link the provider identity from a passed test to the owner account |
+| `POST /admin/api/signin/notice/dismiss` | Dismiss the one-time note from the upgrade |
+| `POST /admin/api/signin/owner-password` | Set the owner's own password |
 
-UNVERIFIED in this scoped review: live login claim handling, persistence in
-`user_identity_claims`, and readership elsewhere in the repository. The
-configuration field alone cannot establish those runtime behaviors.
-
-`client_secret` is write-only and redacted in GET responses.
-
-### PUT /admin/api/oidc-config  (save OIDC config)
-
-Request: any subset of the `oidc_config` fields above. When `client_secret` is
-omitted, blank, or `"<redacted>"`, the existing stored secret is preserved
-(patch semantics). Omitting `groups_claim` preserves the existing value
-(patch semantics). Unknown fields return `400 invalid_oidc_config`.
-
-Accepted fields: `enabled`, `issuer`, `client_id`, `client_secret`,
-`redirect_uri`, `scopes`, `allowed_email_domains`, `admin_emails`,
-`admin_groups`, `admin_roles`, `authorization_endpoint`, `token_endpoint`,
-`jwks_uri`, `clock_skew_seconds`, `groups_claim`.
-
-For non-secret string fields, `null` or `""` explicitly clears a bootstrap
-value; for list fields, `[]` explicitly clears it. Omit a field to preserve
-the database override. `client_secret` remains write-only: blank, null, and
-`"<redacted>"` preserve its stored value.
-
-`200` → `{ "oidc_config": { …same scrubbed shape… } }`
-
-The existing write-only secret behavior is preserved. An empty, omitted, or
-`"<redacted>"` `client_secret` preserves the stored database secret. Dashboard
-provider changes apply live for subsequent OIDC authentication requests. To
-recover access, use an existing authenticated admin session, or generate an
-admin key on the host and claim it at `/setup/claim`; do not promise a hidden
-local-owner sign-in path while OIDC is enabled.
+`PUT /admin/api/signin` is one SQLite transaction: the rules, the switches, the connection (and its secret),
+and every grant removed, session ended and key revoked for the people they touch commit together or not at
+all. What a rollback cannot undo (a person's MCP connections) runs after the commit. A save that moves the
+provider to another host, or to other endpoints, must carry the client secret typed again
+(`409 connection_incomplete`; the preview names it as the `secret_needed` blocker), so a saved secret goes only
+to the host it was entered for. A save that changes the issuer of a live provider ends the sessions of
+everyone linked to the old issuer (not the owner) and pauses their personal keys until they sign in again;
+`issuer_change.signed_out` in the preview counts them.
 
 ### GET /admin/api/extensions
 

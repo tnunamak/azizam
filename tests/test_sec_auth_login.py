@@ -17,6 +17,7 @@ from gateway import accounts, admin_store
 from gateway.admin_oidc import AdminSession, decode_session_cookie, csrf_token_for_session, encode_session_cookie, session_from_claims
 from gateway.oidc_jwks import JWKSCache
 from test_exposure_oidc_security import oidc_gateway, _client, _start_login
+from tests.support.signin import seed_rules
 
 
 @contextmanager
@@ -79,7 +80,7 @@ def test_sec08_legacy_owner_survives_real_oidc_callback_after_migration(oidc_gat
 
 
 def test_sec08_group_removal_revokes_oidc_grant_on_next_login(oidc_gateway, monkeypatch):
-    monkeypatch.setattr(proxy, "ADMIN_OIDC_CONFIG", replace(proxy.ADMIN_OIDC_CONFIG, admin_groups=frozenset({"admins"})))
+    seed_rules(oidc_gateway, domains=["example.test"], groups=["admins"])
     with browser() as client:
         user = login_claims(monkeypatch, client, subject="admin-sub", email="admin@example.test", groups=["/admins"])
         assert client.get("/admin/api/session").status_code == 200

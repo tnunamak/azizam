@@ -1096,37 +1096,8 @@ class FakeAdminStore:
             "automated_count": automated_count,
         }
 
-    def get_oidc_config_setting(self) -> dict[str, Any] | None:
-        raw: dict[str, Any] | None = getattr(self, "_oidc_config", None)
-        if raw is None:
-            return None
-        redacted = dict(raw)
-        if redacted.get("client_secret"):
-            redacted["client_secret"] = "<redacted>"
-            redacted["client_secret_set"] = True
-        else:
-            redacted.setdefault("client_secret", "")
-            redacted["client_secret_set"] = False
-        return redacted
-
     def setting_revision(self, key: str) -> str:
         return "os-1"
-
-    def update_oidc_config_setting(
-        self, *, data: Mapping[str, Any], actor: AdminContext, expected_revision: str | None = None
-    ) -> dict[str, Any]:
-        current: dict[str, Any] = getattr(self, "_oidc_config", {}) or {}
-        merged = {**current, **data}
-        # Never return client_secret in plain form — mirror real store behaviour.
-        redacted = dict(merged)
-        if "client_secret" in redacted and redacted["client_secret"]:
-            redacted["client_secret"] = "<redacted>"
-            redacted["client_secret_set"] = True
-        else:
-            redacted.setdefault("client_secret", "")
-            redacted["client_secret_set"] = False
-        self._oidc_config = merged  # type: ignore[attr-defined]
-        return {**redacted, "revision": "os-1"}
 
 
 def _admin_auth(request: Request) -> AdminContext:
@@ -2041,63 +2012,6 @@ class AdminAuditTests(unittest.TestCase):
         client, _ = _make_client()
         resp = client.get("/admin/api/audit?before=notavalidcursor", headers=_auth())
         self.assertEqual(resp.status_code, 400)
-
-    def test_audit_oidc_groups_claim_round_trips(self) -> None:
-        """groups_claim field round-trips through GET/PUT oidc-config."""
-        client, store = _make_client()
-        # PUT with groups_claim.
-        put_resp = client.put(
-            "/admin/api/oidc-config",
-            json={
-                "enabled": False,
-                "issuer": "https://idp.example.com",
-                "client_id": "my-client",
-                "client_secret": "s3cr3t",
-                "redirect_uri": "https://gw.example.com/auth/callback",
-                "groups_claim": "cognito:groups",
-            },
-            headers=_auth("owner"),
-        )
-        self.assertEqual(put_resp.status_code, 200, put_resp.text)
-        cfg_put = put_resp.json()["oidc_config"]
-        self.assertEqual(cfg_put.get("groups_claim"), "cognito:groups")
-        # client_secret must be redacted.
-        self.assertNotEqual(cfg_put.get("client_secret"), "s3cr3t")
-
-        # GET must return the stored groups_claim plainly (not redacted).
-        get_resp = client.get("/admin/api/oidc-config", headers=_auth("owner"))
-        self.assertEqual(get_resp.status_code, 200)
-        cfg_get = get_resp.json()["oidc_config"]
-        self.assertEqual(cfg_get.get("groups_claim"), "cognito:groups")
-        # client_secret still must not be returned.
-        self.assertNotEqual(cfg_get.get("client_secret"), "s3cr3t")
-
-    def test_audit_oidc_groups_claim_default(self) -> None:
-        """When groups_claim is omitted, the stored value is preserved (patch semantics)."""
-        client, store = _make_client()
-        # Save an initial config with a custom groups_claim.
-        client.put(
-            "/admin/api/oidc-config",
-            json={
-                "enabled": False,
-                "issuer": "https://idp.example.com",
-                "client_id": "c",
-                "client_secret": "s",
-                "redirect_uri": "https://gw/cb",
-                "groups_claim": "my_groups",
-            },
-            headers=_auth("owner"),
-        )
-        # Update a different field without touching groups_claim.
-        patch_resp = client.put(
-            "/admin/api/oidc-config",
-            json={"enabled": False, "issuer": "https://other.example.com"},
-            headers=_auth("owner"),
-        )
-        self.assertEqual(patch_resp.status_code, 200)
-        cfg = patch_resp.json()["oidc_config"]
-        # groups_claim must be preserved from the earlier PUT.
-        self.assertEqual(cfg.get("groups_claim"), "my_groups")
 
 
 class AdminOperatorOverrideTests(unittest.TestCase):

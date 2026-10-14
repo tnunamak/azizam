@@ -236,7 +236,7 @@ def gateway(monkeypatch, tmp_path, request):
         assert any("category rules: NO_GRANT" in reason for reason in decision.reasons)
 
     cfg = OIDCConfig(
-        enabled=True, scopes=("openid", "email"), allowed_email_domains=(), admin_emails=(),
+        enabled=True, scopes=("openid", "email"), admin_emails=(),
         issuer="https://inventory.test", client_id="inventory", client_secret="test-only",
         redirect_uri="http://testserver/callback", signing_key=b"s" * 32,
         cookie=CookieConfig(secure=False), authorization_endpoint="http://idp/auth",

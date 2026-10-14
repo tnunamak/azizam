@@ -35,7 +35,7 @@ def config():
     return OIDCConfig(
         enabled=True, issuer="https://idp.example", client_id="gateway", client_secret="test-secret",
         redirect_uri="https://openai.vivid.fish/admin/oidc/callback", scopes=("openid", "email"),
-        allowed_email_domains=frozenset(), admin_emails=frozenset({"owner@example.test"}),
+        admin_emails=frozenset({"owner@example.test"}),
         signing_key=b"s" * 32, cookie=CookieConfig(secure=False),
         authorization_endpoint="https://idp.example/authorize", token_endpoint="https://idp.example/token",
         jwks_uri="https://idp.example/jwks",

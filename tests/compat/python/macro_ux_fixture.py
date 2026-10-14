@@ -178,6 +178,12 @@ def _seed(proxy: Any, state_root: Path, port: int) -> None:
 
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
     db = proxy.ADMIN_STORE.path
+    from gateway.admin_api import AdminContext
+
+    # A saved client secret the sign-in page must never return.
+    proxy.ADMIN_STORE.update_oidc_config_setting(
+        data={"enabled": False, "client_secret": fixture["redacted_setting"]},
+        actor=AdminContext(subject="fixture-seed", roles=frozenset({"owner"})))
     now = int(time.time())
     registry_record = admin_store.get_service_registry_with_generation(path=db)
     registry = proxy.ADMIN_STORE.get_service_registry()
@@ -287,9 +293,6 @@ def _request(bootstrap: Mapping[str, Any], identity: str, method: str, path: str
         headers["x-azizam-csrf"] = session["csrf"]
         if identity != "admin":
             headers["x-azizam-user-action"] = "1"
-    if method == "PUT" and path == "/admin/api/oidc-config":
-        _, current = _request(bootstrap, identity, "GET", path)
-        headers["If-Match"] = current["revision"]
     request = urllib.request.Request(f"{bootstrap['base_url']}{path}", data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=5) as response:
@@ -422,12 +425,9 @@ def verify(path: Path) -> None:
     status, _ = _request(bootstrap, "user_b", "POST", f"/me/api/apps/{app_a}/keys", {"label": "Denied"})
     if status != 404:
         raise RuntimeError(f"User B key denial failed: {status}")
-    status, setting = _request(bootstrap, "admin", "PUT", "/admin/api/oidc-config", {"enabled": False, "client_secret": bootstrap["fixture"]["redacted_setting"]})
-    if status != 200 or setting.get("oidc_config", {}).get("client_secret") != "<redacted>" or bootstrap["fixture"]["redacted_setting"] in json.dumps(setting):
-        raise RuntimeError(f"fixture redacted setting write failed: {status} {setting}")
-    status, setting = _request(bootstrap, "admin", "GET", "/admin/api/oidc-config")
-    if status != 200 or setting.get("oidc_config", {}).get("client_secret") != "<redacted>" or bootstrap["fixture"]["redacted_setting"] in json.dumps(setting):
-        raise RuntimeError(f"fixture redacted setting projection failed: {status} {setting}")
+    status, setting = _request(bootstrap, "admin", "GET", "/admin/api/signin")
+    if status != 200 or setting.get("provider", {}).get("client_secret_saved") is not True or bootstrap["fixture"]["redacted_setting"] in json.dumps(setting):
+        raise RuntimeError(f"fixture saved secret projection failed: {status} {setting}")
     plan_id = bootstrap["resolved_ids"]["access_plans.fixture"]
     status, policy = _request(bootstrap, "admin", "POST", "/admin/api/access/check", {"plan": plan_id, "request": bootstrap["fixture"]["policy_request"]})
     expected_policy = bootstrap["fixture"]["policy_result"]

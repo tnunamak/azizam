@@ -17,7 +17,9 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway import accounts, admin_store  # noqa: E402
+from gateway.admin_api import AdminContext  # noqa: E402
 from tests.support.access import AdminAppFixtures, plan_document, store_plan  # noqa: E402
+from tests.support.signin import seed_rules  # noqa: E402
 from gateway.admin_oidc import (  # noqa: E402
     CookieConfig,
     OIDCConfig,
@@ -130,50 +132,29 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             "enabled": False,
             "issuer": "https://bootstrap.example",
             "scopes": ["openid", "email"],
-            "allowed_email_domains": ["example.com"],
-            "admin_emails": ["owner@example.com"],
-            "admin_groups": ["owners"],
-            "admin_roles": ["operator"],
         }
-        stored = {
-            "issuer": "", "scopes": [], "allowed_email_domains": [],
-            "admin_emails": [], "admin_groups": [], "admin_roles": [],
-        }
+        stored = {"issuer": "", "scopes": []}
         with patch.object(proxy, "_bootstrap_admin_oidc_cfg", return_value=bootstrap):
             candidate = proxy._merged_admin_oidc_config_candidate(stored)
         self.assertEqual(candidate["issuer"], "")
-        for field in ("scopes", "allowed_email_domains", "admin_emails", "admin_groups", "admin_roles"):
+        for field in ("scopes",):
             self.assertEqual(candidate[field], [])
 
-    def test_oidc_empty_lists_clear_through_put_runtime_get_and_omission(self) -> None:
+    def test_oidc_empty_lists_clear_through_save_runtime_and_omission(self) -> None:
         bootstrap = {
             "enabled": False,
             "scopes": ["openid", "email"],
-            "allowed_email_domains": ["example.com"],
-            "admin_emails": ["owner@example.com"],
-            "admin_groups": ["owners"],
-            "admin_roles": ["operator"],
         }
-        fields = (
-            "scopes", "allowed_email_domains", "admin_emails", "admin_groups", "admin_roles",
-        )
-        clear = {field: [] for field in fields}
+        owner = AdminContext(subject="fixture-owner", roles=frozenset({"owner"}))
         with patch.object(proxy, "_bootstrap_admin_oidc_cfg", return_value=bootstrap):
-            response = self.client.put("/admin/api/oidc-config", json=clear, headers={**self._auth(), "If-Match": proxy.ADMIN_STORE.setting_revision("oidc_provider_config")})
-            self.assertEqual(response.status_code, 200, response.text)
+            saved = proxy.ADMIN_STORE.update_oidc_config_setting(data={"scopes": []}, actor=owner)
             self.assertEqual(proxy._effective_admin_oidc_config().scopes, ())
-            for field in fields:
-                self.assertEqual(response.json()["oidc_config"][field], [])
+            self.assertEqual(saved["scopes"], [])
 
-            # A later PUT that omits the fields retains the explicit clears.
-            response = self.client.put(
-                "/admin/api/oidc-config", json={"client_id": "changed"}, headers={**self._auth(), "If-Match": proxy.ADMIN_STORE.setting_revision("oidc_provider_config")}
-            )
-            self.assertEqual(response.status_code, 200, response.text)
-            response = self.client.get("/admin/api/oidc-config", headers=self._auth())
-            self.assertEqual(response.status_code, 200, response.text)
-            for field in fields:
-                self.assertEqual(response.json()["oidc_config"][field], [])
+            # A later save that omits the field retains the explicit clear.
+            proxy.ADMIN_STORE.update_oidc_config_setting(data={"client_id": "changed"}, actor=owner)
+            self.assertEqual(proxy.ADMIN_STORE.get_oidc_config_setting()["scopes"], [])
+            self.assertEqual(proxy._effective_admin_oidc_config().scopes, ())
 
     def test_malformed_oidc_db_fallback_has_bootstrap_provenance(self) -> None:
         bootstrap = {
@@ -188,7 +169,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         malformed_values = (
             {"issuer": 42},
             {"scopes": ["openid", 42]},
-            {"admin_groups": "owners"},
+            {"scopes": "openid"},
         )
         for malformed in malformed_values:
             with (
@@ -311,7 +292,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
             admin_emails=frozenset({"owner@example.com"}),
             signing_key=b"s" * 32,
             cookie=CookieConfig(secure=False),
@@ -319,6 +299,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
         )
+        seed_rules(self.db, domains=["example.com"], emails=["owner@example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
@@ -335,15 +316,14 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
             admin_emails=frozenset({"owner@example.com"}),
             signing_key=b"s" * 32,
             cookie=CookieConfig(secure=False),
             authorization_endpoint="https://idp.example/authorize",
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
-            admin_groups=frozenset({"admins"}),
         )
+        seed_rules(self.db, domains=["example.com"], groups=["admins"], emails=["owner@example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
@@ -402,16 +382,14 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset(),
             admin_emails=frozenset({"owner@example.com"}),
             signing_key=b"s" * 32,
             cookie=CookieConfig(secure=False),
             authorization_endpoint="https://idp.example/authorize",
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
-            admin_groups=frozenset({"/trusted-users"}),
-            admin_roles=frozenset({"trusted"}),
         )
+        seed_rules(self.db, groups=["/trusted-users"], roles=["trusted"], emails=["owner@example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
@@ -463,7 +441,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
             admin_emails=frozenset(),
             signing_key=b"s" * 32,
             cookie=CookieConfig(secure=False),
@@ -471,6 +448,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
         )
+        seed_rules(self.db, domains=["example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
@@ -525,7 +503,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
             admin_emails=frozenset({"owner@example.com"}),
             signing_key=b"s" * 32,
             cookie=CookieConfig(secure=False),
@@ -533,6 +510,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
         )
+        seed_rules(self.db, domains=["example.com"], emails=["owner@example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
@@ -580,7 +558,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
             admin_emails=frozenset({"owner@example.com"}),
             signing_key=b"s" * 32,
             cookie=CookieConfig(secure=False),
@@ -588,6 +565,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
         )
+        seed_rules(self.db, domains=["example.com"], emails=["owner@example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
@@ -613,7 +591,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="",
             redirect_uri="",
             scopes=(),
-            allowed_email_domains=frozenset(),
             admin_emails=frozenset(),
             signing_key=b"",
             cookie=CookieConfig(secure=False),
@@ -658,15 +635,14 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
             admin_emails=frozenset({"owner@example.com"}),
             signing_key=b"s" * 32,
             cookie=CookieConfig(name="custom_admin_session", secure=False),
             authorization_endpoint="https://idp.example/authorize",
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
-            admin_groups=frozenset({"admins"}),
         )
+        seed_rules(self.db, domains=["example.com"], groups=["admins"], emails=["owner@example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
@@ -710,7 +686,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
             admin_emails=frozenset({"owner@example.com"}),
             signing_key=b"s" * 32,
             cookie=CookieConfig(secure=False),
@@ -718,6 +693,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
         )
+        seed_rules(self.db, domains=["example.com"], emails=["owner@example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
@@ -768,7 +744,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
             admin_emails=frozenset({"owner@example.com"}),
             signing_key=b"s" * 32,
             cookie=CookieConfig(secure=False),
@@ -776,6 +751,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
         )
+        seed_rules(self.db, domains=["example.com"], emails=["owner@example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
@@ -831,7 +807,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset(),
             admin_emails=frozenset(),
             signing_key=b"d" * 32,
             cookie=CookieConfig(secure=False),
@@ -875,7 +850,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset(),
             admin_emails=frozenset(),
             signing_key=b"m" * 32,
             cookie=CookieConfig(secure=False),
@@ -1013,7 +987,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset(),
             admin_emails=frozenset(),
             signing_key=b"n" * 32,
             cookie=CookieConfig(secure=False),
@@ -1063,7 +1036,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
             admin_emails=frozenset({"owner@example.com"}),
             signing_key=b"s" * 32,
             cookie=CookieConfig(secure=False),
@@ -1071,6 +1043,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
         )
+        seed_rules(self.db, domains=["example.com"], emails=["owner@example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
@@ -1165,7 +1138,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
             admin_emails=frozenset(),
             signing_key=b"s" * 32,
             cookie=CookieConfig(secure=False),
@@ -1173,6 +1145,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
         )
+        seed_rules(self.db, domains=["example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
@@ -1271,7 +1244,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
             admin_emails=frozenset(),
             signing_key=b"s" * 32,
             cookie=CookieConfig(secure=False),
@@ -1279,6 +1251,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
         )
+        seed_rules(self.db, domains=["example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
@@ -1544,7 +1517,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
             admin_emails=frozenset(),
             signing_key=b"s" * 32,
             cookie=CookieConfig(secure=False),
@@ -1552,6 +1524,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
         )
+        seed_rules(self.db, domains=["example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
@@ -1608,7 +1581,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
             admin_emails=frozenset({"owner@example.com"}),
             signing_key=b"s" * 32,
             cookie=CookieConfig(secure=False),
@@ -1616,6 +1588,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
         )
+        seed_rules(self.db, domains=["example.com"], emails=["owner@example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
@@ -1747,7 +1720,6 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
             admin_emails=frozenset({"owner@example.com"}),
             signing_key=b"s" * 32,
             cookie=CookieConfig(secure=False),
@@ -1755,6 +1727,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
         )
+        seed_rules(self.db, domains=["example.com"], emails=["owner@example.com"])
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie

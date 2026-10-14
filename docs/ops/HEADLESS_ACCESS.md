@@ -249,8 +249,6 @@ Selected successful workflows are exercised separately.
 | `POST /admin/api/invites` | owner-bearer | denied | `gateway.accounts_api.create_invite`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `DELETE /admin/api/invites/{link_id}` | owner-bearer | denied | `gateway.accounts_api.revoke_invite`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/invites/{link_id}/link` | owner-bearer | denied | `gateway.accounts_api.copy_invite`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
-| `GET /admin/api/oidc-config` | owner-bearer | denied | `gateway.admin_api.get_oidc_config`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `PUT /admin/api/oidc-config` | owner-bearer | denied | `gateway.admin_api.update_oidc_config`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/operator/litellm-config` | owner-bearer | denied | `gateway.admin_api.get_litellm_config`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/operator/litellm/keys` | owner-bearer | denied | `gateway.admin_api.list_litellm_keys`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/operator/litellm/keys` | owner-bearer | denied | `gateway.admin_api.create_litellm_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
@@ -267,8 +265,6 @@ Selected successful workflows are exercised separately.
 | `DELETE /admin/api/operator/services/{service_id}` | owner-bearer | denied | `gateway.admin_api.remove_service`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PATCH /admin/api/operator/services/{service_id}` | owner-bearer | denied | `gateway.admin_api.update_service`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/operator/services/{service_id}/enabled` | owner-bearer | denied | `gateway.admin_api.set_service_enabled`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `GET /admin/api/operator/sign-in` | owner-bearer | denied | `gateway.accounts_api.get_mode`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
-| `PUT /admin/api/operator/sign-in` | owner-bearer | denied | `gateway.accounts_api.set_mode`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/overview` | owner-bearer | denied | `gateway.admin_api.overview`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/people` | owner-bearer | denied | `gateway.accounts_api.people`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `DELETE /admin/api/people/{user_id}` | owner-bearer | denied | `gateway.accounts_api.remove_person`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
@@ -305,6 +301,17 @@ Selected successful workflows are exercised separately.
 | `POST /admin/api/setup-dismiss` | session-only | denied | `gateway.home_api.dismiss_setup`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /admin/api/setup-evidence` | session-only | denied | `gateway.home_api.setup_evidence`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /admin/api/setup-progress` | owner-bearer | denied | `gateway.home_api.setup_progress`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/signin` | owner-bearer | denied | `gateway.signin_api.get_snapshot`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/signin/preview` | owner-bearer | denied | `gateway.signin_api.preview`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/discover` | owner-bearer | denied | `gateway.signin_api.discover_route`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/test` | owner-bearer | denied | `gateway.signin_api.start_test`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/signin/test/{test_id}/start` | owner-bearer | denied | `gateway.signin_api.begin_test`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/signin/test/{test_id}` | owner-bearer | denied | `gateway.signin_api.get_test`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `DELETE /admin/api/signin/test/{test_id}` | owner-bearer | denied | `gateway.signin_api.cancel_test`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/link-owner` | owner-bearer | denied | `gateway.signin_api.link_owner`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PUT /admin/api/signin` | owner-bearer | denied | `gateway.signin_api.save`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/notice/dismiss` | owner-bearer | denied | `gateway.signin_api.dismiss_notice`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/owner-password` | owner-bearer | denied | `gateway.signin_api.owner_password`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/status` | owner-bearer | denied | `gateway.admin_api.status_payload`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/users` | owner-bearer | denied | `gateway.admin_api.list_users`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `DELETE /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.delete_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |

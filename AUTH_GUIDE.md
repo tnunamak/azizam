@@ -188,15 +188,49 @@ admin:
     client_secret_env: AZIZAM_OIDC_CLIENT_SECRET
     redirect_uri: https://ai.example.com/admin/oidc/callback
     signing_key_env: AZIZAM_ADMIN_SESSION_KEY
-    allowed_email_domains: ["example.com"]
-    admin_emails: ["owner@example.com"]
+    admin_emails: ["owner@example.com"]   # may become the first owner, and nothing else
 ```
 
-The first allowed OIDC login becomes `owner` if no owner exists yet. Later
-allowed logins get the configured role or no admin role until an owner grants
-one. A person who signs in without an invitation has **no access plan**: they
-can sign in, see their account and ask for access, and nothing else, until an
-owner chooses a plan in People.
+The first sign-in with `admin_emails` becomes `owner` if no owner exists yet.
+Everyone else is decided by **sign-in rules** (next section). The old
+`allowed_email_domains`, `admin_groups` and `admin_roles` keys are no longer
+read; the gateway prints a warning at start if the file still has them. A
+person who signs in without an invitation has **no access plan** unless a rule
+gives one: they can sign in, see their account and ask for access, and nothing
+else, until an owner chooses a plan in People.
+
+### Sign-in rules: who gets in, and what they get
+
+**Settings → Sign-in** holds the rules. They are data in `admin.db` (the
+`signin_rules` setting) and one evaluator, `gateway/signin_rules.py`, reads
+them for provider sign-in, for the **What changes** preview and for the test
+sign-in, so the three cannot disagree.
+
+- **Deny by default.** The owner, a person an open invitation names (by a
+  verified email) and anyone a rule lets in get in. **Everyone else** is kept
+  out unless the owner chose to let them in with no plan.
+- A rule matches a **group**, **role**, **email**, **email domain** or
+  **everyone**, and can **let in**, **make administrator** (which implies
+  letting in) and **give a plan**. There is no "keep out" rule. Values are
+  picked from what past sign-ins carried (stored in `user_identity_claims`) or
+  added by hand.
+- **The first matching plan rule wins**; the order of the rules is the
+  priority. A plan the owner set on People, or that an invitation carried,
+  always beats any rule.
+- Grants a rule gave are **re-derived at every sign-in** and removed when no
+  rule supports them. Grants the owner made by hand are never touched. Saving
+  a rule change removes grants and sessions the rules no longer support at
+  once; the admin keys those people made are revoked unless the owner keeps
+  them working.
+- The **owner's own password always works**, whether or not built-in sign-in is
+  on. The two sign-in switches can never both be off.
+- **Test sign-in** tries a connection without signing anyone in or creating a
+  person, and a connection must pass one before it is saved while the provider
+  is on. It also links the owner's provider identity to the owner account.
+
+The schema 9 upgrade converted the old lists into rules and marked the
+administrator grants the old group rule gave as rule-derived, so leaving the
+group now removes them.
 
 ## Give A Family Member Access
 

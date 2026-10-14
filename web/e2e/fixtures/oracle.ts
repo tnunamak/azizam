@@ -246,6 +246,26 @@ export async function exerciseOracle(origin: string, manifest: Json, engineOrigi
       "POST /admin/api/access/preview",
       await admin.call("POST", "/admin/api/access/preview", { data: { plan: plan.id } }),
     );
+    // Sign-in: ask what saving the unchanged settings would do.
+    const signIn = (await admin.call("GET", "/admin/api/signin")).body as Json;
+    const { name, address, client_id, scopes, groups_claim, authorization_endpoint, token_endpoint, jwks_uri, clock_skew_seconds } =
+      signIn.provider as Json;
+    record(
+      "POST /admin/api/signin/preview",
+      await admin.call("POST", "/admin/api/signin/preview", {
+        data: {
+          proposal: {
+            methods: signIn.methods,
+            provider: {
+              name, address, client_id, client_secret: "", scopes, groups_claim,
+              authorization_endpoint, token_endpoint, jwks_uri, clock_skew_seconds,
+            },
+            rules: signIn.rules,
+          },
+          test_id: null,
+        },
+      }),
+    );
 
     // --- Category policy: the first candidate becomes the active snapshot.
     const categories = "/admin/api/categories";

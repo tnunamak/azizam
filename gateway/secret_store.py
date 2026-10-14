@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import os
 import secrets
+import sqlite3
 import stat
 import tempfile
 import time
@@ -80,21 +81,22 @@ def ensure_provider_secret_schema(path: Path) -> None:
         conn.commit()
 
 
-def put_provider_secret(secret_id: str, value: str, *, db_path: Path, key_path: Path | None = None, now: int | None = None, approved_origin: str | None = None) -> SecretStatus:
+def put_provider_secret(secret_id: str, value: str, *, db_path: Path, key_path: Path | None = None, now: int | None = None, approved_origin: str | None = None, conn: sqlite3.Connection | None = None) -> SecretStatus:
+    """Store one secret. With ``conn``, write inside the caller's open transaction and leave the commit to
+    the caller; the caller must have run :func:`ensure_provider_secret_schema` before it began."""
     secret_id = _normalize_secret_id(secret_id)
     approved_origin = _normalize_origin(approved_origin) if approved_origin else None
     if len(value) <= 4:
         raise ValueError("secret value must be longer than 4 characters")
-    ensure_provider_secret_schema(db_path)
+    if conn is None:
+        ensure_provider_secret_schema(db_path)
     key = load_or_create_secret_key(db_path.parent / DEFAULT_KEY_FILE if key_path is None else key_path)
     nonce = os.urandom(12)
     aad = _secret_aad(secret_id, approved_origin)
     ciphertext = AESGCM(key).encrypt(nonce, value.encode("utf-8"), aad)
     timestamp = int(time.time() if now is None else now)
     suffix = value[-4:]
-    with closing(sqlite_startup.connect(db_path)) as conn:
-        conn.execute(
-            """
+    insert = """
             INSERT INTO provider_secrets(id, nonce_b64, ciphertext_b64, suffix, approved_origin, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
@@ -103,18 +105,22 @@ def put_provider_secret(secret_id: str, value: str, *, db_path: Path, key_path: 
               suffix=excluded.suffix,
               approved_origin=excluded.approved_origin,
               updated_at=excluded.updated_at
-            """,
-            (
-                secret_id,
-                base64.b64encode(nonce).decode("ascii"),
-                base64.b64encode(ciphertext).decode("ascii"),
-                suffix,
-                approved_origin,
-                timestamp,
-                timestamp,
-            ),
-        )
-        conn.commit()
+            """
+    row = (
+        secret_id,
+        base64.b64encode(nonce).decode("ascii"),
+        base64.b64encode(ciphertext).decode("ascii"),
+        suffix,
+        approved_origin,
+        timestamp,
+        timestamp,
+    )
+    if conn is not None:
+        conn.execute(insert, row)
+    else:
+        with closing(sqlite_startup.connect(db_path)) as own:
+            own.execute(insert, row)
+            own.commit()
     return SecretStatus(secret_id, "set", suffix, timestamp)
 
 
@@ -138,12 +144,16 @@ def get_provider_secret(secret_id: str, *, db_path: Path, key_path: Path | None 
     return AESGCM(key).decrypt(nonce, ciphertext, _secret_aad(secret_id, stored_origin)).decode("utf-8")
 
 
-def delete_provider_secret(secret_id: str, *, db_path: Path) -> SecretStatus:
+def delete_provider_secret(secret_id: str, *, db_path: Path, conn: sqlite3.Connection | None = None) -> SecretStatus:
+    """Delete one secret. With ``conn``, delete inside the caller's open transaction (see :func:`put_provider_secret`)."""
     secret_id = _normalize_secret_id(secret_id)
-    ensure_provider_secret_schema(db_path)
-    with closing(sqlite_startup.connect(db_path)) as conn:
+    if conn is not None:
         conn.execute("DELETE FROM provider_secrets WHERE id = ?", (secret_id,))
-        conn.commit()
+        return SecretStatus(secret_id, "missing", None, None)
+    ensure_provider_secret_schema(db_path)
+    with closing(sqlite_startup.connect(db_path)) as own:
+        own.execute("DELETE FROM provider_secrets WHERE id = ?", (secret_id,))
+        own.commit()
     return SecretStatus(secret_id, "missing", None, None)
 
 

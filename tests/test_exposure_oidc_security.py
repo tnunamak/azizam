@@ -10,6 +10,7 @@ import pytest
 import proxy
 from gateway import admin_store
 from gateway.admin_oidc import CookieConfig, OIDCConfig
+from tests.support.signin import seed_rules
 
 
 SIGNING_KEY = b"exposure-oidc-test-key-32-bytes!!"
@@ -24,7 +25,6 @@ def _oidc_config() -> OIDCConfig:
         client_secret="test-secret",
         redirect_uri=f"{BASE_URL}/admin/oidc/callback",
         scopes=("openid", "email"),
-        allowed_email_domains=frozenset({"example.test"}),
         admin_emails=frozenset({"owner@example.test"}),
         signing_key=SIGNING_KEY,
         cookie=CookieConfig(secure=True),
@@ -51,6 +51,7 @@ def oidc_gateway(monkeypatch: pytest.MonkeyPatch, tmp_path):
         path=path,
     )
     monkeypatch.setattr(proxy, "ADMIN_OIDC_STATES", {})
+    seed_rules(path, domains=["example.test"])
     yield path
 
 

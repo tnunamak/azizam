@@ -28,20 +28,18 @@ def test_config_rejects_invalid_display_name_even_when_disabled(name):
 
 
 @pytest.mark.parametrize("name", INVALID_NAMES)
-def test_owner_api_rejects_invalid_name_without_persisting(client_store, name):
-    client, store, _ = client_store
-    response = client.put("/admin/api/oidc-config", json={"display_name": name}, headers={"If-Match": "0"})
-    assert response.status_code == 400
+def test_saving_an_invalid_name_is_refused_without_persisting(client_store, name):
+    _, store, actor = client_store
+    with pytest.raises(ValueError):
+        store.update_oidc_config_setting(data={"display_name": name}, actor=actor)
     assert store.get_oidc_config_setting_raw() is None
 
 
 def test_owner_can_save_read_and_clear_name(client_store):
-    client, store, _ = client_store
-    saved = client.put("/admin/api/oidc-config", json={"display_name": "Household accounts"}, headers={"If-Match": "0"})
-    assert saved.status_code == 200
-    assert client.get("/admin/api/oidc-config").json()["oidc_config"]["display_name"] == "Household accounts"
-    cleared = client.put("/admin/api/oidc-config", json={"display_name": None}, headers={"If-Match": store.setting_revision("oidc_provider_config")})
-    assert cleared.status_code == 200
+    _, store, actor = client_store
+    store.update_oidc_config_setting(data={"display_name": "Household accounts"}, actor=actor)
+    assert store.get_oidc_config_setting()["display_name"] == "Household accounts"
+    store.update_oidc_config_setting(data={"display_name": None}, actor=actor)
     assert store.get_oidc_config_setting_raw()["display_name"] == ""
 
 

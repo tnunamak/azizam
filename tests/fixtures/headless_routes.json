@@ -361,22 +361,6 @@
   },
   {
     "method": "GET",
-    "path": "/admin/api/oidc-config",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.get_oidc_config",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/oidc-config",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.admin_api.update_oidc_config",
-    "schema": true
-  },
-  {
-    "method": "GET",
     "path": "/admin/api/operator/litellm-config",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
@@ -501,22 +485,6 @@
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.set_service_enabled",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/operator/sign-in",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.accounts_api.get_mode",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/operator/sign-in",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.accounts_api.set_mode",
     "schema": true
   },
   {
@@ -806,6 +774,94 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "gateway.home_api.setup_progress",
     "schema": false
+  },
+  {
+    "method": "GET",
+    "path": "/admin/api/signin",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.signin_api.get_snapshot",
+    "schema": true
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/api/signin",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.save",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/signin/discover",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.discover_route",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/signin/link-owner",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.link_owner",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/signin/notice/dismiss",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.dismiss_notice",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/signin/owner-password",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.owner_password",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/signin/preview",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.preview",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/signin/test",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.start_test",
+    "schema": true
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/api/signin/test/{test_id}",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.cancel_test",
+    "schema": true
+  },
+  {
+    "method": "GET",
+    "path": "/admin/api/signin/test/{test_id}",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.get_test",
+    "schema": true
+  },
+  {
+    "method": "GET",
+    "path": "/admin/api/signin/test/{test_id}/start",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.signin_api.begin_test",
+    "schema": true
   },
   {
     "method": "GET",

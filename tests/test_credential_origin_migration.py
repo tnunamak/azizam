@@ -74,7 +74,7 @@ def test_the_migration_keeps_every_existing_key_going_to_the_host_it_went_to_bef
     # The other records emit exactly what they emitted before.
     assert after["typesafe"] == before["typesafe"]
     assert after["litellm"] == before["litellm"] == []
-    assert admin_store.schema_version(gateway.path) == admin_store.SCHEMA_VERSION == 8
+    assert admin_store.schema_version(gateway.path) == admin_store.SCHEMA_VERSION
 
 
 def test_the_migration_records_the_current_destination_and_names_the_records_in_one_audit_entry(gateway):

@@ -67,14 +67,14 @@ def test_sec05_nobody_reuses_an_existing_key_name_not_even_the_owner(db):
 
 
 def test_sec06_oidc_trust_changes_require_owner(db):
-    admin = client_for(db, "admin")
-    settings = admin.get("/admin/api/oidc-config")
-    assert settings.status_code == 200
-    headers = {"If-Match": settings.json()["revision"]}
-    assert admin.put("/admin/api/oidc-config", json={"enabled": False}, headers=headers).status_code == 403
-    assert AdminSQLiteStore(db).get_oidc_config_setting() is None
-    owner = client_for(db, "owner")
-    assert owner.put("/admin/api/oidc-config", json={"enabled": False}, headers=headers).status_code == 200
+    store = AdminSQLiteStore(db)
+    admin = AdminContext(subject="admin", roles=frozenset({"admin"}))
+    with pytest.raises(PermissionError):
+        store.update_oidc_config_setting(data={"enabled": False}, actor=admin)
+    assert store.get_oidc_config_setting() is None
+    owner = AdminContext(subject="owner", roles=frozenset({"owner"}))
+    store.update_oidc_config_setting(data={"enabled": False}, actor=owner)
+    assert store.get_oidc_config_setting() is not None
 
 
 def test_sec08_oidc_grants_are_removed_but_manual_grants_survive(db):

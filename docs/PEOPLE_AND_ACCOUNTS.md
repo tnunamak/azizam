@@ -11,7 +11,7 @@ are unchanged by this feature.
    email restriction. A pending invitation can be copied again or revoked.
 2. The invitee opens `/invite/#token=...`. They create an email/password
    account, or sign in with the configured OIDC provider and accept using
-   their signed-in identity. Targeted OIDC invites require a verified email.
+   their signed-in identity. Targeted OIDC invites require a verified email, and a verified email an open invitation names is let through the sign-in rules (an invitation with no email cannot admit a provider sign-in).
 3. Acceptance atomically assigns the access plan, creates a personal App and
    API key, consumes the invitation and records an audit event. All existing
    Apps and keys of an OIDC invitee receive the invitation's plan as well.
@@ -67,20 +67,16 @@ members and administrators cannot use the owner-only People/invitation APIs.
 | `POST /admin/api/invites` | `{profile_id,email?,expires_in}`; invitation metadata and private link |
 | `GET /admin/api/invites/{id}/link` | Recover the same pending invitation link; expired/used/revoked links fail |
 | `DELETE /admin/api/invites/{id}` | Revoke pending invitation |
-| `GET /admin/api/operator/sign-in` | Current effective sign-in choices and `revision` |
-| `PUT /admin/api/operator/sign-in` | `{mode:"built-in"}`, `{mode:"oidc"}` or `{mode:"both"}` with `If-Match` from GET; returns saved choices and `revision` |
 
-The sign-in choice lives in `operator_settings.sign_in` in admin.db and
-applies without restart. OIDC must be configured before selecting `oidc` or
-`both` explicitly. The Settings lane can use these APIs without changing the
-account implementation. The default permits built-in sign-in and exposes
-OIDC when its existing configuration is enabled.
-
-Sign-in choice and identity-provider configuration have separate revisions.
-Saving a sign-in choice does not invalidate a provider draft, and saving a
-provider does not invalidate a sign-in-choice draft. A stale revision for the
-same resource returns `409 settings_conflict`; a missing `If-Match` returns
-`428 settings_revision_required`.
+The sign-in switches, the identity provider connection and the sign-in rules
+are one document with one revision, read and written only through
+`/admin/api/signin` (see "Sign-in rules and the Sign-in page" in
+`docs/design/web-api-contract.md`). There is no separate route for the
+built-in or provider switch, and none for the provider connection. The choice
+lives in `operator_settings.sign_in` in admin.db and applies without restart.
+The default permits built-in sign-in and exposes OIDC when its connection is
+turned on. A stale revision returns `409 settings_conflict`; a missing
+`If-Match` returns `428 settings_revision_required`.
 
 ## Revocation and ownership
 

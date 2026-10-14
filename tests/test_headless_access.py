@@ -264,13 +264,25 @@ def principals():
         case.tearDown()
 
 
+# Valid typed bodies for the sign-in routes; each stops in the handler before any effect.
+_SIGNIN_PROPOSAL = {"methods": {"password": True, "provider": False}, "provider": {},
+                    "rules": {"fallback": "closed", "rules": []}}
+SIGNIN_BODIES = {
+    "/admin/api/signin/preview": {"proposal": _SIGNIN_PROPOSAL},
+    "/admin/api/signin/discover": {"address": ""},
+    "/admin/api/signin/test": {"provider": {}},
+    "/admin/api/signin/link-owner": {"test_id": "missing-fixture-id"},
+    "/admin/api/signin": {"proposal": _SIGNIN_PROPOSAL},
+    "/admin/api/signin/owner-password": {"password": "short"},
+}
+
+
 def _request(row):
     path = re.sub(r"\{(?:reservation_id|event_id)\}", "1", row["path"])
     path = re.sub(r"\{[^}]+\}", "missing-fixture-id", path)
     # Supply valid typed bodies so the request reaches auth instead of 422.
     body = {"access_plan": "plan-missing"} if path == "/admin/api/invites" else {}
-    if path == "/admin/api/operator/sign-in":
-        body = {"mode": "both"}
+    body = SIGNIN_BODIES.get(path, body)
     return path, body
 
 
@@ -359,7 +371,7 @@ def test_every_owner_route_reaches_handler_with_owner_bearer(row, principals, ga
         operation.assert_called_once()
     else:
         # Typed bodies must pass FastAPI validation and fail inside the handler.
-        typed = row.get("handler", "").startswith("gateway.accounts_api.")
+        typed = row.get("handler", "").startswith(("gateway.accounts_api.", "gateway.signin_api."))
         if typed and row["method"] not in {"GET", "DELETE"}:
             body = {**body, "expires_in": 0} if "/invites" in path or path.endswith("/reset") else body
             payload = {"json": body}
@@ -396,6 +408,8 @@ HANDLER_ERRORS = {
     "settings_revision_required", "registry_revision_required", "litellm_unconfigured",
     "generation_mismatch", "audit_event_not_found", "person_not_found",
     "invalid_instance", "invalid_prompt_memory",
+    "address_invalid", "client_id_required", "test_not_passed", "test_not_found", "owner_person_required",
+    "invalid_password",
 }
 
 

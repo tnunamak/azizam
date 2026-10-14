@@ -279,8 +279,8 @@ def account_client(account_db):
 OWNER_HEADERS = {"x-test-role": "owner", "x-azizam-csrf": "owner-csrf"}
 
 
-@pytest.mark.parametrize("endpoint", ["/admin/api/people", "/admin/api/invites", "/admin/api/operator/sign-in"])
-def test_people_invites_and_signin_settings_are_owner_only(account_client, endpoint):
+@pytest.mark.parametrize("endpoint", ["/admin/api/people", "/admin/api/invites"])
+def test_people_and_invites_are_owner_only(account_client, endpoint):
     client, _ = account_client
     assert client.get(endpoint).status_code == 401
     assert client.get(endpoint, headers={"x-test-role": "none"}).status_code == 403
@@ -294,7 +294,6 @@ def test_people_invites_and_signin_settings_are_owner_only(account_client, endpo
     ("PATCH", "/admin/api/people/unused", {"disabled": True}),
     ("DELETE", "/admin/api/people/unused", None),
     ("POST", "/admin/api/people/unused/reset", {}),
-    ("PUT", "/admin/api/operator/sign-in", {"mode": "both"}),
 ])
 def test_owner_mutations_require_csrf_before_accessing_records(account_client, method, endpoint, payload):
     client, _ = account_client
@@ -356,31 +355,30 @@ def test_api_login_rejects_other_origin_and_reports_persistent_throttle(account_
 def test_signin_mode_controls_public_options_and_builtin_routes(account_db, account_client, mode, builtin, oidc, fast_password_work):
     path, plan = account_db
     client, _ = account_client
-    revision = client.get("/admin/api/operator/sign-in", headers=OWNER_HEADERS).json()["revision"]
-    set_mode = client.put("/admin/api/operator/sign-in", json={"mode": mode}, headers={**OWNER_HEADERS, "If-Match": revision})
-    assert set_mode.status_code == 200
+    admin_store.put_operator_setting("sign_in", {"mode": mode}, path=path)
     options = client.get("/auth/api/options").json()
     assert options["mode"] == mode
     assert options["built_in"] is builtin
     assert options["oidc"] is oidc
     response = client.post("/auth/api/login", json={"email": "missing@example.test", "password": PASSWORD})
-    assert response.status_code == (401 if builtin else 403)
+    # Only a correct password learns that built-in sign-in is off (see the owner-password tests).
+    assert response.status_code == 401
     _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], path=path)
     accepted = client.post("/auth/api/invite/accept", json={"token": token, "email": "person@example.test", "name": "Person", "password": PASSWORD})
     assert accepted.status_code == (200 if builtin else 403)
 
 
-def test_oidc_mode_requires_configured_provider_and_invalid_settings_fail(account_client):
+def test_both_with_no_provider_turned_on_reads_as_built_in_only(account_db, account_client):
+    path, _ = account_db
     client, state = account_client
     state["oidc_enabled"] = False
-    headers = {**OWNER_HEADERS, "If-Match": "0"}
-    assert client.put("/admin/api/operator/sign-in", json={"mode": "oidc"}, headers=headers).status_code == 409
-    assert client.put("/admin/api/operator/sign-in", json={"mode": "built-in"}, headers=headers).status_code == 200
-    # The default can be put back without a provider; it still reads as built-in only.
-    restored = client.put("/admin/api/operator/sign-in", json={"mode": "both"}, headers={**OWNER_HEADERS, "If-Match": client.get("/admin/api/operator/sign-in", headers=OWNER_HEADERS).json()["revision"]})
-    assert restored.status_code == 200
-    assert client.get("/auth/api/options").json()["oidc"] is False
-    assert client.put("/admin/api/operator/sign-in", json={"mode": "anything"}, headers=OWNER_HEADERS).status_code == 422
+    admin_store.put_operator_setting("sign_in", {"mode": "both"}, path=path)
+    options = client.get("/auth/api/options").json()
+    assert options["built_in"] is True and options["oidc"] is False
+
+
+def test_invalid_account_request_bodies_fail(account_client):
+    client, _ = account_client
     assert client.post("/admin/api/invites", json={"access_plan": "unused", "expires_in": True}, headers=OWNER_HEADERS).status_code == 422
     assert client.patch("/admin/api/people/unused", json={"disabled": "false"}, headers=OWNER_HEADERS).status_code == 422
 

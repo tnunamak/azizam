@@ -92,13 +92,65 @@ export const GLOBAL_SETTINGS: GlobalSetting[] = [
   {
     name: "sign-in",
     read: async (owner) => {
-      const body = await owner.get("/admin/api/operator/sign-in");
-      return { value: body.mode, revision: body.revision as string };
+      const body = await owner.get("/admin/api/signin");
+      const p = body.provider as Json;
+      return {
+        value: {
+          methods: body.methods,
+          rules: body.rules,
+          provider: {
+            name: p.name,
+            address: p.address,
+            client_id: p.client_id,
+            scopes: p.scopes,
+            groups_claim: p.groups_claim,
+            authorization_endpoint: p.authorization_endpoint,
+            token_endpoint: p.token_endpoint,
+            jwks_uri: p.jwks_uri,
+            clock_skew_seconds: p.clock_skew_seconds,
+          },
+        },
+        revision: body.revision as string,
+      };
     },
-    // The admin API refuses the seeded mode "both" while no identity provider
-    // is enabled, so the fixture gateway's restore route writes it back.
-    write: async (owner, value) => {
-      await owner.send("PUT", "/fixture/operator-settings/sign_in", { mode: value });
+    // A provider that was configured and off is written back off ("save for
+    // later", which needs no test). One that was never configured has its
+    // switches and rules put back through the owner's route, then its connection
+    // blanked through the fixture gateway's own route (Save cannot blank it).
+    // The saved client secret is never read or sent.
+    write: async (owner, value, revision) => {
+      const saved = value as { methods: { provider: boolean }; rules: unknown; provider: Json };
+      const connected = Boolean(saved.provider.address && saved.provider.client_id);
+      await owner.send(
+        "PUT",
+        "/admin/api/signin",
+        {
+          proposal: {
+            methods: saved.methods,
+            provider: { ...saved.provider, client_secret: "" },
+            rules: saved.rules,
+          },
+          test_id: null,
+          keep_admin_keys: [],
+          save_for_later: connected && !saved.methods.provider,
+        },
+        revision,
+      );
+      if (connected) return;
+      await owner.send(
+        "PUT",
+        "/fixture/operator-settings/oidc_provider_config",
+        {
+          enabled: false,
+          issuer: "",
+          client_id: "",
+          redirect_uri: "",
+          display_name: "",
+          authorization_endpoint: "",
+          token_endpoint: "",
+          jwks_uri: "",
+        },
+      );
     },
   },
   {
@@ -117,7 +169,7 @@ export const GLOBAL_SETTINGS: GlobalSetting[] = [
   },
 ];
 
-async function ownerApi(request: APIRequestContext): Promise<OwnerApi> {
+export async function ownerApi(request: APIRequestContext): Promise<OwnerApi> {
   const session = await request.get("/admin/api/session");
   expect(session.status(), "the lane owner session").toBe(200);
   const csrf = ((await session.json()) as { actor: { csrf_token: string } }).actor

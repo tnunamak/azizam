@@ -2,11 +2,20 @@
 
 import pytest
 
+from gateway import signin_rules
 from gateway.admin_oidc import (
     AdminRole, SessionError, access_names_from_oidc_claims,
-    admin_role_from_oidc_claims, bootstrap_admin_role, record_state,
+    bootstrap_admin_role, record_state,
 )
 from test_admin_oidc import make_config
+
+
+def admin_by_group(rule_group, claim_group):
+    """Does a rule that makes `rule_group` administrators fire for a person who sent `claim_group`?"""
+    rules = signin_rules.parse_rules({"rules": [
+        {"id": "r", "field": "group", "values": [rule_group], "admin": True}]})
+    claims = signin_rules.Claims(email="a@example.com", groups=(claim_group,))
+    return signin_rules.evaluate(rules, claims).admin
 
 
 @pytest.mark.parametrize("group", [
@@ -14,20 +23,18 @@ from test_admin_oidc import make_config
     "/trusted/admin-users", "/trusted/admin_users",
 ])
 def test_sec07_group_aliases_never_authorize_distinct_groups(group):
-    config = make_config(admin_groups=frozenset({"/trusted/admins", "/trusted/admin users"}))
-    assert admin_role_from_oidc_claims({"groups": [group]}, config=config) == AdminRole.NONE
+    assert admin_by_group("/trusted/admins", group) is False
+    assert admin_by_group("/trusted/admin users", group) is False
 
 
 def test_sec07_short_configured_group_only_matches_root_full_path():
-    config = make_config(admin_groups=frozenset({"admins"}))
-    assert admin_role_from_oidc_claims({"groups": ["/admins"]}, config=config) == AdminRole.ADMIN
-    assert admin_role_from_oidc_claims({"groups": ["/untrusted/admins"]}, config=config) == AdminRole.NONE
+    assert admin_by_group("admins", "/admins") is True
+    assert admin_by_group("admins", "/untrusted/admins") is False
 
 
 def test_sec07_exact_group_ids_are_supported():
-    config = make_config(admin_groups=frozenset({"group-id-123"}))
-    assert admin_role_from_oidc_claims({"groups": ["group-id-123"]}, config=config) == AdminRole.ADMIN
-    assert admin_role_from_oidc_claims({"groups": ["GROUP-ID-123"]}, config=config) == AdminRole.NONE
+    assert admin_by_group("group-id-123", "group-id-123") is True
+    assert admin_by_group("group-id-123", "GROUP-ID-123") is False
 
 
 def test_sec07_profile_claims_have_no_authorization_aliases():

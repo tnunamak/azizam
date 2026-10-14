@@ -106,6 +106,8 @@ def _deliberate(key: str) -> str | None:
         return "access-plans"
     if path.startswith("/admin/api/apps/") and "/trusted-addresses" in path:
         return "trusted-addresses"  # owner routes added after the baseline (gateway/trusted_addresses.py)
+    if path == "/admin/api/signin" or path.startswith("/admin/api/signin/"):
+        return "signin"  # owner routes added after the baseline (gateway/signin_api.py)
     if ui_routes.classify(path) is not None:
         return "ui"
     if path in DELETED_PATHS or ui_routes.first_segment(path) in DELETED_SEGMENTS:
@@ -179,6 +181,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # the access plan API replaced /admin/api/profiles
         if kind == "trusted-addresses":
             continue  # new owner routes; tests/test_trusted_addresses.py covers them
+        if kind == "signin":
+            continue  # new owner routes; tests/test_signin_settings_api.py and test_signin_test_flow.py cover them
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
@@ -219,7 +223,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin"}:
             continue
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue

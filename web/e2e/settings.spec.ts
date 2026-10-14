@@ -3,6 +3,59 @@ import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { fulfilJson } from "./fixtures/intercept";
 
+// GET /admin/api/signin: a live provider ("seeded") or none yet ("empty").
+function signInSnapshot(state: "seeded" | "empty" | "error") {
+  const live = state !== "empty";
+  return {
+    revision: "rev-1",
+    viewer: { role: "owner", can_edit: true },
+    methods: { password: true, provider: live },
+    provider: {
+      name: live ? "Example identity" : "",
+      address: live ? "https://login.example.test/realms/home" : "",
+      client_id: live ? "gateway" : "",
+      scopes: live ? "openid email profile" : "",
+      groups_claim: live ? "groups" : "",
+      authorization_endpoint: "",
+      token_endpoint: "",
+      jwks_uri: "",
+      clock_skew_seconds: 60,
+      client_secret_saved: live,
+      host: live ? "login.example.test" : "",
+      effective_name: live ? "Example identity" : "",
+      redirect_uri: "https://gateway.example.test/admin/oidc/callback",
+      tested_at: live ? 1_800_000_000 : null,
+      groups_missing: false,
+    },
+    rules: {
+      fallback: "closed",
+      rules: live
+        ? [
+            {
+              id: "rule-trusted",
+              field: "group",
+              values: ["/Trusted"],
+              admit: true,
+              admin: true,
+              plan: null,
+            },
+          ]
+        : [],
+    },
+    rule_matches: live ? { "rule-trusted": { count: 1, names: ["Casey"] } } : {},
+    seen: {
+      group: live ? [{ value: "/Trusted", count: 1 }] : [],
+      role: [],
+      email: [],
+      domain: [],
+    },
+    plans: [{ id: "local", name: "Local chat" }],
+    owner: { name: "Casey", email: "casey@example.test", has_password: true },
+    recovery_command: "./venv/bin/python proxy.py generate-admin-key owner-cli",
+    notice: null,
+  };
+}
+
 async function seed(page: Page, state: "seeded" | "empty" | "error") {
   await page.route("**/admin/api/settings/**", (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -44,47 +97,20 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
               };
     return fulfilJson(route, body, { status: state === "error" ? 503 : 200 });
   });
-  await page.route("**/admin/api/oidc-config", (route) =>
-    fulfilJson(
-      route,
-      {
-        revision: "7",
-        oidc_config:
-          state === "empty"
-            ? null
-            : {
-                enabled: true,
-                issuer: "https://login.example.test",
-                client_id: "gateway",
-                client_secret_set: true,
-                redirect_uri: "https://gateway.example.test/auth/callback",
-                scopes: ["openid", "email"],
-                groups_claim: "groups",
-                allowed_email_domains: [],
-                admin_emails: [],
-                admin_groups: [],
-                admin_roles: [],
-                authorization_endpoint: "",
-                token_endpoint: "",
-                jwks_uri: "",
-                clock_skew_seconds: 60,
-              },
-      },
-      { status: state === "error" ? 503 : 200 },
-    ),
+  await page.route("**/admin/api/signin", (route) =>
+    fulfilJson(route, signInSnapshot(state), {
+      status: state === "error" ? 503 : 200,
+    }),
   );
-  await page.route("**/admin/api/operator/sign-in", (route) =>
-    fulfilJson(
-      route,
-      {
-        revision: "7",
-        mode: state === "empty" ? "built-in" : "both",
-        built_in: true,
-        oidc: state !== "empty",
-        oidc_label: "Example identity",
-      },
-      { status: state === "error" ? 503 : 200 },
-    ),
+  await page.route("**/admin/api/signin/preview", (route) =>
+    fulfilJson(route, {
+      people: [],
+      unaffected: [],
+      issuer_change: null,
+      settings: [],
+      blockers: [],
+      test_verdict: null,
+    }),
   );
   await page.route("**/admin/api/operator/overrides", (route) =>
     fulfilJson(
@@ -211,7 +237,7 @@ for (const [state, theme, width] of [
           ).toBeVisible();
           await expect(
             page.getByRole("button", { name: "Try again" }),
-          ).toHaveCount(9);
+          ).toHaveCount(8);
           for (const name of ["People and access"]) {
             const retry = page
               .getByRole("region", { name, exact: true })
@@ -231,25 +257,16 @@ for (const [state, theme, width] of [
           await expect(instance.getByLabel("Instance name")).toHaveValue(
             "Our gateway",
           );
+          const signIn = page.getByRole("region", { name: "Sign-in", exact: true });
           await expect(
-            page.getByText("Built-in accounts on", { exact: true }),
-          ).toHaveCount(0);
-          const signIn = await editSection(page, "Sign-in");
-          await expect(
-            signIn.getByText("Built-in accounts on", { exact: true }),
+            signIn.getByRole("heading", { name: "Ways to sign in" }),
           ).toBeVisible();
-          await expect(
-            signIn.getByLabel("Available sign-in methods"),
-          ).toContainText(
-            state === "empty"
-              ? "Built-in accounts only"
-              : "Built-in accounts and OIDC",
-          );
-          await expect(
-            page.getByText(state === "empty" ? "OIDC off" : "OIDC on", {
-              exact: true,
-            }),
-          ).toBeVisible();
+          if (state === "empty")
+            await expect(signIn.getByText("Not set up", { exact: true })).toBeVisible();
+          else
+            await expect(
+              signIn.getByRole("switch", { name: "Example identity" }),
+            ).toBeChecked();
           await expect(
             page.getByRole("link", { name: "Export redacted snapshot" }),
           ).toBeVisible();
@@ -260,9 +277,6 @@ for (const [state, theme, width] of [
             await editSection(page, "Extensions");
             await expect(
               page.getByText("No extensions installed", { exact: true }),
-            ).toBeVisible();
-            await expect(
-              page.getByText(/No identity provider is connected yet/),
             ).toBeVisible();
           }
         }
@@ -290,9 +304,9 @@ for (const [state, theme, width] of [
 }
 
 // Owner-global state: instance, media admission, the access plan for new
-// invitations and the sign-in choice. The fixture restores them after the test.
+// invitations and the sign-in settings. The fixture restores them after the test.
 test(
-  "settings saves each section through its own API and keeps OIDC secret write-only",
+  "settings saves each section through its own API",
   { tag: GLOBAL_STATE_TAG },
   async ({ page }) => {
     await settingsJourney(page);
@@ -359,86 +373,19 @@ async function settingsJourney(page: Page) {
   await expect(page.getByLabel("Access plan for new invitations")).toContainText(
     "Local chat",
   );
-  await editSection(page, "Sign-in");
-  await page.getByLabel("Available sign-in methods").click();
-  await page
-    .getByRole("option", { name: "Built-in accounts only", exact: true })
-    .click();
-  const signInChoiceSaved = page.waitForResponse(
-    (r) =>
-      r.url().endsWith("/admin/api/operator/sign-in") &&
-      r.request().method() === "PUT",
-  );
-  await page
-    .getByRole("button", { name: "Save sign-in choice", exact: true })
-    .click();
-  expect((await signInChoiceSaved).status()).toBe(200);
+  // Sign-in is on the page, not behind an Edit button. This journey reads it;
+  // the writes are covered by the component specs against the same contract.
+  // The fixture has no provider yet, so the connection form is open (the
+  // design opens it whenever the provider is not live) and its secret is empty.
+  const signIn = page.getByRole("region", { name: "Sign-in", exact: true });
   await expect(
-    page.getByText("Sign-in choice saved", { exact: true }),
+    signIn.getByRole("heading", { name: "Ways to sign in" }),
   ).toBeVisible();
-  await page.reload();
-  await editSection(page, "Sign-in");
-  await expect(page.getByLabel("Available sign-in methods")).toContainText(
-    "Built-in accounts only",
-  );
-  await page.getByLabel("Available sign-in methods").click();
-  await page.getByRole("option", { name: "OIDC only", exact: true }).click();
-  const signInChoiceRejected = page.waitForResponse(
-    (r) =>
-      r.url().endsWith("/admin/api/operator/sign-in") &&
-      r.request().method() === "PUT",
-  );
-  await page
-    .getByRole("button", { name: "Save sign-in choice", exact: true })
-    .click();
-  expect((await signInChoiceRejected).status()).toBe(409);
   await expect(
-    page.getByRole("alert").filter({
-      hasText:
-        "Configure an identity provider before enabling this sign-in option.",
-    }),
-  ).toBeVisible();
-  await page.getByLabel("Available sign-in methods").click();
-  await page
-    .getByRole("option", { name: "Built-in accounts only", exact: true })
-    .click();
-  const signInChoiceRestored = page.waitForResponse(
-    (r) =>
-      r.url().endsWith("/admin/api/operator/sign-in") &&
-      r.request().method() === "PUT",
-  );
-  await page
-    .getByRole("button", { name: "Save sign-in choice", exact: true })
-    .click();
-  expect((await signInChoiceRestored).status()).toBe(200);
-  await page.getByLabel("Issuer URL").fill("https://login.example.test");
-  await page.getByLabel("Client ID", { exact: true }).fill("browser-test");
-  await page
-    .getByLabel("Client secret", { exact: true })
-    .fill("browser-fixture-secret");
-  await page
-    .getByLabel("Redirect URL")
-    .fill("https://gateway.example.test/auth/callback");
-  const oidcSaved = page.waitForResponse(
-    (r) =>
-      r.url().endsWith("/admin/api/oidc-config") &&
-      r.request().method() === "PUT",
-  );
-  await page.getByRole("button", { name: "Save sign-in", exact: true }).click();
-  expect((await oidcSaved).status()).toBe(200);
-  await page.reload();
-  await editSection(page, "Sign-in");
-  await expect(page.getByLabel("Client secret", { exact: true })).toHaveValue(
-    "",
-  );
-  await expect(
-    page.getByText("A secret is saved. Leave this blank to keep it."),
-  ).toBeVisible();
-  const preserve = page.waitForRequest(
-    (r) => r.url().endsWith("/admin/api/oidc-config") && r.method() === "PUT",
-  );
-  await page.getByRole("button", { name: "Save sign-in", exact: true }).click();
-  expect((await preserve).postDataJSON()).not.toHaveProperty("client_secret");
+    signIn.getByRole("switch", { name: "Email and password" }),
+  ).toBeChecked();
+  await expect(signIn.getByText("Not set up", { exact: true })).toBeVisible();
+  await expect(signIn.getByLabel("Client secret", { exact: true })).toHaveValue("");
   await editSection(page, "Advanced");
   await page
     .getByText("Effective configuration and export", { exact: true })
@@ -454,48 +401,6 @@ async function settingsJourney(page: Page) {
   const file = await download;
   expect(file.suggestedFilename()).toBe("gateway-effective-config.json");
 }
-
-test(
-  "a provider draft saves after a real sign-in choice write",
-  { tag: GLOBAL_STATE_TAG },
-  async ({ page }) => {
-    await page.goto("/settings/");
-    await editSection(page, "Sign-in");
-    await page
-      .getByLabel("Client ID", { exact: true })
-      .fill("independent-provider-draft");
-    await page.getByLabel("Available sign-in methods").click();
-    await page
-      .getByRole("option", { name: "Built-in accounts only", exact: true })
-      .click();
-    const modeSaved = page.waitForResponse(
-      (response) =>
-        response.url().endsWith("/admin/api/operator/sign-in") &&
-        response.request().method() === "PUT",
-    );
-    await page
-      .getByRole("button", { name: "Save sign-in choice", exact: true })
-      .click();
-    expect((await modeSaved).status()).toBe(200);
-    await expect(page.getByLabel("Client ID", { exact: true })).toHaveValue(
-      "independent-provider-draft",
-    );
-    const providerSaved = page.waitForResponse(
-      (response) =>
-        response.url().endsWith("/admin/api/oidc-config") &&
-        response.request().method() === "PUT",
-    );
-    await page
-      .getByRole("button", { name: "Save sign-in", exact: true })
-      .click();
-    expect((await providerSaved).status()).toBe(200);
-    await page.reload();
-    await editSection(page, "Sign-in");
-    await expect(page.getByLabel("Client ID", { exact: true })).toHaveValue(
-      "independent-provider-draft",
-    );
-  },
-);
 
 test("new visitors use the saved default theme and personal choices persist", async ({
   browser,
