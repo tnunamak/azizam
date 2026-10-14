@@ -524,4 +524,25 @@ it.each([undefined, null, -1])("records unknown duration in row and details (%s)
   await userEvent.click(row);
   const label = within(screen.getByRole("dialog")).getByText("Time taken");
   expect(label.nextElementSibling).toHaveTextContent("Duration not recorded");
+
+it("resets a source-only empty result to all sources from its empty-state action", async () => {
+  const { requestUrls } = mountActivity({
+    requests: {
+      records: [], next_cursor: null, people: [],
+      sources: [{ id: "reader-app", label: "Reader" }],
+    },
+  });
+  await screen.findByRole("region", { name: "No request receipts yet" });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Source" }));
+  await user.click(await screen.findByRole("option", { name: "Reader" }));
+  const region = await screen.findByRole("region", { name: "No matching requests" });
+  expect(region).toHaveAccessibleDescription("Receipts show request outcomes from your apps and devices; none match these filters.");
+  await waitFor(() => expect(requestUrls.at(-1)).toContain("source=reader-app"));
+  expect(requestUrls.at(-1)).not.toContain("person_id");
+  await user.click(within(region).getByRole("button", { name: "Clear filters" }));
+  expect(await screen.findByRole("region", { name: "No request receipts yet" })).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Source" })).toHaveTextContent("All sources");
+  expect(screen.getByRole("combobox", { name: "Person" })).toHaveFocus();
+  expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
 });
