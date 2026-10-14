@@ -174,9 +174,22 @@ def test_a_category_is_named_by_its_label_and_its_id_stays_out_of_the_sentence()
 def test_an_administrator_gets_the_rule_without_the_category_name_or_id():
     entry = _one(_row("wf", ["chat.completions"]), _rule("category.hidden", kind="category", id="adult", side=None),
                  detail="limited")
-    assert entry["reason"] == "It is in a restricted category that this plan can't see."
+    assert entry["reason"] == "Blocked by a category rule"
     assert entry["rule"] == {"code": "category.hidden", "kind": "category", "id": None, "name": None,
-                             "plain_reason": "It is in a restricted category that this plan can't see."}
+                             "plain_reason": "Blocked by a category rule"}
+
+
+def test_an_administrator_is_not_told_a_restricted_category_exists_even_from_a_recorded_text():
+    """A decision with only recorded text (no rule) gets the same short sentence."""
+    row = _row("wf", ["chat.completions"])
+    kwargs = dict(offered=_catalog(row), permitted=_catalog(),
+                  denied=[_denied("chat.completions", "wf", "category rules: CATEGORY_HIDDEN adult")],
+                  plan_names=PLANS, category_names=CATEGORIES)
+    limited = build_access_preview(detail="limited", **kwargs)["entries"][0]
+    assert limited["reason"] == "Blocked by a category rule"
+    assert "restricted" not in limited["reason"].lower()
+    assert build_access_preview(detail="full", **kwargs)["entries"][0]["reason"] == (
+        "It is in a restricted category that this plan can't see.")
 
 
 @pytest.mark.parametrize("rule", [
@@ -341,9 +354,12 @@ CATALOG = [
 
 
 @contextlib.contextmanager
-def fixture_catalog(capabilities=CATALOG, name_views=None):
-    """The gateway offers exactly ``capabilities``; the policy view over them is the real one."""
-    with patch.object(proxy, "_gateway_catalog_base", lambda: ({}, [])), \
+def fixture_catalog(capabilities=CATALOG, name_views=None, registry=None):
+    """The gateway offers exactly ``capabilities``; the policy view over them is the real one.
+
+    ``registry`` is the service registry the policy view reads providers from.
+    """
+    with patch.object(proxy, "_gateway_catalog_base", lambda: (registry or {}, [])), \
             patch.object(proxy, "_gateway_catalog_finish", lambda *_a: list(capabilities)), \
             patch.object(proxy, "_remote_decision_models", lambda *_a: []), \
             patch.object(proxy, "_gateway_aliases_provider", return_value=name_views or {}), \
@@ -351,9 +367,9 @@ def fixture_catalog(capabilities=CATALOG, name_views=None):
         yield
 
 
-def _preview(owner, plan, capabilities=CATALOG, name_views=None):
+def _preview(owner, plan, capabilities=CATALOG, name_views=None, registry=None):
     """The route's answer for ``plan`` over ``capabilities`` run through the real policy view."""
-    with fixture_catalog(capabilities, name_views):
+    with fixture_catalog(capabilities, name_views, registry):
         response = _post(owner, {"plan": plan["id"]})
     assert response.status_code == 200, response.text
     return response.json()
@@ -534,4 +550,7 @@ def test_the_owner_sees_the_full_rule_and_an_administrator_sees_what_people_rule
     assert "Adult" in full["adult-flow"]["reason"]
     assert limited["adult-flow"]["rule"]["id"] is None and limited["adult-flow"]["rule"]["name"] is None
     assert "Adult" not in limited["adult-flow"]["reason"]
+    # The administrator's row keeps the code; the sentence says no more than "blocked by a rule".
+    assert limited["adult-flow"]["reason"] == "Blocked by a category rule"
+    assert limited["adult-flow"]["rule"]["plain_reason"] == "Blocked by a category rule"
 

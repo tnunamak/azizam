@@ -14,20 +14,25 @@ on the one thing a caller can act on: it is not allowed.
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 
 import pytest
 
 from gateway import category_enforcement
-from gateway.access_plans import capability_for_intent, plan_from_document
+from gateway.access_plans import DIRECT_ENGINE_INTENT, capability_for_intent, plan_from_document
 from gateway.capabilities import Capability
 from gateway.capability_ids import CAPABILITY_LABELS
 from gateway.policy import EffectiveAccess
 from gateway.runtime_auth import evaluate_and_apply, make_policy_request
 from tests.support.access import identity as runtime_identity, service_app, store_plan
+from gateway import category_policy as policy
 from tests.test_access_preview import _cap, _post, _preview, fixture_catalog, owner  # noqa: F401  (owner is a fixture)
 from tests.test_category_visibility import OWNER, _service, activate, rules
 
 TEXT = {"input_modalities": ("text",), "output_modalities": ("text",)}
+
+
+PAID = "cloud-x"
 
 
 def _alias(name, target):
@@ -46,7 +51,17 @@ CATALOG = [
     _cap("image.generate", "img-a", input_modalities=("text",), output_modalities=("image",)),
     _cap("video.generate", "vid-a", input_modalities=("text",), output_modalities=("video",)),
     _cap("audio.speech", "tts-a", input_modalities=("text",), output_modalities=("audio",)),
+    # A paid provider's model: a plan needs the provider granted. PAID is in REGISTRY below.
+    Capability(intent="chat.completions", backend=PAID, model="cloud-chat", tags=("remote",), **TEXT),
+    Capability(intent="image.generate", backend=PAID, model="cloud-img", tags=("remote",),
+               input_modalities=("text",), output_modalities=("image",)),
+    # A workflow: a plan lists it by name.
+    Capability(intent="image.generate", backend="svc", workflow="wf-a",
+               input_modalities=("text",), output_modalities=("image",)),
+    # A direct-engine item.
+    Capability(intent=DIRECT_ENGINE_INTENT, backend="svc", model="engine-a", **TEXT),
 ]
+REGISTRY = {"services": {PAID: {"id": PAID, "kind": "provider", "config": {"provider_type": "remote"}}}}
 VIEWS = {"chat": {"stable": [{"alias": "fast", "resolves_to": "chat-a", "service": "svc"},
                              {"alias": "slow", "resolves_to": "chat-b", "service": "svc"},
                              {"alias": "hush", "resolves_to": "chat-secret", "service": "svc"}]}}
@@ -60,19 +75,35 @@ PLANS = {
     "lists an alias": {"caps": ("chat",), "models": ["fast"]},
     "lists the model behind an alias": {"caps": ("chat",), "models": ["chat-b"]},
     "nothing": {"caps": ()},
+    # Paid providers, fallback, workflows and direct engines.
+    "paid provider granted": {"paid": [PAID]},
+    "fallback but no paid provider": {"fallback": True},
+    "paid provider and fallback": {"paid": [PAID], "fallback": True},
+    "lists a workflow": {"caps": ("image",), "workflows": ["wf-a"]},
+    "lists a model, not the workflow": {"caps": ("image",), "models": ["img-a"]},
+    "every direct engine": {"engines": "all", "operations": ["*"]},
+    "one direct engine": {"engines": ["svc"], "operations": ["*"]},
+    "a direct engine it was not given": {"engines": ["other-engine"], "operations": ["*"]},
 }
 
 
 def _label(intent):
-    return CAPABILITY_LABELS[capability_for_intent(intent)]
+    kind = capability_for_intent(intent)
+    return CAPABILITY_LABELS[kind] if kind else None
 
 
 def _request_for(capability):
-    """The question a real request for this catalog item puts to the evaluator."""
+    """The question a real request for this catalog item puts to the evaluator.
+
+    A request for a paid provider's model names that provider; a workflow request
+    names the workflow.
+    """
     target = next((tag.removeprefix("resolves_to:") for tag in capability.tags if tag.startswith("resolves_to:")), None)
     return make_policy_request(
-        protocol="openai.chat", intent=capability.intent,
-        model=target or capability.model, requested_model=capability.model if target else None)
+        protocol="openai.chat", intent=capability.intent, backend=capability.backend,
+        workflow=capability.workflow,
+        model=target or capability.model, requested_model=capability.model if target else None,
+        remote_provider=capability.backend if "remote" in capability.tags else None)
 
 
 def _shown(entry, label):
@@ -83,12 +114,13 @@ def _shown(entry, label):
     return {"allowed": entry["state"] == "allowed", "rule": entry["rule"], "state": entry["state"]}
 
 
-def _compare(preview, access_for_requests):
-    who = runtime_identity(access_for_requests, app_id=None, person_id=None)
+def _compare(preview, access_for_requests, *, person_id=None, app_id=None):
+    """Every catalog item: Check access says what a request carrying this person and app would get."""
+    who = runtime_identity(access_for_requests, app_id=app_id, person_id=person_id)
     entries = {entry["id"]: entry for entry in preview["entries"]}
     checked = 0
     for capability in CATALOG:
-        entry = entries[capability.model]  # every item the gateway offers is listed
+        entry = entries[capability.model or capability.workflow]  # every item the gateway offers is listed
         decision = evaluate_and_apply(who, _request_for(capability))
         shown = _shown(entry, _label(capability.intent))
         assert shown["allowed"] is decision.allowed, (capability.model, capability.intent, shown, decision)
@@ -114,7 +146,7 @@ def test_check_access_gives_enforcements_answer_for_every_item(owner, category_g
     plan = store_plan(name, path=owner.db, **PLANS[name])
     seer = store_plan("Sees the secret", path=owner.db)
     activate(category_gate, rules(adult_visible_to=[seer["id"]], extra_services=[_service("chat-secret", "adult")]))
-    preview = _preview(owner, plan, CATALOG, VIEWS)
+    preview = _preview(owner, plan, CATALOG, VIEWS, REGISTRY)
     _compare(preview, EffectiveAccess(_plan_of(owner, plan), _plan_of(owner, plan)))
 
 
@@ -142,7 +174,7 @@ def test_an_app_is_judged_by_both_of_its_plans_exactly_as_a_request_is(owner):
     person = admin_store.upsert_oidc_user("https://tests.example", "p1", display_name="P1", path=owner.db)
     accounts.change_person(person["id"], "test", path=owner.db, plan_id=person_plan["id"])
     app = service_app("Tablet", path=owner.db, owner_user_id=person["id"], plan_id=app_plan["id"])
-    with fixture_catalog(CATALOG, VIEWS):
+    with fixture_catalog(CATALOG, VIEWS, REGISTRY):
         response = _post(owner, {"app": app["id"]})
     assert response.status_code == 200, response.text
     preview = response.json()
@@ -161,7 +193,7 @@ def test_when_the_rules_cannot_be_read_enforcement_refuses_and_check_access_says
     with sqlite3.connect(category_gate) as conn:
         conn.execute("DROP TRIGGER IF EXISTS policy_snapshots_no_update")
         conn.execute("UPDATE policy_snapshots SET body_json = '{\"broken\": true}'")
-    preview = _preview(owner, plan, CATALOG, VIEWS)
+    preview = _preview(owner, plan, CATALOG, VIEWS, REGISTRY)
     who = runtime_identity(EffectiveAccess(_plan_of(owner, plan), _plan_of(owner, plan)), app_id=None, person_id=None)
     for entry in preview["entries"]:
         assert entry["state"] == "unknown", entry
@@ -179,3 +211,52 @@ def test_a_provider_that_cannot_be_read_is_a_cannot_tell_and_never_allowed(owner
     assert entries["remote-m"]["state"] == "unknown"
     assert entries["remote-m"]["rule"]["code"] == "provider.config_unavailable"
     assert entries["chat-a"]["state"] == "allowed"
+
+
+# --- a person or an app the category rules govern by name ----------------------------------
+
+def _governing(path, *, people=(), apps=()):
+    """Category rules that govern the named people and apps: they may use ``chat-a`` and nothing else."""
+    base = rules(extra_services=[_service("chat-a", "adult")])
+    grants = policy.Plan("grants-chat-a", (policy.Grant("chat.completions", "chat-a@r1"),), ())
+    activate(path, replace(base, categories={**base.categories, "adult": replace(base.categories["adult"], visible_to=None)},
+                           people={person: (grants,) for person in people},
+                           apps={app: (grants,) for app in apps}))
+
+
+def _person_with_app(owner, kind):
+    from gateway import accounts, admin_store
+
+    plan = store_plan("Everything", path=owner.db)
+    person = admin_store.upsert_oidc_user("https://tests.example", f"gov-{kind}", display_name="Gov", path=owner.db)
+    accounts.change_person(person["id"], "test", path=owner.db, plan_id=plan["id"])
+    app = admin_store.create_app("Governed", kind=kind, owner_user_id=person["id"], access_plan="person", path=owner.db)
+    return plan, person, app
+
+
+def test_a_person_the_category_rules_govern_by_name_gets_the_answer_a_request_gets(owner, category_gate):
+    """The preview carries the app's person, so a rule keyed to that person refuses here as it does there."""
+    plan, person, app = _person_with_app(owner, "personal")
+    _governing(category_gate, people=[person["id"]])
+    with fixture_catalog(CATALOG, VIEWS, REGISTRY):
+        response = _post(owner, {"app": app["id"]})
+    assert response.status_code == 200, response.text
+    preview = response.json()
+    entries = {e["id"]: e for e in preview["entries"]}
+    assert entries["chat-a"]["state"] == "allowed"
+    assert entries["chat-b"]["state"] == "blocked" and entries["chat-b"]["rule"]["kind"] == "category"
+    _compare(preview, EffectiveAccess(_plan_of(owner, plan), _plan_of(owner, plan)),
+             person_id=person["id"], app_id=app["id"])
+
+
+def test_an_app_the_category_rules_govern_by_name_gets_the_answer_a_request_gets(owner, category_gate):
+    plan, person, app = _person_with_app(owner, "service")
+    _governing(category_gate, apps=[app["id"]])
+    with fixture_catalog(CATALOG, VIEWS, REGISTRY):
+        response = _post(owner, {"app": app["id"]})
+    assert response.status_code == 200, response.text
+    preview = response.json()
+    entries = {e["id"]: e for e in preview["entries"]}
+    assert entries["chat-a"]["state"] == "allowed"
+    assert entries["chat-b"]["state"] == "blocked" and entries["chat-b"]["rule"]["kind"] == "category"
+    _compare(preview, EffectiveAccess(_plan_of(owner, plan), _plan_of(owner, plan)), app_id=app["id"])
