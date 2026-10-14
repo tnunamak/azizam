@@ -27,7 +27,6 @@ import { Card } from "@/components/ui/card";
 import { Callout, StateBadge, StatusLine } from "@/components/product/status-ui";
 import { RelativeTime } from "@/components/product";
 import { requestCapability } from "@/lib/capability-state";
-import { errorCopy } from "@/lib/error-copy";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { useModelName } from "@/lib/use-model-name";
 import { technicalModelDetails } from "@/lib/model-name";
@@ -62,13 +61,21 @@ type RequestPage = {
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const isPickList = (value: unknown): value is { id: string; label: string }[] =>
+  Array.isArray(value) && value.every((item) =>
+    isObject(item) && typeof item.id === "string" && typeof item.label === "string",
+  );
+
 // Rows are dereferenced after the query succeeds, so a malformed page must fail
 // the query, where the retry callout can reach it.
 function isRequestPage(payload: unknown): payload is RequestPage {
   return (
     isObject(payload) &&
     Array.isArray(payload.records) &&
-    payload.records.every((row) => isObject(row) && isObject(row.receipt))
+    payload.records.every((row) => isObject(row) && isObject(row.receipt)) &&
+    isPickList(payload.people) &&
+    (payload.sources === undefined || isPickList(payload.sources)) &&
+    (payload.next_cursor === null || typeof payload.next_cursor === "string")
   );
 }
 
@@ -144,7 +151,14 @@ function outcomeCause(receipt: Receipt) {
       ? (receipt.metadata as Record<string, unknown>)
       : {};
   const status = Number(metadata.status_code ?? receipt.status_code);
-  return Number.isFinite(status) && status >= 400 ? errorCopy({ status }).message : null;
+  if (status === 401)
+    return "This request was rejected because it had no valid sign-in or app key. Check the app's access key for this person.";
+  if (status === 403)
+    return "This request was rejected because it did not have permission. Check this person's access plan and the app's access.";
+  if (status === 429) return "This request was rate-limited.";
+  if (status >= 500 && status < 600)
+    return "The gateway could not complete this request.";
+  return null;
 }
 function outcomeSummary(receipt: Receipt) {
   const label = outcome(receipt.status);
@@ -169,7 +183,7 @@ function outcomeSummary(receipt: Receipt) {
   return "We couldn't tell where this stopped. Check for a newer receipt, then try again.";
 }
 function duration(ms?: number | null) {
-  if (typeof ms !== "number" || !Number.isFinite(ms)) return "";
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "Duration not recorded";
   return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
@@ -434,12 +448,14 @@ export function Requests() {
                         <div id={`${rowId}-${index}-outcome`} className="flex min-w-0 max-w-1/2 shrink-0 flex-col items-end gap-0.5">
                           {["failed", "error", "backend_failed"].includes(row.receipt.status ?? "") ? (
                             <StateBadge state="down" word={outcome(row.receipt.status)} />
-                          ) : ["running", "in_progress"].includes(row.receipt.status ?? "") ? (
+                          ) : ["accepted", "running", "in_progress"].includes(row.receipt.status ?? "") ? (
                             <StateBadge state="busy" word={outcome(row.receipt.status)} />
-                          ) : row.receipt.status === "rejected" ? (
+                          ) : ["rejected", "timed_out", "disconnected"].includes(row.receipt.status ?? "") ? (
                             <StateBadge state="degraded" word={outcome(row.receipt.status)} />
-                          ) : (
+                          ) : ["success", "succeeded", "ok"].includes(row.receipt.status ?? "") ? (
                             <span className="text-foreground">{outcome(row.receipt.status)}</span>
+                          ) : (
+                            <StateBadge state="unknown" word={outcome(row.receipt.status)} />
                           )}
                           <p className="text-muted-foreground figures max-w-full truncate text-meta">
                             {row.created_at ? <RelativeTime ts={row.created_at} /> : "Time not recorded"}

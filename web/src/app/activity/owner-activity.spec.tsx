@@ -84,36 +84,34 @@ it("offers human names from the people source beyond the recent audit window", a
       expect.objectContaining({ actor_id: "person-beyond-audit-window" }),
     ),
   );
-  expect(screen.getByText("Technical: filter by person ID")).toBeVisible();
+  expect(screen.queryByText("Technical: filter by person ID")).toBeNull();
+  expect(screen.queryByRole("textbox", { name: /person id/i, hidden: true })).toBeNull();
   expect(screen.queryByText("Find a person")).toBeNull();
 });
 it.each([0, 1])(
-  "clears the category, applied actor and draft with Clear filters button %s",
+  "clears the category and named person with Clear filters button %s",
   async (buttonIndex) => {
     const user = userEvent.setup();
     const audit = mount();
     await screen.findByText("No changes yet");
     await user.click(screen.getByRole("combobox", { name: "Change type" }));
     await user.click(screen.getByRole("option", { name: "Apps" }));
-    await user.click(screen.getByText("Technical: filter by person ID"));
-    await user.type(
-      screen.getByRole("textbox", { name: "Technical person ID" }),
-      "opaque-person",
-    );
-    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await user.click(screen.getByRole("combobox", { name: "Person" }));
+    await user.click(await screen.findByRole("option", { name: "Azizam Owner" }));
+    await waitFor(() => expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({ actor_id: "person-beyond-audit-window" }),
+    ));
+    expect(screen.queryByRole("textbox", { name: /person id/i, hidden: true })).toBeNull();
     await screen.findByText("No matching changes");
     await user.click(
       screen.getAllByRole("button", { name: "Clear filters" })[buttonIndex],
     );
-    expect(
-      screen.getByRole("textbox", { name: "Technical person ID" }),
-    ).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Everyone");
     expect(
       within(screen.getByRole("combobox", { name: "Change type" })).getByText(
         "All changes",
       ),
     ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Apply" }));
     await screen.findByText("No changes yet");
     await waitFor(() =>
       expect(audit).toHaveBeenLastCalledWith(
@@ -149,7 +147,7 @@ it("shows people lookup errors with a retry action", async () => {
   const alert = await screen.findByRole("alert");
   expect(within(alert).getByRole("heading", { name: "Couldn't load people" })).toBeVisible();
   expect(alert).toHaveTextContent(
-    "The gateway's people list could not be loaded. We could not identify the cause. Try again.",
+    "People could not be loaded. Try again.",
   );
   expect(alert).not.toHaveTextContent("still shown");
 });
