@@ -505,7 +505,7 @@ describe("guided JSON fields", () => {
 
     expect(screen.getByText("Technical details").closest("details")).not.toHaveAttribute("open");
     fireEvent.click(screen.getByText("Technical details"));
-    fireEvent.click(screen.getByText("Copy as"));
+    fireEvent.click(screen.getByText("Copy request as"));
     const curl = [...document.querySelectorAll("pre")].find((pre) => pre.textContent?.includes("curl"))!;
     expect(curl).toBeTruthy();
     expect(curl).toHaveTextContent("/gateway/v1/workflows/remix/run");
