@@ -866,11 +866,9 @@ class AdminSQLiteStore:
             try:
                 cb()
             except Exception as exc:  # noqa: BLE001
-                import traceback
-                traceback.print_exc()
                 print(
                     f"[admin_runtime] WARNING: on_service_registry_changed callback "
-                    f"raised an exception (hot-reload may not have taken effect): {exc}",
+                    f"raised {type(exc).__name__} (hot-reload may not have taken effect)",
                     flush=True,
                 )
 
@@ -1216,7 +1214,7 @@ class AdminSQLiteStore:
             try:
                 value["client_secret"] = secret_store.get_provider_secret(str(ref), db_path=self.path)
             except Exception as exc:  # noqa: BLE001
-                print(f"[admin_runtime] OIDC client secret {ref!r} unreadable: {type(exc).__name__}", flush=True)
+                print(f"[admin_runtime] OIDC client secret unreadable: {type(exc).__name__}", flush=True)
         return value
 
     def update_oidc_config_setting(
@@ -1372,7 +1370,7 @@ class AdminSQLiteStore:
             try:
                 callback(before)
             except Exception as exc:  # noqa: BLE001 - revoking must not fail because cleanup did
-                print(f"[admin_runtime] WARNING: on_credential_revoked callback raised: {exc}", flush=True)
+                print(f"[admin_runtime] WARNING: on_credential_revoked callback raised: {type(exc).__name__}", flush=True)
         return _sanitize_credential(record or before)
 
     def recent_audit(

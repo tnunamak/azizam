@@ -156,5 +156,36 @@ class TestReceiptLifecycleOwner(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(receipt.status, "succeeded")
 
 
+def test_category_failure_does_not_log_prompt_or_credentials(caplog) -> None:
+    """Backend errors containing request data retain only operational facts."""
+    import logging
+    from unittest.mock import Mock
+
+    from gateway.category_enforcement import CategoryGate
+
+    prompt = "PRIVATE_PROMPT: a clockwork fox walks through a violet orchard"
+    sensitive = prompt + " key=fake-test-key person@example.invalid https://example.invalid/?token=fake"
+    for error_type in (ValueError, RuntimeError):
+        caplog.clear()
+        gate = CategoryGate(Path("unused-category-store.db"))
+        gate._store = Mock()
+        gate._store.active_revision_counter = 1
+        gate._store.get_active.side_effect = error_type(sensitive)
+        gate._watch = Mock()
+        gate._watch.execute.return_value.fetchone.return_value = (1,)
+        with patch.object(Path, "exists", return_value=True):
+            with caplog.at_level(logging.DEBUG, logger="gateway.category_enforcement"):
+                assert gate._active_now() == (None, True)
+        assert "category rules unavailable" in caplog.text
+        assert error_type.__name__ in caplog.text
+        for value in (prompt, "fake-test-key", "person@example.invalid", "?token=fake"):
+            assert value not in caplog.text
+        records = [record for record in caplog.records
+                   if record.name == "gateway.category_enforcement"]
+        assert records
+        assert all(record.exc_info is None for record in records)
+        assert gate._failed
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

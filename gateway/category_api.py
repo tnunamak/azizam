@@ -267,7 +267,8 @@ def _presets_or_none(presets: Callable[[], list[dict]]) -> list[dict]:
     try:
         return presets()
     except PresetError:
-        log.exception("bundled starter categories could not be read")
+        # Parser tracebacks can include the contents of malformed input.
+        log.error("bundled starter categories could not be read")
         return []
 
 

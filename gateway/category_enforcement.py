@@ -105,7 +105,7 @@ class CategoryGate:
             if self._store is None:
                 return None, False
             # The store this process has been enforcing is gone: fail closed.
-            log.error("category rules unavailable: %s is missing", self._path)
+            log.error("category rules unavailable: previously opened store is missing")
             return None, True
         from gateway.category_api import snapshot_from_json  # codec lives with the API
         with self._lock:
@@ -131,11 +131,12 @@ class CategoryGate:
                 self._data_version, self._failed = data_version, False
                 return self._version, False
             except (CorruptSnapshotError, kernel.PolicyError, ValueError, OSError, sqlite3.Error) as exc:
-                log.error("category rules unavailable: %s", exc)
+                # Errors can contain request values or credential-bearing URLs.
+                log.error("category rules unavailable (%s)", type(exc).__name__)
                 self._failed = True
                 return None, True
             except Exception as exc:  # noqa: BLE001 - fail closed on any store error
-                log.exception("category rules unavailable: %s", exc)
+                log.error("category rules unavailable (%s)", type(exc).__name__)
                 self._failed = True
                 return None, True
 
@@ -164,8 +165,8 @@ class CategoryGate:
             return False
         try:
             owner = request_connections.memo(("category-owner", id(self)), self._owner_id)
-        except Exception:  # noqa: BLE001 - an unreadable owner record never grants
-            log.exception("category rules: owner lookup failed")
+        except Exception as exc:  # noqa: BLE001 - an unreadable owner record never grants
+            log.error("category rules: owner lookup failed (%s)", type(exc).__name__)
             return False
         return owner == person
 
