@@ -94,6 +94,14 @@ def gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", path)
     monkeypatch.setattr(proxy, "ADMIN_DB_PATH", path)
     monkeypatch.setattr(proxy, "ADMIN_OIDC_STATES", {})
+    # A service-registry write through the real app fires the hot reload, which
+    # swaps `proxy.config` and every backend constant for ones built from this
+    # test's temporary registry. Registering each name with monkeypatch puts the
+    # shipped values back at teardown; without it the next test in the same
+    # worker sees a registry with no speech, transcription or kobold services.
+    monkeypatch.setattr(proxy, "config", proxy.config)
+    for name in proxy._derive_backend_constants(proxy.config):
+        monkeypatch.setattr(proxy, name, getattr(proxy, name))
     admin_store.put_operator_setting("instance_presentation", {"base_url": "https://ai.example"}, path=path)
     clients = []
     gw = Gateway(proxy, path, monkeypatch, live_shaped_config())
