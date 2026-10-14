@@ -13,6 +13,10 @@ baseline's paths and its own. Only these differences are allowed:
 * GET and HEAD /showcase/ serve the static product page, and GET and HEAD
   /showcase answer 308 to it (r18: GET /showcase served the page, GET
   /showcase/ redirected to it, HEAD was 405). Other methods keep their answers;
+* /showcase/examples/ is a public, read-only Examples page: GET and HEAD serve
+  HTML, and /showcase/examples redirects to it with 308. The supplemental
+  route baseline records both paths and preserves all non-read responses.
+  tests/test_showcase.py checks public access, cache/CSP and redirect queries;
 * /showcase/docs and /showcase/docs/{path} are new: GET and HEAD serve the
   static product docs; every other method falls to the catch-all and answers
   exactly as it does for an unknown /showcase/ path;

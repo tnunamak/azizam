@@ -26,7 +26,7 @@ const opt = (name, fallback) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
 };
 const PAGES = {
-  home: { path: '/showcase/', words: [600, 1100], height: { desk: 6000, phone: 9000 }, bytes: 400_000 },
+  home: { path: '/showcase/', words: [350, 1100], height: { desk: 6000, phone: 9000 }, bytes: 400_000 },
   examples: { path: '/showcase/examples/', words: null, height: null, bytes: null },
 };
 const wanted = opt('--pages', 'home,examples').split(',').filter((name) => PAGES[name]);

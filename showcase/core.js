@@ -438,21 +438,21 @@
   /** One line + level for the status strip. level: ok | busy | warn | unknown */
   function statusSummary(health, status) {
     if (!health) return { level: "warn", text: "Gateway unreachable" };
-    const parts = [];
-    let level = "ok";
-    if (status && status.comfyui) {
-      const { running, pending } = status.comfyui;
-      if (running || pending) {
-        level = "busy";
-        parts.push(`GPU busy: ${running} rendering, ${pending} queued`);
-      } else parts.push("GPU idle");
+    if (!status) return { level: "unknown", text: "Gateway is up. Add a key to check engine status" };
+    if ((status.comfyui && (status.comfyui.running || status.comfyui.pending)) ||
+        (status.llm && status.llm.processing)) {
+      // Lead with the plain state; retain queue detail for people waiting to run.
+      const details = [];
+      if (status.comfyui && (status.comfyui.running || status.comfyui.pending)) {
+        details.push((status.comfyui.running || 0) + " rendering, " + (status.comfyui.pending || 0) + " queued");
+      }
+      if (status.llm && status.llm.processing) details.push("chat processing");
+      return { level: "busy", text: "Busy · " + details.join("; ") };
     }
-    if (status && status.llm) {
-      if (status.llm.processing) { level = "busy"; parts.push("LLM generating"); }
-      else parts.push("LLM idle");
+    if ((status.engines || []).some((engine) => engine.status !== "available")) {
+      return { level: "warn", text: "Some engines are off" };
     }
-    if (!status) { level = "unknown"; parts.push("Gateway is up. Engine status needs an API key"); }
-    return { level, text: parts.join(" · ") || "Gateway is up" };
+    return { level: "ok", text: "Ready" };
   }
 
   /** Group curated examples by the card they belong to. */

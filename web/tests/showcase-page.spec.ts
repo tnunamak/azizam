@@ -1,4 +1,4 @@
-// The static /showcase/ page (showcase/index.html + core.js + app.js) mounted in jsdom.
+// The static Home and Examples pages mounted in jsdom.
 // The scripts are plain browser scripts, so each test loads them into a fresh document
 // and answers fetch like the gateway did in the browser spec: discovery needs a key
 // (401), the sections and the recorded-example index come from the case.
@@ -10,9 +10,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../showcase");
 const read = (name: string) => readFileSync(path.join(dir, name), "utf8");
-const html = read("index.html");
+const homeHtml = read("index.html");
+const html = read("examples/index.html");
 const coreJs = read("core.js");
 const appJs = read("app.js");
+
+// Preserve the body to which testing-library's screen is bound.
+function mountMarkup(markup: string) {
+  const parsed = new DOMParser().parseFromString(markup, "text/html");
+  parsed.querySelectorAll("script").forEach((script) => script.remove());
+  document.body.className = parsed.body.className;
+  document.body.innerHTML = parsed.body.innerHTML;
+}
 
 const sections = {
   sections: [
@@ -44,12 +53,8 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 /** Mount the page. `data` returning null answers the examples index with 503. */
-async function mountShowcase(data: () => Example[] | null) {
-  // testing-library's `screen` is bound to the original <body>; keep that element.
-  document.body.innerHTML = /<body>([\s\S]*)<\/body>/.exec(html)![1].replace(
-    /<script[^>]*><\/script>/g,
-    "",
-  );
+async function mountExamples(data: () => Example[] | null) {
+  mountMarkup(html);
   const requested: string[] = [];
   vi.stubGlobal(
     "fetch",
@@ -80,21 +85,23 @@ const tryAgain = (root: HTMLElement) => within(root).getByRole("button", { name:
 
 afterEach(() => {
   document.body.innerHTML = "";
+  document.body.className = "";
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
-describe("showcase page", () => {
+describe("Examples page", () => {
   it("renders the page shell and a recorded answer without app navigation", async () => {
-    await mountShowcase(() => [answer]);
+    await mountExamples(() => [answer]);
     expect(await screen.findByText("Air scatters blue light.")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "See it work" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Site" })).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Main navigation" })).toBeNull();
   });
 
   it("retries a failed recorded-example request from the banner", async () => {
     let unavailable = true;
-    await mountShowcase(() => (unavailable ? null : [answer]));
+    await mountExamples(() => (unavailable ? null : [answer]));
     const banner = document.querySelector<HTMLElement>("#banner")!;
     await waitFor(() =>
       expect(banner).toHaveTextContent("Recorded examples could not be loaded from the gateway."),
@@ -107,7 +114,7 @@ describe("showcase page", () => {
 
   it("marks broken recordings, shows recorded falsy inputs and repairs on retry", async () => {
     let repaired = false;
-    const { requested } = await mountShowcase(() => [
+    const { requested } = await mountExamples(() => [
       recorded("invalid", {
         title: "Unavailable recording",
         inputs: [{ value: null }, { value: "   " }],
@@ -136,7 +143,7 @@ describe("showcase page", () => {
   });
 
   it("shows a structured recorded request as JSON", async () => {
-    await mountShowcase(() => [
+    await mountExamples(() => [
       recorded("structured", {
         title: "Recorded structured request",
         inputs: [
@@ -158,7 +165,7 @@ describe("showcase page", () => {
   });
 
   it("retries an image that failed to load", async () => {
-    await mountShowcase(() => [
+    await mountExamples(() => [
       recorded("image-recorded", {
         outputs: [{ kind: "image", file: "output.png", label: "Recorded picture" }],
       }),
@@ -176,7 +183,7 @@ describe("showcase page", () => {
   });
 
   it.each(["audio", "video"] as const)("can retry repeated %s playback errors", async (kind) => {
-    await mountShowcase(() => [
+    await mountExamples(() => [
       recorded("media-recorded", {
         outputs: [{ kind, file: "output.media", label: "Recorded media" }],
       }),
@@ -188,6 +195,51 @@ describe("showcase page", () => {
       fireEvent.click(tryAgain(document.body));
       expect(document.querySelectorAll(`.recorded-media ${kind}`)).toHaveLength(1);
       expect(failedText()).toHaveLength(0);
+    }
+  });
+});
+
+describe("Home page", () => {
+  it("has Site navigation and exactly two primary destination links", () => {
+    mountMarkup(homeHtml);
+    expect(screen.getByRole("navigation", { name: "Site" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Main navigation" })).toBeNull();
+    const ctas = Array.from(document.querySelectorAll("a[data-cta]"));
+    expect(ctas).toHaveLength(2);
+    expect(ctas.map((link) => link.getAttribute("href"))).toEqual([
+      "/showcase/docs/start/install/",
+      "/showcase/examples/",
+    ]);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your own AI gateway");
+    expect(document.querySelector("#sections, #status, #apikey")).toBeNull();
+  });
+
+  it("runs its declared script without gateway requests, including menu and copy interactions", async () => {
+    const parsed = new DOMParser().parseFromString(homeHtml, "text/html");
+    const scripts = Array.from(parsed.querySelectorAll("script"));
+    expect(scripts.map((script) => script.getAttribute("src"))).toEqual(["/showcase/static/site.js"]);
+    mountMarkup(homeHtml);
+    const fetchSpy = vi.fn();
+    const xhrSpy = vi.fn();
+    const socketSpy = vi.fn();
+    const beaconSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.stubGlobal("XMLHttpRequest", xhrSpy);
+    vi.stubGlobal("WebSocket", socketSpy);
+    vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true, addEventListener: vi.fn() })));
+    vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) }, sendBeacon: beaconSpy });
+    vi.useFakeTimers();
+    try {
+      for (const script of scripts) (0, eval)(read(script.getAttribute("src")!.split("/").pop()!));
+      fireEvent.click(screen.getByRole("button", { name: "Menu" }));
+      expect(screen.getByRole("navigation", { name: "Site" })).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+      await Promise.resolve();
+      expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(30_000);
+      for (const spy of [fetchSpy, xhrSpy, socketSpy, beaconSpy]) expect(spy).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

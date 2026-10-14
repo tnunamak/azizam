@@ -761,7 +761,7 @@
     const day = recordedDay(ex.recorded_at);
     if (day) meta.push(h("span", { class: "chip", text: "Recorded " + day }));
     if (ex.seconds != null) meta.push(h("span", { class: "chip time", title: "Wall time of this request through the gateway, when it was recorded", text: "Ran in " + (ex.seconds < 90 ? ex.seconds.toFixed(1) + " s" : Math.round(ex.seconds) + " s") }));
-    if (ex.model) meta.push(h("span", { class: "chip model", text: ex.model + (ex.resolves_to && ex.resolves_to !== ex.model ? " -> " + ex.resolves_to : "") }));
+    if (ex.model) meta.push(h("span", { class: "chip model", text: ex.model }));
     for (const c of ex.chips || []) meta.push(h("span", { class: "chip", text: c }));
     const parts = C.recordedParts(ex);
     const load = form && form._load && parts.inputs.some((i) => i.name)
@@ -792,16 +792,9 @@
   }
 
   function aliasLine(card) {
-    if (card.kind === "workflow") {
-      const bits = [h("code", { text: card.model })];
-      if (card.aliases.length) bits.unshift("aliases ", card.aliases.map((a, i) => [i ? ", " : "", h("code", { text: a })]), " resolve to ");
-      else bits.unshift("model ");
-      return h("p", { class: "alias" }, bits);
-    }
-    if (card.aliases && card.aliases.length) {
-      return h("p", { class: "alias" }, card.aliases.map((a, i) => [i ? "  " : "", h("code", { text: a.alias }), " \u2192 ", h("code", { text: a.engine ? a.engine + (a.upstream_model ? " (" + a.upstream_model + ")" : "") : a.resolves_to })]));
-    }
-    return null;
+    const aliases = (card.aliases || []).map((a) => typeof a === "string" ? a : a.alias).filter(Boolean);
+    if (!aliases.length) return null;
+    return h("p", { class: "alias" }, "Model names: ", aliases.map((a, i) => [i ? ", " : "", h("code", { text: a })]));
   }
 
   function cardDescription(card) {
@@ -840,10 +833,11 @@
 
     const exBlocks = examples.length
       ? examples.map((ex) => renderExample(card, ex, form))
-      : [h("div", { class: "example pending" }, h("p", { text: "No recorded example for this item. Use Try it live to run one." }))];
+      : [];
 
     const tryLabel = card.kind === "voices" ? "Browse and play voices" : "Try it live";
     const tryBody = card.kind === "voices" ? voicesTable() : form;
+    if (!examples.length && !tryBody) return null;
     const node = h("article", { class: "card kind-" + card.kind, id: "card-" + card.id },
       h("div", { class: "examples" }, exBlocks),
       h("header", {}, h("h3", { text: card.title }), h("div", { class: "badges" }, badges(card))),
@@ -898,27 +892,45 @@
 
   // ----------------------------------------------------------------- page shell
 
+  let selectedCapability = "all";
+
   function renderPage() {
     const sections = C.buildSections({
       sectionsDoc: state.data.sectionsDoc, workflows: state.data.workflows.workflows,
       openapi: state.data.openapi, capabilities: state.data.capabilities, aliases: state.data.aliases,
       exampleCards: Object.keys(state.examplesByCard), live: state.live,
     });
-    state.sections = sections;
+    const shownSections = sections.map((s) => ({
+      ...s,
+      rendered: s.cards.map((card) => ({ card, node: renderCard(card) })).filter((item) => item.node),
+    })).filter((s) => s.rendered.length);
+    state.sections = shownSections;
+    if (!shownSections.some((s) => s.id === selectedCapability)) selectedCapability = "all";
     const main = $("#sections");
     main.replaceChildren();
     const nav = $("#nav");
     nav.replaceChildren();
-    for (const s of sections) {
-      nav.append(h("a", { href: "#sec-" + s.id, text: s.title }));
+    function selectCapability(id) {
+      selectedCapability = id;
+      for (const section of main.children) section.hidden = id !== "all" && section.id !== "sec-" + id;
+      for (const button of nav.children) button.setAttribute("aria-pressed", String(button.dataset.capability === id));
+    }
+    const choices = [{ id: "all", title: "All capabilities" }, ...shownSections];
+    for (const choice of choices) nav.append(h("button", {
+      type: "button", "data-capability": choice.id,
+      "aria-pressed": String(choice.id === selectedCapability),
+      text: choice.title, onclick: () => selectCapability(choice.id),
+    }));
+    for (const s of shownSections) {
       main.append(h("section", { id: "sec-" + s.id, class: "section" },
         h("h2", { text: s.title }), h("p", { class: "blurb", text: s.blurb }),
-        h("div", { class: "grid" }, s.cards.map(renderCard))));
+        h("div", { class: "grid" }, s.rendered.map((item) => item.node))));
     }
-    const cards = sections.flatMap((s) => s.cards);
+    selectCapability(selectedCapability);
+    const cards = shownSections.flatMap((s) => s.rendered.map((item) => item.card));
     const shown = cards.reduce((n, c) => n + (state.examplesByCard[c.id] || []).length, 0);
     const live = cards.filter((c) => c.kind !== "recorded").length;
-    $("#stats").textContent = plural(shown, "recorded example") + " in " + plural(sections.length, "group")
+    $("#stats").textContent = plural(shown, "recorded example") + " in " + plural(shownSections.length, "group")
       + (state.live ? ". " + plural(live, "capability", "capabilities") + " you can try live." : ".");
     // Deep link.
     if (location.hash) { const t = document.getElementById(location.hash.slice(1)); if (t) t.scrollIntoView(); }
@@ -997,10 +1009,9 @@
     if (statusText.textContent !== sum.text) statusText.textContent = sum.text;
     const chips = $("#engines");
     chips.replaceChildren();
-    if (status && status.engines) {
-      for (const e of status.engines) {
-        chips.append(h("span", { class: "eng " + (e.status === "available" ? "up" : "down"), title: e.name + ": " + e.status + (e.status === "available" ? "" : " (on-demand engines start when first used)"), text: e.id }));
-      }
+    // Public capability names come from the curated sections, never engine IDs.
+    for (const section of state.sections || []) {
+      chips.append(h("span", { class: "eng", text: section.title }));
     }
   }
 
@@ -1037,7 +1048,6 @@
       if (event.key === "Escape") { event.preventDefault(); close(); }
       else if (event.key === "Enter" && event.target === input) { event.preventDefault(); $("#keysave").click(); }
     });
-    $("#base").textContent = BASE;
     const live = $("#status-text");
     live.setAttribute("role", "status"); live.setAttribute("aria-live", "polite");
     live.setAttribute("aria-atomic", "true");

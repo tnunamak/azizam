@@ -166,7 +166,13 @@ test("buildSections shows public recorded examples when discovery needs a key", 
 test("statusSummary tells busy from broken", () => {
   assert.equal(C.statusSummary(null, null).level, "warn");
   assert.equal(C.statusSummary({}, { comfyui: { running: 1, pending: 2 }, llm: { processing: false } }).level, "busy");
-  assert.match(C.statusSummary({}, { comfyui: { running: 1, pending: 2 }, llm: { processing: false } }).text, /1 rendering, 2 queued/);
+  assert.equal(C.statusSummary({}, { comfyui: { running: 1, pending: 2 }, llm: { processing: false } }).text, "Busy · 1 rendering, 2 queued");
+  assert.deepEqual(C.statusSummary({}, { comfyui: { pending: 2 } }), { level: "busy", text: "Busy · 0 rendering, 2 queued" });
+  assert.deepEqual(C.statusSummary({}, { llm: { processing: true } }), { level: "busy", text: "Busy · chat processing" });
+  assert.equal(C.statusSummary({}, { comfyui: { running: 1, pending: 2 }, llm: { processing: true } }).text,
+    "Busy · 1 rendering, 2 queued; chat processing");
+  assert.deepEqual(C.statusSummary({}, { engines: [{ status: "off" }] }), { level: "warn", text: "Some engines are off" });
+  assert.deepEqual(C.statusSummary({}, { engines: [{ status: "available" }] }), { level: "ok", text: "Ready" });
   assert.equal(C.statusSummary({}, { comfyui: { running: 0, pending: 0 }, llm: { processing: false } }).level, "ok");
   assert.equal(C.statusSummary({}, { comfyui: { running: 0, pending: 0 }, llm: { processing: true } }).level, "busy");
   assert.equal(C.statusSummary({}, null).level, "unknown");

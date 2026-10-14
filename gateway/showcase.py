@@ -136,6 +136,18 @@ def build_showcase_router(
         query = f"?{request.url.query}" if request.url.query else ""
         return RedirectResponse(f"{SHOWCASE_PREFIX}/{query}", status_code=308)
 
+    @router.api_route(SHOWCASE_PREFIX + "/examples/", methods=["GET", "HEAD"], include_in_schema=False)
+    async def showcase_examples_page() -> Response:
+        path = static_dir / "examples" / "index.html"
+        if not path.is_file():
+            return JSONResponse({"error": {"code": "showcase_missing"}}, status_code=404)
+        return _file_response(path, cache="no-cache")
+
+    @router.api_route(SHOWCASE_PREFIX + "/examples", methods=["GET", "HEAD"], include_in_schema=False)
+    async def showcase_examples_slashless(request: Request) -> Response:
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(f"{SHOWCASE_PREFIX}/examples/{query}", status_code=308)
+
     @router.get(SHOWCASE_PREFIX + "/static/{name}", include_in_schema=False)
     async def showcase_static(name: str) -> Response:
         path = static_dir / name
