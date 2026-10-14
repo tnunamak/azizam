@@ -403,12 +403,10 @@ it("summarizes connection failures without putting raw transport text in the ans
   ).toHaveAttribute("href", "/engines/?service=chat");
   await userEvent.click(screen.getByRole("button", { name: /Show all/ }));
   await userEvent.click(screen.getByRole("button", { name: "Local chat" }));
-  expect(
-    within(screen.getByRole("dialog", { name: "Local chat" })).getByText(
-      "Connection refused",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  const body = screen.getByRole("dialog", { name: "Local chat" }).querySelector("dl")!;
+  expect(body).not.toHaveTextContent("Connection refused");
+  expect(within(body).getByText("Not running", { exact: true })).toBeVisible();
+  expect(within(body).getByText("Check the engine address and that it is running, then refresh.")).toBeVisible();
 });
 
 it("groups engines with the same problem into one action row", async () => {
@@ -838,7 +836,7 @@ it.each(["down", "stopped"])(
     expect(within(row).queryByRole("img")).toBeNull();
     expect(screen.queryByRole("heading", { name: "Needs attention" })).toBeNull();
     await userEvent.click(within(row).getByRole("button", { name: "Local chat" }));
-    expect(within(screen.getByRole("dialog", { name: "Local chat" })).getByText(/Idle, starts when needed/)).toBeVisible();
+    expect(within(screen.getByRole("dialog", { name: "Local chat" })).getByText("Chat · Idle, starts when needed", { exact: true })).toBeVisible();
   },
 );
 
@@ -851,6 +849,33 @@ it("counts idle engines separately from ready engines in the folded summary", as
   expect(await screen.findByRole("button", {
     name: "Engines: 1 idle, 1 turned off. Show all",
   })).toBeVisible();
+});
+
+it.each([
+  ["chat", "Chat", "degraded"],
+  ["video", "Video", "degraded"],
+  ["chat", "Chat", "down"],
+  ["video", "Video", "down"],
+])("describes a sole %s (%s) engine that is %s without sampled failures", async (capability, label, observation) => {
+  const serviceRegistry = {
+    ...chatRegistry,
+    services: { chat: { ...registry.services.chat, capabilities: [capability] } },
+  };
+  mount(engineSnapshot({
+    observation,
+    tone: observation === "down" ? "bad" : "warn",
+    capability_title: label,
+    capability_labels: [label],
+  }), serviceRegistry);
+  const title = await screen.findByRole("heading", {
+    name: new RegExp(`^${label} (requests may fail|is unavailable) right now$`),
+  });
+  if (observation === "degraded") {
+    expect(title).not.toHaveTextContent(/unavailable/i);
+    expect(title).toHaveTextContent(`${label} requests may fail right now`);
+  } else {
+    expect(title).toHaveTextContent(`${label} is unavailable right now`);
+  }
 });
 
 it.each([
@@ -870,7 +895,11 @@ it.each([
   await userEvent.click(within(row).getByRole("button", { name: "Local chat" }));
   const sheet = screen.getByRole("dialog", { name: "Local chat" });
   expect(within(sheet).getByText(`Chat · ${word}`)).toBeVisible();
-  expect(within(sheet).getByText(last_error, { exact: true })).toBeVisible();
+  const body = sheet.querySelector("dl")!;
+  expect(body).not.toHaveTextContent(last_error);
+  expect(body).not.toHaveTextContent("127.0.0.1:8000");
+  expect(within(body).getByText(word, { exact: true })).toBeVisible();
+  expect(within(body).getByText("Check the engine address and that it is running, then refresh.")).toBeVisible();
 });
 
 it("does not call a disabled engine idle", async () => {
