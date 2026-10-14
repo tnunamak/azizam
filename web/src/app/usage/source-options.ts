@@ -9,6 +9,30 @@
  * One that was disconnected stays while it has requests to show.
  */
 
+export interface UsageCsvRow {
+  date: string;
+  app: string;
+  modelName: string;
+  requests: number;
+  spendUsd: number | null;
+}
+
+/** RFC 4180 records; blank spend means unknown, never a guessed zero. */
+export function usageCsv(rows: UsageCsvRow[]): string {
+  const cell = (value: string | number | null) => {
+    const text = value === null ? "" : String(value);
+    // Keep app/model labels from becoming formulas in spreadsheet readers.
+    const safe = /^[=+@\t\r\n-]/.test(text) ? `'${text}` : text;
+    return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+  };
+  return [
+    "date,app,model name,requests,spend in USD",
+    ...rows.map((row) =>
+      [row.date, row.app, row.modelName, row.requests, row.spendUsd].map(cell).join(","),
+    ),
+  ].join("\r\n") + "\r\n";
+}
+
 export interface UsageSource {
   id: string;
   label: string;
