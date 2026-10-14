@@ -302,3 +302,17 @@ class WorkflowOpenApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_workflow_input_schema_copies_mutable_constraints_independently():
+    from types import SimpleNamespace
+    from gateway.workflow_openapi import workflow_inputs_schema
+
+    record = SimpleNamespace(id="image.generate.copy-test", manifest={"inputs": {
+        "mode": {"type": "string", "enum": ["fast", "quality"], "default": "fast"},
+    }})
+    first = workflow_inputs_schema(record)
+    first["properties"]["mode"]["enum"].append("invalid")
+    second = workflow_inputs_schema(record)
+    assert record.manifest["inputs"]["mode"]["enum"] == ["fast", "quality"]
+    assert second["properties"]["mode"]["enum"] == ["fast", "quality"]
