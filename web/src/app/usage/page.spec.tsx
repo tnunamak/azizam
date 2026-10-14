@@ -8,8 +8,111 @@ import UsagePage from "./page";
 import { Requests } from "../activity/requests";
 import WorkflowsPage from "../workflows/page";
 import { Money } from "@/components/product/money";
-import { sourceGroups } from "./source-options";
+import { sourceGroups, usageCsv } from "./source-options";
 
+
+test("Usage CSV preserves exact values and quotes commas, quotes and newlines", () => {
+  expect(usageCsv([{
+    date: "2026-10-01",
+    app: 'Writer, "team"',
+    modelName: "Model\nName",
+    requests: 2,
+    spendUsd: 0.000123,
+  }])).toBe('date,app,model name,requests,spend in USD\r\n2026-10-01,"Writer, ""team""","Model\nName",2,0.000123\r\n');
+});
+
+test("Usage CSV distinguishes missing costs from zero and supports empty views", () => {
+  expect(usageCsv([])).toBe("date,app,model name,requests,spend in USD\r\n");
+  expect(usageCsv([
+    { date: "", app: "", modelName: "", requests: 1, spendUsd: null },
+    { date: "", app: "", modelName: "", requests: 1, spendUsd: 0 },
+  ])).toContain(",,,1,\r\n,,,1,0\r\n");
+});
+
+test("Usage CSV makes spreadsheet formulas inert", () => {
+  expect(usageCsv([{ date: "", app: "=1+1", modelName: "@SUM(A1)", requests: 1, spendUsd: 0 }]))
+    .toContain(",'=1+1,'@SUM(A1),1,0\r\n");
+});
+
+test("Usage downloads only loaded receipts with display names and no extra fetch", async () => {
+  const blobs: Blob[] = [];
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL(blob: Blob) { blobs.push(blob); return "blob:usage"; }
+    static revokeObjectURL = vi.fn();
+  });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  try {
+    renderUsage({
+      requests: 100,
+      truncated: true,
+      receipts: [{
+        request_id: "csv-one", created_at: "2026-10-01T12:00:00Z",
+        source_label: 'Writer, "team"', resolved_model: "chat-model",
+        cost_usd: 0.000123,
+      }],
+    });
+    const button = await screen.findByRole("button", { name: "Download CSV" });
+    expect(screen.getByText(/Recent receipts only; excludes requests not loaded/)).toBeVisible();
+    await waitFor(() => expect(button).toBeEnabled());
+    const calls = vi.mocked(fetch).mock.calls.length;
+    await userEvent.setup().click(button);
+    expect(fetch).toHaveBeenCalledTimes(calls);
+    expect(click).toHaveBeenCalledOnce();
+    expect(blobs).toHaveLength(1);
+    const csv = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(blobs[0]);
+    });
+    expect(csv).toContain('2026-10-01T12:00:00.000Z,"Writer, ""team""",');
+    expect(csv).toContain(",1,0.000123\r\n");
+    expect(csv).not.toContain(",100,");
+    expect(document.querySelector('a[download="usage-loaded-receipts.csv"]')).toBeNull();
+  } finally {
+    click.mockRestore();
+  }
+});
+
+
+test("Usage CSV follows the selected app rather than the previous loaded view", async () => {
+  const blobs: Blob[] = [];
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL(blob: Blob) { blobs.push(blob); return "blob:filtered"; }
+    static revokeObjectURL = vi.fn();
+  });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  let request = 0;
+  try {
+    renderUsage({}, async () => Response.json({
+      requests: 1, media_count: 0,
+      sources: [{ id: "app-two", label: "Second app", kind: "app", requests: 1 }],
+      receipts: [{
+        request_id: String(++request),
+        source_label: request === 1 ? "Old app" : "Second app",
+        resolved_model: "friendly-model", cost_usd: 0,
+      }],
+    }));
+    await screen.findByRole("button", { name: "Download CSV" });
+    const user = userEvent.setup();
+    screen.getByRole("combobox", { name: "App or connection" }).focus();
+    await user.keyboard(" ");
+    await user.keyboard("{ArrowDown}{Enter}");
+    await waitFor(() => expect(request).toBe(2));
+    const button = await screen.findByRole("button", { name: "Download CSV" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    const csv = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(blobs[0]);
+    });
+    expect(csv).toContain(",Second app,");
+    expect(csv).not.toContain("Old app");
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("source=app-two"))).toBe(true);
+  } finally {
+    click.mockRestore();
+  }
+});
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: ReactNode }) => <>{children}</>,
   Bar: ({ dataKey, stackId, fill }: { dataKey: string; stackId?: string; fill: string }) =>
