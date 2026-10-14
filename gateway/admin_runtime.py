@@ -987,13 +987,15 @@ class AdminSQLiteStore:
         else:
             merged = dict(data)
         raw = service_registry.service_form_to_raw(merged)
-        registry, _record = service_registry.upsert_service_in_registry(
+        registry, record = service_registry.upsert_service_in_registry(
             current_registry,
             service_id=service_id,
             raw=raw,
             source="ui",
             replace=True,
         )
+        if existing is not None and not service_registry.is_litellm_service_record(sid, existing):
+            service_registry.carry_unnamed_record_fields(existing, record, named=data)
         return self._persist_service_registry(
             registry,
             action="operator.service.updated",
