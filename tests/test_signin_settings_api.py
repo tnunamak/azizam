@@ -89,6 +89,12 @@ def bearer_status(g, key, path="/admin/api/access-plans"):
     return g.client().get(path, headers={"authorization": f"Bearer {key}"}).status_code
 
 
+def provider_off(g):
+    """The provider is set up but not on (as before a first Turn on)."""
+    g.set_config(replace(g.config, enabled=False))
+    admin_store.put_operator_setting("sign_in", {"mode": "built-in"}, path=g.path)
+
+
 def user_id(g, email):
     return g.user(email)["id"]
 
@@ -413,6 +419,7 @@ def test_saving_rules_stores_them_and_returns_the_new_snapshot(sg):
 
 def test_save_for_later_keeps_the_connection_with_the_provider_off_and_needs_no_test(sg):
     owner = owner_client(sg)
+    provider_off(sg)
     snapshot = get_snapshot(owner)
     body = proposal(snapshot, client_id="draft-client", client_secret="draft-secret",
                     address="https://id2.example/realms/home", name="Draft")
@@ -433,6 +440,7 @@ def test_save_for_later_keeps_the_connection_with_the_provider_off_and_needs_no_
 
 def test_save_for_later_needs_the_address_and_client_id(sg):
     owner = owner_client(sg)
+    provider_off(sg)
     snapshot = get_snapshot(owner)
 
     refused = save(owner, snapshot, proposal(snapshot, address="", client_id=""), save_for_later=True)

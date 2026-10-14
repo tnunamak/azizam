@@ -489,6 +489,9 @@ def create_signin_api(
         }
         if provider.client_secret.strip():
             payload["client_secret"] = provider.client_secret.strip()
+        elif saved.client_secret and not (store.get_oidc_config_setting_raw() or {}).get("client_secret"):
+            # A secret that came from the bootstrap file moves into the encrypted store on the first save.
+            payload["client_secret"] = saved.client_secret
         return payload
 
     @router.put("/admin/api/signin")
