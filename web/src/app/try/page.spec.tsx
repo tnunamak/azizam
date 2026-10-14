@@ -877,3 +877,58 @@ test("serializes pending microphone acquisition and releases the acquired stream
   }
 });
 
+
+function tryJson(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function serveTryRun(body: unknown, status = 200) {
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url === "/me/api/models/catalog") return response(models);
+    if (url === "/me/api/workflows") return response(workflows);
+    return tryJson(body, status);
+  });
+}
+
+test("a model blocked by the plan shows the returned plan reason", async () => {
+  const reason = "Your Starter plan does not include this model. Choose a model on your plan.";
+  serveTryRun({ error: { message: reason, details: { layer: "account" } } }, 403);
+  render(<TryPage />);
+  await pressRun();
+  expect(await screen.findByRole("heading", { name: "Your account stopped this request" })).toBeVisible();
+  expect(screen.getByText(reason)).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Chat result" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+});
+
+test("a cancelled workflow job is terminal and cannot be polled again", async () => {
+  mocks.params = new URLSearchParams("capability=workflow");
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url === "/me/api/models/catalog") return response(models);
+    if (url === "/me/api/workflows") return response({ workflows: [{
+      id: "wf-cancel", title: "Cancellable workflow", inputs: [], outputs: [],
+      example_request: { path: "/v1/workflows/cancel", body: {} },
+    }] });
+    return tryJson({ object: "media.job", id: "job-cancel", status: "cancelled" });
+  });
+  render(<TryPage />);
+  await pressRun();
+  expect(await screen.findByText("Couldn’t finish")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+  expect(screen.queryByText("The gateway is still making this. Check again to load it.")).toBeNull();
+  expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+});
+
+test("a long completed chat keeps every character including the tail", async () => {
+  const answer = "BEGIN\n" + "Long answer detail ".repeat(4000) + "\nEND-OF-ANSWER";
+  serveTryRun({ choices: [{ message: { content: answer }, finish_reason: "stop" }] });
+  const view = render(<TryPage />);
+  await pressRun();
+  await screen.findByRole("heading", { name: "Chat result" });
+  const output = view.container.querySelector("section[aria-live] pre");
+  expect(output?.textContent).toBe(answer);
+  expect(screen.queryByRole("heading", { name: "Reply cut off" })).toBeNull();
+});
