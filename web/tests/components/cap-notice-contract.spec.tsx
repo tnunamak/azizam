@@ -1,6 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { CapNotice } from "@/components/product/cap-notice";
+import { errorCopy } from "@/lib/error-copy";
 
 vi.mock("@/lib/use-owner-name", () => ({
   useOwnerName: () => "Robin",
@@ -75,4 +76,100 @@ it("gives a member the rolling-day explanation without owner diagnostics", () =>
   )).toBeVisible();
   expect(screen.queryByText(/fixture-owner-detail/)).toBeNull();
   expect(screen.queryByText(/monthly limit resets/)).toBeNull();
+});
+
+
+const sharedErrorCases: Array<{
+  label: string;
+  error: unknown;
+  role?: "member" | "owner" | "admin";
+  message: string;
+  recovery: "retry" | "sign-in" | "owner-help" | "refresh";
+}> = [
+  ...[
+    "link_unavailable",
+    "invite_unavailable",
+    "invite_expired",
+    "invite_revoked",
+    "invite_consumed",
+    "invite_used",
+    "invite_not_found",
+  ].map((code) => {
+    const link = code === "link_unavailable" ? "link" : "invite link";
+    return {
+      label: code,
+      error: { code, status: 401 },
+      message: `This ${link} can no longer be used. Ask the gateway owner for a new ${link}.`,
+      recovery: "owner-help" as const,
+    };
+  }),
+  ...["account_disabled", "credential_revoked"].map((code) => ({
+    label: code,
+    error: { code, status: 401 },
+    message: "Your access is no longer available. Ask the gateway owner to check your access.",
+    recovery: "owner-help" as const,
+  })),
+  ...["session_expired", "authentication_required"].map((code) => ({
+    label: code,
+    error: { code },
+    message: "Sign in to continue.",
+    recovery: "sign-in" as const,
+  })),
+  {
+    label: "HTTP 401",
+    error: { status: 401 },
+    message: "Sign in to continue.",
+    recovery: "sign-in",
+  },
+  ...(["member", "owner", "admin"] as const).map((role) => ({
+    label: `HTTP 403 for ${role}`,
+    error: { status: 403 },
+    role,
+    message: role === "member"
+      ? "Your account does not have permission for this action. Ask the gateway owner to check your access."
+      : "This account does not have permission for this action. Sign in with an account that has access.",
+    recovery: role === "member" ? "owner-help" as const : "sign-in" as const,
+  })),
+  ...[
+    { label: "HTTP 412", error: { status: 412 } },
+    { label: "generation_mismatch", error: { code: "generation_mismatch" } },
+  ].map((input) => ({
+    ...input,
+    message: "The engine configuration changed. Refresh it before saving again.",
+    recovery: "refresh" as const,
+  })),
+  {
+    label: "HTTP 429",
+    error: { status: 429 },
+    message: "The gateway is limiting requests. Wait before trying again.",
+    recovery: "retry",
+  },
+  ...[500, 503, 599].map((status) => ({
+    label: `HTTP ${status}`,
+    error: { status },
+    message: "The gateway could not complete this request.",
+    recovery: "retry" as const,
+  })),
+  ...[
+    { label: "browser network TypeError", error: new TypeError("Failed to fetch") },
+    { label: "network_unavailable", error: { code: "network_unavailable", status: 0 } },
+  ].map((input) => ({
+    ...input,
+    message: "The gateway could not be reached. Check your connection.",
+    recovery: "retry" as const,
+  })),
+  ...[
+    { label: "unmapped HTTP 400", error: { status: 400 } },
+    { label: "unknown error code", error: { code: "unknown_failure" } },
+  ].map((input) => ({
+    ...input,
+    message: "The request could not be completed. Try again; if this continues, ask the gateway owner for help.",
+    recovery: "retry" as const,
+  })),
+];
+
+// These cases cover the shared helper independently of CapNotice rendering.
+// The current 403 contract exposes permission recovery, not a plan-name field.
+it.each(sharedErrorCases)("shared error copy: $label", ({ error, role, message, recovery }) => {
+  expect(errorCopy(error, { role })).toMatchObject({ message, recovery });
 });
