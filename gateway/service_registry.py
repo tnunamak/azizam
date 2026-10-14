@@ -991,6 +991,17 @@ def lifecycle_driver_changed(before: Mapping[str, Any], after: Mapping[str, Any]
     return _driven_lifecycle_blocks(before) != _driven_lifecycle_blocks(after)
 
 
+# Config fields whose value makes the gateway touch the host's files or processes.
+# ``config_path`` is where the compiled LiteLLM config is written.
+OWNER_ONLY_CONFIG_KEYS = ("config_path",)
+
+
+def _reads_process_command_lines(config: Mapping[str, Any]) -> bool:
+    """True when ``aux`` asks the gateway to read the command lines of host processes."""
+    aux = config.get("aux")
+    return isinstance(aux, Mapping) and aux.get("probe") == "process-cmdline"
+
+
 def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[str, str]:
     url = service_base_url(config)
     return (origin_of(url) or url, str(config.get(LIFECYCLE_BASE_KEY) or ""))
@@ -1003,8 +1014,10 @@ def credential_binding_changes(
 
     A service is listed when it gains or changes a credential reference, when it
     sets the base of the gateway's own internal key, when it already carries a
-    credential and its origin moves, or when its lifecycle driver is set, changed
-    or removed (a driver runs commands or sends a stored key). The value says which.
+    credential and its origin moves, when its lifecycle driver is set, changed
+    or removed (a driver runs commands or sends a stored key), or when it sets a
+    field that makes the gateway write a file or read process command lines.
+    The value says which.
     """
     old = (normalize_service_registry(old_registry).get("services")) or {}
     new = (normalize_service_registry(new_registry).get("services")) or {}
@@ -1021,6 +1034,11 @@ def credential_binding_changes(
             reasons.append("host")
         if lifecycle_driver_changed(before, record):
             reasons.append("lifecycle")
+        for key in OWNER_ONLY_CONFIG_KEYS:
+            if config.get(key) and config.get(key) != before_config.get(key):
+                reasons.append(f"config.{key}")
+        if _reads_process_command_lines(config) and config.get("aux") != before_config.get("aux"):
+            reasons.append("config.aux")
         if reasons:
             changed[service_id] = reasons
     return changed

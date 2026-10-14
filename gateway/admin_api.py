@@ -2795,6 +2795,8 @@ def create_admin_router(
             )
         except _RouteError as exc:
             return exc.as_response()
+        except PermissionError as exc:
+            return _owner_required(exc)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"review": review},

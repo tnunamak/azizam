@@ -1044,13 +1044,21 @@ class AdminSQLiteStore:
     def validate_extension_package_source(
         self, *, source: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
-        del actor
+        self._require_owner_for_host_source(source, actor)
         return extension_packages.validate_extension_package_source(source)
+
+    @staticmethod
+    def _require_owner_for_host_source(source: Mapping[str, Any], actor: AdminContext) -> None:
+        """A package source that reads files on the gateway host is for the owner only."""
+        if "owner" not in actor.roles and extension_packages.source_reads_gateway_host(source):
+            raise PermissionError(
+                "Only the owner can name a directory or a non-https git url as a package source.")
 
     def enable_extension_package(
         self, *, source: Mapping[str, Any], actor: AdminContext,
         expected_generation: int,
     ) -> dict[str, Any]:
+        self._require_owner_for_host_source(source, actor)
         review = extension_packages.validate_extension_package_source(
             source,
             install_root=self.path.parent / "extensions" / "installed",
