@@ -2841,7 +2841,7 @@ class AdminRegistrySQLiteCASTests(unittest.TestCase):
             "errors": [],
             "object_counts": {"services": 1, "protocol_frontends": 0, "workflows": 0, "capabilities": 0},
         }
-        source = {"type": "local_directory", "path": str(self.db.parent / "package")}
+        source = {"type": "git", "url": "https://example.com/package.git"}
         with patch.object(
             extension_packages,
             "validate_extension_package_source",
