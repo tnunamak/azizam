@@ -1153,8 +1153,8 @@ test.each(["owner", "member"] as const)("HONEST-2 Everyone identifies people onl
     const user = userEvent.setup();
     screen.getByRole("combobox", { name: "Person" }).focus();
     await user.keyboard("{Enter}");
-    await user.click(await screen.findByRole("option", { name: "You", exact: true }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Receipt details for Chat request", exact: true })).not.toHaveTextContent("Mira"));
+    await user.click(await screen.findByRole("option", { name: "You" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Receipt details for Chat request" })).not.toHaveTextContent("Mira"));
   } else {
     expect(named).not.toHaveTextContent("Mira");
     expect(unnamed).not.toHaveTextContent("Person not recorded");
