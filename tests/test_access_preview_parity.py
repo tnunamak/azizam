@@ -211,7 +211,7 @@ def test_a_provider_that_cannot_be_read_is_a_cannot_tell_and_never_allowed(owner
     entries = {e["id"]: e for e in body["entries"]}
     assert entries["remote-m"]["state"] == "unknown"
     assert entries["remote-m"]["rule"]["code"] == "provider.config_unavailable"
-    assert entries["chat-a"]["state"] == "allowed", entries["chat-a"]
+    assert entries["chat-a"]["state"] == "allowed", entries["chat-a"]["rule"]
 
 
 # --- a person or an app the category rules govern by name ----------------------------------
@@ -244,7 +244,7 @@ def test_a_person_the_category_rules_govern_by_name_gets_the_answer_a_request_ge
     assert response.status_code == 200, response.text
     preview = response.json()
     entries = {e["id"]: e for e in preview["entries"]}
-    assert entries["chat-a"]["state"] == "allowed", entries["chat-a"]
+    assert entries["chat-a"]["state"] == "allowed", entries["chat-a"]["rule"]
     assert entries["chat-b"]["state"] == "blocked" and entries["chat-b"]["rule"]["kind"] == "category"
     _compare(preview, EffectiveAccess(_plan_of(owner, plan), _plan_of(owner, plan)),
              person_id=person["id"], app_id=app["id"])
@@ -258,6 +258,6 @@ def test_an_app_the_category_rules_govern_by_name_gets_the_answer_a_request_gets
     assert response.status_code == 200, response.text
     preview = response.json()
     entries = {e["id"]: e for e in preview["entries"]}
-    assert entries["chat-a"]["state"] == "allowed", entries["chat-a"]
+    assert entries["chat-a"]["state"] == "allowed", entries["chat-a"]["rule"]
     assert entries["chat-b"]["state"] == "blocked" and entries["chat-b"]["rule"]["kind"] == "category"
     _compare(preview, EffectiveAccess(_plan_of(owner, plan), _plan_of(owner, plan)), app_id=app["id"])
