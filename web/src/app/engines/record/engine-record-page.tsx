@@ -6,17 +6,19 @@
  * Remove. Reads GET /admin/api/engines/{id}; saves through the edit route,
  * which re-checks a changed connection on the server.
  */
-import { useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, CircleAlert, CircleCheck, CircleX, Loader2, Lock, RefreshCw } from "lucide-react";
 import { api, ApiError, queryKeys, type ServiceRegistry } from "@/lib/api";
 import {
   checkFromError,
   enginesApi,
+  fieldFromError,
   type CheckResult,
   type EngineDefinition,
   type EngineView,
   type Finding,
+  type FindingAction,
   type UpdateEngineBody,
 } from "@/lib/engines-api";
 import { cn } from "@/lib/cn";
@@ -33,7 +35,7 @@ import { AccessAnswer, AccessAsk, accessModels } from "../parts/access-answer";
 import { CallLine } from "../parts/call-line";
 import { CapabilityList, rowsFromCheck, type CapabilityRow, type TestState } from "../parts/capabilities";
 import { FindingCard } from "../parts/finding-card";
-import { FormField, LinkButton, Note, Tag } from "../parts/form";
+import { FormField, LinkButton, Note, Tag, describedBy, focusFirstInvalid } from "../parts/form";
 import { ModelsBlock, draftsFromCheck, duplicateNames, modelsBody, type ModelDraft } from "../parts/models-block";
 import { NotEditableRecord } from "./not-editable-record";
 import { RemoveSection, StoredRecordSection, errorText } from "./record-sections";
@@ -50,6 +52,9 @@ import {
 
 export const engineViewKey = (serviceId: string) => ["engineView", serviceId] as const;
 
+/** Section links: 44 px tall on a phone, with room to tap. */
+const NAV_LINK = "text-link inline-flex items-center px-2 hover:underline max-sm:min-h-11";
+
 const SAVED_TEST_NOTE = "Ran on the gateway’s computer with the saved settings. It is not in Activity.";
 const GATEWAY_TEST_NOTE = "Sent through the gateway, the way an app would.";
 const DRAFT_TEST_NOTE = "Ran on the gateway’s computer with the values on this screen. Nothing was saved, and it is not in Activity.";
@@ -61,6 +66,7 @@ export function EngineRecordPage({
   onDismissNotice,
   onBack,
   onRemove,
+  onOpenEngine,
 }: {
   serviceId: string;
   /** "Added …" from the dialog, shown once at the top. */
@@ -68,11 +74,14 @@ export function EngineRecordPage({
   onDismissNotice?: () => void;
   onBack: () => void;
   onRemove: (serviceId: string) => void;
+  /** Opens another engine, for a finding that says an engine already uses this address. */
+  onOpenEngine?: (serviceId: string) => void;
 }) {
   const {
     data: definitions,
     isPending: definitionsPending,
     isError: definitionsFailed,
+    refetch: refetchDefinitions,
   } = useQuery({ queryKey: engineDefinitionsKey, queryFn: enginesApi.definitions, staleTime: 60_000 });
   const {
     data: engine,
@@ -110,10 +119,20 @@ export function EngineRecordPage({
           meta={
             engineError instanceof ApiError && engineError.status === 404
               ? "The engine is no longer on this gateway. Go back to Engines."
-              : "Its settings are unknown. Try loading the engine again."
+              : "Azizam couldn’t load this engine’s settings. Try again."
           }
           actions={
-            <Button type="button" variant="outline" size="sm" onClick={() => void refetchEngine()}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                // Ask again for whatever failed. When both loaded but the kind is unknown, ask for both.
+                const both = !engineFailed && !definitionsFailed;
+                if (engineFailed || both) void refetchEngine();
+                if (definitionsFailed || both) void refetchDefinitions();
+              }}
+            >
               Retry
             </Button>
           }
@@ -174,10 +193,26 @@ export function EngineRecordPage({
           }}
           onDiscard={() => setVersion((v) => v + 1)}
           onRemove={() => onRemove(serviceId)}
+          onOpenEngine={onOpenEngine}
         />
       )}
     </div>
   );
+}
+
+/** A refused Save: what the server said, the check behind it, and the field it is about. */
+interface SaveError {
+  message: string;
+  finding?: Finding;
+  /** The form field the message belongs to: name, address, key, models or one of More options' keys. */
+  field: string | null;
+  /** The form as it was saved. The message shows only while the form still matches it. */
+  body: string;
+}
+
+/** The server calls the key api_key or api_key_env; the page has one place for it. */
+function saveField(raw: string | null): string | null {
+  return raw === "api_key" || raw === "api_key_env" ? "key" : raw;
 }
 
 interface SessionCheck {
@@ -209,6 +244,7 @@ function RecordForm({
   onSaved,
   onDiscard,
   onRemove,
+  onOpenEngine,
 }: {
   view: EngineView;
   definition: EngineDefinition;
@@ -216,6 +252,7 @@ function RecordForm({
   onSaved: (message: string) => Promise<void>;
   onDiscard: () => void;
   onRemove: () => void;
+  onOpenEngine?: (serviceId: string) => void;
 }) {
   const viewer = useViewer();
   const owner = viewer.role === "owner";
@@ -250,14 +287,18 @@ function RecordForm({
   const [tests, setTests] = useState<Record<string, TestState>>({});
   const [detectNote, setDetectNote] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<{ message: string; finding?: Finding } | null>(null);
+  const [saveError, setSaveError] = useState<SaveError | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const checkText = useId();
+  const saveText = useId();
+  const keyErrorId = useId();
   const [enabling, setEnabling] = useState<boolean | null>(null);
   const [enableError, setEnableError] = useState<string | null>(null);
   const [enableWarning, setEnableWarning] = useState<Finding | null>(null);
 
-  function bodyValues(): Record<string, unknown> {
+  function bodyValues(at = address): Record<string, unknown> {
     const keys = new Set(definition.fields.map((f) => f.key));
-    const values: Record<string, unknown> = { address: address.trim() };
+    const values: Record<string, unknown> = { address: at.trim() };
     if (newKey) values.api_key = newKey;
     if (view.key.source === "env" && view.key.env_name && keys.has("api_key_env")) values.api_key_env = view.key.env_name;
     for (const field of optionFields(definition)) {
@@ -284,7 +325,19 @@ function RecordForm({
     return body;
   }
   const [initialBody] = useState(() => JSON.stringify(saveBody()));
-  const dirty = Boolean(newKey) || JSON.stringify(saveBody()) !== initialBody;
+  const bodyNow = JSON.stringify(saveBody());
+  const dirty = Boolean(newKey) || bodyNow !== initialBody;
+  const optionKeys = new Set(optionFields(definition).map((f) => f.key));
+  // A refusal belongs to the form that was sent. Once the owner edits it, the message steps aside.
+  const refusal = saveError && saveError.body === bodyNow ? saveError : null;
+  const refusedField = refusal?.field ?? null;
+  const refusedFinding = refusal?.finding;
+  const findingInline = Boolean(refusedFinding && (refusedField === "address" || refusedField === "key"));
+  const refusedHere = (field: string) => (refusedField === field ? refusal?.message : undefined);
+  const optionErrors: Record<string, string> = refusedField && optionKeys.has(refusedField) && refusal ? { [refusedField]: refusal.message } : {};
+  useEffect(() => {
+    if (saveError) focusFirstInvalid(root.current);
+  }, [saveError]);
 
   const addressChanged = trimAddress(address) !== trimAddress(saved.address);
   const keyStored = view.key.state === "configured";
@@ -300,13 +353,13 @@ function RecordForm({
   const managed = options.lifecycle_mode === "managed";
   const hasLifecycle = definition.fields.some((f) => f.owner_only);
 
-  async function runCheck(detectModels = false) {
+  async function runCheck(detectModels = false, at = address) {
     setChecking(true);
     setCheckError(null);
     setDetectNote(null);
     try {
-      const result = await enginesApi.check({ definition: definition.definition, values: bodyValues() as never, service_id: view.service_id });
-      setSession({ result, address: trimAddress(address), key: newKey });
+      const result = await enginesApi.check({ definition: definition.definition, values: bodyValues(at) as never, service_id: view.service_id });
+      setSession({ result, address: trimAddress(at), key: newKey });
       if (result.outcome !== "error") {
         if (view.check.status === "not_started" && ticked.size === 0) setTicked(new Set(result.capabilities.filter((c) => c.ticked).map((c) => c.id)));
         if (detectModels || models.length === 0) {
@@ -380,6 +433,16 @@ function RecordForm({
     }
   }
 
+  /** "Add /v1 and check again": change the address as the finding says, then check it. */
+  function fixPath(action: FindingAction) {
+    let next = trimAddress(address);
+    if (action.address_append) next += action.address_append;
+    if (action.address_strip && next.endsWith(action.address_strip)) next = next.slice(0, -action.address_strip.length);
+    setAddress(next);
+    setTests({});
+    void runCheck(false, next);
+  }
+
   async function save(options: { keepOff?: boolean; acknowledge?: boolean } = {}) {
     setSaving(true);
     setSaveError(null);
@@ -401,7 +464,11 @@ function RecordForm({
     } catch (error) {
       const refused = checkFromError(error);
       const finding = refused?.findings.find((f) => f.severity === "error") ?? refused?.findings[0];
-      setSaveError({ message: errorText(error), finding });
+      const field = saveField(fieldFromError(error) ?? finding?.field ?? null);
+      setSaveError({ message: errorText(error), finding, field, body: JSON.stringify(saveBody()) });
+      // Show the field the server named: open what hides it, and let the effect below move focus.
+      if (field && optionKeys.has(field)) setMoreOpen(true);
+      if (field === "key" && owner && !locked) setKeyEditing(true);
     } finally {
       setSaving(false);
     }
@@ -460,6 +527,13 @@ function RecordForm({
         <CircleX aria-hidden="true" className="mr-1 inline size-4" />
         {f ? `The check found a problem: ${f.title}.` : "The check found a problem."}
         {addressChanged ? " Fix it and check again, or save and keep the engine off." : ""}
+      </span>
+    );
+  } else if (fresh && fresh.result.outcome === "warning") {
+    checkLine = (
+      <span className="text-warning">
+        <CircleAlert aria-hidden="true" className="mr-1 inline size-4" />
+        Reached the server, but the check found a warning. Review it below before saving.
       </span>
     );
   } else if (fresh) {
@@ -521,7 +595,35 @@ function RecordForm({
     );
   } else if (view.check.status === "failed") checkLine = <>The last check found a problem. Check again to see it.</>;
   else checkLine = <>Not checked from this page yet.</>;
-  const checkFinding = fresh && fresh.result.outcome === "error" ? fresh.result.findings[0] : undefined;
+  const checkFinding =
+    fresh?.result.outcome === "error"
+      ? fresh.result.findings[0]
+      : fresh?.result.outcome === "warning"
+        ? (fresh.result.findings.find((f) => f.severity === "warning") ?? fresh.result.findings[0])
+        : undefined;
+  const checkFindingFor = (field: Finding["field"]) => checkFinding?.field === field && checkFinding.severity === "error";
+  /** What the key box says is wrong: a refused Save, or a check that found the key at fault. */
+  const keyInvalid = Boolean(refusedField === "key" || checkFindingFor("key"));
+  const keyDescription = describedBy(
+    refusedField === "key" && (refusedFinding ? saveText : keyErrorId),
+    checkFinding?.field === "key" && checkText,
+  );
+  const saveCard = (inline: boolean) =>
+    refusedFinding && (inline ? findingInline : !findingInline) ? (
+      <FindingCard
+        finding={refusedFinding}
+        textId={inline ? saveText : undefined}
+        onFixPath={fixPath}
+        onOpenExisting={onOpenEngine}
+        extraActions={
+          refusedFinding.severity === "warning" && (
+            <Button type="button" variant="outline" size="sm" onClick={() => void save({ acknowledge: true })}>
+              Save anyway
+            </Button>
+          )
+        }
+      />
+    ) : null;
 
   // ---- Key
   let keyArea: ReactNode;
@@ -534,6 +636,8 @@ function RecordForm({
         <Input
           type="password"
           aria-labelledby="engine-key-label"
+          aria-invalid={keyInvalid ? true : undefined}
+          aria-describedby={keyDescription}
           autoComplete="new-password"
           placeholder="Paste the key again"
           value={newKey}
@@ -559,6 +663,8 @@ function RecordForm({
           <Input
             type="password"
             aria-labelledby="engine-key-label"
+            aria-invalid={keyInvalid ? true : undefined}
+            aria-describedby={keyDescription}
             autoComplete="new-password"
             placeholder="Paste the key"
             value={newKey}
@@ -637,7 +743,7 @@ function RecordForm({
   const switchDisabled = enabling !== null || (needKey && !owner);
 
   return (
-    <>
+    <div ref={root} className="contents">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-title [overflow-wrap:anywhere]">{view.name}</h1>
@@ -697,27 +803,33 @@ function RecordForm({
           )}
         </Note>
       )}
-      <nav aria-label="On this page" className="text-meta flex flex-wrap gap-x-4 gap-y-1">
-        <a className="text-link hover:underline" href="#engine-connection">Connection</a>
-        <a className="text-link hover:underline" href="#engine-abilities">What it can do</a>
-        <a className="text-link hover:underline" href="#engine-models">Models</a>
-        <a className="text-link hover:underline" href="#engine-more">More options</a>
+      <nav aria-label="On this page" className="text-meta -mx-2 flex flex-wrap gap-x-2 gap-y-1">
+        <a className={NAV_LINK} href="#engine-connection">Connection</a>
+        <a className={NAV_LINK} href="#engine-abilities">What it can do</a>
+        <a className={NAV_LINK} href="#engine-models">Models</a>
+        <a className={NAV_LINK} href="#engine-more">More options</a>
       </nav>
 
       <section aria-labelledby="engine-connection" className="flex flex-col gap-2">
         <h2 id="engine-connection" className="text-heading scroll-mt-20">Connection</h2>
         <div className="bg-card rounded-panel border">
           <div className="flex flex-col gap-4 p-4">
-            <FormField label="Name">
+            <FormField label="Name" error={refusedHere("name")}>
               {(control) => <Input {...control} value={name} autoComplete="off" onChange={(event) => setName(event.target.value)} />}
             </FormField>
             <fieldset disabled={locked} className="flex min-w-0 flex-col gap-4">
               <FormField
                 label="Address"
                 help={fieldOf(definition, "address")?.help}
+                error={refusedFinding ? undefined : refusedHere("address")}
+                extraDescribedBy={describedBy(
+                  findingInline && refusedField === "address" && saveText,
+                  checkFinding?.field === "address" && checkText,
+                )}
                 after={
                   <>
                     <CallLine definition={definition} values={{ address, path_prefix: options.path_prefix }} />
+                    {refusedField === "address" && saveCard(true)}
                     {n2 && (
                       <div role="alert" className="border-warning/40 bg-warning-tint/50 rounded-control flex flex-col gap-2 border p-3">
                         <p className="text-meta flex items-start gap-2 font-medium">
@@ -747,10 +859,23 @@ function RecordForm({
                 }
               >
                 {(control) => (
-                  <Input {...control} type="url" value={address} autoComplete="off" spellCheck={false} onChange={(event) => {
+                  <Input
+                    {...control}
+                    aria-invalid={
+                      control["aria-invalid"] ??
+                      ((findingInline && refusedField === "address" && refusedFinding?.severity === "error") || checkFindingFor("address")
+                        ? true
+                        : undefined)
+                    }
+                    type="url"
+                    value={address}
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(event) => {
                       setAddress(event.target.value);
                       setTests({});
-                    }} />
+                    }}
+                  />
                 )}
               </FormField>
               {fieldOf(definition, "api_key") && (
@@ -759,6 +884,14 @@ function RecordForm({
                     {fieldOf(definition, "api_key")?.label}
                   </span>
                   {keyArea}
+                  {refusedField === "key" &&
+                    (refusedFinding ? (
+                      saveCard(true)
+                    ) : (
+                      <p id={keyErrorId} className="text-meta text-danger">
+                        {refusal?.message}
+                      </p>
+                    ))}
                 </div>
               )}
             </fieldset>
@@ -780,7 +913,15 @@ function RecordForm({
           </div>
           {(checkFinding || checkError) && (
             <div className="px-4 pb-4">
-              {checkFinding ? <FindingCard finding={checkFinding} onRecheck={() => void runCheck()} /> : <Note tone="warn" role="alert">{`Azizam could not run the check. ${checkError}`}</Note>}
+              {checkFinding ? (
+                <FindingCard
+                  finding={checkFinding}
+                  textId={checkText}
+                  onRecheck={() => void runCheck()}
+                  onFixPath={fixPath}
+                  onOpenExisting={onOpenEngine}
+                />
+              ) : <Note tone="warn" role="alert">{`Azizam could not run the check. ${checkError}`}</Note>}
             </div>
           )}
         </div>
@@ -828,6 +969,7 @@ function RecordForm({
             models={models}
             onChange={setModels}
             readOnly={locked}
+            error={refusedHere("models")}
             emptyText="No models yet. Azizam lists them the first time the engine starts. You can also add one by name below."
           />
           {modelsChanged ? (
@@ -858,6 +1000,7 @@ function RecordForm({
             address={address}
             open={moreOpen}
             onOpenChange={setMoreOpen}
+            errors={optionErrors}
           />
         </section>
       </fieldset>
@@ -866,21 +1009,10 @@ function RecordForm({
 
       {!locked && <RemoveSection onRemove={onRemove} />}
 
-      {saveError && (
+      {refusal && (
         <div className="flex flex-col gap-2">
-          <Callout as="div" severity="critical" title="The changes could not be saved" meta={saveError.message} />
-          {saveError.finding && (
-            <FindingCard
-              finding={saveError.finding}
-              extraActions={
-                saveError.finding.severity === "warning" && (
-                  <Button type="button" variant="outline" size="sm" onClick={() => void save({ acknowledge: true })}>
-                    Save anyway
-                  </Button>
-                )
-              }
-            />
-          )}
+          <Callout as="div" severity="critical" title="The changes could not be saved" meta={refusal.message} />
+          {saveCard(false)}
         </div>
       )}
 
@@ -911,6 +1043,6 @@ function RecordForm({
           </span>
         </div>
       )}
-    </>
+    </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import { useId, type RefObject } from "react";
 import { ChevronRight, Search } from "lucide-react";
 import type { EngineDefinition } from "@/lib/engines-api";
 import { cn } from "@/lib/cn";
@@ -17,11 +17,14 @@ export function StepKind({
   query,
   onQuery,
   onPick,
+  headingRef,
 }: {
   definitions: EngineDefinition[];
   query: string;
   onQuery: (q: string) => void;
   onPick: (definition: EngineDefinition) => void;
+  /** The step heading takes focus when this step is shown again. */
+  headingRef?: RefObject<HTMLHeadingElement | null>;
 }) {
   const searchId = useId();
   const q = query.trim().toLowerCase();
@@ -32,7 +35,9 @@ export function StepKind({
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h3 className="text-heading">What kind of server is it?</h3>
+        <h3 ref={headingRef} tabIndex={-1} className="text-heading outline-none">
+          What kind of server is it?
+        </h3>
         <p className="text-meta text-muted-foreground mt-0.5">
           Choose one to continue. Not sure? Pick the first. Azizam checks what the server can do.
         </p>

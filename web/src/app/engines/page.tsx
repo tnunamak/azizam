@@ -361,6 +361,7 @@ function EnginesContents() {
           notice={notice}
           onDismissNotice={() => setNotice(null)}
           onBack={backToList}
+          onOpenEngine={openEngine}
           onRemove={(id) => {
             const target = registryData?.services[id];
             if (target) setRemoveTarget(target);
