@@ -259,7 +259,7 @@ Selected successful workflows are exercised separately.
 | `GET /admin/api/engine-definitions` | owner-bearer | denied | `gateway.engine_admin.get_engine_definitions`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/engines/check` | owner-bearer | denied | `gateway.engine_admin.check_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/engines/test` | owner-bearer | denied | `gateway.engine_admin.test_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `POST /admin/api/engines/workflow` | owner-bearer | denied | `gateway.engine_admin.read_engine_workflow`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/engines/access` | owner-bearer | denied | `gateway.engine_admin.engine_access`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/engines/{service_id}` | owner-bearer | denied | `gateway.engine_admin.get_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/operator/service-registry` | owner-bearer | denied | `gateway.admin_api.get_service_registry`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PUT /admin/api/operator/service-registry` | owner-bearer | denied | `gateway.admin_api.update_service_registry`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |

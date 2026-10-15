@@ -447,7 +447,7 @@
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   },
-  "POST /admin/api/engines/workflow": {
+  "POST /admin/api/engines/access": {
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   },

@@ -18,7 +18,7 @@
     },
     "evidence_text": {
       "type": "object",
-      "required": ["possible", "possible_why", "against", "against_why", "none", "none_why", "needs_key", "declared", "likely_model_field", "likely_metadata", "likely_test"],
+      "required": ["possible", "possible_why", "against", "against_why", "none", "none_why", "needs_key", "likely_model_field", "likely_metadata", "likely_test"],
       "additionalProperties": {"type": "string", "minLength": 1}
     },
     "metadata_rows": {"type": "array", "items": {"$ref": "#/$defs/metadataRow"}},
@@ -64,7 +64,7 @@
         "path": {"type": "string", "pattern": "^/"},
         "from": {"enum": ["origin", "address"]},
         "cap_bytes": {"type": "integer", "minimum": 1024, "maximum": 16777216},
-        "kind": {"enum": ["openapi_paths", "capability_document", "identity", "node_catalog", "model_list"]},
+        "kind": {"enum": ["openapi_paths", "capability_document", "model_list"]},
         "paths": {"type": "object", "additionalProperties": {"type": "string"}},
         "values": {"type": "object", "additionalProperties": {"type": "string"}},
         "require_json_key": {"type": "string"},
@@ -114,19 +114,10 @@
         "sent": {"type": "string"},
         "cost": {"type": "string"},
         "body": {"type": "object"},
-        "multipart_silence": {"type": "object"},
-        "path": {"type": "string", "pattern": "^/"},
-        "from": {"enum": ["origin", "address"]},
         "pass_json": {"type": "string"},
-        "pass_status": {"type": "integer", "minimum": 1, "maximum": 5},
-        "pass_status_in": {"type": "array", "items": {"type": "integer"}},
-        "pass_body": {"type": "string", "format": "regex"},
         "reply_json": {"type": "string"},
-        "reply_text": {"type": "string"},
         "reply_count_json": {"type": "string"},
-        "reply_count_text": {"type": "string"},
-        "reply_audio": {"type": "boolean"},
-        "invalid_input": {"type": "array", "items": {"type": "object", "required": ["input", "value"], "properties": {"input": {"type": "string"}, "value": {}}, "additionalProperties": false}}
+        "reply_count_text": {"type": "string"}
       }
     },
     "condition": {
@@ -147,8 +138,7 @@
         "body_matches": {"type": "string", "format": "regex"},
         "recognised": {"type": "boolean"},
         "models_count": {"type": "integer"},
-        "duplicate": {"type": "boolean"},
-        "workflow": {"enum": ["ui_format", "not_json", "too_large"]}
+        "duplicate": {"type": "boolean"}
       }
     },
     "action": {
@@ -169,7 +159,7 @@
       "properties": {
         "code": {"$ref": "#/$defs/id"},
         "severity": {"enum": ["error", "warning"]},
-        "field": {"enum": ["address", "key", "path", "file"]},
+        "field": {"enum": ["address", "key"]},
         "when": {"$ref": "#/$defs/condition"},
         "title": {"type": "string", "minLength": 1},
         "what": {"type": "string", "minLength": 1},
@@ -223,7 +213,7 @@
         "advanced": {"type": "boolean"},
         "owner_only": {"type": "boolean"},
         "secondary_of": {"type": "string"},
-        "unit": {"enum": ["seconds", "minutes", "tokens"]},
+        "unit": {"enum": ["seconds", "tokens"]},
         "items": {"enum": ["transform", "text"]}
       },
       "allOf": [
@@ -238,28 +228,12 @@
       "properties": {
         "id": {"$ref": "#/$defs/id"},
         "method": {"enum": ["GET", "POST"]},
-        "path": {"type": "string", "pattern": "^(/|\\{path\\}$)"},
+        "path": {"type": "string", "pattern": "^/"},
         "from": {"enum": ["origin", "address"]},
-        "kind": {"enum": ["model_list", "identity", "declared_path"]},
+        "kind": {"const": "model_list"},
         "list_keys": {"type": "array", "items": {"type": "string"}},
         "id_keys": {"type": "array", "items": {"type": "string"}},
         "require_json_key": {"type": "string"}
-      }
-    },
-    "workflowInput": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["key", "label", "help", "fields"],
-      "properties": {
-        "key": {"$ref": "#/$defs/id"},
-        "label": {"type": "string"},
-        "required": {"type": "boolean"},
-        "help": {"type": "string"},
-        "fields": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-        "class_matches": {"type": "string", "format": "regex"},
-        "prefer": {"enum": ["positive"]},
-        "matched_note": {"type": "string"},
-        "missing_note": {"type": "string"}
       }
     },
     "definition": {
@@ -274,8 +248,7 @@
         "summary": {"type": "string", "minLength": 1},
         "badge": {"type": "string"},
         "keywords": {"type": "array", "items": {"type": "string"}},
-        "flow": {"enum": ["detect", "declared", "workflow"]},
-        "declared_capability": {"$ref": "#/$defs/id"},
+        "flow": {"const": "detect"},
         "steps": {"type": "array", "minItems": 5, "maxItems": 5, "items": {"type": "string"}},
         "fields": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/field"}},
         "probes": {
@@ -290,21 +263,10 @@
           }
         },
         "capabilities": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/id"}},
-        "default_ticked": {"enum": ["likely", "declared", "workflow"]},
+        "default_ticked": {"const": "likely"},
         "check_rows": {"type": "array", "minItems": 1, "items": {"type": "string"}},
         "name_fallback": {"type": "string"},
         "models_note": {"type": "string"},
-        "workflow": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["max_bytes", "api_format", "output_rules", "inputs"],
-          "properties": {
-            "max_bytes": {"type": "integer", "minimum": 1},
-            "api_format": {"type": "object"},
-            "output_rules": {"type": "array", "items": {"type": "object", "required": ["class_matches", "makes"], "properties": {"class_matches": {"type": "string", "format": "regex"}, "makes": {"enum": ["images", "video"]}}, "additionalProperties": false}},
-            "inputs": {"type": "array", "items": {"$ref": "#/$defs/workflowInput"}}
-          }
-        },
         "advice": {"type": "array", "items": {"$ref": "#/$defs/advice"}},
         "record": {
           "type": "object",
@@ -317,11 +279,7 @@
             "base_path": {"type": "string"}
           }
         }
-      },
-      "allOf": [
-        {"if": {"properties": {"flow": {"const": "declared"}}}, "then": {"required": ["declared_capability"]}},
-        {"if": {"properties": {"flow": {"const": "workflow"}}}, "then": {"required": ["workflow"]}}
-      ]
+      }
     }
   }
 }

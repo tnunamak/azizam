@@ -66,8 +66,7 @@ class EngineCatalog:
                 key: copy.deepcopy(row[key])
                 for key in (
                     "definition", "definition_version", "title", "example", "summary", "badge",
-                    "keywords", "flow", "declared_capability", "steps", "fields", "check_rows",
-                    "models_note",
+                    "keywords", "flow", "steps", "fields", "check_rows", "models_note",
                 )
                 if key in row
             }
@@ -77,9 +76,6 @@ class EngineCatalog:
             item["capabilities"] = [
                 {"id": cap_id, "label": capabilities[cap_id]["label"]} for cap_id in row["capabilities"]
             ]
-            if "workflow" in row:
-                item["workflow_inputs"] = copy.deepcopy(row["workflow"]["inputs"])
-                item["workflow_max_bytes"] = row["workflow"]["max_bytes"]
             out.append(item)
         tests = {
             test_id: {"sent": test["sent"], "cost": test["cost"]}
@@ -141,14 +137,9 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
         for cap_id in definition["capabilities"]:
             if cap_id not in capabilities:
                 errors.append(f"{where}.capabilities: no capability named {cap_id!r}")
-        declared = definition.get("declared_capability")
-        if declared and declared not in definition["capabilities"]:
-            errors.append(f"{where}.declared_capability: {declared!r} is not one of its capabilities")
         for row_id in definition["probes"]["metadata"]:
             if row_id not in metadata_ids:
                 errors.append(f"{where}.probes.metadata: no metadata row named {row_id!r}")
-        if definition["probes"]["primary"]["path"] == "{path}" and "path" not in keys:
-            errors.append(f"{where}.probes.primary: the path comes from a field named 'path', which is missing")
         own_codes = [row["code"] for row in definition["advice"]]
         if len(set(own_codes)) != len(own_codes):
             errors.append(f"{where}.advice: two rows share a code")
@@ -156,11 +147,6 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
             for key in ("address_matches", "body_matches"):
                 if key in row["when"]:
                     patterns.append((f"{where}.advice.{row['code']}.when.{key}", row["when"][key]))
-        for rule in (definition.get("workflow") or {}).get("output_rules", ()):
-            patterns.append((f"{where}.workflow.output_rules", rule["class_matches"]))
-        for item in (definition.get("workflow") or {}).get("inputs", ()):
-            if item.get("class_matches"):
-                patterns.append((f"{where}.workflow.inputs.{item['key']}", item["class_matches"]))
     for row in data["model_rules"]:
         if "matches" in row:
             patterns.append(("model_rules", row["matches"]))

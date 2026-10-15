@@ -11,20 +11,18 @@ engine.
 Safety (spec section 5): only GET and empty-body POST during the check; no
 redirects; a timeout per request; a size cap per answer; nothing to link-local
 or cloud-metadata addresses; nothing to the gateway's own ports on this
-computer. The real test is a separate, explicit request of the declared kind.
+computer. The real test is a separate, explicit request of one kind the owner picks.
 """
 
 from __future__ import annotations
 
 import asyncio
-import copy
 import ipaddress
 import json
 import re
 import secrets
 import socket
 import ssl
-import struct
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
@@ -350,10 +348,8 @@ def _auth_headers(key: str | None, values: Mapping[str, Any]) -> dict[str, str]:
             name, value = str(row.get("name") or "").strip(), row.get("value")
             if name and isinstance(value, str) and value and value != SECRET_MASK and _header_ok(name, value):
                 headers[name] = value
-    if key:
-        name = str(values.get("auth_header") or "Authorization").strip() or "Authorization"
-        if _header_ok(name, key):
-            headers[name] = f"Bearer {key}" if name.lower() == "authorization" else key
+    if key and _header_ok("Authorization", key):
+        headers["Authorization"] = f"Bearer {key}"
     return headers
 
 
@@ -361,12 +357,10 @@ def _header_ok(name: str, value: str) -> bool:
     return bool(re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name)) and not any(ch in value for ch in "\r\n")
 
 
-def _curl(answer: Answer, *, key_sent: bool, auth_header: str, timeout: bool) -> str:
+def _curl(answer: Answer, *, key_sent: bool, timeout: bool) -> str:
     command = "curl -i" + (" --max-time 5" if timeout else "") + (" -X POST" if answer.method == "POST" else "") + f" {answer.url}"
     if key_sent:
-        name = auth_header or "Authorization"
-        value = "Bearer YOUR_KEY" if name.lower() == "authorization" else "YOUR_KEY"
-        command += f' \\\n  -H "{name}: {value}"'
+        command += ' \\\n  -H "Authorization: Bearer YOUR_KEY"'
     if answer.method == "POST":
         command += " \\\n  -H \"content-type: application/json\" -d '{}'"
     return command
@@ -420,10 +414,7 @@ def _route_url(ctx: _Ctx, path: str, frm: str = "address") -> str:
 
 def _primary_url(ctx: _Ctx) -> tuple[str, str]:
     probe = ctx.definition["probes"]["primary"]
-    path = probe["path"]
-    if path == "{path}":
-        path = str(ctx.values.get("path") or "").strip()
-    return probe["method"], _route_url(ctx, path, probe["from"])
+    return probe["method"], _route_url(ctx, probe["path"], probe["from"])
 
 
 def call_line(definition: Mapping[str, Any], values: Mapping[str, Any]) -> str:
@@ -433,10 +424,9 @@ def call_line(definition: Mapping[str, Any], values: Mapping[str, Any]) -> str:
     except DraftError:
         return ""
     probe = definition["probes"]["primary"]
-    path = str(values.get("path") or "").strip() if probe["path"] == "{path}" else probe["path"]
     base = origin_of(address) if probe["from"] == "origin" else address
     prefix = str(values.get("path_prefix") or "")
-    return f"{probe['method']} {join_url(join_url(base, prefix) if prefix else base, path)}"
+    return f"{probe['method']} {join_url(join_url(base, prefix) if prefix else base, probe['path'])}"
 
 
 MODEL_LIST_CAP_BYTES = 1024 * 1024
@@ -474,7 +464,7 @@ def _matches(when: Mapping[str, Any], obs: Mapping[str, Any]) -> bool:
 
 
 def _finding(row: Mapping[str, Any], fill: Mapping[str, Any], *, viewer_role: str, answer: Answer | None,
-             key_sent: bool, auth_header: str, everywhere: bool = False) -> dict[str, Any]:
+             key_sent: bool, everywhere: bool = False) -> dict[str, Any]:
     admin = viewer_role != "owner"
     why = row.get("why_everywhere") if everywhere and row.get("why_everywhere") else row["why"]
     out: dict[str, Any] = {
@@ -501,7 +491,7 @@ def _finding(row: Mapping[str, Any], fill: Mapping[str, Any], *, viewer_role: st
         out["details"] = {
             "raw": _raw(answer),
             "raw_label": row.get("raw_label") or "What the server said",
-            "request": _curl(answer, key_sent=key_sent, auth_header=auth_header, timeout=answer.transport == "timeout"),
+            "request": _curl(answer, key_sent=key_sent, timeout=answer.transport == "timeout"),
             "with_key": key_sent,
         }
     return out
@@ -603,17 +593,17 @@ def duplicate_finding(
     catalog: EngineCatalog, definition: Mapping[str, Any], values: Mapping[str, Any],
     existing: Iterable[Mapping[str, Any]], *, viewer_role: str = "owner",
 ) -> dict[str, Any] | None:
-    """"Already added" when another engine has this address (and path); ``None`` otherwise. Sends nothing."""
+    """"Already added" when another engine has this address; ``None`` otherwise. Sends nothing."""
     address = normalize_address(values.get("address"))
-    wanted = comparable_address(address) + str(values.get("path") or "").rstrip("/").lower()
+    wanted = comparable_address(address)
     for engine in existing:
         if not engine.get("address"):
             continue
-        if comparable_address(str(engine["address"])) + str(engine.get("path") or "").rstrip("/").lower() != wanted:
+        if comparable_address(str(engine["address"])) != wanted:
             continue
         fill = {"address": address, "existing_name": engine.get("name") or engine.get("id"), "existing_id": engine.get("id")}
         row = next(r for r in catalog.advice_rows(definition) if r["code"] == "dup")
-        return _finding(row, fill, viewer_role=viewer_role, answer=None, key_sent=False, auth_header="")
+        return _finding(row, fill, viewer_role=viewer_role, answer=None, key_sent=False)
     return None
 
 
@@ -633,19 +623,14 @@ async def run_check(
     data = catalog.data
     fields = {f["key"]: f for f in definition["fields"]}
     address = normalize_address(values.get("address"), placeholder=fields["address"].get("placeholder", ""))
-    if definition["probes"]["primary"]["path"] == "{path}":
-        path = str(values.get("path") or "").strip()
-        if not path.startswith("/") or any(ch in path for ch in "?# "):
-            raise DraftError(f"Type the path the server uses, starting with /, for example {fields['path'].get('placeholder', '/inference')}.", field="path")
     prefix = str(values.get("path_prefix") or "").strip()
     check_address = join_url(address, prefix) if prefix else address
-    timeout_s = _number(values.get("connect_timeout_s"), DEFAULT_TIMEOUT_S, low=1, high=60)
+    timeout_s = DEFAULT_TIMEOUT_S
     ctx = _Ctx(
         catalog=catalog, definition=definition, values=values, address=check_address, origin=origin_of(address),
         key=key, headers=_auth_headers(key.value, values), fetch=fetch, timeout_s=timeout_s,
         token=baseline_token or _baseline_token(), viewer_role=viewer_role,
     )
-    auth_header = str(values.get("auth_header") or "Authorization")
     key_sent = bool(key.value)
     method, url = _primary_url(ctx)
     host = urlsplit(address).hostname or ""
@@ -653,7 +638,6 @@ async def run_check(
         "host": f"{host}:{_port_of(urlsplit(address))}" if urlsplit(address).port else host,
         "address": address, "url": url, "route": urlsplit(url).path or "/",
         "timeout": f"{timeout_s:g}", "timeout_words": "1 second" if timeout_s == 1 else f"{timeout_s:g} seconds",
-        "path": values.get("path") or "",
     }
     result: dict[str, Any] = {
         "definition": definition["definition"],
@@ -711,7 +695,7 @@ async def run_check(
         row = next((r for r in advice if r["severity"] == "error" and _matches(r["when"], obs)), None)
         if row is None:
             row = next(r for r in advice if r["code"] == "down")
-        result["findings"].append(_finding(row, fill, viewer_role=viewer_role, answer=primary, key_sent=key_sent, auth_header=auth_header))
+        result["findings"].append(_finding(row, fill, viewer_role=viewer_role, answer=primary, key_sent=key_sent))
         return finish("error")
 
     result["reachable"] = True
@@ -721,8 +705,7 @@ async def run_check(
         result["steps"].append({"label": definition["check_rows"][1], "result": "Refused" if key_sent else "Key needed"})
         row = next((r for r in advice if _matches(r["when"], obs)), None)
         if row is not None:
-            result["findings"].append(_finding(row, fill, viewer_role=viewer_role, answer=primary, key_sent=key_sent,
-                                               auth_header=auth_header, everywhere=everywhere))
+            result["findings"].append(_finding(row, fill, viewer_role=viewer_role, answer=primary, key_sent=key_sent, everywhere=everywhere))
         for cap_id in definition["capabilities"]:
             cap = catalog.capability(cap_id)
             result["capabilities"].append({"id": cap_id, "label": cap["label"], "level": "needs_key",
@@ -732,35 +715,13 @@ async def run_check(
     result["steps"].append({"label": definition["check_rows"][1], "result": "Accepted" if key_sent else "No key needed"})
     if primary.status == 429:
         row = next(r for r in advice if r["code"] == "rate_limited")
-        result["findings"].append(_finding(row, fill, viewer_role=viewer_role, answer=primary, key_sent=key_sent, auth_header=auth_header))
+        result["findings"].append(_finding(row, fill, viewer_role=viewer_role, answer=primary, key_sent=key_sent))
         return finish("error")
 
-    flow = definition["flow"]
     caps: dict[str, dict[str, Any]] = {}
     models: list[dict[str, Any]] = []
     shape = None
     evidence_text = data["evidence_text"]
-
-    if flow == "declared":
-        cap_id = definition["declared_capability"]
-        cap = catalog.capability(cap_id)
-        stop = next((r for r in definition["advice"] if r["severity"] == "error" and _matches(r["when"], obs)), None)
-        result["steps"].append({"label": definition["check_rows"][2], "result": "Not found" if stop else "Found"})
-        if stop is not None:
-            result["findings"].append(_finding(stop, fill, viewer_role=viewer_role, answer=primary, key_sent=key_sent, auth_header=auth_header))
-            return finish("error")
-        server_error = bool(primary.status and primary.status >= 500)
-        evidence = (_fill(evidence_text["declared_unchecked"], {"path": values.get("path")}) if server_error else
-                    _fill(evidence_text["declared"], {"path": values.get("path"), "status_text": f"{primary.status_text}: {_error_message(primary)}" if primary.status and primary.status >= 400 else primary.status_text}))
-        caps[cap_id] = {"id": cap_id, "label": cap["label"], "level": "declared", "ticked": True, "evidence": evidence}
-        result["capabilities"] = list(caps.values())
-        result["steps"].append({"label": definition["check_rows"][3], "result": ""})
-        if server_error:
-            # A 5xx proves nothing (5a): the path may still work with a real request.
-            row = next(r for r in advice if r["code"] == "path_server_error")
-            result["findings"].append(_finding(row, fill, viewer_role=viewer_role, answer=primary, key_sent=key_sent, auth_header=auth_header))
-            return finish("warning")
-        return finish("ok")
 
     if probe["kind"] == "model_list" and primary.status == 200:
         shape, entries = _models_from(primary, probe)
@@ -778,14 +739,6 @@ async def run_check(
         result["shapes"].append(probe["id"])
     elif probe["kind"] == "model_list" and primary.status is not None and primary.status != 200:
         obs["shape"] = "none"
-    if probe["kind"] == "identity":
-        ok = primary.status == 200 and isinstance(primary.json, Mapping) and probe.get("require_json_key", "") in primary.json
-        if not ok:
-            stop = next((r for r in definition["advice"] if r["severity"] == "error" and _matches(r["when"], {**obs, "status": 404})), None)
-            if stop is not None:
-                result["findings"].append(_finding(stop, fill, viewer_role=viewer_role, answer=primary, key_sent=key_sent, auth_header=auth_header))
-                return finish("error")
-        result["shapes"].append(probe["id"])
     result["steps"].append({"label": definition["check_rows"][2], "result": f"{len(models)} found" if probe["kind"] == "model_list" else ""})
 
     # Metadata reads, all at once.
@@ -796,7 +749,6 @@ async def run_check(
     listed: dict[str, tuple[str, str]] = {}  # capability -> (document, path)
     documented: dict[str, list[str]] = {}  # capability -> model ids from a capability document
     name_candidates: list[str] = []
-    node_count = None
     for row, answer in zip(rows, meta_answers):
         body = answer.json if answer.transport == "ok" and answer.status == 200 else None
         if body is None:
@@ -815,8 +767,6 @@ async def run_check(
                     cap_id = row["values"].get(value.lower())
                     if cap_id:
                         documented.setdefault(cap_id, []).append(model_id)
-        if row["kind"] == "node_catalog" and isinstance(body, Mapping):
-            node_count = len(body)
         name_from = row.get("name_from")
         if name_from:
             candidate = _at(body, name_from["json"])
@@ -826,8 +776,6 @@ async def run_check(
                     candidate = match.group(1) if match else ""
                 if candidate:
                     name_candidates.append(candidate.strip() + name_from.get("suffix", ""))
-    if node_count is not None:
-        result["node_count"] = node_count
 
     # Empty POSTs to the standard routes, against the made-up path.
     route_levels: dict[str, tuple[str, Answer]] = {}
@@ -894,13 +842,13 @@ async def run_check(
             row["sent_to"] = f"{cap['route']['method']} {join_url(route_base, cap['route']['path'])}"
         caps[cap_id] = row
 
-    order = {"likely": 0, "declared": 0, "possible": 1, "needs_key": 2, "against": 3, "none": 4}
+    order = {"likely": 0, "possible": 1, "needs_key": 2, "against": 3, "none": 4}
     result["capabilities"] = sorted(caps.values(), key=lambda row: order.get(row["level"], 5))
     for model in models:
         model.pop("capabilities", None)
     result["models"] = models
-    recognised = bool(models) or any(row["level"] in ("likely", "possible") for row in caps.values()) or flow == "workflow"
-    if flow == "detect" and not recognised:
+    recognised = bool(models) or any(row["level"] in ("likely", "possible") for row in caps.values())
+    if not recognised:
         for row in result["capabilities"]:
             if row["level"] in ("none",):
                 row["evidence"] = evidence_text.get("none_nothing_recognised", row["evidence"])
@@ -911,7 +859,7 @@ async def run_check(
     for row in advice:
         if row["code"] == "dup" or not _matches(row["when"], obs):
             continue
-        result["findings"].append(_finding(row, fill, viewer_role=viewer_role, answer=primary, key_sent=key_sent, auth_header=auth_header))
+        result["findings"].append(_finding(row, fill, viewer_role=viewer_role, answer=primary, key_sent=key_sent))
         if row["severity"] == "error":
             return finish("error")
         break
@@ -950,91 +898,8 @@ def _number(value: Any, default: float, *, low: float, high: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Node-graph workflows
-# ---------------------------------------------------------------------------
-
-
-def read_workflow(definition: Mapping[str, Any], text: str, file_name: str) -> dict[str, Any]:
-    """Read an uploaded workflow: API format or not, its nodes, what it makes, and a first input mapping."""
-    spec = definition["workflow"]
-    if len(text.encode("utf-8")) > spec["max_bytes"]:
-        return {"ok": False, "reason": "too_large"}
-    try:
-        graph = json.loads(text)
-    except ValueError:
-        return {"ok": False, "reason": "not_json", "found": "The file is not JSON."}
-    node_keys = spec["api_format"].get("node_keys", ["class_type", "inputs"])
-    ui_keys = spec["api_format"].get("ui_format_keys", ["nodes", "links"])
-    if isinstance(graph, Mapping) and all(key in graph for key in ui_keys):
-        found = ", ".join(f'"{key}"' for key in list(graph)[:6])
-        return {"ok": False, "reason": "ui_format",
-                "found": f"Top-level keys found: {found}\nExpected: a map of node ids to {{\"class_type\", \"inputs\"}}"}
-    nodes = []
-    if isinstance(graph, Mapping):
-        for node_id, node in graph.items():
-            if str(node_id).startswith("_"):
-                continue
-            if not (isinstance(node, Mapping) and all(key in node for key in node_keys) and isinstance(node.get("inputs"), Mapping)):
-                return {"ok": False, "reason": "ui_format", "found": f"Node {node_id!r} has no class_type and inputs."}
-            title = _at(node, "_meta.title") or node["class_type"]
-            literal = [name for name, value in node["inputs"].items() if not (isinstance(value, list) and len(value) == 2 and isinstance(value[1], int))]
-            nodes.append({"id": str(node_id), "class_type": str(node["class_type"]), "title": str(title), "fields": literal})
-    if not nodes:
-        return {"ok": False, "reason": "ui_format", "found": "The file holds no nodes."}
-    makes = "images"
-    for rule in spec["output_rules"]:
-        if any(re.search(rule["class_matches"], node["class_type"]) for node in nodes):
-            makes = rule["makes"]
-            break
-    positive = _positive_prompt_nodes(graph)
-    inputs = []
-    for item in spec["inputs"]:
-        options = [f"{node['id']}.{name}" for node in nodes for name in node["fields"]
-                   if name in item["fields"] and (not item.get("class_matches") or re.search(item["class_matches"], node["class_type"]))]
-        auto = ""
-        if len(options) == 1:
-            auto = options[0]
-        elif options and item.get("prefer") == "positive":
-            preferred = [o for o in options if o.split(".")[0] in positive]
-            auto = preferred[0] if len(preferred) == 1 else ""
-        row = {"key": item["key"], "label": item["label"], "required": bool(item.get("required")), "help": item["help"],
-               "options": [{"value": o, "label": _node_label(nodes, o)} for o in options], "auto": auto}
-        if auto and item.get("matched_note"):
-            node = next(n for n in nodes if n["id"] == auto.split(".")[0])
-            row["note"] = _fill(item["matched_note"], {"node": node["id"], "title": node["title"]})
-        if not options and item.get("missing_note"):
-            row["note"] = item["missing_note"]
-        inputs.append(row)
-    return {"ok": True, "file": file_name, "nodes": nodes, "node_count": len(nodes), "makes": makes, "inputs": inputs,
-            "file_stem": re.sub(r"\.json$", "", file_name.rsplit("/", 1)[-1], flags=re.IGNORECASE)}
-
-
-def _positive_prompt_nodes(graph: Mapping[str, Any]) -> set[str]:
-    out: set[str] = set()
-    for node in graph.values() if isinstance(graph, Mapping) else ():
-        if isinstance(node, Mapping) and isinstance(node.get("inputs"), Mapping):
-            link = node["inputs"].get("positive")
-            if isinstance(link, list) and link:
-                out.add(str(link[0]))
-    return out
-
-
-def _node_label(nodes: list[Mapping[str, Any]], value: str) -> str:
-    node_id, _, name = value.partition(".")
-    node = next((n for n in nodes if n["id"] == node_id), None)
-    return f"{node_id} · {node['title'] if node else '?'} · {name}"
-
-
-# ---------------------------------------------------------------------------
 # The real test
 # ---------------------------------------------------------------------------
-
-
-def silence_wav(seconds: float = 1.0, rate: int = 16000) -> bytes:
-    frames = int(seconds * rate)
-    data = b"\x00\x00" * frames
-    header = b"RIFF" + struct.pack("<I", 36 + len(data)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
-    return header + b"data" + struct.pack("<I", len(data)) + data
 
 
 def _substitute(value: Any, slots: Mapping[str, Any]) -> Any:
@@ -1064,12 +929,9 @@ async def run_real_test(
     key: KeyInput,
     fetch: Fetch,
     model: str | None = None,
-    voice: str | None = None,
-    workflow: Mapping[str, Any] | None = None,
-    mapping: Mapping[str, str] | None = None,
     now: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
-    """One tiny real request of the declared kind, from the gateway's computer, to the draft address."""
+    """One tiny real request of one kind, from the gateway's computer, to the draft address."""
     if capability_id not in definition["capabilities"]:
         raise DraftError("This kind of server does not offer that.", field="capability")
     address = normalize_address(values.get("address"))
@@ -1078,49 +940,14 @@ async def run_real_test(
     headers = _auth_headers(key.value, values)
     prefix = str(values.get("path_prefix") or "").strip()
     base = join_url(address, prefix) if prefix else address
-    if definition["flow"] == "declared":
-        url = join_url(base, str(values.get("path") or ""))
-    elif test.get("path"):
-        url = join_url(origin_of(address) if test.get("from") == "origin" else base, test["path"])
-    elif definition["probes"].get("route_base"):
+    if definition["probes"].get("route_base"):
         url = join_url(join_url(origin_of(address), definition["probes"]["route_base"]), cap["route"]["path"])
     else:
         url = join_url(base, cap["route"]["path"])
-    slots = {"model": model or "", "voice": voice or ""}
-    content: bytes | None
-    if "multipart_silence" in test:
-        boundary = "azizam" + secrets.token_hex(8)
-        spec = test["multipart_silence"]
-        parts = []
-        for name, value in _substitute(spec.get("fields") or {}, slots).items():
-            parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
-        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{spec["file_field"]}"; filename="silence.wav"\r\nContent-Type: audio/wav\r\n\r\n'.encode() + silence_wav() + b"\r\n")
-        parts.append(f"--{boundary}--\r\n".encode())
-        content = b"".join(parts)
-        headers["content-type"] = f"multipart/form-data; boundary={boundary}"
-        shape = "a multipart form with one second of silence in the field “file”"
-    elif test.get("invalid_input") is not None:
-        if not workflow or not mapping:
-            raise DraftError("Pick a workflow and match its inputs first.", field="workflow")
-        graph = copy.deepcopy(dict(workflow))
-        changed = None
-        for item in test["invalid_input"]:
-            target = mapping.get(item["input"])
-            if target:
-                node_id, _, name = target.partition(".")
-                if isinstance(graph.get(node_id), Mapping) and isinstance(graph[node_id].get("inputs"), Mapping):
-                    graph[node_id]["inputs"][name] = item["value"]
-                    changed = item
-                    break
-        if changed is None:
-            raise DraftError("Match the seed, steps or width input first. Azizam needs one value the server must refuse, so that nothing is queued.", field="workflow")
-        content = json.dumps({"prompt": graph}).encode()
-        headers["content-type"] = "application/json"
-        shape = f"the workflow with {changed['input']} set to {changed['value']}"
-    else:
-        content = json.dumps(_substitute(test.get("body") or {}, slots)).encode()
-        headers["content-type"] = "application/json"
-        shape = "a small JSON request in the OpenAI shape"
+    slots = {"model": model or ""}
+    content = json.dumps(_substitute(test.get("body") or {}, slots)).encode()
+    headers["content-type"] = "application/json"
+    shape = "a small JSON request in the OpenAI shape"
     timeout_s = _number(values.get("reply_timeout_s"), TEST_TIMEOUT_S, low=1, high=600)
     answer = await fetch("POST", url, headers=headers, cap_bytes=TEST_CAP_BYTES, timeout_s=timeout_s, content=content)
     result: dict[str, Any] = {
@@ -1150,13 +977,6 @@ async def run_real_test(
 def _judge(test: Mapping[str, Any], answer: Answer) -> tuple[bool, str]:
     if answer.transport != "ok" or answer.status is None:
         return False, answer.detail or "No answer"
-    if "pass_status_in" in test:
-        ok = answer.status in test["pass_status_in"] and (
-            not test.get("pass_body") or re.search(test["pass_body"], answer.text, re.IGNORECASE) is not None)
-        reply = f"Refused before anything was queued: “{_error_message(answer)}”. So the server read the whole workflow." if ok else f"“{_error_message(answer)}”"
-        if answer.status == 200:
-            reply = "The server accepted the workflow and queued it. The refused value did not stop it."
-        return ok, reply
     if answer.status // 100 != 2:
         return False, f"“{_error_message(answer)}” (HTTP {answer.status})"
     if test.get("pass_json") and _at(answer.json, test["pass_json"]) in (None, [], ""):
@@ -1167,7 +987,4 @@ def _judge(test: Mapping[str, Any], answer: Answer) -> tuple[bool, str]:
     if test.get("reply_count_json"):
         value = _at(answer.json, test["reply_count_json"])
         return True, _fill(test.get("reply_count_text", "{count} items"), {"count": len(value) if isinstance(value, list) else "?"})
-    if test.get("reply_audio"):
-        kind = answer.headers.get("content-type", "audio")
-        return True, f"Audio ({kind}), {max(1, len(answer.body) // 1024)} KB"
-    return True, test.get("reply_text") or "An answer"
+    return True, "An answer"

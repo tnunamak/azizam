@@ -321,10 +321,10 @@
   },
   {
     "method": "POST",
-    "path": "/admin/api/engines/workflow",
+    "path": "/admin/api/engines/access",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.engine_admin.read_engine_workflow",
+    "handler": "gateway.engine_admin.engine_access",
     "schema": true
   },
   {

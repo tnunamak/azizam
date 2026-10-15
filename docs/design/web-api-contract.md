@@ -289,7 +289,7 @@ the registry is the source of truth after its initial seed.
 deployment mappings. It makes a service's public model names routable and
 round-trips through PATCH without a client-side provider branch.
 
-### Add engine: definitions, check, test, workflow, engine view
+### Add engine: definitions, check, test, who can use the models, engine view
 
 The engine preset list is gone. Engine kinds are data in
 `registry/engine_definitions.json`, validated against
@@ -297,20 +297,32 @@ The engine preset list is gone. Engine kinds are data in
 
 - `GET /admin/api/engine-definitions` → `{format_version, definitions, real_tests}`.
   Each definition has `definition`, `definition_version`, `title`, `example`,
-  `summary`, `flow` (`detect`, `declared`, `workflow`), `steps`, the curated
-  `fields` list, `check_rows`, `check_request` and `capabilities`.
+  `summary`, `flow` (`detect`), `steps`, the curated `fields` list,
+  `check_rows`, `check_request` and `capabilities`. Version 1 offers only what
+  the gateway routes to an added engine: chat and embeddings, and only fields
+  the running gateway reads (tests/test_engine_definitions.py lists each one
+  with its reader).
 - `POST /admin/api/engines/check` `{definition, values, service_id?}` → `{check}`:
   findings (`{code, severity, field, title, what, why, fix, keep_off, action?, details}`),
-  capabilities with a level (`likely`, `possible`, `declared`, `against`, `none`,
+  capabilities with a level (`likely`, `possible`, `against`, `none`,
   `needs_key`) and the evidence, models, `suggested_name`. Persists nothing. A
   stored key is sent only to the address it was stored for.
-- `POST /admin/api/engines/test` `{definition, values, capability, model?, voice?, workflow?, inputs?}`
+- `POST /admin/api/engines/test` `{definition, values, capability, model?}`
   → `{test}`: one tiny real request from the gateway's computer.
-- `POST /admin/api/engines/workflow` `{file, text}` → `{workflow}`: API format or
-  not, the nodes, and a first input mapping.
+- `POST /admin/api/engines/access` `{capabilities, models}` → `{access}`: who
+  could use these model names, from the stored access plans, evaluated the way
+  every request is (deny by default). `access` holds `plans` (each with `id`,
+  `name`, `models` it includes, `why`, `people`, `apps`, `link`), `you`,
+  `not_included`, `category_rules`, `unreadable_plans`, one `sentence` and
+  `link` to the access plans. It saves nothing.
 - `GET /admin/api/engines/{service_id}` → `{engine}`: the record as typed values,
   key state (never the key), capabilities, models, tests, last check, other
-  settings and the stored record with secrets shown as `configured`.
+  settings, the stored record with secrets shown as `configured`, `access` for
+  its turned-on models (as above), and `editable`. `editable` is false when
+  the model router does not call the engine at its own address (it routes it
+  through the gateway's lifecycle hop, or not at all); then the page shows the
+  settings and an edit that names a definition answers 409
+  `engine_not_editable_here`. Rename it with a plain service edit.
 
 ### POST /admin/api/operator/services  (add service)
 

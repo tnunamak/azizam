@@ -270,6 +270,24 @@ def _is_openai_compatible(service: Mapping[str, Any]) -> bool:
     return "openai" in normalize_string_list(service.get("capabilities"))
 
 
+def reaches_engine_directly(service_id: str, record: Mapping[str, Any]) -> bool:
+    """True when the model router calls this service at its own address.
+
+    Not for a service it does not route, or one it reaches through the
+    gateway's lifecycle hop: there the address path, headers and reply time a
+    service record holds are not what reaches the engine.
+    """
+    service = normalize_service_record(service_id, record)
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    if not _is_openai_compatible(service) or config.get("gateway_lifecycle"):
+        return False
+    try:
+        deployments = _deployment_records(service)
+    except ValueError:
+        return False
+    return not any(deployment["gateway_lifecycle"] for deployment in deployments)
+
+
 def _deployment_records(service: Mapping[str, Any]) -> list[dict[str, Any]]:
     config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
     provider_id = _provider_id(service, config)
@@ -433,6 +451,7 @@ def _model_list_entries(
             api_key_ref = _api_key_ref(config, secret_refs, base_url, service_id=str(service.get("id") or ""))
             if base_url:
                 litellm_params["api_base"] = base_url
+            litellm_params.update(_engine_request_settings(config))
             if api_key_ref:
                 litellm_params["api_key"] = api_key_ref
             elif base_url:
@@ -459,6 +478,28 @@ def _model_list_entries(
         if model_info:
             entry["model_info"] = model_info
         out.append(entry)
+    return out
+
+
+def engine_headers(config: Mapping[str, Any]) -> dict[str, str]:
+    """The plain request headers a service record lists as ``[{"name", "value"}]`` rows."""
+    out: dict[str, str] = {}
+    for row in config.get("headers") or () if isinstance(config.get("headers"), list) else ():
+        if isinstance(row, Mapping) and isinstance(row.get("name"), str) and isinstance(row.get("value"), str):
+            if row["name"].strip() and row["value"]:
+                out[row["name"].strip()] = row["value"]
+    return out
+
+
+def _engine_request_settings(config: Mapping[str, Any]) -> dict[str, Any]:
+    """What the router sends and how long it waits, from the record's ``headers`` and ``timeout``."""
+    out: dict[str, Any] = {}
+    headers = engine_headers(config)
+    if headers:
+        out["extra_headers"] = headers
+    timeout = config.get("timeout")
+    if isinstance(timeout, (int, float)) and not isinstance(timeout, bool) and timeout > 0:
+        out["timeout"] = float(timeout)
     return out
 
 

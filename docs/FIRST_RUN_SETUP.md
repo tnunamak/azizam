@@ -174,7 +174,14 @@ check without saving, `POST /admin/api/engines/check` with the same
 
 A key goes in `values.api_key` (owner only). The gateway stores it encrypted,
 binds it to that address and never returns it. `values.api_key_env` names a
-server environment variable instead.
+server environment variable instead. `values.headers` rows are sent with every
+request to the engine and saved as plain text, so a key never goes there.
+
+Before you add it, `POST /admin/api/engines/access` with
+`{"capabilities": ["chat"], "models": ["my-llama"]}` says which access plans
+will let people and apps use those model names. New models follow the plans
+that exist: a plan that allows all chat models includes them at once; a plan
+that lists models does not.
 
 The executable first-run check is `scripts/e2e/fresh_instance.sh`. It uses only
 HTTP APIs:

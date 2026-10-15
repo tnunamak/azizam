@@ -1,4 +1,4 @@
-"""Add engine routes: definitions, check, draft test, workflow read, engine view, create and edit.
+"""Add engine routes: definitions, check, draft test, who can use the models, engine view, create and edit.
 
 The dialog, a script and an MCP tool use the same routes. The check and the
 gate run on the server: a create or an edit that changes the connection re-runs
@@ -28,7 +28,9 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import secret_store, service_registry, transforms
+from gateway import admin_store, category_enforcement, secret_store, service_registry, transforms
+from gateway.access_plans import PlanError, plan_from_document
+from gateway.engine_access import who_can_use
 from gateway.engine_check import (
     SECRET_MASK,
     DraftError,
@@ -40,24 +42,28 @@ from gateway.engine_check import (
     make_http_fetch,
     normalize_address,
     origin_of,
-    read_workflow,
     run_check,
     run_real_test,
 )
 from gateway.engine_definitions import EngineCatalog, EngineDefinitionError, load_engine_catalog
+from gateway.litellm_substrate import reaches_engine_directly
 
 # Record keys this module writes. Every other config key is the owner's and is
 # carried through an edit untouched ("Other settings").
 _KNOWN_CONFIG_KEYS = frozenset({
     "host", "port", "base_path", "scheme", "protocol", "native_passthrough", "transforms", "models",
-    "definition", "definition_version", "address", "route_path", "path_prefix", "auth_header",
-    "connect_timeout_s", "timeout", "headers", "api_key_secret_id", "api_key_env", "credential_origin",
-    "engine_check", "engine_tests", "voices", "default_voice", "workflows", "model_policy_schema_version",
+    "definition", "definition_version", "address", "path_prefix",
+    "timeout", "headers", "api_key_secret_id", "api_key_env", "credential_origin",
+    "engine_check", "engine_tests", "model_policy_schema_version",
     "name", "enabled", "capabilities", "role", "priority", "managed", "lifecycle",
 })
 _RECORD_KEYS = frozenset({"id", "name", "kind", "source", "enabled", "priority", "role", "capabilities", "config",
                           "secret_refs", "lifecycle", "provenance", "editable"})
-_LIFECYCLE_FIELDS = ("lifecycle_mode", "lifecycle_start", "lifecycle_stop", "lifecycle_ready_s", "lifecycle_idle_min")
+NOT_EDITABLE_HERE = ("This page can’t change how Azizam reaches this engine yet: its settings come from the gateway’s "
+                     "own setup. You can still rename it and turn it on or off.")
+# An engine lists at most this many models in one access question.
+MAX_ACCESS_MODELS = 500
+_LIFECYCLE_FIELDS = ("lifecycle_mode", "lifecycle_start", "lifecycle_stop", "lifecycle_ready_s")
 _TRANSFORM_KINDS = frozenset({"value-map", "drop-params", "default-params", "param-map", "message-inject", "clamp"})
 
 
@@ -138,10 +144,14 @@ def _clean_headers(value: Any) -> list[dict[str, Any]]:
             raise DraftError(f"Header {index + 1}: “{name}” is not a header name.", field="headers")
         if name.lower() in ("host", "content-length", "transfer-encoding", "connection"):
             raise DraftError(f"Header {index + 1}: Azizam sets “{name}” itself.", field="headers")
+        if name.lower() in ("authorization", "proxy-authorization") or row.get("secret"):
+            # Header values are saved as plain text. A key goes in the API key field, which is stored encrypted.
+            raise DraftError(f"Header {index + 1}: put a key in the API key field. Header values are saved as plain text.",
+                             field="headers")
         value_text = str(row.get("value") or "")
         if any(ch in value_text for ch in "\r\n") or not value_text.isascii():
             raise DraftError(f"Header {index + 1}: a value can hold plain letters, digits and signs only, no line break.", field="headers")
-        out.append({"name": name, "value": value_text, "secret": bool(row.get("secret"))})
+        out.append({"name": name, "value": value_text})
     return out
 
 
@@ -194,9 +204,6 @@ def lifecycle_block(values: Mapping[str, Any], definition: Mapping[str, Any]) ->
     if stop:
         driver_config["stop"] = stop
     driver_config["health_timeout_s"] = _number(values, "lifecycle_ready_s", 120, low=1, high=3600)
-    idle = _number(values, "lifecycle_idle_min", 0, low=0, high=10080)
-    if idle:
-        driver_config["idle_stop_minutes"] = idle
     return {"type": "command", "managed": True, "driver": "command", "driver_config": driver_config}
 
 
@@ -205,16 +212,11 @@ def clean_values(definition: Mapping[str, Any], values: Mapping[str, Any]) -> di
     if not isinstance(values, Mapping):
         raise DraftError("values must be an object.", field="values")
     fields = {f["key"]: f for f in definition["fields"]}
-    unknown = sorted(set(values) - set(fields) - {"workflow_graph", "workflow_file", "workflow_inputs", "workflow_makes"})
+    unknown = sorted(set(values) - set(fields))
     if unknown:
         raise DraftError(f"This kind of server has no field called {unknown[0]!r}.", field=unknown[0])
     out = {key: copy.deepcopy(value) for key, value in values.items()}
     out["address"] = normalize_address(values.get("address"), placeholder=fields["address"].get("placeholder", ""))
-    if "path" in fields:
-        path = str(values.get("path") or "").strip()
-        if not path.startswith("/") or any(ch in path for ch in "?# \\"):
-            raise DraftError(f"Type the path the server uses, starting with /, for example {fields['path'].get('placeholder')}.", field="path")
-        out["path"] = path
     prefix = str(values.get("path_prefix") or "").strip()
     if prefix and (not prefix.startswith("/") or any(ch in prefix for ch in "?# \\")):
         raise DraftError("The extra path starts with /, for example /openai.", field="path_prefix")
@@ -228,12 +230,7 @@ def clean_values(definition: Mapping[str, Any], values: Mapping[str, Any]) -> di
         raise DraftError("The key holds a space or a character a request cannot carry. Paste it again.", field="api_key")
     out["headers"] = _clean_headers(values.get("headers"))
     out["transforms"] = _clean_transforms(values["transforms"]) if "transforms" in values else None
-    auth_header = str(values.get("auth_header") or "Authorization").strip()
-    if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", auth_header):
-        raise DraftError("The key header name holds letters, digits and - only, for example X-API-Key.", field="auth_header")
-    out["auth_header"] = auth_header
-    out["connect_timeout_s"] = _number(values, "connect_timeout_s", _field_default(definition, "connect_timeout_s", 5), low=1, high=60)
-    out["reply_timeout_s"] = _number(values, "reply_timeout_s", _field_default(definition, "reply_timeout_s", 120), low=1, high=3600)
+    out["reply_timeout_s"] = _number(values, "reply_timeout_s", _field_default(definition, "reply_timeout_s", 600), low=1, high=3600)
     return out
 
 
@@ -245,7 +242,7 @@ def _existing_engines(registry: Mapping[str, Any], *, exclude: str | None = None
         config = record.get("config") or {}
         address = config.get("address") or service_registry.service_base_url(config)
         if address:
-            out.append({"id": sid, "name": record.get("name") or sid, "address": address, "path": config.get("route_path") or ""})
+            out.append({"id": sid, "name": record.get("name") or sid, "address": address})
     return out
 
 
@@ -328,26 +325,6 @@ def _models_config(definition: Mapping[str, Any], values: Mapping[str, Any], mod
                 return copy.deepcopy(row)
         return {}
 
-    if definition["flow"] == "declared":
-        public = str(values.get("public_name") or _field_default(definition, "public_name", "")).strip()
-        if not public:
-            raise DraftError("Give the model the public name apps use to pick it.", field="public_name")
-        upstream = str(values.get("server_model") or "").strip() or public
-        first = copy.deepcopy(stored_rows[0]) if stored_rows else {}
-        first.pop("id", None)
-        return [{**first, "model_group": public, "upstream_model": upstream}, *copy.deepcopy(stored_rows[1:])]
-    if definition["flow"] == "workflow":
-        public = str(values.get("workflow_public_name") or "").strip()
-        if stored_rows and not isinstance(values.get("workflow_graph"), Mapping):
-            # No new workflow: the stored rows stay; only the name apps use can change.
-            rows = copy.deepcopy(stored_rows)
-            if public and len(rows) == 1:
-                rows[0].pop("id", None)
-                rows[0]["model_group"] = public
-            return rows
-        if not public:
-            raise DraftError("Give the workflow the name apps use.", field="workflow_public_name")
-        return [{"model_group": public, "upstream_model": public}]
     out = []
     taken: set[str] = set()
     for index, row in enumerate(models or ()):
@@ -379,45 +356,12 @@ def _models_config(definition: Mapping[str, Any], values: Mapping[str, Any], mod
     return out
 
 
-def _workflow_config(definition: Mapping[str, Any], values: Mapping[str, Any]) -> list[dict[str, Any]]:
-    graph = values.get("workflow_graph")
-    if not isinstance(graph, Mapping):
-        return []
-    inputs = values.get("workflow_inputs") or {}
-    read = read_workflow(definition, __import__("json").dumps(graph), str(values.get("workflow_file") or "workflow.json"))
-    if not read["ok"]:
-        raise DraftError("The workflow is not in API format.", field="workflow")
-    options = {o["value"] for row in read["inputs"] for o in row["options"]}
-    clean_inputs = {}
-    for key, target in (inputs.items() if isinstance(inputs, Mapping) else ()):
-        if target in (None, ""):
-            continue
-        if target not in options:
-            raise DraftError(f"The workflow has no field {target!r} for {key}.", field="workflow_inputs")
-        clean_inputs[str(key)] = str(target)
-    for row in read["inputs"]:
-        if row["required"] and row["key"] not in clean_inputs:
-            raise DraftError("Azizam needs to know where the prompt goes. Choose the field that holds the prompt text.", field="workflow_inputs")
-    return [{
-        "public_name": str(values.get("workflow_public_name") or "").strip(),
-        "file": read["file"],
-        "makes": values.get("workflow_makes") if values.get("workflow_makes") in ("images", "video") else read["makes"],
-        "inputs": clean_inputs,
-        "graph": copy.deepcopy(dict(graph)),
-    }]
-
-
 # The config keys each optional field owns. A definition without the field leaves them as stored.
 _FIELD_CONFIG_KEYS = {
     "path_prefix": ("path_prefix",),
-    "auth_header": ("auth_header",),
     "transforms": ("transforms",),
     "headers": ("headers",),
-    "connect_timeout_s": ("connect_timeout_s",),
     "reply_timeout_s": ("timeout",),
-    "voices": ("voices",),
-    "default_voice": ("default_voice",),
-    "path": ("route_path",),
 }
 
 
@@ -437,7 +381,6 @@ def build_raw(
     check: Mapping[str, Any],
     tests: Mapping[str, Any] | None,
     secret_id: str | None,
-    header_secret_ids: Mapping[str, str],
     keep: Mapping[str, Any] | None = None,
     stored_models: Iterable[Any] = (),
     extra_capabilities: Iterable[str] = (),
@@ -471,32 +414,22 @@ def build_raw(
         "engine_check": dict(check),
         "engine_capabilities": caps,
     })
-    if "path" in has:
-        raw["route_path"] = values["path"]
     if "transforms" in has:
         transforms_value = values.get("transforms")
         raw["transforms"] = transforms_value if transforms_value is not None else list(definition["record"].get("transforms") or [])
         if not raw["transforms"]:
             raw.pop("transforms")
-    for key, default in (("path_prefix", ""), ("auth_header", "Authorization")):
-        if key not in has:
-            continue
-        if values.get(key) and values.get(key) != default:
-            raw[key] = values[key]
+    if "path_prefix" in has:
+        if values.get("path_prefix"):
+            raw["path_prefix"] = values["path_prefix"]
         else:
-            raw.pop(key, None)
+            raw.pop("path_prefix", None)
     if "reply_timeout_s" in has:
+        # The model router waits this long for a reply (litellm_substrate reads ``timeout``).
         raw["timeout"] = int(values["reply_timeout_s"])
-    if "connect_timeout_s" in has:
-        raw["connect_timeout_s"] = values["connect_timeout_s"]
     if "headers" in has:
-        headers = []
-        for row in values.get("headers") or ():
-            if row["secret"]:
-                if row["name"] in header_secret_ids:
-                    headers.append({"name": row["name"], "value_secret_id": header_secret_ids[row["name"]]})
-            else:
-                headers.append({"name": row["name"], "value": row["value"]})
+        # Sent with every chat and embedding request (litellm_substrate) and every direct call (proxy).
+        headers = [{"name": row["name"], "value": row["value"]} for row in values.get("headers") or ()]
         if headers:
             raw["headers"] = headers
         else:
@@ -507,20 +440,6 @@ def build_raw(
         raw.setdefault("model_policy_schema_version", service_registry.MODEL_POLICY_SCHEMA_VERSION)
     else:
         raw.pop("models", None)
-    if definition["flow"] == "workflow":
-        workflows = _workflow_config(definition, values)
-        if workflows:
-            raw["workflows"] = workflows
-    if "voices" in has:
-        voices = [str(v).strip() for v in values.get("voices") or () if str(v).strip()]
-        raw["voices"] = voices
-        default_voice = str(values.get("default_voice") or "").strip()
-        if default_voice and default_voice not in voices:
-            raise DraftError("Pick a default voice from the list.", field="default_voice")
-        if default_voice:
-            raw["default_voice"] = default_voice
-        else:
-            raw.pop("default_voice", None)
     if tests:
         raw["engine_tests"] = dict(tests)
     else:
@@ -577,42 +496,26 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     assert definition is not None
     address = str(config.get("address") or service_registry.service_base_url(config) or "")
     values: dict[str, Any] = {"address": address}
-    if definition["flow"] == "declared":
-        values["path"] = config.get("route_path") or ""
     values["api_key_env"] = config.get("api_key_env") or ""
     values["path_prefix"] = config.get("path_prefix") or ""
-    values["auth_header"] = config.get("auth_header") or "Authorization"
-    values["connect_timeout_s"] = config.get("connect_timeout_s") or _field_default(definition, "connect_timeout_s", 5)
-    values["reply_timeout_s"] = config.get("timeout") or _field_default(definition, "reply_timeout_s", 120)
-    values["headers"] = [
-        {"name": h.get("name"), "value": SECRET_MASK if h.get("value_secret_id") else h.get("value", ""), "secret": bool(h.get("value_secret_id"))}
-        for h in config.get("headers") or () if isinstance(h, Mapping)
-    ]
+    values["reply_timeout_s"] = config.get("timeout") or _field_default(definition, "reply_timeout_s", 600)
+    values["headers"] = [{"name": h.get("name"), "value": h.get("value", "")}
+                         for h in config.get("headers") or () if isinstance(h, Mapping) and "value" in h]
     values["transforms"] = copy.deepcopy(config.get("transforms") or [])
     lifecycle = record.get("lifecycle") or {}
     driver_config = lifecycle.get("driver_config") or {}
     if lifecycle.get("driver") == "command":
         values.update(lifecycle_mode="managed", lifecycle_start=driver_config.get("start", ""), lifecycle_stop=driver_config.get("stop", ""),
-                      lifecycle_ready_s=driver_config.get("health_timeout_s", 120), lifecycle_idle_min=driver_config.get("idle_stop_minutes", 0))
+                      lifecycle_ready_s=driver_config.get("health_timeout_s", 120))
     else:
         values["lifecycle_mode"] = "external"
     lifecycle_editable = lifecycle.get("driver") in (None, "", "command", "external")
+    editable = reaches_engine_directly(str(record.get("id") or ""), record)
     model_use = (config.get("engine_check") or {}).get("model_use") or {}
     models = [{"id": m.get("upstream_model"), "public_name": m.get("model_group") or m.get("id"),
                "context_window": m.get("context_window"), "enabled": m.get("enabled", True),
                "use": model_use.get(m.get("upstream_model"), "")}
               for m in model_rows(config.get("models"))]
-    if definition["flow"] == "declared" and models:
-        values["public_name"] = models[0]["public_name"]
-        values["server_model"] = models[0]["id"] if models[0]["id"] != models[0]["public_name"] else ""
-        values["voices"] = list(config.get("voices") or [])
-        values["default_voice"] = config.get("default_voice") or ""
-    workflow = None
-    if definition["flow"] == "workflow" and config.get("workflows"):
-        first = config["workflows"][0]
-        values["workflow_public_name"] = first.get("public_name", "")
-        workflow = {key: first.get(key) for key in ("public_name", "file", "makes", "inputs")}
-        workflow["node_count"] = len([k for k in (first.get("graph") or {}) if not str(k).startswith("_")])
     secret_id = str(config.get("api_key_secret_id") or "")
     key: dict[str, Any] = {"state": "none"}
     if secret_id:
@@ -633,6 +536,10 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "name": record.get("name"),
         "enabled": bool(record.get("enabled", True)),
         "locked": service_registry.is_litellm_service_record(record.get("id"), record),
+        # False when the model router does not call this engine at its own address: the page would
+        # save settings the gateway does not use, so it shows them and changes only name and on/off.
+        "editable": editable,
+        "not_editable_reason": "" if editable else NOT_EDITABLE_HERE,
         "lifecycle_editable": lifecycle_editable,
         "values": values,
         "key": key,
@@ -640,7 +547,6 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "models": models,
         "tests": copy.deepcopy(config.get("engine_tests") or {}),
         "check": copy.deepcopy(config.get("engine_check") or {}),
-        "workflow": workflow,
         "calls": call_line(definition, values),
         "other_settings": copy.deepcopy(other),
         "record": redacted_record(record),
@@ -670,8 +576,6 @@ def redacted_record(record: Mapping[str, Any]) -> dict[str, Any]:
                 lowered = str(key).lower()
                 if lowered.endswith("_secret_id") or lowered == "api_key":
                     masked[key] = "configured"
-                elif lowered == "graph":
-                    masked[key] = f"(a workflow of {len(item) if isinstance(item, Mapping) else 0} nodes)"
                 else:
                     masked[key] = mask(item)
             return masked
@@ -743,17 +647,10 @@ def _admin_limits(ctx: Any, values: Mapping[str, Any], definition: Mapping[str, 
     before_values = (before or {}).get("values") or {}
     if values.get("api_key_env") and values.get("api_key_env") != before_values.get("api_key_env"):
         raise _owner_only("Only the owner can read a key from a server environment variable.")
-    for row in values.get("headers") or ():
-        if row.get("secret") and row.get("value") not in ("", SECRET_MASK):
-            raise _owner_only("Only the owner can add or replace secret values.")
     changed_lifecycle = any(_same_text(values.get(k, "")) != _same_text(before_values.get(k, _field_default(definition, k, "")))
                             for k in _LIFECYCLE_FIELDS if k in values)
     if changed_lifecycle and (values.get("lifecycle_mode") == "managed" or before_values.get("lifecycle_mode") == "managed"):
         raise _owner_only("Only the owner can change how Azizam starts and stops a server.")
-
-
-def old_headers_ids(config: Mapping[str, Any]) -> set[str]:
-    return {str(h.get("value_secret_id")) for h in config.get("headers") or () if isinstance(h, Mapping) and h.get("value_secret_id")}
 
 
 class EngineService:
@@ -787,38 +684,14 @@ class EngineService:
             raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
         clean = clean_values(definition, values)
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
-        clean = {**clean, "headers": self._headers_for_check(clean.get("headers") or [], record, clean["address"])}
         existing = _existing_engines(registry, exclude=service_id)
         if record is not None:
             saved = engine_view(catalog, record, db_path=self.db_path)["values"]
-            if (comparable_address(clean["address"]) == comparable_address(saved.get("address") or "")
-                    and clean.get("path", "") == saved.get("path", "")):
+            if comparable_address(clean["address"]) == comparable_address(saved.get("address") or ""):
                 # Checking an engine where it already is: the duplicate rule is for moving onto another's address.
                 existing = []
         return await run_check(catalog, definition, clean, key=key, fetch=self.fetch, existing=existing,
                                viewer_role="owner" if _is_owner(ctx) else "admin")
-
-    def _headers_for_check(self, headers: list[Mapping[str, Any]], record: Mapping[str, Any] | None, address: str) -> list[dict[str, Any]]:
-        """Pasted header values go as typed; stored secret values only to the address they were stored for."""
-        stored = {}
-        if record:
-            config = record.get("config") or {}
-            same_origin = origin_of(address) == str(config.get("credential_origin") or "")
-            for row in config.get("headers") or ():
-                if isinstance(row, Mapping) and row.get("value_secret_id") and same_origin:
-                    try:
-                        stored[row["name"]] = secret_store.get_provider_secret(row["value_secret_id"], db_path=self.db_path,
-                                                                               expected_origin=config.get("credential_origin") or None)
-                    except Exception:  # noqa: BLE001
-                        continue
-        out = []
-        for row in headers:
-            value = row.get("value")
-            if value == SECRET_MASK:
-                value = stored.get(row.get("name"))
-            if value:
-                out.append({"name": row["name"], "value": value})
-        return out
 
     async def test(self, ctx: Any, body: Mapping[str, Any]) -> dict[str, Any]:
         catalog = self.catalog()
@@ -829,55 +702,57 @@ class EngineService:
         record = (registry.get("services") or {}).get(service_id) if service_id else None
         clean = clean_values(definition, values)
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
-        clean = {**clean, "headers": self._headers_for_check(clean.get("headers") or [], record, clean["address"])}
         capability = str(body.get("capability") or "")
-        workflow = body.get("workflow") if isinstance(body.get("workflow"), Mapping) else values.get("workflow_graph")
-        mapping = body.get("inputs") if isinstance(body.get("inputs"), Mapping) else values.get("workflow_inputs")
-        if definition["flow"] == "workflow":
-            capability = capability or definition["capabilities"][0]
-        model = str(body.get("model") or values.get("server_model") or values.get("public_name") or "").strip() or None
-        result = await run_real_test(catalog, definition, clean, capability, key=key, fetch=self.fetch, model=model,
-                                     voice=str(body.get("voice") or values.get("default_voice") or "") or None,
-                                     workflow=workflow, mapping=mapping)
+        model = str(body.get("model") or "").strip() or None
+        result = await run_real_test(catalog, definition, clean, capability, key=key, fetch=self.fetch, model=model)
         result["key_sent"] = bool(key.value)
         result["key_withheld"] = key.withheld
         if record is not None:
             result["via"] = "saved"
         return result
 
-    def workflow(self, body: Mapping[str, Any]) -> dict[str, Any]:
+    def access(self, ctx: Any, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Who could use these models, from the stored access plans. Saves nothing."""
         catalog = self.catalog()
-        definition = _definition(catalog, body.get("definition") or "node-graph")
-        if definition["flow"] != "workflow":
-            raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "no_workflow", "This kind of server does not run workflow files.")
-        text = body.get("text")
-        if not isinstance(text, str):
-            raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "invalid_workflow", "Send the file’s text as text.", field="file")
-        file_name = str(body.get("file") or "workflow.json")
-        result = read_workflow(definition, text, file_name)
-        if not result["ok"]:
-            row = next((r for r in catalog.advice_rows(definition) if r["code"] == "badfile"), None)
-            if row is not None and result["reason"] in ("ui_format", "not_json"):
-                result["finding"] = {
-                    "code": row["code"], "severity": "error", "field": "file", "title": row["title"],
-                    "what": row["what"].replace("{file}", file_name), "why": row["why"], "fix": row["fix"], "keep_off": True,
-                    "details": {"raw": result.get("found", ""), "raw_label": row.get("raw_label") or "What Azizam found in the file"},
-                }
-            elif result["reason"] == "too_large":
-                result["finding"] = {"code": "too_large", "severity": "error", "field": "file", "title": "The file is too large",
-                                     "what": f"“{file_name}” is larger than {definition['workflow']['max_bytes'] // 1048576} MB.",
-                                     "why": "A workflow file is small. A larger file is probably not a workflow.",
-                                     "fix": "Pick the workflow file you exported in API format.", "keep_off": True}
-        else:
-            result["graph"] = __import__("json").loads(text)
-        return result
+        capabilities = body.get("capabilities")
+        if not isinstance(capabilities, list) or not all(isinstance(c, str) for c in capabilities):
+            raise DraftError("capabilities is a list of what the engine does.", field="capabilities")
+        unknown = [c for c in capabilities if c not in catalog.data["capabilities"]]
+        if unknown:
+            raise DraftError(f"No kind of work called {unknown[0]!r}.", field="capabilities")
+        models = body.get("models")
+        if (not isinstance(models, list) or len(models) > MAX_ACCESS_MODELS
+                or not all(isinstance(m, str) and m.strip() and len(m) <= 256 for m in models)):
+            raise DraftError("models is a list of the names apps will use.", field="models")
+        return self._access_answer(ctx, [m.strip() for m in models], capabilities)
 
-    def view(self, service_id: str) -> dict[str, Any]:
+    def _access_answer(self, ctx: Any, models: list[str], capabilities: list[str]) -> dict[str, Any]:
+        plans, holders = [], {}
+        unreadable = 0
+        for record in self.store.list_access_plans():
+            try:
+                plans.append(plan_from_document(record["plan"], plan_id=str(record["id"])))
+            except PlanError:
+                unreadable += 1  # Deny by default: a plan that cannot be read includes nothing.
+                continue
+            holders[str(record["id"])] = record.get("used_by") or {}
+        viewer = None
+        if getattr(ctx, "actor_kind", "user") == "user" and getattr(ctx, "actor_id", None):
+            viewer = admin_store.person_plan_id(str(ctx.actor_id), path=self.db_path)
+        answer = who_can_use(models, capabilities, plans, holders=holders, viewer_plan_id=viewer,
+                             category_rules=category_enforcement.governs_anyone())
+        answer["unreadable_plans"] = unreadable
+        return answer
+
+    def view(self, service_id: str, ctx: Any = None) -> dict[str, Any]:
         registry = self.store.get_service_registry()
         record = (registry.get("services") or {}).get(service_id)
         if record is None:
             raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
-        return engine_view(self.catalog(), record, db_path=self.db_path)
+        view = engine_view(self.catalog(), record, db_path=self.db_path)
+        served = [row["public_name"] for row in view["models"] if row.get("enabled", True) and row.get("public_name")]
+        view["access"] = self._access_answer(ctx, served, list(view["capabilities"]))
+        return view
 
     async def create(self, ctx: Any, body: Mapping[str, Any], *, expected_generation: int) -> dict[str, Any]:
         catalog = self.catalog()
@@ -909,9 +784,6 @@ class EngineService:
                                     viewer_role="owner" if _is_owner(ctx) else "admin")
             _gate(check, acknowledge_warnings=bool(body.get("acknowledge_warnings")))
         capabilities = body.get("capabilities")
-        if capabilities is None and definition["flow"] == "workflow" and isinstance(values.get("workflow_graph"), Mapping):
-            makes = values.get("workflow_makes") or read_workflow(definition, __import__("json").dumps(values["workflow_graph"]), "w.json").get("makes")
-            capabilities = [cap_id for cap_id in definition["capabilities"] if cap_id.endswith("video" if makes == "video" else "images")]
         if capabilities is None:
             capabilities = [c["id"] for c in (check or {}).get("capabilities") or () if c.get("ticked")]
         if not isinstance(capabilities, list):
@@ -936,6 +808,8 @@ class EngineService:
             raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
         if service_registry.is_litellm_service_record(service_id, record):
             raise EngineRouteError(status.HTTP_403_FORBIDDEN, "service_not_editable", "Azizam runs this engine itself. Only its name and Enabled can change.")
+        if not reaches_engine_directly(service_id, record):
+            raise EngineRouteError(status.HTTP_409_CONFLICT, "engine_not_editable_here", NOT_EDITABLE_HERE)
         before = engine_view(catalog, record, db_path=self.db_path)
         definition = _definition(catalog, body.get("definition") or before["definition"])
         values = {**before["values"], **(body.get("values") if isinstance(body.get("values"), Mapping) else {})}
@@ -946,17 +820,14 @@ class EngineService:
         name = str(body.get("name") or before["name"] or service_id).strip()
         disabled = bool(body.get("disabled"))
         enabled = False if disabled else bool(body.get("enabled", before["enabled"]))
-        moved = (comparable_address(clean["address"]) != comparable_address(before["values"]["address"] or clean["address"])
-                 or clean.get("path", "") != before["values"].get("path", ""))
+        moved = comparable_address(clean["address"]) != comparable_address(before["values"]["address"] or clean["address"])
         connection_changed = (
             moved
             or (values.get("api_key") not in ("", SECRET_MASK, None))
             or clean.get("api_key_env") != (before["key"].get("env_name") or "")
             or clean.get("path_prefix", "") != (before["values"].get("path_prefix") or "")
-            or clean.get("auth_header", "Authorization") != (before["values"].get("auth_header") or "Authorization")
-            or [(h["name"], h["value"], h["secret"]) for h in clean.get("headers") or ()]
-               != [(h["name"], h["value"], h["secret"]) for h in before["values"].get("headers") or ()]
-            or _same_text(clean.get("connect_timeout_s")) != _same_text(before["values"].get("connect_timeout_s", clean.get("connect_timeout_s")))
+            or [(h["name"], h["value"]) for h in clean.get("headers") or ()]
+               != [(h["name"], h["value"]) for h in before["values"].get("headers") or ()]
             or body.get("recheck") is True
         )
         if moved:
@@ -969,8 +840,7 @@ class EngineService:
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         check_summary = before["check"] or {}
         if connection_changed and not disabled:
-            check = await run_check(catalog, definition, {**clean, "headers": self._headers_for_check(clean["headers"], record, clean["address"])},
-                                    key=key, fetch=self.fetch, existing=_existing_engines(registry, exclude=service_id),
+            check = await run_check(catalog, definition, clean, key=key, fetch=self.fetch, existing=_existing_engines(registry, exclude=service_id),
                                     viewer_role="owner" if _is_owner(ctx) else "admin")
             _gate(check, acknowledge_warnings=bool(body.get("acknowledge_warnings")))
             check_summary = _check_summary(check, address=clean["address"], disabled=False)
@@ -990,11 +860,6 @@ class EngineService:
         words = capability_words(catalog, definition)
         # Sent capabilities keep the words this kind does not use; unsent ones stay exactly as stored.
         extra_capabilities = [c for c in record.get("capabilities") or () if c not in words]
-        if definition["flow"] == "workflow" and "workflow_graph" not in values and (record.get("config") or {}).get("workflows"):
-            existing_workflows = copy.deepcopy(record["config"]["workflows"])
-            if values.get("workflow_public_name"):
-                existing_workflows[0]["public_name"] = values["workflow_public_name"]
-            keep["workflows"] = existing_workflows
         return self._write(ctx, catalog, definition, clean, service_id=service_id, name=name, capabilities=capabilities,
                            models=models, enabled=enabled, check=check_summary, tests=tests, key=key, existing=record,
                            expected_generation=expected_generation, action="update", keep=keep,
@@ -1037,26 +902,8 @@ class EngineService:
             env_values = dict(values)
             if key_dropped:
                 env_values["api_key_env"] = ""
-            header_ids: dict[str, str] = {}
-            old_headers = {h.get("name"): h for h in old_config.get("headers") or () if isinstance(h, Mapping)}
-            for row in values.get("headers") or ():
-                if not row["secret"]:
-                    continue
-                if row["value"] in ("", SECRET_MASK) and old_headers.get(row["name"], {}).get("value_secret_id"):
-                    if not origin_moved:
-                        header_ids[row["name"]] = old_headers[row["name"]]["value_secret_id"]
-                    continue  # moved: the stored value is left behind, like the key
-                if not row["value"] or row["value"] == SECRET_MASK:
-                    raise DraftError(f"Type the value of the secret header {row['name']}.", field="headers")
-                new_id = _new_secret_id(service_id, "header")
-                secret_store.put_provider_secret(new_id, row["value"], db_path=self.db_path, approved_origin=origin)
-                written.append(new_id)
-                header_ids[row["name"]] = new_id
-            for row in old_headers.values():
-                if row.get("value_secret_id") and row["value_secret_id"] not in header_ids.values():
-                    retired.append(row["value_secret_id"])
             raw = build_raw(catalog, definition, env_values, name=name, capabilities=capabilities, models=models,
-                            enabled=enabled, check=check, tests=tests, secret_id=secret_id, header_secret_ids=header_ids, keep=keep,
+                            enabled=enabled, check=check, tests=tests, secret_id=secret_id, keep=keep,
                             stored_models=old_config.get("models") or (), extra_capabilities=extra_capabilities,
                             record_capabilities=record_capabilities)
             if existing is not None:
@@ -1073,14 +920,10 @@ class EngineService:
                 (secret_id and secret_id == old_config.get("api_key_secret_id"))
                 or (raw.get("api_key_env") and raw.get("api_key_env") == old_config.get("api_key_env"))
                 or (raw.get("api_key_ref") and raw.get("api_key_ref") == old_config.get("api_key_ref"))
-                or any(h.get("value_secret_id") in old_headers_ids(old_config) for h in raw.get("headers") or () if h.get("value_secret_id"))
             )
             if existing is not None and old_origin and kept_key and not origin_moved:
                 # The owner bound this key to this address; an edit that keeps both keeps the binding.
                 raw["credential_origin"] = old_origin
-            elif any(h.get("value_secret_id") for h in raw.get("headers") or ()) and not any(raw.get(k) for k in service_registry.CREDENTIAL_REFERENCE_KEYS):
-                # Secret header values only: bind them to this address, as the store does for a key.
-                raw["credential_origin"] = origin
             if existing is not None and keep_lifecycle:
                 # Start and stop untouched: keep the stored block exactly (other drivers, status, cwd, env).
                 # The config keeps its own copy of the block; carry that copy, so neither changes.
@@ -1173,21 +1016,21 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
             raise
         return JSONResponse(status_code=status.HTTP_200_OK, content={"test": result})
 
-    @router.post("/engines/workflow")
-    async def read_engine_workflow(request: Request) -> JSONResponse:
+    @router.post("/engines/access")
+    async def engine_access(request: Request) -> JSONResponse:
         ctx = await asyncio.to_thread(guard, request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
             body = await read_json(request)
-            result = await asyncio.to_thread(service.workflow, body)
+            result = await asyncio.to_thread(service.access, ctx, body)
         except (EngineRouteError, DraftError) as exc:
             return _error(exc)
         except Exception as exc:  # noqa: BLE001
             if hasattr(exc, "as_response"):
                 return exc.as_response()  # type: ignore[no-any-return]
             raise
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"workflow": result})
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"access": result})
 
     @router.get("/engines/{service_id}")
     async def get_engine(service_id: str, request: Request) -> JSONResponse:
@@ -1195,7 +1038,7 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            view = await asyncio.to_thread(service.view, service_id)
+            view = await asyncio.to_thread(service.view, service_id, ctx)
         except EngineRouteError as exc:
             return exc.as_response()
         response = JSONResponse(status_code=status.HTTP_200_OK, content={"engine": view})

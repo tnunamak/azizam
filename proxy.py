@@ -298,6 +298,7 @@ from gateway.image_output import (
     quality_steps_from_manifest,
 )
 from gateway.litellm_substrate import (
+    engine_headers,
     litellm_known_model_names,
     litellm_public_model_records,
     write_litellm_config_artifact,
@@ -28619,6 +28620,8 @@ def _build_provider_native_targets() -> dict[str, dict[str, Any]]:
             "host": host,
             "enabled": True,
             "timeout": float(raw_cfg.get("timeout") or UPSTREAM_READ_TIMEOUT),
+            # The plain headers the owner listed for this engine (Add engine, Request headers).
+            "headers": engine_headers(raw_cfg),
         }
     return targets
 
@@ -28927,6 +28930,10 @@ async def provider_native_request(
             str(target["service"]),
             native_request_path,
         )
+        for name, value in (target.get("headers") or {}).items():
+            for existing in [key for key in headers if key.lower() == name.lower()]:
+                del headers[existing]
+            headers[name] = value
         url = f"{target['host']}{native_request_path}"
         query = backend_query_string(request.url.query)
         if query:
