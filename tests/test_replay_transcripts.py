@@ -612,7 +612,7 @@ def _local_definitions(root: Path, *protocols: str | None) -> None:
 
 
 def test_the_shipped_engine_definitions_are_read_as_data() -> None:
-    assert replay_scan.local_upstream_protocols(ROOT) == {"openai-compatible", "comfyui"}
+    assert replay_scan.local_upstream_protocols(ROOT) == {"openai-compatible"}
 
 
 def test_a_not_applicable_cell_holds_only_while_no_engine_definition_speaks_its_protocol(tmp_path: Path) -> None:

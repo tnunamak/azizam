@@ -1,7 +1,7 @@
 {
   "protocol": "engine-probe",
   "name": "family-c-task-metadata",
-  "description": "Family C. A speech-to-text server marks its model with task asr. It answers both audio routes with 500 before reading the body, which is no evidence.",
+  "description": "Family C. A speech-to-text server marks its model with task asr and answers the chat and embedding routes like a path that does not exist. Add engine v1 offers neither, so nothing is ticked.",
   "provenance": {
     "source": "hand-written",
     "reference": "~/Documents/azizam/ux-findings/add-engine-probe-table.md (measured 2026-10-14): stt-nemotron :8012/v1"
@@ -135,78 +135,6 @@
           "error": {
             "message": "unknown endpoint: /v1/embeddings",
             "type": "not_found"
-          }
-        }
-      },
-      "repeat": true,
-      "required": false
-    },
-    {
-      "id": "images",
-      "match": {
-        "method": "POST",
-        "path": "/v1/images/generations"
-      },
-      "response": {
-        "status": 404,
-        "json": {
-          "error": {
-            "message": "unknown endpoint: /v1/images/generations",
-            "type": "not_found"
-          }
-        }
-      },
-      "repeat": true,
-      "required": false
-    },
-    {
-      "id": "rerank",
-      "match": {
-        "method": "POST",
-        "path": "/v1/rerank"
-      },
-      "response": {
-        "status": 404,
-        "json": {
-          "error": {
-            "message": "unknown endpoint: /v1/rerank",
-            "type": "not_found"
-          }
-        }
-      },
-      "repeat": true,
-      "required": false
-    },
-    {
-      "id": "speech",
-      "match": {
-        "method": "POST",
-        "path": "/v1/audio/speech"
-      },
-      "response": {
-        "status": 500,
-        "json": {
-          "error": {
-            "message": "missing required json key: model",
-            "type": "server_error"
-          }
-        }
-      },
-      "repeat": true,
-      "required": false
-    },
-    {
-      "id": "transcriptions",
-      "match": {
-        "method": "POST",
-        "path": "/v1/audio/transcriptions"
-      },
-      "response": {
-        "status": 500,
-        "json": {
-          "error": {
-            "message": "missing required json key: model",
-            "type": "server_error"
           }
         }
       },

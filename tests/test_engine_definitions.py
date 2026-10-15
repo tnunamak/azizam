@@ -26,12 +26,9 @@ def _parse(data):
     return parse_engine_catalog(data, schema=SCHEMA, source="test.json")
 
 
-def test_the_seed_holds_the_five_definitions_with_any_openai_compatible_server_first():
+def test_the_seed_holds_the_two_definitions_with_any_openai_compatible_server_first():
     catalog = load_engine_catalog()
-    assert catalog.ids() == [
-        "openai-compatible", "own-model-list", "node-graph",
-        "speech-to-text-custom-path", "text-to-speech-custom-path",
-    ]
+    assert catalog.ids() == ["openai-compatible", "own-model-list"]
     first = catalog.public()["definitions"][0]
     assert first["title"] == "Any OpenAI-compatible server"
     assert first["fields"][0]["key"] == "address" and first["fields"][1]["key"] == "api_key"
@@ -49,14 +46,40 @@ def test_the_old_preset_list_is_gone():
     assert not hasattr(service_registry, "provider_preset")
 
 
-def test_the_custom_path_kinds_ask_for_a_path_and_the_node_graph_kind_for_a_workflow_name():
-    catalog = load_engine_catalog()
-    for definition_id in ("speech-to-text-custom-path", "text-to-speech-custom-path"):
-        keys = [f["key"] for f in catalog.definition(definition_id)["fields"]]
-        assert "path" in keys and "public_name" in keys
-    graph_keys = [f["key"] for f in catalog.definition("node-graph")["fields"]]
-    # N1: the workflow gets the name apps call it by.
-    assert "workflow_public_name" in graph_keys
+# Every field a definition may offer, and where the running gateway reads what it saves.
+# No control may save a setting the gateway ignores (add-engine-spec.md section 8): a new
+# field fails here until it is wired into the request path and listed with its proof.
+FIELDS_THE_GATEWAY_READS = {
+    "address": "service_base_url -> the router's api_base (test_engine_dispatch_wiring)",
+    "path_prefix": "joined into base_path -> api_base (test_engine_dispatch_wiring)",
+    "api_key": "provider secret store -> the router's api_key reference (test_engine_admin_routes)",
+    "api_key_env": "the router's api_key reference (test_engine_admin_routes)",
+    "headers": "router extra_headers and native passthrough (test_engine_dispatch_wiring, test_runtime_route_policy)",
+    "reply_timeout_s": "router timeout (test_engine_dispatch_wiring)",
+    "transforms": "per-backend request adjustments on the chat path",
+    "lifecycle_mode": "the command lifecycle driver",
+    "lifecycle_start": "the command lifecycle driver",
+    "lifecycle_stop": "the command lifecycle driver",
+    "lifecycle_ready_s": "driver_config.health_timeout_s",
+    "models": "the router's model list",
+    "context_window": "model listing (_annotate_model_context_windows)",
+}
+
+
+def test_every_field_is_one_the_running_gateway_reads():
+    for definition in SEED["definitions"]:
+        unread = [f["key"] for f in definition["fields"] if f["key"] not in FIELDS_THE_GATEWAY_READS]
+        assert not unread, f"{definition['definition']} offers {unread}, which the gateway does not use"
+
+
+def test_only_work_the_gateway_routes_to_an_added_engine_is_offered():
+    """Chat and embeddings go through the model router to the engine. Images, speech,
+    transcription, reranking and live voice go to fixed built-in services, so ticking
+    them would save nothing the gateway uses (add-engine-spec.md section 8, v2)."""
+    assert set(SEED["capabilities"]) == {"chat", "embeddings"}
+    for definition in SEED["definitions"]:
+        assert set(definition["capabilities"]) <= {"chat", "embeddings"}, definition["definition"]
+        assert definition["flow"] == "detect"
 
 
 def test_detection_rules_name_api_shapes_not_engines():

@@ -114,9 +114,11 @@ def test_a_long_model_list_from_a_server_that_fronts_many_models_is_read(fake_up
     assert all(f["code"] != "too_large" for f in result["findings"])
 
 
-def test_a_server_that_does_not_answer_in_time_is_unreachable(fake_upstreams):
+def test_a_server_that_does_not_answer_in_time_is_unreachable(fake_upstreams, monkeypatch):
+    # The check's own limit (5 s) is not a setting; shorten it so the test waits 1 s.
+    monkeypatch.setattr(engine_check, "DEFAULT_TIMEOUT_S", 1.0)
     fake = fake_upstreams.loopback(load_scenario("engine-probe/one-answer", token=TOKEN, status=200, body={"data": []}, headers={}, wait="forever"))
-    result = _check(f"{fake.base_url}/v1", fetch=make_http_fetch(resolve=_no_dns), connect_timeout_s=1)
+    result = _check(f"{fake.base_url}/v1", fetch=make_http_fetch(resolve=_no_dns))
     finding = result["findings"][0]
     assert finding["code"] == "down"
     assert "within 1 second." in finding["why"]

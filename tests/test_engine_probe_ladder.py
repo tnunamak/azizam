@@ -58,14 +58,11 @@ def test_family_b_embedding_server_does_not_get_chat_suggested_as_likely(fake_up
     # The 400 "'messages' is required" is a validating 4xx: possible, not likely (5a).
     assert levels["chat"] == "possible"
     assert levels["embeddings"] == "possible"
-    assert levels["rerank"] == "against" and levels["stt"] == "against"
-    assert levels["tts"] == "none" and levels["images"] == "none"
+    assert set(levels) == {"chat", "embeddings"}, "v1 probes only the work an added engine can serve"
     chat = next(row for row in result["capabilities"] if row["id"] == "chat")
     assert chat["ticked"] is False, "a Possible capability stays unticked until a real test passes"
     assert "'messages' is required" in chat["evidence"]
     assert "not that a model can do this" in chat["why"]
-    rerank = next(row for row in result["capabilities"] if row["id"] == "rerank")
-    assert "does not support reranking" in rerank["evidence"]
     assert result["outcome"] == "ok" and result["findings"] == []
     assert result["models"] == [{"id": "nomic-embed-text-v1.5.f16.gguf", "public_name": "nomic-embed-text-v1.5",
                                  "context_window": 2048, "use": "Not known yet"}]
@@ -98,25 +95,40 @@ def test_family_a_route_listed_by_the_api_description_and_validated_is_likely(fa
     assert levels["chat"] == "likely"
     chat = next(row for row in result["capabilities"] if row["id"] == "chat")
     assert chat["ticked"] is True and "/v1/chat/completions" in chat["evidence"]
-    assert levels["embeddings"] == "none" and levels["rerank"] == "none"
+    assert levels["embeddings"] == "none"
     assert result["models"][0]["public_name"] == "qwen3-8b"
     assert result["models"][0]["context_window"] == 40960
     # The description's title is a framework name, so the name comes from the address.
     assert result["name_source"] == "address"
 
 
-def test_family_c_task_field_is_evidence_and_a_5xx_is_not(fake_upstreams):
+def test_family_c_a_speech_server_offers_nothing_v1_can_serve(fake_upstreams):
+    """Its model is marked for speech to text. Version 1 routes only chat and embeddings to an added engine."""
     fake = _serve(fake_upstreams, "family-c-task-metadata")
     result = _check("openai-compatible", f"{fake.base_url}/v1")
-    levels = _levels(result)
-    assert levels["stt"] == "likely"
-    stt = next(row for row in result["capabilities"] if row["id"] == "stt")
-    assert "nemotron-3.5-asr-streaming-0.6b" in stt["evidence"]
-    # 500 "missing required json key" on the speech route proves nothing (5a).
-    assert levels["tts"] == "none"
-    tts = next(row for row in result["capabilities"] if row["id"] == "tts")
-    assert "server error" in tts["evidence"]
-    assert result["models"][0]["use"] == "Speech to text"
+    assert _levels(result) == {"chat": "none", "embeddings": "none"}
+    assert not any(row["ticked"] for row in result["capabilities"])
+    assert result["models"][0]["use"] == "Not known yet"
+
+
+def test_a_task_field_is_evidence_for_the_work_it_names():
+    catalog = load_engine_catalog()
+    fetch = _table({("GET", "/v1/models"): (200, {"data": [{"id": "bge-m3", "task": "embedding"}]})})
+    result = asyncio.run(run_check(catalog, catalog.definition("openai-compatible"), {"address": "http://192.0.2.10:8000/v1"},
+                                   key=KeyInput(), fetch=fetch, baseline_token=TOKEN))
+    embeddings = next(row for row in result["capabilities"] if row["id"] == "embeddings")
+    assert embeddings["level"] == "likely" and "bge-m3" in embeddings["evidence"]
+    assert result["models"][0]["use"] == "Embeddings"
+
+
+def test_a_5xx_on_a_route_is_no_evidence():
+    catalog = load_engine_catalog()
+    fetch = _table({("GET", "/v1/models"): (200, {"data": [{"id": "m"}]}),
+                    ("POST", "/v1/chat/completions"): (500, {"error": "missing required json key"})})
+    result = asyncio.run(run_check(catalog, catalog.definition("openai-compatible"), {"address": "http://192.0.2.10:8000/v1"},
+                                   key=KeyInput(), fetch=fetch, baseline_token=TOKEN))
+    chat = next(row for row in result["capabilities"] if row["id"] == "chat")
+    assert chat["level"] == "none" and "server error" in chat["evidence"]
 
 
 def test_a_route_the_description_lists_but_that_answers_501_is_against(fake_upstreams):
@@ -124,8 +136,15 @@ def test_a_route_the_description_lists_but_that_answers_501_is_against(fake_upst
     result = _check("openai-compatible", f"{fake.base_url}/v1")
     levels = _levels(result)
     assert levels["chat"] == "against"
-    assert levels["realtime"] == "likely"
-    # Recognised, but no model list: a warning, not an error.
+    # Nothing it can serve and no model list: an error, so it is not added turned on.
+    assert result["outcome"] == "error"
+    assert [f["code"] for f in result["findings"]] == ["path_not_found"]
+
+
+def test_a_possible_route_without_a_model_list_is_a_warning(fake_upstreams):
+    fake = _serve(fake_upstreams, "chat-route-without-model-list")
+    result = _check("openai-compatible", f"{fake.base_url}/v1")
+    assert _levels(result)["chat"] == "possible"
     assert result["outcome"] == "warning"
     assert [f["code"] for f in result["findings"]] == ["models_unavailable"]
 
@@ -173,61 +192,11 @@ def test_an_administrator_reads_the_owner_note_for_a_key_gated_server(fake_upstr
     assert fake.base_url in finding["owner_note"]
 
 
-def _object_info(size: int) -> dict:
-    nodes = {}
-    n = 0
-    while len(json.dumps(nodes)) < size:
-        nodes[f"Node{n}"] = {"input": {"required": {"value": ["INT", {"default": 0}]}}, "output": ["INT"], "description": "x" * 200}
-        n += 1
-    return nodes
-
-
 def test_a_405_everywhere_node_graph_server_shows_nothing_possible(fake_upstreams):
-    fake = _serve(fake_upstreams, "node-graph-405-everywhere", object_info={})
+    fake = _serve(fake_upstreams, "node-graph-405-everywhere")
     result = _check("openai-compatible", fake.base_url)
     assert {row["level"] for row in result["capabilities"]} == {"none"}, "a 405 like the made-up path is not a route"
     assert [f["code"] for f in result["findings"]] == ["not_openai_shape"]
-
-
-def test_the_node_graph_definition_reads_a_catalog_larger_than_64_kb(fake_upstreams):
-    catalog_body = _object_info(100 * 1024)
-    fake = _serve(fake_upstreams, "node-graph-405-everywhere", object_info=catalog_body)
-    result = _check("node-graph", fake.base_url)
-    assert result["outcome"] == "ok", result["findings"]
-    assert result["node_count"] == len(catalog_body)
-    assert result["suggested_name"] == "RTX 4090 workflows" and result["name_source"] == "server"
-
-
-def test_the_node_graph_real_test_is_refused_before_anything_is_queued(fake_upstreams):
-    fake = _serve(fake_upstreams, "node-graph-405-everywhere", object_info={})
-    catalog = load_engine_catalog()
-    definition = catalog.definition("node-graph")
-    workflow = {"3": {"class_type": "KSampler", "inputs": {"seed": 5, "steps": 20, "positive": ["6", 0]}},
-                "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "a cat"}},
-                "9": {"class_type": "SaveImage", "inputs": {"images": ["3", 0]}}}
-    result = asyncio.run(run_real_test(catalog, definition, {"address": fake.base_url}, "graph_images", key=KeyInput(),
-                                       fetch=FETCH, workflow=workflow, mapping={"prompt": "6.text", "seed": "3.seed"}))
-    assert result["ok"] is True, result
-    sent = json.loads(next(r for r in fake.requests if r.path == "/prompt").body)
-    assert sent["prompt"]["3"]["inputs"]["seed"] == -1
-
-
-def test_a_custom_path_speech_server_is_declared_and_the_path_answer_is_the_evidence(fake_upstreams):
-    fake = _serve(fake_upstreams, "custom-path-speech-to-text", inference_status=400)
-    result = _check("speech-to-text-custom-path", fake.base_url, path="/inference")
-    assert result["outcome"] == "ok"
-    assert [(row["id"], row["level"], row["ticked"]) for row in result["capabilities"]] == [("stt", "declared", True)]
-    assert "no file provided" in result["capabilities"][0]["evidence"]
-    assert result["calls"] == f"POST {fake.base_url}/inference"
-    assert result["suggested_name"].startswith("Speech to text at ")
-
-
-def test_nothing_at_a_custom_path_stops_with_the_path_finding(fake_upstreams):
-    fake = _serve(fake_upstreams, "custom-path-speech-to-text", inference_status=404)
-    result = _check("speech-to-text-custom-path", fake.base_url, path="/inference")
-    assert result["outcome"] == "error"
-    finding = result["findings"][0]
-    assert finding["code"] == "path" and finding["field"] == "path" and finding["keep_off"] is True
 
 
 def test_an_own_model_list_address_that_ends_in_v1_offers_to_remove_it(fake_upstreams):
@@ -292,26 +261,15 @@ def _table(rows):
     return fetch
 
 
-def test_a_415_on_a_multipart_route_shows_it_exists_and_is_not_against():
+def test_a_415_on_a_route_shows_it_exists_and_is_not_against():
     catalog = load_engine_catalog()
     fetch = _table({
-        ("GET", "/v1/models"): (200, {"data": [{"id": "speech-model"}]}),
-        ("POST", "/v1/audio/transcriptions"): (415, {"detail": "Unsupported Media Type: expected multipart/form-data"}),
+        ("GET", "/v1/models"): (200, {"data": [{"id": "embed-model"}]}),
+        ("POST", "/v1/embeddings"): (415, {"detail": "Unsupported Media Type"}),
     })
     result = asyncio.run(run_check(catalog, catalog.definition("openai-compatible"), {"address": "http://192.0.2.10:8000/v1"},
                                    key=KeyInput(), fetch=fetch, baseline_token=TOKEN))
-    assert _levels(result)["stt"] == "possible"
-
-
-def test_a_custom_path_that_answers_500_to_an_empty_request_warns_and_does_not_block():
-    catalog = load_engine_catalog()
-    fetch = _table({("POST", "/inference"): (500, {"error": "failed to read audio"})})
-    result = asyncio.run(run_check(catalog, catalog.definition("speech-to-text-custom-path"),
-                                   {"address": "http://192.0.2.11:8178", "path": "/inference"},
-                                   key=KeyInput(), fetch=fetch, baseline_token=TOKEN))
-    assert result["outcome"] == "warning"
-    assert [f["code"] for f in result["findings"]] == ["path_server_error"]
-    assert result["capabilities"][0]["level"] == "declared" and result["capabilities"][0]["ticked"] is True
+    assert _levels(result)["embeddings"] == "possible"
 
 
 def test_a_failed_check_still_suggests_a_name_for_add_but_keep_off():

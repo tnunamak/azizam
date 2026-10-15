@@ -134,66 +134,6 @@
       },
       "repeat": true,
       "required": false
-    },
-    {
-      "id": "images",
-      "match": {
-        "method": "POST",
-        "path": "/v1/images/generations"
-      },
-      "response": {
-        "status": 404,
-        "json": {
-          "detail": "Not Found"
-        }
-      },
-      "repeat": true,
-      "required": false
-    },
-    {
-      "id": "rerank",
-      "match": {
-        "method": "POST",
-        "path": "/v1/rerank"
-      },
-      "response": {
-        "status": 404,
-        "json": {
-          "detail": "Not Found"
-        }
-      },
-      "repeat": true,
-      "required": false
-    },
-    {
-      "id": "speech",
-      "match": {
-        "method": "POST",
-        "path": "/v1/audio/speech"
-      },
-      "response": {
-        "status": 404,
-        "json": {
-          "detail": "Not Found"
-        }
-      },
-      "repeat": true,
-      "required": false
-    },
-    {
-      "id": "transcriptions",
-      "match": {
-        "method": "POST",
-        "path": "/v1/audio/transcriptions"
-      },
-      "response": {
-        "status": 404,
-        "json": {
-          "detail": "Not Found"
-        }
-      },
-      "repeat": true,
-      "required": false
     }
   ]
 }

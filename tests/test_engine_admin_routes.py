@@ -141,7 +141,7 @@ def test_an_error_finding_blocks_create_and_nothing_is_saved(gateway, fake_upstr
 
 def test_a_warning_blocks_once_and_acknowledge_warnings_adds_it(gateway, fake_upstreams):
     owner, *_ = owner_and_admin(gateway)
-    fake = _serve(fake_upstreams, "openapi-lists-a-disabled-route")
+    fake = _serve(fake_upstreams, "chat-route-without-model-list")
     body = {"definition": "openai-compatible", "name": "voice-box", "values": {"address": f"{fake.base_url}/v1"}}
     first = _create(owner, body)
     assert first.status_code == 409, first.text
@@ -150,8 +150,8 @@ def test_a_warning_blocks_once_and_acknowledge_warnings_adds_it(gateway, fake_up
     second = _create(owner, {**body, "acknowledge_warnings": True})
     assert second.status_code == 201, second.text
     record = _record(gateway, "voice-box")
-    # Only what the check marked Likely is ticked by default: realtime, never the 501 chat route.
-    assert record["capabilities"] == ["realtime"]
+    # Only what the check marked Likely is ticked by default; a chat route that is only Possible is not.
+    assert record["capabilities"] == []
     assert record["config"]["engine_check"]["status"] == "ok"
 
 
@@ -456,58 +456,67 @@ def test_an_edit_keeps_what_the_page_does_not_show(gateway, fake_upstreams):
     assert rows["small"]["enabled"] is False
 
 
-def test_an_older_node_graph_record_keeps_all_its_workflows_through_the_page(gateway, fake_upstreams):
+@pytest.mark.parametrize("service_id, config", [
+    # A node-graph server: the model router does not route it at all.
+    ("graph", {"name": "Image server", "host": "graph.fk.test", "port": 80, "protocol": "comfyui", "capabilities": ["images"],
+               "transforms": ["a-named-adjustment"], "workflows_dir": "./workflows/images",
+               "models": [{"model_group": f"workflow-{n}", "upstream_model": f"workflow-{n}"} for n in range(3)]}),
+    # A chat server with no protocol: served by the gateway itself, not by the router.
+    ("plain", {"name": "Plain", "host": "plain.fk.test", "port": 80, "base_path": "/v1", "capabilities": ["chat"],
+               "native_passthrough": False}),
+    # A chat server the router reaches through the gateway's lifecycle hop.
+    ("hopped", {"name": "Hopped", "host": "hopped.fk.test", "port": 80, "base_path": "/v1", "protocol": "openai-compatible",
+                "capabilities": ["chat", "completions"], "gateway_lifecycle": True,
+                "models": [{"model_group": "hopped-chat", "upstream_model": "hopped"}]}),
+])
+def test_an_engine_the_router_does_not_call_at_its_own_address_is_shown_not_edited(gateway, fake_upstreams, service_id, config):
+    """Its address path, headers and reply time would not reach the engine, so the page saves none of them."""
     owner, *_ = owner_and_admin(gateway)
-    _silent(fake_upstreams, "graph.fk.test")
+    _silent(fake_upstreams, f"{service_id}.fk.test")
     registry = _registry(gateway)
-    registry.setdefault("services", {})["graph"] = service_registry.service_from_backend_config("graph", {
-        "name": "Image server", "host": "graph.fk.test", "port": 80, "protocol": "comfyui", "capabilities": ["images"],
-        "transforms": ["a-named-adjustment"], "workflows_dir": "./workflows/images",
-        "models": [{"model_group": f"workflow-{n}", "upstream_model": f"workflow-{n}"} for n in range(3)]}, source="ui")
+    registry.setdefault("services", {})[service_id] = service_registry.service_from_backend_config(service_id, config, source="ui")
     _put_registry(gateway, registry)
-    view = owner.get("/admin/api/engines/graph").json()["engine"]
-    assert view["definition"] == "node-graph"
-    assert _edit(owner, "graph", {"definition": "node-graph", "name": "Image server, renamed", "values": {}}).status_code == 200
-    config = _record(gateway, "graph")["config"]
-    assert [row["model_group"] for row in config["models"]] == ["workflow-0", "workflow-1", "workflow-2"]
-    assert config["transforms"] == ["a-named-adjustment"] and config["workflows_dir"] == "./workflows/images"
+    before = _record(gateway, service_id)
+    view = owner.get(f"/admin/api/engines/{service_id}").json()["engine"]
+    assert view["editable"] is False and "can’t change how Azizam reaches this engine" in view["not_editable_reason"]
+    refused = _edit(owner, service_id, {"definition": "openai-compatible", "name": "Renamed", "values": {}})
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["code"] == "engine_not_editable_here"
+    assert _record(gateway, service_id) == before
+    # Renaming stays possible through the plain service edit.
+    renamed = _edit(owner, service_id, {"name": "Renamed"})
+    assert renamed.status_code == 200, renamed.text
+    after = _record(gateway, service_id)
+    assert after["name"] == "Renamed"
+    # The plain edit changes the name; what the gateway uses to reach the engine stays.
+    for key in ("host", "port", "protocol", "gateway_lifecycle", "workflows_dir", "transforms"):
+        assert after["config"].get(key) == before["config"].get(key), key
+    assert ([row["model_group"] for row in after["config"].get("models") or ()]
+            == [row["model_group"] for row in before["config"].get("models") or ()])
 
 
-def test_a_secret_header_value_stays_behind_when_the_address_moves(gateway, fake_upstreams):
+def test_plain_request_headers_are_sent_by_the_check_and_saved_as_plain_rows(gateway, fake_upstreams):
     owner, *_ = owner_and_admin(gateway)
     home = _chat_server(fake_upstreams)
-    _chat_server(fake_upstreams, host="moved-headers.fk.test")
     assert _create(owner, {"definition": "openai-compatible", "name": "headed", "acknowledge_warnings": True,
                            "values": {"address": f"{home.base_url}/v1",
-                                      "headers": [{"name": "X-Client-Token", "value": "header-secret-1", "secret": True}]}}).status_code == 201
-    config = _record(gateway, "headed")["config"]
-    header_secret = config["headers"][0]["value_secret_id"]
-    assert config["credential_origin"] == engine_check.origin_of(home.base_url)
+                                      "headers": [{"name": "X-Client", "value": "azizam-home"}]}}).status_code == 201
+    assert _record(gateway, "headed")["config"]["headers"] == [{"name": "X-Client", "value": "azizam-home"}]
     sent = [r for r in home.requests if r.path == "/v1/models"]
-    assert sent[0].headers.get("x-client-token") == "header-secret-1"
-    moved = _edit(owner, "headed", {"definition": "openai-compatible", "acknowledge_warnings": True,
-                                    "values": {"address": "http://moved-headers.fk.test/v1",
-                                               "headers": [{"name": "X-Client-Token", "value": engine_check.SECRET_MASK, "secret": True}]}})
-    assert moved.status_code == 200, moved.text
-    after = _record(gateway, "headed")["config"]
-    assert "headers" not in after
-    assert secret_store.provider_secret_status(header_secret, db_path=gateway.path).state == "missing"
+    assert sent[0].headers.get("x-client") == "azizam-home"
+    view = owner.get("/admin/api/engines/headed").json()["engine"]
+    assert view["values"]["headers"] == [{"name": "X-Client", "value": "azizam-home"}]
 
 
-def test_a_rename_changes_nothing_about_how_the_gateway_talks_to_an_older_engine(gateway, fake_upstreams):
+def test_a_header_marked_secret_is_refused_with_a_sentence(gateway, fake_upstreams):
     owner, *_ = owner_and_admin(gateway)
-    _silent(fake_upstreams, "plain.fk.test")
-    registry = _registry(gateway)
-    registry.setdefault("services", {})["plain"] = service_registry.service_from_backend_config("plain", {
-        "name": "Plain", "host": "plain.fk.test", "port": 80, "base_path": "/v1", "capabilities": ["chat"],
-        "native_passthrough": False}, source="ui")
-    _put_registry(gateway, registry)
-    before = _record(gateway, "plain")
-    assert _edit(owner, "plain", {"definition": "openai-compatible", "name": "Plain, renamed", "values": {}}).status_code == 200
-    after = _record(gateway, "plain")
-    assert after["capabilities"] == before["capabilities"] == ["chat"]
-    assert after["config"].get("protocol") == before["config"].get("protocol")
-    assert after["config"]["native_passthrough"] is False
+    _silent(fake_upstreams, "secret-header.fk.test")
+    refused = _create(owner, {"definition": "openai-compatible", "name": "headed", "disabled": True,
+                              "values": {"address": "http://secret-header.fk.test/v1",
+                                         "headers": [{"name": "X-Client-Token", "value": "header-secret-1", "secret": True}]}})
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["field"] == "headers"
+    assert "header-secret-1" not in json.dumps(_registry(gateway))
 
 
 def test_an_older_record_with_models_as_a_mapping_keeps_them_through_the_page(gateway, fake_upstreams):
