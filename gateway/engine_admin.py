@@ -46,7 +46,7 @@ from gateway.engine_check import (
     run_real_test,
 )
 from gateway.engine_definitions import EngineCatalog, EngineDefinitionError, load_engine_catalog
-from gateway.litellm_substrate import header_problem, reaches_engine_directly, routed_models
+from gateway.litellm_substrate import CREDENTIAL_HEADER_RE, header_problem, reaches_engine_directly, routed_models
 
 # Record keys this module writes. Every other config key is the owner's and is
 # carried through an edit untouched ("Other settings").
@@ -639,6 +639,24 @@ def _same_text(value: Any) -> str:
     return f"{number:g}"
 
 
+def _header_credentials_are_the_owners(ctx: Any, values: Any) -> None:
+    """One rule on every route that takes values (check, test, create, update), before anything is sent.
+
+    A header row whose name carries a credential (Authorization, Proxy-Authorization,
+    any name with key, token, secret, auth or cookie) or that the client marks
+    secret is the owner's, whatever the flag says. An administrator gets 403; the
+    owner then meets ``_clean_headers``, which sends the key to the API key field.
+    """
+    if _is_owner(ctx) or not isinstance(values, Mapping) or not isinstance(values.get("headers"), list):
+        return
+    for row in values["headers"]:
+        if not isinstance(row, Mapping):
+            continue
+        name = str(row.get("name") or "")
+        if row.get("secret") or name.lower() in ("authorization", "proxy-authorization") or CREDENTIAL_HEADER_RE.search(name):
+            raise _owner_only("Only the owner can send a key, and only in the API key field.")
+
+
 def _admin_limits(ctx: Any, values: Mapping[str, Any], definition: Mapping[str, Any], *, before: Mapping[str, Any] | None) -> None:
     if _is_owner(ctx):
         return
@@ -683,6 +701,7 @@ class EngineService:
         record = (registry.get("services") or {}).get(service_id) if service_id else None
         if service_id and record is None:
             raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
+        _header_credentials_are_the_owners(ctx, body.get("values"))
         clean = clean_values(definition, values)
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         existing = _existing_engines(registry, exclude=service_id)
@@ -701,11 +720,13 @@ class EngineService:
         registry = self.store.get_service_registry()
         service_id = body.get("service_id")
         record = (registry.get("services") or {}).get(service_id) if service_id else None
+        _header_credentials_are_the_owners(ctx, body.get("values"))
         clean = clean_values(definition, values)
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         capability = str(body.get("capability") or "")
         model = str(body.get("model") or "").strip() or None
-        result = await run_real_test(catalog, definition, clean, capability, key=key, fetch=self.fetch, model=model)
+        result = await run_real_test(catalog, definition, clean, capability, key=key, fetch=self.fetch, model=model,
+                                     viewer_role="owner" if _is_owner(ctx) else "admin")
         result["key_sent"] = bool(key.value)
         result["key_withheld"] = key.withheld
         if record is not None:
@@ -794,6 +815,7 @@ class EngineService:
         name = str(body.get("name") or "").strip()
         if not name:
             raise DraftError("Give the engine a name.", field="name")
+        _header_credentials_are_the_owners(ctx, body.get("values"))
         clean = clean_values(definition, values)
         _admin_limits(ctx, {**values, **clean}, definition, before=None)
         registry = self.store.get_service_registry()
@@ -848,6 +870,7 @@ class EngineService:
         values = {**before["values"], **(body.get("values") if isinstance(body.get("values"), Mapping) else {})}
         if "api_key" not in values:
             values["api_key"] = SECRET_MASK if before["key"]["state"] == "configured" and before["key"].get("source") == "stored" else ""
+        _header_credentials_are_the_owners(ctx, body.get("values"))
         clean = clean_values(definition, values)
         _admin_limits(ctx, {**values, **clean}, definition, before=before)
         name = str(body.get("name") or before["name"] or service_id).strip()

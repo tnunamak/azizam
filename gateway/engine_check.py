@@ -17,6 +17,7 @@ computer. The real test is a separate, explicit request of one kind the owner pi
 from __future__ import annotations
 
 import asyncio
+import base64
 import ipaddress
 import json
 import re
@@ -27,7 +28,7 @@ import time
 import zlib
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpcore
 import httpx
@@ -77,6 +78,8 @@ class Answer:
     detail: str = ""
     location: str = ""
     seconds: float = 0.0
+    # The request carried the owner's stored key and an administrator asked: the server's own words are not shown.
+    withheld: bool = False
 
     @property
     def text(self) -> str:
@@ -513,6 +516,72 @@ def _curl(answer: Answer, *, key_sent: bool, timeout: bool) -> str:
     return command
 
 
+HIDDEN = "[hidden]"
+WITHHELD_TEXT = ("Azizam doesn’t show the server’s own words here, because this request carried the owner’s "
+                 "stored key; only the owner sees them.")
+
+
+def secret_spellings(values: Iterable[str | None]) -> list[bytes]:
+    """The ways a sent key can come back: as sent, after "Bearer ", base64, percent- and JSON-encoded."""
+    out: set[bytes] = set()
+    for value in values:
+        value = (value or "").strip()
+        if len(value) < 4:
+            continue
+        for form in (value, f"Bearer {value}"):
+            raw = form.encode("utf-8")
+            out.add(raw)
+            out.add(json.dumps(form)[1:-1].encode("utf-8"))
+            for encoded in (base64.b64encode(raw), base64.urlsafe_b64encode(raw)):
+                out.add(encoded)
+                out.add(encoded.rstrip(b"="))
+            out.add("".join(f"%{byte:02X}" for byte in raw).encode())
+            out.add("".join(f"%{byte:02x}" for byte in raw).encode())
+            out.add(quote(form, safe="").encode())
+    return sorted(out, key=len, reverse=True)
+
+
+def _scrub_bytes(data: bytes, needles: list[bytes]) -> bytes:
+    for needle in needles:
+        if needle in data:
+            data = data.replace(needle, HIDDEN.encode())
+    return data
+
+
+def _scrub_text(text: str, needles: list[bytes]) -> str:
+    return _scrub_bytes(text.encode("utf-8", "surrogateescape"), needles).decode("utf-8", "replace") if text else text
+
+
+def guarded_fetch(fetch: Fetch, key: "KeyInput", *, viewer_role: str) -> Fetch:
+    """Wrap ``fetch`` so no answer carries the key that was sent.
+
+    Every spelling of the key is replaced in the body, the headers, Location and
+    the error text before anything reads the answer, so neither results nor
+    saved summaries can hold it. When an administrator's request carried the
+    owner's stored key, a refusal or redirect also loses its body, headers and
+    Location (a hostile server could split or re-encode the key past any
+    scrub), and the answer is marked ``withheld`` so replies are not quoted.
+    """
+    needles = secret_spellings([key.value])
+    withhold = viewer_role != "owner" and key.source in ("stored", "env") and bool(key.value)
+    if not needles and not withhold:
+        return fetch
+
+    async def guarded(method: str, url: str, **kwargs: Any) -> Answer:
+        answer = await fetch(method, url, **kwargs)
+        answer.body = _scrub_bytes(answer.body, needles)
+        answer.headers = {name: _scrub_text(value, needles) for name, value in answer.headers.items()}
+        answer.location = _scrub_text(answer.location, needles)
+        answer.detail = _scrub_text(answer.detail, needles)
+        if withhold:
+            answer.withheld = True
+            if answer.status is None or answer.status >= 300:
+                answer.body, answer.headers, answer.location = b"", {}, ""
+        return answer
+
+    return guarded  # type: ignore[return-value]
+
+
 def _raw(answer: Answer) -> str:
     if answer.transport not in {"ok", "too_large", "redirect"} or answer.status is None:
         return f"{answer.method} {answer.url}\n{answer.detail}".strip()
@@ -522,7 +591,7 @@ def _raw(answer: Answer) -> str:
         head += f"\ncontent-type: {content_type}"
     if answer.location:
         head += f"\nlocation: {answer.location}"
-    body = answer.text[:800]
+    body = WITHHELD_TEXT if answer.withheld else answer.text[:800]
     return f"{head}\n\n{body}" if body else head
 
 
@@ -773,6 +842,7 @@ async def run_check(
     prefix = str(values.get("path_prefix") or "").strip()
     check_address = join_url(address, prefix) if prefix else address
     timeout_s = DEFAULT_TIMEOUT_S
+    fetch = guarded_fetch(fetch, key, viewer_role=viewer_role)
     ctx = _Ctx(
         catalog=catalog, definition=definition, values=values, address=check_address, origin=origin_of(address),
         key=key, headers=_auth_headers(key.value, values), fetch=fetch, timeout_s=timeout_s,
@@ -1076,9 +1146,11 @@ async def run_real_test(
     key: KeyInput,
     fetch: Fetch,
     model: str | None = None,
+    viewer_role: str = "owner",
     now: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
     """One tiny real request of one kind, from the gateway's computer, to the draft address."""
+    fetch = guarded_fetch(fetch, key, viewer_role=viewer_role)
     if capability_id not in definition["capabilities"]:
         raise DraftError("This kind of server does not offer that.", field="capability")
     address = normalize_address(values.get("address"))
@@ -1103,6 +1175,8 @@ async def run_real_test(
         "seconds": answer.seconds, "cost": test["cost"], "at": int(now()), "status": answer.status, "via": "draft",
     }
     ok, reply = _judge(test, answer)
+    if answer.withheld:
+        reply = (f"The server answered “{answer.status_text}”. " if answer.status else "") + WITHHELD_TEXT
     result["ok"] = ok
     result["reply"] = reply
     if not ok:
