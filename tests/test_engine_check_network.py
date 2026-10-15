@@ -183,15 +183,11 @@ def test_the_self_ports_are_read_when_the_check_runs(fake_upstreams):
     assert gateway.requests == []
 
 
-def test_the_gateway_blocks_its_configured_port_and_its_router_port(monkeypatch):
+def test_the_gateway_blocks_the_port_it_is_configured_to_listen_on(monkeypatch):
     monkeypatch.setattr(proxy, "PROXY_PORT", 18111)
-
-    class Runtime:
-        base_url = "http://127.0.0.1:18222"
-
-    monkeypatch.setattr(proxy, "_litellm_runtime_config", lambda: Runtime())
     ports = proxy._engine_check_self_ports()
-    assert {18111, 18222} <= ports
+    assert 18111 in ports
+    assert {5000, 15000} <= ports, "another gateway instance on this computer stays blocked"
 
 
 # ---------------------------------------------------------------------------

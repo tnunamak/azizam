@@ -15008,18 +15008,11 @@ app.include_router(create_provider_admin_router(
 def _engine_check_self_ports() -> set[int]:
     """The ports where this gateway answers on this computer, read when an engine check runs.
 
-    Its configured listen port, its model router's port (from the service
-    registry) and the usual gateway ports (another instance on this computer
-    is a gateway too). Add engine never calls these on this computer.
+    Its configured listen port (AZIZAM_PORT or proxy.port) and the usual
+    gateway ports (another instance on this computer is a gateway too). Add
+    engine never calls these on this computer.
     """
-    ports = {int(PROXY_PORT), *engine_check.GATEWAY_PORTS}
-    try:
-        router_port = urlsplit(str(_litellm_runtime_config().base_url or "")).port
-    except Exception:  # noqa: BLE001 - an unreadable registry leaves the other ports blocked
-        router_port = None
-    if router_port:
-        ports.add(int(router_port))
-    return ports
+    return {int(PROXY_PORT), *engine_check.GATEWAY_PORTS}
 
 
 app.include_router(
