@@ -75,12 +75,21 @@ export function FindingCard({
   onOpenExisting,
   onRecheck,
   extraActions,
+  textId,
+  context,
 }: {
   finding: Finding;
   onFixPath?: (action: FindingAction) => void;
   onOpenExisting?: (serviceId: string) => void;
   onRecheck?: () => void;
   extraActions?: ReactNode;
+  /**
+   * An id for the what, why and fix text (and the context line), so the field at fault
+   * can list it in aria-describedby. The action buttons are not part of it.
+   */
+  textId?: string;
+  /** One more line of help under the fix, in the same description. */
+  context?: string;
 }) {
   const titleId = useId();
   const warn = finding.severity === "warning";
@@ -100,14 +109,17 @@ export function FindingCard({
         <Icon aria-hidden="true" className={cn("size-4 shrink-0", warn ? "text-warning" : "text-danger")} />
         <span>{finding.title}</span>
       </p>
-      <dl className="text-meta mt-2 grid gap-x-3 gap-y-1 sm:grid-cols-[auto_1fr]">
-        <dt className="text-muted-foreground">What happened</dt>
-        <dd>{finding.what}</dd>
-        <dt className="text-muted-foreground">Why</dt>
-        <dd>{finding.why}</dd>
-        <dt className="text-muted-foreground">What to do</dt>
-        <dd>{finding.fix}</dd>
-      </dl>
+      <div id={textId}>
+        <dl className="text-meta mt-2 grid gap-x-3 gap-y-1 sm:grid-cols-[auto_1fr]">
+          <dt className="text-muted-foreground">What happened</dt>
+          <dd>{finding.what}</dd>
+          <dt className="text-muted-foreground">Why</dt>
+          <dd>{finding.why}</dd>
+          <dt className="text-muted-foreground">What to do</dt>
+          <dd>{finding.fix}</dd>
+        </dl>
+        {context && <p className="text-meta mt-2">{context}</p>}
+      </div>
       <div className="mt-3 flex flex-wrap gap-2 empty:hidden">
         {action?.id === "fixpath" && onFixPath && (
           <Button type="button" variant="outline" size="sm" onClick={() => onFixPath(action)}>

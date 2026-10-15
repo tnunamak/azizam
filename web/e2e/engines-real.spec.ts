@@ -75,7 +75,8 @@ test("real registry journey preserves disabled state and unknown config through 
   await page.getByRole("menuitem", { name: "Open engine", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Journey engine" })).toBeVisible();
 
-  // Other settings are listed, read-only; the stored record is not an editor.
+  // Other settings are listed, read-only, under Technical details; the stored record is not an editor.
+  await page.getByText("Technical details", { exact: true }).click();
   await expect(page.getByRole("heading", { name: "Other settings" })).toBeVisible();
   await expect(page.getByText("custom_operator_field", { exact: true })).toBeVisible();
   await expect(page.getByRole("textbox", { name: /JSON/ })).toHaveCount(0);

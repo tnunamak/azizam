@@ -33,6 +33,7 @@ from urllib.parse import quote, urlsplit
 import httpcore
 import httpx
 
+from gateway import transforms
 from gateway.engine_definitions import EngineCatalog
 
 DEFAULT_CAP_BYTES = 64 * 1024
@@ -1164,15 +1165,39 @@ async def run_real_test(
     else:
         url = join_url(base, cap["route"]["path"])
     slots = {"model": model or ""}
-    content = json.dumps(_substitute(test.get("body") or {}, slots)).encode()
+    body = _substitute(test.get("body") or {}, slots)
+    # The request adjustments the engine will run with: the draft's, or the kind's default for a new engine.
+    specs = values.get("transforms")
+    if specs is None:
+        specs = list(definition["record"].get("transforms") or [])
+    base_result: dict[str, Any] = {
+        "capability": capability_id, "label": cap["label"], "sent_to": f"POST {url}", "cost": test["cost"],
+        "at": int(now()), "via": "draft",
+    }
+    if specs:
+        try:
+            body = transforms.run_request_pipeline(
+                list(specs), body,
+                transforms.TransformContext({"request_path": "/v1" + cap["route"]["path"], "reasoning": {}}),
+                transforms.REGISTRY,
+            )
+        except (KeyError, ValueError, TypeError) as exc:
+            name = exc.args[0] if isinstance(exc, KeyError) and exc.args else str(exc)
+            what = f"Azizam could not apply the request adjustment “{name}”, so it sent nothing."
+            return {**base_result, "sent": test["sent"], "adjusted": False, "ok": False, "status": None, "seconds": 0.0,
+                    "reply": what, "cost": "None. Nothing was sent.",
+                    "finding": {"what": what,
+                                "why": "The engine runs every request through its request adjustments; this one is not known here or refused the request.",
+                                "fix": "Check the adjustment under More options, then test again.", "raw": str(exc)}}
+    content = json.dumps(body).encode()
     headers["content-type"] = "application/json"
-    shape = "a small JSON request in the OpenAI shape"
+    shape = "a small JSON request in the OpenAI shape" + (", with your request adjustments applied" if specs else "")
     # A test is one tiny request: it waits for the reply time, but never longer than two minutes.
     timeout_s = min(_number(values.get("reply_timeout_s"), TEST_TIMEOUT_S, low=1, high=600), TEST_TIMEOUT_S)
     answer = await fetch("POST", url, headers=headers, cap_bytes=TEST_CAP_BYTES, timeout_s=timeout_s, content=content)
     result: dict[str, Any] = {
-        "capability": capability_id, "label": cap["label"], "sent": test["sent"], "sent_to": f"POST {url}",
-        "seconds": answer.seconds, "cost": test["cost"], "at": int(now()), "status": answer.status, "via": "draft",
+        **base_result, "seconds": answer.seconds, "status": answer.status, "adjusted": bool(specs),
+        "sent": test["sent"] + (", with your request adjustments applied" if specs else ""),
     }
     ok, reply = _judge(test, answer)
     if answer.withheld:

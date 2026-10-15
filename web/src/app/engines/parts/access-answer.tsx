@@ -52,6 +52,7 @@ function unreadableText(count: number): string {
 export function AccessAnswer({
   access,
   loading,
+  loadingText = "Checking the access plans…",
   error,
   onRetry,
   errorText = "Azizam couldn’t read the access plans. You can still add the engine; check who can use it on its page.",
@@ -60,6 +61,8 @@ export function AccessAnswer({
 }: {
   access?: EngineAccess | null;
   loading?: boolean;
+  /** What the status line says while loading. */
+  loadingText?: string;
   error?: boolean;
   onRetry?: () => void;
   errorText?: string;
@@ -76,7 +79,7 @@ export function AccessAnswer({
     body = (
       <p role="status" className="text-meta text-muted-foreground flex items-center gap-2">
         <Loader2 aria-hidden="true" className="size-4 animate-spin" />
-        Checking the access plans…
+        {loadingText}
       </p>
     );
   } else if (error || !access) {
@@ -151,7 +154,7 @@ export function AccessAsk({
     const timer = setTimeout(() => setDebounced(now), debounceMs);
     return () => clearTimeout(timer);
   }, [now, debounced, debounceMs]);
-  const { data, isPending, isError, refetch } = useQuery({
+  const { data, isPending, isPlaceholderData, isError, refetch } = useQuery({
     queryKey: ["engineAccess", debounced],
     queryFn: () => enginesApi.access(JSON.parse(debounced) as { capabilities: string[]; models: AccessModel[] }),
     placeholderData: keepPreviousData,
@@ -159,5 +162,17 @@ export function AccessAsk({
     gcTime: 0,
     retry: false,
   });
-  return <AccessAnswer access={data} loading={isPending} error={isError} onRetry={() => void refetch()} {...shown} />;
+  // The answer on screen belongs to other inputs while the debounce is waiting or the
+  // new answer is loading; never show it as the answer for the current ones.
+  const stale = now !== debounced || isPlaceholderData;
+  return (
+    <AccessAnswer
+      access={data}
+      loading={isPending || stale}
+      loadingText={stale ? "Checking who can use these…" : undefined}
+      error={isError && !stale}
+      onRetry={() => void refetch()}
+      {...shown}
+    />
+  );
 }

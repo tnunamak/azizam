@@ -6,7 +6,7 @@
  * field label, help line, check row and capability comes from the definition.
  * The last step also says who will be able to use the models.
  */
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleCheck, Circle, Loader2 } from "lucide-react";
 import { ApiError, queryKeys, type ServiceRegistry } from "@/lib/api";
@@ -36,7 +36,7 @@ import {
   type TestState,
 } from "../parts/capabilities";
 import { FindingCard } from "../parts/finding-card";
-import { FormField, Note, Tag } from "../parts/form";
+import { FormField, Note, Tag, focusFirstInvalid } from "../parts/form";
 import { ModelsBlock, draftsFromCheck, duplicateNames, modelsBody, type ModelDraft } from "../parts/models-block";
 import { AccessAsk, accessModels } from "../parts/access-answer";
 import { addedMessage, fieldOf, keptOffMessage, looksLikeAddress, trimAddress } from "./draft";
@@ -94,17 +94,27 @@ export function AddEngineDialog({
 }
 
 /*
- * Each step mounts its own dialog content, so the dialog cannot remember what
- * opened it. The element that had focus when the wizard mounted (the Add engine
- * button) gets it back when the dialog closes.
+ * The steps share one dialog content, so the dialog cannot remember what opened
+ * it. The element that had focus when the wizard mounted (the Add engine
+ * button) gets it back when the dialog closes. The same scope holds the polite
+ * status line, which stays mounted from the first step to the last so a screen
+ * reader hears how the check ended, and the body that holds the fields.
  */
-const ReturnFocus = createContext<HTMLElement | null>(null);
+interface WizardChrome {
+  returnTo: HTMLElement | null;
+  announcement: string;
+  announce: (text: string) => void;
+  bodyRef: RefObject<HTMLDivElement | null>;
+}
+const Chrome = createContext<WizardChrome>({ returnTo: null, announcement: "", announce: () => undefined, bodyRef: { current: null } });
 
 function ReturnFocusScope({ children }: { children: ReactNode }) {
   const [returnTo] = useState<HTMLElement | null>(() =>
     typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null),
   );
-  return <ReturnFocus.Provider value={returnTo}>{children}</ReturnFocus.Provider>;
+  const [announcement, announce] = useState("");
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  return <Chrome.Provider value={{ returnTo, announcement, announce, bodyRef }}>{children}</Chrome.Provider>;
 }
 
 function Wizard({
@@ -133,7 +143,6 @@ function Wizard({
   const [errors, setErrors] = useState<FieldErrors>({});
   const [check, setCheck] = useState<CheckResult | null>(null);
   const [finding, setFinding] = useState<Finding | null>(null);
-  const [checkIndex, setCheckIndex] = useState(0);
   const [revealed, setRevealed] = useState<CheckResult | null>(null);
   const abort = useRef<AbortController | null>(null);
   const revealTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -149,11 +158,21 @@ function Wizard({
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
+  const { announce, bodyRef } = useContext(Chrome);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const lastStep = useRef<Step>(step);
+  const [focusTick, setFocusTick] = useState(0);
+  // A new step puts focus on its heading, so a keyboard or screen reader user starts at the top of it.
   useEffect(() => {
-    if (step !== "checking" || !def) return;
-    const timer = setInterval(() => setCheckIndex((i) => Math.min(i + 1, def.check_rows.length - 1)), 700);
-    return () => clearInterval(timer);
-  }, [step, def]);
+    if (lastStep.current === step) return;
+    lastStep.current = step;
+    headingRef.current?.focus();
+  }, [step]);
+  // After a failure, the first invalid control wins over the heading (this effect runs second).
+  useEffect(() => {
+    if (focusTick) focusFirstInvalid(bodyRef.current);
+  }, [focusTick, bodyRef]);
+  const focusInvalid = () => setFocusTick((t) => t + 1);
   useEffect(
     () => () => {
       abort.current?.abort();
@@ -204,11 +223,14 @@ function Wizard({
     if (!looksLikeAddress(draft.address))
       next.address = `Enter an address that starts with http:// or https://, for example ${address?.placeholder ?? "http://192.168.1.50:8080"}.`;
     setErrors(next);
-    if (Object.keys(next).length) return;
+    if (Object.keys(next).length) {
+      focusInvalid();
+      return;
+    }
     setFinding(null);
     setAcknowledged(false);
-    setCheckIndex(0);
     setRevealed(null);
+    announce("Checking the server.");
     setStep("checking");
     abort.current?.abort();
     const controller = new AbortController();
@@ -218,6 +240,8 @@ function Wizard({
       .then((result) => {
         if (controller.signal.aborted) return;
         if (result.outcome === "ok") {
+          const count = result.models.length;
+          announce(`Check finished: reached the server, ${count} ${count === 1 ? "model" : "models"} found.`);
           if (checkRevealMs > 0) {
             setRevealed(result);
             revealTimer.current = setTimeout(() => applyCheck(result), checkRevealMs);
@@ -227,12 +251,16 @@ function Wizard({
         setCheck(result);
         const first = result.findings.find((f) => f.severity === "error") ?? result.findings[0] ?? null;
         setFinding(first);
+        announce(first ? `Check finished: ${first.title}.` : "Check finished with a problem.");
+        if (first?.severity === "error") focusInvalid();
         setStep("address");
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         const field = fieldFromError(error) as keyof FieldErrors | null;
         const message = error instanceof Error ? error.message : "The check could not run.";
+        announce(`Check finished: ${message}`);
+        focusInvalid();
         if (field && ["address", "api_key", "api_key_env"].includes(field)) setErrors({ [field]: message });
         else if (error instanceof ApiError && error.code === "owner_required") setErrors({ api_key: message });
         else setErrors({ address: `Azizam could not run the check. ${message}` });
@@ -244,6 +272,7 @@ function Wizard({
     abort.current?.abort();
     if (revealTimer.current) clearTimeout(revealTimer.current);
     setRevealed(null);
+    announce("Check cancelled.");
     setStep("address");
   }
 
@@ -332,9 +361,11 @@ function Wizard({
       } else if (first) {
         if (refused) setCheck(refused);
         setFinding(first);
+        focusInvalid();
         setStep("address");
       } else if (field && ["address", "api_key", "api_key_env"].includes(field)) {
         setErrors({ [field]: error instanceof Error ? error.message : "" });
+        focusInvalid();
         setStep("address");
       } else {
         setCreateError(error instanceof Error ? error.message : "The gateway did not answer.");
@@ -396,7 +427,7 @@ function Wizard({
         stepName={definitions[0]?.steps[0] ?? "Kind"}
         footer={<FooterRow right={<CloseButton />} />}
       >
-        <StepKind definitions={definitions} query={query} onQuery={setQuery} onPick={pickKind} />
+        <StepKind definitions={definitions} query={query} onQuery={setQuery} onPick={pickKind} headingRef={headingRef} />
       </Frame>
     );
 
@@ -491,11 +522,15 @@ function Wizard({
     return (
       <Frame step={2} stepName={stepName} footer={footer}>
         {checking ? (
-          <CheckingRows definition={def} index={checkIndex} revealed={revealed} />
+          <CheckingRows definition={def} revealed={revealed} headingRef={headingRef} />
         ) : (
           <div>
-            <h3 className="text-heading">Where is the server?</h3>
-            <p className="text-meta text-muted-foreground mt-0.5">Two fields. Azizam then looks at the server and fills in the rest.</p>
+            <h3 ref={headingRef} tabIndex={-1} className="text-heading outline-none">
+              Where is the server?
+            </h3>
+            <p className="text-meta text-muted-foreground mt-0.5">
+              Enter the server address and a key if it needs one. Azizam then looks at the server and fills in the rest.
+            </p>
           </div>
         )}
         {f && <SummaryLine finding={f} />}
@@ -530,7 +565,7 @@ function Wizard({
   const noneTicked = ticked.size === 0;
   const addNowButton = (disabled: boolean) => (
     <Button type="button" variant="outline" size="md" disabled={disabled || creating} onClick={addNow}>
-      Add now with these settings
+      Add engine now
     </Button>
   );
 
@@ -556,9 +591,12 @@ function Wizard({
         }
       >
         <div>
-          <h3 className="text-heading">What this server can do</h3>
+          <h3 ref={headingRef} tabIndex={-1} className="text-heading outline-none">
+            What this server can do
+          </h3>
           <p className="text-meta text-muted-foreground mt-0.5">
-            Azizam looked at the server. Tick what you want to use. Nothing turns on until you do.
+            Azizam looked at the server. Tick what you want to use. Review the selected abilities. They become available when you
+            add the engine.
           </p>
         </div>
         {errorCallout}
@@ -567,7 +605,7 @@ function Wizard({
             Azizam could not tell what this server can do. Tick what you know it can do, then run a real test.
           </Note>
         ) : (
-          <Note tone="ok" role="status">
+          <Note tone="ok">
             {`Reached the server. ${keyWord}. Found ${check.models.length} models.`}
           </Note>
         )}
@@ -597,7 +635,7 @@ function Wizard({
         </p>
         <CapabilityLegend />
         <p className="text-meta text-muted-foreground">
-          In a hurry? “Add now with these settings” adds what is ticked, every model the server listed, and the name “{suggested}”.
+          In a hurry? “Add engine now” adds what is ticked, every model the server listed, and the name “{suggested}”.
         </p>
       </Frame>
     );
@@ -621,7 +659,9 @@ function Wizard({
         }
       >
         <div>
-          <h3 className="text-heading">Models and limits</h3>
+          <h3 ref={headingRef} tabIndex={-1} className="text-heading outline-none">
+            Models and limits
+          </h3>
           <p className="text-meta text-muted-foreground mt-0.5">
             {models.length
               ? `A public name is what apps type to pick a model, for example “${models[0].public_name}”. `
@@ -676,7 +716,9 @@ function Wizard({
       }
     >
       <div>
-        <h3 className="text-heading">Name and create</h3>
+        <h3 ref={headingRef} tabIndex={-1} className="text-heading outline-none">
+          Name and create
+        </h3>
         <p className="text-meta text-muted-foreground mt-0.5">One last check of what you are adding.</p>
       </div>
       {createFinding && (
@@ -746,7 +788,7 @@ function Wizard({
         ? "Read from a server variable"
         : owner && conn.key
           ? "Stored on this gateway. Never shown again."
-          : "None. The server has no key.",
+          : "No key supplied.",
     ]);
     rows.push(["Will offer", tickedLabels().join(", ") || "Nothing yet"]);
     const on = models.filter((m) => m.on).length;
@@ -757,7 +799,7 @@ function Wizard({
 }
 
 function Frame({ step, stepName, footer, children }: { step: number; stepName: string; footer: ReactNode; children: ReactNode }) {
-  const returnTo = useContext(ReturnFocus);
+  const { returnTo, announcement, bodyRef } = useContext(Chrome);
   return (
     <DialogContent
       aria-describedby={undefined}
@@ -769,6 +811,9 @@ function Frame({ step, stepName, footer, children }: { step: number; stepName: s
         }
       }}
     >
+      <p data-testid="wizard-announcement" role="status" aria-live="polite" aria-label="Add engine progress" className="sr-only">
+        {announcement}
+      </p>
       <div className="shrink-0 px-6 pt-5 pr-14 pb-3">
         <DialogTitle className="text-heading">Add engine</DialogTitle>
         <p className="text-meta text-muted-foreground mt-0.5">
@@ -780,7 +825,7 @@ function Frame({ step, stepName, footer, children }: { step: number; stepName: s
           ))}
         </div>
       </div>
-      <div data-slot="dialog-body" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-4">
+      <div ref={bodyRef} data-slot="dialog-body" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-4">
         {children}
       </div>
       {footer && (
@@ -821,37 +866,37 @@ function CloseButton({ label = "Cancel" }: { label?: string }) {
 
 function CheckingRows({
   definition,
-  index,
   revealed,
+  headingRef,
 }: {
   definition: EngineDefinition;
-  index: number;
   revealed: CheckResult | null;
+  headingRef: RefObject<HTMLHeadingElement | null>;
 }) {
+  // The rows say nothing about progress. They tick only when the server's real answer arrives.
   return (
     <>
       <div>
-        <h3 className="text-heading">Checking the server</h3>
-        <p className="text-meta text-muted-foreground mt-0.5">This takes a few seconds.</p>
+        <h3 ref={headingRef} tabIndex={-1} className="text-heading outline-none">
+          Checking the server
+        </h3>
+        <p className="text-meta text-muted-foreground mt-0.5 flex items-center gap-2">
+          {!revealed && <Loader2 aria-hidden="true" className="size-4 animate-spin" />}
+          Checking the server. This may take a few seconds.
+        </p>
       </div>
-      <ul role="status" aria-live="polite" aria-label="Check progress" className="bg-card rounded-panel divide-y border">
-        {definition.check_rows.map((label, i) => {
+      <ul aria-label="Check progress" className="bg-card rounded-panel divide-y border">
+        {definition.check_rows.map((label) => {
           const result = revealed?.steps.find((s) => s.label === label)?.result ?? "";
-          const state = revealed ? "done" : i < index ? "done" : i === index ? "now" : "wait";
           return (
             <li key={label} className="text-meta flex items-center gap-2 px-4 py-2.5">
-              {state === "done" ? (
+              {revealed ? (
                 <CircleCheck aria-hidden="true" className="text-success size-4" />
-              ) : state === "now" ? (
-                <Loader2 aria-hidden="true" className="size-4 animate-spin" />
               ) : (
                 <Circle aria-hidden="true" className="text-muted-foreground size-4" />
               )}
-              <span className={cn("flex-1", state === "wait" && "text-muted-foreground")}>
-                {label}
-                {state === "now" && "…"}
-              </span>
-              {state === "done" && result && <span className="text-muted-foreground">{result}</span>}
+              <span className={cn("flex-1", !revealed && "text-muted-foreground")}>{label}</span>
+              {revealed && result && <span className="text-muted-foreground">{result}</span>}
             </li>
           );
         })}

@@ -104,7 +104,7 @@ describe("a: kind search", () => {
     const user = userEvent.setup();
     mount();
     await user.type(await screen.findByRole("searchbox", { name: "Search server kinds" }), "triton");
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(screen.getByText(/^No kind matches/).closest('[role="status"]')).toHaveTextContent(
       "No kind matches “triton”. If the server speaks the OpenAI style, pick “Any OpenAI-compatible server”.",
     );
     await user.click(screen.getByRole("button", { name: "Use Any OpenAI-compatible server" }));
@@ -249,7 +249,7 @@ describe("c: checking", () => {
     const dialog = await pickKind(user, /Any OpenAI-compatible server/);
     await typeAddress(user, "http://192.168.1.50:8080/v1");
     await user.click(within(dialog).getByRole("button", { name: "Continue" }));
-    const rows = within(await within(dialog).findByRole("status", { name: "Check progress" })).getAllByRole("listitem");
+    const rows = within(await within(dialog).findByRole("list", { name: "Check progress" })).getAllByRole("listitem");
     expect(rows.map((r) => r.textContent?.replace("…", ""))).toEqual([
       "Reaching the server",
       "Checking the key",

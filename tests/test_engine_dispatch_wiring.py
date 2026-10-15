@@ -15,6 +15,7 @@ direct engine route are proven in test_runtime_route_policy.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 import litellm
@@ -158,3 +159,43 @@ def test_a_key_cannot_go_in_a_plain_header(header):
         clean_values(definition, {"address": "http://plain.fk.test/v1", "headers": [header]})
     assert refused.value.field == "headers"
     assert "API key field" in str(refused.value)
+
+
+def test_the_draft_real_test_sends_the_request_with_the_adjustments_applied():
+    """The dialog's real test is the request the gateway would send: adjustments included."""
+    from gateway.engine_check import KeyInput, run_real_test
+
+    sent = []
+
+    async def fetch(method, url, *, headers, cap_bytes, timeout_s, content=None):
+        from gateway.engine_check import Answer
+
+        sent.append(json.loads(content))
+        reply = {"choices": [{"index": 0, "message": {"role": "assistant", "content": "OK"}}]}
+        return Answer(method=method, url=url, status=200, body=json.dumps(reply).encode())
+
+    catalog = load_engine_catalog()
+    definition = catalog.definition("openai-compatible")
+    values = clean_values(definition, {"address": "http://garage.fk.test/v1", "transforms": [
+        {"kind": "default-params", "set": {"temperature": 0.2}},
+        {"kind": "drop-params", "drop": ["max_tokens"], "phase": "request"},
+    ]})
+    result = asyncio.run(run_real_test(catalog, definition, values, "chat", key=KeyInput(), fetch=fetch, model="demo-chat"))
+    assert result["ok"] is True
+    assert sent[0]["temperature"] == 0.2 and "max_tokens" not in sent[0]
+    assert result["adjusted"] is True
+    assert "with your request adjustments" in result["sent"]
+
+
+def test_a_draft_real_test_whose_adjustment_refuses_the_request_sends_nothing():
+    from gateway.engine_check import KeyInput, run_real_test
+
+    async def fetch(*args, **kwargs):
+        raise AssertionError("nothing may be sent")
+
+    catalog = load_engine_catalog()
+    definition = catalog.definition("openai-compatible")
+    values = clean_values(definition, {"address": "http://garage.fk.test/v1", "transforms": ["no-such-adjustment"]})
+    result = asyncio.run(run_real_test(catalog, definition, values, "chat", key=KeyInput(), fetch=fetch, model="demo-chat"))
+    assert result["ok"] is False and result["adjusted"] is False
+    assert "no-such-adjustment" in result["finding"]["what"]

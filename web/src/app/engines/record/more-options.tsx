@@ -5,7 +5,7 @@
  * it differs from the definition's defaults. Small headings inside, one per
  * field group the definition lists. Typed forms only.
  */
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import type { EngineDefinition, EngineField, HeaderRow } from "@/lib/engines-api";
 import { Button } from "@/components/ui/button";
@@ -84,6 +84,7 @@ export function MoreOptions({
   address,
   open,
   onOpenChange,
+  errors = {},
 }: {
   definition: EngineDefinition;
   values: OptionValues;
@@ -98,6 +99,8 @@ export function MoreOptions({
   address: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Messages from the server, by field key. The first field named takes focus. */
+  errors?: Record<string, string>;
 }) {
   const fields = optionFields(definition);
   const groups: { name: string; fields: EngineField[] }[] = [];
@@ -142,6 +145,7 @@ export function MoreOptions({
                 locked={locked}
                 address={address}
                 definition={definition}
+                errors={errors}
               />
             </section>
           );
@@ -164,6 +168,7 @@ function GroupBody({
   locked,
   address,
   definition,
+  errors,
 }: {
   group: EngineField[];
   values: OptionValues;
@@ -177,20 +182,22 @@ function GroupBody({
   locked: boolean;
   address: string;
   definition: EngineDefinition;
+  errors: Record<string, string>;
 }) {
   const ownerOnly = group.some((f) => f.owner_only);
-  if (ownerOnly) return <OwnerOnlyGroup fields={group} values={values} onValues={onValues} editable={owner && lifecycleEditable && !locked} />;
+  if (ownerOnly)
+    return <OwnerOnlyGroup fields={group} values={values} onValues={onValues} editable={owner && lifecycleEditable && !locked} errors={errors} />;
   const out: ReactNode[] = [];
   const plain: EngineField[] = [];
   for (const field of group) {
     if (field.type === "keyvalue")
-      out.push(<HeadersEditor key={field.key} field={field} rows={headers} onChange={onHeaders} disabled={locked} />);
+      out.push(<HeadersEditor key={field.key} field={field} rows={headers} onChange={onHeaders} disabled={locked} error={errors[field.key]} />);
     else if (field.items === "transform")
       out.push(
-        <div key={field.key} className="flex flex-col gap-3">
+        <ErrorGroup key={field.key} label={field.label} error={errors[field.key]}>
           {field.help && <p className="text-meta text-muted-foreground">{field.help}</p>}
           <AdjustmentsEditor cards={cards} onChange={onCards} disabled={locked} />
-        </div>,
+        </ErrorGroup>,
       );
     else plain.push(field);
   }
@@ -204,6 +211,7 @@ function GroupBody({
             value={values[field.key] ?? ""}
             onChange={(v) => onValues({ [field.key]: v })}
             disabled={locked}
+            error={errors[field.key]}
             after={field.key === "path_prefix" ? <CallLine definition={definition} values={{ address, path_prefix: values.path_prefix }} /> : undefined}
           />
         ))}
@@ -218,6 +226,7 @@ function PlainField({
   onChange,
   disabled,
   after,
+  error,
   withDefaultTag = true,
 }: {
   field: EngineField;
@@ -225,6 +234,7 @@ function PlainField({
   onChange: (value: string) => void;
   disabled?: boolean;
   after?: ReactNode;
+  error?: string;
   withDefaultTag?: boolean;
 }) {
   const numeric = field.type === "duration" || field.type === "number";
@@ -239,7 +249,7 @@ function PlainField({
     ) : undefined;
   if (field.type === "select")
     return (
-      <FormField label={field.label} help={field.help} tag={changed ? <Tag tone="changed">Changed</Tag> : <Tag>Default</Tag>}>
+      <FormField label={field.label} help={field.help} error={error} tag={changed ? <Tag tone="changed">Changed</Tag> : <Tag>Default</Tag>}>
         {(control) => (
           <NativeSelect {...control} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
             {(field.options ?? []).map((o) => (
@@ -252,7 +262,7 @@ function PlainField({
       </FormField>
     );
   return (
-    <FormField label={field.label} help={field.help} tag={tag} after={after}>
+    <FormField label={field.label} help={field.help} error={error} tag={tag} after={after}>
       {(control) =>
         numeric ? (
           <div className="flex items-center gap-2">
@@ -289,11 +299,13 @@ function OwnerOnlyGroup({
   values,
   onValues,
   editable,
+  errors,
 }: {
   fields: EngineField[];
   values: OptionValues;
   onValues: (patch: OptionValues) => void;
   editable: boolean;
+  errors: Record<string, string>;
 }) {
   const mode = fields.find((f) => f.type === "select");
   const managed = mode ? values[mode.key] !== defaultText(mode) : false;
@@ -327,14 +339,23 @@ function OwnerOnlyGroup({
   return (
     <>
       <p className="text-meta text-muted-foreground">Only needed when Azizam should start this server itself.</p>
-      {mode && <PlainField field={mode} value={values[mode.key] ?? defaultText(mode)} onChange={(v) => onValues({ [mode.key]: v })} />}
+      {mode && (
+        <PlainField field={mode} value={values[mode.key] ?? defaultText(mode)} error={errors[mode.key]} onChange={(v) => onValues({ [mode.key]: v })} />
+      )}
       {text.map((f) => (
-        <PlainField key={f.key} field={f} value={values[f.key] ?? ""} onChange={(v) => onValues({ [f.key]: v })} />
+        <PlainField key={f.key} field={f} value={values[f.key] ?? ""} error={errors[f.key]} onChange={(v) => onValues({ [f.key]: v })} />
       ))}
       {durations.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-2">
           {durations.map((f) => (
-            <PlainField key={f.key} field={f} value={values[f.key] ?? ""} withDefaultTag={false} onChange={(v) => onValues({ [f.key]: v })} />
+            <PlainField
+              key={f.key}
+              field={f}
+              value={values[f.key] ?? ""}
+              error={errors[f.key]}
+              withDefaultTag={false}
+              onChange={(v) => onValues({ [f.key]: v })}
+            />
           ))}
         </div>
       )}
@@ -352,15 +373,17 @@ function HeadersEditor({
   rows,
   onChange,
   disabled,
+  error,
 }: {
   field: EngineField;
   rows: HeaderDraft[];
   onChange: (rows: HeaderDraft[]) => void;
   disabled?: boolean;
+  error?: string;
 }) {
   const set = (i: number, patch: Partial<HeaderDraft>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   return (
-    <div className="flex flex-col gap-3">
+    <ErrorGroup label={field.label} error={error}>
       {field.help && <p className="text-meta text-muted-foreground">{field.help}</p>}
       {rows.map((row, i) => (
         <div key={i} className="grid items-end gap-2 sm:grid-cols-[1fr_1fr_auto]">
@@ -416,6 +439,28 @@ function HeadersEditor({
           <Plus aria-hidden="true" />
           Add a header
         </Button>
+      )}
+    </ErrorGroup>
+  );
+}
+
+/**
+ * A set of controls that is one field to the server (the headers, the adjustments).
+ * With a message from the server it is a labelled group the message describes, and
+ * it can take focus.
+ */
+function ErrorGroup({ label, error, children }: { label: string; error?: string; children: ReactNode }) {
+  const errorId = useId();
+  return (
+    <div
+      className="flex flex-col gap-3"
+      {...(error ? { role: "group", "aria-label": label, "aria-describedby": errorId, tabIndex: -1, "data-field-error": "true" } : {})}
+    >
+      {children}
+      {error && (
+        <p id={errorId} className="text-meta text-danger">
+          {error}
+        </p>
       )}
     </div>
   );

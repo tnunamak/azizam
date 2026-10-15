@@ -5,7 +5,7 @@
  * its context window, prefilled from the server and tagged until edited, and
  * "Add a model by name" for one the server does not list.
  */
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import type { DetectedModel } from "@/lib/engines-api";
 import { Button } from "@/components/ui/button";
@@ -39,13 +39,18 @@ export function draftsFromCheck(models: DetectedModel[], on = true): ModelDraft[
   }));
 }
 
-/** Public names that two offered models share. */
+/** The name apps type for a model, and the name that is saved: the public name, or the server's name when it is empty. */
+export function effectiveName(model: Pick<ModelDraft, "id" | "public_name">): string {
+  return model.public_name.trim() || model.id;
+}
+
+/** Public names that two offered models share, as they will be saved. */
 export function duplicateNames(models: ModelDraft[]): Set<string> {
   const seen = new Set<string>();
   const dup = new Set<string>();
   for (const m of models) {
     if (!m.on) continue;
-    const name = m.public_name.trim();
+    const name = effectiveName(m);
     if (seen.has(name)) dup.add(name);
     seen.add(name);
   }
@@ -55,7 +60,7 @@ export function duplicateNames(models: ModelDraft[]): Set<string> {
 export function modelsBody(models: ModelDraft[]) {
   return models.map((m) => ({
     id: m.id,
-    public_name: m.public_name.trim() || m.id,
+    public_name: effectiveName(m),
     context_window: m.context_window.trim() === "" ? null : Number(m.context_window),
     enabled: m.on,
   }));
@@ -66,15 +71,21 @@ export function ModelsBlock({
   onChange,
   emptyText,
   readOnly,
+  error,
 }: {
   models: ModelDraft[];
   onChange: (next: ModelDraft[]) => void;
   emptyText: string;
   readOnly?: boolean;
+  /** A message from the server about the list as a whole, for example after a refused Save. */
+  error?: string;
 }) {
   const [query, setQuery] = useState("");
   const [byName, setByName] = useState("");
+  const [addError, setAddError] = useState<string | null>(null);
+  const addRow = useRef<HTMLDivElement>(null);
   const searchId = useId();
+  const errorId = useId();
   const dup = duplicateNames(models);
   const shown = models
     .map((model, index) => ({ model, index }))
@@ -87,7 +98,18 @@ export function ModelsBlock({
 
   function add() {
     const name = byName.trim();
-    if (!name || models.some((m) => m.id === name)) return;
+    const problem = !name
+      ? "Enter the model name used by the server."
+      : models.some((m) => m.id === name)
+        ? "This model is already listed. Find it above and tick it to offer it."
+        : null;
+    if (problem) {
+      // Focus the field so the message is read out with it.
+      setAddError(problem);
+      addRow.current?.querySelector("input")?.focus();
+      return;
+    }
+    setAddError(null);
     onChange([
       ...models,
       { id: name, public_name: name, context_window: "", use: "Not known yet", on: true, suggestedName: false, reportedWindow: false, byName: true },
@@ -96,7 +118,15 @@ export function ModelsBlock({
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div
+      className="flex flex-col gap-3"
+      {...(error ? { role: "group", "aria-label": "Models", "aria-describedby": errorId, tabIndex: -1, "data-field-error": "true" } : {})}
+    >
+      {error && (
+        <p id={errorId} className="text-meta text-danger">
+          {error}
+        </p>
+      )}
       <p className="text-meta text-muted-foreground">
         {offered} of {models.length} models offered
       </p>
@@ -141,7 +171,7 @@ export function ModelsBlock({
                 <FormField
                   label="Public name"
                   tag={model.suggestedName ? <Tag tone="suggest">Suggested</Tag> : undefined}
-                  error={model.on && dup.has(model.public_name.trim()) ? `Two models use the public name “${model.public_name.trim()}”. Each needs its own.` : undefined}
+                  error={model.on && dup.has(effectiveName(model)) ? `Two models use the public name “${effectiveName(model)}”. Each needs its own.` : undefined}
                 >
                   {(control) => (
                     <Input
@@ -154,7 +184,11 @@ export function ModelsBlock({
                     />
                   )}
                 </FormField>
-                <FormField label="Context window" tag={model.reportedWindow ? <Tag tone="suggest">Reported by server</Tag> : undefined}>
+                <FormField
+                  label="Context window"
+                  help="Leave empty if you don’t know."
+                  tag={model.reportedWindow ? <Tag tone="suggest">Reported by server</Tag> : undefined}
+                >
                   {(control) => (
                     <div className="flex items-center gap-2">
                       <Input
@@ -178,10 +212,11 @@ export function ModelsBlock({
                   type="button"
                   variant="link"
                   size="sm"
-                  className="ml-7 w-fit px-0"
+                  className="ml-7 w-fit px-0 max-sm:min-h-11"
                   onClick={() => onChange(models.filter((_, i) => i !== index))}
                 >
-                  Remove {model.id}
+                  Remove model
+                  <span className="sr-only"> {model.id}</span>
                 </Button>
               )}
             </div>
@@ -189,11 +224,12 @@ export function ModelsBlock({
         )}
       </div>
       {!readOnly && (
-        <div className="flex flex-wrap items-end gap-2">
+        <div ref={addRow} className="flex flex-wrap items-end gap-2">
           <FormField
             className="min-w-0 flex-1"
             label="Add a model by name"
             help="Use this when the server does not list a model, for example one it loads on demand."
+            error={addError ?? undefined}
           >
             {(control) => (
               <Input
@@ -202,7 +238,10 @@ export function ModelsBlock({
                 value={byName}
                 autoComplete="off"
                 spellCheck={false}
-                onChange={(event) => setByName(event.target.value)}
+                onChange={(event) => {
+                  setByName(event.target.value);
+                  setAddError(null);
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();

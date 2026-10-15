@@ -67,7 +67,7 @@ describe("f: what a detected server can do", () => {
     expect(within(dialog).getByText("The server’s own details say so, or a real test passed. Ticked for you.")).toBeVisible();
     expect(
       within(dialog).getByText(
-        "In a hurry? “Add now with these settings” adds what is ticked, every model the server listed, and the name “Engine at 192.168.1.50:8080”.",
+        "In a hurry? “Add engine now” adds what is ticked, every model the server listed, and the name “Engine at 192.168.1.50:8080”.",
       ),
     ).toBeVisible();
   });
@@ -146,7 +146,7 @@ describe("g, h: models, name and create", () => {
     const recap = within(dialog).getByTestId("recap");
     expect(recap).toHaveTextContent("KindAny OpenAI-compatible server");
     expect(recap).toHaveTextContent("Addresshttp://192.168.1.50:8080/v1");
-    expect(recap).toHaveTextContent("KeyNone. The server has no key.");
+    expect(recap).toHaveTextContent("KeyNo key supplied.");
     expect(recap).toHaveTextContent("Will offerChat, Embeddings");
     expect(recap).toHaveTextContent("Models3 offered");
     await user.clear(name);
@@ -276,7 +276,7 @@ describe("g, h: models, name and create", () => {
       }),
     );
     create.mockResolvedValueOnce(registryWith("engine-at-192-168-1-50-8080", "Engine at 192.168.1.50:8080"));
-    await user.click(within(dialog).getByRole("button", { name: "Add now with these settings" }));
+    await user.click(within(dialog).getByRole("button", { name: "Add engine now" }));
     expect(await within(dialog).findByText("Nothing recognised")).toBeVisible();
     expect(within(dialog).getByText("Step 5 of 5 · Name")).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "Add anyway" }));
@@ -295,7 +295,7 @@ describe("g, h: models, name and create", () => {
         check: check("oai_down"),
       }),
     );
-    await user.click(within(dialog).getByRole("button", { name: "Add now with these settings" }));
+    await user.click(within(dialog).getByRole("button", { name: "Add engine now" }));
     expect(await within(dialog).findByText("Server not reachable")).toBeVisible();
     expect(within(dialog).getByText("Step 2 of 5 · Address and key")).toBeVisible();
     expect(within(dialog).getByRole("button", { name: "Add but keep off" })).toBeVisible();

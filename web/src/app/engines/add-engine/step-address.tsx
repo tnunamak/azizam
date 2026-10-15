@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import { Check, CircleCheck, CircleX, CircleAlert } from "lucide-react";
 import type { EngineDefinition, Finding, FindingAction } from "@/lib/engines-api";
 import { Input } from "@/components/ui/input";
@@ -7,6 +8,10 @@ import { CallLine } from "../parts/call-line";
 import { FindingCard } from "../parts/finding-card";
 import { FormField, LinkButton, Note, OwnerOnlyTag } from "../parts/form";
 import { fieldOf } from "./draft";
+
+/** Under the variable-name box, after a refused key: where to look, besides the server's own reason. */
+const ENV_KEY_CONTEXT =
+  "Azizam could not use the key from this variable. Check the variable name and its value on the computer running Azizam, then check again.";
 
 export interface ConnectionDraft {
   address: string;
@@ -50,10 +55,20 @@ export function ConnectionFields({
   const address = fieldOf(definition, "address");
   const key = fieldOf(definition, "api_key");
   const env = fieldOf(definition, "api_key_env");
-  const card = (field: Finding["field"]) =>
+  // One finding shows at a time, so one id names its text for whichever control it is about.
+  const findingText = useId();
+  const card = (field: Finding["field"], context?: string) =>
     finding && finding.field === field ? (
-      <FindingCard finding={finding} onFixPath={onFixPath} onOpenExisting={onOpenExisting} onRecheck={onRecheck} />
+      <FindingCard
+        finding={finding}
+        textId={findingText}
+        context={context}
+        onFixPath={onFixPath}
+        onOpenExisting={onOpenExisting}
+        onRecheck={onRecheck}
+      />
     ) : null;
+  const describes = (field: Finding["field"]) => (finding?.field === field ? findingText : undefined);
 
   return (
     <div className="flex flex-col gap-4">
@@ -70,6 +85,7 @@ export function ConnectionFields({
           required
           help={address.help}
           error={errors.address}
+          extraDescribedBy={describes("address")}
           after={
             <>
               <CallLine definition={definition} values={{ address: draft.address }} />
@@ -103,15 +119,18 @@ export function ConnectionFields({
           label={env.label}
           help={env.help}
           error={errors.api_key_env}
+          extraDescribedBy={describes("key")}
           after={
-            !disabled && (
-              <LinkButton onClick={() => onChange({ envOpen: false })}>Paste the key here instead</LinkButton>
-            )
+            <>
+              {card("key", ENV_KEY_CONTEXT)}
+              {!disabled && <LinkButton onClick={() => onChange({ envOpen: false })}>Paste the key here instead</LinkButton>}
+            </>
           }
         >
           {(control) => (
             <Input
               {...control}
+              aria-invalid={control["aria-invalid"] ?? (finding?.field === "key" ? true : undefined)}
               className="font-mono"
               placeholder={env.placeholder}
               value={draft.envName}
@@ -128,6 +147,7 @@ export function ConnectionFields({
             label={key.label}
             help={owner ? key.help : undefined}
             error={errors.api_key}
+            extraDescribedBy={describes("key")}
             tag={owner ? undefined : <OwnerOnlyTag />}
             after={
               <>

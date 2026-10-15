@@ -5,7 +5,7 @@
  * Azizam is, the evidence, and a real test. Used by step 3 of the dialog and by
  * the engine page.
  */
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Check, CircleCheck, CircleHelp, CircleX, Circle, Lock, Loader2, type LucideIcon } from "lucide-react";
 import type { CapabilityLevel, CheckedCapability, StoredTest, TestResult } from "@/lib/engines-api";
 import { cn } from "@/lib/cn";
@@ -42,10 +42,13 @@ const LEVEL: Record<RowLevel, { word: string; icon: LucideIcon; className: strin
 };
 const ORDER: Record<RowLevel, number> = { declared: 0, likely: 0, possible: 1, against: 2, none: 3, needs_key: 3, unchecked: 4 };
 
-export function LevelBadge({ level }: { level: RowLevel }) {
+export function LevelBadge({ level, id }: { level: RowLevel; id?: string }) {
   const { word, icon: Icon, className } = LEVEL[level];
   return (
-    <span className={cn("rounded-badge text-badge inline-flex h-5 shrink-0 items-center gap-1 px-1.5 whitespace-nowrap", className)}>
+    <span
+      id={id}
+      className={cn("rounded-badge text-badge inline-flex h-5 shrink-0 items-center gap-1 px-1.5 whitespace-nowrap", className)}
+    >
       <Icon aria-hidden="true" className="size-3.5" />
       {word}
     </span>
@@ -184,66 +187,114 @@ export function CapabilityList({
 }) {
   return (
     <div role="group" aria-label="What this server can do" className="bg-card rounded-panel divide-y border">
-      {sortRows(rows).map((row) => {
-        const on = ticked.has(row.id);
-        const unchecked = row.level === "unchecked";
-        const dim = unchecked || row.level === "none" || row.level === "against" || row.level === "needs_key";
-        const test = tests[row.id];
-        const testable = !unchecked && !readOnly && onTest && (on || row.level === "possible");
-        return (
-          <div key={row.id} className="flex flex-col gap-2 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-              <label className="text-body flex min-h-8 cursor-pointer items-center gap-3 font-medium max-sm:min-h-11">
-                <Checkbox
-                  aria-label={row.label}
-                  checked={on}
-                  disabled={readOnly}
-                  onCheckedChange={(value) => onTick(row.id, value === true)}
-                />
-                <span className={cn(dim && !on && "text-muted-foreground")}>{row.label}</span>
-              </label>
-              <LevelBadge level={row.level} />
-            </div>
-            <div className="flex flex-col gap-2 pl-7">
-              {!unchecked && row.evidence && <p className="text-meta text-muted-foreground">{row.evidence}</p>}
-              {!unchecked && row.why && !on && (
-                <p className="text-meta text-muted-foreground">
-                  <b className="text-foreground font-medium">Why unticked:</b> {row.why}
-                </p>
-              )}
-              {on && !unchecked && row.level !== "likely" && row.level !== "declared" && (
-                <Note tone="warn">
-                  {row.level === "possible"
-                    ? "Not proven yet. Run a real test to be sure."
-                    : "Azizam could not see this. You can turn it on, but requests may fail."}
-                </Note>
-              )}
-              {test && !unchecked ? (
-                <TestResultBlock
-                  test={test}
-                  label={row.label}
-                  note={test.status === "stored" ? (storedNote ?? testNote) : testNote}
-                  disabled={readOnly || !onTest}
-                  onTestAgain={() => onTest?.(row.id)}
-                />
-              ) : (
-                testable && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="w-fit"
-                    aria-label={`Run a real test for ${row.label}`}
-                    onClick={() => onTest?.(row.id)}
-                  >
-                    Run a real test
-                  </Button>
-                )
-              )}
-            </div>
-          </div>
-        );
-      })}
+      {sortRows(rows).map((row) => (
+        <CapabilityRowView
+          key={row.id}
+          row={row}
+          on={ticked.has(row.id)}
+          onTick={onTick}
+          test={tests[row.id]}
+          onTest={onTest}
+          testNote={testNote}
+          storedNote={storedNote}
+          readOnly={readOnly}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CapabilityRowView({
+  row,
+  on,
+  onTick,
+  test,
+  onTest,
+  testNote,
+  storedNote,
+  readOnly,
+}: {
+  row: CapabilityRow;
+  on: boolean;
+  onTick: (id: string, on: boolean) => void;
+  test: TestState | undefined;
+  onTest?: (id: string) => void;
+  testNote: string;
+  storedNote?: string;
+  readOnly?: boolean;
+}) {
+  const base = useId();
+  const unchecked = row.level === "unchecked";
+  const dim = unchecked || row.level === "none" || row.level === "against" || row.level === "needs_key";
+  const testable = !unchecked && !readOnly && onTest && (on || row.level === "possible");
+  const showEvidence = !unchecked && Boolean(row.evidence);
+  const showWhy = !unchecked && Boolean(row.why) && !on;
+  const showWarning = on && !unchecked && row.level !== "likely" && row.level !== "declared";
+  // The ticks are named by the capability; the level, the evidence and the warning describe them.
+  const description = [
+    `${base}-level`,
+    showEvidence && `${base}-evidence`,
+    showWhy && `${base}-why`,
+    showWarning && `${base}-warning`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <div className="flex flex-col gap-2 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <label className="text-body flex min-h-8 cursor-pointer items-center gap-3 font-medium max-sm:min-h-11">
+          <Checkbox
+            aria-label={row.label}
+            aria-describedby={description}
+            checked={on}
+            disabled={readOnly}
+            onCheckedChange={(value) => onTick(row.id, value === true)}
+          />
+          <span className={cn(dim && !on && "text-muted-foreground")}>{row.label}</span>
+        </label>
+        <LevelBadge id={`${base}-level`} level={row.level} />
+      </div>
+      <div className="flex flex-col gap-2 pl-7">
+        {showEvidence && (
+          <p id={`${base}-evidence`} className="text-meta text-muted-foreground">
+            {row.evidence}
+          </p>
+        )}
+        {showWhy && (
+          <p id={`${base}-why`} className="text-meta text-muted-foreground">
+            <b className="text-foreground font-medium">Why unticked:</b> {row.why}
+          </p>
+        )}
+        {showWarning && (
+          <Note tone="warn" id={`${base}-warning`}>
+            {row.level === "possible"
+              ? "Not proven yet. Run a real test to be sure."
+              : "Azizam could not see this. You can turn it on, but requests may fail."}
+          </Note>
+        )}
+        {test && !unchecked ? (
+          <TestResultBlock
+            test={test}
+            label={row.label}
+            note={test.status === "stored" ? (storedNote ?? testNote) : testNote}
+            disabled={readOnly || !onTest}
+            onTestAgain={() => onTest?.(row.id)}
+          />
+        ) : (
+          testable && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-fit"
+              aria-label={`Run a real test for ${row.label}`}
+              onClick={() => onTest?.(row.id)}
+            >
+              Run a real test
+            </Button>
+          )
+        )}
+      </div>
     </div>
   );
 }

@@ -13,6 +13,20 @@ export interface ControlProps {
   id: string;
   "aria-describedby"?: string;
   "aria-invalid"?: true;
+  "aria-required"?: true;
+}
+
+/** Moves focus to the first control marked invalid under `root`. Answers whether there was one. */
+export function focusFirstInvalid(root: ParentNode | null | undefined): boolean {
+  const target = root?.querySelector<HTMLElement>('[aria-invalid="true"], [data-field-error="true"]');
+  target?.focus();
+  return Boolean(target);
+}
+
+/** Joins the ids a control is described by. */
+export function describedBy(...ids: (string | false | null | undefined)[]): string | undefined {
+  const list = ids.filter(Boolean).join(" ");
+  return list || undefined;
 }
 
 export function FormField({
@@ -22,6 +36,7 @@ export function FormField({
   help,
   error,
   after,
+  extraDescribedBy,
   className,
   children,
 }: {
@@ -32,11 +47,13 @@ export function FormField({
   error?: ReactNode;
   /** Shown under help or error: a call line, a finding. */
   after?: ReactNode;
+  /** The id of text in `after` that also describes the control, for example a finding's what, why and fix. */
+  extraDescribedBy?: string;
   className?: string;
   children: (control: ControlProps) => ReactNode;
 }) {
   const id = useId();
-  const describedBy = error ? `${id}-error` : help ? `${id}-help` : undefined;
+  const ownDescription = error ? `${id}-error` : help ? `${id}-help` : undefined;
   return (
     <div className={cn("flex min-w-0 flex-col gap-1.5", className)}>
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
@@ -50,7 +67,12 @@ export function FormField({
         </label>
         {tag}
       </div>
-      {children({ id, "aria-describedby": describedBy, "aria-invalid": error ? true : undefined })}
+      {children({
+        id,
+        "aria-describedby": describedBy(ownDescription, extraDescribedBy),
+        "aria-invalid": error ? true : undefined,
+        "aria-required": required ? true : undefined,
+      })}
       {help && !error && (
         <p id={`${id}-help`} className="text-meta text-muted-foreground">
           {help}
@@ -123,11 +145,13 @@ const noteTone = {
 export function Note({
   tone = "plain",
   role,
+  id,
   children,
   className,
 }: {
   tone?: keyof typeof noteTone;
   role?: "status" | "alert";
+  id?: string;
   children: ReactNode;
   className?: string;
 }) {
@@ -136,7 +160,7 @@ export function Note({
   return (
     <div role={role} className={cn("text-meta rounded-control flex items-start gap-2 px-3 py-2", t.className, className)}>
       <Icon aria-hidden="true" className={cn("mt-0.5 size-4 shrink-0", t.iconClass)} />
-      <div className="min-w-0">{children}</div>
+      <div id={id} className="min-w-0">{children}</div>
     </div>
   );
 }

@@ -28,7 +28,7 @@ for (const width of [1280, 390]) {
       // The seed already serves this address: Continue says so before any request.
       await dialog.getByLabel(/^Address/).fill(`http://127.0.0.1:${enginePort}/v1`);
       await dialog.getByRole("button", { name: "Continue" }).click();
-      await expect(dialog.getByText("Already added")).toBeVisible();
+      await expect(dialog.getByText("Already added", { exact: true }).first()).toBeVisible();
       await expect(dialog.getByRole("button", { name: "Open Local test engine" })).toBeVisible();
       // The fake engine answers the same OpenAI routes under /provider/v1 too.
       const address = `http://127.0.0.1:${enginePort}/provider/v1`;

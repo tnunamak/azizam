@@ -6,18 +6,24 @@ import { CopyButton } from "@/components/ui/copy-button";
 import { ApiError } from "@/lib/api";
 import type { EngineView } from "@/lib/engines-api";
 
+/**
+ * What the gateway saved, for troubleshooting. It holds the keys Azizam stores
+ * under, so it stays folded away until someone asks for it.
+ */
 export function StoredRecordSection({ view }: { view: EngineView }) {
   const otherSettings = Object.entries(view.other_settings ?? {});
   return (
-    <section aria-labelledby="engine-stored" className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id="engine-stored" className="text-heading">Stored record</h2>
-        <CopyButton value={JSON.stringify(view.record, null, 2)} aria-label="Copy the stored record">
-          Copy
-        </CopyButton>
-      </div>
-      <p className="text-meta text-muted-foreground">Exactly what the gateway saved. You cannot edit it here. The key is never shown.</p>
-      <div className="bg-card rounded-panel flex flex-col gap-4 border p-4">
+    <details className="bg-card rounded-panel border">
+      <summary className="text-heading flex min-h-12 cursor-pointer items-center px-4 py-3">Technical details</summary>
+      <section aria-labelledby="engine-stored" className="flex flex-col gap-2 border-t p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="engine-stored" className="text-body font-medium">Stored record</h2>
+          <CopyButton value={JSON.stringify(view.record, null, 2)} aria-label="Copy the stored record">
+            Copy
+          </CopyButton>
+        </div>
+        <p className="text-meta text-muted-foreground">Saved configuration for troubleshooting. Secrets are hidden.</p>
+        <p className="text-meta text-muted-foreground">Exactly what the gateway saved. You cannot edit it here.</p>
         <pre
           tabIndex={0}
           aria-label="Stored record, read only"
@@ -31,18 +37,18 @@ export function StoredRecordSection({ view }: { view: EngineView }) {
             <p className="text-meta text-muted-foreground mb-2">
               Azizam kept these values, but this form has no field for them. They are not lost.
             </p>
-            <dl className="text-meta grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+            <dl className="text-meta grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-1">
               {otherSettings.map(([key, value]) => (
                 <div key={key} className="contents">
-                  <dt className="font-mono">{key}</dt>
+                  <dt className="font-mono [overflow-wrap:anywhere]">{key}</dt>
                   <dd className="[overflow-wrap:anywhere]">{typeof value === "string" ? value : JSON.stringify(value)}</dd>
                 </div>
               ))}
             </dl>
           </div>
         )}
-      </div>
-    </section>
+      </section>
+    </details>
   );
 }
 

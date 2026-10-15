@@ -57,7 +57,9 @@ describe("i: the engine record page", () => {
   });
 
   it("keeps the stored record read-only and lists other settings", async () => {
+    const user = userEvent.setup();
     mount();
+    await user.click(await screen.findByText("Technical details", { selector: "summary" }));
     const pre = await screen.findByLabelText("Stored record, read only");
     expect(pre.tagName).toBe("PRE");
     expect(pre).toHaveTextContent('"api_key_secret_id": "configured"');
@@ -151,9 +153,11 @@ describe("who can use the models", () => {
   it("says when the route fails and offers Try again, without blocking Save", async () => {
     const user = userEvent.setup();
     mount();
-    vi.mocked(enginesApi.access).mockRejectedValueOnce(new Error("boom"));
     const names = await screen.findAllByLabelText("Public name");
     await user.clear(names[0]);
+    // The first question goes out as soon as the list changes; the one after the last keystroke fails.
+    await waitFor(() => expect(enginesApi.access).toHaveBeenCalledTimes(1));
+    vi.mocked(enginesApi.access).mockRejectedValueOnce(new Error("boom"));
     await user.type(names[0], "my-chat");
     expect(await screen.findByText(/Azizam couldn’t read the access plans\./, undefined, { timeout: 3000 })).toBeVisible();
     expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
