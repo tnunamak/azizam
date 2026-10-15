@@ -475,7 +475,7 @@ class LlamaModeTests(unittest.TestCase):
         world = World([busy, snap()])
         code = world.invoke("--llama")
         self.assertEqual(code, sr.EXIT_OK, world.text)
-        self.assertEqual(world.commands, [["systemctl", "--user", "restart", "llama-bee"]])
+        self.assertEqual(world.commands, [["systemctl", "--user", "restart", "local-llm"]])
         # gateway stayed up, so the flag must have been switched off explicitly
         self.assertEqual([p["draining"] for p in world.posts()], [True, False])
         self.assertFalse(world.draining)
