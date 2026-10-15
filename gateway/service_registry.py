@@ -1319,6 +1319,11 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
     drops stored config keys the form has no widget for (e.g. comfyui protocol
     fields, or any future extension field).
     """
+    if "preset" in form:
+        # The preset list is gone (engine definitions replace it). Passed through,
+        # the key would be stored and the record would silently not route.
+        raise ValueError("engine presets are gone: add an engine with a definition and its values "
+                         "(registry/engine_definitions.json), or send a raw record with its protocol")
     raw: dict[str, Any] = {}
     raw.update(split_base_url(form.get("base_url")))
     base_url = str(form.get("base_url") or "").strip().rstrip("/")

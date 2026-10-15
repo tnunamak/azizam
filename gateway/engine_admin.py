@@ -417,9 +417,9 @@ def build_raw(
     })
     if "transforms" in has:
         transforms_value = values.get("transforms")
+        # A new engine gets the kind's default adjustments (local chat: reasoning-effort-final-chat,
+        # AGENTS.md D-1). An owner who removes them keeps an explicit empty list, so the choice stays.
         raw["transforms"] = transforms_value if transforms_value is not None else list(definition["record"].get("transforms") or [])
-        if not raw["transforms"]:
-            raw.pop("transforms")
     if "path_prefix" in has:
         if values.get("path_prefix"):
             raw["path_prefix"] = values["path_prefix"]
