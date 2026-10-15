@@ -358,7 +358,9 @@ def test_a_draft_real_test_runs_from_the_gateway_against_the_draft_values(gatewa
     assert tested.status_code == 200, tested.text
     result = tested.json()["test"]
     assert result["ok"] is True and result["reply"] == "“OK”" and result["via"] == "draft"
-    assert result["sent"] == "One chat message, “Say OK”, with a limit of 1 token"
+    # A new engine runs with its kind's default adjustment, so the test does too.
+    assert result["sent"] == "One chat message, “Say OK”, with a limit of 1 token, with your request adjustments applied"
+    assert result["adjusted"] is True
     assert KEY not in tested.text
     assert "tested" not in _registry(gateway)["services"]
 
