@@ -504,7 +504,7 @@ _HEADER_NAME_RE = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 # Headers the gateway or the HTTP layer sets itself.
 TRANSPORT_HEADERS = frozenset({
     "host", "content-length", "content-type", "transfer-encoding", "connection", "upgrade", "te",
-    "trailer", "keep-alive", "proxy-connection",
+    "trailer", "keep-alive", "proxy-connection", "accept-encoding",
 })
 # A header whose name looks like it carries a credential. Header values are plain
 # text in the registry and the router's config file, so a key never goes there.

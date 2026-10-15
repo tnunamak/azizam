@@ -24,10 +24,12 @@ import secrets
 import socket
 import ssl
 import time
+import zlib
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
 from urllib.parse import urlsplit
 
+import httpcore
 import httpx
 
 from gateway.engine_definitions import EngineCatalog
@@ -102,6 +104,8 @@ class Fetch(Protocol):
 
 
 Resolve = Callable[..., Awaitable[list[str]]]
+# The gateway's own ports: a fixed set, or a function read each time a request is made.
+Ports = Iterable[int] | Callable[[], Iterable[int]]
 
 
 async def _default_resolve(host: str, port: int | None = None) -> list[str]:
@@ -110,12 +114,38 @@ async def _default_resolve(host: str, port: int | None = None) -> list[str]:
     return sorted({info[4][0] for info in infos})
 
 
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
+def plain_address(address: ipaddress._BaseAddress) -> ipaddress._BaseAddress:
+    """The address a connection reaches: IPv4 written as IPv6 is that IPv4 address.
+
+    Covers IPv4-mapped (::ffff:a.b.c.d), IPv4-translated (::ffff:0:a.b.c.d),
+    IPv4-compatible (::a.b.c.d) and the NAT64 prefix (64:ff9b::a.b.c.d), so
+    every rule below sees the IPv4 address.
+    """
+    if not isinstance(address, ipaddress.IPv6Address):
+        return address
+    if address.ipv4_mapped is not None:
+        return address.ipv4_mapped
+    packed = address.packed
+    tail = ipaddress.IPv4Address(packed[12:])
+    if packed[:12] == bytes(8) + b"\xff\xff\x00\x00":
+        return tail
+    if packed[:12] == bytes(12) and int(address) > 1:
+        return tail
+    if address in _NAT64:
+        return tail
+    return address
+
+
 def is_this_computer(address: ipaddress._BaseAddress) -> bool:
     """True when ``address`` belongs to this computer: loopback, unspecified, or one a socket can bind to.
 
     Binding needs no interface list, so a LAN, VPN or container bridge address of
     this computer counts too.
     """
+    address = plain_address(address)
     if address.is_loopback or address.is_unspecified:
         return True
     family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
@@ -135,82 +165,199 @@ def _port_of(parts: Any) -> int:
     return port or (443 if parts.scheme == "https" else 80)
 
 
-async def blocked_reason(
-    url: str, *, resolve: Resolve = _default_resolve, gateway_ports: Iterable[int] = GATEWAY_PORTS,
-) -> str | None:
-    """A sentence when Azizam must not send anything to ``url``; ``None`` when it may.
+@dataclass(frozen=True)
+class Destination:
+    """Where one request may go. ``addresses`` are the checked addresses to dial, and only those."""
 
-    A name that does not resolve is not blocked here: the request then fails
-    as "address not found", which is what the owner needs to read.
+    transport: str  # ok, blocked or dns
+    reason: str = ""
+    host: str = ""
+    port: int = 0
+    addresses: tuple[str, ...] = ()
+
+
+async def _ports(gateway_ports: Ports) -> set[int]:
+    if callable(gateway_ports):
+        # The gateway reads its configured ports from its store: off the event loop.
+        return {int(port) for port in await asyncio.to_thread(gateway_ports)}
+    return {int(port) for port in gateway_ports}
+
+
+async def check_destination(url: str, *, resolve: Resolve | None = None, gateway_ports: Ports = GATEWAY_PORTS) -> Destination:
+    """Look the name up once and check every address it answers.
+
+    Nothing is sent when any address is a link-local or cloud settings address,
+    or is this computer on one of the gateway's own ports, or when the name
+    cannot be looked up (fail closed). The caller dials only ``addresses``, so
+    a second lookup cannot answer something else (DNS rebinding).
     """
     parts = urlsplit(url)
     host = (parts.hostname or "").strip("[]")
     if parts.scheme not in {"http", "https"} or not host:
-        return "The address must start with http:// or https://."
+        return Destination("blocked", "The address must start with http:// or https://.")
     port = _port_of(parts)
     try:
-        addresses = [ipaddress.ip_address(host)]
+        found = [ipaddress.ip_address(host)]
     except ValueError:
+        lookup = resolve or _default_resolve
         try:
             try:
-                found = await resolve(host, port)
+                answers = await lookup(host, port)
             except TypeError:
-                found = await resolve(host)
-            addresses = [ipaddress.ip_address(value.split("%")[0]) for value in found]
-        except Exception:  # noqa: BLE001 - an unresolvable name is reported by the request itself
-            return None
-    ports = set(gateway_ports)
+                answers = await lookup(host)
+            found = [ipaddress.ip_address(str(value).split("%")[0]) for value in answers]
+        except Exception as exc:  # noqa: BLE001 - a name that cannot be looked up gets nothing (fail closed)
+            return Destination("dns", f"Azizam could not find {host}: {exc or type(exc).__name__}", host, port)
+        if not found:
+            return Destination("dns", f"Azizam could not find {host}: the name has no address.", host, port)
+    addresses = [plain_address(address) for address in found]
+    ports = await _ports(gateway_ports)
     for address in addresses:
         if address in _METADATA_ADDRESSES or address.is_link_local:
-            return f"{host} is a link-local or cloud settings address. No engine answers there."
+            return Destination("blocked", f"{host} is a link-local or cloud settings address. No engine answers there.", host, port)
         if port in ports and is_this_computer(address):
-            return f"Port {port} on this computer is the gateway itself, so Azizam does not call it."
-    return None
+            return Destination("blocked", f"Port {port} on this computer is the gateway itself, so Azizam does not call it.", host, port)
+    return Destination("ok", "", host.lower(), port, tuple(dict.fromkeys(str(address) for address in addresses)))
 
 
-def make_http_fetch(*, resolve: Resolve = _default_resolve, gateway_ports: Iterable[int] = GATEWAY_PORTS) -> Fetch:
-    """The real fetcher: no redirects, a timeout, a size cap and the address rules above."""
-    ports = frozenset(gateway_ports)
+async def blocked_reason(url: str, *, resolve: Resolve | None = None, gateway_ports: Ports = GATEWAY_PORTS) -> str | None:
+    """A sentence when Azizam must not send anything to ``url``; ``None`` when it may."""
+    destination = await check_destination(url, resolve=resolve, gateway_ports=gateway_ports)
+    return destination.reason or None
+
+
+class _CheckedAddresses(httpcore.AsyncNetworkBackend):
+    """Opens connections only to the addresses ``check_destination`` validated, for the one name it checked."""
+
+    def __init__(self, destination: Destination) -> None:
+        self._destination = destination
+        self._inner = httpcore.AnyIOBackend()
+
+    async def connect_tcp(self, host: str, port: int, timeout: float | None = None, local_address: str | None = None,
+                          socket_options: Any = None) -> httpcore.AsyncNetworkStream:
+        if host.strip("[]").lower() != self._destination.host or port != self._destination.port:
+            raise httpcore.ConnectError(f"{host}:{port} was not checked")
+        failure: Exception = httpcore.ConnectError("no checked address")
+        for address in self._destination.addresses:
+            try:
+                return await self._inner.connect_tcp(address, port, timeout=timeout, local_address=local_address,
+                                                     socket_options=socket_options)
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
+                failure = exc
+        raise failure
+
+    async def connect_unix_socket(self, path: str, timeout: float | None = None,
+                                  socket_options: Any = None) -> httpcore.AsyncNetworkStream:
+        raise httpcore.ConnectError("Add engine never opens a local socket file.")
+
+    async def sleep(self, seconds: float) -> None:
+        await self._inner.sleep(seconds)
+
+
+def _checked_transport(destination: Destination) -> httpx.AsyncHTTPTransport:
+    """An httpx transport whose sockets go only to the checked addresses.
+
+    The URL keeps the name, so the Host header and the TLS server name (SNI and
+    certificate check) stay the name. httpx builds its connection pool
+    privately; this replaces it with one that dials through ``_CheckedAddresses``
+    (tests/test_engine_check_network.py fails if that stops working).
+    """
+    transport = httpx.AsyncHTTPTransport(retries=0)
+    transport._pool = httpcore.AsyncConnectionPool(  # noqa: SLF001
+        ssl_context=transport._pool._ssl_context,  # noqa: SLF001
+        network_backend=_CheckedAddresses(destination),
+        retries=0,
+    )
+    return transport
+
+
+class _Decoder:
+    """Content decoding with a ceiling on what each step may produce, so a small compressed answer cannot fill memory."""
+
+    def __init__(self, encoding: str) -> None:
+        encoding = encoding.strip().lower()
+        if encoding in ("gzip", "x-gzip"):
+            self._zlib: Any = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        elif encoding == "deflate":
+            self._zlib = zlib.decompressobj(zlib.MAX_WBITS)
+        else:
+            # Identity, or an encoding Azizam did not ask for and does not unpack: the bytes as sent, capped.
+            self._zlib = None
+
+    def feed(self, data: bytes, limit: int) -> bytes:
+        if self._zlib is None:
+            return data[:limit]
+        try:
+            return self._zlib.decompress(self._zlib.unconsumed_tail + data if self._zlib.unconsumed_tail else data, limit)
+        except zlib.error:
+            return b""
+
+    def more(self, limit: int) -> bytes:
+        if self._zlib is None or not self._zlib.unconsumed_tail:
+            return b""
+        try:
+            return self._zlib.decompress(self._zlib.unconsumed_tail, limit)
+        except zlib.error:
+            return b""
+
+
+def make_http_fetch(*, resolve: Resolve | None = None, gateway_ports: Ports = GATEWAY_PORTS) -> Fetch:
+    """The real fetcher: no redirects, a timeout, a size cap and the address rules above.
+
+    ``resolve`` defaults to the computer's own lookup, read when a request is
+    made. ``gateway_ports`` may be a function, so the ports the gateway is
+    configured to listen on are read each time.
+    """
 
     async def fetch(
         method: str, url: str, *, headers: Mapping[str, str], cap_bytes: int,
         timeout_s: float, content: bytes | None = None,
     ) -> Answer:
         answer = Answer(method=method, url=url)
-        reason = await blocked_reason(url, resolve=resolve, gateway_ports=ports)
-        if reason:
-            answer.transport, answer.detail = "blocked", reason
-            return answer
-        started = time.perf_counter()
         try:
             for name, value in headers.items():
                 (name + value).encode("ascii")
         except UnicodeEncodeError:
             answer.transport, answer.detail = "blocked", "A key or header value holds a character a request cannot carry."
             return answer
-        sent = {"accept-encoding": "identity", **dict(headers)}
+        started = time.perf_counter()
         try:
-            async with asyncio.timeout(timeout_s * 2 + 1), httpx.AsyncClient(
-                follow_redirects=False, trust_env=False, timeout=httpx.Timeout(timeout_s)
-            ) as client:
-                async with client.stream(method, url, headers=sent, content=content) as response:
+            async with asyncio.timeout(timeout_s * 2 + 1):
+                destination = await check_destination(url, resolve=resolve, gateway_ports=gateway_ports)
+                if destination.transport != "ok":
+                    answer.transport, answer.detail = destination.transport, destination.reason
+                    return answer
+                # Ask for the answer uncompressed, whatever the header rows say.
+                sent = {k: v for k, v in headers.items() if k.lower() != "accept-encoding"}
+                sent["accept-encoding"] = "identity"
+                async with httpx.AsyncClient(
+                    transport=_checked_transport(destination), follow_redirects=False, trust_env=False,
+                    timeout=httpx.Timeout(timeout_s),
+                ) as client, client.stream(method, url, headers=sent, content=content) as response:
                     answer.status = response.status_code
                     answer.headers = {k.lower(): v for k, v in response.headers.items()}
                     if 300 <= response.status_code < 400:
                         answer.transport = "redirect"
                         answer.location = response.headers.get("location", "")
                         return answer
+                    decoder = _Decoder(response.headers.get("content-encoding", ""))
                     chunks: list[bytes] = []
                     total = 0
-                    async for chunk in response.aiter_bytes():
-                        total += len(chunk)
+                    async for raw in response.aiter_raw():
+                        piece = decoder.feed(raw, cap_bytes - total + 1)
+                        while True:
+                            total += len(piece)
+                            chunks.append(piece)
+                            if total > cap_bytes:
+                                break
+                            piece = decoder.more(cap_bytes - total + 1)
+                            if not piece:
+                                break
                         if total > cap_bytes:
-                            chunks.append(chunk[: max(0, cap_bytes - (total - len(chunk)))])
                             answer.transport = "too_large"
                             answer.detail = f"The answer was larger than {cap_bytes // 1024} KB."
                             break
-                        chunks.append(chunk)
-                    answer.body = b"".join(chunks)
+                    answer.body = b"".join(chunks)[:cap_bytes]
         except (httpx.TimeoutException, TimeoutError):
             answer.transport, answer.detail = "timeout", f"waited {timeout_s:g} s, no reply"
         except httpx.ConnectError as exc:
