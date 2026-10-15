@@ -61,22 +61,29 @@ describe("More options", () => {
         lifecycle_start: "systemctl --user start garage-llm",
         lifecycle_stop: "",
         lifecycle_ready_s: 180,
-        lifecycle_idle_min: 15,
       },
     });
     expect(more.open).toBe(true);
     expect(within(more).getByText("3 changed from default")).toBeVisible();
-    expect(within(more).getByText("Changed · default 120 s")).toBeVisible();
-    expect(within(more).getByText("Default 5 s")).toBeVisible();
-    for (const heading of ["Request headers", "Timeouts", "Extra path and sign-in header", "Request adjustments", "Start and stop"]) {
+    expect(within(more).getByText("Changed · default 600 s")).toBeVisible();
+    for (const heading of ["Request headers", "Timeouts", "Extra path", "Request adjustments", "Start and stop"]) {
       expect(within(more).getByRole("heading", { name: new RegExp(`^${heading}`) })).toBeVisible();
     }
   });
 
+  it("offers no setting the gateway ignores: no sign-in header, connect time or idle stop", async () => {
+    const more = await mount();
+    for (const gone of [/Key header name/, /Time to connect/, /Stop when idle/, /sign-in header/i]) {
+      expect(within(more).queryByText(gone)).toBeNull();
+      expect(within(more).queryByLabelText(gone)).toBeNull();
+    }
+    expect(within(more).queryByRole("checkbox")).toBeNull();
+  });
+
   it("shows only the groups whose fields the definition lists", async () => {
-    const more = await mount({ definition: "speech-to-text-custom-path", values: { ...engineView().values, path: "/inference" } });
-    expect(within(more).queryByRole("heading", { name: "Request adjustments" })).toBeNull();
-    expect(within(more).queryByRole("heading", { name: "Extra path and sign-in header" })).toBeNull();
+    const more = await mount({ definition: "own-model-list" });
+    expect(within(more).queryByRole("heading", { name: "Extra path" })).toBeNull();
+    expect(within(more).getByRole("heading", { name: "Request adjustments" })).toBeInTheDocument();
     expect(within(more).getByRole("heading", { name: "Timeouts" })).toBeInTheDocument();
   });
 
@@ -219,7 +226,6 @@ describe("Start and stop", () => {
         lifecycle_start: "systemctl --user start garage-llm",
         lifecycle_stop: "systemctl --user stop garage-llm",
         lifecycle_ready_s: 180,
-        lifecycle_idle_min: 15,
       },
     });
     expect(within(more).getByText(/Only the owner can change this\. Azizam starts and stops this server with the commands below\./)).toBeVisible();

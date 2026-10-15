@@ -1,6 +1,6 @@
 /**
  * Shared test data for the Add engine and engine record specs. The JSON comes
- * from the real backend code (definitions, checks, tests, workflow reads), made
+ * from the real backend code (definitions, checks, tests, access answers), made
  * by running the check against fake servers, so the specs see the real shapes.
  */
 import type { ReactElement } from "react";
@@ -8,10 +8,10 @@ import { render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   CheckResult,
+  EngineAccess,
   EngineDefinitions,
   EngineView,
   TestResult,
-  WorkflowRead,
 } from "@/lib/engines-api";
 import raw from "./engine-fixtures.json";
 
@@ -19,12 +19,10 @@ const data = raw as unknown as {
   definitions: EngineDefinitions;
   checks: Record<string, CheckResult>;
   tests: Record<string, TestResult>;
-  workflows: { ok: WorkflowRead; bad: WorkflowRead };
-  workflow_text: string;
+  access: Record<"you_and_family" | "listed_only" | "nobody" | "category_rules", EngineAccess>;
 };
 
 export const definitions = data.definitions;
-export const workflowText = data.workflow_text;
 
 /** A deep copy, so a spec can change it freely. */
 export function check(name: string): CheckResult {
@@ -33,8 +31,8 @@ export function check(name: string): CheckResult {
 export function testResult(name: string): TestResult {
   return structuredClone(data.tests[name]);
 }
-export function workflowRead(name: "ok" | "bad"): WorkflowRead {
-  return structuredClone(data.workflows[name]);
+export function accessAnswer(name: keyof typeof data.access): EngineAccess {
+  return structuredClone(data.access[name]);
 }
 export function definition(id: string) {
   const found = definitions.definitions.find((d) => d.definition === id);
@@ -60,12 +58,12 @@ export function engineView(over: Partial<EngineView> = {}): EngineView {
     enabled: true,
     locked: false,
     lifecycle_editable: true,
+    editable: true,
+    not_editable_reason: "",
     values: {
       address: "http://192.168.1.50:8080/v1",
       path_prefix: "",
-      auth_header: "Authorization",
-      connect_timeout_s: 5,
-      reply_timeout_s: 120,
+      reply_timeout_s: 600,
       headers: [],
       transforms: ["reasoning-effort-final-chat"],
       lifecycle_mode: "external",
@@ -78,7 +76,7 @@ export function engineView(over: Partial<EngineView> = {}): EngineView {
     ],
     tests: {},
     check: { status: "ok", checked_at: Math.floor(Date.now() / 1000) - 120, key_sent: true, model_count: 2 },
-    workflow: null,
+    access: structuredClone(data.access.you_and_family),
     calls: "GET http://192.168.1.50:8080/v1/models",
     other_settings: { probe_interval_s: 30, legacy_note: "bought 2025" },
     record: {

@@ -3,7 +3,8 @@ import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 // The Add engine journey (add-engine-spec.md sections 2 and 9): add a chat
 // engine with a key against the fixture gateway's fake engine, then edit its
 // address on the engine page and see that the saved key will not be sent to
-// the new address (N2). The fixture lets the gateway reach only 127.0.0.1, and
+// the new address (N2). The last step and the engine page also answer "Who can
+// use these models", computed by the gateway from the fixture's access plans. The fixture lets the gateway reach only 127.0.0.1, and
 // the seed already serves /v1 there, so the engine goes in at /provider/v1.
 // It writes the service registry, so it runs in the serial global-state lane
 // and removes the engine it added.
@@ -49,6 +50,16 @@ for (const width of [1280, 390]) {
 
       await expect(dialog.getByRole("heading", { name: "Name and create" })).toBeVisible();
       await dialog.getByLabel(/^Name/).fill(name);
+      // Who can use the models: the gateway's answer, shown before Create. The
+      // fixture plans allow all chat models and the signed-in owner holds one.
+      await expect(dialog.getByRole("heading", { name: "Who can use these models" })).toBeVisible();
+      await expect(dialog.getByText(/^Usable by:/)).toBeVisible();
+      await expect(dialog.getByRole("link", { name: "Access plans" })).toBeVisible();
+      await expect(dialog.getByRole("checkbox", { name: /who can use/i })).toHaveCount(0);
+      if (width === 390) {
+        const box = await dialog.getByRole("link", { name: "Access plans" }).boundingBox();
+        expect(box!.height).toBeGreaterThanOrEqual(44);
+      }
       const created = page.waitForResponse(
         (response) => response.request().method() === "POST" && response.url().endsWith("/admin/api/operator/services"),
       );
@@ -61,6 +72,10 @@ for (const width of [1280, 390]) {
       await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
       await expect(page).toHaveURL(new RegExp(`engine=${serviceId}`));
       await expect(page.getByText("Configured", { exact: true })).toBeVisible();
+      // The Models section answers the same question for the saved models.
+      await expect(page.getByRole("heading", { name: "Who can use these models" })).toBeVisible();
+      await expect(page.getByText(/^Usable by:/)).toBeVisible();
+      await expect(page.getByRole("link", { name: "Access plans" })).toBeVisible();
 
       // N2: an edited address never gets the saved key, and the page says so before Save.
       await page.getByLabel(/^Address/).fill(`http://127.0.0.1:${enginePort + 5}/v1`);

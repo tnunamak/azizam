@@ -79,7 +79,8 @@ describe("a: kind search", () => {
     expect(await within(dialog).findByRole("heading", { name: "What kind of server is it?" })).toBeVisible();
     expect(within(dialog).getByText("Step 1 of 5 · Kind")).toBeVisible();
     const kinds = within(within(dialog).getByRole("group", { name: "Server kinds" })).getAllByRole("button");
-    expect(kinds).toHaveLength(5);
+    expect(kinds).toHaveLength(2);
+    expect(kinds.map((k) => k.textContent)).not.toContain("Speech-to-text server with a custom path");
     expect(kinds[0]).toHaveTextContent("Any OpenAI-compatible server");
     expect(kinds[0]).toHaveTextContent("Most servers");
     expect(kinds[0]).toHaveTextContent("For example, vLLM, llama.cpp or LM Studio");
@@ -133,23 +134,20 @@ describe("b: address and key", () => {
     expect(within(dialog).getByText(/Continue sends a few harmless requests/)).toBeVisible();
   });
 
-  it("uses the origin for an own-model-list server and the typed path for a custom-path server", async () => {
+  it("uses the origin for an own-model-list server, and neither kind asks for a path or the removed settings", async () => {
     const user = userEvent.setup();
     mount();
     let dialog = await pickKind(user, /Server with its own model list/);
     await typeAddress(user, "http://192.168.1.50:11434");
     expect(within(dialog).getByTestId("call-line")).toHaveTextContent("Azizam will call GET http://192.168.1.50:11434/api/tags");
+    for (const label of [/^Path on the server/, /Key header name/, /Time to connect/, /Stop when idle/]) {
+      expect(within(dialog).queryByLabelText(label)).toBeNull();
+    }
+    expect(within(dialog).queryByText(/Key header name|Time to connect|Stop when idle/)).toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "Change kind" }));
-    dialog = await pickKind(user, /Speech-to-text server with a custom path/);
-    expect(within(dialog).getByText("Step 2 of 5 · Address and path")).toBeVisible();
-    await typeAddress(user, "http://192.168.1.60:8178");
-    expect(within(dialog).getByTestId("call-line")).toHaveTextContent(
-      "Azizam will call POST http://192.168.1.60:8178 plus the path you type.",
-    );
-    expect(within(dialog).getByRole("button", { name: "Continue" })).toBeDisabled();
-    await user.type(within(dialog).getByLabelText(/^Path on the server/), "/inference");
-    expect(within(dialog).getByTestId("call-line")).toHaveTextContent("Azizam will call POST http://192.168.1.60:8178/inference");
-    expect(within(dialog).getByRole("button", { name: "Continue" })).toBeEnabled();
+    dialog = await pickKind(user, /Any OpenAI-compatible server/);
+    expect(within(dialog).queryByLabelText(/^Path on the server/)).toBeNull();
+    expect(within(dialog).queryByRole("checkbox")).toBeNull();
   });
 
   it("says what a valid address looks like before any request", async () => {

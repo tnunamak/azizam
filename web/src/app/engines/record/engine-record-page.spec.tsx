@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { enginesApi, SECRET_MASK, type EngineView } from "@/lib/engines-api";
-import { check, definitions, engineView, renderWithClient, testResult } from "../__fixtures__/test-utils";
+import { api } from "@/lib/api";
+import { enginesApi, type EngineView } from "@/lib/engines-api";
+import { accessAnswer, check, definitions, engineView, renderWithClient, testResult } from "../__fixtures__/test-utils";
 import { clockTime } from "../add-engine/draft";
 import { EngineRecordPage } from "./engine-record-page";
 
@@ -25,6 +26,7 @@ function mount(over: Partial<EngineView> = {}) {
 beforeEach(() => {
   viewer.current = { authenticated: true, name: "Tim", email: null, role: "owner", admin: true };
   vi.spyOn(enginesApi, "definitions").mockResolvedValue(structuredClone(definitions));
+  vi.spyOn(enginesApi, "access").mockResolvedValue(accessAnswer("nobody"));
 });
 afterEach(() => cleanup());
 
@@ -47,7 +49,8 @@ describe("i: the engine record page", () => {
     expect(screen.getByTestId("check-line")).toHaveTextContent(/^Reached the server\. Key accepted\. 2 models\. Checked/);
     expect(screen.getAllByTestId("call-line")[0]).toHaveTextContent("Azizam will call GET http://192.168.1.50:8080/v1/models");
     expect(screen.getByRole("checkbox", { name: "Chat" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Images" })).not.toBeChecked();
+    expect(screen.getAllByRole("checkbox", { name: /^(Chat|Embeddings|Images|Reranking|Speech to text|Text to speech|Live voice)$/ })).toHaveLength(2);
+    expect(screen.queryByRole("checkbox", { name: "Images" })).toBeNull();
     expect(screen.getByText("2 of 2 models offered")).toBeVisible();
     expect(screen.queryByText(/Advanced JSON/)).toBeNull();
     expect(screen.queryByText("See it in Activity")).toBeNull();
@@ -81,6 +84,81 @@ describe("i: the engine record page", () => {
         tests: { chat: { ok: true, at: result.at, seconds: result.seconds } },
       }),
     );
+  });
+});
+
+describe("who can use the models", () => {
+  it("shows the saved answer under the models list, and does not ask the route while the list is unchanged", async () => {
+    mount();
+    const heading = await screen.findByRole("heading", { name: "Who can use these models" });
+    const models = screen.getByRole("heading", { level: 2, name: "Models" }).closest("section") as HTMLElement;
+    expect(models).toContainElement(heading);
+    expect(within(models).getByText(view.access.sentence)).toBeVisible();
+    expect(within(models).getByRole("link", { name: "Family" })).toHaveAttribute("href", expect.stringMatching(/^\/people\/?\?plan=plan_family$/));
+    expect(within(models).getByRole("link", { name: "Access plans" })).toBeVisible();
+    expect(within(models).queryByRole("checkbox", { name: /who can use/i })).toBeNull();
+    expect(within(models).queryByText("After you save")).toBeNull();
+    expect(enginesApi.access).not.toHaveBeenCalled();
+  });
+
+  it("editing a public name asks the route with the new name, and labels the answer as after you save", async () => {
+    const user = userEvent.setup();
+    mount();
+    const names = await screen.findAllByLabelText("Public name");
+    await user.clear(names[0]);
+    await user.type(names[0], "my-chat");
+    await waitFor(() => expect(enginesApi.access).toHaveBeenCalled(), { timeout: 3000 });
+    await waitFor(() =>
+      expect(enginesApi.access).toHaveBeenLastCalledWith({ capabilities: ["chat", "embeddings"], models: ["my-chat", "nomic-embed-text"] }),
+    );
+    expect(await screen.findByText("After you save")).toBeVisible();
+    expect(await screen.findByText(/^No access plan includes these yet/)).toBeVisible();
+    expect(screen.getAllByRole("heading", { name: "Who can use these models" })).toHaveLength(1);
+  });
+
+  it("turning a model off leaves its name out of the question; turning it back on restores the saved answer", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.click(await screen.findByRole("checkbox", { name: "Offer nomic-embed-text-v1.5" }));
+    await waitFor(() =>
+      expect(enginesApi.access).toHaveBeenLastCalledWith({ capabilities: ["chat", "embeddings"], models: ["qwen3-32b"] }),
+    );
+    await user.click(screen.getByRole("checkbox", { name: "Offer nomic-embed-text-v1.5" }));
+    await waitFor(() => expect(screen.queryByText("After you save")).toBeNull());
+    expect(screen.getByText(view.access.sentence)).toBeVisible();
+  });
+
+  it("after Save, the reloaded view's answer is shown", async () => {
+    const user = userEvent.setup();
+    mount();
+    const names = await screen.findAllByLabelText("Public name");
+    await user.clear(names[0]);
+    await user.type(names[0], "my-chat");
+    const update = vi.spyOn(enginesApi, "update").mockImplementation(async () => {
+      view = {
+        ...view,
+        models: view.models.map((m, i) => (i === 0 ? { ...m, public_name: "my-chat" } : m)),
+        access: accessAnswer("listed_only"),
+      };
+      return registry;
+    });
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    expect(await screen.findByText(accessAnswer("listed_only").sentence)).toBeVisible();
+    expect(screen.queryByText("After you save")).toBeNull();
+  });
+
+  it("says when the route fails and offers Try again, without blocking Save", async () => {
+    const user = userEvent.setup();
+    mount();
+    vi.mocked(enginesApi.access).mockRejectedValueOnce(new Error("boom"));
+    const names = await screen.findAllByLabelText("Public name");
+    await user.clear(names[0]);
+    await user.type(names[0], "my-chat");
+    expect(await screen.findByText(/Azizam couldn’t read the access plans\./, undefined, { timeout: 3000 })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText(/^No access plan includes these yet/)).toBeVisible();
   });
 });
 
@@ -179,7 +257,7 @@ describe("kept-off engines", () => {
     const user = userEvent.setup();
     mount({ enabled: false, check: { status: "not_started" }, key: { state: "none" }, capabilities: [], models: [] });
     expect(await screen.findByText("Not checked yet; checked when you turn it on or press Check now")).toBeVisible();
-    expect(screen.getAllByText("Not checked yet").length).toBeGreaterThan(2);
+    expect(screen.getAllByText("Not checked yet")).toHaveLength(2);
     expect(screen.getByText("Not known yet. Azizam looks the first time the engine starts, or when you press Check now.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Open Start and stop" })).toBeVisible();
     const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
@@ -197,67 +275,81 @@ describe("kept-off engines", () => {
   });
 });
 
-describe("locked and other kinds", () => {
-  it("a locked engine changes only its name and Enabled", async () => {
-    mount({ locked: true });
-    expect(await screen.findByText("Azizam runs this engine itself. Only its name and Enabled can change.")).toBeVisible();
-    expect(screen.getByLabelText("Address")).toBeDisabled();
+describe("an engine the router does not call at its own address", () => {
+  const reason = "The model router sends this engine’s models somewhere else, so changing its address here would do nothing.";
+
+  it("shows the settings read-only with the reason, and no inputs for them", async () => {
+    mount({ editable: false, not_editable_reason: reason });
+    expect(await screen.findByText(reason)).toBeVisible();
+    expect(screen.queryByLabelText("Address")).toBeNull();
+    expect(screen.getByText("http://192.168.1.50:8080/v1")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Replace key|Add a key|Check again|Check now|Detect models again/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Run a real test/ })).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByLabelText("Public name")).toBeNull();
+    expect(screen.queryByText("More options", { selector: "summary span" })).toBeNull();
     expect(screen.getByLabelText("Name")).toBeEnabled();
+    expect(screen.getByRole("switch", { name: "Enabled" })).toBeEnabled();
+    // The models, their state, and who can use them are still shown.
+    expect(screen.getByText("qwen3-32b-instruct-q4_k_m")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Who can use these models" })).toBeVisible();
+    expect(screen.getByText(view.access.sentence)).toBeVisible();
+    expect(enginesApi.access).not.toHaveBeenCalled();
   });
 
-  it("a speech engine shows its path and its model fields; a workflow engine shows N1", async () => {
-    mount({
-      definition: "speech-to-text-custom-path",
-      values: { ...engineView().values, address: "http://192.168.1.60:8178", path: "/inference", public_name: "whisper", server_model: "" },
-      capabilities: ["stt"],
-      models: [],
-      key: { state: "none" },
+  it("renames with a plain edit that names no definition and no values", async () => {
+    const user = userEvent.setup();
+    mount({ editable: false, not_editable_reason: reason });
+    const edit = vi.spyOn(api.services, "edit").mockImplementation(async () => {
+      view = { ...view, name: "garage" };
+      return registry;
     });
-    expect(await screen.findByLabelText("Path on the server")).toHaveValue("/inference");
-    expect(screen.getByTestId("call-line")).toHaveTextContent("Azizam will call POST http://192.168.1.60:8178/inference");
-    expect(screen.getByLabelText(/^Public name/)).toHaveValue("whisper");
-    expect(within(screen.getByRole("navigation", { name: "On this page" })).getByRole("link", { name: "Model" })).toBeVisible();
-    cleanup();
-    mount({
-      definition: "node-graph",
-      values: { ...engineView().values, address: "http://192.168.1.50:8188", workflow_public_name: "sdxl" },
-      capabilities: ["graph_images"],
-      models: [],
-      key: { state: "none" },
-      workflow: { public_name: "sdxl", file: "sdxl-text-to-image.json", makes: "images", inputs: { prompt: "6.text" }, node_count: 7 },
-    });
-    expect(await screen.findByText("sdxl-text-to-image.json")).toBeVisible();
-    expect(screen.getByText("7 nodes. Makes images.")).toBeVisible();
-    expect(screen.getByLabelText(/^Name apps use/)).toHaveValue("sdxl");
-    expect(screen.getByText("Which field gets which input")).toBeVisible();
+    const update = vi.spyOn(enginesApi, "update");
+    const name = await screen.findByLabelText("Name");
+    await user.clear(name);
+    await user.type(name, "garage");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(edit).toHaveBeenCalledWith("garage-gpu", { name: "garage" }));
+    expect(edit.mock.calls[0][1]).not.toHaveProperty("definition");
+    expect(edit.mock.calls[0][1]).not.toHaveProperty("values");
+    expect(update).not.toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { level: 1, name: "garage" })).toBeVisible();
+  });
+
+  it("turns on and off with a plain edit", async () => {
+    const user = userEvent.setup();
+    mount({ editable: false, not_editable_reason: reason });
+    const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
+    await user.click(await screen.findByRole("switch", { name: "Enabled" }));
+    await waitFor(() => expect(edit).toHaveBeenCalledWith("garage-gpu", { enabled: false }));
+    expect(edit.mock.calls[0][1]).not.toHaveProperty("definition");
   });
 });
 
-describe("headers and the stored key value", () => {
-  it("a stored secret header is write-only: Configured with Replace for the owner, locked for an admin", async () => {
-    const user = userEvent.setup();
+describe("headers", () => {
+  it("are plain text rows with no secret toggle, for the owner and for an administrator", async () => {
     const headers = [
-      { name: "X-Client", value: "azizam-home", secret: false },
-      { name: "X-Client-Token", value: SECRET_MASK, secret: true },
+      { name: "X-Client", value: "azizam-home" },
+      { name: "X-Region", value: "lan" },
     ];
     mount({ values: { ...engineView().values, headers } });
     const more = await screen.findByText("More options", { selector: "summary span" });
     expect(more.closest("details")).toHaveAttribute("open");
-    const values = screen.getAllByLabelText("Value");
-    expect(values[1]).toHaveValue("Configured");
-    expect(values[1]).toBeDisabled();
-    expect(screen.queryByDisplayValue(SECRET_MASK)).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Replace X-Client-Token" }));
-    expect(screen.getAllByLabelText("Value")[1]).toHaveAttribute("type", "password");
+    expect(screen.getAllByLabelText("Value").map((v) => (v as HTMLInputElement).value)).toEqual(["azizam-home", "lan"]);
+    for (const value of screen.getAllByLabelText("Value")) expect(value).not.toHaveAttribute("type", "password");
+    expect(screen.queryByRole("checkbox", { name: "Secret" })).toBeNull();
+    expect(screen.queryByText("Secret")).toBeNull();
+    expect(screen.queryByText(/secret values/i)).toBeNull();
+    expect(screen.getByText(/They are saved as plain text, so don’t put a key here\./)).toBeVisible();
     cleanup();
     viewer.current = { ...viewer.current, role: "admin" };
     mount({ values: { ...engineView().values, headers } });
     await screen.findByText("More options", { selector: "summary span" });
-    expect(screen.queryByRole("button", { name: "Replace X-Client-Token" })).toBeNull();
-    expect(screen.getByText("Only the owner can add or replace secret values.")).toBeVisible();
+    for (const value of screen.getAllByLabelText("Value")) expect(value).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^Replace X-/ })).toBeNull();
   });
 
-  it("saving an untouched page sends the stored headers and adjustments back unchanged", async () => {
+  it("saving an untouched page sends the headers and adjustments back unchanged; a new header has no secret flag", async () => {
     const user = userEvent.setup();
     const transforms = [
       "reasoning-effort-final-chat",
@@ -265,7 +357,7 @@ describe("headers and the stored key value", () => {
       { kind: "param-map" as const, from: "a", to: "b" },
       { kind: "param-map" as const, from: "c", to: "d" },
     ];
-    const headers = [{ name: "X-Client-Token", value: SECRET_MASK, secret: true }];
+    const headers = [{ name: "X-Client", value: "azizam-home" }];
     mount({ values: { ...engineView().values, headers, transforms } });
     const name = await screen.findByLabelText("Name");
     await user.type(name, "!");
@@ -273,5 +365,25 @@ describe("headers and the stored key value", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(update).toHaveBeenCalled());
     expect(update.mock.calls[0][1]).toMatchObject({ name: "garage-gpu!", values: { headers, transforms } });
+    update.mockClear();
+    await user.click(screen.getByRole("button", { name: "Add a header" }));
+    const names = screen.getAllByLabelText("Header name");
+    await user.type(names[1], "X-Region");
+    await user.type(screen.getAllByLabelText("Value")[1], "lan");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    expect(update.mock.calls[0][1].values?.headers).toEqual([
+      { name: "X-Client", value: "azizam-home" },
+      { name: "X-Region", value: "lan" },
+    ]);
+  });
+});
+
+describe("a locked engine", () => {
+  it("changes only its name and Enabled", async () => {
+    mount({ locked: true });
+    expect(await screen.findByText("Azizam runs this engine itself. Only its name and Enabled can change.")).toBeVisible();
+    expect(screen.getByLabelText("Address")).toBeDisabled();
+    expect(screen.getByLabelText("Name")).toBeEnabled();
   });
 });
