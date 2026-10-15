@@ -311,10 +311,14 @@ The engine preset list is gone. Engine kinds are data in
   → `{test}`: one tiny real request from the gateway's computer.
 - `POST /admin/api/engines/access` `{capabilities, models}` → `{access}`: who
   could use these model names, from the stored access plans, evaluated the way
-  every request is (deny by default). `access` holds `plans` (each with `id`,
-  `name`, `models` it includes, `why`, `people`, `apps`, `link`), `you`,
-  `not_included`, `category_rules`, `unreadable_plans`, one `sentence` and
-  `link` to the access plans. It saves nothing.
+  every request is (deny by default). A `models` item is a public name, or
+  `{name, capabilities}` when the check found the work that model does (a plan
+  for chat then does not count for an embedding model). `access` holds `plans`
+  (each with `id`, `name`, `models` it includes, `why`, `people`, `apps` (not
+  counting disabled apps), `link`), `you`, `not_included`, `category_rules`,
+  `category_rules_unreadable`, `unreadable_plans`, one `sentence` and `link` to
+  the access plans. A plan counts only the plan itself: an app also needs its
+  person's plan to allow the request. It saves nothing.
 - `GET /admin/api/engines/{service_id}` → `{engine}`: the record as typed values,
   key state (never the key), capabilities, models, tests, last check, other
   settings, the stored record with secrets shown as `configured`, `access` for

@@ -46,7 +46,7 @@ from gateway.engine_check import (
     run_real_test,
 )
 from gateway.engine_definitions import EngineCatalog, EngineDefinitionError, load_engine_catalog
-from gateway.litellm_substrate import reaches_engine_directly
+from gateway.litellm_substrate import header_problem, reaches_engine_directly, routed_models
 
 # Record keys this module writes. Every other config key is the owner's and is
 # carried through an edit untouched ("Other settings").
@@ -142,14 +142,15 @@ def _clean_headers(value: Any) -> list[dict[str, Any]]:
         name = str(row.get("name") or "").strip()
         if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name):
             raise DraftError(f"Header {index + 1}: “{name}” is not a header name.", field="headers")
-        if name.lower() in ("host", "content-length", "transfer-encoding", "connection"):
+        value_text = str(row.get("value") or "")
+        problem = "credential" if row.get("secret") else header_problem(name, value_text or "x")
+        if problem == "transport":
             raise DraftError(f"Header {index + 1}: Azizam sets “{name}” itself.", field="headers")
-        if name.lower() in ("authorization", "proxy-authorization") or row.get("secret"):
+        if problem == "credential":
             # Header values are saved as plain text. A key goes in the API key field, which is stored encrypted.
             raise DraftError(f"Header {index + 1}: put a key in the API key field. Header values are saved as plain text.",
                              field="headers")
-        value_text = str(row.get("value") or "")
-        if any(ch in value_text for ch in "\r\n") or not value_text.isascii():
+        if problem or not value_text:
             raise DraftError(f"Header {index + 1}: a value can hold plain letters, digits and signs only, no line break.", field="headers")
         out.append({"name": name, "value": value_text})
     return out
@@ -712,7 +713,11 @@ class EngineService:
         return result
 
     def access(self, ctx: Any, body: Mapping[str, Any]) -> dict[str, Any]:
-        """Who could use these models, from the stored access plans. Saves nothing."""
+        """Who could use these models, from the stored access plans. Saves nothing.
+
+        ``models`` holds public names, or ``{"name", "capabilities"}`` when the work a
+        model does is known (the check's model list says so).
+        """
         catalog = self.catalog()
         capabilities = body.get("capabilities")
         if not isinstance(capabilities, list) or not all(isinstance(c, str) for c in capabilities):
@@ -720,13 +725,26 @@ class EngineService:
         unknown = [c for c in capabilities if c not in catalog.data["capabilities"]]
         if unknown:
             raise DraftError(f"No kind of work called {unknown[0]!r}.", field="capabilities")
-        models = body.get("models")
-        if (not isinstance(models, list) or len(models) > MAX_ACCESS_MODELS
-                or not all(isinstance(m, str) and m.strip() and len(m) <= 256 for m in models)):
+        rows = body.get("models")
+        if not isinstance(rows, list) or len(rows) > MAX_ACCESS_MODELS:
             raise DraftError("models is a list of the names apps will use.", field="models")
-        return self._access_answer(ctx, [m.strip() for m in models], capabilities)
+        names: list[str] = []
+        works: dict[str, list[str]] = {}
+        for row in rows:
+            name, known = (row, None) if isinstance(row, str) else (
+                (row.get("name"), row.get("capabilities")) if isinstance(row, Mapping) else (None, None))
+            if not isinstance(name, str) or not name.strip() or len(name) > 256:
+                raise DraftError("models is a list of the names apps will use.", field="models")
+            if known is not None:
+                if not isinstance(known, list) or not all(isinstance(c, str) for c in known):
+                    raise DraftError(f"The work of “{name.strip()}” is a list of capability ids.", field="models")
+                works[name.strip()] = known
+            names.append(name.strip())
+        return self._access_answer(ctx, names, capabilities, model_works=works)
 
-    def _access_answer(self, ctx: Any, models: list[str], capabilities: list[str]) -> dict[str, Any]:
+    def _access_answer(self, ctx: Any, models: list[str], capabilities: list[str], *,
+                       model_works: Mapping[str, list[str]] | None = None,
+                       remote_provider: str | None = None) -> dict[str, Any]:
         plans, holders = [], {}
         unreadable = 0
         for record in self.store.list_access_plans():
@@ -739,8 +757,10 @@ class EngineService:
         viewer = None
         if getattr(ctx, "actor_kind", "user") == "user" and getattr(ctx, "actor_id", None):
             viewer = admin_store.person_plan_id(str(ctx.actor_id), path=self.db_path)
+        rules = category_enforcement.rules_state()
         answer = who_can_use(models, capabilities, plans, holders=holders, viewer_plan_id=viewer,
-                             category_rules=category_enforcement.governs_anyone())
+                             category_rules=rules == "governs", category_rules_unreadable=rules == "unreadable",
+                             model_works=model_works, remote_provider=remote_provider)
         answer["unreadable_plans"] = unreadable
         return answer
 
@@ -749,9 +769,22 @@ class EngineService:
         record = (registry.get("services") or {}).get(service_id)
         if record is None:
             raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
-        view = engine_view(self.catalog(), record, db_path=self.db_path)
-        served = [row["public_name"] for row in view["models"] if row.get("enabled", True) and row.get("public_name")]
-        view["access"] = self._access_answer(ctx, served, list(view["capabilities"]))
+        catalog = self.catalog()
+        view = engine_view(catalog, record, db_path=self.db_path)
+        definition = _definition(catalog, view["definition"])
+        # Every request names its work; the router serves an engine's models for any of
+        # the work it routes, so an engine that names none is asked about all of it.
+        works = list(view["capabilities"]) or list(definition["capabilities"])
+        labels = {catalog.capability(cap_id)["label"]: cap_id for cap_id in definition["capabilities"]}
+        model_works = {}
+        for row in view["models"]:
+            known = [labels[word] for word in str(row.get("use") or "").split(", ") if word in labels]
+            if known and row.get("public_name"):
+                model_works[row["public_name"]] = known
+        served, provider = routed_models(service_id, record)
+        if not served and not provider:
+            served = [row["public_name"] for row in view["models"] if row.get("enabled", True) and row.get("public_name")]
+        view["access"] = self._access_answer(ctx, served, works, model_works=model_works, remote_provider=provider)
         return view
 
     async def create(self, ctx: Any, body: Mapping[str, Any], *, expected_generation: int) -> dict[str, Any]:

@@ -187,7 +187,14 @@ describe("g, h: models, name and create", () => {
     await user.click(within(dialog).getByRole("button", { name: "Continue" }));
     expect(within(dialog).getByText("Step 5 of 5 · Name")).toBeVisible();
     await waitFor(() => expect(access).toHaveBeenCalledOnce());
-    expect(access).toHaveBeenCalledWith({ capabilities: ["chat"], models: ["my-chat", "nomic-embed-text-v1.5"] });
+    // Each model goes with the work the check found it does, so a chat-only plan is not counted for the embedder.
+    expect(access).toHaveBeenCalledWith({
+      capabilities: ["chat"],
+      models: [
+        { name: "my-chat", capabilities: ["chat"] },
+        { name: "nomic-embed-text-v1.5", capabilities: ["embeddings"] },
+      ],
+    });
     const answer = await within(dialog).findByRole("heading", { name: "Who can use these models" });
     expect(answer).toBeVisible();
     expect(within(dialog).getByText(/^Usable by: you, and the Family plan/)).toBeVisible();

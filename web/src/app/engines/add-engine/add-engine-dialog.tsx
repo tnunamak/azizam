@@ -38,7 +38,7 @@ import {
 import { FindingCard } from "../parts/finding-card";
 import { FormField, Note, Tag } from "../parts/form";
 import { ModelsBlock, draftsFromCheck, duplicateNames, modelsBody, type ModelDraft } from "../parts/models-block";
-import { AccessAsk } from "../parts/access-answer";
+import { AccessAsk, accessModels } from "../parts/access-answer";
 import { addedMessage, fieldOf, keptOffMessage, looksLikeAddress, trimAddress } from "./draft";
 import { ConnectionFields, SummaryLine, type ConnectionDraft, type FieldErrors } from "./step-address";
 import { StepKind } from "./step-kind";
@@ -726,7 +726,7 @@ function Wizard({
       </div>
       <AccessAsk
         capabilities={def.capabilities.filter((c) => ticked.has(c.id)).map((c) => c.id)}
-        models={models.filter((m) => m.on).map((m) => m.public_name.trim() || m.id)}
+        models={accessModels(models, def.capabilities)}
         newTab
       />
     </Frame>

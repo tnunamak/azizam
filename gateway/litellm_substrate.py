@@ -19,6 +19,7 @@ from gateway.compat import get_env
 
 import os
 import hashlib
+import re
 from pathlib import Path
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -288,6 +289,24 @@ def reaches_engine_directly(service_id: str, record: Mapping[str, Any]) -> bool:
     return not any(deployment["gateway_lifecycle"] for deployment in deployments)
 
 
+def routed_models(service_id: str, record: Mapping[str, Any]) -> tuple[list[str], str | None]:
+    """The public names the model router serves for this record, and its paid provider (None when local).
+
+    A remote provider's names carry its prefix, as the router serves them. A
+    record the router does not route gives no names.
+    """
+    service = normalize_service_record(service_id, record)
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    if not service.get("enabled", True) or not _is_openai_compatible(service):
+        return [], None
+    try:
+        deployments = _deployment_records(service)
+    except ValueError:
+        return [], None
+    provider = _provider_id(service, config) if is_remote_provider_config(config) else None
+    return [str(deployment["model_group"]) for deployment in deployments], provider
+
+
 def _deployment_records(service: Mapping[str, Any]) -> list[dict[str, Any]]:
     config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
     provider_id = _provider_id(service, config)
@@ -481,14 +500,65 @@ def _model_list_entries(
     return out
 
 
+_HEADER_NAME_RE = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+# Headers the gateway or the HTTP layer sets itself.
+TRANSPORT_HEADERS = frozenset({
+    "host", "content-length", "content-type", "transfer-encoding", "connection", "upgrade", "te",
+    "trailer", "keep-alive", "proxy-connection",
+})
+# A header whose name looks like it carries a credential. Header values are plain
+# text in the registry and the router's config file, so a key never goes there.
+CREDENTIAL_HEADER_RE = re.compile(r"auth|key|token|secret|passw|cookie|session|credential|signature", re.IGNORECASE)
+
+
+def header_problem(name: str, value: str) -> str:
+    """Why a plain engine header cannot be sent, or ``""`` when it can."""
+    if not _HEADER_NAME_RE.fullmatch(name):
+        return "not_a_name"
+    if name.lower() in TRANSPORT_HEADERS:
+        return "transport"
+    if CREDENTIAL_HEADER_RE.search(name):
+        return "credential"
+    if not value or not value.isascii() or any(ch in value for ch in "\r\n"):
+        return "bad_value"
+    return ""
+
+
 def engine_headers(config: Mapping[str, Any]) -> dict[str, str]:
-    """The plain request headers a service record lists as ``[{"name", "value"}]`` rows."""
+    """The plain request headers a service record lists as ``[{"name", "value"}]`` rows.
+
+    A row that fails ``header_problem`` is left out: a raw service edit can store
+    anything, and nothing malformed or credential-shaped is sent.
+    """
     out: dict[str, str] = {}
     for row in config.get("headers") or () if isinstance(config.get("headers"), list) else ():
         if isinstance(row, Mapping) and isinstance(row.get("name"), str) and isinstance(row.get("value"), str):
-            if row["name"].strip() and row["value"]:
-                out[row["name"].strip()] = row["value"]
+            name = row["name"].strip()
+            if not header_problem(name, row["value"]):
+                out[name] = row["value"]
     return out
+
+
+def router_reply_timeout(registry: Mapping[str, Any], model_name: str) -> float | None:
+    """The reply time the record serving ``model_name`` set for the router, if any.
+
+    The gateway's own wait for the router must be at least this long, or the
+    owner's setting would be cut short by the hop in front of it.
+    """
+    services = registry.get("services") if isinstance(registry, Mapping) else {}
+    for service in sorted(_normalize_services(services if isinstance(services, Mapping) else {}),
+                          key=lambda row: (row["priority"], row["id"])):
+        if not service.get("enabled", True) or not _is_openai_compatible(service):
+            continue
+        config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+        try:
+            deployments = _deployment_records(service)
+        except ValueError:
+            continue
+        for deployment in deployments:
+            if str(deployment["model_group"]) == model_name and not (deployment["gateway_lifecycle"] or config.get("gateway_lifecycle")):
+                return _engine_request_settings(config).get("timeout")
+    return None
 
 
 def _engine_request_settings(config: Mapping[str, Any]) -> dict[str, Any]:

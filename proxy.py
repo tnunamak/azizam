@@ -300,6 +300,7 @@ from gateway.image_output import (
 from gateway.litellm_substrate import (
     engine_headers,
     litellm_known_model_names,
+    router_reply_timeout,
     litellm_public_model_records,
     write_litellm_config_artifact,
 )
@@ -27515,7 +27516,8 @@ async def _forward_litellm_proxy_request(
             code="missing_required_parameter",
         )
 
-    remote_provider = provider_execution.provider_for_model(ADMIN_STORE.get_service_registry(), model_name)
+    live_registry = ADMIN_STORE.get_service_registry()
+    remote_provider = provider_execution.provider_for_model(live_registry, model_name)
     if remote_provider is not None:
         admission = _dispatch_admission_response(
             "text.embeddings" if request_path == "/v1/embeddings" else "chat.generate", auth_context=auth_context, service_id=remote_provider.id,
@@ -27628,6 +27630,10 @@ async def _forward_litellm_proxy_request(
         if request_path == "/v1/embeddings"
         else UPSTREAM_READ_TIMEOUT
     )
+    engine_reply_timeout = router_reply_timeout(live_registry, model_name)
+    if engine_reply_timeout is not None:
+        # The router gives up at the engine's own reply time; wait a little longer for its answer.
+        read_timeout = max(read_timeout, engine_reply_timeout + 5.0)
     execution_request = LlmExecutionRequest(
         method=request.method,
         url=litellm_url(

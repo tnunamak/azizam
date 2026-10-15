@@ -10,11 +10,30 @@ import { useEffect, useId, useState } from "react";
 import Link from "next/link";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { enginesApi, type EngineAccess, type EngineAccessPlan } from "@/lib/engines-api";
+import { enginesApi, type AccessModel, type EngineAccess, type EngineAccessPlan } from "@/lib/engines-api";
 import { Button } from "@/components/ui/button";
 import { Tag } from "./form";
 
 const LINK_CLASS = "text-link text-meta inline-flex items-center font-medium underline-offset-4 hover:underline max-sm:min-h-11";
+
+/**
+ * The turned-on models as the access question names them: the public name, with
+ * the work the check found the model does when it found any ("Embeddings" →
+ * embeddings), so a plan for chat is not counted for an embedding model.
+ */
+export function accessModels(
+  models: { id: string; public_name: string; use: string; on: boolean }[],
+  capabilities: { id: string; label: string }[],
+): AccessModel[] {
+  return models
+    .filter((m) => m.on)
+    .map((m) => {
+      const name = m.public_name.trim() || m.id;
+      const words = m.use.split(", ");
+      const known = capabilities.filter((c) => words.includes(c.label)).map((c) => c.id);
+      return known.length ? { name, capabilities: known } : name;
+    });
+}
 
 /** "3 people and 1 app", "1 person", or "Nobody holds this plan yet". */
 export function holdersText(plan: Pick<EngineAccessPlan, "people" | "apps">): string {
@@ -122,7 +141,7 @@ export function AccessAsk({
   ...shown
 }: {
   capabilities: string[];
-  models: string[];
+  models: AccessModel[];
   debounceMs?: number;
 } & Pick<Parameters<typeof AccessAnswer>[0], "errorText" | "qualifier" | "newTab">) {
   const now = JSON.stringify({ capabilities, models });
@@ -134,7 +153,7 @@ export function AccessAsk({
   }, [now, debounced, debounceMs]);
   const { data, isPending, isError, refetch } = useQuery({
     queryKey: ["engineAccess", debounced],
-    queryFn: () => enginesApi.access(JSON.parse(debounced) as { capabilities: string[]; models: string[] }),
+    queryFn: () => enginesApi.access(JSON.parse(debounced) as { capabilities: string[]; models: AccessModel[] }),
     placeholderData: keepPreviousData,
     staleTime: 0,
     gcTime: 0,

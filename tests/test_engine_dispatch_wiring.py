@@ -21,11 +21,14 @@ import litellm
 import pytest
 from litellm import Router
 
+import proxy
 from gateway.engine_admin import build_raw, clean_values
 from gateway.engine_definitions import load_engine_catalog
-from gateway.litellm_substrate import compile_litellm_config_from_registry
+from gateway.litellm_substrate import compile_litellm_config_from_registry, engine_headers, router_reply_timeout
 from gateway.service_registry import service_from_backend_config
+from tests.registry_test_helpers import write_service_registry_for_test
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
+from tests.support.gateway import gateway_client, register_litellm, use_admin_db
 
 MESSAGES = [{"role": "user", "content": "hi"}]
 # The gateway sends these with every routed request (LlmExecutionRequest trusted retries).
@@ -74,6 +77,60 @@ def test_the_reply_time_an_owner_set_ends_the_wait(fake_upstreams):
     assert len(fake.calls("chat")) == 1
 
 
+def test_the_headers_reach_an_embedding_engine_too(fake_upstreams):
+    fake = fake_upstreams.loopback(load_scenario("openai-compatible/engine-record-embeddings", tenant="family", model="demo-chat"))
+    entry = _entry(_registry(f"{fake.base_url}/v1", headers=[{"name": "X-Tenant", "value": "family"}]))
+    router = Router(model_list=[entry], num_retries=0)
+    reply = asyncio.run(router.aembedding(model="garage-chat", input="hello", **NO_RETRIES))
+    assert len(reply.data) == 1
+    assert fake.calls("embeddings")[0].headers["x-tenant"] == "family"
+
+
+def test_the_gateway_waits_for_the_router_at_least_as_long_as_the_engine_reply_time(fake_upstreams, monkeypatch, tmp_path):
+    """The hop in front of the router must not cut the owner's reply time short (600 s chat, 120 s embeddings)."""
+    fake = fake_upstreams.asgi(load_scenario("openai-compatible/chat-text", model="garage-chat", content="ok"),
+                               host="litellm.fk.test")
+    db = use_admin_db(monkeypatch, tmp_path)
+    register_litellm(monkeypatch, db, fake.base_url)
+    registry = proxy.ADMIN_STORE.get_service_registry()
+    registry["services"].update(_registry("http://garage.fk.test/v1", reply_timeout_s=1800)["services"])
+    write_service_registry_for_test(registry, path=db)
+    sent = []
+    real = proxy.send_llm_execution_request
+
+    async def spy(request, *args, **kwargs):
+        sent.append(request)
+        return await real(request, *args, **kwargs)
+
+    monkeypatch.setattr(proxy, "send_llm_execution_request", spy)
+
+    async def call():
+        async with gateway_client() as client:
+            return await client.post("/v1/chat/completions", json={"model": "garage-chat", "messages": MESSAGES})
+
+    response = asyncio.run(call())
+    assert response.status_code == 200, response.text
+    assert sent[0].read_timeout == 1805.0
+
+
+def test_the_hop_keeps_its_own_limit_when_the_engine_sets_none_or_a_shorter_one():
+    registry = _registry("http://garage.fk.test/v1", reply_timeout_s=30)
+    assert router_reply_timeout(registry, "garage-chat") == 30.0
+    assert router_reply_timeout(registry, "another-model") is None
+    hopped = {"schema_version": 1, "services": {"hopped": service_from_backend_config("hopped", {
+        "name": "Hopped", "host": "h.fk.test", "port": 80, "base_path": "/v1", "protocol": "openai-compatible",
+        "capabilities": ["chat"], "gateway_lifecycle": True, "timeout": 900,
+        "models": [{"model_group": "hopped-chat", "upstream_model": "hopped"}]}, source="ui")}}
+    assert router_reply_timeout(hopped, "hopped-chat") is None, "the lifecycle hop applies its own time"
+
+
+def test_a_header_stored_by_a_raw_edit_is_sent_only_when_it_is_safe():
+    rows = [{"name": "X-Tenant", "value": "family"}, {"name": "X-Api-Key", "value": "sk-raw"},
+            {"name": "Host", "value": "elsewhere"}, {"name": "X-Bad", "value": "a\r\nX-Injected: 1"},
+            {"name": "bad name", "value": "x"}, {"name": "X-Empty", "value": ""}]
+    assert engine_headers({"headers": rows}) == {"X-Tenant": "family"}
+
+
 def test_a_record_without_headers_or_a_reply_time_compiles_as_before():
     entry = _entry(_registry("http://plain.fk.test/v1"))
     # The form's default reply time is the gateway's own read limit, so a default changes nothing.
@@ -88,7 +145,9 @@ def test_a_record_without_headers_or_a_reply_time_compiles_as_before():
 
 @pytest.mark.parametrize("header", [
     {"name": "Authorization", "value": "Bearer sk-typed-here"},
-    {"name": "X-Client-Token", "value": "kept-secret", "secret": True},
+    {"name": "X-Client", "value": "kept-secret", "secret": True},
+    {"name": "X-API-Key", "value": "sk-typed-here"},
+    {"name": "X-Auth-Token", "value": "t0k3n"},
 ])
 def test_a_key_cannot_go_in_a_plain_header(header):
     """Header values are saved as plain text, so a key goes in the API key field instead."""

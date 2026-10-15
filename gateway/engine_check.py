@@ -948,7 +948,8 @@ async def run_real_test(
     content = json.dumps(_substitute(test.get("body") or {}, slots)).encode()
     headers["content-type"] = "application/json"
     shape = "a small JSON request in the OpenAI shape"
-    timeout_s = _number(values.get("reply_timeout_s"), TEST_TIMEOUT_S, low=1, high=600)
+    # A test is one tiny request: it waits for the reply time, but never longer than two minutes.
+    timeout_s = min(_number(values.get("reply_timeout_s"), TEST_TIMEOUT_S, low=1, high=600), TEST_TIMEOUT_S)
     answer = await fetch("POST", url, headers=headers, cap_bytes=TEST_CAP_BYTES, timeout_s=timeout_s, content=content)
     result: dict[str, Any] = {
         "capability": capability_id, "label": cap["label"], "sent": test["sent"], "sent_to": f"POST {url}",

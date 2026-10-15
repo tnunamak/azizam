@@ -59,23 +59,32 @@ def who_can_use(
     holders: Mapping[str, Mapping[str, Any]],
     viewer_plan_id: str | None,
     category_rules: bool = False,
+    category_rules_unreadable: bool = False,
+    model_works: Mapping[str, Sequence[str]] | None = None,
+    remote_provider: str | None = None,
 ) -> dict[str, Any]:
     """Which plans include ``models`` for ``works`` (engine capability ids), and one sentence saying so.
 
     ``holders`` maps a plan id to who holds it (``people`` and ``apps`` lists).
     ``viewer_plan_id`` is the asking person's own plan, for "you".
-    ``category_rules`` says active category rules govern some people or apps:
-    a new model is in no category yet, so they cannot use it until it is added.
+    ``model_works`` narrows a model to the work it is known to do (an embedding
+    model is not counted as included by a plan that allows only chat).
+    ``remote_provider`` is the paid provider the models run on, which a plan
+    must also list. ``category_rules`` says active category rules govern some
+    people or apps: a new model is in no category yet, so they cannot use it
+    until it is added. ``category_rules_unreadable`` says the rules cannot be
+    read, so every request is refused.
     """
     models = list(dict.fromkeys(name for name in models if name))
+    known = model_works or {}
     included: list[dict[str, Any]] = []
     for plan in plans:
         access = EffectiveAccess(person_plan=plan, app_plan=plan)
         allowed: list[str] = []
         rules: list[tuple[str, str | None]] = []
         for model in models:
-            for work in works:
-                decision = evaluate(access, PolicyRequest(intent=work, model=model))
+            for work in [w for w in works if w in known[model]] if known.get(model) else works:
+                decision = evaluate(access, PolicyRequest(intent=work, model=model, remote_provider=remote_provider))
                 if decision.allowed:
                     if model not in allowed:
                         allowed.append(model)
@@ -84,13 +93,15 @@ def who_can_use(
         if not allowed:
             continue
         held = holders.get(plan.id) or {}
+        # A disabled app is listed as "Name (disabled)"; it cannot use anything.
+        apps = [name for name in held.get("apps") or () if not str(name).endswith("(disabled)")]
         included.append({
             "id": plan.id,
             "name": plan.name,
             "models": allowed,
             "why": _why(rules),
             "people": len(held.get("people") or ()),
-            "apps": len(held.get("apps") or ()),
+            "apps": len(apps),
             "link": plan_link(plan.id),
         })
     covered = {model for row in included for model in row["models"]}
@@ -101,14 +112,16 @@ def who_can_use(
         "you": you,
         "not_included": not_included,
         "category_rules": category_rules,
+        "category_rules_unreadable": category_rules_unreadable,
         "sentence": _sentence(models, included, not_included, you=you, viewer_plan_id=viewer_plan_id,
-                              category_rules=category_rules),
+                              category_rules=category_rules, category_rules_unreadable=category_rules_unreadable),
         "link": PLANS_LINK,
     }
 
 
 def _sentence(models: Sequence[str], included: Sequence[Mapping[str, Any]], not_included: Sequence[str], *,
-              you: bool, viewer_plan_id: str | None, category_rules: bool) -> str:
+              you: bool, viewer_plan_id: str | None, category_rules: bool,
+              category_rules_unreadable: bool = False) -> str:
     if not models:
         return "No models yet. When it has some, this shows who can use them."
     if not included:
@@ -125,6 +138,8 @@ def _sentence(models: Sequence[str], included: Sequence[Mapping[str, Any]], not_
             text = f"Usable by: {_join(others)}. Your own plan doesn’t include them."
         if not_included:
             text += f" Not in any plan yet: {', '.join(not_included)}."
-    if category_rules:
+    if category_rules_unreadable:
+        text += " The category rules can’t be read right now, so the gateway refuses every request until they can."
+    elif category_rules:
         text += " People and apps under category rules can’t use them until you add them to a category."
     return text

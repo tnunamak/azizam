@@ -15,7 +15,9 @@ from gateway import admin_store
 from gateway.access_plans import AccessPlan, CapabilityGrant, plan_to_document
 from gateway.engine_access import PLANS_LINK, who_can_use
 from tests.support.fake_upstream import fake_upstreams  # noqa: F401 - fixture
-from tests.test_engine_admin_routes import _create, _silent
+from tests.test_engine_admin_routes import TOKEN, _create, _silent  # noqa: F401 - fixed_baseline below
+from tests.test_engine_admin_routes import fixed_baseline  # noqa: F401 - fixture
+from tests.support.fake_upstream import load_scenario
 from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
     csrf_for,
     gateway,
@@ -83,6 +85,38 @@ def test_you_and_other_plans_read_as_one_sentence():
     assert [row["link"] for row in answer["plans"]] == ["/people/?plan=plan_family", "/people/?plan=plan_kids"]
 
 
+def test_a_model_known_to_do_other_work_is_not_included_by_a_plan_for_chat():
+    """An embedding model under a plan that allows only chat would be refused at the gateway."""
+    answer = who_can_use(["llama-chat", "nomic-embed"], ["chat", "embeddings"], [FAMILY], holders={},
+                         viewer_plan_id=None, model_works={"nomic-embed": ["embeddings"]})
+    assert answer["plans"][0]["models"] == ["llama-chat"]
+    assert answer["not_included"] == ["nomic-embed"]
+
+
+def test_a_plan_must_also_list_the_paid_provider_the_models_run_on():
+    paid = AccessPlan(id="plan_paid", name="Paid", can_use={"chat": CapabilityGrant(all_items=True)},
+                      paid_providers=frozenset({"openrouter"}))
+    answer = who_can_use(["openrouter/gpt"], ["chat"], [FAMILY, paid], holders={}, viewer_plan_id=None,
+                         remote_provider="openrouter")
+    assert [row["id"] for row in answer["plans"]] == ["plan_paid"]
+
+
+def test_disabled_apps_are_not_counted_as_holders():
+    holders = {"plan_family": {"people": ["Sam"], "apps": ["Kitchen", "Old tablet (disabled)"]}}
+    answer = who_can_use(["qwen3-32b"], ["chat"], [FAMILY], holders=holders, viewer_plan_id=None)
+    assert (answer["plans"][0]["people"], answer["plans"][0]["apps"]) == (1, 1)
+
+
+@pytest.mark.parametrize("state, says", [
+    ("governs", "People and apps under category rules can’t use them until you add them to a category."),
+    ("unreadable", "The category rules can’t be read right now, so the gateway refuses every request until they can."),
+])
+def test_category_rules_are_part_of_the_answer(state, says):
+    answer = who_can_use(["qwen3-32b"], ["chat"], [FAMILY], holders={}, viewer_plan_id="plan_family",
+                         category_rules=state == "governs", category_rules_unreadable=state == "unreadable")
+    assert answer["sentence"].endswith(says)
+
+
 def test_an_engine_with_no_models_yet_says_so():
     answer = who_can_use([], ["chat"], [FAMILY], holders={}, viewer_plan_id="plan_family")
     assert answer["plans"] == []
@@ -92,6 +126,11 @@ def test_an_engine_with_no_models_yet_says_so():
 # ---------------------------------------------------------------------------
 # Through the routes, from the plans the gateway stores
 # ---------------------------------------------------------------------------
+
+
+def _serve_family_b(fakes):
+    """An embedding server whose model list marks its one model as an embedding model."""
+    return fakes.asgi(load_scenario("engine-probe/family-c-embedding-model", token=TOKEN), host="embedder.fk.test")
 
 
 def _store_plan(gateway, plan: AccessPlan) -> str:
@@ -116,6 +155,9 @@ def test_the_access_route_answers_from_the_stored_plans(gateway):
     assert access["you"] is True
     assert by_id[family]["why"] == "allows all chat models"
     assert by_id[kids]["models"] == ["qwen3-32b"]
+    # The owner holds the starter plan; nobody holds the others yet.
+    assert (by_id[owner_plan]["people"], by_id[owner_plan]["apps"]) == (1, 0)
+    assert (by_id[family]["people"], by_id[family]["apps"]) == (0, 0)
     assert access["sentence"].startswith("Usable by: you, and the Family plan (allows all chat models) and the Kids plan")
 
 
@@ -135,6 +177,26 @@ def test_an_administrator_without_a_plan_gets_the_same_answer_without_you(gatewa
     access = _ask(admin, {"capabilities": ["chat"], "models": ["qwen3-32b"]}).json()["access"]
     assert access["you"] is False
     assert "the Family plan (allows all chat models)" in access["sentence"]
+
+
+def test_the_access_route_takes_the_work_each_model_is_known_to_do(gateway):
+    owner, *_ = owner_and_admin(gateway)
+    family = _store_plan(gateway, FAMILY)
+    access = _ask(owner, {"capabilities": ["chat", "embeddings"],
+                          "models": ["llama-chat", {"name": "nomic-embed", "capabilities": ["embeddings"]}]}).json()["access"]
+    assert {row["id"]: row["models"] for row in access["plans"]}[family] == ["llama-chat"]
+
+
+def test_the_engine_page_asks_about_each_model_for_the_work_the_check_found(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    fake = _serve_family_b(fake_upstreams)
+    family = _store_plan(gateway, FAMILY)
+    created = _create(owner, {"definition": "openai-compatible", "name": "embedder", "acknowledge_warnings": True,
+                              "values": {"address": f"{fake.base_url}/v1"}, "capabilities": ["chat", "embeddings"]})
+    assert created.status_code == 201, created.text
+    engine = owner.get("/admin/api/engines/embedder").json()["engine"]
+    assert engine["models"][0]["use"] == "Embeddings"
+    assert family not in {row["id"] for row in engine["access"]["plans"]}, "Family allows chat only"
 
 
 @pytest.mark.parametrize("body, field", [

@@ -201,6 +201,8 @@ export interface StoredTest {
 }
 
 /** One access plan that includes the engine's models, and who holds it. */
+export type AccessModel = string | { name: string; capabilities: string[] };
+
 export interface EngineAccessPlan {
   id: string;
   name: string;
@@ -306,7 +308,8 @@ export const enginesApi = {
     service_id?: string;
   }) => adminFetch<{ test: TestResult }>("/admin/api/engines/test", { method: "POST", body }).then((r) => r.test),
   /** Who could use these models (capability ids and public names). Saves nothing. */
-  access: (body: { capabilities: string[]; models: string[] }) =>
+  /** A model is its public name, or the name with the work the check found it does. */
+  access: (body: { capabilities: string[]; models: AccessModel[] }) =>
     adminFetch<{ access: EngineAccess }>("/admin/api/engines/access", { method: "POST", body }).then((r) => r.access),
   view: (serviceId: string) =>
     adminFetch<{ engine: EngineView }>(`/admin/api/engines/${encodeURIComponent(serviceId)}`).then((r) => r.engine),
