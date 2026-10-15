@@ -58,6 +58,23 @@ def _system_lookup(monkeypatch, answers: dict[str, str]) -> list[str]:
     return asked
 
 
+def _dial_spy(monkeypatch, *, unreachable: str) -> list[tuple[str, int]]:
+    """Record every address a connection dials. ``unreachable`` (a documentation address) fails at once."""
+    import httpcore
+
+    original = httpcore.AnyIOBackend.connect_tcp
+    dialled: list[tuple[str, int]] = []
+
+    async def connect_tcp(self, host, port, *args, **kwargs):
+        dialled.append((host, port))
+        if host == unreachable:
+            raise httpcore.ConnectError(f"{host} is a documentation address")
+        return await original(self, host, port, *args, **kwargs)
+
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", connect_tcp)
+    return dialled
+
+
 def _fetch(fetch, url, cap=64 * 1024, timeout=1.0):
     return asyncio.run(fetch("GET", url, headers={}, cap_bytes=cap, timeout_s=timeout))
 
@@ -77,8 +94,10 @@ def test_a_name_that_rebinds_to_the_gateway_after_validation_is_never_connected(
 
     # The second lookup (the one a connection would make) answers this computer.
     _system_lookup(monkeypatch, {"rebind.test": "127.0.0.1"})
+    dialled = _dial_spy(monkeypatch, unreachable="198.51.100.7")
     answer = _fetch(make_http_fetch(resolve=resolve, gateway_ports={port}), f"http://rebind.test:{port}/v1/models")
     assert gateway.requests == [], "the request reached the gateway port through a second lookup"
+    assert dialled == [("198.51.100.7", port)], "only the validated address may be dialled"
     assert answer.transport != "ok"
 
 

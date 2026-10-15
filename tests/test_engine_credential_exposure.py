@@ -29,7 +29,7 @@ from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixtu
 )
 
 SENTINEL = "sk-SENTINEL-7f3a91c2d4"
-SPELLINGS = [SENTINEL, base64.b64encode(f"Bearer {SENTINEL}".encode()).decode(), SENTINEL.replace("-", "%2D")]
+SPELLINGS = [SENTINEL, base64.b64encode(f"Bearer {SENTINEL}".encode()).decode(), "".join(f"%{b:02X}" for b in SENTINEL.encode())]
 PROVENANCE = {"source": "hand-written", "reference": "add-engine-security-review-r1.md finding 3"}
 WITHHELD = "only the owner sees"
 
@@ -102,7 +102,7 @@ def test_a_refusal_that_echoes_the_stored_key_does_not_return_it(gateway, fake_u
         assert WITHHELD in finding["details"]["raw"]
         assert "You sent" not in answered.text, "an administrator gets no raw server text after the owner's key was sent"
     else:
-        assert "You sent Authorization: Bearer [hidden]" in finding["details"]["raw"]
+        assert "You sent Authorization: [hidden]" in finding["details"]["raw"]
 
 
 @pytest.mark.parametrize("who", ["owner", "admin"])
@@ -139,6 +139,9 @@ def test_a_saved_check_summary_and_the_engine_view_never_hold_the_echoed_key(gat
     fake, service_id = _engine(fake_upstreams, gateway, "summary.fk.test", [
         _exchange("models", "GET", "/v1/models", 200, body={"data": [{"id": f"model-{SENTINEL}"}, {"id": "echo-chat"}]}),
         _exchange("chat", "POST", "/v1/chat/completions", 400, body={"error": {"message": _echo("chat route")}}),
+        _exchange("embeddings", "POST", "/v1/embeddings", 404),
+        _exchange("openapi", "GET", "/openapi.json", 404),
+        _exchange("capabilities", "GET", "/v1/models/capabilities", 404),
     ])
     saved = _edit(owner, service_id, {"definition": "openai-compatible", "recheck": True, "acknowledge_warnings": True,
                                       "values": {}})
