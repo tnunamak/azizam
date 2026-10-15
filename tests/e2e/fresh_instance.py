@@ -305,7 +305,7 @@ def run(compose):
         registry = expect(client.get("/admin/api/operator/service-registry"), 200)
         headers["If-Match"] = registry.headers["etag"]
         created = expect(client.post("/admin/api/operator/services", headers=headers, json={
-            "name": "First chat engine", "preset": "openai-compatible", "base_url": engine_url,
+            "name": "First chat engine", "protocol": "openai-compatible", "base_url": engine_url,
             "health_endpoint": "/v1/models",
             "capabilities": ["chat"], "models": [{"public": MODEL, "upstream": MODEL}]
         }), 201).json()["service_registry"]

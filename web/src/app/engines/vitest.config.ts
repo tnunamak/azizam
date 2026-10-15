@@ -5,6 +5,6 @@ export default defineConfig({
   ...base,
   test: {
     ...base.test,
-    include: ["src/app/engines/*.spec.ts", "src/app/engines/*.spec.tsx"],
+    include: ["src/app/engines/**/*.spec.ts", "src/app/engines/**/*.spec.tsx"],
   },
 });

@@ -2,6 +2,7 @@
   "openai-compatible": {
     "paths": [
       "/v1/chat/completions",
+      "/provider/v1/chat/completions",
       "/v1/completions",
       "/v1/embeddings",
       "/v1/models",
@@ -92,5 +93,22 @@
     ],
     "framing": "ndjson",
     "stream_media_type": "application/x-ndjson"
+  },
+  "engine-probe": {
+    "paths": [
+      "/v1/models",
+      "/models",
+      "/api/tags",
+      "/openapi.json",
+      "/v1/models/capabilities",
+      "/models/capabilities",
+      "/v1/zz-not-a-route-{token}",
+      "/zz-not-a-route-{token}",
+      "/v1/chat/completions",
+      "/v1/embeddings",
+      "/chat/completions",
+      "/embeddings"
+    ],
+    "framing": "none"
   }
 }

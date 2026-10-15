@@ -3,17 +3,21 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api, ApiError, type ServiceRegistry, type StatusPayload } from "@/lib/api";
+import { enginesApi } from "@/lib/engines-api";
+import { definitions, engineView } from "./__fixtures__/test-utils";
 import Page from "./page";
 
 // Moved from e2e/status-engines-services.spec.ts: seeded, empty and error
 // pictures of the Engines page, and the add / edit / toggle / remove request
 // bodies, with the response shapes the browser spec intercepted.
 const search = vi.hoisted(() => ({ value: "" }));
+const router = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(search.value),
+  useRouter: () => router,
 }));
 vi.mock("@/components/shell/session", () => ({
-  useViewer: () => ({ admin: true }),
+  useViewer: () => ({ admin: true, role: "owner" }),
 }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("@/lib/toast", () => ({ toast }));
@@ -25,6 +29,7 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   search.value = "";
+  router.push.mockReset();
   toast.success.mockClear();
   toast.error.mockClear();
 });
@@ -113,20 +118,6 @@ const status = {
   backends: [{ service_id: "chat", live_status: "up", latency_ms: 42 }],
 } as unknown as StatusPayload;
 
-const presets = {
-  presets: [
-    {
-      id: "protocol-a",
-      label: "Engine A",
-      base_path: "/v1",
-      default_port: null,
-      protocol: "protocol-a",
-      capabilities: ["chat"],
-      native_passthrough: false,
-    },
-  ],
-};
-
 function mount(
   options: {
     registry?: ServiceRegistry | Error;
@@ -141,7 +132,6 @@ function mount(
   const stSpy = vi.spyOn(api, "status");
   if (st instanceof Error) stSpy.mockRejectedValue(st);
   else stSpy.mockResolvedValue(st);
-  vi.spyOn(api.services, "presets").mockResolvedValue(presets);
   render(
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}
@@ -156,12 +146,9 @@ const gatewayError = (code: string, message: string) =>
 const engineRow = (name: string) =>
   screen.getAllByRole("row").find((r) => r.textContent?.includes(name))!;
 
-/** Open the edit sheet through the row's name button. */
-async function openEdit(user: ReturnType<typeof userEvent.setup>, name: string) {
-  await user.click(
-    within(engineRow(name)).getAllByRole("button", { name: new RegExp(name) })[0],
-  );
-  return screen.findByRole("dialog", { name: "Edit engine" });
+/** Open an engine through the row's name button. */
+async function openRow(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(within(engineRow(name)).getAllByRole("button", { name: new RegExp(name) })[0]);
 }
 
 /**
@@ -175,7 +162,7 @@ async function enter(user: ReturnType<typeof userEvent.setup>, field: HTMLElemen
   await user.paste(text);
 }
 
-it("lists the in-use engine without its model names, hides unused engines, and opens an edit sheet with test and detect", async () => {
+it("lists the in-use engine without its model names, hides unused engines, and opens a row as its record page", async () => {
   const user = userEvent.setup();
   mount();
   await screen.findByRole("heading", { name: "Engines", level: 1 });
@@ -184,29 +171,8 @@ it("lists the in-use engine without its model names, hides unused engines, and o
   expect(screen.queryByText("Local image engine")).toBeNull();
   await user.click(screen.getByRole("switch", { name: "Show not in use" }));
   expect(screen.getByText("Local image engine")).toBeVisible();
-
-  vi.spyOn(api.services, "testConnection").mockResolvedValue({
-    ok: true,
-    status: 200,
-    error: "",
-    url: "http://engine-a.test/v1/health",
-  });
-  vi.spyOn(api.services, "detectModels").mockResolvedValue({
-    ok: true,
-    models: ["demo-chat"],
-    error: "",
-  });
-  const sheet = await openEdit(user, "Local chat engine");
-  await user.click(within(sheet).getByText("Connection and models", { exact: true }));
-  expect(within(sheet).getByText("existing-chat", { exact: true })).toBeVisible();
-  await user.click(within(sheet).getByRole("button", { name: "Test" }));
-  expect(await within(sheet).findByText(/connection passed/)).toBeVisible();
-  await user.click(within(sheet).getByRole("button", { name: "Detect" }));
-  expect(
-    within(within(sheet).getByRole("group", { name: "Model 1" })).getByRole("textbox", {
-      name: "Model name",
-    }),
-  ).toHaveValue("demo-chat");
+  await openRow(user, "Local chat engine");
+  expect(router.push).toHaveBeenCalledWith("/engines/?engine=chat");
 });
 
 it("says No engines configured when the registry is empty", async () => {
@@ -261,7 +227,7 @@ it("clears the live projection when the status refresh fails", async () => {
   expect(screen.queryByText("Ready")).toBeNull();
 });
 
-it("selects a not-in-use engine named in the query string and opens it with its switch off", async () => {
+it("selects a not-in-use engine named in the query string and opens it", async () => {
   search.value = "service=image";
   const user = userEvent.setup();
   mount();
@@ -269,8 +235,49 @@ it("selects a not-in-use engine named in the query string and opens it with its 
   const selected = document.querySelector("tr[aria-current='true']") as HTMLElement;
   expect(within(selected).getByText("Local image engine")).toBeVisible();
   await user.click(within(selected).getAllByRole("button", { name: /Local image engine/ })[0]);
-  const sheet = await screen.findByRole("dialog", { name: "Edit engine" });
-  expect(within(sheet).getByRole("switch", { name: "Toggle Local image engine" })).not.toBeChecked();
+  expect(router.push).toHaveBeenCalledWith("/engines/?engine=image");
+});
+
+it("says when a kept-off engine is checked, or that it waits for the owner's key", async () => {
+  const user = userEvent.setup();
+  mount({
+    registry: {
+      ...registry,
+      services: {
+        ...registry.services,
+        image: { ...registry.services.image, config: { engine_check: { status: "not_started" } } },
+        locked: {
+          ...registry.services.image,
+          id: "locked",
+          name: "Locked server",
+          config: { engine_check: { status: "not_started", reason: "needkey" } },
+        },
+      },
+    } as ServiceRegistry,
+  });
+  await screen.findByRole("row", { name: /Local chat engine/ });
+  await user.click(screen.getByRole("switch", { name: "Show not in use" }));
+  expect(within(engineRow("Local image engine")).getByText("Not checked yet; checked when you turn it on or press Check now")).toBeVisible();
+  expect(within(engineRow("Locked server")).getByText("Waiting for the owner to add a key")).toBeVisible();
+});
+
+it("opens the record page from ?engine=, goes back, and removes the engine there", async () => {
+  search.value = "engine=chat";
+  const user = userEvent.setup();
+  vi.spyOn(enginesApi, "definitions").mockResolvedValue(structuredClone(definitions));
+  vi.spyOn(enginesApi, "view").mockResolvedValue(engineView({ service_id: "chat", name: "Local chat engine" }));
+  const remove = vi.spyOn(api.services, "remove").mockResolvedValue({ schema_version: 1, services: {} });
+  mount();
+  expect(await screen.findByRole("heading", { level: 1, name: "Local chat engine" })).toBeVisible();
+  expect(screen.queryByRole("table", { name: "Engines" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Engines" }));
+  expect(router.push).toHaveBeenCalledWith("/engines/");
+  await user.click(screen.getByRole("button", { name: "Remove engine" }));
+  const confirm = await screen.findByRole("dialog", { name: "Remove engine?" });
+  await enter(user, within(confirm).getByRole("textbox"), "Local chat engine");
+  await user.click(within(confirm).getByRole("button", { name: "Remove engine" }));
+  await waitFor(() => expect(remove).toHaveBeenCalledWith("chat"));
+  await waitFor(() => expect(router.push).toHaveBeenLastCalledWith("/engines/"));
 });
 
 it("labels degraded and standby engines as such, never Busy or Starting", async () => {
@@ -303,15 +310,11 @@ it("labels degraded and standby engines as such, never Busy or Starting", async 
   expect(screen.queryByText("Starting")).toBeNull();
 });
 
-it("adds, edits, toggles and removes engines through the existing APIs with the documented bodies", async () => {
+it("removes an engine through the existing API with the documented request", async () => {
   const user = userEvent.setup();
   mount();
   // Only the network is faked: the production API client serializes every body.
-  const writes: { method: string; path: string; body: Record<string, unknown> | undefined; ifMatch: string | null }[] = [];
-  const registryReply = () =>
-    new Response(JSON.stringify({ service_registry: registry }), {
-      headers: { "content-type": "application/json", etag: "test-etag" },
-    });
+  const writes: { method: string; path: string; ifMatch: string | null }[] = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -322,100 +325,23 @@ it("adds, edits, toggles and removes engines through the existing APIs with the 
           headers: { "content-type": "application/json" },
         });
       }
-      if (method !== "GET") {
-        writes.push({
-          method,
-          path,
-          body: init?.body ? JSON.parse(String(init.body)) : undefined,
-          ifMatch: new Headers(init?.headers).get("if-match"),
-        });
-      }
-      return registryReply();
+      if (method !== "GET") writes.push({ method, path, ifMatch: new Headers(init?.headers).get("if-match") });
+      return new Response(JSON.stringify({ service_registry: registry }), {
+        headers: { "content-type": "application/json", etag: "test-etag" },
+      });
     }),
   );
-  const sent = (method: string) => writes.filter((write) => write.method === method);
   try {
-
-  await screen.findByRole("row", { name: /Local chat engine/ });
-  await user.click(screen.getAllByRole("button", { name: "Add engine" })[0]);
-  const addDialog = await screen.findByRole("dialog", { name: "Add engine" });
-  await user.click(within(addDialog).getByRole("combobox", { name: "Preset" }));
-  await user.click(await screen.findByRole("option", { name: /Engine A/ }));
-  await enter(user, within(addDialog).getByLabelText(/^Name/), "Added engine");
-  await enter(user, within(addDialog).getByLabelText(/^Base URL/), "http://engine-d.test/v1");
-  await user.click(within(addDialog).getByRole("button", { name: "Add engine" }));
-  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Engine added"));
-  expect(sent("POST")).toHaveLength(1);
-  expect(sent("POST")[0]).toMatchObject({
-    path: "/admin/api/operator/services",
-    ifMatch: "test-etag",
-    body: { name: "Added engine", preset: "protocol-a", base_url: "http://engine-d.test/v1" },
-  });
-
-  const dialog = await openEdit(user, "Local chat engine");
-  const name = within(dialog).getByLabelText(/^Name/);
-  await enter(user, name, "Renamed chat engine");
-  const endpoint = within(dialog).getByLabelText("Endpoint");
-  await enter(user, endpoint, "https://example.test/v1");
-  await user.click(within(dialog).getByRole("button", { name: "Save engine" }));
-  expect(await within(dialog).findByText(/HTTPS endpoints are not supported/)).toBeVisible();
-  await user.click(within(dialog).getByText("Advanced fields", { exact: true }));
-  const json = within(dialog).getByLabelText("Advanced JSON", { exact: true }) as HTMLTextAreaElement;
-  const config = json.value;
-  await enter(user, json, "null");
-  await user.click(within(dialog).getByRole("button", { name: "Save engine" }));
-  expect(await within(dialog).findByText("Advanced fields must be a JSON object.")).toBeVisible();
-  expect(sent("PATCH")).toHaveLength(0);
-  await enter(user, json, config);
-  await enter(user, endpoint, "http://engine-a.test:19000/v1");
-  await user.click(within(dialog).getByRole("button", { name: "Save engine" }));
-  await waitFor(() => expect(sent("PATCH")).toHaveLength(1));
-  expect(sent("PATCH")[0].path).toBe("/admin/api/operator/services/chat");
-  expect(sent("PATCH")[0].body).toMatchObject({
-    name: "Renamed chat engine",
-    host: "engine-a.test",
-    port: 19000,
-    base_path: "/v1",
-    custom_flag: "keep-me",
-    enabled: true,
-  });
-  expect(sent("PATCH")[0].body).not.toHaveProperty("base_url");
-  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit engine" })).toBeNull());
-
-  await user.click(screen.getByText("Show infrastructure", { exact: true }));
-  const managed = await openEdit(user, "Gateway substrate");
-  const mname = within(managed).getByLabelText(/^Name/);
-  await enter(user, mname, "Renamed substrate");
-  const note = within(managed).getByLabelText("Note");
-  await enter(user, note, "Managed note changed.");
-  expect(within(managed).queryByLabelText("Endpoint")).toBeNull();
-  await user.click(within(managed).getByRole("button", { name: "Save engine" }));
-  await waitFor(() => expect(sent("PATCH")).toHaveLength(2));
-  expect(sent("PATCH")[1]).toMatchObject({
-    path: "/admin/api/operator/services/managed",
-    body: { name: "Renamed substrate", note: "Managed note changed.", enabled: true },
-  });
-  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit engine" })).toBeNull());
-
-  const toggle = await openEdit(user, "Local chat engine");
-  await user.click(within(toggle).getByRole("switch", { name: "Toggle Local chat engine" }));
-  expect(sent("PATCH")).toHaveLength(2);
-  await user.click(within(toggle).getByRole("button", { name: "Save engine" }));
-  await waitFor(() => expect(sent("PATCH")).toHaveLength(3));
-  expect(sent("PATCH")[2]).toMatchObject({ path: "/admin/api/operator/services/chat", body: { enabled: false } });
-  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit engine" })).toBeNull());
-
-  await user.click(screen.getByRole("switch", { name: "Show not in use" }));
-  await user.click(
-    within(engineRow("Local image engine")).getByRole("button", { name: "Actions for Local image engine" }),
-  );
-  await user.click(await screen.findByRole("menuitem", { name: "Remove engine" }));
-  const confirm = await screen.findByRole("dialog", { name: "Remove engine?" });
-  await enter(user, within(confirm).getByRole("textbox"), "Local image engine");
-  await user.click(within(confirm).getByRole("button", { name: "Remove engine" }));
-  await waitFor(() => expect(sent("DELETE")).toHaveLength(1));
-  expect(sent("DELETE")[0]).toMatchObject({ path: "/admin/api/operator/services/image", ifMatch: "test-etag" });
-  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Engine removed"));
+    await screen.findByRole("row", { name: /Local chat engine/ });
+    await user.click(screen.getByRole("switch", { name: "Show not in use" }));
+    await user.click(within(engineRow("Local image engine")).getByRole("button", { name: "Actions for Local image engine" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Remove engine" }));
+    const confirm = await screen.findByRole("dialog", { name: "Remove engine?" });
+    await enter(user, within(confirm).getByRole("textbox"), "Local image engine");
+    await user.click(within(confirm).getByRole("button", { name: "Remove engine" }));
+    await waitFor(() => expect(writes.filter((w) => w.method === "DELETE")).toHaveLength(1));
+    expect(writes[0]).toMatchObject({ method: "DELETE", path: "/admin/api/operator/services/image", ifMatch: "test-etag" });
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Engine removed"));
   } finally {
     vi.unstubAllGlobals();
   }

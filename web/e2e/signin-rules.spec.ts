@@ -30,14 +30,19 @@ for (const viewport of [
     // An administrator by the owner's hand (a hand-made grant is what the page must not touch).
     const helper = await isolated.member({ name: "Helper" });
     const db = path.join(fixtureStateDir(Number(new URL(baseURL!).port)), "admin.db");
+    // The gateway's own writer can hold the lock for a moment: wait for it
+    // to be released (busy timeout), never fail on a transient lock.
     execFileSync("sqlite3", [
+      "-cmd",
+      ".timeout 10000",
       db,
       "INSERT INTO admin_role_assignments(role, subject_kind, subject_id, granted_at, granted_by, provenance) " +
         `VALUES ('admin', 'user', '${helper.userId}', ${Math.floor(Date.now() / 1000)}, 'e2e', 'manual')`,
     ]);
 
     // Someone who signed in with the provider before, in a group no rule covers yet.
-    const sql = (statement: string) => execFileSync("sqlite3", [db, statement]);
+    const sql = (statement: string) =>
+      execFileSync("sqlite3", ["-cmd", ".timeout 10000", db, statement]);
     const now = Math.floor(Date.now() / 1000);
     sql(
       "INSERT INTO users(id, issuer, subject, email, display_name, created_at, last_login_at) VALUES " +

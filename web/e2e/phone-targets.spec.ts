@@ -1,4 +1,4 @@
-import { type Locator, type Page, type Route } from "@playwright/test";
+import { type Locator, type Page } from "@playwright/test";
 import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { fulfilJson } from "./fixtures/intercept";
@@ -103,24 +103,8 @@ async function mockEngineApis(page: Page) {
   await page.route("**/admin/api/status", (route) =>
     fulfilJson(route, { status }),
   );
-  await page.route("**/admin/api/operator/service-presets", (route) =>
-    fulfilJson(route, { presets: [] }),
-  );
   await page.route("**/admin/api/operator/service-registry", (route) =>
     fulfilJson(route, { service_registry: serviceRegistry }, { headers: { etag: "test-etag" } }),
-  );
-  await page.route("**/admin/api/operator/services/test", (route: Route) =>
-    fulfilJson(route, {
-        probe: {
-          ok: true,
-          status: 200,
-          error: "",
-          url: "http://127.0.0.1:18081/v1/health",
-        },
-      }),
-  );
-  await page.route("**/admin/api/operator/services/detect-models", (route) =>
-    fulfilJson(route, { detected: { ok: true, models: ["demo-chat"], error: "" } }),
   );
 }
 
@@ -254,50 +238,34 @@ test.describe("phone target primitives", () => {
           await expectMinBox(summaryButton, 44, 44);
         }
 
-        await summaryButton.focus();
-        await page.keyboard.press("Enter");
-        const dialog = page.getByRole("dialog", { name: "Edit engine" });
+        // Add engine: the kind cards and the dialog's own buttons are tap targets on a phone.
+        await addEngine.click();
+        const dialog = page.getByRole("dialog", { name: "Add engine" });
         await expect(dialog).toBeVisible();
-        const engineToggle = dialog.getByRole("switch", {
-          name: "Toggle Local chat engine",
-        });
-        // DESIGN "Controls": the toggle is 32 x 20 (Linear 29 x 20).
-        await expectCompactBox(
-          engineToggle.locator('[data-slot="switch-track"]'),
-          32,
-          20,
-        );
-        const testButton = dialog.getByRole("button", { name: "Test" });
-        const detectButton = dialog.getByRole("button", { name: "Detect" });
+        const firstKind = dialog.getByRole("button", { name: /Any OpenAI-compatible server/ });
+        await expect(firstKind).toBeVisible();
         if (width === 390) {
-          await expectMinBox(engineToggle, 44, 44);
-          await expectMinBox(testButton, 44, 44);
-          await expectMinBox(detectButton, 44, 44);
-        } else {
-          await expectCompactHeight(testButton, 32);
-          await expectCompactHeight(detectButton, 32);
+          // Measure the settled dialog, not its 95%-to-100% entrance zoom.
+          for (const control of [
+            firstKind,
+            dialog.getByRole("button", { name: "Cancel" }),
+            dialog.getByRole("button", { name: "Close" }),
+          ]) {
+            await expect.poll(async () => (await control.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+            await expectMinBox(control, 44, 44);
+          }
         }
         await expectNoSeriousAxeOrOverflow(page);
-        if (width === 390) {
-          await expectMinBox(
-            dialog.getByRole("button", { name: "Cancel" }),
-            44,
-            44,
-          );
-          await expectMinBox(
-            dialog.getByRole("button", { name: "Save engine" }),
-            44,
-            44,
-          );
-          await expectMinBox(
-            dialog.getByRole("button", { name: "Close" }),
-            44,
-            44,
-          );
-        }
         await page.keyboard.press("Escape");
         await expect(dialog).toHaveCount(0);
-        await expect(summaryButton).toBeFocused();
+        await expect(addEngine).toBeFocused();
+
+        // A row opens the engine page.
+        await summaryButton.focus();
+        await page.keyboard.press("Enter");
+        await expect(page).toHaveURL(/engine=chat/);
+        await page.goBack();
+        await expect(summaryButton).toBeVisible();
 
         await expectNoSeriousAxeOrOverflow(page);
         await page.screenshot({

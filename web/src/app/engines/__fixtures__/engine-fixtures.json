@@ -1,0 +1,1325 @@
+{
+ "definitions": {
+  "format_version": 1,
+  "definitions": [
+   {
+    "definition": "openai-compatible",
+    "definition_version": 1,
+    "title": "Any OpenAI-compatible server",
+    "example": "For example, vLLM, llama.cpp or LM Studio",
+    "summary": "Chat and embeddings. Azizam finds out which of these the server offers.",
+    "badge": "Most servers",
+    "keywords": [
+     "openai",
+     "compatible",
+     "vllm",
+     "llama.cpp",
+     "lm studio",
+     "localai",
+     "tabby",
+     "text generation",
+     "api",
+     "v1",
+     "jan",
+     "sglang",
+     "llamafile",
+     "kobold"
+    ],
+    "flow": "detect",
+    "steps": [
+     "Kind",
+     "Address and key",
+     "What it can do",
+     "Models",
+     "Name"
+    ],
+    "fields": [
+     {
+      "key": "address",
+      "label": "Address",
+      "type": "url",
+      "required": true,
+      "order": 1,
+      "placeholder": "http://192.168.1.50:8080/v1",
+      "help": "Where the server listens, with its port. Usually ends in /v1."
+     },
+     {
+      "key": "api_key",
+      "label": "API key",
+      "type": "secret",
+      "secret": true,
+      "writeOnly": true,
+      "order": 2,
+      "placeholder": "Optional",
+      "help": "Leave empty if the server has no key."
+     },
+     {
+      "key": "api_key_env",
+      "label": "Environment variable name",
+      "type": "text",
+      "order": 3,
+      "placeholder": "LAN_SERVER_KEY",
+      "secondary_of": "api_key",
+      "help": "Azizam reads the key from this variable on the gateway’s computer. Only the name is saved. The value is never shown."
+     },
+     {
+      "key": "headers",
+      "label": "Request headers",
+      "type": "keyvalue",
+      "advanced": true,
+      "group": "Request headers",
+      "order": 10,
+      "default": [],
+      "help": "Extra headers Azizam sends with every chat and embedding request to this server, for example X-Client: azizam-home. They are saved as plain text, so don’t put a key here."
+     },
+     {
+      "key": "reply_timeout_s",
+      "label": "Time to wait for a reply",
+      "type": "duration",
+      "advanced": true,
+      "group": "Timeouts",
+      "order": 21,
+      "default": 600,
+      "unit": "seconds",
+      "help": "How long Azizam waits for an answer before it gives up. The default, 10 minutes, is the gateway’s own limit."
+     },
+     {
+      "key": "path_prefix",
+      "label": "Extra path before every request",
+      "type": "text",
+      "advanced": true,
+      "group": "Extra path",
+      "order": 30,
+      "default": "",
+      "placeholder": "Empty",
+      "help": "Leave empty unless the server needs one, for example /openai. Azizam puts it between the address and each route."
+     },
+     {
+      "key": "transforms",
+      "label": "Request adjustments",
+      "type": "list",
+      "items": "transform",
+      "advanced": true,
+      "group": "Request adjustments",
+      "order": 40,
+      "default": [
+       "reasoning-effort-final-chat"
+      ],
+      "help": "Fix a mismatch between what apps send and what this server accepts, for example leave out a field the server refuses. Each one says in plain words what it does."
+     },
+     {
+      "key": "lifecycle_mode",
+      "label": "Who starts and stops this server",
+      "type": "select",
+      "advanced": true,
+      "owner_only": true,
+      "group": "Start and stop",
+      "order": 50,
+      "default": "external",
+      "options": [
+       {
+        "value": "external",
+        "label": "Azizam leaves it running (default)"
+       },
+       {
+        "value": "managed",
+        "label": "Azizam starts and stops it"
+       }
+      ]
+     },
+     {
+      "key": "lifecycle_start",
+      "label": "Start command",
+      "type": "text",
+      "advanced": true,
+      "owner_only": true,
+      "group": "Start and stop",
+      "order": 51,
+      "show_if": {
+       "field": "lifecycle_mode",
+       "equals": "managed"
+      },
+      "help": "Run on the gateway’s computer when a request needs this server."
+     },
+     {
+      "key": "lifecycle_stop",
+      "label": "Stop command",
+      "type": "text",
+      "advanced": true,
+      "owner_only": true,
+      "group": "Start and stop",
+      "order": 52,
+      "show_if": {
+       "field": "lifecycle_mode",
+       "equals": "managed"
+      }
+     },
+     {
+      "key": "lifecycle_ready_s",
+      "label": "Wait for it to be ready",
+      "type": "duration",
+      "advanced": true,
+      "owner_only": true,
+      "group": "Start and stop",
+      "order": 53,
+      "default": 120,
+      "unit": "seconds",
+      "show_if": {
+       "field": "lifecycle_mode",
+       "equals": "managed"
+      }
+     },
+     {
+      "key": "models",
+      "label": "Models",
+      "type": "multiselect",
+      "order": 60,
+      "options_from": "models",
+      "custom_value": true
+     },
+     {
+      "key": "context_window",
+      "label": "Context window",
+      "type": "number",
+      "order": 61,
+      "unit": "tokens",
+      "default_from": "models.context_window"
+     }
+    ],
+    "check_rows": [
+     "Reaching the server",
+     "Checking the key",
+     "Listing the models",
+     "Finding what it can do"
+    ],
+    "check_request": {
+     "method": "GET",
+     "path": "/models",
+     "from": "address"
+    },
+    "capabilities": [
+     {
+      "id": "chat",
+      "label": "Chat"
+     },
+     {
+      "id": "embeddings",
+      "label": "Embeddings"
+     }
+    ]
+   },
+   {
+    "definition": "own-model-list",
+    "definition_version": 1,
+    "title": "Server with its own model list",
+    "example": "For example, Ollama",
+    "summary": "Lists its models at its own address and loads them when asked. Chat and embeddings.",
+    "keywords": [
+     "ollama",
+     "native",
+     "tags",
+     "pull",
+     "library"
+    ],
+    "flow": "detect",
+    "steps": [
+     "Kind",
+     "Address and key",
+     "What it can do",
+     "Models",
+     "Name"
+    ],
+    "fields": [
+     {
+      "key": "address",
+      "label": "Address",
+      "type": "url",
+      "required": true,
+      "order": 1,
+      "placeholder": "http://192.168.1.50:11434",
+      "help": "Where the server listens, with its port. Usually port 11434. Do not add /v1."
+     },
+     {
+      "key": "api_key",
+      "label": "API key",
+      "type": "secret",
+      "secret": true,
+      "writeOnly": true,
+      "order": 2,
+      "placeholder": "Optional",
+      "help": "Leave empty if the server has no key."
+     },
+     {
+      "key": "api_key_env",
+      "label": "Environment variable name",
+      "type": "text",
+      "order": 3,
+      "placeholder": "LAN_SERVER_KEY",
+      "secondary_of": "api_key",
+      "help": "Azizam reads the key from this variable on the gateway’s computer. Only the name is saved. The value is never shown."
+     },
+     {
+      "key": "headers",
+      "label": "Request headers",
+      "type": "keyvalue",
+      "advanced": true,
+      "group": "Request headers",
+      "order": 10,
+      "default": [],
+      "help": "Extra headers Azizam sends with every chat and embedding request to this server, for example X-Client: azizam-home. They are saved as plain text, so don’t put a key here."
+     },
+     {
+      "key": "reply_timeout_s",
+      "label": "Time to wait for a reply",
+      "type": "duration",
+      "advanced": true,
+      "group": "Timeouts",
+      "order": 21,
+      "default": 600,
+      "unit": "seconds",
+      "help": "How long Azizam waits for an answer before it gives up. The default, 10 minutes, is the gateway’s own limit."
+     },
+     {
+      "key": "transforms",
+      "label": "Request adjustments",
+      "type": "list",
+      "items": "transform",
+      "advanced": true,
+      "group": "Request adjustments",
+      "order": 40,
+      "default": [
+       "reasoning-effort-final-chat"
+      ]
+     },
+     {
+      "key": "lifecycle_mode",
+      "label": "Who starts and stops this server",
+      "type": "select",
+      "advanced": true,
+      "owner_only": true,
+      "group": "Start and stop",
+      "order": 50,
+      "default": "external",
+      "options": [
+       {
+        "value": "external",
+        "label": "Azizam leaves it running (default)"
+       },
+       {
+        "value": "managed",
+        "label": "Azizam starts and stops it"
+       }
+      ]
+     },
+     {
+      "key": "lifecycle_start",
+      "label": "Start command",
+      "type": "text",
+      "advanced": true,
+      "owner_only": true,
+      "group": "Start and stop",
+      "order": 51,
+      "show_if": {
+       "field": "lifecycle_mode",
+       "equals": "managed"
+      }
+     },
+     {
+      "key": "lifecycle_stop",
+      "label": "Stop command",
+      "type": "text",
+      "advanced": true,
+      "owner_only": true,
+      "group": "Start and stop",
+      "order": 52,
+      "show_if": {
+       "field": "lifecycle_mode",
+       "equals": "managed"
+      }
+     },
+     {
+      "key": "lifecycle_ready_s",
+      "label": "Wait for it to be ready",
+      "type": "duration",
+      "advanced": true,
+      "owner_only": true,
+      "group": "Start and stop",
+      "order": 53,
+      "default": 120,
+      "unit": "seconds",
+      "show_if": {
+       "field": "lifecycle_mode",
+       "equals": "managed"
+      }
+     },
+     {
+      "key": "models",
+      "label": "Models",
+      "type": "multiselect",
+      "order": 60,
+      "options_from": "models",
+      "custom_value": true
+     }
+    ],
+    "check_rows": [
+     "Reaching the server",
+     "Checking the key",
+     "Listing its models",
+     "Reading what each model can do"
+    ],
+    "models_note": "This server loads a model the first time something asks for it. That first request can take a while.",
+    "check_request": {
+     "method": "GET",
+     "path": "/api/tags",
+     "from": "origin"
+    },
+    "capabilities": [
+     {
+      "id": "chat",
+      "label": "Chat"
+     },
+     {
+      "id": "embeddings",
+      "label": "Embeddings"
+     }
+    ]
+   }
+  ],
+  "real_tests": {
+   "chat": {
+    "sent": "One chat message, “Say OK”, with a limit of 1 token",
+    "cost": "About one token"
+   },
+   "embeddings": {
+    "sent": "One short text, “hello”",
+    "cost": "About one token"
+   }
+  }
+ },
+ "checks": {
+  "oai_ok": {
+   "definition": "openai-compatible",
+   "definition_version": 1,
+   "address": "http://192.168.1.50:8080/v1",
+   "calls": "GET http://192.168.1.50:8080/v1/models",
+   "checked_at": 1792000000,
+   "key_sent": false,
+   "key_withheld": false,
+   "key_source": "none",
+   "reachable": true,
+   "auth": "not_needed",
+   "findings": [],
+   "capabilities": [
+    {
+     "id": "chat",
+     "label": "Chat",
+     "level": "likely",
+     "evidence": "Its model list marks “qwen3-32b-instruct-q4_k_m” and 1 other models as chat models.",
+     "ticked": true,
+     "real_test": "chat",
+     "sent_to": "POST http://192.168.1.50:8080/v1/chat/completions"
+    },
+    {
+     "id": "embeddings",
+     "label": "Embeddings",
+     "level": "likely",
+     "evidence": "Its model list marks “nomic-embed-text-v1.5” as a embedding model.",
+     "ticked": true,
+     "real_test": "embeddings",
+     "sent_to": "POST http://192.168.1.50:8080/v1/embeddings"
+    }
+   ],
+   "models": [
+    {
+     "id": "qwen3-32b-instruct-q4_k_m",
+     "public_name": "qwen3-32b",
+     "context_window": 40960,
+     "use": "Chat"
+    },
+    {
+     "id": "gemma-3-12b-it",
+     "public_name": "gemma-3-12b",
+     "context_window": 131072,
+     "use": "Chat"
+    },
+    {
+     "id": "nomic-embed-text-v1.5",
+     "public_name": "nomic-embed-text-v1.5",
+     "context_window": 8192,
+     "use": "Embeddings"
+    }
+   ],
+   "shapes": [
+    "model_list"
+   ],
+   "suggested_name": "Engine at 192.168.1.50:8080",
+   "name_source": "address",
+   "steps": [
+    {
+     "label": "Reaching the server",
+     "result": "192.168.1.50:8080"
+    },
+    {
+     "label": "Checking the key",
+     "result": "No key needed"
+    },
+    {
+     "label": "Listing the models",
+     "result": "3 found"
+    },
+    {
+     "label": "Finding what it can do",
+     "result": ""
+    }
+   ],
+   "outcome": "ok"
+  },
+  "oai_ok_key": {
+   "definition": "openai-compatible",
+   "definition_version": 1,
+   "address": "http://192.168.1.50:8080/v1",
+   "calls": "GET http://192.168.1.50:8080/v1/models",
+   "checked_at": 1792000000,
+   "key_sent": true,
+   "key_withheld": false,
+   "key_source": "pasted",
+   "reachable": true,
+   "auth": "accepted",
+   "findings": [],
+   "capabilities": [
+    {
+     "id": "chat",
+     "label": "Chat",
+     "level": "likely",
+     "evidence": "Its model list marks “qwen3-32b-instruct-q4_k_m” and 1 other models as chat models.",
+     "ticked": true,
+     "real_test": "chat",
+     "sent_to": "POST http://192.168.1.50:8080/v1/chat/completions"
+    },
+    {
+     "id": "embeddings",
+     "label": "Embeddings",
+     "level": "likely",
+     "evidence": "Its model list marks “nomic-embed-text-v1.5” as a embedding model.",
+     "ticked": true,
+     "real_test": "embeddings",
+     "sent_to": "POST http://192.168.1.50:8080/v1/embeddings"
+    }
+   ],
+   "models": [
+    {
+     "id": "qwen3-32b-instruct-q4_k_m",
+     "public_name": "qwen3-32b",
+     "context_window": 40960,
+     "use": "Chat"
+    },
+    {
+     "id": "gemma-3-12b-it",
+     "public_name": "gemma-3-12b",
+     "context_window": 131072,
+     "use": "Chat"
+    },
+    {
+     "id": "nomic-embed-text-v1.5",
+     "public_name": "nomic-embed-text-v1.5",
+     "context_window": 8192,
+     "use": "Embeddings"
+    }
+   ],
+   "shapes": [
+    "model_list"
+   ],
+   "suggested_name": "Engine at 192.168.1.50:8080",
+   "name_source": "address",
+   "steps": [
+    {
+     "label": "Reaching the server",
+     "result": "192.168.1.50:8080"
+    },
+    {
+     "label": "Checking the key",
+     "result": "Accepted"
+    },
+    {
+     "label": "Listing the models",
+     "result": "3 found"
+    },
+    {
+     "label": "Finding what it can do",
+     "result": ""
+    }
+   ],
+   "outcome": "ok"
+  },
+  "oai_auth": {
+   "definition": "openai-compatible",
+   "definition_version": 1,
+   "address": "http://192.168.1.50:8080/v1",
+   "calls": "GET http://192.168.1.50:8080/v1/models",
+   "checked_at": 1792000000,
+   "key_sent": true,
+   "key_withheld": false,
+   "key_source": "pasted",
+   "reachable": true,
+   "auth": "rejected",
+   "findings": [
+    {
+     "code": "auth_rejected",
+     "severity": "error",
+     "field": "key",
+     "title": "Key refused",
+     "what": "The server refused the key.",
+     "why": "It answered “401 Unauthorized”. The key may be mistyped, out of date, or made for another server.",
+     "fix": "Paste the key again. If the server lists its keys in its own settings, make a new one and paste that.",
+     "keep_off": true,
+     "details": {
+      "raw": "HTTP/1.1 401 Unauthorized\ncontent-type: application/json\n\n{\"error\": {\"message\": \"Invalid API key.\"}}",
+      "raw_label": "What the server said",
+      "request": "curl -i http://192.168.1.50:8080/v1/models \\\n  -H \"Authorization: Bearer YOUR_KEY\"",
+      "with_key": true
+     }
+    }
+   ],
+   "capabilities": [
+    {
+     "id": "chat",
+     "label": "Chat",
+     "level": "needs_key",
+     "evidence": "Not known yet. The server needs a key first.",
+     "ticked": false
+    },
+    {
+     "id": "embeddings",
+     "label": "Embeddings",
+     "level": "needs_key",
+     "evidence": "Not known yet. The server needs a key first.",
+     "ticked": false
+    }
+   ],
+   "models": [],
+   "shapes": [],
+   "suggested_name": "Engine at 192.168.1.50:8080",
+   "name_source": "address",
+   "steps": [
+    {
+     "label": "Reaching the server",
+     "result": "192.168.1.50:8080"
+    },
+    {
+     "label": "Checking the key",
+     "result": "Refused"
+    }
+   ],
+   "outcome": "error"
+  },
+  "oai_needkey_admin": {
+   "definition": "openai-compatible",
+   "definition_version": 1,
+   "address": "http://192.168.1.50:8080/v1",
+   "calls": "GET http://192.168.1.50:8080/v1/models",
+   "checked_at": 1792000000,
+   "key_sent": false,
+   "key_withheld": false,
+   "key_source": "none",
+   "reachable": true,
+   "auth": "needed",
+   "findings": [
+    {
+     "code": "needkey",
+     "severity": "error",
+     "field": "key",
+     "title": "This server needs a key",
+     "what": "This server needs a key.",
+     "why": "Every real route answered “401 Unauthorized”, but a made-up path answered “404 Not Found”. So the routes exist and are locked.",
+     "fix": "This server needs a key, and only the owner can add one. Save it without a key and ask the owner, or ask the owner to add it.",
+     "keep_off": true,
+     "summary": "This server needs a key. Only the owner can add one.",
+     "owner_note": "Please add the API key for the server at http://192.168.1.50:8080/v1. In Azizam, open Engines, then the engine, then API key.",
+     "details": {
+      "raw": "HTTP/1.1 401 Unauthorized\ncontent-type: application/json\n\n{\"error\": {\"message\": \"Invalid API key.\"}}",
+      "raw_label": "What the server said",
+      "request": "curl -i http://192.168.1.50:8080/v1/models",
+      "with_key": false
+     }
+    }
+   ],
+   "capabilities": [
+    {
+     "id": "chat",
+     "label": "Chat",
+     "level": "needs_key",
+     "evidence": "Not known yet. The server needs a key first.",
+     "ticked": false
+    },
+    {
+     "id": "embeddings",
+     "label": "Embeddings",
+     "level": "needs_key",
+     "evidence": "Not known yet. The server needs a key first.",
+     "ticked": false
+    }
+   ],
+   "models": [],
+   "shapes": [],
+   "suggested_name": "Engine at 192.168.1.50:8080",
+   "name_source": "address",
+   "steps": [
+    {
+     "label": "Reaching the server",
+     "result": "192.168.1.50:8080"
+    },
+    {
+     "label": "Checking the key",
+     "result": "Key needed"
+    }
+   ],
+   "outcome": "error"
+  },
+  "oai_needkey_owner": {
+   "definition": "openai-compatible",
+   "definition_version": 1,
+   "address": "http://192.168.1.50:8080/v1",
+   "calls": "GET http://192.168.1.50:8080/v1/models",
+   "checked_at": 1792000000,
+   "key_sent": false,
+   "key_withheld": false,
+   "key_source": "none",
+   "reachable": true,
+   "auth": "needed",
+   "findings": [
+    {
+     "code": "needkey",
+     "severity": "error",
+     "field": "key",
+     "title": "This server needs a key",
+     "what": "This server needs a key.",
+     "why": "Every real route answered “401 Unauthorized”, but a made-up path answered “404 Not Found”. So the routes exist and are locked.",
+     "fix": "Paste the key the server expects, then continue. Azizam stores it and never shows it again.",
+     "keep_off": true,
+     "details": {
+      "raw": "HTTP/1.1 401 Unauthorized\ncontent-type: application/json\n\n{\"error\": {\"message\": \"Invalid API key.\"}}",
+      "raw_label": "What the server said",
+      "request": "curl -i http://192.168.1.50:8080/v1/models",
+      "with_key": false
+     }
+    }
+   ],
+   "capabilities": [
+    {
+     "id": "chat",
+     "label": "Chat",
+     "level": "needs_key",
+     "evidence": "Not known yet. The server needs a key first.",
+     "ticked": false
+    },
+    {
+     "id": "embeddings",
+     "label": "Embeddings",
+     "level": "needs_key",
+     "evidence": "Not known yet. The server needs a key first.",
+     "ticked": false
+    }
+   ],
+   "models": [],
+   "shapes": [],
+   "suggested_name": "Engine at 192.168.1.50:8080",
+   "name_source": "address",
+   "steps": [
+    {
+     "label": "Reaching the server",
+     "result": "192.168.1.50:8080"
+    },
+    {
+     "label": "Checking the key",
+     "result": "Key needed"
+    }
+   ],
+   "outcome": "error"
+  },
+  "oai_down": {
+   "definition": "openai-compatible",
+   "definition_version": 1,
+   "address": "http://192.168.1.50:8080/v1",
+   "calls": "GET http://192.168.1.50:8080/v1/models",
+   "checked_at": 1792000000,
+   "key_sent": false,
+   "key_withheld": false,
+   "key_source": "none",
+   "reachable": false,
+   "auth": "unknown",
+   "findings": [
+    {
+     "code": "down",
+     "severity": "error",
+     "field": "address",
+     "title": "Server not reachable",
+     "what": "Azizam could not reach the server.",
+     "why": "Nothing answered at 192.168.1.50:8080 within 5 seconds. The server may be off, or the address or port may be wrong.",
+     "fix": "Check that the server is running and that the address and port are right. If Azizam runs in a container, “localhost” means the container, not your computer. If Azizam should start this server itself, add it kept off, then set its start command on the engine page.",
+     "keep_off": true,
+     "details": {
+      "raw": "GET http://192.168.1.50:8080/v1/models\nconnect ECONNREFUSED",
+      "raw_label": "What the server said",
+      "request": "curl -i http://192.168.1.50:8080/v1/models",
+      "with_key": false
+     }
+    }
+   ],
+   "capabilities": [],
+   "models": [],
+   "shapes": [],
+   "suggested_name": "Engine at 192.168.1.50:8080",
+   "name_source": "address",
+   "steps": [
+    {
+     "label": "Reaching the server",
+     "result": "No answer"
+    }
+   ],
+   "outcome": "error"
+  },
+  "oai_down_admin": {
+   "definition": "openai-compatible",
+   "definition_version": 1,
+   "address": "http://192.168.1.50:8080/v1",
+   "calls": "GET http://192.168.1.50:8080/v1/models",
+   "checked_at": 1792000000,
+   "key_sent": false,
+   "key_withheld": false,
+   "key_source": "none",
+   "reachable": false,
+   "auth": "unknown",
+   "findings": [
+    {
+     "code": "down",
+     "severity": "error",
+     "field": "address",
+     "title": "Server not reachable",
+     "what": "Azizam could not reach the server.",
+     "why": "Nothing answered at 192.168.1.50:8080 within 5 seconds. The server may be off, or the address or port may be wrong.",
+     "fix": "Check that the server is running and that the address and port are right. If Azizam runs in a container, “localhost” means the container, not your computer. If the server starts only when needed, add it kept off and ask the owner to set its start command.",
+     "keep_off": true,
+     "details": {
+      "raw": "GET http://192.168.1.50:8080/v1/models\nconnect ECONNREFUSED",
+      "raw_label": "What the server said",
+      "request": "curl -i http://192.168.1.50:8080/v1/models",
+      "with_key": false
+     }
+    }
+   ],
+   "capabilities": [],
+   "models": [],
+   "shapes": [],
+   "suggested_name": "Engine at 192.168.1.50:8080",
+   "name_source": "address",
+   "steps": [
+    {
+     "label": "Reaching the server",
+     "result": "No answer"
+    }
+   ],
+   "outcome": "error"
+  },
+  "oai_path": {
+   "definition": "openai-compatible",
+   "definition_version": 1,
+   "address": "http://192.168.1.50:8080",
+   "calls": "GET http://192.168.1.50:8080/models",
+   "checked_at": 1792000000,
+   "key_sent": false,
+   "key_withheld": false,
+   "key_source": "none",
+   "reachable": true,
+   "auth": "not_needed",
+   "findings": [
+    {
+     "code": "path_v1_missing",
+     "severity": "error",
+     "field": "address",
+     "title": "No model list at this address",
+     "what": "The address answered, but it has no list of models.",
+     "why": "The server returned “404 Not Found” for /models, the same as for a made-up path. The API probably starts one level deeper.",
+     "fix": "Add /v1 to the end of the address, then check again.",
+     "keep_off": true,
+     "action": {
+      "id": "fixpath",
+      "label": "Add /v1 and check again",
+      "address_append": "/v1"
+     },
+     "details": {
+      "raw": "HTTP/1.1 404 Not Found\n\n{\"error\": {\"message\": \"File Not Found\"}}",
+      "raw_label": "What the server said",
+      "request": "curl -i http://192.168.1.50:8080/models",
+      "with_key": false
+     }
+    }
+   ],
+   "capabilities": [
+    {
+     "id": "chat",
+     "label": "Chat",
+     "level": "none",
+     "evidence": "The server answered every standard request with “not supported” or “not found”.",
+     "ticked": false,
+     "why": "Nothing was found.",
+     "real_test": "chat",
+     "sent_to": "POST http://192.168.1.50:8080/chat/completions"
+    },
+    {
+     "id": "embeddings",
+     "label": "Embeddings",
+     "level": "none",
+     "evidence": "The server answered every standard request with “not supported” or “not found”.",
+     "ticked": false,
+     "why": "Nothing was found.",
+     "real_test": "embeddings",
+     "sent_to": "POST http://192.168.1.50:8080/embeddings"
+    }
+   ],
+   "models": [],
+   "shapes": [],
+   "suggested_name": "Engine at 192.168.1.50:8080",
+   "name_source": "address",
+   "steps": [
+    {
+     "label": "Reaching the server",
+     "result": "192.168.1.50:8080"
+    },
+    {
+     "label": "Checking the key",
+     "result": "No key needed"
+    },
+    {
+     "label": "Listing the models",
+     "result": "0 found"
+    },
+    {
+     "label": "Finding what it can do",
+     "result": ""
+    }
+   ],
+   "outcome": "error"
+  },
+  "oai_nocap": {
+   "definition": "openai-compatible",
+   "definition_version": 1,
+   "address": "http://192.168.1.50:8080/v1",
+   "calls": "GET http://192.168.1.50:8080/v1/models",
+   "checked_at": 1792000000,
+   "key_sent": false,
+   "key_withheld": false,
+   "key_source": "none",
+   "reachable": true,
+   "auth": "not_needed",
+   "findings": [
+    {
+     "code": "nocap",
+     "severity": "warning",
+     "field": "address",
+     "title": "Nothing recognised",
+     "what": "Azizam could not tell what this server can do.",
+     "why": "The server is reachable and did not refuse the key. But it listed no models, and it answered every standard request with “not supported” or “not found”.",
+     "fix": "Check that the address ends where the API starts, often /v1. Or add the server anyway and say yourself what it can do.",
+     "keep_off": false,
+     "details": {
+      "raw": "HTTP/1.1 200 OK\ncontent-type: application/json\n\n{\"object\": \"list\", \"data\": []}",
+      "raw_label": "What the server said",
+      "request": "curl -i http://192.168.1.50:8080/v1/models",
+      "with_key": false
+     }
+    }
+   ],
+   "capabilities": [
+    {
+     "id": "chat",
+     "label": "Chat",
+     "level": "none",
+     "evidence": "The server answered every standard request with “not supported” or “not found”.",
+     "ticked": false,
+     "why": "Nothing was found.",
+     "real_test": "chat",
+     "sent_to": "POST http://192.168.1.50:8080/v1/chat/completions"
+    },
+    {
+     "id": "embeddings",
+     "label": "Embeddings",
+     "level": "none",
+     "evidence": "The server answered every standard request with “not supported” or “not found”.",
+     "ticked": false,
+     "why": "Nothing was found.",
+     "real_test": "embeddings",
+     "sent_to": "POST http://192.168.1.50:8080/v1/embeddings"
+    }
+   ],
+   "models": [],
+   "shapes": [
+    "model_list"
+   ],
+   "suggested_name": "Engine at 192.168.1.50:8080",
+   "name_source": "address",
+   "steps": [
+    {
+     "label": "Reaching the server",
+     "result": "192.168.1.50:8080"
+    },
+    {
+     "label": "Checking the key",
+     "result": "No key needed"
+    },
+    {
+     "label": "Listing the models",
+     "result": "0 found"
+    },
+    {
+     "label": "Finding what it can do",
+     "result": ""
+    }
+   ],
+   "outcome": "warning"
+  },
+  "oai_dup": {
+   "definition": "openai-compatible",
+   "definition_version": 1,
+   "address": "http://192.168.1.20:8080/v1",
+   "calls": "GET http://192.168.1.20:8080/v1/models",
+   "checked_at": 1792000000,
+   "key_sent": false,
+   "key_withheld": false,
+   "key_source": "none",
+   "reachable": false,
+   "auth": "unknown",
+   "findings": [
+    {
+     "code": "dup",
+     "severity": "error",
+     "field": "address",
+     "title": "Already added",
+     "what": "An engine already uses this address.",
+     "why": "“Kitchen mini PC” points to http://192.168.1.20:8080/v1. Adding it twice would split its load and its history.",
+     "fix": "Open the engine that exists, or change the address.",
+     "keep_off": false,
+     "action": {
+      "id": "openexisting",
+      "label": "Open Kitchen mini PC",
+      "service_id": "kitchen"
+     }
+    }
+   ],
+   "capabilities": [],
+   "models": [],
+   "shapes": [],
+   "suggested_name": "Engine at 192.168.1.20:8080",
+   "name_source": "address",
+   "steps": [],
+   "outcome": "error"
+  },
+  "native_ok": {
+   "definition": "own-model-list",
+   "definition_version": 1,
+   "address": "http://192.168.1.50:11434",
+   "calls": "GET http://192.168.1.50:11434/api/tags",
+   "checked_at": 1792000000,
+   "key_sent": false,
+   "key_withheld": false,
+   "key_source": "none",
+   "reachable": true,
+   "auth": "not_needed",
+   "findings": [],
+   "capabilities": [
+    {
+     "id": "chat",
+     "label": "Chat",
+     "level": "likely",
+     "evidence": "Its model list marks “llama3.2:3b” as a chat model.",
+     "ticked": true,
+     "real_test": "chat",
+     "sent_to": "POST http://192.168.1.50:11434/v1/chat/completions"
+    },
+    {
+     "id": "embeddings",
+     "label": "Embeddings",
+     "level": "likely",
+     "evidence": "Its model list marks “nomic-embed-text:latest” as a embedding model.",
+     "ticked": true,
+     "real_test": "embeddings",
+     "sent_to": "POST http://192.168.1.50:11434/v1/embeddings"
+    }
+   ],
+   "models": [
+    {
+     "id": "llama3.2:3b",
+     "public_name": "llama3.2-3b",
+     "context_window": null,
+     "use": "Chat"
+    },
+    {
+     "id": "nomic-embed-text:latest",
+     "public_name": "nomic-embed-text-latest",
+     "context_window": null,
+     "use": "Embeddings"
+    }
+   ],
+   "shapes": [
+    "model_list"
+   ],
+   "suggested_name": "Engine at 192.168.1.50:11434",
+   "name_source": "address",
+   "steps": [
+    {
+     "label": "Reaching the server",
+     "result": "192.168.1.50:11434"
+    },
+    {
+     "label": "Checking the key",
+     "result": "No key needed"
+    },
+    {
+     "label": "Listing its models",
+     "result": "2 found"
+    },
+    {
+     "label": "Reading what each model can do",
+     "result": ""
+    }
+   ],
+   "outcome": "ok"
+  },
+  "native_path": {
+   "definition": "own-model-list",
+   "definition_version": 1,
+   "address": "http://192.168.1.50:11434/v1",
+   "calls": "GET http://192.168.1.50:11434/api/tags",
+   "checked_at": 1792000000,
+   "key_sent": false,
+   "key_withheld": false,
+   "key_source": "none",
+   "reachable": true,
+   "auth": "not_needed",
+   "findings": [
+    {
+     "code": "native_v1",
+     "severity": "error",
+     "field": "address",
+     "title": "No model list at this address",
+     "what": "The address answered, but it has no model list of its own.",
+     "why": "The server returned “404 Not Found” for /api/tags. An address that ends in /v1 points at the OpenAI-style part of a server, which has no such list.",
+     "fix": "Take /v1 off the end of the address, then check again.",
+     "keep_off": true,
+     "action": {
+      "id": "fixpath",
+      "label": "Remove /v1 and check again",
+      "address_strip": "/v1"
+     },
+     "details": {
+      "raw": "HTTP/1.1 404 Not Found\n\n{\"error\": {\"message\": \"File Not Found\"}}",
+      "raw_label": "What the server said",
+      "request": "curl -i http://192.168.1.50:11434/api/tags",
+      "with_key": false
+     }
+    }
+   ],
+   "capabilities": [
+    {
+     "id": "chat",
+     "label": "Chat",
+     "level": "none",
+     "evidence": "The server answered every standard request with “not supported” or “not found”.",
+     "ticked": false,
+     "why": "Nothing was found.",
+     "real_test": "chat",
+     "sent_to": "POST http://192.168.1.50:11434/v1/chat/completions"
+    },
+    {
+     "id": "embeddings",
+     "label": "Embeddings",
+     "level": "none",
+     "evidence": "The server answered every standard request with “not supported” or “not found”.",
+     "ticked": false,
+     "why": "Nothing was found.",
+     "real_test": "embeddings",
+     "sent_to": "POST http://192.168.1.50:11434/v1/embeddings"
+    }
+   ],
+   "models": [],
+   "shapes": [],
+   "suggested_name": "Engine at 192.168.1.50:11434",
+   "name_source": "address",
+   "steps": [
+    {
+     "label": "Reaching the server",
+     "result": "192.168.1.50:11434"
+    },
+    {
+     "label": "Checking the key",
+     "result": "No key needed"
+    },
+    {
+     "label": "Listing its models",
+     "result": "0 found"
+    },
+    {
+     "label": "Reading what each model can do",
+     "result": ""
+    }
+   ],
+   "outcome": "error"
+  }
+ },
+ "tests": {
+  "chat_pass": {
+   "capability": "chat",
+   "label": "Chat",
+   "sent": "One chat message, “Say OK”, with a limit of 1 token",
+   "sent_to": "POST http://192.168.1.50:8080/v1/chat/completions",
+   "seconds": 0.4,
+   "cost": "About one token",
+   "at": 1792000000,
+   "status": 200,
+   "via": "draft",
+   "ok": true,
+   "reply": "“OK”",
+   "key_sent": false,
+   "key_withheld": false
+  },
+  "embeddings_pass": {
+   "capability": "embeddings",
+   "label": "Embeddings",
+   "sent": "One short text, “hello”",
+   "sent_to": "POST http://192.168.1.50:8080/v1/embeddings",
+   "seconds": 0.4,
+   "cost": "About one token",
+   "at": 1792000000,
+   "status": 200,
+   "via": "draft",
+   "ok": true,
+   "reply": "A list of 3 numbers",
+   "key_sent": false,
+   "key_withheld": false
+  },
+  "chat_fail": {
+   "capability": "chat",
+   "label": "Chat",
+   "sent": "One chat message, “Say OK”, with a limit of 1 token",
+   "sent_to": "POST http://192.168.1.50:8080/v1/chat/completions",
+   "seconds": 0.4,
+   "cost": "None. The server refused it.",
+   "at": 1792000000,
+   "status": 400,
+   "via": "draft",
+   "ok": false,
+   "reply": "“model not found” (HTTP 400)",
+   "finding": {
+    "what": "The server answered “400 Bad Request” at POST http://192.168.1.50:8080/v1/chat/completions.",
+    "why": "Azizam sent a small JSON request in the OpenAI shape. The server may want a different request shape, or it cannot do this.",
+    "fix": "Check what the server expects with whoever set it up. Its own text is under Details.",
+    "raw": "HTTP/1.1 400 Bad Request\ncontent-type: application/json\n\n{\"error\": {\"message\": \"model not found\"}}"
+   },
+   "key_sent": false,
+   "key_withheld": false
+  }
+ },
+ "access": {
+  "you_and_family": {
+   "plans": [
+    {
+     "id": "plan_family",
+     "name": "Family",
+     "models": [
+      "qwen3-32b",
+      "gemma-3-12b-it"
+     ],
+     "why": "allows all chat models",
+     "people": 3,
+     "apps": 1,
+     "link": "/people/?plan=plan_family"
+    },
+    {
+     "id": "plan_kids",
+     "name": "Kids",
+     "models": [
+      "qwen3-32b"
+     ],
+     "why": "lists qwen3-32b",
+     "people": 1,
+     "apps": 0,
+     "link": "/people/?plan=plan_kids"
+    },
+    {
+     "id": "plan_local",
+     "name": "Local only",
+     "models": [
+      "qwen3-32b",
+      "gemma-3-12b-it"
+     ],
+     "why": "allows all chat models",
+     "people": 1,
+     "apps": 0,
+     "link": "/people/?plan=plan_local"
+    }
+   ],
+   "you": true,
+   "not_included": [],
+   "category_rules": false,
+   "sentence": "Usable by: you, and the Family plan (allows all chat models) and the Kids plan (lists qwen3-32b).",
+   "link": "/people/?tab=plans",
+   "unreadable_plans": 0
+  },
+  "listed_only": {
+   "plans": [
+    {
+     "id": "plan_kids",
+     "name": "Kids",
+     "models": [
+      "qwen3-32b"
+     ],
+     "why": "lists qwen3-32b",
+     "people": 1,
+     "apps": 0,
+     "link": "/people/?plan=plan_kids"
+    }
+   ],
+   "you": false,
+   "not_included": [
+    "gemma-3-12b-it"
+   ],
+   "category_rules": false,
+   "sentence": "Usable by: the Kids plan (lists qwen3-32b). Your own plan doesn’t include them. Not in any plan yet: gemma-3-12b-it.",
+   "link": "/people/?tab=plans",
+   "unreadable_plans": 0
+  },
+  "nobody": {
+   "plans": [],
+   "you": false,
+   "not_included": [
+    "qwen3-32b",
+    "gemma-3-12b-it"
+   ],
+   "category_rules": false,
+   "sentence": "No access plan includes these yet, so nobody can use them, you included. Add them to a plan in Access plans.",
+   "link": "/people/?tab=plans",
+   "unreadable_plans": 0
+  },
+  "category_rules": {
+   "plans": [
+    {
+     "id": "plan_local",
+     "name": "Local only",
+     "models": [
+      "qwen3-32b",
+      "gemma-3-12b-it"
+     ],
+     "why": "allows all chat models",
+     "people": 1,
+     "apps": 0,
+     "link": "/people/?plan=plan_local"
+    }
+   ],
+   "you": true,
+   "not_included": [],
+   "category_rules": true,
+   "sentence": "Usable by: you (Local only plan: allows all chat models). People and apps under category rules can’t use them until you add them to a category.",
+   "link": "/people/?tab=plans",
+   "unreadable_plans": 0
+  }
+ }
+}

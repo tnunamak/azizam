@@ -1,0 +1,139 @@
+{
+  "protocol": "engine-probe",
+  "name": "family-a-routes-when-served",
+  "description": "Family A. Unserved routes answer 404 like a made-up path; the API description lists chat, and an empty chat request is validated.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "~/Documents/azizam/ux-findings/add-engine-probe-table.md (measured 2026-10-14): divan add-engine section 6, family A (vLLM registers routes per supported task)"
+  },
+  "exchanges": [
+    {
+      "id": "baseline-get",
+      "match": {
+        "method": "GET",
+        "path": "/v1/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "baseline-post",
+      "match": {
+        "method": "POST",
+        "path": "/v1/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "models",
+      "match": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "response": {
+        "status": 200,
+        "json": {
+          "object": "list",
+          "data": [
+            {
+              "id": "Qwen/Qwen3-8B",
+              "object": "model",
+              "max_model_len": 40960
+            }
+          ]
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "openapi",
+      "match": {
+        "method": "GET",
+        "path": "/openapi.json"
+      },
+      "response": {
+        "status": 200,
+        "json": {
+          "openapi": "3.1.0",
+          "info": {
+            "title": "FastAPI",
+            "version": "0.1.0"
+          },
+          "paths": {
+            "/v1/models": {},
+            "/v1/chat/completions": {
+              "post": {}
+            },
+            "/v1/completions": {
+              "post": {}
+            }
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "capability-document",
+      "match": {
+        "method": "GET",
+        "path": "/v1/models/capabilities"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "chat",
+      "match": {
+        "method": "POST",
+        "path": "/v1/chat/completions"
+      },
+      "response": {
+        "status": 400,
+        "json": {
+          "object": "error",
+          "message": "Field required: messages",
+          "type": "BadRequestError",
+          "code": 400
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "embeddings",
+      "match": {
+        "method": "POST",
+        "path": "/v1/embeddings"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    }
+  ]
+}

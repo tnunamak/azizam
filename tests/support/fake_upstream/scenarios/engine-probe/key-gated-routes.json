@@ -1,0 +1,61 @@
+{
+  "protocol": "engine-probe",
+  "name": "key-gated-routes",
+  "description": "Real routes answer 401 and a made-up path answers 404: the routes exist and need a key.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "~/Documents/azizam/ux-findings/add-engine-probe-table.md (measured 2026-10-14): litellm :4011"
+  },
+  "exchanges": [
+    {
+      "id": "baseline-get",
+      "match": {
+        "method": "GET",
+        "path": "/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "baseline-post",
+      "match": {
+        "method": "POST",
+        "path": "/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "models",
+      "match": {
+        "method": "GET",
+        "path": "/models"
+      },
+      "response": {
+        "status": 401,
+        "json": {
+          "error": {
+            "message": "Authentication Error, Malformed API Key passed in. Ensure Key has 'Bearer ' prefix.",
+            "type": "auth_error",
+            "param": "None",
+            "code": "401"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    }
+  ]
+}

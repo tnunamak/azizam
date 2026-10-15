@@ -156,20 +156,32 @@ curl -s -X POST http://127.0.0.1:5000/admin/api/operator/services \
      -H "If-Match: ${etag}" \
      -H "Content-Type: application/json" \
      -d '{
+       "definition": "openai-compatible",
        "name": "Local chat engine",
-       "preset": "openai-compatible",
-       "base_url": "http://host.docker.internal:8080/v1",
-       "health_endpoint": "/v1/models",
+       "values": {"address": "http://host.docker.internal:8080/v1"},
        "capabilities": ["chat"],
-       "models": [
-         {"public": "my-llama", "upstream": "TheBloke_Llama-3-8B"}
-       ]
+       "models": [{"id": "TheBloke_Llama-3-8B", "public_name": "my-llama"}]
      }'
 ```
 
-Do not send inline provider or engine secrets to this API. If a service needs a
-key, set the key in the process environment and send its variable name as
-`api_key_env`.
+This is the same path the Add engine dialog takes. `GET /admin/api/engine-definitions`
+lists the kinds of server and their fields. The gateway checks the server
+before it saves: an error (unreachable, key refused) answers 422 with the
+check; a warning answers 409 until you send `"acknowledge_warnings": true`;
+`"disabled": true` saves the engine turned off without a check. To see the
+check without saving, `POST /admin/api/engines/check` with the same
+`definition` and `values`.
+
+A key goes in `values.api_key` (owner only). The gateway stores it encrypted,
+binds it to that address and never returns it. `values.api_key_env` names a
+server environment variable instead. `values.headers` rows are sent with every
+request to the engine and saved as plain text, so a key never goes there.
+
+Before you add it, `POST /admin/api/engines/access` with
+`{"capabilities": ["chat"], "models": ["my-llama"]}` says which access plans
+will let people and apps use those model names. New models follow the plans
+that exist: a plan that allows all chat models includes them at once; a plan
+that lists models does not.
 
 The executable first-run check is `scripts/e2e/fresh_instance.sh`. It uses only
 HTTP APIs:
@@ -180,7 +192,8 @@ HTTP APIs:
 4. `POST /setup/first-app` mints the first `opk_...` runtime key.
 5. `GET /admin/api/operator/service-registry` reads the registry `ETag`.
 6. `POST /admin/api/operator/services` registers the fake OpenAI-compatible
-   engine with `If-Match`, `health_endpoint: /v1/models`, and a model mapping.
+   engine as a raw record (`protocol: openai-compatible`) with `If-Match`,
+   `health_endpoint: /v1/models`, and a model mapping.
 7. `POST /openai/v1/chat/completions` verifies unauthenticated 401 first, then
    authenticated chat success.
 

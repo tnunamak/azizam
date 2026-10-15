@@ -277,6 +277,21 @@ def visible(identity: Any, request: PolicyRequest) -> bool:
     return _GATE is None or _GATE.check(identity, request) is None
 
 
+def rules_state() -> str:
+    """``"none"``, ``"governs"`` when the active rules list a person or an app, or ``"unreadable"``.
+
+    People and apps the rules list need a category for each service they use,
+    so a model the owner adds is closed to them until it is put in a category.
+    Rules that cannot be read refuse every request.
+    """
+    if _GATE is None:
+        return "none"
+    version, unavailable = _GATE._active()
+    if unavailable:
+        return "unreadable"
+    return "governs" if version is not None and (version.people or version.apps) else "none"
+
+
 def is_hidden(reasons: Any) -> bool:
     """True when a policy view says a restricted category hides the item.
 

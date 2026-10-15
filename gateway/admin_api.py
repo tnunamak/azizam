@@ -44,7 +44,7 @@ from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.availability import availability_evidence_snapshot, project_service
 from gateway.model_presentation import service_presentation, starts_on_demand
 from gateway.backends.litellm_admin import LiteLLMAdminError
-from gateway import admin_catalog, admin_store, extension_packages, service_registry
+from gateway import admin_catalog, admin_store, engine_admin, engine_check, extension_packages, service_registry
 
 __all__ = [
     "AdminAuthError",
@@ -1426,8 +1426,15 @@ def _validate_service_form(
                 "invalid_service",
                 "a base URL (or host) is required",
             )
-    # An inline plaintext key is never accepted — secrets are referenced by env
-    # var name only (api_key_env).
+    if "preset" in payload:
+        raise _RouteError(
+            status.HTTP_400_BAD_REQUEST,
+            "invalid_service",
+            "engine presets are gone: send a definition and its values "
+            "(GET /admin/api/engine-definitions lists them)",
+        )
+    # An inline plaintext key is never accepted on this path — a raw record names
+    # an env var (api_key_env). Add engine stores a pasted key (engine_admin).
     if any(str(k).lower() == "api_key" for k in payload):
         raise _RouteError(
             status.HTTP_400_BAD_REQUEST,
@@ -1574,6 +1581,7 @@ def create_admin_router(
     status_provider: StatusProvider | None = None,
     litellm_key_client: LiteLLMKeyClient | None = None,
     known_model_names_getter: Callable[[], frozenset[str]] | None = None,
+    engine_fetch: engine_check.Fetch | None = None,
     prefix: str = "/admin/api",
 ) -> APIRouter:
     """Build an admin-plane router.
@@ -1604,6 +1612,11 @@ def create_admin_router(
 
     def _guard(request: Request) -> AdminContext | JSONResponse:
         return _require_admin(auth, request)
+
+    # Add engine: definitions, check, draft test, who can use the models and the engine view.
+    # Create and edit with a definition run through the services routes below.
+    engine_service = engine_admin.EngineService(store, fetch=engine_fetch)
+    engine_admin.register_engine_routes(router, service=engine_service, guard=_guard, read_json=_read_json_body)
 
     @router.get("/session")
     def session(request: Request) -> JSONResponse:
@@ -2329,44 +2342,6 @@ def create_admin_router(
             code, http = "invalid_service", status.HTTP_400_BAD_REQUEST
         return _RouteError(http, code, msg).as_response()
 
-    @router.get("/operator/service-presets")
-    def get_service_presets(request: Request) -> JSONResponse:
-        """Return the provider preset list for the Add-service dialog.
-
-        "Custom (OpenAI-compatible)" is always first; subsequent entries are
-        known backends (vLLM, Ollama, …). The client MUST consume this endpoint
-        instead of duplicating the list client-side.
-        """
-        ctx = _guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        presets = [dict(p) for p in service_registry.PROVIDER_PRESETS]
-        _cap_labels: dict[str, str] = {
-            "chat": "Chat",
-            "completions": "Completions",
-            "vision": "Vision",
-            "embeddings": "Embeddings",
-            "image": "Images",
-            "audio": "Audio",
-            "speech": "Speech",
-            "generations": "Generations",
-            "videos": "Videos",
-        }
-        capability_choices = [
-            {
-                "id": cap,
-                "label": _cap_labels.get(
-                    cap,
-                    cap.replace(".", " ").replace("_", " ").capitalize(),
-                ),
-            }
-            for cap in service_registry._CAPABILITY_CHOICES
-        ]
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"presets": presets, "capabilities": capability_choices},
-        )
-
     @router.post("/operator/services")
     async def add_service(request: Request) -> JSONResponse:
         ctx = (await asyncio.to_thread(_guard, request))
@@ -2375,14 +2350,29 @@ def create_admin_router(
         try:
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
-            form = _validate_service_form(body)
-            record = store.add_service(
-                data=form,
-                actor=ctx,
-                expected_generation=expected_generation,
-            )
+            if "definition" in body:
+                # Add engine: the server re-runs the check and enforces the gate.
+                record = await engine_service.create(ctx, body, expected_generation=expected_generation)
+                response = _registry_response(record, response_status=status.HTTP_201_CREATED)
+                payload = json.loads(response.body)
+                payload["service_id"] = record["service_id"]
+                kept = {k: v for k, v in response.headers.items() if k.lower() in ("etag", "cache-control")}
+                return JSONResponse(status_code=status.HTTP_201_CREATED, content=payload, headers=kept)
+            else:
+                form = _validate_service_form(body)
+                record = store.add_service(
+                    data=form,
+                    actor=ctx,
+                    expected_generation=expected_generation,
+                )
         except _RouteError as exc:
             return exc.as_response()
+        except engine_admin.EngineRouteError as exc:
+            return exc.as_response()
+        except engine_check.DraftError as exc:
+            return engine_admin.EngineRouteError(
+                status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=exc.field
+            ).as_response()
         except PermissionError as exc:
             return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
@@ -2399,21 +2389,31 @@ def create_admin_router(
         try:
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
-            # Endpoint is only required for full edits; metadata-only edits (name,
-            # enabled, note — the only fields allowed for managed-substrate rows)
-            # may omit host/url.
-            has_host = bool(str(body.get("host") or "").strip())
-            has_url = bool(str(body.get("base_url") or "").strip())
-            require_endpoint = has_host or has_url
-            form = _validate_service_form(body, require_endpoint=require_endpoint, require_name=False)
-            record = store.update_service(
-                service_id=service_id,
-                data=form,
-                actor=ctx,
-                expected_generation=expected_generation,
-            )
+            if "definition" in body or "values" in body:
+                # The engine page: an edit that changes the connection re-runs the check.
+                record = await engine_service.update(ctx, service_id, body, expected_generation=expected_generation)
+            else:
+                # Endpoint is only required for full edits; metadata-only edits (name,
+                # enabled, note — the only fields allowed for managed-substrate rows)
+                # may omit host/url.
+                has_host = bool(str(body.get("host") or "").strip())
+                has_url = bool(str(body.get("base_url") or "").strip())
+                require_endpoint = has_host or has_url
+                form = _validate_service_form(body, require_endpoint=require_endpoint, require_name=False)
+                record = store.update_service(
+                    service_id=service_id,
+                    data=form,
+                    actor=ctx,
+                    expected_generation=expected_generation,
+                )
         except _RouteError as exc:
             return exc.as_response()
+        except engine_admin.EngineRouteError as exc:
+            return exc.as_response()
+        except engine_check.DraftError as exc:
+            return engine_admin.EngineRouteError(
+                status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=exc.field
+            ).as_response()
         except PermissionError as exc:
             return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:

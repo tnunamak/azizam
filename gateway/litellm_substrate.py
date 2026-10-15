@@ -19,6 +19,7 @@ from gateway.compat import get_env
 
 import os
 import hashlib
+import re
 from pathlib import Path
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -270,6 +271,42 @@ def _is_openai_compatible(service: Mapping[str, Any]) -> bool:
     return "openai" in normalize_string_list(service.get("capabilities"))
 
 
+def reaches_engine_directly(service_id: str, record: Mapping[str, Any]) -> bool:
+    """True when the model router calls this service at its own address.
+
+    Not for a service it does not route, or one it reaches through the
+    gateway's lifecycle hop: there the address path, headers and reply time a
+    service record holds are not what reaches the engine.
+    """
+    service = normalize_service_record(service_id, record)
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    if not _is_openai_compatible(service) or config.get("gateway_lifecycle"):
+        return False
+    try:
+        deployments = _deployment_records(service)
+    except ValueError:
+        return False
+    return not any(deployment["gateway_lifecycle"] for deployment in deployments)
+
+
+def routed_models(service_id: str, record: Mapping[str, Any]) -> tuple[list[str], str | None]:
+    """The public names the model router serves for this record, and its paid provider (None when local).
+
+    A remote provider's names carry its prefix, as the router serves them. A
+    record the router does not route gives no names.
+    """
+    service = normalize_service_record(service_id, record)
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    if not service.get("enabled", True) or not _is_openai_compatible(service):
+        return [], None
+    try:
+        deployments = _deployment_records(service)
+    except ValueError:
+        return [], None
+    provider = _provider_id(service, config) if is_remote_provider_config(config) else None
+    return [str(deployment["model_group"]) for deployment in deployments], provider
+
+
 def _deployment_records(service: Mapping[str, Any]) -> list[dict[str, Any]]:
     config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
     provider_id = _provider_id(service, config)
@@ -430,9 +467,10 @@ def _model_list_entries(
         else:
             if is_remote_provider_config(config) and not base_url:
                 raise ValueError("remote provider requires an explicit api_base")
-            api_key_ref = _api_key_ref(config, secret_refs, base_url)
+            api_key_ref = _api_key_ref(config, secret_refs, base_url, service_id=str(service.get("id") or ""))
             if base_url:
                 litellm_params["api_base"] = base_url
+            litellm_params.update(_engine_request_settings(config))
             if api_key_ref:
                 litellm_params["api_key"] = api_key_ref
             elif base_url:
@@ -459,6 +497,79 @@ def _model_list_entries(
         if model_info:
             entry["model_info"] = model_info
         out.append(entry)
+    return out
+
+
+_HEADER_NAME_RE = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+# Headers the gateway or the HTTP layer sets itself.
+TRANSPORT_HEADERS = frozenset({
+    "host", "content-length", "content-type", "transfer-encoding", "connection", "upgrade", "te",
+    "trailer", "keep-alive", "proxy-connection", "accept-encoding",
+})
+# A header whose name looks like it carries a credential. Header values are plain
+# text in the registry and the router's config file, so a key never goes there.
+CREDENTIAL_HEADER_RE = re.compile(r"auth|key|token|secret|passw|cookie|session|credential|signature", re.IGNORECASE)
+
+
+def header_problem(name: str, value: str) -> str:
+    """Why a plain engine header cannot be sent, or ``""`` when it can."""
+    if not _HEADER_NAME_RE.fullmatch(name):
+        return "not_a_name"
+    if name.lower() in TRANSPORT_HEADERS:
+        return "transport"
+    if CREDENTIAL_HEADER_RE.search(name):
+        return "credential"
+    if not value or not value.isascii() or any(ch in value for ch in "\r\n"):
+        return "bad_value"
+    return ""
+
+
+def engine_headers(config: Mapping[str, Any]) -> dict[str, str]:
+    """The plain request headers a service record lists as ``[{"name", "value"}]`` rows.
+
+    A row that fails ``header_problem`` is left out: a raw service edit can store
+    anything, and nothing malformed or credential-shaped is sent.
+    """
+    out: dict[str, str] = {}
+    for row in config.get("headers") or () if isinstance(config.get("headers"), list) else ():
+        if isinstance(row, Mapping) and isinstance(row.get("name"), str) and isinstance(row.get("value"), str):
+            name = row["name"].strip()
+            if not header_problem(name, row["value"]):
+                out[name] = row["value"]
+    return out
+
+
+def router_reply_timeout(registry: Mapping[str, Any], model_name: str) -> float | None:
+    """The reply time the record serving ``model_name`` set for the router, if any.
+
+    The gateway's own wait for the router must be at least this long, or the
+    owner's setting would be cut short by the hop in front of it.
+    """
+    services = registry.get("services") if isinstance(registry, Mapping) else {}
+    for service in sorted(_normalize_services(services if isinstance(services, Mapping) else {}),
+                          key=lambda row: (row["priority"], row["id"])):
+        if not service.get("enabled", True) or not _is_openai_compatible(service):
+            continue
+        config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+        try:
+            deployments = _deployment_records(service)
+        except ValueError:
+            continue
+        for deployment in deployments:
+            if str(deployment["model_group"]) == model_name and not (deployment["gateway_lifecycle"] or config.get("gateway_lifecycle")):
+                return _engine_request_settings(config).get("timeout")
+    return None
+
+
+def _engine_request_settings(config: Mapping[str, Any]) -> dict[str, Any]:
+    """What the router sends and how long it waits, from the record's ``headers`` and ``timeout``."""
+    out: dict[str, Any] = {}
+    headers = engine_headers(config)
+    if headers:
+        out["extra_headers"] = headers
+    timeout = config.get("timeout")
+    if isinstance(timeout, (int, float)) and not isinstance(timeout, bool) and timeout > 0:
+        out["timeout"] = float(timeout)
     return out
 
 
@@ -590,7 +701,9 @@ def _lifecycle_api_key(config: Mapping[str, Any], api_base: str) -> str:
     return LOCAL_NO_AUTH_API_KEY
 
 
-def _api_key_ref(config: Mapping[str, Any], secret_refs: Mapping[str, Any], api_base: str = "") -> str:
+def _api_key_ref(
+    config: Mapping[str, Any], secret_refs: Mapping[str, Any], api_base: str = "", *, service_id: str = "",
+) -> str:
     if not is_remote_provider_config(config) and not _credential_bound_to(config, api_base):
         # A local record names a key; send it only to the host it was attached for.
         return ""
@@ -610,7 +723,8 @@ def _api_key_ref(config: Mapping[str, Any], secret_refs: Mapping[str, Any], api_
         return f"os.environ/{env_name}"
     secret_id = str(config.get("api_key_secret_id") or "").strip()
     if secret_id:
-        env_name = secret_env_name_for_provider(str(config.get("provider_id") or ""), secret_id)
+        # A local engine has no provider id; the sidecar names its variable after the service id.
+        env_name = secret_env_name_for_provider(str(config.get("provider_id") or service_id), secret_id)
         return f"os.environ/{env_name}"
     if secret_refs.get("api_key") == SECRET_PLACEHOLDER:
         return "os.environ/AZIZAM_DOWNSTREAM_API_KEY"

@@ -96,6 +96,7 @@ from gateway.decision_routing import DecisionRuntime
 from gateway import rerank as rerank_api
 from gateway import stable_aliases
 from gateway import model_metadata
+from gateway import engine_check
 from gateway import speech_stream
 from gateway import custom_voices
 from gateway import voice_audio
@@ -297,7 +298,9 @@ from gateway.image_output import (
     quality_steps_from_manifest,
 )
 from gateway.litellm_substrate import (
+    engine_headers,
     litellm_known_model_names,
+    router_reply_timeout,
     litellm_public_model_records,
     write_litellm_config_artifact,
 )
@@ -15002,6 +15005,16 @@ app.include_router(create_provider_admin_router(
     spending_provider=lambda: provider_ledger_spending_snapshot(path=ADMIN_DB_PATH.parent / "provider_spend.db"),
 ))
 
+def _engine_check_self_ports() -> set[int]:
+    """The ports where this gateway answers on this computer, read when an engine check runs.
+
+    Its configured listen port (AZIZAM_PORT or proxy.port) and the usual
+    gateway ports (another instance on this computer is a gateway too). Add
+    engine never calls these on this computer.
+    """
+    return {int(PROXY_PORT), *engine_check.GATEWAY_PORTS}
+
+
 app.include_router(
     create_admin_router(
         ADMIN_STORE,
@@ -15014,6 +15027,8 @@ app.include_router(
         known_model_names_getter=lambda: litellm_known_model_names(
             ADMIN_STORE.get_service_registry()
         ),
+        # Add engine never calls the gateway itself: its default ports and the one it listens on.
+        engine_fetch=engine_check.make_http_fetch(gateway_ports=_engine_check_self_ports),
     )
 )
 
@@ -27511,7 +27526,8 @@ async def _forward_litellm_proxy_request(
             code="missing_required_parameter",
         )
 
-    remote_provider = provider_execution.provider_for_model(ADMIN_STORE.get_service_registry(), model_name)
+    live_registry = ADMIN_STORE.get_service_registry()
+    remote_provider = provider_execution.provider_for_model(live_registry, model_name)
     if remote_provider is not None:
         admission = _dispatch_admission_response(
             "text.embeddings" if request_path == "/v1/embeddings" else "chat.generate", auth_context=auth_context, service_id=remote_provider.id,
@@ -27624,6 +27640,10 @@ async def _forward_litellm_proxy_request(
         if request_path == "/v1/embeddings"
         else UPSTREAM_READ_TIMEOUT
     )
+    engine_reply_timeout = router_reply_timeout(live_registry, model_name)
+    if engine_reply_timeout is not None:
+        # The router gives up at the engine's own reply time; wait a little longer for its answer.
+        read_timeout = max(read_timeout, engine_reply_timeout + 5.0)
     execution_request = LlmExecutionRequest(
         method=request.method,
         url=litellm_url(
@@ -28616,6 +28636,8 @@ def _build_provider_native_targets() -> dict[str, dict[str, Any]]:
             "host": host,
             "enabled": True,
             "timeout": float(raw_cfg.get("timeout") or UPSTREAM_READ_TIMEOUT),
+            # The plain headers the owner listed for this engine (Add engine, Request headers).
+            "headers": engine_headers(raw_cfg),
         }
     return targets
 
@@ -28924,6 +28946,10 @@ async def provider_native_request(
             str(target["service"]),
             native_request_path,
         )
+        for name, value in (target.get("headers") or {}).items():
+            for existing in [key for key in headers if key.lower() == name.lower()]:
+                del headers[existing]
+            headers[name] = value
         url = f"{target['host']}{native_request_path}"
         query = backend_query_string(request.url.query)
         if query:

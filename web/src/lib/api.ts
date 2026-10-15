@@ -88,12 +88,15 @@ export interface ApiErrorEnvelope {
 export class ApiError extends Error {
   readonly code: string;
   readonly status: number;
+  /** The whole error body, for routes that answer with more than code and message. */
+  readonly payload?: unknown;
 
-  constructor(code: string, message: string, status: number) {
+  constructor(code: string, message: string, status: number, payload?: unknown) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
+    this.payload = payload;
   }
 }
 
@@ -282,27 +285,6 @@ export interface ServiceRegistry {
 
 export interface ServiceRegistryResponse {
   service_registry: ServiceRegistry;
-}
-
-export interface ProviderPreset {
-  id: string;
-  label: string;
-  base_path: string;
-  default_port: number | null;
-  protocol: string | null;
-  capabilities: string[];
-  native_passthrough: boolean;
-}
-
-export interface CapabilityChoice {
-  id: string;
-  label: string;
-}
-
-export interface PresetsResponse {
-  presets: ProviderPreset[];
-  /** Canonical capability choices supplied by the server. */
-  capabilities?: CapabilityChoice[];
 }
 
 // ---------------------------------------------------------------------------
@@ -561,6 +543,7 @@ async function requestSession(): Promise<Session> {
         payload.error.code,
         payload.error.message,
         response.status,
+        payload,
       );
     }
     throw new ApiError(
@@ -694,6 +677,7 @@ export async function adminFetch<T>(
         payload.error.code,
         payload.error.message,
         response.status,
+        payload,
       );
     }
     throw new ApiError(
@@ -787,16 +771,6 @@ export const api = {
       adminFetch<ServiceRegistryResponse>(
         "/admin/api/operator/service-registry",
       ).then((r) => r.service_registry),
-    presets: () =>
-      adminFetch<PresetsResponse>("/admin/api/operator/service-presets"),
-    add: (input: Record<string, unknown>) =>
-      adminRegistryMutation<ServiceRegistryResponse>(
-        "/admin/api/operator/services",
-        {
-          method: "POST",
-          body: input,
-        },
-      ).then((r) => r.service_registry),
     edit: (serviceId: string, input: Record<string, unknown>) =>
       adminRegistryMutation<ServiceRegistryResponse>(
         `/admin/api/operator/services/${serviceId}`,
@@ -807,25 +781,6 @@ export const api = {
         `/admin/api/operator/services/${serviceId}`,
         { method: "DELETE" },
       ).then((r) => r.service_registry),
-    testConnection: (input: Record<string, unknown>) =>
-      adminFetch<{
-        probe: {
-          ok: boolean;
-          status: number | null;
-          error: string;
-          url: string;
-        };
-      }>("/admin/api/operator/services/test", {
-        method: "POST",
-        body: input,
-      }).then((r) => r.probe),
-    detectModels: (input: Record<string, unknown>) =>
-      adminFetch<{
-        detected: { ok: boolean; models: string[]; error: string };
-      }>("/admin/api/operator/services/detect-models", {
-        method: "POST",
-        body: input,
-      }).then((r) => r.detected),
   },
 
   status: () =>
@@ -869,7 +824,6 @@ export const queryKeys = {
     ["audit", params] as const,
   auditEvent: (eventId: string | null) => ["audit", "event", eventId] as const,
   serviceRegistry: ["serviceRegistry"] as const,
-  servicePresets: ["servicePresets"] as const,
   status: ["status"] as const,
   litellmConfig: ["litellmConfig"] as const,
   operatorOverrides: ["operator", "overrides"] as const,

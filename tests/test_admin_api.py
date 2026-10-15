@@ -2896,7 +2896,7 @@ class AdminServiceCrudTests(unittest.TestCase):
         client, store = _make_client(self._store_with_provisioned())
         resp = client.post(
             "/admin/api/operator/services",
-            json={"name": "My vLLM", "preset": "vllm", "base_url": "http://10.0.0.5:8000/v1"},
+            json={"name": "My vLLM", "base_url": "http://10.0.0.5:8000/v1"},
             headers=_auth(),
         )
         self.assertEqual(resp.status_code, 201)
@@ -3072,7 +3072,7 @@ class AdminServiceCrudTests(unittest.TestCase):
         # Create a service first.
         client.post(
             "/admin/api/operator/services",
-            json={"name": "tgw", "preset": "openai-compatible", "base_url": "http://h:7860/v1"},
+            json={"name": "tgw", "protocol": "openai-compatible", "base_url": "http://h:7860/v1"},
             headers=_auth(),
         )
         # Patch with a models list.
@@ -3158,49 +3158,29 @@ class AdminServiceCrudTests(unittest.TestCase):
 
 
 class AdminServicePresetsTests(unittest.TestCase):
-    def test_presets_endpoint_returns_list_with_custom_first(self) -> None:
-        """GET /operator/service-presets returns all presets; custom is first."""
+    def test_engine_definitions_replace_the_preset_list(self) -> None:
+        """GET /engine-definitions lists the definitions; Any OpenAI-compatible server is first."""
         client, _ = _make_client()
-        resp = client.get("/admin/api/operator/service-presets", headers=_auth())
+        resp = client.get("/admin/api/engine-definitions", headers=_auth())
         self.assertEqual(resp.status_code, 200)
-        presets = resp.json()["presets"]
-        self.assertIsInstance(presets, list)
-        self.assertGreater(len(presets), 1)
-        # Custom preset must be first.
-        self.assertEqual(presets[0]["id"], "openai-compatible")
+        definitions = resp.json()["definitions"]
+        self.assertEqual(definitions[0]["definition"], "openai-compatible")
+        for row in definitions:
+            for field in ("definition", "definition_version", "title", "summary", "fields", "capabilities", "steps"):
+                self.assertIn(field, row, f"definition {row.get('definition')!r} missing {field!r}")
+        self.assertEqual(client.get("/admin/api/operator/service-presets", headers=_auth()).status_code, 404)
 
-    def test_presets_each_have_required_fields(self) -> None:
-        """Every preset must have id, label, base_path, default_port, capabilities."""
+    def test_engine_definitions_require_admin(self) -> None:
         client, _ = _make_client()
-        resp = client.get("/admin/api/operator/service-presets", headers=_auth())
-        for preset in resp.json()["presets"]:
-            for field in ("id", "label", "base_path", "capabilities", "native_passthrough"):
-                self.assertIn(field, preset, f"preset {preset.get('id')!r} missing {field!r}")
-
-    def test_presets_requires_admin(self) -> None:
-        client, _ = _make_client()
-        resp = client.get("/admin/api/operator/service-presets")
+        resp = client.get("/admin/api/engine-definitions")
         self.assertEqual(resp.status_code, 401)
 
-    def test_presets_response_includes_capabilities_list(self) -> None:
-        """GET /operator/service-presets includes capabilities [{id, label}] for dedup."""
+    def test_a_preset_body_is_refused_with_the_way_forward(self) -> None:
         client, _ = _make_client()
-        resp = client.get("/admin/api/operator/service-presets", headers=_auth())
-        self.assertEqual(resp.status_code, 200)
-        body = resp.json()
-        self.assertIn("capabilities", body, "response must include 'capabilities' key")
-        caps = body["capabilities"]
-        self.assertIsInstance(caps, list)
-        self.assertGreater(len(caps), 0, "capabilities list must be non-empty")
-        for cap in caps:
-            self.assertIn("id", cap, f"capability entry missing 'id': {cap!r}")
-            self.assertIn("label", cap, f"capability entry missing 'label': {cap!r}")
-            self.assertIsInstance(cap["id"], str)
-            self.assertIsInstance(cap["label"], str)
-        # Spot-check a few expected values
-        ids = [c["id"] for c in caps]
-        for expected in ("chat", "completions", "vision", "embeddings"):
-            self.assertIn(expected, ids, f"expected capability {expected!r} missing")
+        resp = client.post("/admin/api/operator/services", headers=_auth(),
+                           json={"name": "x", "preset": "openai-compatible", "base_url": "http://h:1/v1"})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("engine-definitions", resp.json()["error"]["message"])
 
     def test_managed_substrate_remove_is_blocked(self) -> None:
         """DELETE on the litellm managed-substrate row returns 403."""
@@ -3239,24 +3219,6 @@ class AdminServicePresetsTests(unittest.TestCase):
         self.assertEqual(svc["name"], "LiteLLM Custom")
         # Config must still be derived (execution_substrate preserved).
         self.assertEqual(svc["config"]["execution_substrate"], "litellm")
-
-    def test_presets_capabilities_include_generations_and_videos(self) -> None:
-        """Capability vocab must include 'generations' and 'videos' (H2: no hidden caps)."""
-        client, _ = _make_client()
-        resp = client.get("/admin/api/operator/service-presets", headers=_auth())
-        self.assertEqual(resp.status_code, 200)
-        caps = resp.json()["capabilities"]
-        ids = [c["id"] for c in caps]
-        self.assertIn("generations", ids,
-                      "generations must appear in the capability vocabulary")
-        self.assertIn("videos", ids,
-                      "videos must appear in the capability vocabulary")
-        # Both must have non-empty human labels
-        cap_by_id = {c["id"]: c for c in caps}
-        self.assertTrue(cap_by_id["generations"]["label"],
-                        "generations must have a non-empty label")
-        self.assertTrue(cap_by_id["videos"]["label"],
-                        "videos must have a non-empty label")
 
     def test_detect_models_comfyui_protocol_returns_not_ok(self) -> None:
         """POST /operator/services/detect-models for a comfyui-protocol service.

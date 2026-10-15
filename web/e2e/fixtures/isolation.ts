@@ -227,6 +227,8 @@ async function noWorkLeft(request: APIRequestContext) {
     "sqlite3",
     [
       "-readonly",
+      "-cmd",
+      ".timeout 10000",
       path.join(fixtureStateDir(port), "media_jobs.db"),
       "SELECT count(*) FROM media_jobs WHERE status IN ('queued','running')",
     ],

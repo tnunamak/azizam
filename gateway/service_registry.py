@@ -1094,77 +1094,6 @@ def is_litellm_service_record(raw_id: Any, service: Mapping[str, Any]) -> bool:
 # derived and locked; rename/enable/note are still allowed; removal is blocked.
 # ---------------------------------------------------------------------------
 
-# Provider presets for the "add a backend" form. Each pre-fills the connection
-# fields for a common upstream; "openai-compatible" is the custom escape hatch.
-# Kept here (not in the renderer) so the form and any API consumer share one
-# source of truth. base_path/default_port are hints; the operator can override.
-# ``protocol: "openai-compatible"`` is what marks a service as routable through
-# the LiteLLM substrate (litellm_substrate._is_openai_compatible). Every LLM
-# preset sets it; ComfyUI (image) does not.
-PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
-    {
-        "id": "openai-compatible",
-        "label": "OpenAI-compatible (custom)",
-        "base_path": "/v1",
-        "default_port": None,
-        "protocol": "openai-compatible",
-        "capabilities": ["chat", "completions"],
-        "native_passthrough": True,
-        "transforms": ["reasoning-effort-final-chat"],
-    },
-    {
-        "id": "vllm",
-        "label": "vLLM",
-        "base_path": "/v1",
-        "default_port": 8000,
-        "protocol": "openai-compatible",
-        "capabilities": ["chat", "completions"],
-        "native_passthrough": True,
-        "transforms": ["reasoning-effort-final-chat"],
-    },
-    {
-        "id": "ollama",
-        "label": "Ollama",
-        "base_path": "/v1",
-        "default_port": 11434,
-        "protocol": "openai-compatible",
-        "capabilities": ["chat", "completions"],
-        "native_passthrough": True,
-        "transforms": ["reasoning-effort-final-chat"],
-    },
-    {
-        "id": "lmstudio",
-        "label": "LM Studio",
-        "base_path": "/v1",
-        "default_port": 1234,
-        "protocol": "openai-compatible",
-        "capabilities": ["chat", "completions"],
-        "native_passthrough": True,
-        "transforms": ["reasoning-effort-final-chat"],
-    },
-    {
-        "id": "comfyui",
-        "label": "ComfyUI",
-        "base_path": "",
-        "default_port": 8188,
-        "protocol": None,
-        "capabilities": ["image"],
-        "native_passthrough": False,
-    },
-)
-
-_CAPABILITY_CHOICES: tuple[str, ...] = (
-    "chat",
-    "completions",
-    "vision",
-    "embeddings",
-    "image",
-    "audio",
-    "speech",
-    "generations",
-    "videos",
-)
-
 # Per-protocol fields beyond the generic openai-compatible set.  Each entry
 # lists fields that service_form_to_raw should accept and round-trip for that
 # protocol.  Fields not listed here for a given protocol pass through the
@@ -1174,14 +1103,6 @@ _PROTOCOL_FIELDS: dict[str, tuple[str, ...]] = {
     # openai-compatible uses the generic path; listed here for documentation.
     "openai-compatible": (),
 }
-
-
-def provider_preset(preset_id: Any) -> dict[str, Any] | None:
-    pid = normalize_id(preset_id)
-    for preset in PROVIDER_PRESETS:
-        if preset["id"] == pid:
-            return preset
-    return None
 
 
 def upsert_service_in_registry(
@@ -1360,8 +1281,6 @@ def split_base_url(value: Any) -> dict[str, Any]:
 _FORM_CONSUMED_KEYS: frozenset[str] = frozenset({
     # Parsed/derived — stored as host+port+base_path instead.
     "base_url",
-    # Form-only routing hint — not stored in config.
-    "preset",
     # Top-level record fields, not config fields.
     "name",
     "enabled",
@@ -1400,29 +1319,18 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
     drops stored config keys the form has no widget for (e.g. comfyui protocol
     fields, or any future extension field).
     """
+    if "preset" in form:
+        # The preset list is gone (engine definitions replace it). Passed through,
+        # the key would be stored and the record would silently not route.
+        raise ValueError("engine presets are gone: add an engine with a definition and its values "
+                         "(registry/engine_definitions.json), or send a raw record with its protocol")
     raw: dict[str, Any] = {}
     raw.update(split_base_url(form.get("base_url")))
     base_url = str(form.get("base_url") or "").strip().rstrip("/")
     if base_url and is_remote_provider_config(form):
         raw["base_url"] = base_url
 
-    preset = provider_preset(form.get("preset"))
-    if preset:
-        raw.setdefault("base_path", preset["base_path"])
-        if preset.get("default_port") and "port" not in raw:
-            raw["port"] = int(preset["default_port"])
-        raw.setdefault("native_passthrough", preset["native_passthrough"])
-        if "transforms" in preset and "transforms" not in form:
-            raw["transforms"] = copy.deepcopy(preset["transforms"])
-        # The preset's protocol is what makes the service routable through the
-        # LiteLLM substrate (openai-compatible). It's a config default the
-        # operator rarely needs to see; an explicit form `protocol` overrides it.
-        if preset.get("protocol"):
-            raw.setdefault("protocol", preset["protocol"])
-        if not normalize_string_list(form.get("capabilities")):
-            raw["capabilities"] = list(preset["capabilities"])
-
-    # Explicit fields win over preset/URL-derived values.
+    # Explicit fields win over URL-derived values.
     for key in ("name", "host", "base_path", "protocol", "health_endpoint",
                 "api_key_env", "note", "service_name"):
         value = form.get(key)
@@ -1435,7 +1343,7 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
     if form.get("priority") not in (None, ""):
         raw["priority"] = int(form["priority"])
 
-    # resources is a nested dict; merge over any preset-derived defaults.
+    # resources is a nested dict.
     resources = form.get("resources")
     if isinstance(resources, Mapping) and resources:
         raw["resources"] = dict(resources)

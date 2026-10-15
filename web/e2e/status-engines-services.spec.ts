@@ -119,21 +119,6 @@ async function mockEngineApis(
           options.empty ? { backends: [] } : status,
       });
   });
-  await page.route("**/admin/api/operator/service-presets", (route) =>
-    fulfilJson(route, {
-        presets: [
-          {
-            id: "openai-compatible",
-            label: "OpenAI compatible",
-            base_path: "/v1",
-            default_port: null,
-            protocol: "openai-compatible",
-            capabilities: ["chat"],
-            native_passthrough: false,
-          },
-        ],
-      }),
-  );
   await page.route("**/admin/api/operator/service-registry", (route) => {
     if (options.registryError) {
       return fulfilJson(route, { error: { code: "offline", message: "Registry offline" } }, { status: 503 });
@@ -168,16 +153,12 @@ function engineCard(page: Page, name: string) {
   return page.locator("tr").filter({ hasText: name });
 }
 
-async function openEngineEdit(
+async function openEngine(
   page: Page,
   card: ReturnType<typeof engineCard>,
   serviceName: string,
 ) {
-  const summary = card
-    .getByRole("button", { name: new RegExp(serviceName) })
-    .first();
-  await summary.click();
-  return page.getByRole("dialog", { name: "Edit engine" });
+  await card.getByRole("button", { name: new RegExp(serviceName) }).first().click();
 }
 
 // Copy, truth tables and the add / edit / toggle / remove request bodies are
@@ -207,13 +188,11 @@ for (const { state, theme, width } of cases) {
       ).toBeVisible();
       const chatCard = engineCard(page, "Local chat engine");
       await expect(chatCard).toBeVisible();
-      const editSheet = await openEngineEdit(
-        page,
-        chatCard,
-        "Local chat engine",
-      );
-      await expect(editSheet).toBeVisible();
-      await page.keyboard.press("Escape");
+      // A row opens the engine page; the list comes back on Back.
+      await openEngine(page, chatCard, "Local chat engine");
+      await expect(page).toHaveURL(/engine=chat/);
+      await page.goBack();
+      await expect(chatCard).toBeVisible();
     } else if (state === "empty") {
       await expect(page.getByText("No engines configured")).toBeVisible();
     } else {
