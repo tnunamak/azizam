@@ -48,7 +48,7 @@ test.beforeAll(async ({ baseURL }) => {
     process: spawn(
       process.env.UI_E2E_PYTHON ?? path.resolve("../venv/bin/python"),
       ["-m", "uvicorn", "engines_key_gate:app", "--app-dir", "e2e", "--host", "127.0.0.1", "--port", String(port)],
-      { env: { PATH: process.env.PATH, HOME: home, PYTHONDONTWRITEBYTECODE: "1" }, stdio: "ignore" },
+      { env: { PATH: process.env.PATH, NODE_ENV: "test", HOME: home, PYTHONDONTWRITEBYTECODE: "1" }, stdio: "ignore" },
     ),
   }));
   for (const gate of gates) {
