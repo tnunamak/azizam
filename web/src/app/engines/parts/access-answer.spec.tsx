@@ -1,10 +1,15 @@
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { accessAnswer } from "../__fixtures__/test-utils";
-import { AccessAnswer } from "./access-answer";
+import { enginesApi, type AccessModel, type EngineAccess } from "@/lib/engines-api";
+import { accessAnswer, renderWithClient } from "../__fixtures__/test-utils";
+import { AccessAnswer, AccessAsk } from "./access-answer";
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("AccessAnswer", () => {
   it("you and two plans: the sentence, a link per plan, who holds it, and the Access plans link", () => {
@@ -107,5 +112,50 @@ describe("AccessAnswer", () => {
   it("a qualifier says when the answer is for unsaved changes", () => {
     render(<AccessAnswer access={accessAnswer("nobody")} qualifier="After you save" />);
     expect(screen.getByText("After you save")).toBeVisible();
+  });
+});
+
+function AskHarness() {
+  const [models, setModels] = useState<AccessModel[]>(["qwen3-32b"]);
+  return (
+    <>
+      <button type="button" onClick={() => setModels(["gemma-3-12b-it"])}>
+        Change models
+      </button>
+      <AccessAsk capabilities={["chat"]} models={models} debounceMs={60} />
+    </>
+  );
+}
+
+describe("AccessAsk: an answer for other models is never shown as the answer for these", () => {
+  it("stale answer: the old sentence is gone during the debounce and while refetching, and the new one shows when it resolves", async () => {
+    const user = userEvent.setup();
+    const first = accessAnswer("you_and_family");
+    const second = accessAnswer("nobody");
+    let release!: (answer: EngineAccess) => void;
+    const ask = vi
+      .spyOn(enginesApi, "access")
+      .mockResolvedValueOnce(first)
+      .mockImplementationOnce(() => new Promise<EngineAccess>((resolve) => (release = resolve)));
+    renderWithClient(<AskHarness />);
+    expect(await screen.findByText(first.sentence)).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Change models" }));
+    // During the debounce the request has not gone out yet.
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(first.sentence)).toBeNull();
+    expect(screen.queryByRole("list", { name: "Plans that include these models" })).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("Checking who can use these…");
+
+    // While the new answer is being fetched.
+    await waitFor(() => expect(ask).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(first.sentence)).toBeNull();
+    expect(screen.queryByRole("list", { name: "Plans that include these models" })).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("Checking who can use these…");
+
+    release(second);
+    expect(await screen.findByText(second.sentence)).toBeVisible();
+    expect(screen.queryByText(/Checking who can use these/)).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
