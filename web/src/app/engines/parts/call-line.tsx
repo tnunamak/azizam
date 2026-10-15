@@ -11,7 +11,7 @@ export function CallLine({
   values,
 }: {
   definition: EngineDefinition;
-  values: Pick<EngineValues, "address" | "path" | "path_prefix">;
+  values: Pick<EngineValues, "address" | "path_prefix">;
 }) {
   const line = callLine(definition, values);
   const twice = line.kind === "call" && line.twice;
@@ -24,12 +24,6 @@ export function CallLine({
       <Icon aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
       <span className="min-w-0 [overflow-wrap:anywhere]">
         {line.kind === "empty" && "Azizam shows the exact request it will make here."}
-        {line.kind === "needs-path" && (
-          <>
-            Azizam will call <b className="font-mono font-medium">{`${definition.check_request.method} ${line.base}`}</b> plus the
-            path you type.
-          </>
-        )}
         {line.kind === "call" && (
           <>
             Azizam will call <b className="font-mono font-medium">{line.request}</b>

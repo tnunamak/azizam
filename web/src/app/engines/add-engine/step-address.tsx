@@ -6,11 +6,10 @@ import { Input } from "@/components/ui/input";
 import { CallLine } from "../parts/call-line";
 import { FindingCard } from "../parts/finding-card";
 import { FormField, LinkButton, Note, OwnerOnlyTag } from "../parts/form";
-import { fieldOf, hasPath } from "./draft";
+import { fieldOf } from "./draft";
 
 export interface ConnectionDraft {
   address: string;
-  path: string;
   key: string;
   envOpen: boolean;
   envName: string;
@@ -18,12 +17,11 @@ export interface ConnectionDraft {
 
 export interface FieldErrors {
   address?: string;
-  path?: string;
   api_key?: string;
   api_key_env?: string;
 }
 
-/** The fields of step 2, drawn from the definition: address, path, key, or the key's variable name. */
+/** The fields of step 2, drawn from the definition: address, key, or the key's variable name. */
 export function ConnectionFields({
   definition,
   draft,
@@ -50,15 +48,12 @@ export function ConnectionFields({
   onRecheck: () => void;
 }) {
   const address = fieldOf(definition, "address");
-  const path = fieldOf(definition, "path");
   const key = fieldOf(definition, "api_key");
   const env = fieldOf(definition, "api_key_env");
-  const withPath = hasPath(definition);
   const card = (field: Finding["field"]) =>
     finding && finding.field === field ? (
       <FindingCard finding={finding} onFixPath={onFixPath} onOpenExisting={onOpenExisting} onRecheck={onRecheck} />
     ) : null;
-  const callLine = <CallLine definition={definition} values={{ address: draft.address, path: draft.path }} />;
 
   return (
     <div className="flex flex-col gap-4">
@@ -77,7 +72,7 @@ export function ConnectionFields({
           error={errors.address}
           after={
             <>
-              {!withPath && callLine}
+              <CallLine definition={definition} values={{ address: draft.address }} />
               {card("address")}
               {finding?.field === "key" && (
                 <p className="text-meta text-success flex items-center gap-1.5">
@@ -102,36 +97,6 @@ export function ConnectionFields({
             />
           )}
         </FormField>
-      )}
-      {path && (
-        <FormField
-          label={path.label}
-          required
-          help={path.help}
-          error={errors.path}
-          after={
-            <>
-              {callLine}
-              {card("path")}
-            </>
-          }
-        >
-          {(control) => (
-            <Input
-              {...control}
-              className="font-mono"
-              placeholder={path.placeholder}
-              value={draft.path}
-              disabled={disabled}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => onChange({ path: event.target.value })}
-            />
-          )}
-        </FormField>
-      )}
-      {definition.flow === "workflow" && (
-        <Note tone="info">Next you pick the workflow file and say which of its inputs Azizam fills in.</Note>
       )}
       {owner && draft.envOpen && env ? (
         <FormField

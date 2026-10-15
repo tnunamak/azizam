@@ -1,5 +1,5 @@
 /**
- * Add engine: the definitions, the check, the draft test, the workflow read
+ * Add engine: the definitions, the check, the draft test, the access answer
  * and the engine view. The dialog and the engine page call these; a script or
  * an MCP tool calls the same routes (gateway/engine_admin.py).
  */
@@ -9,9 +9,6 @@ import {
   ApiError,
   type ServiceRegistryResponse,
 } from "@/lib/api";
-
-/** Sent in place of a stored secret: "keep what is stored". */
-export const SECRET_MASK = "<configured>";
 
 export type FieldType =
   | "text"
@@ -48,13 +45,6 @@ export interface EngineField {
   items?: "transform" | "text";
 }
 
-export interface WorkflowInputSpec {
-  key: string;
-  label: string;
-  required?: boolean;
-  help: string;
-}
-
 export interface EngineDefinition {
   definition: string;
   definition_version: number;
@@ -63,16 +53,13 @@ export interface EngineDefinition {
   summary: string;
   badge?: string;
   keywords?: string[];
-  flow: "detect" | "declared" | "workflow";
-  declared_capability?: string;
+  flow: "detect";
   steps: string[];
   fields: EngineField[];
   check_rows: string[];
   check_request: { method: "GET" | "POST"; path: string; from: "origin" | "address" };
   capabilities: { id: string; label: string }[];
   models_note?: string;
-  workflow_inputs?: WorkflowInputSpec[];
-  workflow_max_bytes?: number;
 }
 
 export interface EngineDefinitions {
@@ -92,7 +79,7 @@ export interface FindingAction {
 export interface Finding {
   code: string;
   severity: "error" | "warning";
-  field: "address" | "key" | "path" | "file";
+  field: "address" | "key";
   title: string;
   what: string;
   why: string;
@@ -149,7 +136,6 @@ export interface CheckResult {
   suggested_name: string;
   name_source: "server" | "address" | "";
   steps: { label: string; result: string }[];
-  node_count?: number;
 }
 
 export interface TestResult {
@@ -169,36 +155,6 @@ export interface TestResult {
   finding?: { what: string; why: string; fix: string; raw: string };
 }
 
-export interface WorkflowNode {
-  id: string;
-  class_type: string;
-  title: string;
-  fields: string[];
-}
-
-export interface WorkflowInputRow {
-  key: string;
-  label: string;
-  required: boolean;
-  help: string;
-  options: { value: string; label: string }[];
-  auto: string;
-  note?: string;
-}
-
-export type WorkflowRead =
-  | {
-      ok: true;
-      file: string;
-      file_stem: string;
-      nodes: WorkflowNode[];
-      node_count: number;
-      makes: "images" | "video";
-      inputs: WorkflowInputRow[];
-      graph: Record<string, unknown>;
-    }
-  | { ok: false; reason: "ui_format" | "not_json" | "too_large"; found?: string; finding?: Finding };
-
 /** One request adjustment as stored: a named built-in or one of the six primitives. */
 export type TransformRow =
   | string
@@ -216,10 +172,10 @@ interface PhaseFields {
   [extra: string]: unknown;
 }
 
+/** A request header. The value is saved as plain text; a key goes in the API key field. */
 export interface HeaderRow {
   name: string;
   value: string;
-  secret: boolean;
 }
 
 /** Draft values, keyed by the definition's field keys. */
@@ -227,27 +183,14 @@ export interface EngineValues {
   address: string;
   api_key?: string;
   api_key_env?: string;
-  path?: string;
   headers?: HeaderRow[];
-  connect_timeout_s?: number | string;
   reply_timeout_s?: number | string;
   path_prefix?: string;
-  auth_header?: string;
   transforms?: TransformRow[];
   lifecycle_mode?: "external" | "managed";
   lifecycle_start?: string;
   lifecycle_stop?: string;
   lifecycle_ready_s?: number | string;
-  lifecycle_idle_min?: number | string;
-  public_name?: string;
-  server_model?: string;
-  voices?: string[];
-  default_voice?: string;
-  workflow_public_name?: string;
-  workflow_graph?: Record<string, unknown>;
-  workflow_file?: string;
-  workflow_inputs?: Record<string, string>;
-  workflow_makes?: "images" | "video";
 }
 
 export interface StoredTest {
@@ -255,6 +198,30 @@ export interface StoredTest {
   at: number;
   via: "draft" | "saved";
   seconds?: number;
+}
+
+/** One access plan that includes the engine's models, and who holds it. */
+export interface EngineAccessPlan {
+  id: string;
+  name: string;
+  models: string[];
+  why: string;
+  people: number;
+  apps: number;
+  link: string;
+}
+
+/** Who will be able to use a set of models. Computed by the gateway from the real access plans. */
+export interface EngineAccess {
+  plans: EngineAccessPlan[];
+  you: boolean;
+  not_included: string[];
+  category_rules: boolean;
+  unreadable_plans: number;
+  /** The whole answer in one line. */
+  sentence: string;
+  /** The access plans page. */
+  link: string;
 }
 
 export interface EngineView {
@@ -268,6 +235,9 @@ export interface EngineView {
   /** The gateway runs this engine itself; only name and Enabled change. */
   locked: boolean;
   lifecycle_editable: boolean;
+  /** False when the model router does not call this engine at its own address: settings are read-only. */
+  editable: boolean;
+  not_editable_reason: string;
   values: EngineValues;
   key: { state: "none" | "configured"; source?: "stored" | "env"; env_name?: string; origin?: string };
   capabilities: string[];
@@ -285,7 +255,8 @@ export interface EngineView {
     /** What each model is for, by model id, from the last stored check. */
     model_use?: Record<string, string>;
   };
-  workflow: { public_name: string; file: string; makes: "images" | "video"; inputs: Record<string, string>; node_count: number } | null;
+  /** Who can use the turned-on models, as saved. */
+  access: EngineAccess;
   calls: string;
   other_settings: Record<string, unknown>;
   /** The stored record, secrets shown as "configured". */
@@ -332,13 +303,11 @@ export const enginesApi = {
     values: EngineValues;
     capability: string;
     model?: string;
-    voice?: string;
     service_id?: string;
-    workflow?: Record<string, unknown>;
-    inputs?: Record<string, string>;
   }) => adminFetch<{ test: TestResult }>("/admin/api/engines/test", { method: "POST", body }).then((r) => r.test),
-  workflow: (body: { definition?: string; file: string; text: string }) =>
-    adminFetch<{ workflow: WorkflowRead }>("/admin/api/engines/workflow", { method: "POST", body }).then((r) => r.workflow),
+  /** Who could use these models (capability ids and public names). Saves nothing. */
+  access: (body: { capabilities: string[]; models: string[] }) =>
+    adminFetch<{ access: EngineAccess }>("/admin/api/engines/access", { method: "POST", body }).then((r) => r.access),
   view: (serviceId: string) =>
     adminFetch<{ engine: EngineView }>(`/admin/api/engines/${encodeURIComponent(serviceId)}`).then((r) => r.engine),
   /** Answers with the registry and the id the gateway gave the new engine. */

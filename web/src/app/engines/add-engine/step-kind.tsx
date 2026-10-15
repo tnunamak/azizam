@@ -46,7 +46,7 @@ export function StepKind({
           id={searchId}
           type="search"
           className="pl-9"
-          placeholder="Search, for example speech or workflow"
+          placeholder="Search, for example Ollama or vLLM"
           value={query}
           autoComplete="off"
           spellCheck={false}

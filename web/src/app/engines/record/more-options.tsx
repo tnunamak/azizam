@@ -5,34 +5,28 @@
  * it differs from the definition's defaults. Small headings inside, one per
  * field group the definition lists. Typed forms only.
  */
-import { useState, type ReactNode } from "react";
-import { Lock, Plus, Trash2 } from "lucide-react";
-import { SECRET_MASK, type EngineDefinition, type EngineField, type HeaderRow } from "@/lib/engines-api";
+import type { ReactNode } from "react";
+import { Plus, Trash2 } from "lucide-react";
+import type { EngineDefinition, EngineField, HeaderRow } from "@/lib/engines-api";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { CallLine } from "../parts/call-line";
 import { FormField, NativeSelect, Note, OwnerOnlyTag, Tag } from "../parts/form";
 import { transformsFromCards, type AdjustmentCard } from "./adjustments";
 import { AdjustmentsEditor } from "./adjustment-forms";
 
-export interface HeaderDraft {
-  name: string;
-  value: string;
-  secret: boolean;
-  /** A secret value the gateway holds; write-only until replaced. */
-  stored: boolean;
-}
+/** A header row while it is being typed. Values are plain text. */
+export type HeaderDraft = HeaderRow;
 
 /** The plain values More options edits, as text while they are being typed. */
 export type OptionValues = Record<string, string>;
 
 export function headersFrom(rows: HeaderRow[] | undefined): HeaderDraft[] {
-  return (rows ?? []).map((h) => ({ name: h.name, value: h.value === SECRET_MASK ? "" : h.value, secret: h.secret, stored: h.value === SECRET_MASK }));
+  return (rows ?? []).map((h) => ({ name: h.name, value: h.value }));
 }
 
 export function headersBody(rows: HeaderDraft[]): HeaderRow[] {
-  return rows.map((h) => ({ name: h.name, value: h.stored ? SECRET_MASK : h.value, secret: h.secret }));
+  return rows.map((h) => ({ name: h.name, value: h.value }));
 }
 
 function unitWord(unit: EngineField["unit"]): string {
@@ -190,7 +184,7 @@ function GroupBody({
   const plain: EngineField[] = [];
   for (const field of group) {
     if (field.type === "keyvalue")
-      out.push(<HeadersEditor key={field.key} field={field} rows={headers} onChange={onHeaders} owner={owner} disabled={locked} />);
+      out.push(<HeadersEditor key={field.key} field={field} rows={headers} onChange={onHeaders} disabled={locked} />);
     else if (field.items === "transform")
       out.push(
         <div key={field.key} className="flex flex-col gap-3">
@@ -357,22 +351,19 @@ function HeadersEditor({
   field,
   rows,
   onChange,
-  owner,
   disabled,
 }: {
   field: EngineField;
   rows: HeaderDraft[];
   onChange: (rows: HeaderDraft[]) => void;
-  owner: boolean;
   disabled?: boolean;
 }) {
-  const [replacing, setReplacing] = useState<Set<number>>(new Set());
   const set = (i: number, patch: Partial<HeaderDraft>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   return (
     <div className="flex flex-col gap-3">
       {field.help && <p className="text-meta text-muted-foreground">{field.help}</p>}
       {rows.map((row, i) => (
-        <div key={i} className="grid items-end gap-2 sm:grid-cols-[1fr_1fr_auto_auto]">
+        <div key={i} className="grid items-end gap-2 sm:grid-cols-[1fr_1fr_auto]">
           <FormField label="Header name">
             {(control) => (
               <Input
@@ -381,7 +372,7 @@ function HeadersEditor({
                 className="font-mono"
                 placeholder="X-Client"
                 value={row.name}
-                disabled={disabled || (!owner && row.secret)}
+                disabled={disabled}
                 autoComplete="off"
                 spellCheck={false}
                 onChange={(event) => set(i, { name: event.target.value })}
@@ -389,74 +380,38 @@ function HeadersEditor({
             )}
           </FormField>
           <FormField label="Value">
-            {(control) =>
-              row.stored && !replacing.has(i) ? (
-                <div className="flex items-center gap-2">
-                  <Input {...control} size="sm" value="Configured" disabled readOnly />
-                  {owner && !disabled && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      aria-label={`Replace ${row.name}`}
-                      onClick={() => {
-                        setReplacing((s) => new Set(s).add(i));
-                        set(i, { stored: false, value: "" });
-                      }}
-                    >
-                      Replace
-                    </Button>
-                  )}
-                </div>
-              ) : (
-                <Input
-                  {...control}
-                  size="sm"
-                  type={row.secret ? "password" : "text"}
-                  className={row.secret ? undefined : "font-mono"}
-                  value={row.value}
-                  disabled={disabled || (!owner && row.secret)}
-                  autoComplete={row.secret ? "new-password" : "off"}
-                  spellCheck={false}
-                  onChange={(event) => set(i, { value: event.target.value })}
-                />
-              )
-            }
+            {(control) => (
+              <Input
+                {...control}
+                size="sm"
+                className="font-mono"
+                value={row.value}
+                disabled={disabled}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => set(i, { value: event.target.value })}
+              />
+            )}
           </FormField>
-          <label className="text-meta flex min-h-8 items-center gap-2 max-sm:min-h-11">
-            <Checkbox
-              aria-label="Secret"
-              checked={row.secret}
-              disabled={disabled || !owner || row.stored}
-              onCheckedChange={(v) => set(i, { secret: v === true })}
-            />
-            Secret
-          </label>
           <Button
             type="button"
             variant="ghost"
             size="icon"
             aria-label={`Remove header ${row.name || i + 1}`}
-            disabled={disabled || (!owner && row.secret)}
+            disabled={disabled}
             onClick={() => onChange(rows.filter((_, j) => j !== i))}
           >
             <Trash2 aria-hidden="true" />
           </Button>
         </div>
       ))}
-      {!owner && (
-        <p className="text-meta text-muted-foreground flex items-center gap-1.5">
-          <Lock aria-hidden="true" className="size-4" />
-          Only the owner can add or replace secret values.
-        </p>
-      )}
       {!disabled && (
         <Button
           type="button"
           variant="outline"
           size="sm"
           className="w-fit"
-          onClick={() => onChange([...rows, { name: "", value: "", secret: false, stored: false }])}
+          onClick={() => onChange([...rows, { name: "", value: "" }])}
         >
           <Plus aria-hidden="true" />
           Add a header
@@ -465,4 +420,3 @@ function HeadersEditor({
     </div>
   );
 }
-

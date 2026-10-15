@@ -2,7 +2,7 @@
 
 /**
  * The engine record page, opened at /engines/?engine=<id>: Connection, What it
- * can do, Models (or Model, or Workflow), More options, the stored record and
+ * can do, Models (with who can use them), More options, the stored record and
  * Remove. Reads GET /admin/api/engines/{id}; saves through the edit route,
  * which re-checks a changed connection on the server.
  */
@@ -22,20 +22,21 @@ import {
 import { cn } from "@/lib/cn";
 import { useViewer } from "@/components/shell/session";
 import { Button } from "@/components/ui/button";
-import { CopyButton } from "@/components/ui/copy-button";
 import { Input } from "@/components/ui/input";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Callout, StateWord } from "@/components/product/status-ui";
 import { engineDefinitionsKey } from "../add-engine/add-engine-dialog";
-import { checkedWhen, clockTime, fieldOf, hasPath, originOf, trimAddress } from "../add-engine/draft";
+import { checkedWhen, clockTime, fieldOf, originOf, trimAddress } from "../add-engine/draft";
+import { AccessAnswer, AccessAsk } from "../parts/access-answer";
 import { CallLine } from "../parts/call-line";
 import { CapabilityList, rowsFromCheck, type CapabilityRow, type TestState } from "../parts/capabilities";
 import { FindingCard } from "../parts/finding-card";
 import { FormField, LinkButton, Note, Tag } from "../parts/form";
 import { ModelsBlock, draftsFromCheck, duplicateNames, modelsBody, type ModelDraft } from "../parts/models-block";
-import { SpeechFields, speechDraft, speechValues, type SpeechDraft } from "../parts/speech-fields";
+import { NotEditableRecord } from "./not-editable-record";
+import { RemoveSection, StoredRecordSection, errorText } from "./record-sections";
 import { cardProblem, cardsFromTransforms, transformsFromCards, type AdjustmentCard } from "./adjustments";
 import {
   MoreOptions,
@@ -131,22 +132,40 @@ export function EngineRecordPage({
         </div>
       )}
       {crumb}
-      <RecordForm
-        key={version}
-        view={view.data}
-        definition={definition}
-        onRefresh={async () => {
-          await view.refetch();
-        }}
-        onSaved={async (message) => {
-          await view.refetch();
-          setVersion((v) => v + 1);
-          setOwnNotice(message);
-          onDismissNotice?.();
-        }}
-        onDiscard={() => setVersion((v) => v + 1)}
-        onRemove={() => onRemove(serviceId)}
-      />
+      {view.data.editable === false ? (
+        <NotEditableRecord
+          key={version}
+          view={view.data}
+          definition={definition}
+          onRefresh={async () => {
+            await view.refetch();
+          }}
+          onSaved={async (message) => {
+            await view.refetch();
+            setVersion((v) => v + 1);
+            setOwnNotice(message);
+            onDismissNotice?.();
+          }}
+          onRemove={() => onRemove(serviceId)}
+        />
+      ) : (
+        <RecordForm
+          key={version}
+          view={view.data}
+          definition={definition}
+          onRefresh={async () => {
+            await view.refetch();
+          }}
+          onSaved={async (message) => {
+            await view.refetch();
+            setVersion((v) => v + 1);
+            setOwnNotice(message);
+            onDismissNotice?.();
+          }}
+          onDiscard={() => setVersion((v) => v + 1)}
+          onRemove={() => onRemove(serviceId)}
+        />
+      )}
     </div>
   );
 }
@@ -154,7 +173,6 @@ export function EngineRecordPage({
 interface SessionCheck {
   result: CheckResult;
   address: string;
-  path: string;
   /** The key typed when the check ran; the result says nothing about another key. */
   key: string;
 }
@@ -192,14 +210,11 @@ function RecordForm({
   const viewer = useViewer();
   const owner = viewer.role === "owner";
   const queryClient = useQueryClient();
-  const flow = definition.flow;
-  const withPath = hasPath(definition);
-  const saved = { address: view.values.address ?? "", path: view.values.path ?? "" };
+  const saved = { address: view.values.address ?? "" };
   const locked = view.locked;
 
   const [name, setName] = useState(view.name);
   const [address, setAddress] = useState(saved.address);
-  const [path, setPath] = useState(saved.path);
   const [newKey, setNewKey] = useState("");
   const [keyEditing, setKeyEditing] = useState(false);
   const [options, setOptions] = useState<OptionValues>(() => optionValuesFrom(definition, view));
@@ -218,15 +233,6 @@ function RecordForm({
       byName: false,
     })),
   );
-  const [speech, setSpeech] = useState<SpeechDraft>(() =>
-    speechDraft(definition, {
-      public_name: view.values.public_name,
-      server_model: view.values.server_model,
-      voices: view.values.voices,
-      default_voice: view.values.default_voice,
-    }),
-  );
-  const [workflowName, setWorkflowName] = useState(view.values.workflow_public_name ?? view.workflow?.public_name ?? "");
   const [moreOpen, setMoreOpen] = useState(() => changedCount(definition, optionValuesFrom(definition, view), headersFrom(view.values.headers), cardsFromTransforms(view.values.transforms)) > 0);
   const [session, setSession] = useState<SessionCheck | null>(null);
   const [checking, setChecking] = useState(false);
@@ -242,7 +248,6 @@ function RecordForm({
   function bodyValues(): Record<string, unknown> {
     const keys = new Set(definition.fields.map((f) => f.key));
     const values: Record<string, unknown> = { address: address.trim() };
-    if (withPath) values.path = path.trim();
     if (newKey) values.api_key = newKey;
     if (view.key.source === "env" && view.key.env_name && keys.has("api_key_env")) values.api_key_env = view.key.env_name;
     for (const field of optionFields(definition)) {
@@ -256,8 +261,6 @@ function RecordForm({
         values[field.key] = /^-?\d+(\.\d+)?$/.test(text) ? Number(text) : text;
       } else values[field.key] = options[field.key] ?? "";
     }
-    if (flow === "declared") Object.assign(values, speechValues(definition, speech));
-    if (flow === "workflow" && keys.has("workflow_public_name")) values.workflow_public_name = workflowName.trim();
     return values;
   }
   function saveBody(): UpdateEngineBody {
@@ -267,19 +270,18 @@ function RecordForm({
       values: bodyValues() as unknown as UpdateEngineBody["values"],
       capabilities: definition.capabilities.filter((c) => ticked.has(c.id)).map((c) => c.id),
     };
-    if (flow === "detect") body.models = modelsBody(models);
+    body.models = modelsBody(models);
     return body;
   }
   const [initialBody] = useState(() => JSON.stringify(saveBody()));
   const dirty = Boolean(newKey) || JSON.stringify(saveBody()) !== initialBody;
 
-  const addressChanged = trimAddress(address) !== trimAddress(saved.address) || (withPath && path.trim() !== saved.path.trim());
+  const addressChanged = trimAddress(address) !== trimAddress(saved.address);
   const keyStored = view.key.state === "configured";
   // The server withholds a stored key from another origin (resolve_key), and drops it on Save.
   const keyOrigin = view.key.origin || originOf(saved.address);
   const n2 = keyStored && originOf(address) !== keyOrigin;
-  const fresh =
-    session && session.address === trimAddress(address) && session.path === path.trim() && session.key === newKey ? session : null;
+  const fresh = session && session.address === trimAddress(address) && session.key === newKey ? session : null;
   const freshPassed = Boolean(fresh && fresh.result.outcome !== "error");
   const keyAcceptedHere = Boolean(fresh && freshPassed && fresh.result.key_sent && fresh.result.auth === "accepted");
   const blocked = addressChanged && !freshPassed;
@@ -294,10 +296,10 @@ function RecordForm({
     setDetectNote(null);
     try {
       const result = await enginesApi.check({ definition: definition.definition, values: bodyValues() as never, service_id: view.service_id });
-      setSession({ result, address: trimAddress(address), path: path.trim(), key: newKey });
+      setSession({ result, address: trimAddress(address), key: newKey });
       if (result.outcome !== "error") {
         if (view.check.status === "not_started" && ticked.size === 0) setTicked(new Set(result.capabilities.filter((c) => c.ticked).map((c) => c.id)));
-        if (flow === "detect" && (detectModels || models.length === 0)) {
+        if (detectModels || models.length === 0) {
           const known = new Set(models.map((m) => m.id));
           const found = draftsFromCheck(result.models.filter((m) => !known.has(m.id)), models.length === 0);
           setModels([...models, ...found]);
@@ -316,10 +318,7 @@ function RecordForm({
     const label = definition.capabilities.find((c) => c.id === capability)?.label.toLowerCase() ?? "";
     const uses = new Map((session?.result.models ?? []).map((m) => [m.id, m.use]));
     const offered = models.filter((m) => m.on);
-    const model =
-      flow === "detect"
-        ? (offered.find((m) => (m.use || uses.get(m.id) || "").toLowerCase().includes(label)) ?? offered[0])?.id
-        : undefined;
+    const model = (offered.find((m) => (m.use || uses.get(m.id) || "").toLowerCase().includes(label)) ?? offered[0])?.id;
     try {
       const result = await enginesApi.test({
         definition: definition.definition,
@@ -361,7 +360,7 @@ function RecordForm({
     } catch (error) {
       const refused = checkFromError(error);
       if (refused) {
-        setSession({ result: refused, address: trimAddress(address), path: path.trim(), key: newKey });
+        setSession({ result: refused, address: trimAddress(address), key: newKey });
         const warning = refused.findings.find((f) => f.severity === "warning");
         if (warning && !refused.findings.some((f) => f.severity === "error")) setEnableWarning(warning);
       }
@@ -440,7 +439,7 @@ function RecordForm({
       : SAVED_TEST_NOTE;
 
   // ---- The check line
-  const detail = (count: number) => (flow === "declared" ? "The path answered. " : flow === "detect" ? `${count} models. ` : "");
+  const detail = (count: number) => `${count} models. `;
   let checkLine: ReactNode;
   let checkButton = "Check again";
   if (checking) checkLine = <><Loader2 aria-hidden="true" className="size-4 animate-spin" /> Checking…</>;
@@ -616,14 +615,16 @@ function RecordForm({
     );
   }
 
-  const modelsTitle = flow === "workflow" ? "Workflow" : flow === "declared" ? (fieldOf(definition, "voices") ? "Model and voices" : "Model") : "Models";
-  const jumpModels = flow === "workflow" ? "Workflow" : flow === "declared" ? "Model" : "Models";
+  const capabilityIds = definition.capabilities.filter((c) => ticked.has(c.id)).map((c) => c.id);
+  const modelNames = models.filter((m) => m.on).map((m) => m.public_name.trim() || m.id);
+  const savedCapabilities = definition.capabilities.filter((c) => view.capabilities.includes(c.id)).map((c) => c.id);
+  const savedNames = view.models.filter((m) => m.enabled !== false).map((m) => m.public_name.trim() || m.id);
+  const sameList = (a: string[], b: string[]) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+  const modelsChanged = !sameList(capabilityIds, savedCapabilities) || !sameList(modelNames, savedNames);
   const enabledNow = enabling ?? view.enabled;
   const offWord = !view.enabled && notStarted;
   const sessionFailed = !view.enabled && view.check.status === "not_started" && session?.result.outcome === "error";
-  const otherSettings = Object.entries(view.other_settings ?? {});
   const switchDisabled = enabling !== null || (needKey && !owner);
-  const workflowField = fieldOf(definition, "workflow_public_name");
 
   return (
     <>
@@ -689,7 +690,7 @@ function RecordForm({
       <nav aria-label="On this page" className="text-meta flex flex-wrap gap-x-4 gap-y-1">
         <a className="text-link hover:underline" href="#engine-connection">Connection</a>
         <a className="text-link hover:underline" href="#engine-abilities">What it can do</a>
-        <a className="text-link hover:underline" href="#engine-models">{jumpModels}</a>
+        <a className="text-link hover:underline" href="#engine-models">Models</a>
         <a className="text-link hover:underline" href="#engine-more">More options</a>
       </nav>
 
@@ -706,7 +707,7 @@ function RecordForm({
                 help={fieldOf(definition, "address")?.help}
                 after={
                   <>
-                    {!withPath && <CallLine definition={definition} values={{ address, path_prefix: options.path_prefix }} />}
+                    <CallLine definition={definition} values={{ address, path_prefix: options.path_prefix }} />
                     {n2 && (
                       <div role="alert" className="border-warning/40 bg-warning-tint/50 rounded-control flex flex-col gap-2 border p-3">
                         <p className="text-meta flex items-start gap-2 font-medium">
@@ -724,7 +725,6 @@ function RecordForm({
                           className="w-fit"
                           onClick={() => {
                             setAddress(saved.address);
-                            setPath(saved.path);
                             setNewKey("");
                             setSession(null);
                           }}
@@ -743,20 +743,6 @@ function RecordForm({
                     }} />
                 )}
               </FormField>
-              {withPath && (
-                <FormField
-                  label={fieldOf(definition, "path")?.label ?? "Path on the server"}
-                  help="The part after the address, starting with /."
-                  after={<CallLine definition={definition} values={{ address, path }} />}
-                >
-                  {(control) => (
-                    <Input {...control} className="font-mono" value={path} autoComplete="off" spellCheck={false} onChange={(event) => {
-                      setPath(event.target.value);
-                      setTests({});
-                    }} />
-                  )}
-                </FormField>
-              )}
               {fieldOf(definition, "api_key") && (
                 <div role="group" aria-labelledby="engine-key-label" className="flex flex-col gap-1.5">
                   <span id="engine-key-label" className="text-meta font-medium">
@@ -821,68 +807,29 @@ function RecordForm({
 
         <section aria-labelledby="engine-models" className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 id="engine-models" className="text-heading scroll-mt-20">{modelsTitle}</h2>
-            {flow === "detect" && (
-              <Button type="button" variant="outline" size="sm" disabled={checking} onClick={() => void runCheck(true)}>
-                <RefreshCw aria-hidden="true" />
-                Detect models again
-              </Button>
-            )}
+            <h2 id="engine-models" className="text-heading scroll-mt-20">Models</h2>
+            <Button type="button" variant="outline" size="sm" disabled={checking} onClick={() => void runCheck(true)}>
+              <RefreshCw aria-hidden="true" />
+              Detect models again
+            </Button>
           </div>
           {detectNote && <p role="status" className="text-meta text-muted-foreground">{detectNote}</p>}
-          {flow === "detect" && (
-            <ModelsBlock
-              models={models}
-              onChange={setModels}
-              readOnly={locked}
-              emptyText="No models yet. Azizam lists them the first time the engine starts. You can also add one by name below."
+          <ModelsBlock
+            models={models}
+            onChange={setModels}
+            readOnly={locked}
+            emptyText="No models yet. Azizam lists them the first time the engine starts. You can also add one by name below."
+          />
+          {modelsChanged ? (
+            <AccessAsk
+              capabilities={capabilityIds}
+              models={modelNames}
+              debounceMs={400}
+              qualifier="After you save"
+              errorText="Azizam couldn’t read the access plans. You can still save; check who can use the models on this page afterwards."
             />
-          )}
-          {flow === "declared" && (
-            <div className="bg-card rounded-panel border p-4">
-              <SpeechFields definition={definition} draft={speech} onChange={setSpeech} showSuggested={false} readOnly={locked} />
-            </div>
-          )}
-          {flow === "workflow" && (
-            <div className="bg-card rounded-panel flex flex-col gap-4 border p-4">
-              {view.workflow ? (
-                <>
-                  <div className="flex items-start gap-2">
-                    <CircleCheck aria-hidden="true" className="text-success mt-0.5 size-4 shrink-0" />
-                    <span className="min-w-0">
-                      <span className="text-meta block font-mono [overflow-wrap:anywhere]">{view.workflow.file}</span>
-                      <span className="text-meta text-muted-foreground block">
-                        {view.workflow.node_count} nodes. Makes {view.workflow.makes === "video" ? "video" : "images"}.
-                      </span>
-                    </span>
-                  </div>
-                  {workflowField && (
-                    <FormField label={workflowField.label} required help={workflowField.help} error={workflowName.trim() ? undefined : "Give the workflow the name apps use."}>
-                      {(control) => (
-                        <Input {...control} value={workflowName} autoComplete="off" spellCheck={false} onChange={(event) => setWorkflowName(event.target.value)} />
-                      )}
-                    </FormField>
-                  )}
-                  <div>
-                    <h3 className="text-meta mb-2 font-medium">Which field gets which input</h3>
-                    <dl className="text-meta grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-                      {(definition.workflow_inputs ?? []).map((input) => {
-                        const target = view.workflow?.inputs?.[input.key];
-                        const [node, field] = String(target ?? "").split(".");
-                        return (
-                          <div key={input.key} className="contents">
-                            <dt className="text-muted-foreground">{input.label}</dt>
-                            <dd className="font-mono">{target ? `Node ${node} · ${field}` : "Not used"}</dd>
-                          </div>
-                        );
-                      })}
-                    </dl>
-                  </div>
-                </>
-              ) : (
-                <p className="text-meta text-muted-foreground">No workflow yet. Choose one before you turn this engine on.</p>
-              )}
-            </div>
+          ) : (
+            <AccessAnswer access={view.access} />
           )}
         </section>
 
@@ -905,52 +852,9 @@ function RecordForm({
         </section>
       </fieldset>
 
-      <section aria-labelledby="engine-stored" className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 id="engine-stored" className="text-heading">Stored record</h2>
-          <CopyButton value={JSON.stringify(view.record, null, 2)} aria-label="Copy the stored record">
-            Copy
-          </CopyButton>
-        </div>
-        <p className="text-meta text-muted-foreground">Exactly what the gateway saved. You cannot edit it here. The key is never shown.</p>
-        <div className="bg-card rounded-panel flex flex-col gap-4 border p-4">
-          <pre
-            tabIndex={0}
-            aria-label="Stored record, read only"
-            className="bg-muted rounded-control text-meta max-h-96 overflow-auto p-3 font-mono whitespace-pre-wrap [overflow-wrap:anywhere]"
-          >
-            {JSON.stringify(view.record, null, 2)}
-          </pre>
-          {otherSettings.length > 0 && (
-            <div>
-              <h3 className="text-meta mb-1 font-medium">Other settings</h3>
-              <p className="text-meta text-muted-foreground mb-2">
-                Azizam kept these values, but this form has no field for them. They are not lost.
-              </p>
-              <dl className="text-meta grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-                {otherSettings.map(([key, value]) => (
-                  <div key={key} className="contents">
-                    <dt className="font-mono">{key}</dt>
-                    <dd className="[overflow-wrap:anywhere]">{typeof value === "string" ? value : JSON.stringify(value)}</dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          )}
-        </div>
-      </section>
+      <StoredRecordSection view={view} />
 
-      {!locked && (
-        <section aria-labelledby="engine-remove" className="bg-card rounded-panel flex flex-wrap items-center justify-between gap-3 border p-4">
-          <div>
-            <h2 id="engine-remove" className="text-heading">Remove this engine</h2>
-            <p className="text-meta text-muted-foreground">Apps lose its models at once. You can add it again later.</p>
-          </div>
-          <Button type="button" variant="destructive" size="sm" onClick={onRemove}>
-            Remove engine
-          </Button>
-        </section>
-      )}
+      {!locked && <RemoveSection onRemove={onRemove} />}
 
       {saveError && (
         <div className="flex flex-col gap-2">
@@ -975,9 +879,6 @@ function RecordForm({
           <span className="text-meta">
             {blocked ? "The address changed. Check it again before you save, or save and keep the engine off." : "You have unsaved changes."}
             {n2 && !newKey ? " Saving removes the old key from this engine." : ""}
-            {originOf(address) !== originOf(saved.address) && headers.some((h) => h.stored)
-              ? " Saving also removes the stored secret header values. Type them again for the new address."
-              : ""}
           </span>
           <span className="flex flex-wrap gap-2">
             <Button type="button" variant="ghost" size="md" onClick={onDiscard}>
@@ -991,7 +892,7 @@ function RecordForm({
             <Button
               type="button"
               size="md"
-              disabled={blocked || saving || !name.trim() || cards.some((c) => cardProblem(c) !== null) || duplicateNames(models).size > 0 || (flow === "workflow" && Boolean(workflowField) && !workflowName.trim() && Boolean(view.workflow))}
+              disabled={blocked || saving || !name.trim() || cards.some((c) => cardProblem(c) !== null) || duplicateNames(models).size > 0}
               onClick={() => void save()}
             >
               {saving && <Loader2 aria-hidden="true" className="animate-spin" />}
@@ -1002,13 +903,4 @@ function RecordForm({
       )}
     </>
   );
-}
-
-function errorText(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.status === 412) return "Engine settings changed elsewhere. Refresh and try again.";
-    if (error.code === "owner_required") return error.message;
-    return error.message;
-  }
-  return error instanceof Error ? error.message : "The gateway did not answer. Try again.";
 }

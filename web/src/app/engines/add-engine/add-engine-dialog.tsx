@@ -2,9 +2,9 @@
 
 /**
  * Add engine: a five-step dialog driven by the server's engine definitions.
- * Kind, address and key, what it can do (or the workflow file), models (or
- * the model name, or the workflow inputs), then name and create. Every field
- * label, help line, check row and capability comes from the definition.
+ * Kind, address and key, what it can do, models, then name and create. Every
+ * field label, help line, check row and capability comes from the definition.
+ * The last step also says who will be able to use the models.
  */
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -31,7 +31,6 @@ import { Callout } from "@/components/product/status-ui";
 import {
   CapabilityLegend,
   CapabilityList,
-  TestResultBlock,
   rowsFromCheck,
   withTests,
   type TestState,
@@ -39,20 +38,10 @@ import {
 import { FindingCard } from "../parts/finding-card";
 import { FormField, Note, Tag } from "../parts/form";
 import { ModelsBlock, draftsFromCheck, duplicateNames, modelsBody, type ModelDraft } from "../parts/models-block";
-import { SpeechFields, speechDraft, speechValues, type SpeechDraft } from "../parts/speech-fields";
-import {
-  addedMessage,
-  clockTime,
-  fieldOf,
-  hasPath,
-  joinUrl,
-  keptOffMessage,
-  looksLikeAddress,
-  trimAddress,
-} from "./draft";
+import { AccessAsk } from "../parts/access-answer";
+import { addedMessage, fieldOf, keptOffMessage, looksLikeAddress, trimAddress } from "./draft";
 import { ConnectionFields, SummaryLine, type ConnectionDraft, type FieldErrors } from "./step-address";
 import { StepKind } from "./step-kind";
-import { StepInputs, StepWorkflowFile, inputsMissing, type WorkflowOk } from "./step-workflow";
 
 export const engineDefinitionsKey = ["engineDefinitions"] as const;
 
@@ -66,35 +55,6 @@ type Step = "kind" | "address" | "checking" | "caps" | "detail" | "name";
 const STEP_NUMBER: Record<Step, number> = { kind: 1, address: 2, checking: 2, caps: 3, detail: 4, name: 5 };
 
 const DRAFT_TEST_NOTE = "Ran on the gateway’s computer with the values on this screen. Nothing was saved, and it is not in Activity.";
-
-interface WorkflowDraft {
-  read: WorkflowOk | null;
-  finding: Finding | null;
-  reading: boolean;
-  makes: "images" | "video";
-  inputs: Record<string, string>;
-  publicName: string;
-  publicSuggested: boolean;
-}
-const emptyWorkflow: WorkflowDraft = {
-  read: null,
-  finding: null,
-  reading: false,
-  makes: "images",
-  inputs: {},
-  publicName: "",
-  publicSuggested: true,
-};
-
-function readText(file: File): Promise<string> {
-  if (typeof file.text === "function") return file.text();
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ""));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsText(file);
-  });
-}
 
 function hostOf(address: string): string {
   return trimAddress(address).replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split("/")[0] ?? "";
@@ -164,7 +124,7 @@ function Wizard({
   const [step, setStep] = useState<Step>("kind");
   const [def, setDef] = useState<EngineDefinition | null>(null);
   const [query, setQuery] = useState("");
-  const [conn, setConn] = useState<ConnectionDraft>({ address: "", path: "", key: "", envOpen: false, envName: "" });
+  const [conn, setConn] = useState<ConnectionDraft>({ address: "", key: "", envOpen: false, envName: "" });
   const [errors, setErrors] = useState<FieldErrors>({});
   const [check, setCheck] = useState<CheckResult | null>(null);
   const [finding, setFinding] = useState<Finding | null>(null);
@@ -178,8 +138,6 @@ function Wizard({
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [tests, setTests] = useState<Record<string, TestState>>({});
   const [models, setModels] = useState<ModelDraft[]>([]);
-  const [speech, setSpeech] = useState<SpeechDraft | null>(null);
-  const [wf, setWf] = useState<WorkflowDraft>(emptyWorkflow);
   const [name, setName] = useState("");
   const [nameTouched, setNameTouched] = useState(false);
   const [createFinding, setCreateFinding] = useState<Finding | null>(null);
@@ -199,14 +157,11 @@ function Wizard({
     [],
   );
 
-  const flow = def?.flow;
-  const declared = def ? hasPath(def) : false;
   const suggested = check?.suggested_name || hostOf(conn.address);
   const engineName = (nameTouched ? name : name || suggested).trim();
 
   function connectionValues(draft = conn): EngineValues {
     const values: EngineValues = { address: draft.address.trim() };
-    if (def && hasPath(def)) values.path = draft.path.trim();
     if (owner) {
       if (draft.envOpen) {
         if (draft.envName.trim()) values.api_key_env = draft.envName.trim();
@@ -215,32 +170,14 @@ function Wizard({
     return values;
   }
 
-  function capabilityForMakes(makes: "images" | "video"): string {
-    const caps = def?.capabilities ?? [];
-    return (caps.find((c) => c.id.endsWith(makes)) ?? caps[0])?.id ?? makes;
-  }
-
   function allValues(): EngineValues {
-    const values = connectionValues();
-    if (!def) return values;
-    if (flow === "declared" && speech) Object.assign(values, speechValues(def, speech));
-    if (flow === "workflow" && wf.read) {
-      values.workflow_public_name = wf.publicName.trim();
-      values.workflow_graph = wf.read.graph;
-      values.workflow_file = wf.read.file;
-      values.workflow_makes = wf.makes;
-      values.workflow_inputs = Object.fromEntries(Object.entries(wf.inputs).filter(([, v]) => v));
-    }
-    return values;
+    return connectionValues();
   }
 
   function pickKind(d: EngineDefinition) {
     setDef(d);
-    setConn((c) => ({ ...c, path: "" }));
     setFinding(null);
     setErrors({});
-    setSpeech(speechDraft(d));
-    setWf(emptyWorkflow);
     setStep("address");
   }
 
@@ -258,11 +195,9 @@ function Wizard({
   function runCheck(draft = conn) {
     if (!def) return;
     const address = fieldOf(def, "address");
-    const path = fieldOf(def, "path");
     const next: FieldErrors = {};
     if (!looksLikeAddress(draft.address))
       next.address = `Enter an address that starts with http:// or https://, for example ${address?.placeholder ?? "http://192.168.1.50:8080"}.`;
-    if (path && !draft.path.trim()) next.path = `Type the path the server uses, for example ${path.placeholder ?? "/inference"}.`;
     setErrors(next);
     if (Object.keys(next).length) return;
     setFinding(null);
@@ -293,7 +228,7 @@ function Wizard({
         if (controller.signal.aborted) return;
         const field = fieldFromError(error) as keyof FieldErrors | null;
         const message = error instanceof Error ? error.message : "The check could not run.";
-        if (field && ["address", "path", "api_key", "api_key_env"].includes(field)) setErrors({ [field]: message });
+        if (field && ["address", "api_key", "api_key_env"].includes(field)) setErrors({ [field]: message });
         else if (error instanceof ApiError && error.code === "owner_required") setErrors({ api_key: message });
         else setErrors({ address: `Azizam could not run the check. ${message}` });
         setStep("address");
@@ -327,14 +262,13 @@ function Wizard({
     setTests((t) => ({ ...t, [capability]: { status: "running" } }));
     const label = def.capabilities.find((c) => c.id === capability)?.label.toLowerCase() ?? "";
     const offered = models.filter((m) => m.on);
-    const model = flow === "detect" ? (offered.find((m) => m.use.toLowerCase().includes(label)) ?? offered[0] ?? models[0])?.id : undefined;
+    const model = (offered.find((m) => m.use.toLowerCase().includes(label)) ?? offered[0] ?? models[0])?.id;
     try {
       const result = await enginesApi.test({
         definition: def.definition,
         values: allValues(),
         capability,
         ...(model ? { model } : {}),
-        ...(flow === "workflow" && wf.read ? { workflow: wf.read.graph, inputs: allValues().workflow_inputs } : {}),
       });
       const row = check?.capabilities.find((c) => c.id === capability);
       const tickForYou = result.ok && row?.level === "possible" && !ticked.has(capability);
@@ -345,75 +279,8 @@ function Wizard({
     }
   }
 
-  async function chooseFile(file: File) {
-    if (!def) return;
-    const max = def.workflow_max_bytes ?? 20 * 1048576;
-    if (file.size > max) {
-      setWf({
-        ...emptyWorkflow,
-        finding: {
-          code: "too_large",
-          severity: "error",
-          field: "file",
-          title: "The file is too large",
-          what: `“${file.name}” is larger than ${Math.round(max / 1048576)} MB.`,
-          why: "A workflow file is small. A larger file is probably not a workflow.",
-          fix: "Pick the workflow file you exported in API format.",
-          keep_off: true,
-        },
-      });
-      return;
-    }
-    setWf((w) => ({ ...w, reading: true }));
-    try {
-      const text = await readText(file);
-      const read = await enginesApi.workflow({ definition: def.definition, file: file.name, text });
-      if (read.ok) {
-        setWf({
-          read,
-          finding: null,
-          reading: false,
-          makes: read.makes,
-          inputs: Object.fromEntries(read.inputs.filter((r) => r.auto).map((r) => [r.key, r.auto])),
-          publicName: read.file_stem,
-          publicSuggested: true,
-        });
-        setTests({});
-      } else {
-        setWf({
-          ...emptyWorkflow,
-          finding: read.finding ?? {
-            code: read.reason,
-            severity: "error",
-            field: "file",
-            title: "This file is not in API format",
-            what: `Azizam could not read “${file.name}”.`,
-            why: read.found ?? "",
-            fix: "In the editor, choose “Export (API)”, then pick that new file here.",
-            keep_off: true,
-          },
-        });
-      }
-    } catch (error) {
-      setWf({
-        ...emptyWorkflow,
-        finding: {
-          code: "read_failed",
-          severity: "error",
-          field: "file",
-          title: "Azizam could not read the file",
-          what: error instanceof Error ? error.message : "The file could not be read.",
-          why: "The gateway did not answer, or the file could not be opened.",
-          fix: "Choose the file again.",
-          keep_off: true,
-        },
-      });
-    }
-  }
-
   function tickedLabels(): string[] {
     if (!def) return [];
-    if (flow === "workflow") return [wf.makes === "video" ? "Video" : "Images"];
     return def.capabilities.filter((c) => ticked.has(c.id)).map((c) => c.label);
   }
 
@@ -434,8 +301,8 @@ function Wizard({
       if (options.needKey) body.keep_off_reason = "needkey";
     } else {
       body = { definition: def.definition, name: finalName, values: allValues() };
-      body.capabilities = flow === "workflow" ? [capabilityForMakes(wf.makes)] : def.capabilities.filter((c) => ticked.has(c.id)).map((c) => c.id);
-      if (flow === "detect") body.models = modelsBody(models);
+      body.capabilities = def.capabilities.filter((c) => ticked.has(c.id)).map((c) => c.id);
+      body.models = modelsBody(models);
       body.tests = testsBody();
       if (options.acknowledge || acknowledged) body.acknowledge_warnings = true;
     }
@@ -461,7 +328,7 @@ function Wizard({
         if (refused) setCheck(refused);
         setFinding(first);
         setStep("address");
-      } else if (field && ["address", "path", "api_key", "api_key_env"].includes(field)) {
+      } else if (field && ["address", "api_key", "api_key_env"].includes(field)) {
         setErrors({ [field]: error instanceof Error ? error.message : "" });
         setStep("address");
       } else {
@@ -529,7 +396,7 @@ function Wizard({
     );
 
   const stepName = def.steps[STEP_NUMBER[step] - 1] ?? "";
-  const empty = !conn.address.trim() || (declared && !conn.path.trim());
+  const empty = !conn.address.trim();
   const keepOffButton = (label = "Add but keep off", needKey = false) => (
     <Button type="button" variant="outline" size="md" disabled={creating} onClick={() => void create({ keepOff: true, needKey })}>
       {label}
@@ -615,21 +482,15 @@ function Wizard({
       ? "“Add but keep off” saves the engine without a key and turned off. The owner adds the key later, then turns it on."
       : f && (f.keep_off || f.severity === "warning")
         ? "“Add but keep off” adds the engine turned off and skips the check. It shows as not checked yet, and Azizam checks it when you turn it on or press Check now."
-        : declared
-          ? "Continue sends one empty request to the path. Nothing is generated and nothing is saved yet."
-          : "Continue sends a few harmless requests: lists and empty ones. Nothing is generated and nothing is saved yet.";
+        : "Continue sends a few harmless requests: lists and empty ones. Nothing is generated and nothing is saved yet.";
     return (
       <Frame step={2} stepName={stepName} footer={footer}>
         {checking ? (
-          <CheckingRows definition={def} index={checkIndex} revealed={revealed} declared={declared} />
+          <CheckingRows definition={def} index={checkIndex} revealed={revealed} />
         ) : (
           <div>
             <h3 className="text-heading">Where is the server?</h3>
-            <p className="text-meta text-muted-foreground mt-0.5">
-              {declared
-                ? "Tell Azizam where the server is and which path to call. Azizam then checks the path and fills in the rest."
-                : "Two fields. Azizam then looks at the server and fills in the rest."}
-            </p>
+            <p className="text-meta text-muted-foreground mt-0.5">Two fields. Azizam then looks at the server and fills in the rest.</p>
           </div>
         )}
         {f && <SummaryLine finding={f} />}
@@ -639,14 +500,13 @@ function Wizard({
           draft={conn}
           onChange={(patch) => {
             setConn((c) => ({ ...c, ...patch }));
-            const edited = ["address", "path", "key", "envName"].some((k) => k in patch);
+            const edited = ["address", "key", "envName"].some((k) => k in patch);
             // A finding belongs to the values that were checked; an edit makes it stale.
             if (edited && finding) {
               setFinding(null);
               setAcknowledged(false);
             }
             if (patch.address !== undefined) setErrors((e) => ({ ...e, address: undefined }));
-            if (patch.path !== undefined) setErrors((e) => ({ ...e, path: undefined }));
           }}
           owner={owner}
           finding={f}
@@ -662,55 +522,16 @@ function Wizard({
     );
   }
 
-  const noneTicked = flow !== "workflow" && ticked.size === 0;
+  const noneTicked = ticked.size === 0;
   const addNowButton = (disabled: boolean) => (
     <Button type="button" variant="outline" size="md" disabled={disabled || creating} onClick={addNow}>
       Add now with these settings
     </Button>
   );
 
-  if (step === "caps" && flow === "workflow") {
-    const failed = !wf.read && wf.finding;
-    return (
-      <Frame
-        step={3}
-        stepName={stepName}
-        footer={
-          <FooterRow
-            left={<BackButton onClick={back} />}
-            right={
-              <>
-                {failed && keepOffButton()}
-                <Button type="button" size="md" disabled={!wf.read} onClick={next}>
-                  Continue
-                </Button>
-              </>
-            }
-          />
-        }
-      >
-        {errorCallout}
-        <StepWorkflowFile
-          definition={def}
-          read={wf.read}
-          finding={wf.finding}
-          reading={wf.reading}
-          makes={wf.makes}
-          onMakes={(makes) => setWf((w) => ({ ...w, makes }))}
-          onFile={(file) => void chooseFile(file)}
-          onReplace={() => {
-            setWf(emptyWorkflow);
-            setTests({});
-          }}
-        />
-      </Frame>
-    );
-  }
-
   if (step === "caps" && check) {
     const keyWord = check.auth === "accepted" ? "Key accepted" : "No key needed";
     const rows = withTests(rowsFromCheck(check.capabilities), tests);
-    const firstLower = def.summary.charAt(0).toLowerCase() + def.summary.slice(1);
     return (
       <Frame
         step={3}
@@ -730,11 +551,9 @@ function Wizard({
         }
       >
         <div>
-          <h3 className="text-heading">{declared ? "What this server will do" : "What this server can do"}</h3>
+          <h3 className="text-heading">What this server can do</h3>
           <p className="text-meta text-muted-foreground mt-0.5">
-            {declared
-              ? `You said this server ${firstLower.replace(/\.$/, "")}. One real test shows that it works.`
-              : "Azizam looked at the server. Tick what you want to use. Nothing turns on until you do."}
+            Azizam looked at the server. Tick what you want to use. Nothing turns on until you do.
           </p>
         </div>
         {errorCallout}
@@ -744,9 +563,7 @@ function Wizard({
           </Note>
         ) : (
           <Note tone="ok" role="status">
-            {declared
-              ? `Reached the server. ${keyWord}. The path answered.`
-              : `Reached the server. ${keyWord}. Found ${check.models.length} models.`}
+            {`Reached the server. ${keyWord}. Found ${check.models.length} models.`}
           </Note>
         )}
         <CapabilityList
@@ -773,96 +590,10 @@ function Wizard({
           A real test sends one tiny request from the gateway’s computer, using the values on this screen. Nothing is saved, and it
           does not show in Activity. It can take a few seconds if the server has to load a model.
         </p>
-        <CapabilityLegend declared={declared} />
+        <CapabilityLegend />
         <p className="text-meta text-muted-foreground">
-          In a hurry? “Add now with these settings” adds what is ticked
-          {declared ? `, the model name “${speech?.public_name ?? ""}”,` : ", every model the server listed,"} and the name “
-          {suggested}”.
+          In a hurry? “Add now with these settings” adds what is ticked, every model the server listed, and the name “{suggested}”.
         </p>
-      </Frame>
-    );
-  }
-
-  if (step === "detail" && flow === "workflow" && wf.read) {
-    const missing = inputsMissing(wf.read, wf.inputs) || !wf.publicName.trim();
-    const cap = capabilityForMakes(wf.makes);
-    const test = tests[cap];
-    return (
-      <Frame
-        step={4}
-        stepName={stepName}
-        footer={
-          <FooterRow
-            left={<BackButton onClick={back} />}
-            right={
-              <>
-                {addNowButton(missing)}
-                <Button type="button" size="md" disabled={missing} onClick={next}>
-                  Continue
-                </Button>
-              </>
-            }
-          />
-        }
-      >
-        {errorCallout}
-        <StepInputs
-          read={wf.read}
-          inputs={wf.inputs}
-          onInputs={(inputs) => setWf((w) => ({ ...w, inputs }))}
-          publicField={fieldOf(def, "workflow_public_name")}
-          publicName={wf.publicName}
-          publicSuggested={wf.publicSuggested}
-          onPublicName={(publicName) => setWf((w) => ({ ...w, publicName, publicSuggested: false }))}
-        />
-        <div className="flex flex-col gap-2">
-          <p className="text-meta font-medium">Real test</p>
-          <p className="text-meta text-muted-foreground">
-            Azizam sends your workflow with one input set to a value the server must refuse. The server reads every node, then stops
-            before it queues anything. Nothing is generated and nothing is saved.
-          </p>
-          {test ? (
-            <TestResultBlock test={test} label="the workflow" note={DRAFT_TEST_NOTE} onTestAgain={() => void runTest(cap)} />
-          ) : (
-            <Button type="button" variant="outline" size="sm" className="w-fit" disabled={missing} onClick={() => void runTest(cap)}>
-              Run a real test
-            </Button>
-          )}
-        </div>
-        <p className="text-meta text-muted-foreground">
-          In a hurry? “Add now with these settings” adds this workflow with the inputs above, under the name “{suggested}”.
-        </p>
-      </Frame>
-    );
-  }
-
-  if (step === "detail" && flow === "declared" && speech) {
-    const withVoices = Boolean(fieldOf(def, "voices"));
-    return (
-      <Frame
-        step={4}
-        stepName={stepName}
-        footer={
-          <FooterRow
-            left={<BackButton onClick={back} />}
-            right={
-              <Button type="button" size="md" disabled={!speech.public_name.trim()} onClick={next}>
-                Continue
-              </Button>
-            }
-          />
-        }
-      >
-        <div>
-          <h3 className="text-heading">{withVoices ? "Name the model and its voices" : "Name the model"}</h3>
-          <p className="text-meta text-muted-foreground mt-0.5">
-            This kind of server has one model, so there is no list to pick from. Apps choose it by the public name.
-          </p>
-        </div>
-        <Note>
-          Prefilled values <Tag tone="suggest">Suggested</Tag> work as they are. Change one only if you know better.
-        </Note>
-        <SpeechFields definition={def} draft={speech} onChange={setSpeech} />
       </Frame>
     );
   }
@@ -993,16 +724,17 @@ function Wizard({
           ))}
         </dl>
       </div>
+      <AccessAsk
+        capabilities={def.capabilities.filter((c) => ticked.has(c.id)).map((c) => c.id)}
+        models={models.filter((m) => m.on).map((m) => m.public_name.trim() || m.id)}
+        newTab
+      />
     </Frame>
   );
 
   function recapRows(): [string, string][] {
     if (!def) return [];
     const rows: [string, string][] = [["Kind", def.title], ["Address", conn.address.trim()]];
-    if (declared) {
-      rows.push(["Path", conn.path.trim()]);
-      rows.push(["Azizam will call", `${def.check_request.method} ${joinUrl(conn.address, conn.path.trim())}`]);
-    }
     rows.push([
       "Key",
       owner && conn.envOpen && conn.envName.trim()
@@ -1011,26 +743,7 @@ function Wizard({
           ? "Stored on this gateway. Never shown again."
           : "None. The server has no key.",
     ]);
-    if (flow === "workflow" && wf.read) {
-      const used = wf.read.inputs.filter((r) => wf.inputs[r.key]).map((r) => r.label);
-      const unused = wf.read.inputs.filter((r) => !wf.inputs[r.key]).map((r) => r.label);
-      const t = tests[capabilityForMakes(wf.makes)];
-      rows.push(["Workflow", `${wf.read.file} (${wf.read.node_count} nodes)`]);
-      rows.push([fieldOf(def, "workflow_public_name")?.label ?? "Name apps use", wf.publicName.trim()]);
-      rows.push(["Will offer", wf.makes === "video" ? "Video" : "Images"]);
-      rows.push(["Inputs filled", used.join(", ") || "None"]);
-      if (unused.length) rows.push(["Not used", unused.join(", ")]);
-      rows.push(["Tested", t?.status === "done" && t.result.ok ? `Workflow checked at ${clockTime(t.result.at)}` : "Not tested"]);
-      return rows;
-    }
     rows.push(["Will offer", tickedLabels().join(", ") || "Nothing yet"]);
-    if (flow === "declared" && speech) {
-      rows.push(["Model", `${speech.public_name.trim()}${speech.server_model.trim() ? `, which the server calls “${speech.server_model.trim()}”` : ""}`]);
-      if (fieldOf(def, "voices")) rows.push(["Voices", speech.voices.join(", ") || "None listed"]);
-      const t = Object.values(tests).find((x) => x.status === "done");
-      rows.push(["Tested", t?.status === "done" && t.result.ok ? `Passed at ${clockTime(t.result.at)}` : "Not tested"]);
-      return rows;
-    }
     const on = models.filter((m) => m.on).length;
     const added = models.filter((m) => m.on && m.byName).length;
     rows.push(["Models", `${on} offered${added ? ` (${on - added} the server listed, ${added} you added)` : ""}`]);
@@ -1105,12 +818,10 @@ function CheckingRows({
   definition,
   index,
   revealed,
-  declared,
 }: {
   definition: EngineDefinition;
   index: number;
   revealed: CheckResult | null;
-  declared: boolean;
 }) {
   return (
     <>
@@ -1140,11 +851,7 @@ function CheckingRows({
           );
         })}
       </ul>
-      <Note tone="info">
-        {declared
-          ? "Azizam sends one empty request to the path. Nothing is generated and nothing is saved yet."
-          : "Azizam sends only lists and empty requests. Nothing is generated and nothing is saved yet."}
-      </Note>
+      <Note tone="info">Azizam sends only lists and empty requests. Nothing is generated and nothing is saved yet.</Note>
     </>
   );
 }

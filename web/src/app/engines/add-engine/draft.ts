@@ -28,26 +28,13 @@ export function fieldOf(definition: EngineDefinition | undefined, key: string): 
   return definition?.fields.find((field) => field.key === key);
 }
 
-/** A custom-path kind: the definition asks for the path, and the check calls it. */
-export function hasPath(definition: EngineDefinition): boolean {
-  return Boolean(fieldOf(definition, "path"));
-}
-
-export type CallLine =
-  | { kind: "empty" }
-  | { kind: "needs-path"; base: string }
-  | { kind: "call"; request: string; twice?: string };
+export type CallLine = { kind: "empty" } | { kind: "call"; request: string; twice?: string };
 
 /** The exact first request the check makes, from the definition's `check_request`. */
-export function callLine(definition: EngineDefinition, values: Pick<EngineValues, "address" | "path" | "path_prefix">): CallLine {
+export function callLine(definition: EngineDefinition, values: Pick<EngineValues, "address" | "path_prefix">): CallLine {
   const address = trimAddress(values.address);
   if (!address) return { kind: "empty" };
   const { method, path, from } = definition.check_request;
-  if (path.includes("{path}")) {
-    const typed = String(values.path ?? "").trim();
-    if (!typed) return { kind: "needs-path", base: address };
-    return { kind: "call", request: `${method} ${joinUrl(address, path.replace("{path}", typed))}` };
-  }
   const prefix = String(values.path_prefix ?? "").trim().replace(/\/+$/, "");
   const base = from === "origin" ? originOf(address) : joinUrl(address, prefix);
   const twice = from !== "origin" && prefix && address.endsWith(prefix) ? prefix : undefined;
@@ -77,9 +64,4 @@ export function keptOffMessage(name: string, needKey: boolean): string {
   return needKey
     ? `Added “${name}”, turned off. The server needs a key, and only the owner can add one. Ask the owner, then turn the engine on.`
     : `Added “${name}”, turned off. Azizam has not checked the server yet. ${checkedWhen(false)}`;
-}
-
-/** The size cap of a workflow file in whole megabytes, for the drop area. */
-export function megabytes(bytes: number | undefined): number {
-  return Math.round((bytes ?? 20 * 1048576) / 1048576);
 }

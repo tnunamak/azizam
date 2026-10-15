@@ -248,14 +248,12 @@ export function CapabilityList({
   );
 }
 
-export function CapabilityLegend({ declared }: { declared: boolean }) {
-  const items: [RowLevel, string][] = declared
-    ? [["declared", "You picked this kind and gave the path. A real test shows that it works."]]
-    : [
-        ["likely", "The server’s own details say so, or a real test passed. Ticked for you."],
-        ["possible", "The server answers, but nothing proves it. Left unticked."],
-        ["against", "The server said no. Left unticked."],
-      ];
+export function CapabilityLegend() {
+  const items: [RowLevel, string][] = [
+    ["likely", "The server’s own details say so, or a real test passed. Ticked for you."],
+    ["possible", "The server answers, but nothing proves it. Left unticked."],
+    ["against", "The server said no. Left unticked."],
+  ];
   return (
     <div className="flex flex-col gap-1.5">
       {items.map(([level, text]) => (
