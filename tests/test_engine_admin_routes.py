@@ -13,6 +13,7 @@ import pytest
 from gateway import admin_store, engine_check, secret_store, service_registry, transforms
 from gateway.litellm_substrate import compile_litellm_config_from_registry
 from gateway.provider_sidecar import provider_secret_env_map_from_registry, provider_secret_origin_map_from_registry
+from tests.support.engine_dns import use_fake_engine_dns
 from tests.support.fake_upstream import fake_upstreams, load_scenario, scenario_from_data  # noqa: F401 - fixture
 from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
     csrf_for,
@@ -27,6 +28,12 @@ KEY = "sk-local-demo-8f2a91"
 @pytest.fixture(autouse=True)
 def fixed_baseline(monkeypatch):
     monkeypatch.setattr(engine_check, "_baseline_token", lambda: TOKEN)
+
+
+@pytest.fixture(autouse=True)
+def fake_engine_dns(monkeypatch):
+    """The check looks each name up once and refuses one that does not resolve: answer the fake hosts."""
+    use_fake_engine_dns(monkeypatch)
 
 
 def _serve(fakes, name, host=None, **values):

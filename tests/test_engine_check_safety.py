@@ -17,19 +17,18 @@ import pytest
 from gateway import engine_check
 from gateway.engine_check import KeyInput, blocked_reason, make_http_fetch, run_check
 from gateway.engine_definitions import load_engine_catalog
+from tests.support.engine_dns import resolve_fake_engines
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
 
 TOKEN = "t0k3n"
 
 
-async def _no_dns(host: str) -> list[str]:
-    raise OSError("fake hosts do not resolve")
 
 
 def _check(address: str, *, fetch=None, definition: str = "openai-compatible", **values):
     catalog = load_engine_catalog()
     return asyncio.run(run_check(catalog, catalog.definition(definition), {"address": address, **values}, key=KeyInput(),
-                                 fetch=fetch or make_http_fetch(resolve=_no_dns), baseline_token=TOKEN))
+                                 fetch=fetch or make_http_fetch(resolve=resolve_fake_engines), baseline_token=TOKEN))
 
 
 @pytest.mark.parametrize("address", [
@@ -118,7 +117,7 @@ def test_a_server_that_does_not_answer_in_time_is_unreachable(fake_upstreams, mo
     # The check's own limit (5 s) is not a setting; shorten it so the test waits 1 s.
     monkeypatch.setattr(engine_check, "DEFAULT_TIMEOUT_S", 1.0)
     fake = fake_upstreams.loopback(load_scenario("engine-probe/one-answer", token=TOKEN, status=200, body={"data": []}, headers={}, wait="forever"))
-    result = _check(f"{fake.base_url}/v1", fetch=make_http_fetch(resolve=_no_dns))
+    result = _check(f"{fake.base_url}/v1", fetch=make_http_fetch(resolve=resolve_fake_engines))
     finding = result["findings"][0]
     assert finding["code"] == "down"
     assert "within 1 second." in finding["why"]
@@ -139,7 +138,7 @@ def test_a_closed_port_is_unreachable_with_what_why_and_fix():
 
 
 def test_a_key_a_request_cannot_carry_is_not_sent():
-    answer = asyncio.run(make_http_fetch(resolve=_no_dns)("GET", "http://192.0.2.9:8080/v1/models",
+    answer = asyncio.run(make_http_fetch(resolve=resolve_fake_engines)("GET", "http://192.0.2.9:8080/v1/models",
                                                           headers={"Authorization": "Bearer clé"}, cap_bytes=1024, timeout_s=1))
     assert answer.transport == "blocked" and "cannot carry" in answer.detail
 

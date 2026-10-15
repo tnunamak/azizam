@@ -16,7 +16,7 @@ from gateway.access_plans import AccessPlan, CapabilityGrant, plan_to_document
 from gateway.engine_access import PLANS_LINK, who_can_use
 from tests.support.fake_upstream import fake_upstreams  # noqa: F401 - fixture
 from tests.test_engine_admin_routes import TOKEN, _create, _silent  # noqa: F401 - fixed_baseline below
-from tests.test_engine_admin_routes import fixed_baseline  # noqa: F401 - fixture
+from tests.test_engine_admin_routes import fake_engine_dns, fixed_baseline  # noqa: F401 - fixtures
 from tests.support.fake_upstream import load_scenario
 from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
     csrf_for,

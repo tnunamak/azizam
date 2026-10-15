@@ -17,16 +17,15 @@ import json
 from gateway import engine_check
 from gateway.engine_check import KeyInput, make_http_fetch, run_check, run_real_test
 from gateway.engine_definitions import load_engine_catalog
+from tests.support.engine_dns import resolve_fake_engines
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
 
 TOKEN = "t0k3n"
 
 
-async def _no_dns(host: str) -> list[str]:
-    raise OSError("fake hosts do not resolve; the fake transport answers them")
 
 
-FETCH = make_http_fetch(resolve=_no_dns)
+FETCH = make_http_fetch(resolve=resolve_fake_engines)
 
 
 def _check(definition_id: str, address: str, *, key: str | None = None, **values):
