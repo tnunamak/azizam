@@ -287,19 +287,49 @@ def test_fresh_seed_declares_opt_in_as_data():
     assert "transforms" not in custom["services"]["custom"]["config"]
 
 
-@pytest.mark.parametrize("preset", ["openai-compatible", "vllm", "ollama", "lmstudio"])
-def test_local_chat_preset_declares_overridable_attachment(preset):
-    form = {"preset": preset, "base_url": "http://127.0.0.1:5111/v1"}
-    raw = service_registry.service_form_to_raw(form)
+def _local_chat_definitions():
+    from gateway.engine_definitions import load_engine_catalog
+
+    catalog = load_engine_catalog()
+    return [catalog.definition(i) for i in catalog.ids() if "chat" in catalog.definition(i)["capabilities"]]
+
+
+def _new_engine_raw(definition, **values):
+    from gateway.engine_admin import build_raw, clean_values
+    from gateway.engine_definitions import load_engine_catalog
+
+    clean = clean_values(definition, {"address": "http://127.0.0.1:5111/v1", **values})
+    return build_raw(load_engine_catalog(), definition, clean, name="Local chat", capabilities=["chat"], models=[],
+                     enabled=True, check={}, tests=None, secret_id=None)
+
+
+@pytest.mark.parametrize("definition", _local_chat_definitions(), ids=lambda d: d["definition"])
+def test_a_new_local_chat_engine_carries_the_overridable_reasoning_attachment(definition):
+    """D-1: the reasoning transform is opt-in per service, and every local chat kind opts in by default (as data)."""
+    assert definition["record"]["transforms"] == ["reasoning-effort-final-chat"]
+    raw = _new_engine_raw(definition)
     assert raw["transforms"] == ["reasoning-effort-final-chat"]
     raw["transforms"].clear()
-    assert service_registry.provider_preset(preset)["transforms"] == ["reasoning-effort-final-chat"]
-    assert service_registry.service_form_to_raw({**form, "transforms": []})["transforms"] == []
+    assert definition["record"]["transforms"] == ["reasoning-effort-final-chat"], "the definition is not shared state"
+    # The owner can remove it, and the removal is kept as an explicit empty list.
+    assert _new_engine_raw(definition, transforms=[])["transforms"] == []
+    record = service_registry.service_from_backend_config("local", _new_engine_raw(definition, transforms=[]), source="ui")
+    assert record["config"]["transforms"] == []
 
 
-def test_media_and_unselected_presets_do_not_attach_reasoning():
-    for form in ({"preset": "comfyui"}, {}):
+def test_the_local_chat_kinds_cover_the_old_presets():
+    """openai-compatible, vLLM, LM Studio (OpenAI-compatible) and Ollama (own model list) are all local chat kinds."""
+    assert {d["definition"] for d in _local_chat_definitions()} == {"openai-compatible", "own-model-list"}
+
+
+def test_a_raw_record_without_a_definition_attaches_no_reasoning():
+    for form in ({"protocol": "comfyui"}, {}):
         assert "transforms" not in service_registry.service_form_to_raw(form)
+
+
+def test_a_raw_form_that_names_a_preset_is_refused():
+    with pytest.raises(ValueError, match="presets are gone"):
+        service_registry.service_form_to_raw({"preset": "vllm", "base_url": "http://127.0.0.1:5111/v1"})
 
 
 def test_migration_rolls_back_registry_generation_and_version_together(tmp_path):

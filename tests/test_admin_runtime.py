@@ -986,7 +986,7 @@ class ServicePatchRoundTripTests(unittest.TestCase):
 
     def test_new_model_mappings_use_current_policy_schema(self) -> None:
         registry = self.store.add_service(
-            data={"name": "first-chat", "preset": "openai-compatible",
+            data={"name": "first-chat", "protocol": "openai-compatible",
                   "base_url": "http://engine:18001/v1",
                   "models": [{"public": "chat", "upstream": "engine-model"}]},
             actor=self.ctx,
@@ -1346,19 +1346,39 @@ class ServiceModelRoutabilityTests(unittest.TestCase):
         # state dir; this mirrors start.sh's LITELLM_CONFIG_PATH=data/litellm.config.yaml.
         return self.state_dir / "litellm.config.yaml"
 
+    # Engines are added and edited through an engine definition (gateway/engine_admin.py,
+    # POST/PATCH /admin/api/operator/services with "definition"); the preset form path is
+    # gone. These tests drive that path, with a check that answers like the engine would.
+    def _engines(self):
+        from gateway.engine_admin import EngineService
+        from gateway.engine_check import Answer
+
+        async def fetch(method, url, *, headers, cap_bytes, timeout_s, content=None):
+            if method == "GET" and url.endswith("/models"):
+                body = {"object": "list", "data": [{"id": "TheBloke_Llama-3-8B"}, {"id": "u"}, {"id": "old-upstream"}, {"id": "new-upstream"}]}
+                return Answer(method=method, url=url, status=200, body=json.dumps(body).encode())
+            return Answer(method=method, url=url, status=404, body=b'{"detail": "Not Found"}')
+
+        return EngineService(self.store, fetch=fetch)
+
+    def _generation(self) -> int:
+        current = admin_store.get_service_registry_with_generation(path=self.db)
+        return int(current["operator_settings_generation"]) if current else 0
+
+    def _add_engine(self, name: str, address: str, models: list[dict]) -> None:
+        import asyncio
+
+        asyncio.run(self._engines().create(self.ctx, {
+            "definition": "openai-compatible", "name": name, "values": {"address": address},
+            "capabilities": ["chat"], "models": models, "acknowledge_warnings": True,
+        }, expected_generation=self._generation()))
+
     def test_added_service_with_model_writes_routable_litellm_config_to_state_dir(self) -> None:
         fired = {"n": 0}
         self.store.on_service_registry_changed = lambda: fired.__setitem__("n", fired["n"] + 1)
 
-        self.store.add_service(
-            data={
-                "name": "text-generation-webui",
-                "preset": "openai-compatible",
-                "base_url": "http://127.0.0.1:7860/v1",
-                "models": [{"public": "my-llama", "upstream": "TheBloke_Llama-3-8B"}],
-            },
-            actor=self.ctx,
-        )
+        self._add_engine("text-generation-webui", "http://127.0.0.1:7860/v1",
+                         [{"id": "TheBloke_Llama-3-8B", "public_name": "my-llama"}])
 
         artifact = self._artifact_path()
         self.assertTrue(
@@ -1389,15 +1409,7 @@ class ServiceModelRoutabilityTests(unittest.TestCase):
         repo_stray = repo_root / "litellm.config.yaml"
         pre_existing = repo_stray.exists()
 
-        self.store.add_service(
-            data={
-                "name": "svc",
-                "preset": "openai-compatible",
-                "base_url": "http://127.0.0.1:9100/v1",
-                "models": [{"public": "m", "upstream": "u"}],
-            },
-            actor=self.ctx,
-        )
+        self._add_engine("svc", "http://127.0.0.1:9100/v1", [{"id": "u", "public_name": "m"}])
 
         self.assertTrue(self._artifact_path().exists())
         if not pre_existing:
@@ -1409,29 +1421,28 @@ class ServiceModelRoutabilityTests(unittest.TestCase):
 
     def test_edit_service_model_rewrites_litellm_config(self) -> None:
         """Editing a service's model mapping must update the on-disk LiteLLM config."""
-        self.store.add_service(
-            data={
-                "name": "svc",
-                "preset": "openai-compatible",
-                "base_url": "http://127.0.0.1:9200/v1",
-                "models": [{"public": "old-name", "upstream": "old-upstream"}],
-            },
-            actor=self.ctx,
-        )
-        self.store.update_service(
-            service_id="svc",
-            data={
-                "base_url": "http://127.0.0.1:9200/v1",
-                "models": [{"public": "new-name", "upstream": "new-upstream"}],
-            },
-            actor=self.ctx,
-        )
+        import asyncio
+
+        self._add_engine("svc", "http://127.0.0.1:9200/v1", [{"id": "old-upstream", "public_name": "old-name"}])
+        asyncio.run(self._engines().update(self.ctx, "svc", {
+            "definition": "openai-compatible", "values": {"address": "http://127.0.0.1:9200/v1"},
+            "models": [{"id": "new-upstream", "public_name": "new-name"}],
+        }, expected_generation=self._generation()))
 
         import yaml
         compiled = yaml.safe_load(self._artifact_path().read_text())
         names = [m.get("model_name") for m in compiled.get("model_list", [])]
         self.assertIn("new-name", names, "Edited model mapping must be reflected in LiteLLM config")
         self.assertNotIn("old-name", names, "Stale model mapping must be removed from LiteLLM config")
+
+    def test_a_raw_add_that_names_a_preset_is_refused_not_stored_unroutable(self) -> None:
+        with self.assertRaisesRegex(ValueError, "presets are gone"):
+            self.store.add_service(
+                data={"name": "svc", "preset": "openai-compatible", "base_url": "http://127.0.0.1:9300/v1",
+                      "models": [{"public": "m", "upstream": "u"}]},
+                actor=self.ctx,
+            )
+        self.assertNotIn("svc", self.store.get_service_registry().get("services", {}))
 
 
 if __name__ == "__main__":
