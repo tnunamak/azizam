@@ -69,8 +69,18 @@ export function EngineRecordPage({
   onBack: () => void;
   onRemove: (serviceId: string) => void;
 }) {
-  const defs = useQuery({ queryKey: engineDefinitionsKey, queryFn: enginesApi.definitions, staleTime: 60_000 });
-  const view = useQuery({ queryKey: engineViewKey(serviceId), queryFn: () => enginesApi.view(serviceId) });
+  const {
+    data: definitions,
+    isPending: definitionsPending,
+    isError: definitionsFailed,
+  } = useQuery({ queryKey: engineDefinitionsKey, queryFn: enginesApi.definitions, staleTime: 60_000 });
+  const {
+    data: engine,
+    isPending: enginePending,
+    isError: engineFailed,
+    error: engineError,
+    refetch: refetchEngine,
+  } = useQuery({ queryKey: engineViewKey(serviceId), queryFn: () => enginesApi.view(serviceId) });
   const [version, setVersion] = useState(0);
   const [ownNotice, setOwnNotice] = useState<string | null>(null);
 
@@ -80,7 +90,7 @@ export function EngineRecordPage({
       Engines
     </Button>
   );
-  if (view.isPending || defs.isPending)
+  if (enginePending || definitionsPending)
     return (
       <div className="flex flex-col gap-4" aria-busy="true">
         {crumb}
@@ -88,8 +98,8 @@ export function EngineRecordPage({
         <Skeleton aria-hidden="true" className="h-72 w-full" />
       </div>
     );
-  const definition = defs.data?.definitions.find((d) => d.definition === view.data?.definition);
-  if (view.isError || defs.isError || !view.data || !definition)
+  const definition = definitions?.definitions.find((d) => d.definition === engine?.definition);
+  if (engineFailed || definitionsFailed || !engine || !definition)
     return (
       <div className="flex flex-col gap-4">
         {crumb}
@@ -98,12 +108,12 @@ export function EngineRecordPage({
           severity="critical"
           title="This engine could not be loaded"
           meta={
-            view.error instanceof ApiError && view.error.status === 404
+            engineError instanceof ApiError && engineError.status === 404
               ? "The engine is no longer on this gateway. Go back to Engines."
               : "Its settings are unknown. Try loading the engine again."
           }
           actions={
-            <Button type="button" variant="outline" size="sm" onClick={() => void view.refetch()}>
+            <Button type="button" variant="outline" size="sm" onClick={() => void refetchEngine()}>
               Retry
             </Button>
           }
@@ -132,16 +142,16 @@ export function EngineRecordPage({
         </div>
       )}
       {crumb}
-      {view.data.editable === false ? (
+      {engine.editable === false ? (
         <NotEditableRecord
           key={version}
-          view={view.data}
+          view={engine}
           definition={definition}
           onRefresh={async () => {
-            await view.refetch();
+            await refetchEngine();
           }}
           onSaved={async (message) => {
-            await view.refetch();
+            await refetchEngine();
             setVersion((v) => v + 1);
             setOwnNotice(message);
             onDismissNotice?.();
@@ -151,13 +161,13 @@ export function EngineRecordPage({
       ) : (
         <RecordForm
           key={version}
-          view={view.data}
+          view={engine}
           definition={definition}
           onRefresh={async () => {
-            await view.refetch();
+            await refetchEngine();
           }}
           onSaved={async (message) => {
-            await view.refetch();
+            await refetchEngine();
             setVersion((v) => v + 1);
             setOwnNotice(message);
             onDismissNotice?.();

@@ -201,11 +201,11 @@ function CardBody({ card, onChange, disabled }: { card: AdjustmentCard; onChange
       return (
         <>
           <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="Role">
+            <FormField label="Sent as">
               {(control) => (
                 <NativeSelect {...control} value={card.role} disabled={disabled} onChange={(event) => onChange({ ...card, role: event.target.value })}>
-                  <option value="system">System</option>
-                  <option value="user">User</option>
+                  <option value="system">Instructions</option>
+                  <option value="user">A person’s message</option>
                   {!["system", "user"].includes(card.role) && <option value={card.role}>{card.role}</option>}
                 </NativeSelect>
               )}

@@ -119,7 +119,12 @@ function Wizard({
   const viewer = useViewer();
   const owner = viewer.role === "owner";
   const queryClient = useQueryClient();
-  const defs = useQuery({ queryKey: engineDefinitionsKey, queryFn: enginesApi.definitions, staleTime: 60_000 });
+  const {
+    data: definitionsData,
+    isPending: definitionsPending,
+    isError: definitionsFailed,
+    refetch: refetchDefinitions,
+  } = useQuery({ queryKey: engineDefinitionsKey, queryFn: enginesApi.definitions, staleTime: 60_000 });
 
   const [step, setStep] = useState<Step>("kind");
   const [def, setDef] = useState<EngineDefinition | null>(null);
@@ -360,13 +365,13 @@ function Wizard({
     }
   }
 
-  if (defs.isPending)
+  if (definitionsPending)
     return (
       <Frame step={1} stepName="Kind" footer={null}>
         <Skeleton aria-hidden="true" className="h-40 w-full" />
       </Frame>
     );
-  if (defs.isError || !defs.data)
+  if (definitionsFailed || !definitionsData)
     return (
       <Frame step={1} stepName="Kind" footer={null}>
         <Callout
@@ -375,7 +380,7 @@ function Wizard({
           title="Server kinds could not be loaded"
           meta="Azizam needs the list of server kinds to add an engine. Try again."
           actions={
-            <Button type="button" variant="outline" size="sm" onClick={() => void defs.refetch()}>
+            <Button type="button" variant="outline" size="sm" onClick={() => void refetchDefinitions()}>
               Retry
             </Button>
           }
@@ -383,7 +388,7 @@ function Wizard({
       </Frame>
     );
 
-  const definitions = defs.data.definitions;
+  const definitions = definitionsData.definitions;
   if (step === "kind" || !def)
     return (
       <Frame
