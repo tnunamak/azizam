@@ -147,6 +147,24 @@ describe("LibraryPage batch J provenance", () => {
   });
 
 
+  test("uses the loaded Library grid and square tile geometry while loading", async () => {
+    let finish!: (response: Response) => void;
+    vi.mocked(fetch).mockReturnValue(new Promise<Response>((resolve) => { finish = resolve; }));
+    renderLibrary();
+    const loading = screen.getByRole("status", { name: "Loading library" });
+    const grid = loading.querySelector(".grid")!;
+    const gridClasses = grid.className;
+    expect(grid.children).toHaveLength(12);
+    expect(grid.firstElementChild).toHaveClass("relative", "min-w-0");
+    expect(grid.firstElementChild?.firstElementChild).toHaveClass("aspect-square", "rounded-media");
+    expect(loading.querySelector("[data-loading-spinner]")).toBeNull();
+    finish(Response.json({ assets: [assetWithReceipt], models: ["image"], next_cursor: null }));
+    const loadedGrid = await screen.findByRole("group", { name: "Creations" });
+    expect(loadedGrid.className).toBe(gridClasses);
+    expect(loadedGrid.querySelector(".aspect-square")).toHaveClass("rounded-media");
+    expect(screen.queryByRole("status", { name: "Loading library" })).toBeNull();
+  });
+
   test("only the newest tile media plays across video and audio", async () => {
     vi.mocked(fetch).mockResolvedValue(Response.json({ assets: [
       { ...assetWithReceipt, asset_id: "video-a", kind: "video", prompt: "Video A" },

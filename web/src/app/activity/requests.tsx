@@ -24,13 +24,15 @@ import {
 import { EmptyState } from "@/components/product/empty-state";
 import { Table, TableBody, TableRow, TableCell } from "@/components/ui/table";
 import { Card } from "@/components/ui/card";
-import { Callout, StateBadge, StatusLine } from "@/components/product/status-ui";
-import { RelativeTime } from "@/components/product";
+import { Callout, DelayedSpinner, StateBadge } from "@/components/product/status-ui";
+import { formatTimestamp } from "@/lib/format";
 import { requestCapability } from "@/lib/capability-state";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { useModelName } from "@/lib/use-model-name";
 import { technicalModelDetails } from "@/lib/model-name";
 import { useViewer } from "@/components/shell/session";
+
+const requestRowLayout = "flex min-h-(--row-2) w-full min-w-0 items-center gap-3 px-4 py-2 text-left max-sm:min-h-(--row-phone-2)";
 
 type Receipt = {
   request_id: string;
@@ -157,9 +159,9 @@ function outcomeCause(receipt: Receipt) {
     return "This request was rejected because it did not have permission. Check this person's access plan and the app's access.";
   if (status === 429) return "A request limit refused this request. The receipt does not identify which limit. Wait before trying again; if it happens again, ask the owner to check the request limits.";
   if (status >= 500 && status < 600)
-    return "An error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner.";
+    return "An error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, open Technical details and share the request number with the owner.";
   return outcome(receipt.status) === "Rejected"
-    ? "The receipt does not identify the rule that refused this request. Share the request ID from Technical details with the owner to check before trying again."
+    ? "The receipt does not identify the rule that refused this request. Open Technical details and share the request number with the owner before trying again."
     : null;
 }
 function outcomeSummary(receipt: Receipt) {
@@ -169,7 +171,7 @@ function outcomeSummary(receipt: Receipt) {
     const metadata = isObject(receipt.metadata) ? receipt.metadata : {};
     return Number(metadata.status_code ?? receipt.status_code) === 403
       ? "Access check: the receipt does not identify the specific rule."
-      : "The gateway rejected this request.";
+      : "This request was not allowed.";
   }
   if (label === "Failed") return "We couldn't tell where this stopped. Try again.";
   // Only media lands in Library; a chat or embedding result cannot be found there.
@@ -182,7 +184,7 @@ function outcomeSummary(receipt: Receipt) {
   if (label === "In progress")
     return "The request was still running when this receipt was recorded.";
   if (label === "Accepted")
-    return "The gateway accepted this request for processing.";
+    return "This request was accepted. Its result was not recorded here.";
   if (label === "Cancelled")
     return "The request was cancelled before completion.";
   if (label === "Disconnected")
@@ -336,15 +338,31 @@ export function Requests() {
         )}
       </div>
       {isPending ? (
-        <div
-          aria-label="Loading requests"
-          aria-busy="true"
-          className="space-y-4"
-        >
-          <div aria-hidden="true"><StatusLine tone="unknown" text="Loading requests" compact /></div>
-          {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-20 w-full motion-reduce:animate-none" />
-          ))}
+        <div aria-label="Loading requests" aria-busy="true" className="relative">
+          <span className="absolute right-4 top-3 z-10"><DelayedSpinner /></span>
+          <Card aria-hidden="true" className="gap-0 overflow-hidden p-0! max-sm:p-0!">
+            <Table dense className="table-fixed">
+              <TableBody>
+                {[0, 1, 2, 3].map((i) => (
+                  <TableRow key={i}>
+                    <TableCell className="px-0! py-0!">
+                      <div className={requestRowLayout}>
+                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <Skeleton className="h-5 w-2/3 motion-reduce:animate-none" />
+                          <Skeleton className="h-4 w-1/2 motion-reduce:animate-none" />
+                        </div>
+                        <div className="flex min-w-0 max-w-1/2 shrink-0 flex-col items-end gap-0.5">
+                          <Skeleton className="h-5 w-16 motion-reduce:animate-none" />
+                          <Skeleton className="h-4 w-24 motion-reduce:animate-none" />
+                        </div>
+                        <span className="size-4 shrink-0" />
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
         </div>
       ) : isError && rows.length === 0 ? (
         <Callout
@@ -358,7 +376,7 @@ export function Requests() {
           }
         >
           <p>
-            The gateway&apos;s request list could not be loaded. We could not
+            The request list could not be loaded. We could not
             identify the cause. Try again.
           </p>
         </Callout>
@@ -404,7 +422,7 @@ export function Requests() {
               }
             >
               <p>
-                The gateway&apos;s request list could not be refreshed. We could
+                The request list could not be refreshed. We could
                 not identify the cause. The requests already loaded are still
                 shown.
               </p>
@@ -421,7 +439,7 @@ export function Requests() {
                         type="button"
                         aria-label={`Request details: ${requestSummary(row.receipt)} by ${row.person_label}`}
                         aria-describedby={`${rowId}-${index}-context ${rowId}-${index}-outcome`}
-                        className="focus-visible:outline-ring flex min-h-(--row-2) w-full min-w-0 items-center gap-3 px-4 py-2 text-left hover:[&_p:first-child]:underline focus-visible:outline-2 focus-visible:-outline-offset-2 max-sm:min-h-(--row-phone-2)"
+                        className={`${requestRowLayout} focus-visible:outline-ring hover:[&_p:first-child]:underline focus-visible:outline-2 focus-visible:-outline-offset-2`}
                         onClick={(event) => {
                           openerRef.current = event.currentTarget;
                           setSelectedReceiptKey(keys[index]);
@@ -465,7 +483,7 @@ export function Requests() {
                             <StateBadge state="unknown" word={outcome(row.receipt.status)} />
                           )}
                           <p className="text-muted-foreground figures max-w-full truncate text-meta">
-                            {row.created_at ? <RelativeTime ts={row.created_at} /> : "Time not recorded"}
+                            <time {...formatTimestamp(row.created_at || null)} />
                             {" · "}
                             {duration(row.receipt.latency_ms) || "Duration not recorded"}
                           </p>
@@ -494,7 +512,7 @@ export function Requests() {
                 }
               >
                 <p>
-                The gateway&apos;s request list could not be refreshed. We could
+                The request list could not be refreshed. We could
                 not identify the cause. The requests already loaded are still
                 shown.
               </p>
@@ -590,7 +608,7 @@ export function RequestReceiptSheet({ record, onOpenChange, title, description, 
                   {[
                     ...(fellBack ? [
                       ["Requested model", nameModel(requested!)],
-                      ["Served model", nameModel(served!)],
+                      ["Model used", nameModel(served!)],
                     ] : different ? [
                       ["Name used", nameModel(requested!)],
                       ["Model", nameModel(served!)],
@@ -605,7 +623,7 @@ export function RequestReceiptSheet({ record, onOpenChange, title, description, 
                   ))}
                   <div>
                     <dt className="text-muted-foreground">Where it ran</dt>
-                    <dd className="mt-1">See Technical details for recorded routing, when available.</dd>
+                    <dd className="mt-1">Open Technical details to see how this request was handled, if recorded.</dd>
                   </div>
                 </dl>
                 </section>
@@ -620,7 +638,7 @@ export function RequestReceiptSheet({ record, onOpenChange, title, description, 
                   <div>
                     <dt className="text-muted-foreground">When</dt>
                     <dd className="mt-1">
-                      {record.created_at ? <RelativeTime ts={record.created_at} /> : "Time not recorded"}
+                      <time {...formatTimestamp(record.created_at || null)} />
                     </dd>
                   </div>
                 </dl>

@@ -816,8 +816,8 @@ test.each(["success", "succeeded", "ok"])("COPY-11 usage completion once (%s)", 
 });
 
 test.each([
-  ["rejected", "Rejected", "The gateway rejected this request."],
-  ["accepted", "Accepted", "The gateway accepted this request for processing."],
+  ["rejected", "Rejected", "This request was not allowed."],
+  ["accepted", "Accepted", "This request was accepted. Its result was not recorded here."],
   ["in_progress", "In progress", "The request was still running when this receipt was recorded."],
   ["timed_out", "Timed out", "The request timed out before we recorded a result. Try again."],
   ["incomplete", "Outcome not recorded", "We couldn't tell where this stopped. Check for a newer receipt, then try again."],
@@ -968,11 +968,18 @@ test.each([false, true])("PF-045 shows requested and served models only when dif
   const sheet = within(screen.getByRole("dialog"));
   expect(Boolean(sheet.queryByText("A different model was used."))).toBe(different);
   expect(Boolean(sheet.queryByText("Requested model"))).toBe(different);
-  expect(Boolean(sheet.queryByText("Served model"))).toBe(different);
+  expect(Boolean(sheet.queryByText("Model used"))).toBe(different);
   expect(Boolean(sheet.queryByText("Model", { exact: true }))).toBe(!different);
   const technical = sheet.getByText("Technical details").closest("details")!;
   expect(technical).not.toHaveAttribute("open");
   expect(technical).toHaveTextContent("private_stage");
+  expect(sheet.getByText("Open Technical details to see how this request was handled, if recorded.")).toBeVisible();
+  const plain = screen.getByRole("dialog").cloneNode(true) as HTMLElement;
+  plain.querySelectorAll("details").forEach((node) => node.remove());
+  expect(plain.textContent).not.toMatch(/receipt id|request id|upstream|routing|provider slug|alias|served model/i);
+  await user.click(sheet.getByText("Technical details"));
+  expect(technical).toHaveAttribute("open");
+  expect(within(technical).getByText("Request ID: routing")).toBeVisible();
 });
 
 

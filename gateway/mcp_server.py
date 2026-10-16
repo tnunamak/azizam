@@ -535,10 +535,12 @@ def tool_result(payload: Mapping[str, Any], *, is_error: bool = False, version: 
     """MCP tool result: JSON text for any client, structured content, links for media.
 
     2025-03-26 has neither ``structuredContent`` nor ``resource_link`` (both
-    arrived in 2025-06-18), so its clients get the JSON text alone. The text
-    already carries every asset URL.
+    arrived in 2025-06-18), so its clients get text alone. Errors lead with a
+    plain message; the JSON block preserves details for every protocol era.
     """
     content: list[dict[str, Any]] = [{"type": "text", "text": json.dumps(payload, separators=(",", ":"), default=str)}]
+    if is_error:
+        content.insert(0, {"type": "text", "text": str(payload.get("error") or "Tool execution failed")})
     if version == OLDEST_VERSION:
         result: dict[str, Any] = {"content": content}
     else:
@@ -560,7 +562,10 @@ async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args:
     tools = Tools(deps, request, auth)
     handler = {"capabilities": tools.capabilities, "run": tools.run, "job": tools.job}[name]
     try:
-        return tool_result(await handler(args), version=version)
+        # Both run and job expose generation failures to the caller as errors.
+        # A canceled job is a valid outcome, including an explicit cancel request.
+        payload = await handler(args)
+        return tool_result(payload, is_error=payload.get("status") == "failed", version=version)
     except CallError as exc:
         return tool_result({"status": "error", "error": str(exc), **exc.details}, is_error=True, version=version)
     except Exception as exc:  # noqa: BLE001 - never leak a traceback to the client
@@ -646,9 +651,9 @@ async def handle_message(deps: McpDeps, request: Request, auth: Any, msg: Mappin
             result.update(ttlMs=300000, cacheScope="public")
     elif method == "tools/call":
         name = params.get("name")
-        if name not in {t["name"] for t in TOOLS}:
+        if not isinstance(name, str) or name not in {t["name"] for t in TOOLS}:
             return rpc_error(mid, INVALID_PARAMS, f"Unknown tool: {name}")
-        args = params.get("arguments") or {}
+        args = params.get("arguments", {})
         if not isinstance(args, Mapping):
             return rpc_error(mid, INVALID_PARAMS, "arguments must be an object")
         result = await call_tool(deps, request, auth, name, args, version)

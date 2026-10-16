@@ -184,7 +184,7 @@ it("names the layer in change-list failures (PF-142)", async () => {
   const audit = mount(() => Promise.reject(new Error("offline")));
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent(
-    "The gateway's changes list could not be loaded. We could not identify the cause. Try again.",
+    "The changes list could not be loaded. We could not identify the cause. Try again.",
   );
   audit.mockResolvedValue({ records: [recordedChange], next_cursor: "older" });
   await user.click(within(alert).getByRole("button", { name: "Try again" }));
@@ -192,7 +192,7 @@ it("names the layer in change-list failures (PF-142)", async () => {
   audit.mockRejectedValue(new Error("offline"));
   await user.click(screen.getByRole("button", { name: "Refresh" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "The gateway's changes list could not be refreshed. We could not identify the cause.",
+    "The changes list could not be refreshed. We could not identify the cause.",
   );
 });
 
@@ -420,7 +420,7 @@ it("names the layer when the request list fails (PF-142)", async () => {
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
   mountRequests();
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "The gateway's request list could not be loaded. We could not identify the cause. Try again.",
+    "The request list could not be loaded. We could not identify the cause. Try again.",
   );
 });
 
@@ -535,7 +535,7 @@ it.each([undefined, "provider", "opaque_stage"])("COPY-08 activity failure uncer
 });
 
 it.each([
-  ["rejected", "The gateway rejected this request."],
+  ["rejected", "This request was not allowed."],
   ["in_progress", "The request was still running when this receipt was recorded."],
   ["timed_out", "The request timed out before we recorded a result. Try again."],
   ["incomplete", "We couldn't tell where this stopped. Check for a newer receipt, then try again."],
@@ -558,7 +558,7 @@ it.each([
   const sheet = within(screen.getByRole("dialog"));
   expect(sheet.queryByText("A different model was used.") !== null).toBe(different);
   expect(sheet.queryByText("Requested model") !== null).toBe(different);
-  expect(sheet.queryByText("Served model") !== null).toBe(different);
+  expect(sheet.queryByText("Model used") !== null).toBe(different);
   expect(sheet.queryByText("Model", { exact: true }) !== null).toBe(!different);
 });
 
@@ -691,7 +691,7 @@ it("recognizes fallback_model without fallback reasons in the receipt sheet", as
   const sheet = within(screen.getByRole("dialog"));
   expect(sheet.queryByText("A different model was used.")).toBeVisible();
   expect(sheet.getByText("Requested model").nextElementSibling).toHaveTextContent(/primary/i);
-  expect(sheet.getByText("Served model").nextElementSibling).toHaveTextContent(/backup/i);
+  expect(sheet.getByText("Model used").nextElementSibling).toHaveTextContent(/backup/i);
   expect(sheet.queryByText("Name used")).toBeNull();
 });
 
@@ -705,7 +705,7 @@ it("does not claim a substitution when fallback metadata records the same served
   const sheet = within(screen.getByRole("dialog"));
   expect(sheet.queryByText("A different model was used.")).toBeNull();
   expect(sheet.queryByText("Requested model")).toBeNull();
-  expect(sheet.queryByText("Served model")).toBeNull();
+  expect(sheet.queryByText("Model used")).toBeNull();
   expect(sheet.getByText("Model", { exact: true })).toBeVisible();
 });
 
