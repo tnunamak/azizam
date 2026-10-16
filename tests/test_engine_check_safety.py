@@ -113,15 +113,17 @@ def test_a_long_model_list_from_a_server_that_fronts_many_models_is_read(fake_up
     assert all(f["code"] != "too_large" for f in result["findings"])
 
 
-def test_a_server_that_does_not_answer_in_time_is_unreachable(fake_upstreams, monkeypatch):
-    # The check's own limit (5 s) is not a setting; shorten it so the test waits 1 s.
-    monkeypatch.setattr(engine_check, "DEFAULT_TIMEOUT_S", 1.0)
+def test_a_server_that_does_not_answer_in_time_is_unreachable(fake_upstreams):
+    # The probe limit is definition data; shorten it so the test waits 1 s.
     fake = fake_upstreams.loopback(load_scenario("engine-probe/one-answer", token=TOKEN, status=200, body={"data": []}, headers={}, wait="forever"))
-    result = _check(f"{fake.base_url}/v1", fetch=make_http_fetch(resolve=resolve_fake_engines))
+    catalog = load_engine_catalog()
+    definition = {**catalog.definition("openai-compatible"), "timeouts": {"probe_s": 1}}
+    result = asyncio.run(run_check(catalog, definition, {"address": f"{fake.base_url}/v1"}, key=KeyInput(),
+                                   fetch=make_http_fetch(resolve=resolve_fake_engines), baseline_token=TOKEN))
     finding = result["findings"][0]
     assert finding["code"] == "down"
     assert "within 1 second." in finding["why"]
-    assert "--max-time 5" in finding["details"]["request"]
+    assert "--max-time 1" in finding["details"]["request"]
 
 
 def test_a_closed_port_is_unreachable_with_what_why_and_fix():
