@@ -6,11 +6,16 @@ and checks against fake servers of the engine-probe protocol.
 
 from __future__ import annotations
 
+import asyncio
 import json
+from types import SimpleNamespace
 
+import httpx
 import pytest
+from fastapi import APIRouter, FastAPI
+from fastapi.responses import JSONResponse
 
-from gateway import admin_store, engine_check, secret_store, service_registry, transforms
+from gateway import admin_store, engine_admin, engine_check, secret_store, service_registry, transforms
 from gateway.litellm_substrate import compile_litellm_config_from_registry
 from gateway.provider_sidecar import provider_secret_env_map_from_registry, provider_secret_origin_map_from_registry
 from tests.support.engine_dns import use_fake_engine_dns
@@ -567,3 +572,215 @@ def test_checking_an_engine_where_it_already_is_ignores_others_at_that_address(g
     moved = owner.post("/admin/api/engines/check", headers=csrf_for(owner), json={
         "definition": "openai-compatible", "values": {"address": f"{fake.base_url}/v1"}})
     assert moved.json()["check"]["findings"][0]["code"] == "dup", "a new engine at that address is still a duplicate"
+
+
+def _probe_route_app(monkeypatch, *, action=None, concurrent=None, per_minute=None):
+    """Real handlers, inert probe service and a fixed clock: no upstream or DNS calls."""
+    for name, value in (("AZIZAM_ENGINE_CHECK_MAX_CONCURRENT", concurrent),
+                        ("AZIZAM_ENGINE_CHECKS_PER_MINUTE", per_minute)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, str(value))
+    limiter_type = engine_admin._EngineProbeLimiter
+    monkeypatch.setattr(engine_admin, "_EngineProbeLimiter",
+                        lambda **limits: limiter_type(**limits, clock=lambda: 1000.0))
+    calls = []
+
+    def guard(request):
+        actor = request.headers.get("x-test-actor")
+        if not actor:
+            return JSONResponse(status_code=401, content={"error": {"code": "unauthorized"}})
+        return SimpleNamespace(actor_kind=request.headers.get("x-test-kind", "user"), actor_id=actor)
+
+    async def read_json(request):
+        try:
+            return await request.json()
+        except ValueError:
+            raise engine_check.DraftError("The request must be JSON.", field="values") from None
+
+    async def probe(ctx, body):
+        calls.append((ctx.actor_kind, ctx.actor_id, body))
+        return await action(ctx, body) if action else {"ok": True}
+
+    app = FastAPI()
+    router = APIRouter(prefix="/admin/api")
+    engine_admin.register_engine_routes(
+        router, service=SimpleNamespace(check=probe, test=probe), guard=guard, read_json=read_json,
+    )
+    app.include_router(router)
+    return app, calls
+
+
+def _probe_client(app):
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver")
+
+
+def _assert_probe_limited(response, *, retry_after=None):
+    assert response.status_code == 429, response.text
+    assert set(response.json()) == {"error"}
+    assert response.json()["error"]["code"] == "engine_probe_rate_limited"
+    assert response.json()["error"]["message"]
+    assert int(response.headers["Retry-After"]) >= 1
+    if retry_after is not None:
+        assert response.headers["Retry-After"] == str(retry_after)
+
+
+def test_check_and_draft_test_share_thirty_starts_per_caller(monkeypatch):
+    app, calls = _probe_route_app(monkeypatch)
+
+    async def exercise():
+        async with _probe_client(app) as client:
+            # Guard refusals cannot consume the authenticated caller's budget.
+            assert (await client.post("/admin/api/engines/check", json={})).status_code == 401
+            for index in range(30):
+                endpoint = ("check", "test")[index % 2]
+                response = await client.post(f"/admin/api/engines/{endpoint}", json={"index": index},
+                                             headers={"x-test-actor": "alice"})
+                assert response.status_code == 200, response.text
+            for endpoint in ("check", "test"):
+                _assert_probe_limited(await client.post(f"/admin/api/engines/{endpoint}", json={},
+                                                       headers={"x-test-actor": "alice"}), retry_after=60)
+            # Neither another user nor another actor kind shares Alice's budget.
+            for headers in ({"x-test-actor": "bob"}, {"x-test-actor": "alice", "x-test-kind": "service_account"}):
+                assert (await client.post("/admin/api/engines/test", json={}, headers=headers)).status_code == 200
+        assert len(calls) == 32, "refused requests must not invoke the probe"
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("first, second", [("check", "test"), ("test", "check")])
+def test_probe_routes_share_two_slots_and_release_on_cancellation(monkeypatch, first, second):
+    async def exercise():
+        started, release = asyncio.Queue(), asyncio.Event()
+
+        async def action(ctx, body):
+            if body.get("hold"):
+                await started.put(body["hold"])
+                await release.wait()
+            return {"ok": True}
+
+        app, calls = _probe_route_app(monkeypatch, action=action)
+        async with _probe_client(app) as client:
+            headers = {"x-test-actor": "alice"}
+            tasks = [asyncio.create_task(client.post(f"/admin/api/engines/{endpoint}",
+                                                    json={"hold": index + 1}, headers=headers))
+                     for index, endpoint in enumerate((first, second))]
+            try:
+                assert {await asyncio.wait_for(started.get(), 5) for _ in tasks} == {1, 2}
+                for endpoint in ("check", "test"):
+                    _assert_probe_limited(await client.post(f"/admin/api/engines/{endpoint}", json={},
+                                                           headers=headers), retry_after=1)
+                assert len(calls) == 2
+                assert (await client.post("/admin/api/engines/check", json={},
+                                          headers={"x-test-actor": "bob"})).status_code == 200
+                tasks[0].cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await tasks[0]
+                assert (await client.post(f"/admin/api/engines/{first}", json={}, headers=headers)).status_code == 200
+                assert not tasks[1].done(), "cancelling one check must not cancel its sibling"
+            finally:
+                release.set()
+                await asyncio.gather(*tasks, return_exceptions=True)
+            assert tasks[1].result().status_code == 200
+            assert (await client.post(f"/admin/api/engines/{second}", json={}, headers=headers)).status_code == 200
+
+    asyncio.run(exercise())
+
+
+def test_probe_route_limits_are_configurable_and_rejections_do_not_count(monkeypatch):
+    async def exercise():
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def action(ctx, body):
+            if body.get("hold"):
+                started.set()
+                await release.wait()
+            return {"ok": True}
+
+        app, calls = _probe_route_app(monkeypatch, action=action, concurrent=1, per_minute=2)
+        async with _probe_client(app) as client:
+            headers = {"x-test-actor": "alice"}
+            first = asyncio.create_task(client.post("/admin/api/engines/check", json={"hold": True}, headers=headers))
+            try:
+                await asyncio.wait_for(started.wait(), 5)
+                _assert_probe_limited(await client.post("/admin/api/engines/test", json={}, headers=headers),
+                                      retry_after=1)
+            finally:
+                release.set()
+                await first
+            assert (await client.post("/admin/api/engines/test", json={}, headers=headers)).status_code == 200
+            _assert_probe_limited(await client.post("/admin/api/engines/check", json={}, headers=headers),
+                                  retry_after=60)
+        assert len(calls) == 2
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("failure", ["route", "draft", "permission", "unexpected", "body"])
+def test_probe_slot_is_released_when_request_fails(monkeypatch, failure):
+    async def action(ctx, body):
+        if body.get("fail"):
+            if failure == "route":
+                raise engine_admin.EngineRouteError(422, "test_failure", "Probe refused.")
+            if failure == "draft":
+                raise engine_check.DraftError("Invalid draft.", field="values")
+            if failure == "permission":
+                raise PermissionError("Owner required.")
+            raise RuntimeError("Unexpected probe failure.")
+        return {"ok": True}
+
+    app, _ = _probe_route_app(monkeypatch, action=action, concurrent=1)
+
+    async def exercise():
+        async with _probe_client(app) as client:
+            headers = {"x-test-actor": "alice"}
+            if failure == "unexpected":
+                with pytest.raises(RuntimeError, match="Unexpected probe failure"):
+                    await client.post("/admin/api/engines/test", json={"fail": True}, headers=headers)
+            else:
+                kwargs = {"content": "{"} if failure == "body" else {"json": {"fail": True}}
+                response = await client.post("/admin/api/engines/test", headers=headers, **kwargs)
+                assert response.status_code == {"route": 422, "draft": 400, "permission": 403, "body": 400}[failure]
+            assert (await client.post("/admin/api/engines/check", json={}, headers=headers)).status_code == 200
+
+    asyncio.run(exercise())
+
+
+def test_probe_limit_uses_a_rolling_minute_and_cleans_expired_callers():
+    now = [100.0]
+    limiter = engine_admin._EngineProbeLimiter(max_concurrent=2, per_minute=2, clock=lambda: now[0])
+    alice = SimpleNamespace(actor_kind="user", actor_id="alice")
+    bob = SimpleNamespace(actor_kind="user", actor_id="bob")
+    with limiter.slot(alice), limiter.slot(bob):
+        pass
+    now[0] = 110.0
+    with limiter.slot(alice):
+        pass
+    now[0] = 159.1
+    with pytest.raises(engine_admin.EngineRouteError) as refused:
+        with limiter.slot(alice):
+            pytest.fail("A rolling minute still includes both starts.")
+    response = refused.value.as_response()
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "1"
+    now[0] = 160.0
+    with limiter.slot(alice):
+        pass
+    assert ("user", "bob") not in limiter._starts
+    assert list(limiter._starts[("user", "alice")]) == [110.0, 160.0]
+    assert not limiter._active
+    now[0] = 169.1
+    with pytest.raises(engine_admin.EngineRouteError):
+        with limiter.slot(alice):
+            pytest.fail("Expiry of one start must not reset the whole minute.")
+    now[0] = 170.0
+    with limiter.slot(alice):
+        pass
+
+
+@pytest.mark.parametrize("invalid", ["0", "-1", "not-a-number", "1.5"])
+def test_invalid_probe_limit_configuration_keeps_safe_defaults(monkeypatch, invalid):
+    for name, default in (("AZIZAM_ENGINE_CHECK_MAX_CONCURRENT", 2), ("AZIZAM_ENGINE_CHECKS_PER_MINUTE", 30)):
+        monkeypatch.setenv(name, invalid)
+        assert engine_admin._probe_limit(name, default) == default

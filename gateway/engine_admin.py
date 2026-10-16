@@ -22,8 +22,12 @@ import os
 import re
 import secrets
 import time
+from collections import deque
+from contextlib import contextmanager
+from math import ceil
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from threading import Lock
+from typing import Any, Callable, Iterable, Iterator, Mapping
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
@@ -68,13 +72,15 @@ _TRANSFORM_KINDS = frozenset({"value-map", "drop-params", "default-params", "par
 
 
 class EngineRouteError(Exception):
-    def __init__(self, status_code: int, code: str, message: str, *, field: str | None = None, check: Mapping[str, Any] | None = None) -> None:
+    def __init__(self, status_code: int, code: str, message: str, *, field: str | None = None,
+                 check: Mapping[str, Any] | None = None, headers: Mapping[str, str] | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
         self.field = field
         self.check = check
+        self.headers = dict(headers or {})
 
     def as_response(self) -> JSONResponse:
         error: dict[str, Any] = {"code": self.code, "message": self.message}
@@ -83,7 +89,68 @@ class EngineRouteError(Exception):
         content: dict[str, Any] = {"error": error}
         if self.check is not None:
             content["check"] = dict(self.check)
-        return JSONResponse(status_code=self.status_code, content=content)
+        return JSONResponse(status_code=self.status_code, content=content, headers=self.headers)
+
+
+def _probe_limit(name: str, default: int) -> int:
+    """Invalid settings keep the safe default rather than disabling protection."""
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+class _EngineProbeLimiter:
+    """Shared check/draft-test budget per authenticated actor, per gateway process."""
+
+    def __init__(self, *, max_concurrent: int, per_minute: int,
+                 clock: Callable[[], float] | None = None) -> None:
+        self.max_concurrent = max_concurrent
+        self.per_minute = per_minute
+        self._clock = clock or time.monotonic
+        self._lock = Lock()
+        self._active: dict[tuple[str, str], int] = {}
+        self._starts: dict[tuple[str, str], deque[float]] = {}
+
+    @contextmanager
+    def slot(self, ctx: Any) -> Iterator[None]:
+        # Never key on a request header, session, draft address or client IP.
+        # A guard without an actor id conservatively shares one fallback bucket.
+        key = (str(getattr(ctx, "actor_kind", None) or "user"),
+               str(getattr(ctx, "actor_id", None) or ""))
+        with self._lock:
+            now = self._clock()
+            for caller, starts in list(self._starts.items()):
+                while starts and starts[0] <= now - 60:
+                    starts.popleft()
+                if not starts and not self._active.get(caller):
+                    del self._starts[caller]
+            starts = self._starts.setdefault(key, deque())
+            if len(starts) >= self.per_minute:
+                raise EngineRouteError(
+                    status.HTTP_429_TOO_MANY_REQUESTS, "engine_probe_rate_limited",
+                    "Too many engine checks this minute. Try again shortly.",
+                    headers={"Retry-After": str(max(1, ceil(starts[0] + 60 - now)))},
+                )
+            if self._active.get(key, 0) >= self.max_concurrent:
+                raise EngineRouteError(
+                    status.HTTP_429_TOO_MANY_REQUESTS, "engine_probe_rate_limited",
+                    "Too many engine checks are still running. Try again shortly.",
+                    headers={"Retry-After": "1"},
+                )
+            starts.append(now)
+            self._active[key] = self._active.get(key, 0) + 1
+        try:
+            yield
+        finally:
+            # Also release on malformed JSON, probe errors, disconnect/cancellation.
+            with self._lock:
+                remaining = self._active[key] - 1
+                if remaining:
+                    self._active[key] = remaining
+                else:
+                    del self._active[key]
 
 
 def _is_owner(ctx: Any) -> bool:
@@ -1018,6 +1085,12 @@ class EngineService:
 def register_engine_routes(router: APIRouter, *, service: EngineService, guard: Callable[[Request], Any],
                            read_json: Callable[[Request], Any]) -> None:
     """Mount the Add engine routes on the admin router (owner and administrator)."""
+    # Both endpoints consume one budget. Configure positive integers in the
+    # gateway environment; changes take effect when the routes are registered.
+    probe_limits = _EngineProbeLimiter(
+        max_concurrent=_probe_limit("AZIZAM_ENGINE_CHECK_MAX_CONCURRENT", 2),
+        per_minute=_probe_limit("AZIZAM_ENGINE_CHECKS_PER_MINUTE", 30),
+    )
 
     def _error(exc: BaseException) -> JSONResponse:
         if isinstance(exc, EngineRouteError):
@@ -1046,8 +1119,9 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            body = await read_json(request)
-            result = await service.check(ctx, body)
+            with probe_limits.slot(ctx):
+                body = await read_json(request)
+                result = await service.check(ctx, body)
         except (EngineRouteError, DraftError, PermissionError) as exc:
             return _error(exc)
         except Exception as exc:  # noqa: BLE001 - the route error type is owned by admin_api
@@ -1062,8 +1136,9 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            body = await read_json(request)
-            result = await service.test(ctx, body)
+            with probe_limits.slot(ctx):
+                body = await read_json(request)
+                result = await service.test(ctx, body)
         except (EngineRouteError, DraftError, PermissionError) as exc:
             return _error(exc)
         except Exception as exc:  # noqa: BLE001

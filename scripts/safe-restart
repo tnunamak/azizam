@@ -452,6 +452,17 @@ class Restarter:
     def execute(self) -> int:
         args = self.args
         target = self._unit()
+        if args.llama and not args.dry_run:
+            code = self.run(
+                ["systemctl", "--user", "cat", "--no-pager", "--", target],
+                args.systemctl_timeout,
+            )
+            if code != 0:
+                self.say(
+                    f"Cannot find or inspect systemd user unit {target} (exit {code}). "
+                    "Check --llama-unit; NOT draining or restarting."
+                )
+                return EXIT_SYSTEMCTL
         if not (args.llama or args.dry_run or args.skip_web_build):
             if web_build_required(self.web_dir):
                 self.say("building web/out before draining; requests are still accepted")

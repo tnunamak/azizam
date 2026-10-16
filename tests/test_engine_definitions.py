@@ -32,6 +32,16 @@ def test_the_seed_holds_the_two_definitions_with_any_openai_compatible_server_fi
     first = catalog.public()["definitions"][0]
     assert first["title"] == "Any OpenAI-compatible server"
     assert first["fields"][0]["key"] == "address" and first["fields"][1]["key"] == "api_key"
+    # Shared advice and definition-specific overrides must all be actionable.
+    advice_groups = [("shared", SEED["advice"])] + [
+        (definition["definition"], definition["advice"])
+        for definition in SEED["definitions"]
+    ]
+    for owner, rows in advice_groups:
+        for row in rows:
+            for part in ("what", "why", "fix"):
+                text = row.get(part)
+                assert isinstance(text, str) and text.strip(), (owner, row.get("code"), part)
 
 
 def test_every_secret_field_is_write_only():
@@ -70,6 +80,14 @@ def test_every_field_is_one_the_running_gateway_reads():
     for definition in SEED["definitions"]:
         unread = [f["key"] for f in definition["fields"] if f["key"] not in FIELDS_THE_GATEWAY_READS]
         assert not unread, f"{definition['definition']} offers {unread}, which the gateway does not use"
+        local_fields = {field["key"] for field in definition["fields"]}
+        for field in definition["fields"]:
+            if "show_if" in field:
+                condition = field["show_if"]
+                assert isinstance(condition, dict), (definition["definition"], field["key"])
+                assert condition.get("field") in local_fields, (
+                    definition["definition"], field["key"], condition.get("field")
+                )
 
 
 def test_only_work_the_gateway_routes_to_an_added_engine_is_offered():
@@ -80,6 +98,24 @@ def test_only_work_the_gateway_routes_to_an_added_engine_is_offered():
     for definition in SEED["definitions"]:
         assert set(definition["capabilities"]) <= {"chat", "embeddings"}, definition["definition"]
         assert definition["flow"] == "detect"
+        # Probe implications must refer to catalog capabilities, not arbitrary names.
+        known = set(SEED["capabilities"])
+        for rule in SEED["model_rules"]:
+            assert rule.get("capability") in known, (
+                definition["definition"], "model_rule", rule.get("field"), rule.get("capability")
+            )
+        metadata = {row["id"]: row for row in SEED["metadata_rows"]}
+        for probe_id in definition["probes"]["metadata"]:
+            assert probe_id in metadata, (definition["definition"], probe_id)
+            probe = metadata[probe_id]
+            for mapping in ("paths", "values"):
+                for source, capability in probe.get(mapping, {}).items():
+                    assert capability in known, (
+                        definition["definition"], probe_id, mapping, source, capability
+                    )
+        if definition["probes"].get("route_probes"):
+            for capability in definition["capabilities"]:
+                assert capability in known, (definition["definition"], "route_probe", capability)
 
 
 def test_detection_rules_name_api_shapes_not_engines():
@@ -136,3 +172,126 @@ def test_the_published_schema_is_a_valid_json_schema():
     jsonschema.Draft202012Validator.check_schema(SCHEMA)
     assert SEED["$schema"] == "./engine_definitions.schema.json"
     assert (Path(engine_definitions.__file__).parent.parent / "registry" / "engine_definitions.schema.json").is_file()
+
+
+def test_definition_timeouts_are_optional_positive_bounded_numbers():
+    for timeouts in ({}, {"probe_s": 0.25}, {"check_s": 600}, {"real_test_s": 240},
+                     {"probe_s": 7, "check_s": 30, "real_test_s": 180}):
+        data = copy.deepcopy(SEED)
+        data["definitions"][0]["timeouts"] = timeouts
+        assert _parse(data).definition("openai-compatible")["timeouts"] == timeouts
+    for key in ("probe_s", "check_s", "real_test_s"):
+        for bad in (0, -1, 601, True, "5", None, [], {}):
+            data = copy.deepcopy(SEED)
+            data["definitions"][0]["timeouts"] = {key: bad}
+            with pytest.raises(EngineDefinitionError, match="timeouts"):
+                _parse(data)
+    for bad in (None, [], {"unexpected_s": 5}):
+        data = copy.deepcopy(SEED)
+        data["definitions"][0]["timeouts"] = bad
+        with pytest.raises(EngineDefinitionError, match="timeouts"):
+            _parse(data)
+    data = copy.deepcopy(SEED)
+    for definition in data["definitions"]:
+        definition.pop("timeouts", None)
+    assert _parse(data).ids() == ["openai-compatible", "own-model-list"]
+
+
+def test_definition_timeouts_reach_every_probe_and_cap_the_real_test():
+    import asyncio
+    from gateway import engine_check
+
+    async def exercise():
+        for configured, probe_s, test_s in ((None, 5, 120), ({}, 5, 120),
+                                           ({"probe_s": 2.5, "real_test_s": 180}, 2.5, 180)):
+            data = copy.deepcopy(SEED)
+            for row in data["definitions"]:
+                row.pop("timeouts", None)
+                if configured is not None:
+                    row["timeouts"] = configured
+            catalog = _parse(data)
+            for ident in catalog.ids():
+                definition = catalog.definition(ident)
+                calls = []
+
+                async def fetch(method, url, **kwargs):
+                    calls.append((method, url, kwargs["timeout_s"]))
+                    body = b'{"data": [{"id": "fixture"}], "models": [{"name": "fixture"}]}'
+                    return engine_check.Answer(method, url, status=200, body=body)
+
+                values = {"address": "http://engine.invalid/v1", "transforms": []}
+                await engine_check.run_check(catalog, definition, values,
+                                             key=engine_check.KeyInput(), fetch=fetch)
+                assert len(calls) > 3
+                assert all(call[2] == probe_s for call in calls)
+                assert any(call[0] == "POST" and call[1].endswith("/embeddings") for call in calls)
+                for reply_s, expected in ((None, test_s), (3, 3), (600, test_s), ("bad", test_s)):
+                    calls.clear()
+                    draft = dict(values)
+                    if reply_s is not None:
+                        draft["reply_timeout_s"] = reply_s
+                    await engine_check.run_real_test(catalog, definition, draft, "chat",
+                                                     key=engine_check.KeyInput(), fetch=fetch, model="fixture")
+                    assert len(calls) == 1
+                    assert calls[0][2] == expected
+
+    asyncio.run(exercise())
+
+
+def test_whole_check_timeout_uses_definition_and_cancels_pending_probes(monkeypatch):
+    import asyncio
+    from gateway import engine_check
+
+    original_timeout = asyncio.timeout
+    contexts = []
+    configured = []
+
+    def timeout(seconds):
+        configured.append(seconds)
+        context = original_timeout(seconds)
+        contexts.append(context)
+        return context
+
+    monkeypatch.setattr(engine_check.asyncio, "timeout", timeout)
+
+    async def exercise():
+        data = copy.deepcopy(SEED)
+        data["definitions"][0]["timeouts"] = {"check_s": 37}
+        catalog = _parse(data)
+        definition = catalog.definition("openai-compatible")
+        started, cancelled = [], []
+
+        async def fetch(method, url, **kwargs):
+            started.append((method, url))
+            # Expire the real deadline deterministically, without sleeping.
+            contexts[0].reschedule(asyncio.get_running_loop().time())
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.append((method, url))
+
+        with pytest.raises(TimeoutError):
+            await engine_check.run_check(catalog, definition, {"address": "http://engine.invalid"},
+                                         key=engine_check.KeyInput(), fetch=fetch)
+        assert configured == [37]
+        assert len(started) == 3
+        assert sorted(cancelled) == sorted(started)
+
+        definition = dict(definition)
+        definition.pop("timeouts")
+        entered = asyncio.Event()
+
+        async def pending(method, url, **kwargs):
+            entered.set()
+            await asyncio.Event().wait()
+
+        task = asyncio.create_task(engine_check.run_check(
+            catalog, definition, {"address": "http://engine.invalid"},
+            key=engine_check.KeyInput(), fetch=pending))
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert configured == [37, None]
+
+    asyncio.run(exercise())
