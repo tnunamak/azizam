@@ -597,7 +597,7 @@ def _probe_route_app(monkeypatch, *, action=None, concurrent=None, per_minute=No
         try:
             return await request.json()
         except ValueError:
-            raise engine_check.DraftError("The request must be JSON.") from None
+            raise engine_check.DraftError("The request must be JSON.", field="values") from None
 
     async def probe(ctx, body):
         calls.append((ctx.actor_kind, ctx.actor_id, body))
