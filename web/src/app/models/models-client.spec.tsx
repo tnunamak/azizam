@@ -10,7 +10,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ModelsClient, { modelDescription, snippetsFor } from "./models-client";
+import ModelsClient, { appSnippetsFor, modelDescription, snippetsFor } from "./models-client";
 import { ViewerContext, type Viewer } from "@/components/shell/session";
 import { accountApi } from "@/lib/account-api";
 import {
@@ -654,6 +654,73 @@ describe("Details mutation regressions", () => {
   });
 });
 
+
+describe("Use it from an app", () => {
+  it("uses the current origin, public name and placeholder in every language without examples", () => {
+    const entry = row({
+      id: "provider/public-model",
+      name: "private-name",
+      display_name: "Pretty title",
+      resolves_to: { chat: "private-target" },
+      examples: [],
+    });
+    const snippets = appSnippetsFor(entry, "https://current.example:8443");
+    expect(snippets.map(({ language }) => language)).toEqual(["curl", "Python", "JavaScript"]);
+    for (const { code } of snippets) {
+      expect(code).toContain("https://current.example:8443/openai/v1");
+      expect(code).toContain("provider/public-model");
+      expect(code).toContain("YOUR_KEY");
+      expect(code).not.toMatch(/private-name|private-target|Pretty title|AZIZAM_API_KEY/);
+    }
+  });
+
+  it("never copies catalog-supplied example credentials into app configuration", () => {
+    const entry = row({
+      examples: [{ kind: "chat.completions", body: { model: "internal", api_key: "fixture-secret-not-a-key" } }],
+    });
+    for (const { code } of appSnippetsFor(entry, "https://current.example")) {
+      expect(code).not.toMatch(/fixture-secret|internal/);
+      expect(code).toContain("YOUR_KEY");
+    }
+  });
+
+  it("quotes model identifiers for shell, Python and JavaScript", () => {
+    const id = "vendor/model's \"quoted\"\\name";
+    const snippets = appSnippetsFor(row({ id }), "http://localhost:3000/");
+    expect(snippets[0].code).toContain(id.replaceAll("'", "'\"'\"'"));
+    expect(snippets[1].code).toContain(`model = ${JSON.stringify(id)}`);
+    expect(snippets[2].code).toContain(`const model = ${JSON.stringify(id)};`);
+    expect(snippets[0].code).not.toContain("//openai");
+  });
+
+  it("copies each selected tab using the browser origin rather than discovery", async () => {
+    const user = userEvent.setup();
+    const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const entry = row({ id: "app-model" });
+    renderModels(catalog([entry]));
+    await user.click(await screen.findByRole("button", { name: "app-model" }));
+    const section = within(dialog().getByRole("heading", { name: "Use it from an app" }).closest("section")!);
+    for (const snippet of appSnippetsFor(entry, window.location.origin)) {
+      await user.click(section.getByRole("tab", { name: snippet.language }));
+      await user.click(section.getByRole("button", { name: `Copy ${snippet.language} code` }));
+      expect(write).toHaveBeenLastCalledWith(snippet.code);
+      expect(snippet.code).not.toContain("gateway.example.test");
+    }
+  });
+
+  it("copies the new public name after closing and opening another model", async () => {
+    const user = userEvent.setup();
+    const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    renderModels(catalog([row({ id: "first-model" }), row({ id: "second-model" })]));
+    await user.click(await screen.findByRole("button", { name: "first-model" }));
+    await user.click(dialog().getByRole("tab", { name: "Python" }));
+    await user.keyboard("{Escape}");
+    await user.click(nameButton("second-model"));
+    await user.click(dialog().getByRole("button", { name: "Copy curl code" }));
+    expect(write).toHaveBeenLastCalledWith(appSnippetsFor(row({ id: "second-model" }), window.location.origin)[0].code);
+    expect(write.mock.lastCall?.[0]).not.toContain("first-model");
+  });
+});
 describe("Details", () => {
   it("lists the facts a person needs, and omits the ones the catalog does not report", async () => {
     renderModels(

@@ -385,6 +385,26 @@ function exampleBody(row: CatalogRow): Record<string, unknown> {
   return row.examples[0]?.body ?? { model: row.use.model };
 }
 
+/** App configuration uses public identifiers only, never catalog examples or keys. */
+export function appSnippetsFor(row: CatalogRow, origin: string) {
+  const baseUrl = `${new URL(origin).origin}/openai/v1`;
+  const model = JSON.stringify(row.id);
+  return [
+    {
+      language: "curl",
+      code: `OPENAI_BASE_URL=${shellSingleQuote(baseUrl)}\nMODEL=${shellSingleQuote(row.id)}\n# Use $MODEL in the model field of your requests.\ncurl "$OPENAI_BASE_URL/models" \\\n  -H "Authorization: Bearer YOUR_KEY"`,
+    },
+    {
+      language: "Python",
+      code: `from openai import OpenAI\n\nclient = OpenAI(\n    base_url=${JSON.stringify(baseUrl)},\n    api_key="YOUR_KEY",\n)\nmodel = ${model}\n# Use model in requests for this model\u0027s task.`,
+    },
+    {
+      language: "JavaScript",
+      code: `import OpenAI from "openai";\n\nconst client = new OpenAI({\n  baseURL: ${JSON.stringify(baseUrl)},\n  apiKey: "YOUR_KEY",\n});\nconst model = ${model};\n// Use model in requests for this model\u0027s task.`,
+    },
+  ];
+}
+
 export function snippetsFor(row: CatalogRow, origin: string) {
   const path = row.use.path ?? row.use.python?.path ?? row.use.javascript?.path;
   if (!path || !row.examples[0]?.body) return [];
@@ -740,6 +760,16 @@ function DetailSheet({
                     </dl>
                   </section>
                 )}
+              <section className="space-y-3">
+                <h3 className="text-body font-medium">Use it from an app</h3>
+                <p className="text-muted-foreground text-meta">
+                  Set your OpenAI connection address and model name with these examples.
+                  Replace YOUR_KEY with your own key in your server-side app.
+                </p>
+                <div className="[&_pre]:break-all [&_pre]:whitespace-pre-wrap">
+                  <CodeBlock key={row.id} snippets={appSnippetsFor(row, window.location.origin)} />
+                </div>
+              </section>
               <section className="space-y-3">
                 <h3 className="text-body font-medium">Example for app setup</h3>
                 <div className="[&_pre]:break-all [&_pre]:whitespace-pre-wrap">
