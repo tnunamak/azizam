@@ -724,7 +724,7 @@ def test_probe_slot_is_released_when_request_fails(monkeypatch, failure):
             if failure == "route":
                 raise engine_admin.EngineRouteError(422, "test_failure", "Probe refused.")
             if failure == "draft":
-                raise engine_check.DraftError("Invalid draft.")
+                raise engine_check.DraftError("Invalid draft.", field="values")
             if failure == "permission":
                 raise PermissionError("Owner required.")
             raise RuntimeError("Unexpected probe failure.")
