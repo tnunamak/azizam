@@ -30,8 +30,31 @@ test("Usage CSV distinguishes missing costs from zero and supports empty views",
 });
 
 test("Usage CSV makes spreadsheet formulas inert", () => {
-  expect(usageCsv([{ date: "", app: "=1+1", modelName: "@SUM(A1)", requests: 1, spendUsd: 0 }]))
-    .toContain(",'=1+1,'@SUM(A1),1,0\r\n");
+  const cases = [
+    ["=1+1", "'=1+1"],
+    ["+1+1", "'+1+1"],
+    ["-1+1", "'-1+1"],
+    ["@SUM(A1)", "'@SUM(A1)"],
+    ["\t=1+1", "'\t=1+1"],
+    ["\r=1+1", "\"'\r=1+1\""],
+    ["\n=1+1", "\"'\n=1+1\""],
+    ['=HYPERLINK("target","label")', "\"'=HYPERLINK(\"\"target\"\",\"\"label\"\")\""],
+    ["+SUM(1,2)\r\n", "\"'+SUM(1,2)\r\n\""],
+    ["plain=+@-", "plain=+@-"],
+    ["'=1+1", "'=1+1"],
+  ];
+  for (const [value, expected] of cases) {
+    expect(usageCsv([{
+      date: value,
+      app: value,
+      modelName: value,
+      requests: 1,
+      spendUsd: 0,
+    }]), JSON.stringify(value)).toBe(
+      "date,app,model name,requests,spend in USD\r\n" +
+      [expected, expected, expected, "1", "0"].join(",") + "\r\n",
+    );
+  }
 });
 
 test("Usage downloads only loaded receipts with display names and no extra fetch", async () => {
