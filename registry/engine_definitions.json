@@ -481,6 +481,7 @@
   "definitions": [
     {
       "definition": "openai-compatible",
+      "timeouts": {"probe_s": 5, "real_test_s": 120},
       "definition_version": 1,
       "title": "Any OpenAI-compatible server",
       "example": "For example, vLLM, llama.cpp or LM Studio",
@@ -710,6 +711,7 @@
     },
     {
       "definition": "own-model-list",
+      "timeouts": {"probe_s": 5, "real_test_s": 120},
       "definition_version": 1,
       "title": "Server with its own model list",
       "example": "For example, Ollama",

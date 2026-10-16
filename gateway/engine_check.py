@@ -508,8 +508,9 @@ def _header_ok(name: str, value: str) -> bool:
     return bool(re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name)) and not any(ch in value for ch in "\r\n")
 
 
-def _curl(answer: Answer, *, key_sent: bool, timeout: bool) -> str:
-    command = "curl -i" + (" --max-time 5" if timeout else "") + (" -X POST" if answer.method == "POST" else "") + f" {answer.url}"
+def _curl(answer: Answer, *, key_sent: bool, timeout: bool, timeout_s: float = DEFAULT_TIMEOUT_S) -> str:
+    limit = f" --max-time {timeout_s:g}" if timeout else ""
+    command = "curl -i" + limit + (" -X POST" if answer.method == "POST" else "") + f" {answer.url}"
     if key_sent:
         command += ' \\\n  -H "Authorization: Bearer YOUR_KEY"'
     if answer.method == "POST":
@@ -708,7 +709,8 @@ def _finding(row: Mapping[str, Any], fill: Mapping[str, Any], *, viewer_role: st
         out["details"] = {
             "raw": _raw(answer),
             "raw_label": row.get("raw_label") or "What the server said",
-            "request": _curl(answer, key_sent=key_sent, timeout=answer.transport == "timeout"),
+            "request": _curl(answer, key_sent=key_sent, timeout=answer.transport == "timeout",
+                             timeout_s=float(fill.get("timeout", DEFAULT_TIMEOUT_S))),
             "with_key": key_sent,
         }
     return out
@@ -836,13 +838,37 @@ async def run_check(
     baseline_token: str | None = None,
     now: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
+    """Run the ladder within the definition's optional whole-check deadline.
+
+    Omitting check_s preserves the caller's existing deadline. Expiry raises
+    TimeoutError after cancelling outstanding probes; caller cancellation propagates.
+    """
+    async with asyncio.timeout(definition.get("timeouts", {}).get("check_s")):
+        return await _run_check(
+            catalog, definition, values, key=key, fetch=fetch, existing=existing,
+            viewer_role=viewer_role, baseline_token=baseline_token, now=now,
+        )
+
+
+async def _run_check(
+    catalog: EngineCatalog,
+    definition: Mapping[str, Any],
+    values: Mapping[str, Any],
+    *,
+    key: KeyInput,
+    fetch: Fetch,
+    existing: Iterable[Mapping[str, Any]] = (),
+    viewer_role: str = "owner",
+    baseline_token: str | None = None,
+    now: Callable[[], float] = time.time,
+) -> dict[str, Any]:
     """Run the ladder for ``definition`` against draft ``values``. Persists nothing."""
     data = catalog.data
     fields = {f["key"]: f for f in definition["fields"]}
     address = normalize_address(values.get("address"), placeholder=fields["address"].get("placeholder", ""))
     prefix = str(values.get("path_prefix") or "").strip()
     check_address = join_url(address, prefix) if prefix else address
-    timeout_s = DEFAULT_TIMEOUT_S
+    timeout_s = definition.get("timeouts", {}).get("probe_s", DEFAULT_TIMEOUT_S)
     fetch = guarded_fetch(fetch, key, viewer_role=viewer_role)
     ctx = _Ctx(
         catalog=catalog, definition=definition, values=values, address=check_address, origin=origin_of(address),
@@ -1192,8 +1218,9 @@ async def run_real_test(
     content = json.dumps(body).encode()
     headers["content-type"] = "application/json"
     shape = "a small JSON request in the OpenAI shape" + (", with your request adjustments applied" if specs else "")
-    # A test is one tiny request: it waits for the reply time, but never longer than two minutes.
-    timeout_s = min(_number(values.get("reply_timeout_s"), TEST_TIMEOUT_S, low=1, high=600), TEST_TIMEOUT_S)
+    # The definition caps the draft's reply time; absent data keeps the two-minute cap.
+    test_timeout_s = definition.get("timeouts", {}).get("real_test_s", TEST_TIMEOUT_S)
+    timeout_s = min(_number(values.get("reply_timeout_s"), test_timeout_s, low=1, high=600), test_timeout_s)
     answer = await fetch("POST", url, headers=headers, cap_bytes=TEST_CAP_BYTES, timeout_s=timeout_s, content=content)
     result: dict[str, Any] = {
         **base_result, "seconds": answer.seconds, "status": answer.status, "adjusted": bool(specs),
