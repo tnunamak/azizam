@@ -492,7 +492,7 @@ function EnginesContents() {
               }
               description={
                 services.length === 0
-                  ? "Add an engine. Azizam checks the server and finds out what it can do."
+                  ? "An engine is a server that runs AI models for Azizam."
                   : "Turn on Show not in use to review engines that are disabled or not configured."
               }
               action={
