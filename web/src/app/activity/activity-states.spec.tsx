@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -11,7 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import Activity from "./page";
-import { StateBadge } from "@/components/product/status-ui";
+import { DelayedSpinner, StateBadge } from "@/components/product/status-ui";
 
 // Radix Select and Sheet call these; jsdom lacks them.
 for (const method of [
@@ -714,4 +715,58 @@ it("filter regression: paging retains both filters and appends older matching ch
   expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Sam");
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   expect(screen.getByRole("status", { name: "Changes updates" })).toHaveTextContent("2 changes loaded. No more matching changes.");
+});
+
+it("reserves spinner space immediately and only shows the icon at 300 ms", () => {
+  vi.useFakeTimers();
+  try {
+    const { container } = render(<DelayedSpinner />);
+    const slot = container.firstElementChild;
+    expect(slot).toHaveClass("size-4", "shrink-0");
+    expect(slot).toHaveAttribute("aria-hidden", "true");
+    expect(container.querySelector("[data-loading-spinner]")).toBeNull();
+    act(() => vi.advanceTimersByTime(299));
+    expect(container.querySelector("[data-loading-spinner]")).toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    expect(container.querySelector("[data-loading-spinner]")).toHaveClass("motion-safe:animate-spin");
+    expect(container.firstElementChild).toBe(slot);
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
+});
+
+it("cancels a fast load's spinner and gives the next load a fresh delay", () => {
+  vi.useFakeTimers();
+  try {
+    const first = render(<DelayedSpinner />);
+    act(() => vi.advanceTimersByTime(200));
+    first.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    const next = render(<DelayedSpinner />);
+    act(() => vi.advanceTimersByTime(100));
+    expect(next.container.querySelector("[data-loading-spinner]")).toBeNull();
+    act(() => vi.advanceTimersByTime(199));
+    expect(next.container.querySelector("[data-loading-spinner]")).toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    expect(next.container.querySelector("[data-loading-spinner]")).not.toBeNull();
+    next.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
+});
+
+it("uses loaded change-row spacing for the loading placeholders", () => {
+  mountActivity({ tab: "Changes", audit: () => new Promise(() => {}) });
+  const loading = screen.getByLabelText("Loading changes");
+  const rows = loading.querySelector(".divide-y");
+  expect(rows?.children).toHaveLength(5);
+  for (const row of Array.from(rows?.children ?? [])) {
+    expect(row).toHaveClass("flex", "w-full", "items-center", "gap-4", "py-4");
+    expect(row.querySelector(".size-8")).toHaveClass("hidden", "sm:flex");
+  }
+  expect(loading).not.toHaveClass("space-y-5");
+  expect(within(loading).queryByText("Loading changes")).toBeNull();
 });

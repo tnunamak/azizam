@@ -51,6 +51,7 @@ import { toast } from "@/lib/toast";
 import { cn } from "@/lib/cn";
 import { formatAbsoluteUTC } from "@/lib/format";
 import { MakingTile } from "@/components/product/making-tile";
+import { DelayedSpinner } from "@/components/product/status-ui";
 import { RelativeTime } from "@/components/product/relative-time";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
@@ -112,6 +113,8 @@ import {
   thumbnailSize,
   type CapabilityNameRow,
 } from "./library-format";
+
+const libraryGridLayout = cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap);
 
 type NameModel = (model: string, workflow?: string | null) => string;
 
@@ -2890,13 +2893,14 @@ export default function LibraryPage() {
             role="status"
             aria-label="Loading library"
             aria-busy="true"
-            className="space-y-3"
+            className="relative"
           >
-            {/* The grid's own shape: three to six columns (D1.5: two big
-              phone squares jumped to three). */}
-            <div className={cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap)}>
+            <span className="absolute right-2 top-2 z-10"><DelayedSpinner /></span>
+            <div aria-hidden="true" className={libraryGridLayout}>
               {Array.from({ length: 12 }).map((_, index) => (
-                <Skeleton key={index} className="rounded-media aspect-square motion-reduce:animate-none" />
+                <div key={index} className="relative min-w-0">
+                  <Skeleton className="rounded-media aspect-square motion-reduce:animate-none" />
+                </div>
               ))}
             </div>
           </div>
@@ -2944,7 +2948,7 @@ export default function LibraryPage() {
               role="group"
               aria-label="Creations"
               onKeyDown={navigateTiles}
-              className={cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap)}
+              className={libraryGridLayout}
             >
               {inProgress.map((item) => (
                 <MakingTile key={item.id} kind={item.kind} startedAt={item.startedAt} />

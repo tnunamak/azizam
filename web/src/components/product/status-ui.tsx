@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   ChevronRight,
   CircleAlert,
@@ -11,6 +11,7 @@ import {
   Clock3,
   Info,
   Lock,
+  LoaderCircle,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -24,6 +25,20 @@ import { Badge } from "@/components/ui/badge";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { capabilityMeta } from "./readiness";
 import { KeyValueList } from "./key-value";
+
+/** Reserve the icon's space immediately, but avoid flashing on fast loads. */
+export function DelayedSpinner() {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setVisible(true), 300);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return (
+    <span aria-hidden="true" className="inline-flex size-4 shrink-0">
+      {visible ? <LoaderCircle data-loading-spinner="true" className="size-4 motion-safe:animate-spin" /> : null}
+    </span>
+  );
+}
 
 /* One icon, one colour and one word per state tone. */
 const toneIcon: Record<StateTone, LucideIcon> = {

@@ -26,8 +26,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/product/page-header";
 import { EmptyState } from "@/components/product/empty-state";
-import { Callout, StatusLine } from "@/components/product/status-ui";
+import { Callout, DelayedSpinner, StatusLine } from "@/components/product/status-ui";
 import { RelativeTime } from "@/components/product";
+
+const auditRowLayout = "flex w-full items-center gap-4 py-4 text-left";
 
 const categories = [
   { value: "", label: "All changes" },
@@ -348,15 +350,21 @@ export default function ActivityPage() {
             </Callout>
           )}
           {auditPending ? (
-            <div
-              aria-label="Loading changes"
-              aria-busy="true"
-              className="space-y-5"
-            >
-              <div aria-hidden="true"><StatusLine tone="unknown" text="Loading changes" compact /></div>
-              {[0, 1, 2, 3, 4].map((i) => (
-                <Skeleton className="h-14 w-full motion-reduce:animate-none" key={i} />
-              ))}
+            <div aria-label="Loading changes" aria-busy="true" className="relative">
+              <span className="absolute right-0 top-4 z-10"><DelayedSpinner /></span>
+              <div aria-hidden="true" className="divide-border divide-y">
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <div className={auditRowLayout} key={i}>
+                    <Skeleton className="hidden size-8 shrink-0 rounded-full sm:flex motion-reduce:animate-none" />
+                    <div className="min-w-0 flex-1">
+                      <Skeleton className="h-5 w-2/3 motion-reduce:animate-none" />
+                      <Skeleton className="mt-1 h-4 w-1/2 motion-reduce:animate-none" />
+                    </div>
+                    <Skeleton className="h-4 w-16 shrink-0 motion-reduce:animate-none" />
+                    <span className="size-4 shrink-0" />
+                  </div>
+                ))}
+              </div>
             </div>
           ) : auditError && !entries.length ? (
             <Callout
@@ -423,7 +431,7 @@ export default function ActivityPage() {
                       openerRef.current = event.currentTarget;
                       setEntry(row);
                     }}
-                    className="group hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-4 py-4 text-left transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 motion-reduce:transition-none"
+                    className={`${auditRowLayout} group hover:bg-muted/40 focus-visible:outline-ring transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 motion-reduce:transition-none`}
                   >
                     <div className="bg-muted hidden size-8 shrink-0 items-center justify-center rounded-full sm:flex">
                       <History
