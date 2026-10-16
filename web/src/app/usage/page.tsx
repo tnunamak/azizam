@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useViewer } from "@/components/shell/session";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
+import { formatTimestamp } from "@/lib/format";
 import { memberTerms, taskNames } from "@/lib/terms";
 import { RequestReceiptSheet } from "../activity/requests";
 import { useModelName } from "@/lib/use-model-name";
@@ -47,7 +48,6 @@ import {
   Money,
   ErrorState,
   PageHeader,
-  RelativeTime,
 } from "@/components/product";
 
 const UsageChart = lazy(() => import("./usage-chart"));
@@ -820,7 +820,7 @@ function ReceiptsList({
                   ) : null}
                   {(receipt.createdAt || receipt.durationMs != null) ? (
                     <p className="text-muted-foreground mt-1 text-meta">
-                      {[receipt.createdAt ? <RelativeTime key="time" ts={receipt.createdAt} /> : null,
+                      {[receipt.createdAt ? <time key="time" {...formatTimestamp(receipt.createdAt)} /> : null,
                         receipt.durationMs != null ? formatDuration(receipt.durationMs) : null]
                         .filter(Boolean)
                         .map((part, index) => <span key={index}>{index ? " · " : ""}{part}</span>)}

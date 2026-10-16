@@ -49,9 +49,8 @@ import {
 import { toast } from "@/lib/toast";
 
 import { cn } from "@/lib/cn";
-import { formatAbsoluteUTC } from "@/lib/format";
+import { formatTimestamp } from "@/lib/format";
 import { MakingTile } from "@/components/product/making-tile";
-import { RelativeTime } from "@/components/product/relative-time";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
 import { PersonMark } from "@/components/product/person-mark";
@@ -535,7 +534,7 @@ async function shareCreation(asset: MediaAsset, everyone: boolean) {
 }
 
 function absolute(ts: MediaAsset["created_at"]) {
-  return ts ? formatAbsoluteUTC(ts) : undefined;
+  return formatTimestamp(ts).title;
 }
 
 function pauseOtherMedia(current?: HTMLMediaElement) {
@@ -2000,7 +1999,7 @@ function CreationViewer({
                 )}
                 {asset.created_at ? (
                   <span className="text-muted-foreground">
-                    <RelativeTime ts={asset.created_at} fallback="" />
+                    <time {...formatTimestamp(asset.created_at)} />
                   </span>
                 ) : null}
               </p>
@@ -2079,10 +2078,7 @@ function CreationViewer({
                   [
                     "Created",
                     created
-                      ? created.toLocaleString(undefined, {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })
+                      ? <time {...formatTimestamp(created)} />
                       : "",
                   ],
                   [

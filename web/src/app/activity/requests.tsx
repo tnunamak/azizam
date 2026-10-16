@@ -25,7 +25,7 @@ import { EmptyState } from "@/components/product/empty-state";
 import { Table, TableBody, TableRow, TableCell } from "@/components/ui/table";
 import { Card } from "@/components/ui/card";
 import { Callout, StateBadge, StatusLine } from "@/components/product/status-ui";
-import { RelativeTime } from "@/components/product";
+import { formatTimestamp } from "@/lib/format";
 import { requestCapability } from "@/lib/capability-state";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { useModelName } from "@/lib/use-model-name";
@@ -465,7 +465,7 @@ export function Requests() {
                             <StateBadge state="unknown" word={outcome(row.receipt.status)} />
                           )}
                           <p className="text-muted-foreground figures max-w-full truncate text-meta">
-                            {row.created_at ? <RelativeTime ts={row.created_at} /> : "Time not recorded"}
+                            <time {...formatTimestamp(row.created_at || null)} />
                             {" · "}
                             {duration(row.receipt.latency_ms) || "Duration not recorded"}
                           </p>
@@ -620,7 +620,7 @@ export function RequestReceiptSheet({ record, onOpenChange, title, description, 
                   <div>
                     <dt className="text-muted-foreground">When</dt>
                     <dd className="mt-1">
-                      {record.created_at ? <RelativeTime ts={record.created_at} /> : "Time not recorded"}
+                      <time {...formatTimestamp(record.created_at || null)} />
                     </dd>
                   </div>
                 </dl>

@@ -27,7 +27,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/product/page-header";
 import { EmptyState } from "@/components/product/empty-state";
 import { Callout, StatusLine } from "@/components/product/status-ui";
-import { RelativeTime } from "@/components/product";
+import { formatTimestamp } from "@/lib/format";
 
 const categories = [
   { value: "", label: "All changes" },
@@ -439,7 +439,7 @@ export default function ActivityPage() {
                       </p>
                     </div>
                     <div id={`${rowId}-${index}-time`} className="text-muted-foreground shrink-0 text-xs">
-                      <RelativeTime ts={row.created_at} />
+                      <time {...formatTimestamp(row.created_at)} />
                     </div>
                     <ChevronRight
                       aria-hidden="true"
@@ -526,7 +526,7 @@ export default function ActivityPage() {
                   <div>
                     <dt className="text-muted-foreground">When</dt>
                     <dd className="mt-1">
-                      <RelativeTime ts={entry.created_at} />
+                      <time {...formatTimestamp(entry.created_at)} />
                     </dd>
                   </div>
                 </dl>

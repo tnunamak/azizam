@@ -127,3 +127,38 @@ export function formatCellValue(value: unknown): string {
   if (typeof value === "string") return value;
   return String(value);
 }
+
+export interface TimestampFormatOptions {
+  nowMs?: number;
+  locale?: string | string[];
+  timeZone?: string;
+}
+
+/** Display timestamps consistently, with an exact ISO tooltip.
+ * Recent times are relative; times at least 24 hours away include their zone.
+ * The returned properties can be spread directly onto a semantic <time>. */
+export function formatTimestamp(
+  ts: TimestampInput,
+  { nowMs = Date.now(), locale, timeZone }: TimestampFormatOptions = {},
+): { children: string; title?: string; dateTime?: string } {
+  const date = toDate(ts);
+  if (!date || !Number.isFinite(date.getTime())) {
+    return { children: "Time not recorded" };
+  }
+  const iso = date.toISOString();
+  const delta = date.getTime() - nowMs;
+  let children: string;
+  if (Math.abs(delta) < DAY * 1000) {
+    const seconds = Math.abs(delta) / 1000;
+    const unit = seconds < MINUTE ? "second" : seconds < HOUR ? "minute" : "hour";
+    const divisor = unit === "second" ? 1000 : unit === "minute" ? MINUTE * 1000 : HOUR * 1000;
+    children = new Intl.RelativeTimeFormat(locale, { numeric: "auto" })
+      .format(Math.trunc(delta / divisor), unit);
+  } else {
+    children = new Intl.DateTimeFormat(locale, {
+      year: "numeric", month: "short", day: "numeric",
+      hour: "numeric", minute: "2-digit", timeZoneName: "short", timeZone,
+    }).format(date);
+  }
+  return { children, title: iso, dateTime: iso };
+}
