@@ -236,6 +236,16 @@
         "require_json_key": {"type": "string"}
       }
     },
+    "timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Seconds for each probe, the whole check and the real-test reply cap. Omitted probe_s and real_test_s preserve 5 and 120 seconds. Omitted check_s preserves the caller's deadline without adding a new one.",
+      "properties": {
+        "probe_s": {"type": "number", "exclusiveMinimum": 0, "maximum": 600, "default": 5},
+        "check_s": {"type": "number", "exclusiveMinimum": 0, "maximum": 600},
+        "real_test_s": {"type": "number", "exclusiveMinimum": 0, "maximum": 600, "default": 120}
+      }
+    },
     "definition": {
       "type": "object",
       "additionalProperties": false,
@@ -251,6 +261,7 @@
         "flow": {"const": "detect"},
         "steps": {"type": "array", "minItems": 5, "maxItems": 5, "items": {"type": "string"}},
         "fields": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/field"}},
+        "timeouts": {"$ref": "#/$defs/timeouts"},
         "probes": {
           "type": "object",
           "additionalProperties": false,
