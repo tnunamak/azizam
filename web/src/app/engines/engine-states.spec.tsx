@@ -175,12 +175,25 @@ it("lists the in-use engine without its model names, hides unused engines, and o
   expect(router.push).toHaveBeenCalledWith("/engines/?engine=chat");
 });
 
-it("says No engines configured when the registry is empty", async () => {
+it("explains an empty engine list and opens the wizard from its Add engine action", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(enginesApi, "definitions").mockResolvedValue(structuredClone(definitions));
   mount({
     registry: { schema_version: 1, services: {} },
     status: { backends: [] } as unknown as StatusPayload,
   });
-  expect(await screen.findByText("No engines configured")).toBeVisible();
+  const heading = await screen.findByText("No engines configured");
+  expect(heading).toBeVisible();
+  expect(screen.getByText("An engine is a server that runs AI models for Azizam.")).toBeVisible();
+  // Scope to the empty list so the header's separate Add engine cannot mask a broken CTA.
+  const emptyList = heading.closest("section")!;
+  const add = within(emptyList).getByRole("button", { name: "Add engine" });
+  expect(add).toBeVisible();
+  expect(add).toBeEnabled();
+  await user.click(add);
+  const dialog = await screen.findByRole("dialog", { name: "Add engine" });
+  expect(await within(dialog).findByRole("heading", { name: "What kind of server is it?" })).toBeVisible();
+  expect(within(dialog).getByText("Step 1 of 5 · Kind")).toBeVisible();
 });
 
 it("reports an unloadable engine list as unknown and keeps the gateway's words under Technical details", async () => {
