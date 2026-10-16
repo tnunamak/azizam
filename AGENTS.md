@@ -4,7 +4,7 @@ This is a self-hosted, OpenAI-compatible gateway that fronts whatever local AI
 engines an operator runs (llama.cpp, vLLM, Ollama, ComfyUI, TTS/STT,
 and whatever replaces them). Read this before doing engine-related work.
 
-**Restart rule:** restart the gateway only with `scripts/safe-restart` (`--llama` for llama-bee), never a bare `systemctl --user restart`. See `docs/ops/SAFE_RESTART.md`.
+**Restart rule:** restart the gateway only with `scripts/safe-restart` (`--llama` for local-llm), never a bare `systemctl --user restart`. See `docs/ops/SAFE_RESTART.md`.
 
 ## THE BINDING PRINCIPLE: track engines as DATA, never as CODE
 

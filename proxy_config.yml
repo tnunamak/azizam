@@ -62,7 +62,7 @@ backends:
     # whole. Existing DB-owned collections must be explicitly migrated.
     model_policy_schema_version: 1
     # model_metadata: what /v1/models reports (docs/api/MODEL_METADATA.md).
-    # Every record loads the mmproj (image input) and llama-bee runs with
+    # Every record loads the mmproj (image input) and local-llm runs with
     # --jinja (native tool calls) and --reasoning on. Only the records with a
     # `reasoning_effort: none` overlay omit the `reasoning` tag. The 16384
     # `max_tokens` on `default` is a default, not a cap, so it is not declared.
@@ -217,7 +217,7 @@ backends:
       driver: systemd
       driver_config:
         scope: user
-        unit: llama-bee.service
+        unit: local-llm.service
         # Sort after the operator-owned 90-engine.conf so model/profile
         # activation cannot change the selected engine.
         dropin: 95-activation.conf
@@ -752,7 +752,7 @@ images:
     multiref_default_workflow: qwen-image-2.1-edit-multiref
 model_routing:
   gguf_dir: /media/windows/AI Models/LLMs/GGUF
-  kobold_service: llama-bee.service
+  kobold_service: local-llm.service
   switch_timeout: 60
   # Per-chunk (idle) read timeout for /v1/chat/completions and /v1/completions
   # forwarding. NOT a wall-clock cap — this is the max silence between bytes

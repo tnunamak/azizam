@@ -34,7 +34,7 @@ CONFIG = {
     "backends": {
         "kobold": {
             "host": "127.0.0.1", "port": 5051, "vram_budget_key": "GPU1_LLM",
-            "lifecycle": {"driver": "systemd", "driver_config": {"scope": "user", "unit": "llama-bee.service"}},
+            "lifecycle": {"driver": "systemd", "driver_config": {"scope": "user", "unit": "local-llm.service"}},
         },
         "tts-supertonic": {
             "host": "127.0.0.1", "port": 8010,
@@ -66,7 +66,7 @@ class FakeHost:
     def __init__(self, tmp: Path) -> None:
         self.root = tmp
         self.units = {
-            "llama-bee.service": [300],
+            "local-llm.service": [300],
             "supertonic-tts.service": [200, 201],
             "comfyui.service": [100, 101],
         }

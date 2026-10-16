@@ -474,13 +474,13 @@ class QuietWindowTests(unittest.TestCase):
 
 class LlamaModeTests(unittest.TestCase):
     def test_missing_llama_unit_refuses_before_draining(self) -> None:
-        for unit in ("llama-bee", "custom-llama.service"):
+        for unit in ("local-llm", "custom-llama.service"):
             for extra in ((), ("--force",)):
                 for failure in (1, 124, 127):
                     with self.subTest(unit=unit, extra=extra, failure=failure):
                         world = World()
                         world.unit_check_code = failure
-                        argv = () if unit == "llama-bee" else ("--llama-unit", unit)
+                        argv = () if unit == "local-llm" else ("--llama-unit", unit)
                         code = world.invoke("--llama", *argv, *extra)
                         self.assertEqual(code, sr.EXIT_SYSTEMCTL, world.text)
                         self.assertEqual(world.commands, [
@@ -499,8 +499,8 @@ class LlamaModeTests(unittest.TestCase):
         code = world.invoke("--llama")
         self.assertEqual(code, sr.EXIT_OK, world.text)
         self.assertEqual(world.commands, [
-            ["systemctl", "--user", "cat", "--no-pager", "--", "llama-bee"],
-            ["systemctl", "--user", "restart", "llama-bee"],
+            ["systemctl", "--user", "cat", "--no-pager", "--", "local-llm"],
+            ["systemctl", "--user", "restart", "local-llm"],
         ])
         # gateway stayed up, so the flag must have been switched off explicitly
         self.assertEqual([p["draining"] for p in world.posts()], [True, False])
@@ -523,14 +523,14 @@ class LlamaModeTests(unittest.TestCase):
     def test_llama_deadline_does_not_restart(self) -> None:
         world = World([snap(requests=1, chat=1)])
         self.assertEqual(world.invoke("--llama", "--timeout", "3"), sr.EXIT_BUSY)
-        self.assertEqual(world.commands, [["systemctl", "--user", "cat", "--no-pager", "--", "llama-bee"]])
+        self.assertEqual(world.commands, [["systemctl", "--user", "cat", "--no-pager", "--", "local-llm"]])
         self.assertFalse(world.draining)
 
     def test_llama_refuses_when_gateway_drain_unreachable(self) -> None:
         world = World()
         world.unreachable = True
         self.assertEqual(world.invoke("--llama"), sr.EXIT_REFUSED)
-        self.assertEqual(world.commands, [["systemctl", "--user", "cat", "--no-pager", "--", "llama-bee"]])
+        self.assertEqual(world.commands, [["systemctl", "--user", "cat", "--no-pager", "--", "local-llm"]])
 
 
 class MainTests(unittest.TestCase):
