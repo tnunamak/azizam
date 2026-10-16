@@ -24,13 +24,15 @@ import {
 import { EmptyState } from "@/components/product/empty-state";
 import { Table, TableBody, TableRow, TableCell } from "@/components/ui/table";
 import { Card } from "@/components/ui/card";
-import { Callout, StateBadge, StatusLine } from "@/components/product/status-ui";
+import { Callout, DelayedSpinner, StateBadge } from "@/components/product/status-ui";
 import { formatTimestamp } from "@/lib/format";
 import { requestCapability } from "@/lib/capability-state";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { useModelName } from "@/lib/use-model-name";
 import { technicalModelDetails } from "@/lib/model-name";
 import { useViewer } from "@/components/shell/session";
+
+const requestRowLayout = "flex min-h-(--row-2) w-full min-w-0 items-center gap-3 px-4 py-2 text-left max-sm:min-h-(--row-phone-2)";
 
 type Receipt = {
   request_id: string;
@@ -336,15 +338,31 @@ export function Requests() {
         )}
       </div>
       {isPending ? (
-        <div
-          aria-label="Loading requests"
-          aria-busy="true"
-          className="space-y-4"
-        >
-          <div aria-hidden="true"><StatusLine tone="unknown" text="Loading requests" compact /></div>
-          {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-20 w-full motion-reduce:animate-none" />
-          ))}
+        <div aria-label="Loading requests" aria-busy="true" className="relative">
+          <span className="absolute right-4 top-3 z-10"><DelayedSpinner /></span>
+          <Card aria-hidden="true" className="gap-0 overflow-hidden p-0! max-sm:p-0!">
+            <Table dense className="table-fixed">
+              <TableBody>
+                {[0, 1, 2, 3].map((i) => (
+                  <TableRow key={i}>
+                    <TableCell className="px-0! py-0!">
+                      <div className={requestRowLayout}>
+                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <Skeleton className="h-5 w-2/3 motion-reduce:animate-none" />
+                          <Skeleton className="h-4 w-1/2 motion-reduce:animate-none" />
+                        </div>
+                        <div className="flex min-w-0 max-w-1/2 shrink-0 flex-col items-end gap-0.5">
+                          <Skeleton className="h-5 w-16 motion-reduce:animate-none" />
+                          <Skeleton className="h-4 w-24 motion-reduce:animate-none" />
+                        </div>
+                        <span className="size-4 shrink-0" />
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
         </div>
       ) : isError && rows.length === 0 ? (
         <Callout
@@ -421,7 +439,7 @@ export function Requests() {
                         type="button"
                         aria-label={`Request details: ${requestSummary(row.receipt)} by ${row.person_label}`}
                         aria-describedby={`${rowId}-${index}-context ${rowId}-${index}-outcome`}
-                        className="focus-visible:outline-ring flex min-h-(--row-2) w-full min-w-0 items-center gap-3 px-4 py-2 text-left hover:[&_p:first-child]:underline focus-visible:outline-2 focus-visible:-outline-offset-2 max-sm:min-h-(--row-phone-2)"
+                        className={`${requestRowLayout} focus-visible:outline-ring hover:[&_p:first-child]:underline focus-visible:outline-2 focus-visible:-outline-offset-2`}
                         onClick={(event) => {
                           openerRef.current = event.currentTarget;
                           setSelectedReceiptKey(keys[index]);
