@@ -387,7 +387,9 @@ function exampleBody(row: CatalogRow): Record<string, unknown> {
 
 /** App configuration uses public identifiers only, never catalog examples or keys. */
 export function appSnippetsFor(row: CatalogRow, origin: string) {
-  const baseUrl = `${new URL(origin).origin}/openai/v1`;
+  // Next replaces this with next.config's basePath in the client build.
+  const basePath = process.env.__NEXT_ROUTER_BASEPATH ?? "";
+  const baseUrl = `${new URL(origin).origin}${basePath}/openai/v1`;
   const model = JSON.stringify(row.id);
   return [
     {
