@@ -661,6 +661,9 @@ def test_an_unexpected_failure_becomes_a_tool_error_without_a_traceback(env):
                                               "params": {"name": "run", "arguments": {"target": "krea", "inputs": {"prompt": "x"}}}})
     result = resp.json()["result"]
     assert result["isError"] is True and "secret" not in json.dumps(result)
+    assert "error" not in resp.json()
+    assert result["content"][0] == {
+        "type": "text", "text": "the adapter hit an unexpected error; see the gateway log"}
 
 
 def test_admission_refusal_keeps_safe_reasons_and_actions(env):
@@ -687,3 +690,77 @@ def test_job_waits_through_unknown_nonterminal_state_and_exposes_phases(env):
     out = call(env, 'job', {'job_id': 'mj_1', 'wait_seconds': 5})['structuredContent']
     assert out['status'] == 'canceled'
     assert (out['started_at'], out['finished_at'], out['attempt_number']) == (10, 20, 1)
+
+
+@pytest.mark.parametrize("version", mcp_server.SUPPORTED_VERSIONS)
+@pytest.mark.parametrize("status", [400, 403, 429, 500])
+def test_execution_errors_have_plain_message_and_preserve_details(env, version, status):
+    env.core.routes[("POST", "/v1/images/generations")] = httpx.Response(
+        status, json={"error": {"message": "generation refused", "code": "generation_failed"}})
+    resp = rpc(env, "tools/call",
+               {"name": "run", "arguments": {"target": "krea", "inputs": {"prompt": "x"}}},
+               modern=version == MODERN, headers={"mcp-protocol-version": version}, id_=42)
+    body = resp.json()
+    assert resp.status_code == 200 and body["id"] == 42
+    assert "error" not in body
+    result = body["result"]
+    assert result["isError"] is True
+    assert result["content"][0] == {"type": "text", "text": "generation refused"}
+    payload = json.loads(result["content"][1]["text"])
+    assert payload["http_status"] == status and payload["code"] == "generation_failed"
+    if version == mcp_server.OLDEST_VERSION:
+        assert "structuredContent" not in result
+    else:
+        assert result["structuredContent"] == payload
+
+
+@pytest.mark.parametrize("name", [None, "", "missing", [], {}])
+def test_invalid_tool_names_are_protocol_errors(env, name):
+    resp = rpc(env, "tools/call", {"name": name, "arguments": {}})
+    assert resp.status_code == 200
+    assert resp.json()["error"]["code"] == mcp_server.INVALID_PARAMS
+    assert "result" not in resp.json() and env.core.calls == []
+
+
+@pytest.mark.parametrize("modern", [False, True])
+@pytest.mark.parametrize("arguments", [None, False, 0, "", [], ["x"], "x"])
+def test_non_object_arguments_are_protocol_errors(env, modern, arguments):
+    resp = rpc(env, "tools/call", {"name": "capabilities", "arguments": arguments}, modern=modern)
+    assert resp.status_code == 200
+    assert resp.json()["error"]["code"] == mcp_server.INVALID_PARAMS
+    assert "result" not in resp.json() and env.core.calls == []
+
+
+def test_omitted_arguments_are_still_supported(env):
+    resp = rpc(env, "tools/call", {"name": "capabilities"})
+    assert resp.status_code == 200
+    assert "error" not in resp.json() and not resp.json()["result"].get("isError")
+
+
+@pytest.mark.parametrize("tool", ["run", "job"])
+@pytest.mark.parametrize("error", ["out of memory", None])
+def test_failed_jobs_are_tool_errors_with_plain_messages(env, tool, error):
+    env.core.routes[("POST", "/gateway/v1/media/jobs")] = httpx.Response(200, json={"job_id": "mj_2"})
+    env.core.polls["/gateway/v1/media/jobs/mj_2"] = [{"status": "failed", "error": error}]
+    args = {"job_id": "mj_2"} if tool == "job" else {
+        "target": "krea", "mode": "async", "inputs": {"prompt": "x"}, "wait_seconds": 0}
+    result = call(env, tool, args)
+    assert result["isError"] is True
+    assert result["content"][0] == {"type": "text", "text": error or "failed"}
+    assert result["structuredContent"]["job_id"] == "mj_2"
+    assert result["structuredContent"]["status"] == "failed"
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "canceled"])
+def test_non_failed_job_states_are_not_tool_errors(env, status):
+    env.core.polls["/gateway/v1/media/jobs/mj_2"] = [{"status": status}]
+    result = call(env, "job", {"job_id": "mj_2"})
+    assert not result.get("isError")
+    assert result["structuredContent"]["status"] == status
+
+
+def test_input_validation_error_has_plain_message(env):
+    result = call(env, "run", {})
+    assert result["isError"] is True
+    assert result["content"][0] == {"type": "text", "text": "`target` is required"}
+    assert env.core.calls == []
