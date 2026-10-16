@@ -708,6 +708,32 @@ describe("Use it from an app", () => {
     }
   });
 
+  it("copies the configured Next base path with the browser origin in every language", async () => {
+    vi.stubEnv("__NEXT_ROUTER_BASEPATH", "/gateway/team");
+    const previousUrl = window.location.href;
+    window.history.replaceState(null, "", "/gateway/team/models/?source=catalog");
+    try {
+      const user = userEvent.setup();
+      const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+      renderModels(catalog([row({ id: "app-model" })]));
+      await user.click(await screen.findByRole("button", { name: "app-model" }));
+      const section = within(dialog().getByRole("heading", { name: "Use it from an app" }).closest("section")!);
+      for (const language of ["curl", "Python", "JavaScript"]) {
+        await user.click(section.getByRole("tab", { name: language }));
+        await user.click(section.getByRole("button", { name: `Copy ${language} code` }));
+        const copied = write.mock.lastCall?.[0];
+        expect(copied).toContain(`${window.location.origin}/gateway/team/openai/v1`);
+        expect(copied).toContain("app-model");
+        expect(copied).toContain("YOUR_KEY");
+        expect(copied).not.toMatch(/gateway\.example\.test|\/models\/|source=catalog/);
+      }
+    } finally {
+      cleanup();
+      vi.unstubAllEnvs();
+      window.history.replaceState(null, "", previousUrl);
+    }
+  });
+
   it("copies the new public name after closing and opening another model", async () => {
     const user = userEvent.setup();
     const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
