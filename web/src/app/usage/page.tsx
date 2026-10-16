@@ -907,7 +907,7 @@ function ReceiptDeepLink() {
     ) : (
       <ErrorState
         heading="Couldn’t open this receipt"
-        message="The gateway couldn’t load this receipt. Try again."
+        message="We couldn’t load this receipt. Try again."
         action={{ label: "Try again", onClick: () => void refetch() }}
         retrying={isFetching}
       />

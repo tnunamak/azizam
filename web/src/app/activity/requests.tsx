@@ -157,9 +157,9 @@ function outcomeCause(receipt: Receipt) {
     return "This request was rejected because it did not have permission. Check this person's access plan and the app's access.";
   if (status === 429) return "A request limit refused this request. The receipt does not identify which limit. Wait before trying again; if it happens again, ask the owner to check the request limits.";
   if (status >= 500 && status < 600)
-    return "An error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner.";
+    return "An error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, open Technical details and share the request number with the owner.";
   return outcome(receipt.status) === "Rejected"
-    ? "The receipt does not identify the rule that refused this request. Share the request ID from Technical details with the owner to check before trying again."
+    ? "The receipt does not identify the rule that refused this request. Open Technical details and share the request number with the owner before trying again."
     : null;
 }
 function outcomeSummary(receipt: Receipt) {
@@ -169,7 +169,7 @@ function outcomeSummary(receipt: Receipt) {
     const metadata = isObject(receipt.metadata) ? receipt.metadata : {};
     return Number(metadata.status_code ?? receipt.status_code) === 403
       ? "Access check: the receipt does not identify the specific rule."
-      : "The gateway rejected this request.";
+      : "This request was not allowed.";
   }
   if (label === "Failed") return "We couldn't tell where this stopped. Try again.";
   // Only media lands in Library; a chat or embedding result cannot be found there.
@@ -182,7 +182,7 @@ function outcomeSummary(receipt: Receipt) {
   if (label === "In progress")
     return "The request was still running when this receipt was recorded.";
   if (label === "Accepted")
-    return "The gateway accepted this request for processing.";
+    return "This request was accepted. Its result was not recorded here.";
   if (label === "Cancelled")
     return "The request was cancelled before completion.";
   if (label === "Disconnected")
@@ -358,7 +358,7 @@ export function Requests() {
           }
         >
           <p>
-            The gateway&apos;s request list could not be loaded. We could not
+            The request list could not be loaded. We could not
             identify the cause. Try again.
           </p>
         </Callout>
@@ -404,7 +404,7 @@ export function Requests() {
               }
             >
               <p>
-                The gateway&apos;s request list could not be refreshed. We could
+                The request list could not be refreshed. We could
                 not identify the cause. The requests already loaded are still
                 shown.
               </p>
@@ -494,7 +494,7 @@ export function Requests() {
                 }
               >
                 <p>
-                The gateway&apos;s request list could not be refreshed. We could
+                The request list could not be refreshed. We could
                 not identify the cause. The requests already loaded are still
                 shown.
               </p>
@@ -590,7 +590,7 @@ export function RequestReceiptSheet({ record, onOpenChange, title, description, 
                   {[
                     ...(fellBack ? [
                       ["Requested model", nameModel(requested!)],
-                      ["Served model", nameModel(served!)],
+                      ["Model used", nameModel(served!)],
                     ] : different ? [
                       ["Name used", nameModel(requested!)],
                       ["Model", nameModel(served!)],
@@ -605,7 +605,7 @@ export function RequestReceiptSheet({ record, onOpenChange, title, description, 
                   ))}
                   <div>
                     <dt className="text-muted-foreground">Where it ran</dt>
-                    <dd className="mt-1">See Technical details for recorded routing, when available.</dd>
+                    <dd className="mt-1">Open Technical details to see how this request was handled, if recorded.</dd>
                   </div>
                 </dl>
                 </section>

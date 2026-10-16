@@ -34,7 +34,7 @@ const categories = [
   { value: "app.", label: "Apps" },
   { value: "credential.", label: "Keys" },
   { value: "profile.", label: "Access plans" },
-  { value: "operator.", label: "Gateway settings" },
+  { value: "operator.", label: "Shared settings" },
   { value: "runtime_profile_mapping.", label: "Access assignments" },
 ];
 
@@ -44,7 +44,7 @@ function auditSummary(entry: AuditEntry) {
   if (entry.action === "usage.summary.everyone")
     return "Viewed everyone’s usage";
   if (entry.action === "operator.instance.update")
-    return "Updated instance settings";
+    return "Updated shared settings";
   if (entry.action === "operator.default_access_plan.update")
     return "Updated the default access plan";
   return auditDescription(entry);
@@ -55,7 +55,7 @@ function changedName(entry: AuditEntry) {
     credential: "Key",
     profile: "Access plan",
     user: "Person",
-    operator_setting: "Gateway settings",
+    operator_setting: "Shared settings",
     service: "Engine",
     runtime_profile_mapping: "Access assignment",
     app: "App",
@@ -341,7 +341,7 @@ export default function ActivityPage() {
               }
             >
               <p>
-                The gateway&apos;s changes list could not be refreshed. We could
+                The changes list could not be refreshed. We could
                 not identify the cause. The changes already loaded are still
                 shown.
               </p>
@@ -370,7 +370,7 @@ export default function ActivityPage() {
               }
             >
               <p>
-                The gateway&apos;s changes list could not be loaded. We could not
+                The changes list could not be loaded. We could not
                 identify the cause. Try again.
               </p>
             </Callout>
@@ -461,7 +461,7 @@ export default function ActivityPage() {
                     }
                   >
                     <p>
-                      The gateway&apos;s next changes could not be loaded. We
+                      More changes could not be loaded. We
                       could not identify the cause. The changes already loaded
                       are still shown.
                     </p>

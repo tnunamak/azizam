@@ -121,7 +121,7 @@ it("hides owner access history until the filter is enabled, and asks the server 
     }),
   });
   expect(
-    await screen.findByRole("button", { name: /Updated instance settings/ }),
+    await screen.findByRole("button", { name: /Updated shared settings/ }),
   ).toBeVisible();
   expect(
     screen.queryByRole("button", { name: /Viewed everyone’s usage/ }),
@@ -236,7 +236,7 @@ it("keeps a system change label generic until its technical details are opened",
   const change = await screen.findByRole("button", {
     name: /Updated engine configuration by System/,
   });
-  expect(change).toHaveTextContent("System · Gateway settings");
+  expect(change).toHaveTextContent("System · Shared settings");
   expect(screen.queryByText(rawLabel)).toBeNull();
 
   await user.click(change);
@@ -354,7 +354,7 @@ it.each([
     const sheet = within(await screen.findByRole("dialog"));
     expect(sheet.getByText("Model")).toBeVisible();
     expect(sheet.queryByText("Requested model")).toBeNull();
-    expect(sheet.queryByText("Served model")).toBeNull();
+    expect(sheet.queryByText("Model used")).toBeNull();
     expect(sheet.getAllByText("Mira")).toHaveLength(1);
     expect(sheet.getAllByText("Notes")).toHaveLength(1);
     expect(sheet.getByText(next)).toBeVisible();
@@ -477,12 +477,16 @@ it.each([
   [401, "The sign-in or app-key check refused this request. Check the app's access key for this person, then try again."],
   [403, "This request was rejected because it did not have permission. Check this person's access plan and the app's access."],
   [429, "A request limit refused this request. The receipt does not identify which limit. Wait before trying again; if it happens again, ask the owner to check the request limits."],
-  [500, "An error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner."],
-  [599, "An error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, share the request ID from Technical details with the owner."],
+  [500, "An error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, open Technical details and share the request number with the owner."],
+  [599, "An error prevented this request from completing. No refusal rule was recorded. Try again; if it happens again, open Technical details and share the request number with the owner."],
 ])("describes stored rejection %s in the past tense", async (statusCode, message) => {
   mountOutcome({ status: "rejected", metadata: { status_code: statusCode } });
   await userEvent.click(await screen.findByRole("button", { name: /Request details:/ }));
   expect(within(screen.getByRole("dialog")).getByText(message)).toBeVisible();
+  const plain = screen.getByRole("dialog").cloneNode(true) as HTMLElement;
+  plain.querySelectorAll("details").forEach((node) => node.remove());
+  expect(plain.textContent).not.toMatch(/receipt id|request id|upstream|routing|provider slug|alias|gateway/i);
+  expect(within(screen.getByRole("dialog")).getByText("Request ID: outcome").closest("details")).not.toHaveAttribute("open");
   if (statusCode === 403) expect(screen.getByRole("dialog")).toHaveTextContent("Access check: the receipt does not identify the specific rule.");
   expect(screen.getByRole("dialog")).not.toHaveTextContent("Sign in to continue.");
   expect(screen.getByRole("dialog")).not.toHaveTextContent("Your account does not have permission");
@@ -491,9 +495,9 @@ it.each([
 it.each([400, 404, 600])("does not invent a cause for stored status %s", async (status_code) => {
   mountOutcome({ status: "rejected", status_code });
   await userEvent.click(await screen.findByRole("button", { name: /Request details:/ }));
-  const summary = within(screen.getByRole("dialog")).getByText("The gateway rejected this request.").parentElement;
+  const summary = within(screen.getByRole("dialog")).getByText("This request was not allowed.").parentElement;
   expect(summary?.querySelectorAll("p")).toHaveLength(3);
-  expect(summary).toHaveTextContent("The receipt does not identify the rule that refused this request. Share the request ID from Technical details with the owner to check before trying again.");
+  expect(summary).toHaveTextContent("The receipt does not identify the rule that refused this request. Open Technical details and share the request number with the owner before trying again.");
 });
 
 it.each([
@@ -567,7 +571,7 @@ it("groups receipt facts and hides raw fields until Technical details is opened"
   expect(within(request).getByText("App").nextElementSibling).toHaveTextContent("Notes");
   const model = sheet.getByRole("heading", { name: "Model and where it ran" }).closest("section")!;
   expect(within(model).getByText("Where it ran").nextElementSibling)
-    .toHaveTextContent("See Technical details for recorded routing, when available.");
+    .toHaveTextContent("Open Technical details to see how this request was handled, if recorded.");
   const timing = sheet.getByRole("heading", { name: "Time and cost" }).closest("section")!;
   expect(within(timing).getByText("Time taken").nextElementSibling).toHaveTextContent("1.3 s");
   expect(within(timing).getByText("Spend").nextElementSibling).toHaveTextContent("Cost not recorded");
@@ -617,7 +621,7 @@ it("filter regression: change-type pick-list sends each category and restores al
   await screen.findByRole("button", { name: /Details: Created an app/ });
   for (const [label, prefix] of [
     ["Apps", "app."], ["Keys", "credential."], ["Access plans", "profile."],
-    ["Gateway settings", "operator."], ["Access assignments", "runtime_profile_mapping."],
+    ["Shared settings", "operator."], ["Access assignments", "runtime_profile_mapping."],
     ["All changes", undefined],
   ] as const) {
     audit.mockClear();
