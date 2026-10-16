@@ -32,6 +32,16 @@ def test_the_seed_holds_the_two_definitions_with_any_openai_compatible_server_fi
     first = catalog.public()["definitions"][0]
     assert first["title"] == "Any OpenAI-compatible server"
     assert first["fields"][0]["key"] == "address" and first["fields"][1]["key"] == "api_key"
+    # Shared advice and definition-specific overrides must all be actionable.
+    advice_groups = [("shared", SEED["advice"])] + [
+        (definition["definition"], definition["advice"])
+        for definition in SEED["definitions"]
+    ]
+    for owner, rows in advice_groups:
+        for row in rows:
+            for part in ("what", "why", "fix"):
+                text = row.get(part)
+                assert isinstance(text, str) and text.strip(), (owner, row.get("code"), part)
 
 
 def test_every_secret_field_is_write_only():
@@ -70,6 +80,14 @@ def test_every_field_is_one_the_running_gateway_reads():
     for definition in SEED["definitions"]:
         unread = [f["key"] for f in definition["fields"] if f["key"] not in FIELDS_THE_GATEWAY_READS]
         assert not unread, f"{definition['definition']} offers {unread}, which the gateway does not use"
+        local_fields = {field["key"] for field in definition["fields"]}
+        for field in definition["fields"]:
+            if "show_if" in field:
+                condition = field["show_if"]
+                assert isinstance(condition, dict), (definition["definition"], field["key"])
+                assert condition.get("field") in local_fields, (
+                    definition["definition"], field["key"], condition.get("field")
+                )
 
 
 def test_only_work_the_gateway_routes_to_an_added_engine_is_offered():
@@ -80,6 +98,24 @@ def test_only_work_the_gateway_routes_to_an_added_engine_is_offered():
     for definition in SEED["definitions"]:
         assert set(definition["capabilities"]) <= {"chat", "embeddings"}, definition["definition"]
         assert definition["flow"] == "detect"
+        # Probe implications must refer to catalog capabilities, not arbitrary names.
+        known = set(SEED["capabilities"])
+        for rule in SEED["model_rules"]:
+            assert rule.get("capability") in known, (
+                definition["definition"], "model_rule", rule.get("field"), rule.get("capability")
+            )
+        metadata = {row["id"]: row for row in SEED["metadata_rows"]}
+        for probe_id in definition["probes"]["metadata"]:
+            assert probe_id in metadata, (definition["definition"], probe_id)
+            probe = metadata[probe_id]
+            for mapping in ("paths", "values"):
+                for source, capability in probe.get(mapping, {}).items():
+                    assert capability in known, (
+                        definition["definition"], probe_id, mapping, source, capability
+                    )
+        if definition["probes"].get("route_probes"):
+            for capability in definition["capabilities"]:
+                assert capability in known, (definition["definition"], "route_probe", capability)
 
 
 def test_detection_rules_name_api_shapes_not_engines():
