@@ -1,6 +1,6 @@
 # Engine protocol descriptions, the http-v1 executor and the adapter interface
 
-Status: implemented on `engine/w4-executor` (engine contract v2.1, section 4).
+Status: implemented on `engine/w4-executor`, reviewed fixes on `engine/w4-executor-fix` (engine contract v2.1, section 4).
 Code: `gateway/engine_protocol/`. Data: `registry/protocols/`.
 Tests: `tests/test_engine_protocol_*.py`, `tests/test_tts_adapter_seam.py`.
 
@@ -40,7 +40,9 @@ or a `job`.
 
 **Request.** `method` (GET, POST, PUT, PATCH, DELETE); `path`, a relative
 template that starts with `/` and holds `{name}` placeholders (values are
-percent-encoded; no host, query, fragment, `..` or backslash is allowed);
+percent-encoded; no host, query, fragment, `..` or backslash is allowed in the
+template. A value that would make a `.` or `..` segment, or that already holds an
+encoded slash or backslash (`%2f`, `%5c`), is refused with a mapping error);
 `query`, a list of `{name, from, default}`; `headers`, constant non-credential
 headers; `body`.
 
@@ -99,8 +101,13 @@ grammar forbids (a GET with a body, a poll path without `{id}`).
 **Budgets** (`budgets.py`). Checked on every call: request body 8 MiB, upload
 64 MiB, buffered answer 16 MiB, saved asset 256 MiB, one event 1 MiB, one
 stream 64 MiB, JSON depth 32, selected values 10 000, assets per job 64,
-same-origin redirects 3, mapping time 0.5 s. The connection adds connect,
-first-byte and total timeouts. A stream's total time is checked at each chunk;
+same-origin redirects 3, mapping time 0.5 s, all assets of one `fetch_assets`
+call 512 MiB. The connection adds connect, first-byte and total timeouts.
+Depth is checked first and without recursion, on the request body and params
+before any rule runs, on every JSON answer, job step and stream event that is
+parsed. A deeper value is `BudgetExceeded(max_json_depth)`, never a
+`RecursionError`. `mapping_s` is checked between rules (inside a `when` too), so a
+slow map stops while it runs. A stream's total time is checked at each chunk;
 a stalled stream ends at the first-byte timeout.
 
 ## The executor
@@ -110,7 +117,8 @@ executor = HttpV1Executor(description, transport=..., assets=...)
 await executor.invoke(conn, CanonicalRequest(op="chat", body={...}))   # Reply | StreamReply
 await executor.submit(conn, request) -> JobRef
 await executor.poll(conn, ref)       -> JobStatus
-await executor.cancel(conn, ref)
+await executor.wait(conn, ref)       -> JobStatus     # polls every interval_s, gives up after max_wait_s
+await executor.cancel(conn, ref)     # polls first; a job that already ended is left alone
 await executor.fetch_assets(conn, ref, status) -> tuple[AssetRef, ...]
 await executor.preview(conn, request) -> {method, url, headers (key masked), body}
 ```
@@ -120,6 +128,25 @@ await executor.preview(conn, request) -> {method, url, headers (key masked), bod
 - A non-2xx answer raises `UpstreamError` with the description's advice row.
   Error text never holds a credential.
 - Answers are requested uncompressed; a compressed answer is refused.
+- `wait` polls every `interval_s` and raises `BudgetExceeded(max_wait_s)` when
+  the job has not ended after `max_wait_s`; the limit also cuts a poll that
+  hangs. `cancel` asks the job's state first and sends nothing for a job that
+  has succeeded, failed or been cancelled. `wait` is an executor method, not
+  part of the adapter interface: core keeps the durable job state and may poll
+  on its own clock.
+- All reads of one `fetch_assets` call share one total deadline and one size
+  cap, and the cap holds whatever the asset store does with its `max_bytes`.
+- A saved asset's type is not the engine's claim. `assets.served_media_type`
+  allows image, audio and video types only (no HTML, SVG, script or text). The
+  claimed type must be on that list, and the first bytes must show the same kind
+  of file; the sniffed type is saved when the label and bytes differ. Bytes with
+  no signature are saved only as `application/octet-stream` or `audio/pcm`, and
+  markup is refused. Anything else is `MalformedResponse` and nothing is saved.
+- A key sent as query auth (or any credential) is redacted from every error
+  text, preview, answer header and job failure reason, in the raw, percent-encoded
+  and JSON-escaped spellings. Errors leave with no chained cause that holds the
+  URL. `transport.py` also keeps URL queries out of the `httpx` request log.
+  The body of an answer is returned as the engine sent it.
 - An unmapped stream is relayed as raw bytes without a JSON parse. A mapped
   stream yields dicts.
 - The transport (`HttpxTransport`) reuses the address checks of
