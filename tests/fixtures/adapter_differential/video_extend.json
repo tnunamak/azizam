@@ -1,0 +1,322 @@
+{
+  "assets": [],
+  "caller": [
+    {
+      "label": "create the source video",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"prompt\":\"waves at dusk\",\"model\":\"ltx-2.5-t2v\"}"
+        },
+        "headers": {
+          "content-length": "48",
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/videos",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"id\": \"video_p1\", \"object\": \"video\", \"model\": \"ltx-2.5-t2v\", \"azizam_resolved_model\": \"video-ltx-2.5-t2v\", \"status\": \"queued\", \"progress\": 0, \"created_at\": \"<time>\", \"completed_at\": null, \"expires_at\": \"<time>\", \"prompt\": \"waves at dusk\", \"remixed_from_video_id\": null, \"error\": null, \"size\": \"960x512\", \"seconds\": \"5\", \"actual_seconds\": 5.0417}"
+        },
+        "headers": {
+          "content-length": "<346 after normalisation>",
+          "content-type": "application/json"
+        },
+        "status": 200
+      }
+    },
+    {
+      "label": "status of the source",
+      "request": {
+        "body": {
+          "kind": "empty"
+        },
+        "headers": {},
+        "method": "GET",
+        "path": "/v1/videos/video_p1",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"id\": \"video_p1\", \"object\": \"video\", \"azizam_object\": \"video.generation\", \"status\": \"completed\", \"azizam_status\": \"succeeded\", \"progress\": 100, \"completed_at\": \"<time>\", \"expires_at\": \"<time>\", \"prompt\": null, \"remixed_from_video_id\": null, \"error\": null, \"model\": \"ltx-2.5-t2v\", \"size\": \"960x512\", \"seconds\": \"5\", \"actual_seconds\": 5.0417, \"created_at\": \"<time>\", \"azizam_resolved_model\": \"video-ltx-2.5-t2v\", \"updated_at\": \"<time>\"}"
+        },
+        "headers": {
+          "content-length": "<435 after normalisation>",
+          "content-type": "application/json"
+        },
+        "status": 200
+      }
+    },
+    {
+      "label": "extend the source",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"video\":{\"id\":\"video_p1\"},\"prompt\":\"more waves\",\"seconds\":\"2\"}"
+        },
+        "headers": {
+          "content-length": "63",
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/videos/extensions",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"id\": \"video_p1\", \"object\": \"video\", \"model\": \"ltx-2.5-t2v\", \"azizam_resolved_model\": \"video-ltx-2.5-long\", \"status\": \"queued\", \"progress\": 0, \"created_at\": \"<time>\", \"completed_at\": null, \"expires_at\": \"<time>\", \"prompt\": \"more waves\", \"remixed_from_video_id\": \"video_p1\", \"error\": null, \"size\": \"64x64\", \"seconds\": \"3.6\", \"actual_seconds\": 3.6, \"extended_from_video_id\": \"video_p1\", \"total_seconds\": 3.6, \"segments\": 1}"
+        },
+        "headers": {
+          "content-length": "<422 after normalisation>",
+          "content-type": "application/json",
+          "x-duration-adjusted": "requested=4 actual=3.6000 reason=ltx_latent_8np1_stride"
+        },
+        "status": 200
+      }
+    }
+  ],
+  "description": "POST /v1/videos/extensions of a finished video",
+  "engine_requests": [
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"prompt\":{\"1\":{\"class_type\":\"UNETLoader\",\"inputs\":{\"unet_name\":\"ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors\",\"weight_dtype\":\"default\"}},\"2\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"ltx-2.5-video-vae-bf16.safetensors\"}},\"3\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"ltx-2.5-audio-vae-bf16.safetensors\"}},\"4\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors\",\"type\":\"ltxv\",\"device\":\"default\"}},\"5\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"4\",0],\"text\":\"waves at dusk\"}},\"6\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"4\",0],\"text\":\"pc game, console game, video game, cartoon, childish, ugly\"}},\"7\":{\"class_type\":\"LTXVConditioning\",\"inputs\":{\"positive\":[\"5\",0],\"negative\":[\"6\",0],\"frame_rate\":[\"24\",0]}},\"20\":{\"class_type\":\"INTConstant\",\"inputs\":{\"value\":960},\"_meta\":{\"title\":\"Width (final)\"}},\"21\":{\"class_type\":\"INTConstant\",\"inputs\":{\"value\":512},\"_meta\":{\"title\":\"Height (final)\"}},\"22\":{\"class_type\":\"PrimitiveInt\",\"inputs\":{\"value\":121},\"_meta\":{\"title\":\"Length (frames, 8k+1)\"}},\"23\":{\"class_type\":\"PrimitiveInt\",\"inputs\":{\"value\":24.0},\"_meta\":{\"title\":\"Frame Rate (int)\"}},\"24\":{\"class_type\":\"PrimitiveFloat\",\"inputs\":{\"value\":24.0},\"_meta\":{\"title\":\"Frame Rate (float)\"}},\"25\":{\"class_type\":\"ComfyMathExpression\",\"inputs\":{\"expression\":\"a/2\",\"values.a\":[\"20\",0]}},\"26\":{\"class_type\":\"ComfyMathExpression\",\"inputs\":{\"expression\":\"a/2\",\"values.a\":[\"21\",0]}},\"10\":{\"class_type\":\"EmptyLTXVLatentVideo\",\"inputs\":{\"width\":[\"25\",1],\"height\":[\"26\",1],\"length\":[\"22\",0],\"batch_size\":1}},\"11\":{\"class_type\":\"LTXVEmptyLatentAudio\",\"inputs\":{\"frames_number\":[\"22\",0],\"frame_rate\":[\"23\",0],\"batch_size\":1,\"audio_vae\":[\"3\",0]}},\"12\":{\"class_type\":\"LTXVConcatAVLatent\",\"inputs\":{\"video_latent\":[\"10\",0],\"audio_latent\":[\"11\",0]}},\"13\":{\"class_type\":\"LTXVDualCFGGuider\",\"inputs\":{\"model\":[\"1\",0],\"positive\":[\"7\",0],\"negative\":[\"7\",1],\"video_cfg\":1.0,\"audio_cfg\":1.0}},\"14\":{\"class_type\":\"KSamplerSelect\",\"inputs\":{\"sampler_name\":\"euler_ancestral\"}},\"15\":{\"class_type\":\"ManualSigmas\",\"inputs\":{\"sigmas\":\"1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0\"}},\"30\":{\"class_type\":\"RandomNoise\",\"inputs\":{\"noise_seed\":192058881}},\"16\":{\"class_type\":\"SamplerCustomAdvanced\",\"inputs\":{\"noise\":[\"30\",0],\"guider\":[\"13\",0],\"sampler\":[\"14\",0],\"sigmas\":[\"15\",0],\"latent_image\":[\"12\",0]}},\"17\":{\"class_type\":\"LTXVSeparateAVLatent\",\"inputs\":{\"av_latent\":[\"16\",0]}},\"40\":{\"class_type\":\"LatentUpscaleModelLoader\",\"inputs\":{\"model_name\":\"ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors\"}},\"41\":{\"class_type\":\"LTXVLatentUpsampler\",\"inputs\":{\"samples\":[\"17\",0],\"upscale_model\":[\"40\",0],\"vae\":[\"2\",0]}},\"42\":{\"class_type\":\"LTXVConcatAVLatent\",\"inputs\":{\"video_latent\":[\"41\",0],\"audio_latent\":[\"17\",1]}},\"43\":{\"class_type\":\"LTXVDualCFGGuider\",\"inputs\":{\"model\":[\"1\",0],\"positive\":[\"7\",0],\"negative\":[\"7\",1],\"video_cfg\":1.0,\"audio_cfg\":1.0}},\"44\":{\"class_type\":\"ManualSigmas\",\"inputs\":{\"sigmas\":\"0.85, 0.7250, 0.4219, 0.0\"}},\"31\":{\"class_type\":\"RandomNoise\",\"inputs\":{\"noise_seed\":192058881}},\"45\":{\"class_type\":\"SamplerCustomAdvanced\",\"inputs\":{\"noise\":[\"31\",0],\"guider\":[\"43\",0],\"sampler\":[\"14\",0],\"sigmas\":[\"44\",0],\"latent_image\":[\"42\",0]}},\"46\":{\"class_type\":\"LTXVSeparateAVLatent\",\"inputs\":{\"av_latent\":[\"45\",0]}},\"47\":{\"class_type\":\"VAEDecodeTiled\",\"inputs\":{\"samples\":[\"46\",0],\"vae\":[\"2\",0],\"tile_size\":512,\"overlap\":64,\"temporal_size\":64,\"temporal_overlap\":16}},\"48\":{\"class_type\":\"LTXVAudioVAEDecode\",\"inputs\":{\"samples\":[\"46\",1],\"audio_vae\":[\"3\",0]}},\"58\":{\"class_type\":\"CreateVideo\",\"inputs\":{\"images\":[\"47\",0],\"fps\":[\"24\",0],\"audio\":[\"48\",0]}},\"60\":{\"class_type\":\"SaveVideo\",\"inputs\":{\"video\":[\"58\",0],\"filename_prefix\":\"video/ltx-2.5-t2v\",\"format\":\"mp4\",\"codec\":\"auto\"}}},\"client_id\":\"<hex32:1>\"}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "content-length": "<3815 after normalisation>",
+        "content-type": "application/json",
+        "host": "comfy.fk.test"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/prompt",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/history/p1",
+      "query": [],
+      "step": 1,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/history/p1",
+      "query": [],
+      "step": 2,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "identity",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/view",
+      "query": [
+        [
+          "filename",
+          "clip.mp4"
+        ],
+        [
+          "type",
+          "output"
+        ]
+      ],
+      "step": 2,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "boundary": "<boundary>",
+        "epilogue": "\r\n",
+        "kind": "multipart",
+        "parts": [
+          {
+            "body": {
+              "kind": "binary",
+              "len": 11572,
+              "magic": "0000001c66747970",
+              "sha256": "d91ecbffb482b763bc4f367beab1f05883d4753e74e82f392a4da61633ba10d4"
+            },
+            "crlf_after_body": true,
+            "headers": "Content-Disposition: form-data; name=\"image\"; filename=\"clip.mp4\"\r\nContent-Type: video/mp4"
+          }
+        ],
+        "preamble": ""
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "content-length": "11742",
+        "content-type": "multipart/form-data; boundary=<boundary>",
+        "host": "comfy.fk.test"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/upload/image",
+      "query": [],
+      "step": 2,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"prompt\":{\"unet\":{\"class_type\":\"UNETLoader\",\"inputs\":{\"unet_name\":\"ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors\",\"weight_dtype\":\"default\"}},\"vae\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"ltx-2.5-video-vae-bf16.safetensors\"}},\"avae\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"ltx-2.5-audio-vae-bf16.safetensors\"}},\"clip\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors\",\"type\":\"ltxv\",\"device\":\"default\"}},\"neg\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"clip\",0],\"text\":\"text, subtitles, logo, still image, still video, no motion, static, frozen, blurry, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, glitches, watermark, signature, distorted sound, saturated sound\"}},\"sampler\":{\"class_type\":\"KSamplerSelect\",\"inputs\":{\"sampler_name\":\"euler_ancestral\"}},\"sigmas\":{\"class_type\":\"ManualSigmas\",\"inputs\":{\"sigmas\":\"1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0\"}},\"src_file\":{\"class_type\":\"LoadVideo\",\"inputs\":{\"file\":\"uploaded.png\"}},\"src_parts\":{\"class_type\":\"GetVideoComponents\",\"inputs\":{\"video\":[\"src_file\",0]}},\"s0_text\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"clip\",0],\"text\":\"more waves\"}},\"s0_cond\":{\"class_type\":\"LTXVConditioning\",\"inputs\":{\"positive\":[\"s0_text\",0],\"negative\":[\"neg\",0],\"frame_rate\":10.0}},\"s0_tail\":{\"class_type\":\"ImageFromBatch\",\"inputs\":{\"image\":[\"src_parts\",0],\"batch_index\":11,\"length\":9}},\"s0_enc\":{\"class_type\":\"VAEEncode\",\"inputs\":{\"pixels\":[\"s0_tail\",0],\"vae\":[\"vae\",0]}},\"s0_vlat\":{\"class_type\":\"EmptyLTXVLatentVideo\",\"inputs\":{\"width\":64,\"height\":64,\"length\":25,\"batch_size\":1}},\"s0_guide\":{\"class_type\":\"LTXVAddLatentGuide\",\"inputs\":{\"positive\":[\"s0_cond\",0],\"negative\":[\"s0_cond\",1],\"vae\":[\"vae\",0],\"latent\":[\"s0_vlat\",0],\"guiding_latent\":[\"s0_enc\",0],\"latent_idx\":0,\"strength\":0.9}},\"s0_alat\":{\"class_type\":\"LTXVEmptyLatentAudio\",\"inputs\":{\"frames_number\":25,\"frame_rate\":10,\"batch_size\":1,\"audio_vae\":[\"avae\",0]}},\"s0_av\":{\"class_type\":\"LTXVConcatAVLatent\",\"inputs\":{\"video_latent\":[\"s0_guide\",2],\"audio_latent\":[\"s0_alat\",0]}},\"s0_guider\":{\"class_type\":\"CFGGuider\",\"inputs\":{\"model\":[\"unet\",0],\"positive\":[\"s0_guide\",0],\"negative\":[\"s0_guide\",1],\"cfg\":1.0}},\"s0_noise\":{\"class_type\":\"RandomNoise\",\"inputs\":{\"noise_seed\":27837429}},\"s0_sample\":{\"class_type\":\"SamplerCustomAdvanced\",\"inputs\":{\"noise\":[\"s0_noise\",0],\"guider\":[\"s0_guider\",0],\"sampler\":[\"sampler\",0],\"sigmas\":[\"sigmas\",0],\"latent_image\":[\"s0_av\",0]}},\"s0_sep\":{\"class_type\":\"LTXVSeparateAVLatent\",\"inputs\":{\"av_latent\":[\"s0_sample\",0]}},\"s0_crop\":{\"class_type\":\"LTXVCropGuides\",\"inputs\":{\"positive\":[\"s0_guide\",0],\"negative\":[\"s0_guide\",1],\"latent\":[\"s0_sep\",0]}},\"s0_decode\":{\"class_type\":\"VAEDecodeTiled\",\"inputs\":{\"samples\":[\"s0_crop\",2],\"vae\":[\"vae\",0],\"tile_size\":512,\"overlap\":64,\"temporal_size\":64,\"temporal_overlap\":16}},\"s0_new\":{\"class_type\":\"ImageFromBatch\",\"inputs\":{\"image\":[\"s0_decode\",0],\"batch_index\":9,\"length\":16}},\"s0_cat\":{\"class_type\":\"ImageBatch\",\"inputs\":{\"image1\":[\"src_parts\",0],\"image2\":[\"s0_new\",0]}},\"create\":{\"class_type\":\"CreateVideo\",\"inputs\":{\"images\":[\"s0_cat\",0],\"fps\":10.0}},\"save\":{\"class_type\":\"SaveVideo\",\"inputs\":{\"video\":[\"create\",0],\"filename_prefix\":\"video/ltx-2.5-long\",\"format\":\"mp4\",\"codec\":\"auto\"}}},\"client_id\":\"<hex32:1>\"}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "content-length": "<3372 after normalisation>",
+        "content-type": "application/json",
+        "host": "comfy.fk.test"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/prompt",
+      "query": [],
+      "step": 2,
+      "to": "comfy.fk.test"
+    }
+  ],
+  "gateway_sleeps": [],
+  "media_jobs": {
+    "media_jobs_migrations": [
+      {
+        "applied_at": "<time>",
+        "name": "video_job_records_v1"
+      }
+    ],
+    "media_jobs_schema_version": [
+      {
+        "version": 2
+      }
+    ],
+    "video_job_records": [
+      {
+        "created_at": "<time>",
+        "deleted_at": null,
+        "owner_key_hash": "app:app_test",
+        "prompt_id": "p1",
+        "record_json": {
+          "actual_seconds": 3.6,
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "chain": {
+            "context_seconds": 1.0,
+            "fps": 10.0,
+            "segment_frames": [
+              16
+            ],
+            "segments": 1,
+            "shots": 1,
+            "source_frames": 20,
+            "total_frames": 36,
+            "units": [
+              {
+                "decode": "s0_decode",
+                "sample": "s0_sample"
+              }
+            ]
+          },
+          "completed_at": null,
+          "created_at": "<time>",
+          "deleted_at": null,
+          "error": null,
+          "expires_at": "<time>",
+          "extended_from_video_id": "video_p1",
+          "metadata_mode": null,
+          "model": "ltx-2.5-t2v",
+          "owner_key_hash": "app:app_test",
+          "person_id": null,
+          "provenance": {
+            "backend": "comfyui",
+            "created_at": "<iso-time>",
+            "generator": "azizam-gateway",
+            "kind": "video",
+            "model_alias": "ltx-2.5-t2v",
+            "parameters": {
+              "actual_seconds": 3.6,
+              "length_frames": 36,
+              "seconds": "4",
+              "size": "64x64"
+            },
+            "receipt": "/gateway/v1/receipts/video_p1",
+            "request_id": "video_p1",
+            "requested_model": "ltx-2.5-t2v",
+            "resolved_model": "video-ltx-2.5-long",
+            "schema": "azizam.provenance/1",
+            "seed": 27837429,
+            "workflow_id": "video.generate.video-ltx-2.5-long"
+          },
+          "remixed_from_video_id": "video_p1",
+          "resolved_model": "video-ltx-2.5-long",
+          "seconds": "3.6",
+          "size": "64x64",
+          "total_seconds": 3.6
+        }
+      }
+    ]
+  },
+  "notes": {},
+  "receipts": {
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "video_extend",
+  "schema": 1
+}
