@@ -973,7 +973,10 @@ class AdminSQLiteStore:
         )
         self.write_litellm_config(record["value"])
         self._fire_registry_changed(record)
-        return record
+        # Reload can backfill bundled metadata in a second registry write.
+        # Return the applied snapshot and its matching revision, so the next
+        # edit does not start with an already-stale If-Match token.
+        return admin_store.get_service_registry_with_generation(path=self.path) or record
 
     def add_service(
         self, *, data: Mapping[str, Any], actor: AdminContext,
