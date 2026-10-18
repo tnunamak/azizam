@@ -454,3 +454,194 @@ def test_load_is_skipped_when_the_engine_already_reports_the_model_resident():
     controller = ResidencyController(invoke=invoke, observe=observe)
     assert run(controller.load({"residency": {"load": {"op": "load"}}})) is True
     assert calls == []
+
+
+# -- finding 5: the permission lives in the live admin database ---------------
+
+
+def test_command_permission_is_read_from_the_bound_live_admin_database(tmp_path):
+    from gateway import admin_store, host_commands
+
+    live = tmp_path / "live-admin.db"
+    admin_store.init_db(live)
+    admin_store.put_operator_setting_with_audit(
+        "allow_host_commands", {"enabled": True}, updated_by="owner",
+        audit_action="operator.host_commands.update", audit_actor_kind="owner", audit_actor_id="owner",
+        audit_actor_label="owner", audit_target_kind="operator_setting",
+        audit_target_id="allow_host_commands", path=live)
+    try:
+        assert host_commands.commands_allowed() is False  # unbound: the import-time default store is empty
+        host_commands.bind_admin_db(live)
+        assert host_commands.commands_allowed() is True
+        from gateway.engine_process import _operator_allows_commands
+        assert _operator_allows_commands() is True
+    finally:
+        host_commands.bind_admin_db(None)
+
+
+def test_proxy_binds_its_admin_database_for_the_command_permission():
+    source = (Path(__file__).resolve().parent.parent / "proxy.py").read_text()
+    assert "host_commands.bind_admin_db(ADMIN_DB_PATH)" in source
+
+
+# -- finding 6: D13 migration, off-switch behaviour, driver resolution --------
+
+_LEGACY = {
+    "engine-a": {"lifecycle": {"driver": "systemd", "driver_config": {"unit": "a.service"}}},
+    "engine-b": {"config": {"lifecycle": {"driver": "systemd"}}, "lifecycle": {"driver": "external"}},
+    "engine-c": {"lifecycle": {"driver": "command", "driver_config": {"start": "run-c"}}},
+    "engine-d": {"process": {"driver": "process", "start": ["run-d"]}},
+    "engine-e": {"lifecycle": {"driver": "external"}},
+    "engine-f": {},
+}
+
+
+def _audit(path):
+    from gateway import admin_store
+
+    return admin_store.list_audit(action_prefix="operator.host_commands", path=path)
+
+
+def test_migration_enables_commands_once_for_existing_lifecycles_and_audits_them(tmp_path):
+    from gateway import admin_store, host_commands
+
+    path = tmp_path / "admin.db"
+    admin_store.init_db(path)
+    found = host_commands.migrate_legacy_command_lifecycles(path, _LEGACY)
+    assert sorted(item["id"] for item in found) == ["engine-a", "engine-b", "engine-c", "engine-d"]
+    setting = admin_store.get_operator_setting("allow_host_commands", path=path)
+    assert setting["value"] == {"enabled": True}
+    events = _audit(path)
+    assert len(events) == 1
+    listed = {item["id"]: item["driver"] for item in events[0]["metadata"]["lifecycles"]}
+    assert listed == {"engine-a": "systemd", "engine-b": "systemd", "engine-c": "command",
+                      "engine-d": "process"}
+    # The owner turns it off; the migration never runs a second time.
+    admin_store.put_operator_setting_with_audit(
+        "allow_host_commands", {"enabled": False}, updated_by="owner",
+        audit_action="operator.host_commands.update", audit_actor_kind="owner", audit_actor_id="owner",
+        audit_actor_label="owner", audit_target_kind="operator_setting",
+        audit_target_id="allow_host_commands", path=path)
+    assert host_commands.migrate_legacy_command_lifecycles(path, _LEGACY) == []
+    assert admin_store.get_operator_setting("allow_host_commands", path=path)["value"] == {"enabled": False}
+    assert len(_audit(path)) == 2
+
+
+def test_new_install_keeps_commands_off_even_if_a_command_engine_is_added_later(tmp_path):
+    from gateway import admin_store, host_commands
+
+    path = tmp_path / "admin.db"
+    admin_store.init_db(path)
+    assert host_commands.migrate_legacy_command_lifecycles(path, {"engine-e": _LEGACY["engine-e"]}) == []
+    assert admin_store.get_operator_setting("allow_host_commands", path=path) is None
+    assert host_commands.migrate_legacy_command_lifecycles(path, _LEGACY) == []
+    assert admin_store.get_operator_setting("allow_host_commands", path=path) is None
+    assert _audit(path) == []
+
+
+def test_turning_commands_off_blocks_new_starts_but_leaves_a_running_engine_alone(tmp_path):
+    svc = process_service(tmp_path)
+    svc["residency"]["idle_owner"] = "engine"
+    allowed = {"on": True}
+    driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: allowed["on"])
+
+    async def scenario():
+        assert await driver.ensure_ready(svc, 2)
+        pid = state_pid(tmp_path)
+        allowed["on"] = False
+        assert await driver.status(svc) == "running"
+        assert await driver.ensure_ready(svc, 2) is True  # still served, never respawned
+        assert state_pid(tmp_path) == pid
+        driver.stop(svc)  # an explicit stop is still possible
+        assert await driver.status(svc) == "stopped"
+        assert await driver.ensure_ready(svc, 0.2) is False  # no new start while off
+        assert not (tmp_path / "state" / "fixture.json").exists()
+
+    try:
+        run(scenario())
+    finally:
+        driver.stop(svc)
+
+
+def test_disabling_the_setting_reports_that_running_processes_continue(gateway):
+    from unittest.mock import patch as _patch
+    from tests.test_admin_cannot_act_as_owner import csrf_for
+    from tests.test_admin_owner_holes_round4 import owner_and_admin
+
+    owner, _, _, _admin = owner_and_admin(gateway)
+    path = "/admin/api/operator/host-commands"
+    on = owner.put(path, headers={**csrf_for(owner), "If-Match": "0"}, json={"enabled": True})
+    assert on.status_code == 200, on.text
+    with _patch("gateway.lifecycle_drivers._process_driver.stop") as stop, \
+         _patch("gateway.lifecycle_drivers._process_driver.shutdown") as shutdown:
+        off = owner.put(path, headers={**csrf_for(owner), "If-Match": on.json()["revision"]},
+                        json={"enabled": False})
+    assert off.status_code == 200, off.text
+    body = off.json()
+    assert body["enabled"] is False
+    assert body["running_processes"] == "unchanged"
+    assert "keep running" in body["note"]
+    stop.assert_not_called()
+    shutdown.assert_not_called()
+
+
+def _record(**fields):
+    base = {"id": "svc", "config": {}, "lifecycle": {
+        "driver": "external", "driver_config": {}, "managed": False, "service_name": None, "type": None}}
+    base.update(fields)
+    return base
+
+
+def _systemd(**extra):
+    wrapper = {"driver": "systemd", "driver_config": {"unit": "unit.service"}, "managed": True,
+               "service_name": "unit.service", "type": "systemd"}
+    return _record(lifecycle=wrapper, **extra)
+
+
+_PROCESS_MAPPING = {"start": ["run"], "port": {"fixed": 8080}}
+
+# Every live lifecycle shape from the reality audit (section 4) plus the v2 shapes.
+_SHAPES = {
+    "systemd wrapper plus nested copy (13 live)": (
+        _systemd(config={"lifecycle": {"driver": "systemd", "driver_config": {"unit": "unit.service"}}}),
+        "systemd"),
+    "systemd wrapper only": (_systemd(), "systemd"),
+    "systemd nested copy only": (
+        _record(config={"lifecycle": {"driver": "systemd", "driver_config": {"unit": "u.service"}}},
+                lifecycle={}), "systemd"),
+    "external wrapper without nested copy (7 live)": (_record(), "external"),
+    "no lifecycle at all": ({"id": "svc", "config": {}}, "external"),
+    "empty driver string": (_record(lifecycle={"driver": ""}), "external"),
+    "unknown driver": (_record(lifecycle={"driver": "mystery"}), "external"),
+    "legacy command string": (_record(lifecycle={"driver": "command", "driver_config": {"start": "run"}}),
+                              "command"),
+    "docker": (_record(lifecycle={"driver": "docker", "driver_config": {"container": "c"}}), "docker"),
+    "http-load-unload": (_record(lifecycle={"driver": "http-load-unload"}), "http-load-unload"),
+    "systemd plus process mapping without a driver (top level)": (
+        _systemd(process=dict(_PROCESS_MAPPING)), "systemd"),
+    "systemd plus process mapping without a driver (config)": (
+        _systemd(config={"process": dict(_PROCESS_MAPPING)}), "systemd"),
+    "systemd plus process driver none": (
+        _systemd(process={"driver": "none", **_PROCESS_MAPPING}), "systemd"),
+    "systemd plus blank process driver": (
+        _systemd(process={"driver": "", **_PROCESS_MAPPING}), "systemd"),
+    "v2 process driver wins": (
+        _systemd(process={"driver": "process", **_PROCESS_MAPPING}), "process"),
+    "v2 command driver": (_record(process={"driver": "command", "start": ["run"]}), "command"),
+    "v2 process alone": (_record(process={"driver": "process", **_PROCESS_MAPPING}), "process"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_SHAPES))
+def test_driver_resolution_keeps_every_live_lifecycle_shape(name):
+    from gateway import lifecycle_drivers, service_registry
+
+    record, expected = _SHAPES[name]
+    drivers = {
+        "systemd": lifecycle_drivers._systemd_driver, "command": lifecycle_drivers._command_driver,
+        "docker": lifecycle_drivers._docker_driver, "process": lifecycle_drivers._process_driver,
+        "http-load-unload": lifecycle_drivers._http_load_unload_driver,
+        "external": lifecycle_drivers._external_driver,
+    }
+    backend = service_registry.runtime_backend_from_service(record)
+    assert lifecycle_drivers.driver_for_service("svc", {"svc": backend}) is drivers[expected]
