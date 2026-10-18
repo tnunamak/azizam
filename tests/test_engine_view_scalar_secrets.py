@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from gateway import engine_admin, engine_redaction as redaction
 from gateway.engine_definitions import load_engine_catalog
 from tests.test_engine_redaction import MARKER, SECRET, _command_record, _stored, _write
@@ -90,12 +92,12 @@ def test_the_stored_observations_survive_the_view_and_the_v2_migration(gateway) 
 
 def test_the_settings_view_and_the_engine_view_hide_the_same_url_credentials() -> None:
     url = "http://user:pw-syn@host.invalid:81/p?token=t-syn#frag"
-    assert redaction.redact_config({"u": url})["u"] == "http://host.invalid:81/p"
+    assert redaction.public_value({"u": url})["u"] == "http://host.invalid:81/p"
     from gateway import settings_api
-    assert settings_api.redact_config({"u": url}) == redaction.redact_config({"u": url})
+    assert settings_api.public_value({"u": url}) == redaction.public_value({"u": url})
 
 
-def test_a_page_save_keeps_a_hidden_header_value_by_its_name_and_drops_a_renamed_row(gateway) -> None:
+def test_a_page_save_keeps_a_hidden_header_value_by_its_name(gateway) -> None:
     owner, *_ = owner_and_admin(gateway)
     record = _command_record()
     record["config"]["headers"] = [{"name": "X-Org", "value": "sk-synthetic-hdr-1234"},
@@ -108,12 +110,15 @@ def test_a_page_save_keeps_a_hidden_header_value_by_its_name_and_drops_a_renamed
     assert _stored(gateway)["config"]["headers"] == record["config"]["headers"]
 
 
-def test_a_header_row_renamed_with_the_marker_in_it_is_dropped_not_given_the_hidden_value() -> None:
+def test_a_header_row_renamed_with_the_marker_in_it_is_refused_not_given_the_hidden_value() -> None:
     stored = [{"name": "X-Org", "value": "sk-synthetic-hdr-1234"}, {"name": "X-Team", "value": "team-public"}]
-    sent = [{"name": "X-Renamed", "value": MARKER}, {"name": "X-Org", "value": MARKER}, {"name": "X-Team", "value": "team-public"}]
-    restored = redaction.restore_headers(sent, stored)
-    assert restored == stored
-    assert redaction.restore_headers([{"name": "X-Org", "value": MARKER}], None) == []
+    renamed = [{"name": "X-Renamed", "value": MARKER}, {"name": "X-Org", "value": MARKER}, {"name": "X-Team", "value": "team-public"}]
+    with pytest.raises(ValueError, match="X-Renamed"):
+        redaction.restore_headers(renamed, stored)
+    with pytest.raises(ValueError, match="no hidden stored value"):
+        redaction.restore_headers([{"name": "X-Org", "value": MARKER}], None)
+    kept = [{"name": "X-Org", "value": MARKER}, {"name": "X-Team", "value": "team-public"}]
+    assert redaction.restore_headers(kept, stored) == stored
 
 
 def test_a_page_save_that_changes_only_the_ready_timeout_leaves_a_list_start_byte_identical(gateway) -> None:

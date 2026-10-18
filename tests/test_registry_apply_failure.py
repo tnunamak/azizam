@@ -184,6 +184,26 @@ def test_a_boot_with_one_bad_service_serves_the_others_and_names_the_one_it_left
     assert "bad-engine" in capsys.readouterr().out  # logged loudly, not swallowed
 
 
+def test_a_boot_after_a_refused_migration_serves_the_other_services_and_names_the_left_out_one(live, capsys):
+    """The schema 2 migration leaves a mixed record out instead of stopping the gateway; boot then serves the rest."""
+    mixed = _service("mixed-engine", lifecycle={"driver": "command", "driver_config": {"start": ["legacy-start"]}})
+    mixed["process"] = {"driver": "process", "start": ["runner"], "port": {"fixed": 8080}}
+    registry = {"schema_version": 1, "services": {"good-engine": GOOD, "mixed-engine": mixed},
+                "protocol_frontends": {}, "workflows": {}, "capabilities": {}}
+    refused: dict[str, str] = {}
+    service_registry.migrate_engine_records_v2(registry, refused=refused)
+    assert set(refused) == {"mixed-engine"}
+    write_service_registry_for_test(registry, path=live)
+
+    config, problem = _boot(live)
+
+    assert set(config["backends"]) == {"good-engine"}
+    assert problem["mode"] == "partial" and set(problem["left_out"]) == {"mixed-engine"}
+    assert "keep one" in problem["left_out"]["mixed-engine"].lower()
+    [item] = [i for i in derive_admin_attention({"registry_problem": problem}) if i["kind"] == "registry"]
+    assert "mixed-engine" in item["detail"]
+
+
 def test_a_boot_never_serves_the_bootstrap_yaml_backends_in_place_of_the_registry(live):
     yaml_backends = set(proxy._bootstrap_config.get("backends") or {})
     assert yaml_backends, "the fixture needs bootstrap backends for this to prove anything"
