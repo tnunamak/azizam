@@ -46,6 +46,7 @@ from gateway.engine_check import (
     make_http_fetch,
     normalize_address,
     origin_of,
+    join_url,
     run_check,
     run_real_test,
 )
@@ -64,8 +65,6 @@ _KNOWN_CONFIG_KEYS = frozenset({
 _RECORD_KEYS = frozenset({"id", "name", "kind", "source", "enabled", "priority", "role", "capabilities", "config",
                           "secret_refs", "lifecycle", "process", "observations", "residency", "resources",
                           "provenance", "editable"})
-NOT_EDITABLE_HERE = ("This page can’t change how Azizam reaches this engine yet: its settings come from the gateway’s "
-                     "own setup. You can still rename it and turn it on or off.")
 # An engine lists at most this many models in one access question.
 MAX_ACCESS_MODELS = 500
 _LIFECYCLE_FIELDS = ("lifecycle_mode", "lifecycle_start", "lifecycle_stop", "lifecycle_ready_s")
@@ -579,7 +578,8 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     else:
         values["lifecycle_mode"] = "external"
     lifecycle_editable = lifecycle.get("driver") in (None, "", "command", "external")
-    editable = reaches_engine_directly(str(record.get("id") or ""), record)
+    locked = service_registry.is_litellm_service_record(record.get("id"), record)
+    editable = not locked
     model_use = (config.get("engine_check") or {}).get("model_use") or {}
     models = [{"id": m.get("upstream_model"), "public_name": m.get("model_group") or m.get("id"),
                "context_window": m.get("context_window"), "enabled": m.get("enabled", True),
@@ -597,6 +597,18 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     field_keys = {f["key"] for f in definition["fields"]}
     values = {k: v for k, v in values.items() if k in field_keys}
     other = {k: v for k, v in config.items() if k not in _KNOWN_CONFIG_KEYS and k != "engine_capabilities"}
+    request_base = join_url(address, str(config.get("path_prefix") or ""))
+    hop_routed = bool(config.get("gateway_lifecycle") or any(
+        row.get("gateway_lifecycle") for row in model_rows(config.get("models"))
+    ))
+    operations = []
+    for cap_id in caps:
+        route = (catalog.capability(cap_id) or {}).get("route") or {}
+        if route.get("path"):
+            base = request_base
+            if definition["probes"].get("route_base"):
+                base = join_url(origin_of(address), definition["probes"]["route_base"])
+            operations.append({"capability": cap_id, "method": "POST", "url": join_url(base, route["path"])})
     return {
         "service_id": record.get("id"),
         "definition": definition["definition"],
@@ -604,11 +616,8 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "inferred": not config.get("definition"),
         "name": record.get("name"),
         "enabled": bool(record.get("enabled", True)),
-        "locked": service_registry.is_litellm_service_record(record.get("id"), record),
-        # False when the model router does not call this engine at its own address: the page would
-        # save settings the gateway does not use, so it shows them and changes only name and on/off.
+        "locked": locked,
         "editable": editable,
-        "not_editable_reason": "" if editable else NOT_EDITABLE_HERE,
         "lifecycle_editable": lifecycle_editable,
         "values": values,
         "key": key,
@@ -620,6 +629,9 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "other_settings": copy.deepcopy(other),
         "record": redacted_record(record),
         "v2": service_registry.service_record_v2(record),
+        "request_path": {"mode": "gateway_lifecycle" if hop_routed else "direct", "source": "service record",
+                         "url": operations[0]["url"] if operations else "", "operations": operations},
+        "credential_destination": key.get("origin") or origin_of(address),
     }
 
 
@@ -934,8 +946,6 @@ class EngineService:
             raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
         if service_registry.is_litellm_service_record(service_id, record):
             raise EngineRouteError(status.HTTP_403_FORBIDDEN, "service_not_editable", "Azizam runs this engine itself. Only its name and Enabled can change.")
-        if not reaches_engine_directly(service_id, record):
-            raise EngineRouteError(status.HTTP_409_CONFLICT, "engine_not_editable_here", NOT_EDITABLE_HERE)
         before = engine_view(catalog, record, db_path=self.db_path)
         definition = _definition(catalog, body.get("definition") or before["definition"])
         values = {**before["values"], **(body.get("values") if isinstance(body.get("values"), Mapping) else {})}

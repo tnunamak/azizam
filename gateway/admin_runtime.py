@@ -822,6 +822,14 @@ class AdminSQLiteStore:
             old_services = before_registry.get("services") or {}
             for service_id, record in (value.get("services") or {}).items():
                 previous = old_services.get(service_id) or {}
+                if previous:
+                    old_config, new_config = previous.get("config") or {}, record.get("config") or {}
+                    for section, keys in {
+                        "connection": ("address", "host", "port", "scheme", "base_path", "path_prefix", "protocol", "timeout", "headers"),
+                        "offerings": ("models", "transforms"),
+                    }.items():
+                        if any(old_config.get(key) != new_config.get(key) for key in keys):
+                            raise PermissionError(f"Only the owner can change service {section}.")
                 for field in ("connection", "process", "protocol_operations", "control_file_roots",
                               "offerings", "residency", "observations"):
                     # Migration writes empty blocks; an empty block grants nothing.
@@ -960,10 +968,20 @@ class AdminSQLiteStore:
         registry, record = service_registry.upsert_service_in_registry(
             self.get_service_registry(), service_id=service_id, raw=raw, source="ui", replace=replace,
         )
+        if isinstance(raw.get("lifecycle"), Mapping):
+            record["process"] = service_registry._v2_process(raw["lifecycle"])
         if existing is not None:
-            for field in ("kind", "provenance"):
+            for field in ("kind", "provenance", "secret_refs", "resources"):
                 if field in existing:
                     record[field] = copy.deepcopy(existing[field])
+            # Rebuilding a connection must not discard the process identity,
+            # its observation contracts, or residency policy. A lifecycle edit
+            # deliberately rebuilds these blocks through migration instead.
+            old_lifecycle = service_registry.legacy_lifecycle_from_service(existing)
+            if raw.get("lifecycle") == old_lifecycle:
+                for field in ("process", "observations", "residency"):
+                    if field in existing:
+                        record[field] = copy.deepcopy(existing[field])
         return self._persist_service_registry(
             registry,
             action="operator.service.updated" if replace else "operator.service.added",

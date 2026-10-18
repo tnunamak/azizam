@@ -1225,6 +1225,10 @@ async def run_real_test(
     result: dict[str, Any] = {
         **base_result, "seconds": answer.seconds, "status": answer.status, "adjusted": bool(specs),
         "sent": test["sent"] + (", with your request adjustments applied" if specs else ""),
+        "request": {"method": "POST", "url": url,
+                    "headers": {name: "Bearer [redacted]" if name.lower() == "authorization" else value
+                                for name, value in headers.items()},
+                    "body": body, "timeout_s": timeout_s},
     }
     ok, reply = _judge(test, answer)
     if answer.withheld:

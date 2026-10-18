@@ -99,6 +99,7 @@ from gateway import rerank as rerank_api
 from gateway import stable_aliases
 from gateway import model_metadata
 from gateway import engine_check
+from gateway.engine_connection import inference_connection
 from gateway import speech_stream
 from gateway import custom_voices
 from gateway import voice_audio
@@ -28511,12 +28512,19 @@ async def _forward_internal_litellm_local_upstream(
         return admission
 
     body["model"] = activation.backend_model or target_model
+    # Read the saved service, not the boot-time host table: an owner edit
+    # changes the final hop even while the model router retains its hop URL.
+    record = (ADMIN_STORE.get_service_registry().get("services") or {}).get(backend)
+    connection = inference_connection(
+        record, "/chat/completions", fallback_address=f"{upstream_base}/v1",
+        fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
+    )
     execution_request = LlmExecutionRequest(
         method="POST",
-        url=f"{upstream_base}/v1/chat/completions",
-        headers={"content-type": "application/json"},
+        url=connection.url,
+        headers=connection.headers,
         body=json.dumps(body).encode("utf-8"),
-        read_timeout=UPSTREAM_READ_TIMEOUT,
+        read_timeout=connection.read_timeout,
     )
 
     # This route runs behind LiteLLM's own httpx client, not the original

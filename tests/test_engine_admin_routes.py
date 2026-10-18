@@ -366,6 +366,13 @@ def test_a_draft_real_test_runs_from_the_gateway_against_the_draft_values(gatewa
     # A new engine runs with its kind's default adjustment, so the test does too.
     assert result["sent"] == "One chat message, “Say OK”, with a limit of 1 token, with your request adjustments applied"
     assert result["adjusted"] is True
+    trace = result["request"]
+    sent = next(row for row in fake.requests if row.path == "/v1/chat/completions" and row.json.get("messages"))
+    assert trace["method"] == sent.method
+    assert trace["url"] == f"{fake.base_url}{sent.path}"
+    assert trace["body"] == sent.json
+    assert trace["headers"]["Authorization"] == "Bearer [redacted]"
+    assert trace["headers"]["content-type"] == sent.headers["content-type"]
     assert KEY not in tested.text
     assert "tested" not in _registry(gateway)["services"]
 

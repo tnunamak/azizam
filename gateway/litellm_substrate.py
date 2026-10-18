@@ -274,9 +274,8 @@ def _is_openai_compatible(service: Mapping[str, Any]) -> bool:
 def reaches_engine_directly(service_id: str, record: Mapping[str, Any]) -> bool:
     """True when the model router calls this service at its own address.
 
-    Not for a service it does not route, or one it reaches through the
-    gateway's lifecycle hop: there the address path, headers and reply time a
-    service record holds are not what reaches the engine.
+    False for a service it does not route, or one reached through the gateway's
+    lifecycle hop. Both paths use the service record's connection settings.
     """
     service = normalize_service_record(service_id, record)
     config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
