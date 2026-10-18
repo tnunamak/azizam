@@ -67,3 +67,30 @@ it("editing after a test starts cannot relabel it as proof of the new draft", as
   await waitFor(() => expect(screen.queryByLabelText("Real test of Chat")).toBeNull());
   expect(screen.queryByText(/Tested the saved settings/)).toBeNull();
 });
+
+it.each(["path", "header", "model"])("discarding tested draft %s changes leaves no saved proof", async (field) => {
+  const mounted = mount();
+  const user = userEvent.setup();
+  await screen.findByRole("heading", { level: 1 });
+  const more = screen.getByText("More options", { selector: "summary span" });
+  if (!more.closest("details")?.open) await user.click(more);
+  if (field === "path") await user.type(screen.getByLabelText("Extra path before every request"), "/draft");
+  if (field === "header") {
+    await user.click(screen.getByRole("button", { name: "Add a header" }));
+    await user.type(screen.getByLabelText("Header name"), "X-Tenant");
+    await user.type(screen.getByLabelText("Value"), "draft");
+  }
+  if (field === "model") await user.click(screen.getByRole("checkbox", { name: /Offer qwen/ }));
+  const run = vi.spyOn(enginesApi, "test").mockResolvedValue({ ...testResult("chat_pass"), via: "draft" });
+  const update = vi.spyOn(enginesApi, "update");
+  await user.click(screen.getByRole("button", { name: "Run a real test for Chat" }));
+  expect(await screen.findByText(/Tested your unsaved changes/)).toBeVisible();
+  expect(run).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Discard" }));
+  expect(screen.queryByLabelText("Real test of Chat")).toBeNull();
+  expect(update).not.toHaveBeenCalled();
+  mounted.unmount();
+  mount();
+  await screen.findByRole("heading", { level: 1 });
+  expect(screen.queryByLabelText("Real test of Chat")).toBeNull();
+});

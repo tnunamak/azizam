@@ -163,6 +163,7 @@ for (const width of [1280, 390]) {
     const start = ["runner", "--model", "/models/family, chat.bin"];
     const stop = ["stop-runner", "family chat"];
     record.lifecycle = { driver: "command", driver_config: { start, stop, health_timeout_s: 120 } };
+    record.process = { driver: "command", start, stop, legacy_lifecycle: record.lifecycle };
     record.config.engine_capabilities = ["chat"];
     const longId = "family/" + "large-model-name-".repeat(16);
     record.config.models = [{ model_group: "family-chat", upstream_model: longId }];
@@ -175,8 +176,8 @@ for (const width of [1280, 390]) {
     const arg = page.getByRole("textbox", { name: "Start command argument 3" });
     await expect(arg).toHaveValue(start[2]);
     await arg.fill("/models/new family, chat.bin");
-    const from = page.getByLabel("Old field (row 1)");
-    const to = page.getByLabel("New field (row 1)");
+    const from = page.getByLabel("Field name (row 1)");
+    const to = page.getByLabel("Rename to (row 1)");
     await from.scrollIntoViewIfNeeded();
     await expect(from).toBeVisible();
     await expect(to).toBeVisible();
@@ -192,8 +193,8 @@ for (const width of [1280, 390]) {
     await page.getByRole("button", { name: "Save changes", exact: true }).click();
     expect((await saved).status()).toBe(200);
     const after = (await read()).value.services[id];
-    expect(after.lifecycle.driver_config.start).toEqual([start[0], start[1], "/models/new family, chat.bin"]);
-    expect(after.lifecycle.driver_config.stop).toEqual(stop);
+    expect(after.process.start).toEqual([start[0], start[1], "/models/new family, chat.bin"]);
+    expect(after.process.stop).toEqual(stop);
     await page.reload();
     await expect(page.getByRole("textbox", { name: "Start command argument 3" })).toHaveValue("/models/new family, chat.bin");
     // Long workflow IDs and required inputs stay inspectable even without an editor.
