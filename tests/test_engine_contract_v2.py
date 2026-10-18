@@ -244,7 +244,7 @@ def test_v2_migration_preserves_external_and_system_runtime_wrappers() -> None:
     assert after == before
 
 
-def test_admin_schema_migration_refuses_conflict_atomically(tmp_path: Path) -> None:
+def test_admin_schema_migration_leaves_a_conflicting_service_out_and_keeps_the_gateway_starting(tmp_path: Path) -> None:
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
     service = _service()
@@ -253,8 +253,10 @@ def test_admin_schema_migration_refuses_conflict_atomically(tmp_path: Path) -> N
     with sqlite3.connect(db) as conn:
         conn.execute("UPDATE schema_version SET version=9")
         conn.execute("INSERT INTO operator_settings(key,value_json,updated_at) VALUES ('service_registry',?,0)", (json.dumps(registry),))
-    with pytest.raises(ValueError, match=r"engine-a.*lifecycle.*driver.*conflict"):
-        admin_store.init_db(db)
+    admin_store.init_db(db)
     with sqlite3.connect(db) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 9
-        assert json.loads(conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0]) == registry
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 10
+        stored = json.loads(conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0])
+    record = stored["services"]["engine-a"]
+    assert "engine-a" in record["migration_refused"] and "conflict" in record["migration_refused"]
+    assert {key: value for key, value in record.items() if key != "migration_refused"} == registry["services"]["engine-a"]
