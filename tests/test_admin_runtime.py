@@ -1051,6 +1051,23 @@ class ServicePatchRoundTripTests(unittest.TestCase):
         self.assertEqual(process["start"], ["new"])
         self.assertEqual(process["legacy_lifecycle"]["driver_config"]["start"], ["new"])
 
+    def test_v2_partial_lifecycle_fields_keep_unnamed_values(self) -> None:
+        backends = {name: {"protocol": "openai-compatible", "host": name, "port": 18001,
+                           "lifecycle": {"type": "systemd", "managed": True, "service_name": "old.service"}}
+                    for name in ("rename-unit", "keep-unit", "keep-managed")}
+        seed = service_registry.build_service_registry_seed({"backends": backends})
+        write_service_registry_for_test(seed, path=self.db)
+        cases = (
+            ("rename-unit", {"service_name": "new.service"}, {"type": "systemd", "managed": True, "service_name": "new.service"}),
+            ("keep-unit", {"managed": True}, {"type": "systemd", "managed": True, "service_name": "old.service"}),
+            ("keep-managed", {"lifecycle_type": "systemd"}, {"type": "systemd", "managed": True, "service_name": "old.service"}),
+        )
+        for service_id, patch, expected in cases:
+            with self.subTest(service_id=service_id):
+                registry = self.store.update_service(service_id=service_id, data=patch, actor=self.ctx)
+                lifecycle = registry["services"][service_id]["process"]["legacy_lifecycle"]
+                self.assertEqual({key: lifecycle[key] for key in expected}, expected)
+
     def _seed_embeddings(self) -> None:
         """Add the canonical 'embeddings' service from the spec example."""
         self.store.add_service(

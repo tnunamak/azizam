@@ -205,6 +205,14 @@ def test_v2_command_changes_still_require_owner() -> None:
     assert "lifecycle" in service_registry.credential_binding_changes(migrated, edited)["engine-a"]
 
 
+def test_owner_gate_catches_legacy_driver_beside_process_marker() -> None:
+    record = _service()
+    record["process"] = {"driver": "none"}
+    before = {"schema_version": 1, "services": {}}
+    after = {"schema_version": 1, "services": {"engine-a": record}}
+    assert "lifecycle" in service_registry.credential_binding_changes(before, after)["engine-a"]
+
+
 def test_v2_record_readers_keep_legacy_availability_and_admin_shape() -> None:
     from gateway.availability import _is_idle_startable
     from gateway.engine_admin import redacted_record
