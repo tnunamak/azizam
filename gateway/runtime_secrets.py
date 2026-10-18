@@ -12,8 +12,11 @@ the address it is about to be sent to, so a record whose address moved cannot se
 from __future__ import annotations
 
 import os
+import sqlite3
 from pathlib import Path
 from typing import Any, Callable, Mapping
+
+from cryptography.exceptions import InvalidTag
 
 from gateway import admin_store, record_carriers, secret_refs, secret_store
 
@@ -27,13 +30,19 @@ class SecretUnavailable(RuntimeError):
 
 
 def resolve(ref: Any, *, origin: str | None = None) -> str:
+    """The secret stored under ``ref`` for ``origin``. Every way a lookup can fail raises ``SecretUnavailable``, with no value."""
     if not secret_refs.is_ref(ref):
         raise SecretUnavailable("a secret reference is invalid")
     try:
         value = secret_store.get_provider_secret(str(ref), db_path=database(), expected_origin=origin)
-    except (KeyError, PermissionError, ValueError, FileNotFoundError):
+    except (KeyError, PermissionError, ValueError, OSError, sqlite3.Error, InvalidTag):
         raise SecretUnavailable("a secret could not be read") from None
     return value
+
+
+def _ref_of(entry: Any) -> Any:
+    """The reference an entry holds, or None for anything that is not a mapping with one (a view, a stray value)."""
+    return entry.get("secret_ref") if isinstance(entry, Mapping) else None
 
 
 def header_pairs(headers: Any, *, origin: str | None) -> dict[str, str]:
@@ -144,14 +153,20 @@ def url(container: Mapping[str, Any], key: str) -> str:
     if not isinstance(held, Mapping) or not held:
         return str(public or "")
     if held.get("whole"):
-        return resolve(held["whole"]["secret_ref"])
+        return resolve(_ref_of(held["whole"]))
     base = str(public or "")
     origin = secret_refs.origin_or_none(base)
-    userinfo = resolve(held["userinfo"]["secret_ref"], origin=origin) if isinstance(held.get("userinfo"), Mapping) else None
+    userinfo = resolve(_ref_of(held["userinfo"]), origin=origin) if held.get("userinfo") else None
     query = record_carriers.query_chunks(held.get("query"), lambda ref: resolve(ref, origin=origin)) if "query" in held else None
     fragment = None
     if isinstance(held.get("fragment"), Mapping):
-        fragment = resolve(held["fragment"]["secret_ref"], origin=origin) if secret_refs.is_secret_entry(held["fragment"]) else ""
+        marker = held["fragment"]
+        if secret_refs.is_secret_entry(marker):
+            fragment = resolve(marker["secret_ref"], origin=origin)
+        elif marker.get("empty") is True:
+            fragment = ""
+        else:
+            resolve(None)  # a fragment that is neither an entry nor an empty marker cannot be rebuilt
     return record_carriers.join_url(base, userinfo=userinfo, query=query, fragment=fragment)
 
 

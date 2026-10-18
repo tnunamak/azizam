@@ -29497,7 +29497,7 @@ def _native_engine_base(target: Mapping[str, Any]) -> str:
 
 def _resolve_header_secret(row: Mapping[str, Any], origin: str | None) -> str | None:
     try:
-        return runtime_secrets.resolve(row["secret_ref"], origin=origin or None)
+        return runtime_secrets.resolve(row.get("secret_ref"), origin=origin or None)
     except runtime_secrets.SecretUnavailable:
         return None
 

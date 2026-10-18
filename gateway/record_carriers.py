@@ -86,6 +86,16 @@ class UrlRefused(ValueError):
         self.path = path
 
 
+class EntryRefused(ValueError):
+    """A write put a read's view of a secret entry, or a malformed entry, where an entry goes. The text names the place only."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"{path} holds what a read shows for a secret entry (or a malformed entry), not an entry. Leave it out to keep "
+            "the stored one, or change it with the secret-entries commands.")
+        self.path = path
+
+
 class ValueRefused(ValueError):
     """A write put a mapping or a list where an environment value goes. The text names the place and never the value."""
 
@@ -136,20 +146,22 @@ def observation_http_blocks(record: Mapping[str, Any]) -> Iterator[tuple[str, di
 
 
 def url_containers(record: Mapping[str, Any]) -> Iterator[tuple[str, dict[str, Any], str]]:
-    """(path of the field, the mapping that holds it, its key) for every URL field a record can hold."""
+    """(path of the field, the mapping that holds it, its key) for every URL field a record can hold.
+
+    A field counts when its credentials sit beside it even if the public field itself is gone."""
     for path in URL_FIELD_PATHS:
         parent_path, _, key = path.rpartition(".")
         parent = _container(record, parent_path)
-        if parent is not None and key in parent:
+        if parent is not None and (key in parent or key + SECRETS_SUFFIX in parent):
             yield path, parent, key
     for base, http in observation_http_blocks(record):
         for key in ("path", "url"):
-            if key in http:
+            if key in http or key + SECRETS_SUFFIX in http:
                 yield f"{base}.{key}", http, key
     for list_path in URL_LIST_PATHS:
         rows = _get(record, list_path)
         for index, row in enumerate(rows if isinstance(rows, list) else ()):
-            if isinstance(row, dict) and "url" in row:
+            if isinstance(row, dict) and ("url" in row or "url" + SECRETS_SUFFIX in row):
                 yield f"{list_path}[{index}].url", row, "url"
 
 
@@ -264,15 +276,17 @@ def query_chunks(entries: Any, resolve: Any) -> list[tuple[str, str | None]]:
     """The raw chunks a stored query holds, in order; ``resolve(ref)`` gives a stored value."""
     chunks: list[tuple[str, str | None]] = []
     for item in entries if isinstance(entries, list) else ():
-        if not isinstance(item, Mapping):
-            continue
-        if secret_refs.is_secret_entry(item):
+        if isinstance(item, Mapping) and secret_refs.is_secret_entry(item):
             value = resolve(item["secret_ref"])
             chunks.append((value, None) if item.get("bare") else (str(item.get("name") or ""), value))
-        elif item.get("empty"):
+        elif isinstance(item, Mapping) and item.get("empty"):
             chunks.append((str(item.get("name") or ""), ""))
-        elif item.get("gap"):
+        elif isinstance(item, Mapping) and item.get("gap"):
             chunks.append(("", None))
+        else:
+            # A chunk with no reference (a read written back) cannot be rebuilt: the resolver refuses it, so the URL is not
+            # sent with a part missing.
+            resolve(item.get("secret_ref") if isinstance(item, Mapping) else None)
     return chunks
 
 
@@ -750,7 +764,70 @@ def ingest_service(
     # A read hides the settings no type classifies (decision D34); a write built from a read does not carry them, so
     # the stored ones are kept. The count a read shows is never stored.
     projection.retain_hidden(projection_types.SERVICE_RECORD, record, stored)
+    refuse_echoed_views(record)
     return externalize_service(record, put, reject_ambiguous=True)
+
+
+def _is_view(item: Any) -> bool:
+    """What a read shows for a secret entry: a mapping that says whether it is configured and holds no reference."""
+    return isinstance(item, Mapping) and "configured" in item and not secret_refs.is_ref(item.get("secret_ref"))
+
+
+def _walk_views(node: Any, path: str) -> None:
+    if _is_view(node):
+        raise EntryRefused(path)
+    if isinstance(node, Mapping):
+        for key, item in node.items():
+            _walk_views(item, f"{path}.{str(key)[:64]}")
+    elif isinstance(node, (list, tuple)):
+        for index, item in enumerate(node):
+            _walk_views(item, f"{path}[{index}]")
+
+
+def _url_entries_malformed(held: Any) -> bool:
+    """True when ``<field>_entries`` is not a shape the migration and ingestion write: every part is an entry that holds
+    a reference, or (for a fragment or a query chunk) an empty or gap marker."""
+    if not isinstance(held, Mapping):
+        return True
+
+    def entry(item: Any) -> bool:
+        return secret_refs.is_secret_entry(item)
+
+    def marker(item: Any, key: str) -> bool:
+        return isinstance(item, Mapping) and item.get(key) is True
+
+    for part, item in held.items():
+        if part in ("userinfo", "whole"):
+            if not entry(item):
+                return True
+        elif part == "fragment":
+            if not (entry(item) or marker(item, "empty")):
+                return True
+        elif part == "query":
+            if not isinstance(item, list) or not all(entry(chunk) or marker(chunk, "empty") or marker(chunk, "gap") for chunk in item):
+                return True
+        else:
+            return True
+    return False
+
+
+def refuse_echoed_views(record: Mapping[str, Any]) -> None:
+    """Raise ``EntryRefused`` when a carrier of ``record`` holds a read's view of an entry or a malformed ``_entries`` part.
+
+    A view (``{"id", "configured"}``) written where no stored entry has that id would otherwise become a secret whose
+    value is the view's text, or a URL part that cannot be rebuilt when the engine is called.
+    """
+    for path, parent, key, policy_name in carrier_slots(record):
+        if key not in parent:
+            continue
+        value = parent[key]
+        if policy_name == "url_entries":
+            if value in (None, {}, ""):
+                continue
+            if _url_entries_malformed(value):
+                raise EntryRefused(path)
+        else:
+            _walk_views(value, path)
 
 
 # ---------------------------------------------------------------------------

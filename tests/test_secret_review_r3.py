@@ -49,7 +49,10 @@ def stored(gateway) -> dict:
 
 def secret_rows(gateway) -> dict:
     with sqlite3.connect(gateway.path) as conn:
-        return {row[0]: row[1] for row in conn.execute("SELECT id, approved_origin FROM provider_secrets")}
+        try:
+            return {row[0]: row[1] for row in conn.execute("SELECT id, approved_origin FROM provider_secrets")}
+        except sqlite3.OperationalError:  # no secret was ever stored here
+            return {}
 
 
 def change(client, mutate):
@@ -487,3 +490,108 @@ def test_a_migration_still_keeps_a_stored_structured_environment_value_as_a_secr
     record = {"id": "e", "config": {"host": "good.invalid", "port": 9}, "process": {"driver": "command", "env": {"MODE": {"a": "R3SECRET"}}}}
     moved = _moved(record, store)
     assert "R3SECRET" not in json.dumps(moved)
+
+
+# ---------------------------------------------------------------------------
+# L5: a read's view of an entry written back, and runtime lookups that fail without a KeyError
+# ---------------------------------------------------------------------------
+
+VIEW = {"id": "ent_" + "1" * 16, "configured": True}
+
+
+def _never_put(value, origin=None):
+    pytest.fail("a refused write must not store anything")
+
+
+VIEW_WRITES = {
+    "env": {"id": "e", "config": {"host": "h.invalid", "port": 9, "env": {"TOKEN": VIEW}}},
+    "header row": {"id": "e", "config": {"host": "h.invalid", "port": 9, "headers": [{**VIEW, "name": "X-Key"}]}},
+    "argv item": {"id": "e", "config": {"host": "h.invalid", "port": 9}, "process": {"driver": "command", "start": ["run", VIEW]}},
+    "scalar": {"id": "e", "config": {"host": "h.invalid", "port": 9}, "lifecycle": {"driver": "http-load-unload", "admin_key": VIEW}},
+    "userinfo": {"id": "e", "config": {"host": "h.invalid", "port": 9, "base_url": "http://h.invalid:9/v1", "base_url_entries": {"userinfo": VIEW}}},
+    "whole": {"id": "e", "config": {"host": "h.invalid", "port": 9, "base_url": "", "base_url_entries": {"whole": VIEW}}},
+    "fragment": {"id": "e", "config": {"host": "h.invalid", "port": 9, "base_url": "http://h.invalid:9/v1", "base_url_entries": {"fragment": VIEW}}},
+    "query chunk": {"id": "e", "config": {"host": "h.invalid", "port": 9, "base_url": "http://h.invalid:9/v1",
+                                          "base_url_entries": {"query": [{**VIEW, "name": "key"}]}}},
+    "unknown part": {"id": "e", "config": {"host": "h.invalid", "port": 9, "base_url": "http://h.invalid:9/v1", "base_url_entries": {"extra": 1}}},
+    "entries not a mapping": {"id": "e", "config": {"host": "h.invalid", "port": 9, "base_url": "http://h.invalid:9/v1", "base_url_entries": ["x"]}},
+}
+
+
+@pytest.mark.parametrize("name", sorted(VIEW_WRITES))
+def test_a_write_refuses_a_read_s_view_of_an_entry_and_stores_nothing(name):
+    with pytest.raises(record_carriers.EntryRefused) as refused:
+        record_carriers.ingest_service(copy.deepcopy(VIEW_WRITES[name]), None, _never_put)
+    assert VIEW["id"] not in str(refused.value)
+
+
+def test_a_write_accepts_the_entry_shapes_the_gateway_itself_stores():
+    ref = "sref_" + "a" * 24
+    record = {"id": "e", "config": {"host": "h.invalid", "port": 9, "base_url": "http://h.invalid:9/v1", "base_url_entries": {
+        "userinfo": {"id": "ent_" + "2" * 16, "secret_ref": ref},
+        "query": [{"id": "ent_" + "3" * 16, "name": "key", "secret_ref": ref}, {"id": "ent_" + "4" * 16, "name": "x", "empty": True},
+                  {"id": "ent_" + "5" * 16, "gap": True}],
+        "fragment": {"id": "ent_" + "6" * 16, "empty": True}}}}
+    written, _ = record_carriers.ingest_service(copy.deepcopy(record), None, _never_put)
+    assert written["config"]["base_url_entries"] == record["config"]["base_url_entries"]
+
+
+def test_an_administrator_cannot_save_a_view_as_the_url_credentials_of_a_record(gateway, host_isolated):
+    owner, _, _, admin = owner_and_admin(gateway)
+    empty_registry(gateway)
+    made = owner.post("/admin/api/operator/services", headers=_etag(owner), json={"name": "nb", "base_url": "http://nb.invalid:9/v1"})
+    assert made.status_code == 201, made.text
+    held = copy.deepcopy(stored(gateway)["nb"])
+    for entries in ({"userinfo": VIEW}, {"whole": VIEW}):
+        refused = change(admin, lambda services, entries=entries: services["nb"]["config"].update(base_url_entries=entries))
+        assert refused.status_code == 400, refused.text
+        assert VIEW["id"] not in refused.text
+        assert stored(gateway)["nb"] == held
+
+
+def test_a_view_written_as_an_environment_value_does_not_become_a_secret(gateway, host_isolated):
+    owner, _, _, _ = owner_and_admin(gateway)
+    empty_registry(gateway)
+    made = owner.post("/admin/api/operator/services", headers=_etag(owner), json={"name": "ev", "base_url": "http://ev.invalid:9/v1"})
+    assert made.status_code == 201, made.text
+    before = secret_rows(gateway)
+    refused = change(owner, lambda services: services["ev"]["config"].update(env={"TOKEN": VIEW}))
+    assert refused.status_code == 400, refused.text
+    assert secret_rows(gateway) == before
+
+
+MALFORMED_STORED = {
+    "userinfo view": {"userinfo": VIEW},
+    "whole view": {"whole": VIEW},
+    "whole not a mapping": {"whole": True},
+    "userinfo not a mapping": {"userinfo": "x"},
+    "fragment view": {"fragment": VIEW},
+    "query chunk view": {"query": [{**VIEW, "name": "key"}]},
+    "query chunk not a mapping": {"query": ["x"]},
+}
+
+
+@pytest.mark.parametrize("name", sorted(MALFORMED_STORED))
+def test_a_stored_entry_that_cannot_be_resolved_raises_secret_unavailable_and_never_a_key_error(store, name):
+    container = {"base_url": "http://h.invalid:9/v1", "base_url_entries": MALFORMED_STORED[name]}
+    with pytest.raises(runtime_secrets.SecretUnavailable):
+        runtime_secrets.url(container, "base_url")
+    with pytest.raises(runtime_secrets.SecretUnavailable):
+        runtime_secrets.service_url({"base_url": "http://h.invalid:9/v1", "base_url_entries": MALFORMED_STORED[name]})
+
+
+def test_a_header_row_without_a_reference_is_left_out_by_the_router_config(store):
+    from gateway import litellm_runtime
+
+    assert litellm_runtime._header({"id": "ent_" + "1" * 16, "name": "X"}, None) is None
+
+
+def test_a_secret_whose_stored_bytes_are_damaged_is_unavailable_and_not_a_crypto_error(store):
+    ref = secret_refs.store("R3-DAMAGED", db_path=store)
+    with sqlite3.connect(store) as conn:
+        conn.execute("UPDATE provider_secrets SET ciphertext_b64 = ? WHERE id = ?", ("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", ref))
+    with pytest.raises(runtime_secrets.SecretUnavailable) as raised:
+        runtime_secrets.resolve(ref)
+    assert "R3-DAMAGED" not in str(raised.value) and ref not in str(raised.value)
+    with pytest.raises(runtime_secrets.SecretUnavailable):
+        runtime_secrets.resolve("sref_" + "0" * 24)
