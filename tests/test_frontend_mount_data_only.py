@@ -70,6 +70,9 @@ def test_a_data_only_frontend_serves_chat_through_a_fake_engine_and_writes_a_rec
 ):
     engine = fake_upstreams.loopback(load_scenario("openai-compatible/chat-text", model="demo-chat", content="reached"))
     db = use_admin_db(monkeypatch, tmp_path)
+    receipts = tmp_path / "receipts.db"
+    receipt_store.init_db(receipts)
+    monkeypatch.setattr(receipt_store, "DB_PATH", receipts)
     fake_upstreams.router.add("router.fk.test", router_sidecar(proxy.ADMIN_STORE.get_service_registry))
     register_litellm(monkeypatch, db, "http://router.fk.test")
     _save_engine(db, engine.base_url)
@@ -85,9 +88,9 @@ def test_a_data_only_frontend_serves_chat_through_a_fake_engine_and_writes_a_rec
     assert response.status_code == 200, response.text
     assert response.json()["choices"][0]["message"]["content"] == "reached"
     assert len(engine.calls("chat")) == 1
-    receipt = receipt_store.get(response.headers["x-azizam-request-id"], audience="internal", path=db)
+    receipt = receipt_store.get(response.headers["x-azizam-request-id"], audience="internal", path=receipts)
     assert receipt is not None
-    assert receipt.path == "/v1/chat/completions"
+    assert receipt["path"] == "/v1/chat/completions"
 
 
 def test_the_acme_route_is_gone_once_the_row_is_removed(monkeypatch):
