@@ -89,14 +89,14 @@ def test_missing_key_still_allows_health_and_resource_checks(monkeypatch, fake_u
         'exchanges': [{'id': 'health', 'times': 2, 'match': {'method': 'GET', 'path': '/health',
                         'headers': {'authorization': {'$absent': True}}}, 'response': {'status': 200, 'json': {'ok': True}}}],
     }), host='review.fk.test')
-    config = {'definition': 'openai-compatible', 'base_url': fake.base_url + '/v1',
+    config = {'definition': 'openai-compatible', 'probe_with_inference_connection': True, 'base_url': fake.base_url + '/v1',
               'api_key_env': 'W5_UNSET_TEST_KEY', 'credential_origin': 'http://review.fk.test:80'}
     assert asyncio.run(ExternalDriver().ensure_ready(config, timeout_s=0))
     assert asyncio.run(proxy._probe_service_resource_fact(config)) == {'status': 'available'}
 
 
 @pytest.mark.parametrize('config,url', [
-    ({'base_url': 'https://openrouter.ai/api/v1', 'base_path': '/api/v1', 'api_key_env': 'W5_PROBE_KEY',
+    ({'definition': 'openai-compatible', 'base_url': 'https://openrouter.ai/api/v1', 'base_path': '/api/v1', 'api_key_env': 'W5_PROBE_KEY',
       'credential_origin': 'https://openrouter.ai:443'}, 'https://openrouter.ai/api/v1/health'),
     ({'host': '127.0.0.1', 'port': 6061, 'base_path': '/openai', 'api_key_env': 'W5_PROBE_KEY',
       'credential_origin': 'http://127.0.0.1:6061'}, 'http://127.0.0.1:6061/health'),
