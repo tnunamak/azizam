@@ -11,7 +11,7 @@ from pathlib import Path
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "engine_protocol" / "acme"
 KEY = "acme-secret-key"
-OUTPUTS = {"o1": b"\x89PNG-one", "o 2": b"\x89PNG-two"}
+OUTPUTS = {"o1": b"\x89PNG\r\n\x1a\n-one", "o 2": b"\x89PNG\r\n\x1a\n-two"}  # real PNG signatures: assets are sniffed
 
 
 class AcmeFake:

@@ -24,6 +24,7 @@ from tests.support.fake_upstream import HandlerTransport
 BASE = "http://engine.test:8080"
 SECRET = "sk-test-SECRET-1234"
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8  # the first bytes of a PNG: assets are sniffed
+WAV = b"RIFF\x24\x00\x00\x00WAVEfmt "
 
 
 def desc(operations: dict, *, auth: dict | None = None, errors: list | None = None, budgets: Budgets | None = None):
@@ -487,10 +488,10 @@ def test_stream_budgets_event_size_and_total_bytes() -> None:
 def test_a_binary_answer_is_saved_as_an_asset() -> None:
     assets = MemoryAssetStore()
     ops = {"speak": {"class": "generate", "request": {"method": "POST", "path": "/s", "body": {"encoding": "json"}}, "response": {"framing": "binary"}}}
-    ex, _ = make(ops, lambda r: httpx.Response(200, content=b"RIFFxxxx", headers={"content-type": "audio/wav"}), assets=assets)
+    ex, _ = make(ops, lambda r: httpx.Response(200, content=WAV, headers={"content-type": "audio/wav"}), assets=assets)
     reply = run(ex.invoke(conn(), req("speak", {"input": "hi"})))
-    assert (reply.asset.content_type, reply.asset.size) == ("audio/wav", 8)
-    assert assets.get(reply.asset) == b"RIFFxxxx"
+    assert (reply.asset.content_type, reply.asset.size) == ("audio/wav", len(WAV))
+    assert assets.get(reply.asset) == WAV
     assert reply.body is None
 
 
@@ -669,7 +670,7 @@ def job_handler(states):
             return httpx.Response(200, json=queue.pop(0))
         if r.url.path.startswith("/jobs/42/files/"):
             name = r.url.path.rsplit("/", 1)[1]
-            return httpx.Response(200, content=b"bytes-of-" + name.encode(), headers={"content-type": "image/png"})
+            return httpx.Response(200, content=PNG + b"bytes-of-" + name.encode(), headers={"content-type": "image/png"})
         if r.url.path == "/jobs/42/cancel":
             return httpx.Response(204)
         return httpx.Response(404)
@@ -703,7 +704,7 @@ def test_finished_job_assets_are_fetched_per_selected_handle() -> None:
         return status, await ex.fetch_assets(conn(), ref, status)
     status, refs = run(go())
     assert status.state is JobState.succeeded and status.assets == ("a.png", "b c.png")
-    assert [assets.get(r) for r in refs] == [b"bytes-of-a.png", b"bytes-of-b c.png"]
+    assert [assets.get(r) for r in refs] == [PNG + b"bytes-of-a.png", PNG + b"bytes-of-b c.png"]
     assert all(r.content_type == "image/png" for r in refs)
     assert [r.url.raw_path for r in fake.requests if "/files/" in r.url.path] == [b"/jobs/42/files/a.png", b"/jobs/42/files/b%20c.png"]
 
@@ -742,7 +743,7 @@ class Slow(httpx.AsyncByteStream):
     async def __aiter__(self):
         for _ in range(self.count):
             await asyncio.sleep(self.delay)
-            yield b"x" * self.size
+            yield (PNG + b"x" * self.size)[:self.size] if self.size >= len(PNG) else b"x" * self.size
 
     async def aclose(self) -> None:
         pass

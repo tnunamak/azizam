@@ -77,7 +77,7 @@ def served_media_type(declared: str | None, head: bytes) -> str | None:
     The claimed type must be on the allowlist (parameters are dropped, never kept). The first bytes then decide: the
     claimed type stands only when it names the kind of file the bytes show, otherwise the sniffed type is served. Bytes
     with no signature are served only as raw data (``application/octet-stream`` or ``audio/pcm``), never as a type that
-    a browser would run or render as a page.
+    a browser would run or render as a page, and markup is refused even then.
     """
     claimed = (declared or "").split(";", 1)[0].strip().lower()
     if claimed and claimed not in ALLOWED_MEDIA_TYPES:
@@ -85,11 +85,11 @@ def served_media_type(declared: str | None, head: bytes) -> str | None:
     sniffed = sniff_media_type(head)
     if sniffed is not None:
         return claimed if claimed in _FAMILY[sniffed] else sniffed
-    if claimed in _UNSNIFFABLE:
+    if claimed == "audio/pcm":
         return claimed
-    return "application/octet-stream" if not claimed else None
-
-
+    if head.lstrip(b"\xef\xbb\xbf \t\r\n")[:1] == b"<":  # markup under no label or a bare one: a page, not media
+        return None
+    return (claimed or "application/octet-stream") if claimed in _UNSNIFFABLE or not claimed else None
 
 class AssetStore(Protocol):
     async def read(self, ref: AssetRef, *, max_bytes: int) -> bytes: ...

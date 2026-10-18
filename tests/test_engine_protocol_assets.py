@@ -61,6 +61,7 @@ def test_the_served_type_follows_the_bytes_within_the_allowlist(declared, head, 
     ("text/html", HTML), ("text/html", PNG), ("image/svg+xml", SVG), ("application/javascript", b"alert(1)"), ("text/plain", b"hello"),
     ("application/xhtml+xml", HTML), ("application/pdf", b"%PDF-1.7"),
     ("image/png", HTML), ("image/png", SVG), ("image/png", b""), ("audio/wav", b"not a wave file"), ("audio/mpeg", HTML),
+    ("application/octet-stream", HTML), ("application/octet-stream", SVG), (None, b"  \n<?xml version='1.0'?>"),
     ("image/png\r\nX-Evil: 1", PNG), ("image/png\nx", PNG), ("image/ png", PNG), ("../../etc", PNG), ("", HTML),
 ])
 def test_a_type_outside_the_allowlist_or_bytes_that_do_not_match_it_are_refused(declared, head) -> None:

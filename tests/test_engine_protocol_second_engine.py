@@ -26,7 +26,7 @@ from gateway.engine_protocol.transport import HttpxTransport
 from gateway.engine_protocol.types import CanonicalRequest, JobState, Reply
 from tests.support.fake_upstream.loopback import LoopbackServer
 from tests.support.fake_upstream.transport import StreamingASGITransport
-from tests.support.second_engine_fake import KEY, AcmeFake
+from tests.support.second_engine_fake import KEY, OUTPUTS, AcmeFake
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "engine_protocol"
 ACME = FIXTURES / "acme"
@@ -176,7 +176,7 @@ def test_render_job_submit_poll_fetch_and_the_bytes_of_each_step(rig: Rig) -> No
     ref, status, states, refs = run(go())
     assert ref.id == "r-7" and states == [JobState.pending, JobState.running, JobState.succeeded]
     assert status.assets == ("o1", "o 2")
-    assert [rig.assets.get(r) for r in refs] == [b"\x89PNG-one", b"\x89PNG-two"]
+    assert [rig.assets.get(r) for r in refs] == list(OUTPUTS.values())
     assert all(r.content_type == "image/png" for r in refs)
     submit = rig.fake.requests[0]
     golden("render.submit.request.head.txt", head(submit))
