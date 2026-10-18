@@ -305,8 +305,8 @@ def test_L3_an_edit_that_adds_a_paid_marker_to_a_stored_local_record_is_refused(
 
 # --- L-2: an executor stream receipt records what a legacy stream receipt records ----------------
 
-SSE = (b'data: {"id":"x","choices":[{"index":0,"delta":{"content":"a"}}]}\n\n'
-       b'data: {"id":"x","choices":[{"index":0,"delta":{"content":"b"},"finish_reason":"stop"}]}\n\n'
+SSE = (b'data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"coder","choices":[{"index":0,"delta":{"content":"a"}}]}\n\n'
+       b'data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"coder","choices":[{"index":0,"delta":{"content":"b"},"finish_reason":"stop"}]}\n\n'
        b'data: [DONE]\n\n')
 
 
@@ -326,7 +326,6 @@ def _receipt_projection(row):
 def test_L2_executor_stream_receipt_matches_the_legacy_receipt_for_the_same_request(monkeypatch, tmp_path):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
-    from gateway import media_jobs as jobs
     fixture = json.loads((Path(__file__).parent / 'fixtures/engine_protocol/live-shaped.json').read_text())
     fixture['services']['exec'] = {'id': 'exec', 'enabled': True, 'config': {
         'connection': {'transport': 'http', 'dispatch': 'protocol', 'protocol': 'openai-compatible',
@@ -345,17 +344,17 @@ def test_L2_executor_stream_receipt_matches_the_legacy_receipt_for_the_same_requ
     monkeypatch.setattr(proxy, 'send_llm_execution_request', legacy_send)
     monkeypatch.setattr(executor, 'HttpxTransport', lambda: transport.HttpxTransport.for_tests(
         HandlerTransport(lambda request: httpx.Response(200, content=SSE, headers={'content-type': 'text/event-stream'}))))
+    # The legacy route writes receipts through the store's default path, so use that path (sandboxed by the runner).
     monkeypatch.setattr(media_jobs, 'DB_PATH', tmp_path / 'j.db')
-    monkeypatch.setattr(receipt_store, 'DB_PATH', tmp_path / 'r.db')
     media_jobs.init_db(path=media_jobs.DB_PATH)
-    receipt_store.init_db(path=receipt_store.DB_PATH)
+    receipt_store.init_db()
     message = [{'role': 'user', 'content': 'hi'}]
     with authenticated():
         client = TestClient(proxy.app)
         legacy = client.post('/v1/chat/completions', json={'model': 'coder', 'messages': message, 'stream': True})
         protocol = client.post('/v1/chat/completions', json={'model': 'exec-coder', 'messages': message, 'stream': True})
     assert legacy.status_code == 200 and protocol.status_code == 200, (legacy.text, protocol.text)
-    rows = {row['request_id']: row for row in receipt_store.recent(path=receipt_store.DB_PATH)}
+    rows = {row['request_id']: row for row in receipt_store.recent()}
     legacy_row = rows[legacy.headers['x-request-id']]
     protocol_row = rows[protocol.headers['x-request-id']]
     assert _receipt_projection(protocol_row) == _receipt_projection(legacy_row)
