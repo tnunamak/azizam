@@ -133,6 +133,7 @@ from gateway.admin_api import (
     AdminContext,
     _require_admin,
     create_admin_router,
+    registry_not_applied_response,
 )
 from gateway.settings_api import create_settings_router, instance_settings, prompt_memory_settings
 from gateway.activity_api import create_activity_router
@@ -174,6 +175,7 @@ from gateway.admin_runtime import (
     AdminAuthenticator,
     AdminSQLiteStore,
     OIDC_PROVIDER_FIELDS,
+    RegistryNotApplied,
     access_for_person,
     create_admin_service_account_key,
     identity_from_access_row,
@@ -12836,6 +12838,13 @@ async def lifespan(app: FastAPI):
 tls_context()
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+
+
+@app.exception_handler(RegistryNotApplied)
+async def _registry_not_applied_handler(_request: Request, exc: RegistryNotApplied) -> JSONResponse:
+    """An admin save that is stored but not live answers with that fact, not with a success."""
+    return registry_not_applied_response(exc)
+
 
 from gateway.api_reference import register_api_reference
 
@@ -28910,18 +28919,6 @@ def _build_provider_native_targets() -> dict[str, dict[str, Any]]:
 
 _PROVIDER_NATIVE_TARGETS = _build_provider_native_targets()
 
-_PROVIDER_NATIVE_HOP_BY_HOP_HEADERS = {
-    "connection",
-    "content-length",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-}
-
 
 def _native_passthrough_receipt(
     *,
@@ -29311,6 +29308,50 @@ async def _native_credential_headers(
     return None
 
 
+def _classify_native_call(
+    request: Request,
+    receipt: RouteReceipt,
+    policy: native_lane.NativePolicy,
+    *,
+    provider_key: str,
+    native_request_path: str,
+    native_operation: str,
+    identity: Any,
+    default_reads: bool,
+) -> tuple[native_lane.AllowEntry | None, Response | None]:
+    """The allow entry a native call falls under, or the refusal to answer with.
+
+    ``default_reads`` is the provider route: a call the record does not declare is a read when its
+    method is GET or HEAD, and is a control call for any other method (see ``native_lane``).
+    """
+    if default_reads:
+        resolution = native_lane.provider_route_resolution(policy, request.method, native_request_path)
+    else:
+        resolution = policy.resolve(request.method, native_request_path)
+    entry = resolution.entry
+    if entry is None:
+        return None, _refuse_native(
+            receipt, status_code=403, code="native_not_allowed",
+            message=f"{native_operation} is not on the allow list of engine {provider_key!r}.",
+        )
+    receipt.metadata["native_class"] = entry.klass
+    if resolution.ambiguous:
+        return None, _refuse_native(
+            receipt, status_code=403, code="native_ambiguous_path",
+            message=f"{native_operation} matches a control entry of engine {provider_key!r} only by letter case, "
+                    f"so it is refused.",
+        )
+    if entry.klass == native_lane.CONTROL and not _native_caller_is_owner(identity):
+        return None, _refuse_native(
+            receipt, status_code=403, code="native_owner_only",
+            message=f"{native_operation} is a control call; only the gateway owner may make it.",
+        )
+    query_problem = native_lane.query_problem(entry, request.url.query)
+    if query_problem is not None:
+        return None, _refuse_native(receipt, status_code=403, code=query_problem[0], message=query_problem[1])
+    return entry, None
+
+
 async def _forward_provider_native(
     request: Request,
     *,
@@ -29344,32 +29385,21 @@ async def _forward_provider_native(
         lane=lane,
     )
     native_operation = f"{request.method.upper()} {native_request_path}"
+    # The provider route has no policy of its own: it reads the engine record's, as the lane does.
+    policy = native_policy if native_policy is not None else native_lane.policy_for(target.get("record") or {})
+
+    def classify() -> tuple[native_lane.AllowEntry | None, Response | None]:
+        return _classify_native_call(
+            request, receipt, policy, provider_key=provider_key, native_request_path=native_request_path,
+            native_operation=native_operation, identity=auth_context.identity, default_reads=native_policy is None,
+        )
+
+    entry: native_lane.AllowEntry | None = None
     if native_policy is not None:
         receipt.metadata["native_operation"] = native_operation
-        resolution = native_policy.resolve(request.method, native_request_path)
-        entry = resolution.entry
-        if entry is None:
-            return _refuse_native(
-                receipt, status_code=403, code="native_not_allowed",
-                message=f"{native_operation} is not on the allow list of engine {provider_key!r}.",
-            )
-        receipt.metadata["native_class"] = entry.klass
-        if resolution.ambiguous:
-            return _refuse_native(
-                receipt, status_code=403, code="native_ambiguous_path",
-                message=f"{native_operation} matches a control entry of engine {provider_key!r} only by letter case, "
-                        f"so it is refused.",
-            )
-        if entry.klass == native_lane.CONTROL and not _native_caller_is_owner(auth_context.identity):
-            return _refuse_native(
-                receipt, status_code=403, code="native_owner_only",
-                message=f"{native_operation} is a control call; only the gateway owner may make it.",
-            )
-        query_problem = native_lane.query_problem(entry, request.url.query)
-        if query_problem is not None:
-            return _refuse_native(
-                receipt, status_code=403, code=query_problem[0], message=query_problem[1],
-            )
+        entry, refusal = classify()
+        if refusal is not None:
+            return refusal
     decision = evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
@@ -29386,6 +29416,11 @@ async def _forward_provider_native(
         receipt.finish("denied")
         _record_native_passthrough_receipt(receipt)
         return _policy_denied_response(decision)
+    if native_policy is None:
+        # The access plan answers first on this route, so its refusals keep the plan's codes.
+        entry, refusal = classify()
+        if refusal is not None:
+            return refusal
 
     admission = _dispatch_admission_response(
         'provider.native', auth_context=auth_context, service_id=str(target["service"]),
@@ -29394,22 +29429,19 @@ async def _forward_provider_native(
     if admission is not None:
         return admission
 
-    if native_policy is None:
-        body = await request.body()
-    else:
-        def too_large() -> Response:
-            return _refuse_native(
-                receipt, status_code=413, code="native_request_too_large",
-                message=f"The request is over the {native_policy.max_request_bytes}-byte limit of this lane.",
-            )
+    def too_large() -> Response:
+        return _refuse_native(
+            receipt, status_code=413, code="native_request_too_large",
+            message=f"The request is over the {policy.max_request_bytes}-byte limit of this lane.",
+        )
 
-        declared = request.headers.get("content-length", "")
-        if declared.isdigit() and int(declared) > native_policy.max_request_bytes:
-            return too_large()
-        capped = await _read_capped_body(request, native_policy.max_request_bytes)
-        if capped is None:
-            return too_large()
-        body = capped
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > policy.max_request_bytes:
+        return too_large()
+    capped = await _read_capped_body(request, policy.max_request_bytes)
+    if capped is None:
+        return too_large()
+    body = capped
     receipt.stream = False
     receipt.effective_output_limit = None
     owner = ReceiptLifecycleOwner(receipt)
@@ -29428,28 +29460,28 @@ async def _forward_provider_native(
                 native_request_path,
             )
             query = backend_query_string(request.url.query)
-            client = httpx.AsyncClient(follow_redirects=False, timeout=timeout)
         else:
             # The lane sends the engine its own credential for this class and nothing of the caller's.
             headers = backend_request_headers(request.headers)
             query = native_lane.forwarded_query(request.url.query)
-            destination = await engine_check.check_destination(str(target["host"]), gateway_ports=_engine_check_self_ports)
-            if destination.transport != "ok":
-                return _fail_native(
-                    owner, receipt, status_code=502, code="native_destination_blocked",
-                    message=f"Engine {provider_key!r} cannot be reached by the native lane: {destination.reason}",
-                    reason="destination_blocked",
-                )
+        destination = await engine_check.check_destination(str(target["host"]), gateway_ports=_engine_check_self_ports)
+        if destination.transport != "ok":
+            return _fail_native(
+                owner, receipt, status_code=502, code="native_destination_blocked",
+                message=f"Engine {provider_key!r} cannot be reached by the native lane: {destination.reason}",
+                reason="destination_blocked",
+            )
+        if native_policy is not None:
             credential_error = await _native_credential_headers(
                 headers, target, entry.klass, provider_key,
             )
             if credential_error is not None:
                 return _fail_native(owner, receipt, status_code=502, **credential_error)
-            # Dial only the addresses just checked, so a second lookup cannot answer somewhere else.
-            client = httpx.AsyncClient(
-                transport=engine_check.checked_transport(destination), follow_redirects=False,
-                trust_env=False, timeout=timeout,
-            )
+        # Dial only the addresses just checked, so a second lookup cannot answer somewhere else.
+        client = httpx.AsyncClient(
+            transport=engine_check.checked_transport(destination), follow_redirects=False,
+            trust_env=False, timeout=timeout,
+        )
         for name, value in (target.get("headers") or {}).items():
             for existing in [key for key in headers if key.lower() == name.lower()]:
                 del headers[existing]
@@ -29496,32 +29528,24 @@ async def _forward_provider_native(
             )
 
         receipt.metadata["status_code"] = upstream.status_code
-        if native_policy is not None:
-            refusal = native_lane.reply_refusal(
-                native_policy, upstream.status_code, upstream.headers.get("content-length"), provider_key,
-            )
-            if refusal is not None:
-                receipt.metadata["refusal"] = refusal[1]
-                await stream_context.__aexit__(None, None, None)
-                await client.aclose()
-                owner.report(status="failed", reason="failed")
-                return openai_error_response(refusal[2], status_code=refusal[0], error_type="api_error", code=refusal[1])
+        refusal = native_lane.reply_refusal(
+            policy, upstream.status_code, upstream.headers.get("content-length"), provider_key,
+        )
+        if refusal is not None:
+            receipt.metadata["refusal"] = refusal[1]
+            await stream_context.__aexit__(None, None, None)
+            await client.aclose()
+            owner.report(status="failed", reason="failed")
+            return openai_error_response(refusal[2], status_code=refusal[0], error_type="api_error", code=refusal[1])
 
-        if native_policy is None:
-            response_headers = {
-                k: v
-                for k, v in upstream.headers.items()
-                if k.lower() not in _PROVIDER_NATIVE_HOP_BY_HOP_HEADERS
-            }
-        else:
-            response_headers = native_lane.relayed_headers(upstream.headers)
+        response_headers = native_lane.relayed_headers(upstream.headers)
 
         async def _provider_native_body_stream():
             sent = 0
             try:
                 async for chunk in upstream.aiter_bytes():
                     sent += len(chunk)
-                    if native_policy is not None and sent > native_policy.max_response_bytes:
+                    if sent > policy.max_response_bytes:
                         receipt.metadata["refusal"] = "native_response_too_large"
                         owner.report(status="failed", reason="failed")
                         raise _NativeResponseTooLarge

@@ -33,7 +33,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from starlette.routing import BaseRoute
+from starlette.routing import BaseRoute, compile_path
 
 from gateway import frontend_loss
 from gateway.frontend_loss import LossReport
@@ -44,6 +44,10 @@ MULTIPART = "multipart"
 BODIES = (JSON, MULTIPART)
 
 WEBSOCKET = "WEBSOCKET"
+
+# A record the registry reader set aside (a stored record that claims a builtin's id) carries the reason
+# under this key. It mounts nothing, and its frontend is reported as broken with that reason.
+MOUNT_PROBLEM = "mount_problem"
 
 # The translators a package, UI or imported row may name. Every other translator reaches code that
 # only builtin rows may mount: provider-native and native forward to engines, gateway and realtime
@@ -159,7 +163,7 @@ def rows_from_frontends(
     """
     rows: list[RouteRow] = []
     for frontend in frontends:
-        if frontend.get("enabled") is False:
+        if frontend.get("enabled") is False or frontend.get(MOUNT_PROBLEM):
             continue
         try:
             rows.extend(_rows_of(frontend))
@@ -223,6 +227,26 @@ def package_row_problems(frontend: Mapping[str, Any]) -> list[str]:
         for path in (item.get("canonical"), item.get("alias")):
             if path and not _opens_with_literal(str(path)):
                 problems.append(f"{frontend_id}: {path} must open with a literal path segment, not a parameter")
+    return problems
+
+
+def unroutable_paths(frontend: Mapping[str, Any]) -> list[str]:
+    """The rows of a frontend record whose path the router rejects (an unknown converter, a repeated name).
+
+    Checked when a record is written, so the writer is told; the mount skips such a row all the same.
+    """
+    frontend_id = str(frontend.get("id") or "")
+    problems: list[str] = []
+    for item in frontend.get("registered_routes") or ():
+        if not isinstance(item, Mapping) or not item.get("translator"):
+            continue
+        for path in (item.get("canonical"), item.get("alias")):
+            if not path:
+                continue
+            try:
+                compile_path(str(path).strip())
+            except Exception as error:  # noqa: BLE001 - whatever the router raises says the path cannot mount
+                problems.append(f"{frontend_id}: {path} is not a path the router accepts ({error})")
     return problems
 
 
@@ -437,15 +461,23 @@ class FrontendMounts:
             generate_unique_id_function=self.app.router.generate_unique_id_function,
         )
         for row, operation in planned:
-            _add_route(router, row, operation, refuse=self.refuse, authenticate=self.authenticate)
+            mark = len(router.routes)
+            try:
+                _add_route(router, row, operation, refuse=self.refuse, authenticate=self.authenticate)
+            except Exception as error:  # noqa: BLE001 - the router refused this row; the others still mount
+                del router.routes[mark:]
+                problems.append(RowProblem(
+                    row.frontend, row.path, tuple(sorted(row.methods)), f"{row.path} cannot be added to the router: {error}",
+                ))
         return PreparedMounts(self, list(router.routes), _status_of(records, problems))
 
     def _commit(self, prepared: PreparedMounts) -> None:
-        before = list(self.app.router.routes)
+        before, own = list(self.app.router.routes), self._routes
         try:
             self._swap(prepared.routes)
         except BaseException:
             self.app.router.routes[:] = before
+            self._routes = own
             raise
         self._status = prepared.status
         self.app.openapi_schema = None
@@ -476,8 +508,16 @@ def _status_of(records: list[Mapping[str, Any]], problems: list[RowProblem]) -> 
     status: list[dict[str, Any]] = []
     for record in records:
         frontend_id = str(record.get("id") or "")
-        frontend_errors = errors.get(frontend_id, [])
-        state = "disabled" if record.get("enabled") is False else "broken" if frontend_errors else "mounted"
+        if record.get(MOUNT_PROBLEM):
+            # Set aside before the mount: its reason is its own, not the problems of the record that mounts.
+            frontend_errors = [{"route": "", "message": str(record[MOUNT_PROBLEM])}]
+        else:
+            frontend_errors = errors.get(frontend_id, [])
+        state = (
+            "broken" if record.get(MOUNT_PROBLEM)
+            else "disabled" if record.get("enabled") is False
+            else "broken" if frontend_errors else "mounted"
+        )
         status.append({
             "id": frontend_id,
             "name": str(record.get("name") or frontend_id),

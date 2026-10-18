@@ -194,21 +194,32 @@ def test_a_reload_that_fails_leaves_the_table_and_the_report_as_they_were():
     assert client.get("/x/b").status_code == 404
 
 
-def test_a_commit_that_fails_midway_restores_the_routes(monkeypatch):
+def test_a_commit_that_fails_after_changing_the_table_restores_the_routes(monkeypatch):
     mounts = _mounts()
     mounts.apply([_frontend("a", _get("/x/a"))])
     routes_before = list(mounts.app.routes)
     prepared = mounts.prepare([_frontend("b", _get("/x/b"))])
+    swap = frontend_mount.FrontendMounts._swap
 
-    def broken_swap(*args, **kwargs):
-        raise RuntimeError("swap failed")
+    def swap_then_fail(self, routes):
+        swap(self, routes)  # the table has changed when this raises
+        assert _paths(self) == ["/x/b"]
+        raise RuntimeError("failed after the swap")
 
-    monkeypatch.setattr(frontend_mount.FrontendMounts, "_swap", broken_swap)
+    monkeypatch.setattr(frontend_mount.FrontendMounts, "_swap", swap_then_fail)
     with pytest.raises(RuntimeError):
         prepared.commit()
 
     assert list(mounts.app.routes) == routes_before
     assert _paths(mounts) == ["/x/a"]
+    # The manager still knows which routes are its own: the next reload replaces them, and leaves no copy behind.
+    monkeypatch.setattr(frontend_mount.FrontendMounts, "_swap", swap)
+    mounts.apply([_frontend("a", _get("/x/a")), _frontend("c", _get("/x/c"))])
+    assert _paths(mounts) == ["/x/a", "/x/c"]
+    assert mounts.broken() == []  # the old /x/a was not mistaken for a foreign route
+    client = TestClient(mounts.app)
+    assert client.get("/x/a").json() == {"served": "/x/a"}
+    assert client.get("/x/b").status_code == 404
 
 
 # --- the live gateway ----------------------------------------------------------------------

@@ -43,7 +43,8 @@ _HEADER_TOKEN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 # Reply headers the lane never relays: the hop-by-hop set, and what belongs to the engine's origin
 # (cookies, transport security, cross-origin policy, challenges) and must not act on the gateway's.
 _HOP_HEADERS = frozenset({
-    "connection", "content-length", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
+    # content-encoding and content-length describe the engine's bytes; the lane relays them decoded.
+    "connection", "content-encoding", "content-length", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
     "transfer-encoding", "upgrade",
 })
 _ORIGIN_HEADERS = frozenset({
@@ -60,6 +61,7 @@ class AllowEntry:
     path: str
     klass: str
     query: tuple[str, ...] = ()
+    any_query: bool = False  # a call the record does not declare: any key, but the value rules still apply
 
     def matches(self, method: str, path: str, *, fold: bool = False) -> bool:
         return self.method == method.upper() and _template(self.path, fold).fullmatch(path) is not None
@@ -135,6 +137,22 @@ def validate_native_block(block: Any) -> None:
             raise ValueError(f"native.{name} must be a positive integer")
 
 
+READ_METHODS = frozenset({"GET", "HEAD"})
+
+
+def provider_route_resolution(policy: NativePolicy, method: str, path: str) -> Resolution:
+    """The entry for a call on the provider route: the record's own, else a default by method.
+
+    A call the record's allow list names is classed as the list says. Any other GET or HEAD is a
+    ``generate`` read, and any other method is a ``control`` call, which only the owner may make.
+    """
+    resolution = policy.resolve(method, path)
+    if resolution.entry is not None or resolution.ambiguous:
+        return resolution
+    klass = GENERATE if method.upper() in READ_METHODS else CONTROL
+    return Resolution(AllowEntry(method.upper(), path, klass, any_query=True))
+
+
 def policy_for(record: Mapping[str, Any]) -> NativePolicy:
     """The policy an engine record declares. A record with no valid ``native`` block allows nothing."""
     block = record.get("native")
@@ -179,11 +197,11 @@ def query_problem(entry: AllowEntry, raw_query: str) -> tuple[str, str] | None:
     """
     seen: set[str] = set()
     for key, value in parse_qsl(raw_query, keep_blank_values=True):
-        if key not in entry.query:
+        if key not in entry.query and not entry.any_query:
             return "native_query_not_allowed", (
                 f"The query key {key[:48]!r} is not allowed for {entry.method} {entry.path}."
             )
-        if key in seen:
+        if key in seen and not entry.any_query:
             return "native_query_not_allowed", f"The query key {key[:48]!r} is repeated."
         seen.add(key)
         if entry.klass == GENERATE and _path_like(value):
