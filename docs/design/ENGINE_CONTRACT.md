@@ -12,7 +12,7 @@ those documents stands, including its routing resolution (section 3 here).
 Identity: docs/PRODUCT_STRATEGY.md "Identity". Extension rules:
 docs/EXTENSION_ARCHITECTURE.md. Evidence (divan, local-ai-gateway/): gateways
 4eccb54, local runners 8ccad98, platform lifecycle e927fa5, community setups
-aa87d59, media stacks c603498, model picks 95c470a, media delivery d627bf2, declarative adapters 5d1bed8. Code
+aa87d59, media stacks c603498, model picks 95c470a, media delivery d627bf2, declarative adapters 5d1bed8, plugins and inbound shapes 14001b7. Code
 audit: ~/Documents/azizam/engine-contract/reality-audit.md.
 
 ## 1. Model and scope
@@ -208,7 +208,13 @@ Descriptors mount at boot and on reload, with collision checks and rollback
 when a reload fails.
 
 - **The data-only promise covers HTTP frontends** whose shapes fit identity or
-  http-v1 mapping. That includes any OpenAI-like vendor SDK.
+  http-v1 mapping. In practice that means OpenAI-structured shapes, because
+  the mapping has no loops. No surveyed gateway makes a new inbound shape pure
+  data (divan 14001b7).
+- **Each frontend declares a `strictness`:** `exact` refuses any field it
+  can't carry; `lenient` drops it and records it. Every translated response
+  carries a loss report (dropped or approximated fields), both in the receipt
+  and in a response header.
 - **Other shapes** (new handshakes, WebSocket session protocols, signed
   webhooks) need a reviewed translator. A translator package becomes
   installable without a release once the trusted loader exists (section 7).
@@ -238,7 +244,11 @@ These are docs/EXTENSION_ARCHITECTURE.md packages.
 - **Code objects** (adapters, translators) are trusted host code. Until a real
   OS sandbox enforces mounts, network and process limits, declared permissions
   are reviewed, not enforced, and the UI says so.
-- **A code object runs as a sidecar,** after an explicit owner trust decision:
+- **A code object runs as a sidecar,** after an explicit owner trust decision.
+  Sidecars win over Wasm: Kong dropped Wasm, Bifrost deprecated it, and a stdio
+  hop costs about 33 µs. Unprivileged bubblewrap is the first enforcing
+  sandbox to adopt, because `systemd-run --user` sandboxing was silently
+  ignored on the test host (14001b7). The sidecar runs with:
   - a versioned RPC over stdio, with peer authentication
   - time, memory and output limits
   - restart on crash
