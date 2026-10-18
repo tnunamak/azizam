@@ -235,3 +235,56 @@ def test_plan_denial_precedes_all_protocol_network_calls(engine):
         response=chat(engine)
     assert response.status_code==403,response.text
     assert not engine.fake.requests
+
+
+def test_no_switch_permission_is_checked_after_acquiring_selection_lock(engine):
+    import asyncio
+    from gateway.engine_protocol import dispatch
+    from gateway.engine_switch import SwitchUnavailable
+    from gateway.swap_drain import SwapDrain
+    switching(engine)
+    engine.fake.active='text-v2'
+    class RacedLock:
+        async def acquire(self):
+            # Authorized B wins the lock while restricted A is queued.
+            engine.fake.active='text-old'
+        def release(self):
+            pass
+    async def go():
+        runtime=dispatch.Runtime(dispatch.resolve(engine.registry,'prism-chat','chat'))
+        try:
+            lease=await runtime.lease(drain=SwapDrain(),lock_for=lambda _:RacedLock(),may_switch=False)
+        except SwitchUnavailable:
+            return
+        lease.release()
+        pytest.fail('Restricted caller switched after its pre-lock observation went stale')
+    asyncio.run(go())
+    assert not [r for r in engine.fake.requests if r.method=='POST']
+
+
+def test_contract_http_observations_verify_selected_and_offering_ready(engine,monkeypatch):
+    switching(engine)
+    engine.record['config']['observations']={'selected':{'http':{'path':'/selected'},'select':'/active'},
+        'offering_ready':{'http':{'path':'/ready','select':'/ready'}}}
+    original=engine.fake.__call__
+    def handler(request):
+        if request.url.path=='/prefix/ready':
+            engine.fake.requests.append(request)
+            return httpx.Response(200,json={'ready':True})
+        return original(request)
+    wire=transport.HttpxTransport.for_tests(HandlerTransport(handler))
+    monkeypatch.setattr(executor,'HttpxTransport',lambda:wire)
+    response=chat(engine)
+    assert response.status_code==200,response.text
+    assert any(r.url.path=='/prefix/ready' for r in engine.fake.requests)
+
+
+def test_async_submission_receives_the_same_offering_parameters_as_sync(engine,monkeypatch):
+    import yaml
+    data=yaml.safe_load((FIXTURE/'prism.yml').read_text())
+    data['operations']['images']['job']['submit']['request']['query']=[{'name':'offering','from':'/params/offering'},{'name':'model','from':'/params/model'}]
+    doc=description.parse_description(data,source='prism.yml')
+    monkeypatch.setattr(description,'load_registry',lambda:{'prism':doc})
+    response=engine.client.post('/v1/images/generations',json={'model':'prism-image','prompt':'blue'})
+    assert response.status_code==200,response.text
+    assert str(engine.fake.requests[0].url)=='http://prism.test:9100/prefix/api/v3/renders?offering=prism-image&model=render'
