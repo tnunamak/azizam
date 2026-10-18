@@ -16,10 +16,15 @@ from gateway.engine_protocol.types import StreamReply
 
 ENGINE_TIMEOUT_S = 1.0
 LIST_TIMEOUT_S = 1.5
+# A description read gets this long; past it, a listing serves the last good read. The read keeps
+# running in its worker thread, and the engines still have the rest of LIST_TIMEOUT_S.
+DESCRIPTION_LOAD_S = 0.5
 CACHE_TTL_S = 15.0
 MAX_CACHED_ENGINES = 256
 _cache: OrderedDict[str, tuple[float, list[dict], description.ProtocolDescription]] = OrderedDict()
 _issues: dict[str, str] = {}
+_docs_last_good: dict[str, description.ProtocolDescription] | None = None
+_docs_load: asyncio.Future | None = None
 _LOG = logging.getLogger(__name__)
 
 
@@ -50,16 +55,50 @@ def collection(payload: Any) -> list[Mapping]:
     return items
 
 
+def _docs_loaded(future: asyncio.Future) -> None:
+    global _docs_last_good, _docs_load
+    _docs_load = None
+    if future.cancelled():
+        return
+    error = future.exception()
+    if error is None:
+        _docs_last_good = future.result()
+    else:
+        _LOG.warning('Protocol description load failed: %s', error)
+
+
+async def _descriptions(budget_s: float) -> dict[str, description.ProtocolDescription] | None:
+    """The description directory, read in one worker thread at a time and waited for at most ``budget_s``.
+
+    A read that is still running at the budget yields the last good read (None before any). A
+    concurrent listing joins the running read rather than starting another thread.
+    """
+    global _docs_load
+    if _docs_load is None:
+        _docs_load = asyncio.ensure_future(asyncio.to_thread(description.load_registry))
+        _docs_load.add_done_callback(_docs_loaded)
+    try:
+        return await asyncio.wait_for(asyncio.shield(_docs_load), timeout=budget_s)
+    except Exception:  # a read past its budget, or a failed read
+        return _docs_last_good
+
+
 async def models(registry: Mapping) -> list[dict]:
-    now = time.monotonic()
+    started = time.monotonic()
     for key, cached in list(_cache.items()):
-        if now - cached[0] >= CACHE_TTL_S:
+        if started - cached[0] >= CACHE_TTL_S:
             del _cache[key]
-    docs = await asyncio.to_thread(description.load_registry)
     services = {key: row for key, row in (registry.get('services') or {}).items()
                 if dispatch.opted_in(row) and row.get('enabled', True)}
     for stale in _issues.keys() - services.keys():
         _issues.pop(stale, None)
+    if not services:
+        return []
+    docs = await _descriptions(DESCRIPTION_LOAD_S)
+    if docs is None:
+        for engine_id in services:
+            _issues[engine_id] = 'The protocol descriptions are unavailable.'
+        return []
 
     async def one(engine_id, service):
         doc = docs.get(connection_config(service).get('protocol'))
@@ -77,14 +116,14 @@ async def models(registry: Mapping) -> list[dict]:
         if not offerings:
             _issues.pop(engine_id, None)
             return []
-        # Include credential refs, address, offerings and the compiled document.
-        # Configuration changes cannot reuse a previous origin's inventory.
-        key = json.dumps([engine_id, service, id(doc)], sort_keys=True)
-        cached = _cache.get(key)
-        if cached and time.monotonic() - cached[0] < CACHE_TTL_S:
-            _cache.move_to_end(key)
-            return copy.deepcopy(cached[1])
         try:
+            # Include credential refs, address, offerings and the compiled document.
+            # Configuration changes cannot reuse a previous origin's inventory.
+            key = json.dumps([engine_id, service, id(doc)], sort_keys=True)
+            cached = _cache.get(key)
+            if cached and time.monotonic() - cached[0] < CACHE_TTL_S:
+                _cache.move_to_end(key)
+                return copy.deepcopy(cached[1])
             async with asyncio.timeout(ENGINE_TIMEOUT_S):
                 from gateway.service_registry import validate_protocol_dispatch_local_only
                 validate_protocol_dispatch_local_only(service)
@@ -110,10 +149,8 @@ async def models(registry: Mapping) -> list[dict]:
             return []
 
     tasks = {asyncio.create_task(one(key, row)): key for key, row in services.items()}
-    if not tasks:
-        return []
     try:
-        done, pending = await asyncio.wait(tasks, timeout=LIST_TIMEOUT_S)
+        done, pending = await asyncio.wait(tasks, timeout=max(started + LIST_TIMEOUT_S - time.monotonic(), 0))
     except BaseException:
         for task in tasks:
             task.cancel()

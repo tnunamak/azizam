@@ -210,6 +210,11 @@ _StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _c
 
 def parse_description_text(text: str, *, source: str, budgets: Budgets = DEFAULT_BUDGETS) -> ProtocolDescription:
     try:
+        # Refuse aliases and anchors on the event stream, before the composer expands them. A
+        # short alias chain otherwise multiplies into millions of nodes (about 10x per level).
+        for event in yaml.parse(text, Loader=yaml.SafeLoader):
+            if isinstance(event, yaml.AliasEvent) or getattr(event, "anchor", None):
+                raise DescriptionError(source, ["YAML aliases and anchors are not allowed; write each value out"])
         doc = yaml.load(text, Loader=_StrictLoader)  # noqa: S506 - SafeLoader subclass
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
