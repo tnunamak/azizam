@@ -75,7 +75,7 @@ class SpeechSeamTests(RouteCase):
         self._use(Refusing(TransportFailure("unreachable", "refused")))
         resp = self.client.post("/v1/audio/speech", json={"model": "tts-fast", "voice": "alloy", "input": "x", "response_format": "wav"})
         self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (502, "tts_backend_unavailable"))
-        self.assertIn("http://127.0.0.1:8010", resp.json()["error"]["message"])
+        self.assertRegex(resp.json()["error"]["message"], r"^TTS backend unavailable at http://127\.0\.0\.1:\d+$")
 
     def test_any_other_failure_keeps_its_original_text(self) -> None:
         self._use(Refusing(TransportFailure("aborted", "weird failure")))

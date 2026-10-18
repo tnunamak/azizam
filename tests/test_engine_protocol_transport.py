@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 
 import pytest
 
@@ -112,7 +113,11 @@ def test_a_redirect_to_a_blocked_address_is_refused_on_a_real_socket(server) -> 
 
 
 def test_connection_refused_is_unreachable() -> None:
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()  # nothing listens here now
     ex = make(gateway_ports=())
     with pytest.raises(TransportFailure) as raised:
-        run(ex.invoke(Connection(address="http://127.0.0.1:1"), CanonicalRequest(op="x", body={})))
+        run(ex.invoke(Connection(address=f"http://127.0.0.1:{port}"), CanonicalRequest(op="x", body={})))
     assert raised.value.kind == "unreachable"
