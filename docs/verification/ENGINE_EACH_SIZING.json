@@ -1,0 +1,381 @@
+{
+  "baseline_commit": "45cc9bb535d3ff87df02b675db670e60a0962f08",
+  "implementation_commit": "ef77ca30bc14ee450a52b563a35389485a43aee2",
+  "python": "3.12.13",
+  "method": "measure_each_absolute(), best of five per row, three complete calls per revision; source construction excluded, no JSON write, timed budgets raised exactly as bench script specifies",
+  "before": [
+    {
+      "load_start": [
+        10.7958984375,
+        8.16943359375,
+        3.876953125
+      ],
+      "results": {
+        "embeddings 768 floats, 1000 items": {
+          "bare_ms": 0.065,
+          "each_ms": 503.316,
+          "added_ms": 503.25,
+          "ratio": 7694.19,
+          "default_budgets": "refused: mapping_s"
+        },
+        "embeddings 768 floats, 10000 items": {
+          "bare_ms": 0.7,
+          "each_ms": 5495.457,
+          "added_ms": 5494.757,
+          "ratio": 7846.47,
+          "default_budgets": "refused: mapping_s"
+        },
+        "model list, 1000 items": {
+          "bare_ms": 0.069,
+          "each_ms": 3.361,
+          "added_ms": 3.292,
+          "ratio": 48.82,
+          "default_budgets": "ok"
+        },
+        "model list, 10000 items": {
+          "bare_ms": 0.724,
+          "each_ms": 32.999,
+          "added_ms": 32.275,
+          "ratio": 45.6,
+          "default_budgets": "ok"
+        }
+      },
+      "load_end": [
+        15.33837890625,
+        9.72314453125,
+        4.60546875
+      ]
+    },
+    {
+      "load_start": [
+        15.33837890625,
+        9.72314453125,
+        4.60546875
+      ],
+      "results": {
+        "embeddings 768 floats, 1000 items": {
+          "bare_ms": 0.065,
+          "each_ms": 502.246,
+          "added_ms": 502.18,
+          "ratio": 7689.44,
+          "default_budgets": "ok"
+        },
+        "embeddings 768 floats, 10000 items": {
+          "bare_ms": 0.687,
+          "each_ms": 4926.703,
+          "added_ms": 4926.016,
+          "ratio": 7173.38,
+          "default_budgets": "refused: mapping_s"
+        },
+        "model list, 1000 items": {
+          "bare_ms": 0.068,
+          "each_ms": 3.217,
+          "added_ms": 3.149,
+          "ratio": 47.2,
+          "default_budgets": "ok"
+        },
+        "model list, 10000 items": {
+          "bare_ms": 0.698,
+          "each_ms": 32.982,
+          "added_ms": 32.284,
+          "ratio": 47.26,
+          "default_budgets": "ok"
+        }
+      },
+      "load_end": [
+        15.0927734375,
+        10.443359375,
+        5.06982421875
+      ]
+    },
+    {
+      "load_start": [
+        15.0927734375,
+        10.443359375,
+        5.06982421875
+      ],
+      "results": {
+        "embeddings 768 floats, 1000 items": {
+          "bare_ms": 0.063,
+          "each_ms": 465.841,
+          "added_ms": 465.778,
+          "ratio": 7379.1,
+          "default_budgets": "refused: mapping_s"
+        },
+        "embeddings 768 floats, 10000 items": {
+          "bare_ms": 0.665,
+          "each_ms": 4912.161,
+          "added_ms": 4911.496,
+          "ratio": 7387.23,
+          "default_budgets": "refused: max_response_bytes"
+        },
+        "model list, 1000 items": {
+          "bare_ms": 0.068,
+          "each_ms": 3.219,
+          "added_ms": 3.151,
+          "ratio": 47.34,
+          "default_budgets": "ok"
+        },
+        "model list, 10000 items": {
+          "bare_ms": 0.705,
+          "each_ms": 33.097,
+          "added_ms": 32.391,
+          "ratio": 46.92,
+          "default_budgets": "ok"
+        }
+      },
+      "load_end": [
+        13.02783203125,
+        10.44140625,
+        5.26953125
+      ]
+    }
+  ],
+  "after": [
+    {
+      "load_start": [
+        7.35693359375,
+        8.927734375,
+        7.13916015625
+      ],
+      "results": {
+        "embeddings 768 floats, 1000 items": {
+          "bare_ms": 0.092,
+          "each_ms": 88.362,
+          "added_ms": 88.27,
+          "ratio": 962.83,
+          "default_budgets": "ok"
+        },
+        "embeddings 768 floats, 10000 items": {
+          "bare_ms": 0.657,
+          "each_ms": 877.977,
+          "added_ms": 877.32,
+          "ratio": 1336.5,
+          "default_budgets": "refused: mapping_s"
+        },
+        "model list, 1000 items": {
+          "bare_ms": 0.071,
+          "each_ms": 5.988,
+          "added_ms": 5.917,
+          "ratio": 84.3,
+          "default_budgets": "ok"
+        },
+        "model list, 10000 items": {
+          "bare_ms": 0.723,
+          "each_ms": 70.38,
+          "added_ms": 69.656,
+          "ratio": 97.31,
+          "default_budgets": "ok"
+        }
+      },
+      "load_end": [
+        7.328125,
+        8.8955078125,
+        7.13818359375
+      ]
+    },
+    {
+      "load_start": [
+        7.328125,
+        8.8955078125,
+        7.13818359375
+      ],
+      "results": {
+        "embeddings 768 floats, 1000 items": {
+          "bare_ms": 0.063,
+          "each_ms": 85.779,
+          "added_ms": 85.716,
+          "ratio": 1357.86,
+          "default_budgets": "ok"
+        },
+        "embeddings 768 floats, 10000 items": {
+          "bare_ms": 0.657,
+          "each_ms": 876.799,
+          "added_ms": 876.142,
+          "ratio": 1334.29,
+          "default_budgets": "refused: mapping_s"
+        },
+        "model list, 1000 items": {
+          "bare_ms": 0.07,
+          "each_ms": 5.949,
+          "added_ms": 5.879,
+          "ratio": 85.47,
+          "default_budgets": "ok"
+        },
+        "model list, 10000 items": {
+          "bare_ms": 0.712,
+          "each_ms": 69.796,
+          "added_ms": 69.084,
+          "ratio": 98.04,
+          "default_budgets": "ok"
+        }
+      },
+      "load_end": [
+        7.4443359375,
+        8.86669921875,
+        7.1474609375
+      ]
+    },
+    {
+      "load_start": [
+        7.4443359375,
+        8.86669921875,
+        7.1474609375
+      ],
+      "results": {
+        "embeddings 768 floats, 1000 items": {
+          "bare_ms": 0.062,
+          "each_ms": 85.667,
+          "added_ms": 85.605,
+          "ratio": 1383.4,
+          "default_budgets": "ok"
+        },
+        "embeddings 768 floats, 10000 items": {
+          "bare_ms": 0.655,
+          "each_ms": 881.147,
+          "added_ms": 880.492,
+          "ratio": 1345.97,
+          "default_budgets": "refused: mapping_s"
+        },
+        "model list, 1000 items": {
+          "bare_ms": 0.069,
+          "each_ms": 6.112,
+          "added_ms": 6.042,
+          "ratio": 88.06,
+          "default_budgets": "ok"
+        },
+        "model list, 10000 items": {
+          "bare_ms": 0.753,
+          "each_ms": 70.825,
+          "added_ms": 70.072,
+          "ratio": 94.02,
+          "default_budgets": "ok"
+        }
+      },
+      "load_end": [
+        7.677734375,
+        8.87060546875,
+        7.16796875
+      ]
+    }
+  ],
+  "budget_refusals": {
+    "selected": {
+      "codes": [
+        "max_selected"
+      ],
+      "elapsed_ms": [
+        2.283675000057883,
+        2.217991000065922,
+        2.345499999933054,
+        2.3243880000336503,
+        3.035584000031122,
+        2.1682660000124088,
+        2.152076000015768,
+        2.1831569999903877,
+        2.1576060000825237,
+        2.1790969999528897
+      ],
+      "max_ms": 3.035584000031122,
+      "overshoot_max_ms": null
+    },
+    "bytes": {
+      "codes": [
+        "max_response_bytes"
+      ],
+      "elapsed_ms": [
+        2.5352350000957813,
+        2.5164029999587,
+        2.6008499999079504,
+        2.605130000006284,
+        2.53432400006659,
+        2.5049629999784884,
+        2.5334240000347563,
+        2.5143039999875327,
+        2.595509000002494,
+        2.5713680000762906
+      ],
+      "max_ms": 2.605130000006284,
+      "overshoot_max_ms": null
+    },
+    "depth": {
+      "codes": [
+        "max_json_depth"
+      ],
+      "elapsed_ms": [
+        0.039272999970307865,
+        0.014661000022897497,
+        0.013470999988385302,
+        0.016440999957012536,
+        0.020091999999749532,
+        0.016661000017847982,
+        0.013281000065035187,
+        0.01315100007559522,
+        0.013371000022743829,
+        0.013061000004199741
+      ],
+      "max_ms": 0.039272999970307865,
+      "overshoot_max_ms": null
+    },
+    "time unique floats": {
+      "codes": [
+        "mapping_s"
+      ],
+      "elapsed_ms": [
+        10.095495999962623,
+        10.098515000095176,
+        10.167181000042547,
+        10.084005000067009,
+        10.074834000079136,
+        10.062362999974539,
+        10.09879599996566,
+        10.06290199995874,
+        10.046850999970047,
+        10.134309000022768
+      ],
+      "max_ms": 10.167181000042547,
+      "overshoot_max_ms": 0.16718100004254666
+    },
+    "time large integers": {
+      "codes": [
+        "mapping_s"
+      ],
+      "elapsed_ms": [
+        1.0420900000553956,
+        1.1074359999838634,
+        1.092182999968827,
+        1.0922339999979158,
+        1.104324999914752,
+        1.1026750000837637,
+        1.0985139999775129,
+        1.099494999948547,
+        1.0973640000884188,
+        1.1025149999568384
+      ],
+      "max_ms": 1.1074359999838634,
+      "overshoot_max_ms": 0.10743599998386344
+    },
+    "load": [
+      10.134765625,
+      8.9189453125,
+      6.65625
+    ]
+  },
+  "full_suite": {
+    "commit": "4c9d4247",
+    "passed": 11632,
+    "subtests_passed": 3517,
+    "skipped": 3,
+    "xfailed": 1,
+    "seconds": 88.66
+  },
+  "final_protocol_corpus": {
+    "commit": "ef77ca30",
+    "passed": 616,
+    "compilations_compared": 597,
+    "applications_compared": 197,
+    "replay_exclusions": 14,
+    "hypothesis_examples": 180,
+    "seconds": 25.82
+  }
+}

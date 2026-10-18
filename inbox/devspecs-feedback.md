@@ -202,3 +202,7 @@ identified the job recovery and polling commits that touched this journey.
 The release traces supplied the decisive evidence: the browser fixtures
 missed playback renewal and query parameters on job polls. No CLI friction
 in this use; source reads and trace inspection were still necessary.
+
+## 2026-10-18: each sizing implementation
+
+`ds task` produced a three-slice task after indexing 2,432 candidate files. Progress messages made the wait visible, but indexing took several minutes while direct source inspection and baseline measurements continued. The returned pack arrived after the mapper boundary and tests were already known from the explicit brief. `ds task checkpoint --index=false` recorded the measured target miss without another indexing delay. The artifacts stayed ignored in this worktree. A quick mode that records slices before a full index refresh would better fit an implementation task with named files and a frozen behavioral oracle.

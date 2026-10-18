@@ -417,6 +417,89 @@ OpenAI-shaped (the D23 fallback) is the other option. Decision D23b ships
 `each` with these figures: model lists of realistic size and embedding requests
 with a few vectors stay well inside the default budgets (one 768-float vector
 costs about 0.6 ms), while large embedding batches are refused by the mapping
-time budget. The next change computes sizes once per response, so copying a
-subtree costs a constant amount against the byte budget; its target is 1,000
-embeddings within 10 ms of a bare copy.
+time budget. D23b's next target is source sizes computed once per response,
+so copying a subtree costs a constant amount against the byte budget, with
+1,000 embeddings within 10 ms of a bare copy. The candidate below implements
+the accounting change but does not meet the performance target.
+
+
+### Per-response subtree accounting candidate
+
+The candidate at `ef77ca30` indexes exact compact UTF-8 sizes and container
+depths per mapping invocation. Copies inherit container facts; writes
+invalidate the cached values for the changed container and its parents.
+Each completed item and the final envelope still face the same byte and
+depth limits. Intermediate oversized arrays cannot be hidden by later writes.
+
+The mapper polls every 64 cheap operations. Numeric accounting and copies use
+256-element chunks, and string encoding uses 4,096-character chunks. Large
+integer values and keys force an additional poll. `stringify` and enum-key
+serialization also poll within JSON containers and strings. These limits
+bound the mapper's own uninterrupted work on ordinary parsed JSON; they
+cannot bound OS scheduling pauses. Opaque direct-call Python values, such as
+tuples and upload objects, retain the native encoder for compatibility and
+do not have its serialization interrupted.
+
+Three complete before/after runs used the unchanged
+`scripts/bench_engine_protocol.py --each-absolute` workload on Python 3.12.13.
+Each row within a run is best of five, as in the existing script. The baseline
+is `45cc9bb5`; the candidate is `ef77ca30`. One-minute load at run boundaries
+was 10.80–15.34 before and 7.33–7.68 after, below the 48 ceiling. The bare
+comprehension shares vector containers; `each` owns its copies. Source
+construction and the final JSON write are outside these timings, but source
+indexing is inside. Timed budgets are raised by the benchmark; defaults are
+checked separately. The vectors have 768 floats drawn from the benchmark's
+997 possible values, so these timings benefit from the bounded numeric-size
+cache. They do not measure arbitrary unique-valued embeddings.
+
+| Case | Before `each` ms (runs 1 / 2 / 3) | After `each` ms (runs 1 / 2 / 3) | Before bare ms | After bare ms |
+|---|---|---|---|---|
+| 1,000 models | 3.361 / 3.217 / 3.219 | 5.988 / 5.949 / 6.112 | 0.069 / 0.068 / 0.068 | 0.071 / 0.070 / 0.069 |
+| 10,000 models | 32.999 / 32.982 / 33.097 | 70.380 / 69.796 / 70.825 | 0.724 / 0.698 / 0.705 | 0.723 / 0.712 / 0.753 |
+| 1,000 vectors | 503.316 / 502.246 / 465.841 | 88.362 / 85.779 / 85.667 | 0.065 / 0.065 / 0.063 | 0.092 / 0.063 / 0.062 |
+| 10,000 vectors | 5495.457 / 4926.703 / 4912.161 | 877.977 / 876.799 / 881.147 | 0.700 / 0.687 / 0.665 | 0.657 / 0.657 / 0.655 |
+
+| Case | Median added ms before | Median added ms after |
+|---|---|---|
+| 1,000 models | 3.151 | 5.917 |
+| 10,000 models | 32.284 | 69.656 |
+| 1,000 vectors | 502.180 | 85.716 |
+| 10,000 vectors | 4926.016 | 877.320 |
+
+The 1,000-vector target of 10 ms added and the 10,000-vector target of 100 ms
+added are **not met**. Vectors improve by about 5.6–5.9x, while model lists
+regress by about 1.9–2.2x. This is a measured optimization candidate, not
+acceptance against D23b. All after runs accept 1,000 vectors and both model
+list sizes under the defaults; 10,000 vectors still refuse with `mapping_s`.
+Baseline default refusals varied with elapsed time: 1,000 vectors sometimes
+completed, and 10,000 vectors hit either `mapping_s` or `max_response_bytes`.
+A faster implementation cannot preserve which wall-clock limit wins a race;
+controlled-clock comparisons isolate byte, depth and selection semantics.
+
+The [raw measurements](../verification/ENGINE_EACH_SIZING.json) include every
+run, baseline, load and refusal result. Final hermetic protocol verification
+passed 616 tests, with 597 compilations and 197 applications replayed against
+the frozen original mapper. The replay compared serialized output bytes,
+refusal types, codes, budget names and messages. Fourteen timing or
+instrumentation cases ran without replay. Hypothesis, already in the
+hermetic lock, supplied 180 deterministic generated cases across all rules,
+nested iteration, conditionals, mutation, Unicode and exact budget boundaries.
+Regression checks also cover signed zero, ownership, opaque tuple compatibility,
+chunk polling and intermediate oversized results. The frozen mapper's Git
+blob hash is checked by a test.
+
+Ten adversarial runs per budget all refused: 10,001 selected items took at
+most 3.036 ms; a 100-byte output limit with 10,000 large items took 2.606 ms;
+a 5,000-level input took 0.040 ms to refuse at depth 32. Unique-float input
+with a 10 ms deadline refused by 10.168 ms; 4,000-digit integers with a 1 ms
+deadline refused by 1.108 ms. Thus measured maximum overshoot was below
+0.168 ms. An elapsed-work fake clock separately checks chunked string and
+large-integer sizing against the 5 ms allowance. This is measured evidence,
+not an absolute wall-clock guarantee for arbitrary Python extensions.
+
+The full hermetic suite ran once at `4c9d4247`: 11,632 tests and 3,517 subtests
+passed, with 3 skips and 1 expected failure, in 88.66 s. The later `ef77ca30`
+opaque-value compatibility fix and integer-key polling received the final
+616-test hermetic protocol run; the full suite was not repeated after that
+fix. No live gateway, external engine, service restart or release gate was
+used for this work.
