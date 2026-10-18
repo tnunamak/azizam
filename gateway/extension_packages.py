@@ -404,6 +404,115 @@ def remove_extension_package(
     return out
 
 
+class PackageInUse(ValueError):
+    """A removal would leave a record that something outside the package still names."""
+
+
+def package_registry_snapshot(
+    registry: Mapping[str, Any], package_id: str,
+) -> dict[str, dict[str, Any]]:
+    """Capture the actual normalized installed records, including host bindings."""
+    return {
+        kind: {
+            record_id: copy.deepcopy(record)
+            for record_id, record in (registry.get(kind) or {}).items()
+            if (record.get("provenance") or {}).get("package_id") == package_id
+        }
+        for kind in sorted(DATA_OBJECT_KINDS)
+    }
+
+
+def change_package_lifecycle(
+    index: Mapping[str, Any], registry: Mapping[str, Any], package_id: str,
+    *, mode: str = "remove", references: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, str]]]:
+    """Compute a lifecycle edit without mutating inputs or trusting provenance alone."""
+    if mode not in {"remove", "disable", "enable"}:
+        raise ValueError("package lifecycle mode must be remove, disable or enable")
+    out_index = copy.deepcopy(normalize_extension_package_index(index))
+    if package_id not in out_index["packages"]:
+        raise KeyError(f"extension package not found: {package_id!r}")
+    package = out_index["packages"][package_id]
+    out = copy.deepcopy(dict(registry))
+    snapshot = package.get("installed_records") or {}
+    disabled_states = package.setdefault("disabled_states", {})
+    affected = []
+    owned = package_registry_snapshot(out, package_id)
+    if mode == "remove":
+        # Match actual routing identifiers as well as the service id. Access
+        # plans may refer to the public model name instead of its service.
+        # A model alias the package owns goes with its base model; only a
+        # reference from outside the package keeps the package installed.
+        targets = {record_id for records in owned.values() for record_id in records}
+        for record in owned["services"].values():
+            for model in (record.get("config") or {}).get("models") or []:
+                if isinstance(model, Mapping):
+                    targets.update(str(model[key]) for key in ("id", "model_group")
+                                   if model.get(key))
+        def referenced(value: Any) -> bool:
+            if isinstance(value, Mapping):
+                return any(referenced(item) for item in value.values())
+            if isinstance(value, (list, tuple)):
+                return any(referenced(item) for item in value)
+            return isinstance(value, str) and value in targets
+        for label, document in (references or {}).items():
+            if referenced(document):
+                raise PackageInUse(f"cannot remove package {package_id!r}: referenced by {label}")
+        # References from records that will remain must also be preserved.
+        for kind in sorted(DATA_OBJECT_KINDS):
+            for record_id, record in (out.get(kind) or {}).items():
+                if record_id not in owned[kind] and referenced(record):
+                    raise PackageInUse(
+                        f"cannot remove package {package_id!r}: referenced by {kind}/{record_id}"
+                    )
+    for kind, records in owned.items():
+        states = disabled_states.setdefault(kind, {})
+        for record_id, record in records.items():
+            current = out[kind][record_id]
+            if mode == "disable":
+                states.setdefault(record_id, bool(current.get("enabled", True)))
+                current["enabled"] = False
+                action = "disabled"
+            elif mode == "enable":
+                if record_id not in states:
+                    continue
+                previous_enabled = states.pop(record_id)
+                if current.get("enabled") is False:
+                    current["enabled"] = previous_enabled
+                action = "enabled" if current["enabled"] else "restored_disabled"
+            else:
+                expected = copy.deepcopy((snapshot.get(kind) or {}).get(record_id))
+                comparable = copy.deepcopy(record)
+                if record_id in states and comparable.get("enabled") is False:
+                    comparable["enabled"] = states[record_id]
+                provenance = record.get("provenance") or {}
+                matches = (
+                    expected is not None and comparable == expected
+                    and provenance.get("package_hash") == package.get("package_hash")
+                    and provenance.get("package_version") == package.get("version")
+                )
+                if matches:
+                    del out[kind][record_id]
+                    action = "removed"
+                else:
+                    provenance = dict(current.get("provenance") or {})
+                    for key in ("package_id", "package_version", "package_hash"):
+                        provenance.pop(key, None)
+                    current["provenance"] = provenance
+                    # The package's disable does not outlive the package; an operator's edit stays.
+                    if record_id in states and current.get("enabled") is False:
+                        current["enabled"] = states[record_id]
+                    action = "detached"
+            affected.append({"kind": kind, "id": record_id, "action": action})
+    if mode == "remove":
+        del out_index["packages"][package_id]
+    else:
+        package["enabled"] = mode == "enable"
+        package["updated_at"] = int(time.time())
+    out_index["updated_at"] = out["updated_at"] = int(time.time())
+    return out_index, out, affected
+
+
 def review_local_directory_package(package_dir: str | Path) -> dict[str, Any]:
     """Return a validation review for a local data-only extension package."""
 

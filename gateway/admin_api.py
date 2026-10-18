@@ -236,7 +236,8 @@ class AdminStore(Protocol):
     ) -> dict[str, Any]: ...
 
     def remove_extension_package(
-        self, *, package_id: str, actor: AdminContext
+        self, *, package_id: str, actor: AdminContext, mode: str = "remove",
+        expected_generation: int | None = None,
     ) -> dict[str, Any]: ...
 
     def recent_audit(
@@ -2762,15 +2763,30 @@ def create_admin_router(
 
     @router.delete("/extensions/{package_id}")
     async def remove_extension_package(
-        request: Request, package_id: str
+        request: Request, package_id: str, mode: str = "remove"
     ) -> JSONResponse:
+        """Remove the package's records, or disable them with ``?mode=disable``."""
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        if mode not in ("remove", "disable"):
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_extension_package_mode",
+                "Use mode=remove or mode=disable.",
+            ).as_response()
         try:
             result = store.remove_extension_package(
-                package_id=package_id, actor=ctx
+                package_id=package_id, actor=ctx, mode=mode
             )
+        except extension_packages.PackageInUse as exc:
+            return _RouteError(
+                status.HTTP_409_CONFLICT,
+                "extension_package_referenced",
+                str(exc),
+            ).as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND,
