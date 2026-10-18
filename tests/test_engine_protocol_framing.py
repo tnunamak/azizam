@@ -35,6 +35,45 @@ def test_sse_accepts_crlf_and_lone_cr_even_when_the_pair_is_split_across_chunks(
     assert [e.data for e in split] == [b"a", b"b", b"c"]
 
 
+ENDINGS = [b"\n\n", b"\r\n\r\n", b"\r\r", b"\n\r", b"\r\n\n", b"\r\r\n", b"\n\r\n", b"\r\n\r"]
+
+
+def sse_to_eof(chunks):
+    decoder = framing.SseDecoder()
+    out = []
+    for chunk in chunks:
+        out.extend(decoder.feed(chunk))
+    out.extend(decoder.finish())
+    return out, decoder
+
+
+@pytest.mark.parametrize("ending", ENDINGS)
+def test_sse_final_event_is_whole_at_end_of_stream_in_every_line_ending_style(ending: bytes) -> None:
+    wire = b"data: a" + ending
+    for pieces in ([wire], [wire[i:i + 1] for i in range(len(wire))]):
+        events, decoder = sse_to_eof(pieces)
+        assert [e.data for e in events] == [b"a"], (ending, len(pieces))
+        assert not decoder.pending()
+
+
+@pytest.mark.parametrize("ending", ENDINGS)
+def test_sse_two_events_in_every_style_end_with_both_delivered(ending: bytes) -> None:
+    wire = b"data: a" + ending + b"data: b" + ending
+    events, decoder = sse_to_eof([wire])
+    assert [e.data for e in events] == [b"a", b"b"] and not decoder.pending()
+
+
+@pytest.mark.parametrize("tail", [b"data: a\n", b"data: a\r\n", b"data: a\r", b"data: a", b"event: x\r"])
+def test_sse_event_cut_before_its_blank_line_stays_pending_at_end_of_stream(tail: bytes) -> None:
+    events, decoder = sse_to_eof([tail])
+    assert events == [] and decoder.pending()
+
+
+def test_sse_a_lone_line_ending_after_the_last_event_is_not_an_event() -> None:
+    events, decoder = sse_to_eof([b"data: a\n\n\r"])
+    assert [e.data for e in events] == [b"a"] and not decoder.pending()
+
+
 def test_sse_strips_one_leading_space_and_ignores_unknown_fields() -> None:
     events, _ = sse_events([b"id: 7\nretry: 100\ndata:  two spaces\nfoo: bar\n\ndata:nospace\n\n"])
     assert [e.data for e in events] == [b" two spaces", b"nospace"]

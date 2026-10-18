@@ -354,6 +354,24 @@ def test_the_same_operation_is_json_or_sse_by_the_request() -> None:
     assert collect(streamed) == [b'{"a":1}', b'{"a":2}']  # unmapped events are relayed as raw bytes; the sentinel ends it
 
 
+@pytest.mark.parametrize("ending", [b"\n\n", b"\r\n\r\n", b"\r\r", b"\n\r", b"\r\n\n"])
+def test_an_sse_stream_whose_last_event_ends_the_stream_is_complete_in_every_line_ending_style(ending: bytes) -> None:
+    wire = b'data: {"a":1}' + ending + b"data: [DONE]" + ending
+    ex, _ = make(CHAT_STREAM, lambda r: httpx.Response(200, content=wire))
+    assert collect(run(ex.invoke(conn(), req("chat", {"stream": True})))) == [b'{"a":1}']
+    plain = {"chat": {"class": "generate", "request": {"method": "POST", "path": "/c", "body": {"encoding": "json"}}, "response": {"framing": "sse"}}}
+    ex, _ = make(plain, lambda r: httpx.Response(200, content=b'data: {"t":"hi"}' + ending + b'data: {"t":"!"}' + ending))
+    assert collect(run(ex.invoke(conn(), req("chat", {})))) == [b'{"t":"hi"}', b'{"t":"!"}']
+
+
+def test_an_sse_stream_cut_inside_its_last_event_is_still_a_failure() -> None:
+    plain = {"chat": {"class": "generate", "request": {"method": "POST", "path": "/c", "body": {"encoding": "json"}}, "response": {"framing": "sse"}}}
+    for tail in (b'data: {"t":"hi"}\r\rdata: {"t":', b'data: {"t":"hi"}\r\rdata: {"t":"!"}\r'):
+        ex, _ = make(plain, lambda r, tail=tail: httpx.Response(200, content=tail))
+        with pytest.raises(TransportFailure):
+            collect(run(ex.invoke(conn(), req("chat", {}))))
+
+
 def test_a_stream_map_turns_each_event_into_a_dict() -> None:
     ops = {"chat": {"class": "generate", "request": {"method": "POST", "path": "/c", "body": {"encoding": "json"}}, "response": {
         "framing": "ndjson", "terminal": {"path": "/done", "equals": True},
