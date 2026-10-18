@@ -764,6 +764,7 @@ def test_cache_does_not_publish_failed_install(world: World, monkeypatch: pytest
     custom_root = world.tmp / "custom-cache"
     custom_root.mkdir()
     monkeypatch.setenv("AZIZAM_CI_CACHE", str(custom_root))
+    monkeypatch.setattr(helper, "output", lambda *args: "ext4" if args[0] == "stat" else "/dev/sda1")
     monkeypatch.setattr(helper.os, "getuid", lambda: custom_root.stat().st_uid + 1)
     with pytest.raises(PermissionError, match="owned by the current user"):
         helper.install("node", world.tmp / "new-node-modules")
