@@ -399,7 +399,7 @@ ADMIN_DB_PATH = _configured_admin_db_path(admin_cfg)
 
 
 def _load_effective_runtime_config(raw_config: Mapping[str, Any]) -> dict[str, Any]:
-    """Overlay DB-owned service registry onto bootstrap config."""
+    """Overlay DB-owned service registry onto bootstrap config. Raises when the registry cannot be applied."""
     effective = _overlay_service_registry(raw_config)
     if isinstance(effective, dict):
         stable_aliases.fold_workflow_aliases(effective)
@@ -407,22 +407,65 @@ def _load_effective_runtime_config(raw_config: Mapping[str, Any]) -> dict[str, A
 
 
 def _overlay_service_registry(raw_config: Mapping[str, Any]) -> dict[str, Any]:
+    """The bootstrap config with its ``backends`` replaced by the stored registry's.
+
+    Any failure raises: the caller decides what keeps serving. This never answers with the bootstrap
+    file's backends in place of the registry, which would put config the registry never described live.
+    """
+    admin_store.init_db(ADMIN_DB_PATH)
+    registry = service_registry.ensure_service_registry(
+        raw_config,
+        path=ADMIN_DB_PATH,
+        actor="startup",
+    )
+    _write_litellm_config_artifact(registry)
+    return service_registry.apply_service_registry_to_config(raw_config, registry)
+
+
+# What the Overview reports when the stored registry is not what is running (None when it is):
+# {"mode": "partial" | "empty" | "stale", "error": str, "left_out": {service id: reason}, "served": int}.
+# "partial" and "empty" are a boot that could not apply the whole registry; "stale" is a reload that
+# failed, so the running config is the one before the change.
+REGISTRY_APPLY_PROBLEM: dict[str, Any] | None = None
+
+
+def _boot_effective_runtime_config(raw_config: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The config to boot with, and the problem to report (None when the registry applied whole).
+
+    When the stored registry cannot be applied, boot does not fall back to the bootstrap file's
+    backends. It serves the stored services that validate on their own (``partial``), and when the store
+    cannot be read at all it serves no registry backends (``empty``). Either way the failure is logged
+    here and reported on the Overview. The LiteLLM config file is left as it is: a partial registry must
+    not overwrite what the running LiteLLM reloads.
+    """
     try:
-        admin_store.init_db(ADMIN_DB_PATH)
-        registry = service_registry.ensure_service_registry(
-            raw_config,
-            path=ADMIN_DB_PATH,
-            actor="startup",
-        )
-        _write_litellm_config_artifact(registry)
-        return service_registry.apply_service_registry_to_config(raw_config, registry)
-    except Exception as e:  # noqa: BLE001
-        print(
-            "[proxy] WARNING: service registry unavailable; "
-            f"falling back to bootstrap config for this process: {e}",
-            flush=True,
-        )
-        return copy.deepcopy(dict(raw_config))
+        return _load_effective_runtime_config(raw_config), None
+    except Exception as error:  # noqa: BLE001 - boot continues, degraded and loud
+        failure = f"{type(error).__name__}: {error}"[:300]
+    left_out: dict[str, str] = {}
+    try:
+        stored = admin_store.get_service_registry_with_generation(path=ADMIN_DB_PATH)
+        if stored is None:
+            raise LookupError("no stored service registry")
+        registry, left_out = service_registry.servable_part_of_registry(stored["value"])
+        effective = service_registry.apply_service_registry_to_config(raw_config, registry)
+        stable_aliases.fold_workflow_aliases(effective)
+        problem = {"mode": "partial", "error": failure, "left_out": left_out, "served": len(registry["services"])}
+    except Exception as partial_error:  # noqa: BLE001
+        effective = service_registry.apply_service_registry_to_config(raw_config, {"services": {}})
+        problem = {
+            "mode": "empty", "left_out": {}, "served": 0,
+            "error": f"{failure} (and the stored services could not be read: {type(partial_error).__name__}: {partial_error})"[:500],
+        }
+    print(
+        "[proxy] ERROR: the stored service registry could not be applied, so the gateway is starting "
+        + ("with the stored services that validate" if problem["mode"] == "partial" else "with NO registry backends")
+        + f". Cause: {problem['error']}",
+        flush=True,
+    )
+    for service_id, reason in left_out.items():
+        print(f"[proxy] ERROR: service {service_id!r} left out of the running config: {reason}", flush=True)
+    return effective, problem
 
 
 def _write_litellm_config_artifact(registry: Mapping[str, Any]) -> None:
@@ -440,7 +483,7 @@ def _write_litellm_config_artifact(registry: Mapping[str, Any]) -> None:
         print(f"[proxy] WARNING: LiteLLM config generation failed: {e}", flush=True)
 
 
-config = _load_effective_runtime_config(config)
+config, REGISTRY_APPLY_PROBLEM = _boot_effective_runtime_config(config)
 auth_cfg = config.get("auth", {})
 admin_cfg = config.get("admin", {}) or {}
 
@@ -986,19 +1029,48 @@ def _prepare_frontend_mounts(effective_cfg: Mapping[str, Any]):
     return mounts.prepare(route_registry.mount_frontend_records(registry=registry, proxy_config=effective_cfg))
 
 
+# One reload at a time. Two saves close together would otherwise each read the registry, then publish in
+# either order, and the config that stays live could be the older read. Under the lock each reload reads
+# the registry after the one before it has published, so the last one to run is the one that matches the store.
+_RELOAD_LOCK = threading.RLock()
+
+
 def reload_runtime_config() -> dict:
     """Re-derive all backend constants from the current DB service registry.
 
     Atomically reassigns every module-level name that was originally computed
     from config["backends"] at import time.  Safe to call from any thread:
-    each name assignment is a single reference swap under the GIL.
+    reloads run one at a time, and each name assignment is a single reference
+    swap under the GIL.
 
     Returns the dict of updated names → new values (for logging / tests).
+
+    A reload that fails for any reason (the registry cannot be applied, a route
+    cannot be built) raises and leaves the old config, constants and routes
+    serving. It is reported on the Overview as ``stale`` until a reload
+    succeeds. Boot decides what to serve when the registry cannot be applied;
+    a reload never falls back to the bootstrap file.
 
     Note: the LiteLLM subprocess config file is NOT reloaded here — that
     requires a separate litellm restart.  Native-routed and capability-routed
     requests see the new registry immediately.
     """
+    global REGISTRY_APPLY_PROBLEM
+    with _RELOAD_LOCK:
+        try:
+            updates = _apply_stored_registry()
+        except Exception as error:  # noqa: BLE001 - reported, then re-raised for the caller
+            REGISTRY_APPLY_PROBLEM = {
+                "mode": "stale", "left_out": {}, "served": len(config.get("backends") or {}),
+                "error": f"{type(error).__name__}: {error}"[:300],
+            }
+            print(f"[proxy] ERROR: runtime config reload failed; the previous config is still serving: {error}", flush=True)
+            raise
+        REGISTRY_APPLY_PROBLEM = None
+        return updates
+
+
+def _apply_stored_registry() -> dict:
     # Re-overlay the service registry onto the bootstrap YAML config.
     new_cfg = _load_effective_runtime_config(_bootstrap_config)
 
@@ -15108,6 +15180,7 @@ app.include_router(
         # Add engine never calls the gateway itself: its default ports and the one it listens on.
         engine_fetch=engine_check.make_http_fetch(gateway_ports=_engine_check_self_ports),
         frontend_status=lambda: FRONTEND_MOUNTS.status(),
+        registry_problem=lambda: REGISTRY_APPLY_PROBLEM,
     )
 )
 

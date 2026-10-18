@@ -475,6 +475,9 @@ def review_local_directory_package(package_dir: str | Path) -> dict[str, Any]:
         if isinstance(record, Mapping):
             _check_code_bearing_adapter(record, "protocol_frontends", errors)
             errors.extend(f"{raw_ref}: {problem}" for problem in frontend_mount.package_row_problems(record))
+            errors.extend(f"{raw_ref}: {problem}" for problem in frontend_mount.unroutable_paths(record))
+            if service_registry.normalize_id(record.get("id")) in service_registry.builtin_frontend_ids():
+                errors.append(f"{raw_ref}: protocol frontend {record.get('id')!r} is a builtin frontend; a package cannot replace it")
             protocol_frontends.append(_normalize_protocol_frontend(record))
 
     for raw_ref in _object_refs(objects.get("capabilities"), "objects.capabilities", errors):

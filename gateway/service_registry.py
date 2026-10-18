@@ -320,9 +320,10 @@ def _validate_model_policy_graphs(services: Mapping[str, Mapping[str, Any]]) -> 
             visit(model_id)
 
 
-def _validate_public_alias_uniqueness(services: Mapping[str, Mapping[str, Any]]) -> None:
-    """Make unscoped public-alias resolution deterministic across services."""
+def _public_alias_conflicts(services: Mapping[str, Mapping[str, Any]]) -> list[tuple[str, str, str]]:
+    """(alias, first service, other service) for each public alias two services both claim."""
     owners: dict[str, str] = {}
+    conflicts: list[tuple[str, str, str]] = []
     for service_id, service in services.items():
         config = service.get("config") if isinstance(service, Mapping) else None
         records = config.get("models") if isinstance(config, Mapping) else None
@@ -337,11 +338,52 @@ def _validate_public_alias_uniqueness(services: Mapping[str, Mapping[str, Any]])
                     continue
                 owner = owners.get(alias)
                 if owner is not None and owner != service_id:
-                    raise ValueError(
-                        f"public alias {alias!r} is ambiguous across services "
-                        f"{owner!r} and {service_id!r}"
-                    )
+                    conflicts.append((alias, owner, service_id))
                 owners[alias] = service_id
+    return conflicts
+
+
+def _validate_public_alias_uniqueness(services: Mapping[str, Mapping[str, Any]]) -> None:
+    """Make unscoped public-alias resolution deterministic across services."""
+    for alias, owner, service_id in _public_alias_conflicts(services)[:1]:
+        raise ValueError(
+            f"public alias {alias!r} is ambiguous across services "
+            f"{owner!r} and {service_id!r}"
+        )
+
+
+def servable_part_of_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """The stored services that validate, and why each of the others was left out.
+
+    Boot uses this when the whole registry will not normalize (``normalize_service_registry`` refuses it
+    all for one bad record). A service that fails its own checks is left out, and so is every service in
+    an ambiguous public alias, because neither can be trusted to route. Nothing is written back.
+    """
+    services: dict[str, Any] = {}
+    left_out: dict[str, str] = {}
+    for raw_id, raw in (value.get("services") or {}).items():
+        if not isinstance(raw, Mapping):
+            continue
+        service_id = normalize_id(raw.get("id") or raw_id)
+        if not service_id:
+            continue
+        try:
+            record = normalize_service_record(service_id, raw)
+            _validate_model_policy_schema_markers({service_id: record})
+            _validate_model_policy_graphs({service_id: record})
+        except Exception as error:  # noqa: BLE001 - any refusal of this record leaves it out; the rest still serve
+            left_out[service_id] = f"{type(error).__name__}: {error}"[:300]
+            continue
+        services[service_id] = record
+    for _alias, owner, other in _public_alias_conflicts(services):
+        for service_id in (owner, other):
+            if service_id in services:
+                del services[service_id]
+                left_out[service_id] = "its public model alias is also claimed by another service"
+    return {
+        "schema_version": int(value.get("schema_version") or SERVICE_REGISTRY_SCHEMA_VERSION),
+        "services": services,
+    }, left_out
 
 
 def backfill_seed_catalog_metadata(
