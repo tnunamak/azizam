@@ -96,7 +96,7 @@ def test_queued_route_stores_no_prompt_and_completed_asset_has_none(household, m
         async def fail(*args, **kwargs):
             return JSONResponse({"error": {"message": body["prompt"]}}, status_code=400)
         monkeypatch.setattr(proxy, "_auth_context_from_image_job_payload", lambda *_: hh.auth)
-        for name in ("proxy_comfy_request", "proxy_audio_generate", "proxy_comfy_video_create"):
+        for name in ("proxy_graph_image_request", "proxy_audio_generate", "proxy_comfy_video_create"):
             monkeypatch.setattr(proxy, name, fail)
         kind = "image" if intent == "image.generate" else "video" if intent == "video.generate" else "audio"
         asyncio.run(getattr(proxy, f"_run_{kind}_media_job")(job_id))

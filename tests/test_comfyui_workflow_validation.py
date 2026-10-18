@@ -72,7 +72,7 @@ class TestComfyUIWorkflowValidation(unittest.TestCase):
             )
 
             with patch.object(proxy, "COMFY_WORKFLOWS_DIR", workflows_dir):
-                self.assertIsNone(proxy.load_comfy_workflow("bad"))
+                self.assertIsNone(proxy.load_graph_workflow("bad"))
 
     def test_proxy_loader_resolves_imported_package_workflow_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -119,7 +119,7 @@ class TestComfyUIWorkflowValidation(unittest.TestCase):
                 "COMFY_WORKFLOWS_DIR",
                 package_dir / "empty",
             ):
-                workflow = proxy.load_comfy_workflow("demo")
+                workflow = proxy.load_graph_workflow("demo")
                 manifest = proxy._find_image_manifest("image.generate", "demo")
 
             self.assertIsNotNone(workflow)

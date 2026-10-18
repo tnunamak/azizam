@@ -177,7 +177,7 @@ def test_delete_during_image_retry_keeps_original_erasure_clock(stores, monkeypa
         asset = proxy.store_asset_bytes(PNG, owner_key_hash=proxy._asset_owner_key(auth))
         assert prompt_memory.get(asset, user["id"], path=jobs) is None
         return proxy.JSONResponse({"data": [{"image_id": asset, "asset_id": asset, "url": "https://gateway.test/media"}]})
-    monkeypatch.setattr(proxy, "proxy_comfy_request", generate)
+    monkeypatch.setattr(proxy, "proxy_graph_image_request", generate)
     monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_MAX_ATTEMPTS", 2)
     monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_RETRY_BASE_SECONDS", 0)
     monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS", 0)

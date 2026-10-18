@@ -304,7 +304,7 @@ def test_image_attempt_cancellation_has_a_durable_terminal_receipt(jobs, tmp_pat
                         lambda _: proxy.NO_AUTH_CONTEXT)
     monkeypatch.setattr(proxy, "_media_job_admission_response", lambda *a, **kw: None)
     provider = AsyncMock(side_effect=asyncio.CancelledError())
-    monkeypatch.setattr(proxy, "proxy_comfy_request", provider)
+    monkeypatch.setattr(proxy, "proxy_graph_image_request", provider)
 
     async def scenario():
         semaphore = asyncio.Semaphore(1)

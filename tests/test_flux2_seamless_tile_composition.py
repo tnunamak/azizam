@@ -235,7 +235,7 @@ class TestFlux2SeamlessTileManifest(unittest.TestCase):
 class TestFlux2InpaintSeedManifest(unittest.TestCase):
     def test_inpaint_manifest_binds_seed_to_noise_seed(self) -> None:
         manifest = load_workflow_manifest(INPAINT_MANIFEST_PATH)
-        workflow = proxy.load_comfy_workflow("flux2-klein-4b-inpaint")
+        workflow = proxy.load_graph_workflow("flux2-klein-4b-inpaint")
         assert workflow is not None
         workflow.pop("_meta", None)
 
@@ -267,7 +267,7 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
             "configured_downstream_headers",
             lambda _auth_context, _service: {},
         ):
-            response = await proxy.proxy_comfy_request(
+            response = await proxy.proxy_graph_image_request(
                 _JsonRequest(body),  # type: ignore[arg-type]
                 access_context(),
                 receipt=receipt,
@@ -377,7 +377,7 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
                 "_graph_run_round",
                 fake_run_round,
             ):
-                response = await proxy.proxy_comfy_request(
+                response = await proxy.proxy_graph_image_request(
                     _JsonRequest(body),  # type: ignore[arg-type]
                     access_context(),
                     receipt=receipt,

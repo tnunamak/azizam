@@ -87,7 +87,7 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
             # The background decision probes service health over HTTP; no ComfyUI fact is under test here.
             proxy, "resolve_image_background_decision",
             AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False))):
-            response = await proxy.proxy_comfy_request(Req(), self.auth, receipt=receipt)
+            response = await proxy.proxy_graph_image_request(Req(), self.auth, receipt=receipt)
         return response
 
     async def test_member_forget_end_to_end(self):

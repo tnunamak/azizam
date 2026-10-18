@@ -5184,7 +5184,7 @@ def _build_graph_submit_payload(workflow: dict, **extra: Any) -> dict:
     return payload
 
 
-def load_comfy_workflow(model_name: str) -> Optional[dict]:
+def load_graph_workflow(model_name: str) -> Optional[dict]:
     """Load a ComfyUI workflow template by model name.
 
     Attaches the UI-format twin (`<model>.ui.json`) under the private
@@ -5194,10 +5194,10 @@ def load_comfy_workflow(model_name: str) -> Optional[dict]:
     """
     workflow_path = COMFY_WORKFLOWS_DIR / f"{model_name}.json"
     if not workflow_path.exists():
-        workflow_path = _comfy_workflow_artifact_path_for_model(model_name)
+        workflow_path = _graph_workflow_artifact_path_for_model(model_name)
     if not workflow_path.exists():
         return None
-    workflow = _load_comfy_workflow_file(workflow_path)
+    workflow = _load_graph_workflow_file(workflow_path)
     if workflow is None:
         return None
     return workflow
@@ -5205,7 +5205,7 @@ def load_comfy_workflow(model_name: str) -> Optional[dict]:
 
 
 
-def _comfy_object_info(class_type: str) -> Optional[dict]:
+def _graph_node_info(class_type: str) -> Optional[dict]:
     """A node type's slot definitions from ComfyUI /object_info (cached), or None."""
     return comfy_object_info.lookup(COMFY_HOST, class_type)
 
@@ -5220,13 +5220,13 @@ def _derive_ui_workflow(api: Mapping[str, Any]) -> Optional[dict]:
     hand-authored twin or omits the chunk.
     """
     try:
-        return comfy_ui_graph.derive_ui_workflow(api, _comfy_object_info)
+        return comfy_ui_graph.derive_ui_workflow(api, _graph_node_info)
     except Exception as exc:  # noqa: BLE001 - never fail a render over metadata
         print(f"[proxy] UI workflow derivation failed: {type(exc).__name__}: {exc}", flush=True)
         return None
 
 
-def _load_comfy_workflow_file(workflow_path: Path) -> Optional[dict]:
+def _load_graph_workflow_file(workflow_path: Path) -> Optional[dict]:
     with open(workflow_path) as f:
         workflow = json.load(f)
     errors = validate_comfyui_workflow_graph(workflow)
@@ -5244,7 +5244,7 @@ def _load_comfy_workflow_file(workflow_path: Path) -> Optional[dict]:
     return workflow
 
 
-def _comfy_workflow_artifact_path_for_model(model_name: str) -> Path:
+def _graph_workflow_artifact_path_for_model(model_name: str) -> Path:
     try:
         registry = GATEWAY_WORKFLOW_REGISTRY
     except NameError:
@@ -7677,10 +7677,10 @@ async def proxy_image_request(request, auth_context, receipt=None):
     response = await _try_protocol_request(request, auth_context, "images", receipt=receipt)
     if response is not None:
         return response
-    return await proxy_comfy_request(request, auth_context, receipt=receipt)
+    return await proxy_graph_image_request(request, auth_context, receipt=receipt)
 
 
-async def proxy_comfy_request(
+async def proxy_graph_image_request(
     request: Request,
     auth_context: AuthContext,
     receipt: RouteReceipt | None = None,
@@ -7858,7 +7858,7 @@ async def proxy_comfy_request(
             quality=quality,
         )
 
-    workflow = load_comfy_workflow(model)
+    workflow = load_graph_workflow(model)
     if not workflow:
         return model_compatibility_error(
             ModelCompatibilityError(
@@ -8122,7 +8122,7 @@ async def _identity_edit_alias(
         return identity_api.error(502, "identity_backend_error", f"identity workflow failed: {str(exc) or type(exc).__name__}")
 
 
-async def proxy_comfy_edit_request(
+async def proxy_graph_image_edit_request(
     request: Request,
     auth_context: AuthContext,
     receipt: RouteReceipt | None = None,
@@ -8315,7 +8315,7 @@ async def proxy_comfy_edit_request(
             request, auth_context, form, form_dict, image_files, str(prompt or ""), response_format,
         )
 
-    workflow = load_comfy_workflow(model)
+    workflow = load_graph_workflow(model)
     if not workflow:
         return model_compatibility_error(
             ModelCompatibilityError(
@@ -8751,7 +8751,7 @@ class _OverlayFormRequest:
         return self._form
 
 
-async def proxy_comfy_variations_request(
+async def proxy_graph_image_variations_request(
     request: Request,
     auth_context: AuthContext,
     receipt: RouteReceipt | None = None,
@@ -8760,7 +8760,7 @@ async def proxy_comfy_variations_request(
 
     There is no local model dedicated to "variations" (an unprompted
     creative re-render). Instead this validates the narrower variations
-    field set, then delegates to `proxy_comfy_edit_request` via
+    field set, then delegates to `proxy_graph_image_edit_request` via
     `_OverlayFormRequest` with a fixed generic prompt and the configured
     edit-capable workflow (`images.variations.default_workflow`,
     `proxy_config.yml`), reusing its entire upload/inject/adaptive-batching
@@ -8889,13 +8889,13 @@ async def proxy_comfy_variations_request(
 
     overlay_request = _OverlayFormRequest(request, form, overlay)
     client_requested_model = requested_model or None
-    response = await proxy_comfy_edit_request(
+    response = await proxy_graph_image_edit_request(
         overlay_request,  # type: ignore[arg-type]
         auth_context,
         receipt=receipt,
     )
     if receipt is not None:
-        # proxy_comfy_edit_request just overwrote receipt.requested_model with
+        # proxy_graph_image_edit_request just overwrote receipt.requested_model with
         # the *injected* overlay model (what the edit backend was asked to
         # run) -- from its own point of view that's correct, but here it
         # clobbers what the client actually sent (e.g. "dall-e-2"). Restore
@@ -13935,7 +13935,7 @@ class _SessionMakeRuntime:
                 headers=Headers({"content-type": asset_media_type(source_asset_id, source)}),
             )))
             request: Any = _FormBodyRequestShim(form=FormData(fields), scheme="http", netloc="127.0.0.1")
-            route, call = "/v1/images/edits", proxy_comfy_edit_request
+            route, call = "/v1/images/edits", proxy_graph_image_edit_request
         else:
             request = _JsonBodyRequestShim(body=body, headers={}, scheme="http", netloc="127.0.0.1")
             route, call = "/v1/images/generations", proxy_image_request
@@ -14460,7 +14460,7 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
     headers = configured_downstream_headers(auth_context, "comfyui")
     async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
         for node_id, content in uploads.items():
-            name, upload_error = await _upload_comfy_image_bytes(
+            name, upload_error = await _upload_graph_image_bytes(
                 client, headers, content, filename=f"identity-{uuid.uuid4().hex}.png"
             )
             if upload_error is not None:
@@ -18308,7 +18308,7 @@ def _manifest_input_default(
     return fallback
 
 
-async def _upload_comfy_image_bytes(
+async def _upload_graph_image_bytes(
     client: Any,
     headers: Mapping[str, str],
     content: bytes,
@@ -18445,7 +18445,7 @@ def _set_workflow_seed(
     inputs[seed_field] = int(seed)
 
 
-async def _run_single_comfy_image(
+async def _run_single_graph_image(
     *,
     request: Request | None = None,
     client: httpx.AsyncClient,
@@ -18567,8 +18567,8 @@ async def _proxy_offset_inpaint_tile_request(
         "inpaint_model",
         fallback="flux2-klein-4b-inpaint",
     )
-    base_workflow = load_comfy_workflow(base_model)
-    inpaint_workflow = load_comfy_workflow(inpaint_model)
+    base_workflow = load_graph_workflow(base_model)
+    inpaint_workflow = load_graph_workflow(inpaint_model)
     base_manifest = _find_image_manifest("image.generate", base_model)
     inpaint_manifest = _find_image_manifest("image.edit", inpaint_model)
     if not base_workflow or not inpaint_workflow or base_manifest is None or inpaint_manifest is None:
@@ -18656,7 +18656,7 @@ async def _proxy_offset_inpaint_tile_request(
                     else None
                 )
                 seam_seed = base_seed + 1 if base_seed is not None else None
-                err, base_image = await _run_single_comfy_image(
+                err, base_image = await _run_single_graph_image(
                     request=request,
                     client=client,
                     workflow=base_workflow,
@@ -18678,7 +18678,7 @@ async def _proxy_offset_inpaint_tile_request(
                     seam_width=seam_width,
                 )
 
-                uploaded_image, upload_error = await _upload_comfy_image_bytes(
+                uploaded_image, upload_error = await _upload_graph_image_bytes(
                     client,
                     headers,
                     offset_image,
@@ -18686,7 +18686,7 @@ async def _proxy_offset_inpaint_tile_request(
                 )
                 if upload_error is not None:
                     return upload_error
-                uploaded_mask, upload_error = await _upload_comfy_image_bytes(
+                uploaded_mask, upload_error = await _upload_graph_image_bytes(
                     client,
                     headers,
                     mask,
@@ -18719,7 +18719,7 @@ async def _proxy_offset_inpaint_tile_request(
                     },
                 ).request
 
-                err, repaired_offset = await _run_single_comfy_image(
+                err, repaired_offset = await _run_single_graph_image(
                     request=request,
                     client=client,
                     workflow=edit_workflow,
@@ -18847,7 +18847,7 @@ def _prefer_inpaint_workflow_for_mask(model: str) -> str:
         return model
     base = model.removesuffix("-edit")
     candidate = f"{base}-inpaint"
-    return candidate if load_comfy_workflow(candidate) else model
+    return candidate if load_graph_workflow(candidate) else model
 
 
 def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> str:
@@ -18859,7 +18859,7 @@ def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> st
         return selected
 
     if not (selected.endswith("-edit") or selected.endswith("-inpaint")):
-        direct_workflow = load_comfy_workflow(selected)
+        direct_workflow = load_graph_workflow(selected)
         direct_meta = direct_workflow.get("_meta", {}) if isinstance(direct_workflow, Mapping) else {}
         if not isinstance(direct_meta, Mapping) or not (direct_meta.get("image_node") or direct_meta.get("image_nodes")):
             selected = f"{selected}-edit"
@@ -22620,7 +22620,7 @@ async def images_variations(request: Request):
 
     Routed through an edit-capable workflow (images.variations.default_workflow
     in proxy_config.yml) with a fixed generic prompt -- see
-    proxy_comfy_variations_request for why.
+    proxy_graph_image_variations_request for why.
     """
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/variations"))
     if isinstance(auth_context, Response):
@@ -22632,7 +22632,7 @@ async def images_variations(request: Request):
         finish_image_route_receipt(receipt, response)
         return response
     try:
-        response = await proxy_comfy_variations_request(request, auth_context, receipt=receipt)
+        response = await proxy_graph_image_variations_request(request, auth_context, receipt=receipt)
     except asyncio.CancelledError:
         finish_image_route_receipt(receipt, None, status="cancelled")
         raise
@@ -22652,7 +22652,7 @@ async def images_edits(request: Request):
         finish_image_route_receipt(receipt, response)
         return response
     try:
-        response = await proxy_comfy_edit_request(request, auth_context, receipt=receipt)
+        response = await proxy_graph_image_edit_request(request, auth_context, receipt=receipt)
     except asyncio.CancelledError:
         finish_image_route_receipt(receipt, None, status="cancelled")
         raise

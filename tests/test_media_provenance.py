@@ -485,7 +485,7 @@ class ImageRouteTests(unittest.IsolatedAsyncioTestCase):
         ), patch.object(
             proxy, "configured_downstream_headers", lambda *_a: {}
         ):
-            response = await proxy.proxy_comfy_request(Req(), auth_context, receipt=receipt)  # type: ignore[arg-type]
+            response = await proxy.proxy_graph_image_request(Req(), auth_context, receipt=receipt)  # type: ignore[arg-type]
         return response, json.loads(response.body)
 
     async def test_plan_bound_and_request_override(self) -> None:
@@ -1033,7 +1033,7 @@ class UiGraphSubmitTests(unittest.TestCase):
             "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "THIS REQUEST", "clip": ["1", 1]}},
             "__ui_workflow__": {"nodes": [], "stale": True},
         }
-        with patch.object(proxy, "_comfy_object_info", lambda ct: self.OBJECT_INFO.get(ct)):
+        with patch.object(proxy, "_graph_node_info", lambda ct: self.OBJECT_INFO.get(ct)):
             payload = proxy._build_graph_submit_payload(graph)
         ui = payload["extra_data"]["extra_pnginfo"]["workflow"]
         self.assertNotIn("stale", ui)
@@ -1048,7 +1048,7 @@ class UiGraphSubmitTests(unittest.TestCase):
             "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "a"}},
             "__ui_workflow__": {"nodes": [], "twin": True},
         }
-        with patch.object(proxy, "_comfy_object_info", lambda ct: None):
+        with patch.object(proxy, "_graph_node_info", lambda ct: None):
             payload = proxy._build_graph_submit_payload(graph)
         self.assertTrue(payload["extra_data"]["extra_pnginfo"]["workflow"]["twin"])
 

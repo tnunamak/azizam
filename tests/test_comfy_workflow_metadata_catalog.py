@@ -65,8 +65,8 @@ def test_workflow_derives_a_complete_ui_graph(path: Path, request: pytest.Fixtur
 @pytest.mark.parametrize("path", PATHS, ids=_rel)
 def test_submit_payload_embeds_workflow(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The real submit helper, on the template as the gateway loads it."""
-    monkeypatch.setattr(proxy, "_comfy_object_info", OBJECT_INFO.get)
-    workflow = proxy._load_comfy_workflow_file(path)
+    monkeypatch.setattr(proxy, "_graph_node_info", OBJECT_INFO.get)
+    workflow = proxy._load_graph_workflow_file(path)
     assert workflow is not None, "gateway rejects this workflow"
     payload = proxy._build_graph_submit_payload(workflow)
     ui = payload["extra_data"]["extra_pnginfo"]["workflow"]

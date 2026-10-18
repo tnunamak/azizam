@@ -265,7 +265,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
                 media_type="application/json",
             )
 
-        with patch.object(proxy, "proxy_comfy_request", fake_proxy_comfy_request):
+        with patch.object(proxy, "proxy_graph_image_request", fake_proxy_comfy_request):
             await proxy._run_image_media_job(job_id)
 
         stored = media_jobs.get(job_id, audience="internal", path=self.db)
@@ -309,7 +309,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
                 media_type="application/json",
             )
 
-        with patch.object(proxy, "proxy_comfy_request", fake_proxy_comfy_request):
+        with patch.object(proxy, "proxy_graph_image_request", fake_proxy_comfy_request):
             await proxy._run_image_media_job(job_id)
 
         stored = media_jobs.get(job_id, audience="internal", path=self.db)

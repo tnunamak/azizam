@@ -315,7 +315,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         with patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", payload_dir), \
              patch.object(proxy, "IMAGE_MEDIA_JOB_MAX_ATTEMPTS", 1), \
              patch.object(proxy, "finish_image_route_receipt", lambda *_args, **_kwargs: None), \
-             patch.object(proxy, "proxy_comfy_request", fake_proxy_comfy_request):
+             patch.object(proxy, "proxy_graph_image_request", fake_proxy_comfy_request):
             proxy._persist_image_media_job_payload(
                 created.job_id,
                 body=body,
