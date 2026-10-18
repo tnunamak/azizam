@@ -29,6 +29,9 @@ COPIED = ("scripts/ci/install_cached.py", "scripts/ci-local", "scripts/low-prior
 
 STUBS = {
     # Tools on PATH.
+    # World lives on the hermetic runner's tmpfs; its fake host cache is disk-backed.
+    "stat": 'if [[ $1 == -f && $2 == -c && $3 == %T ]]; then echo ext4; else exec /usr/bin/stat "$@"; fi',
+    "findmnt": 'echo /dev/sda1',
     "npm": """
 case "$1 ${2:-}" in
   "ci "*) mkdir -p node_modules/.bin && cp "$FAKE_BIN/playwright" node_modules/.bin/ ;;
