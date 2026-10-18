@@ -113,6 +113,13 @@ _DRIVEN = pytest.mark.parametrize("lifecycle", [_COMMAND_LIFECYCLE, _ADMIN_KEY_L
                                   ids=["command-driver", "admin-key-env"])
 
 
+def _stored_lifecycle(record):
+    # Engine contract v2 deliberately stores lifecycle in process once.
+    assert "lifecycle" not in record
+    assert "lifecycle" not in record["config"]
+    return (record.get("process") or {}).get("legacy_lifecycle") or {}
+
+
 def _registry_with_lifecycle(lifecycle):
     return service_registry.normalize_service_registry({"services": {"engine": {
         "id": "engine", "name": "Engine", "kind": "provider", "lifecycle": lifecycle,
@@ -150,7 +157,7 @@ def test_an_administrator_cannot_edit_a_service_into_a_driven_lifecycle(gateway,
                           headers={**csrf_for(admin), "If-Match": _etag(admin)}, json={"lifecycle": lifecycle})
     assert refused.status_code == 403, refused.text
     assert refused.json()["error"]["code"] == "owner_required"
-    assert not _services(gateway)["engine"]["lifecycle"].get("driver")
+    assert not _stored_lifecycle(_services(gateway)["engine"]).get("driver")
 
 
 def test_an_administrator_cannot_enable_a_package_with_a_driven_lifecycle(gateway, tmp_path, monkeypatch):
@@ -177,7 +184,7 @@ def test_an_administrator_cannot_change_or_remove_the_owners_driven_lifecycle(ga
     allowed = admin.patch("/admin/api/operator/services/engine",
                           headers={**csrf_for(admin), "If-Match": _etag(admin)}, json={"note": "fine"})
     assert allowed.status_code == 200, allowed.text
-    assert _services(gateway)["engine"]["lifecycle"]["driver"] == "command"
+    assert _stored_lifecycle(_services(gateway)["engine"])["driver"] == "command"
     # The owner may change it.
     changed = owner.patch("/admin/api/operator/services/engine",
                           headers={**csrf_for(owner), "If-Match": _etag(owner)},
@@ -210,7 +217,7 @@ def test_an_administrator_editing_a_note_keeps_a_driver_kept_only_on_the_record(
     allowed = admin.patch("/admin/api/operator/services/engine",
                           headers={**csrf_for(admin), "If-Match": _etag(admin)}, json={"note": "fine"})
     assert allowed.status_code == 200, allowed.text
-    assert _services(gateway)["engine"]["lifecycle"]["driver"] == "command"
+    assert _stored_lifecycle(_services(gateway)["engine"])["driver"] == "command"
 
 
 # -- Sweep: other ways an administrator could make the gateway run, read or write something
