@@ -185,10 +185,12 @@ def create_me_media_router(
                 receipts_path=receipt_path,
                 prompt_memory_path=prompt_path,
             )
+            # The folder is listed and counted once per Library, on the first page; later pages carry no state.
             storage = asset_storage_provider() if asset_storage_provider is not None else None
-            result["media_folder"] = _media_folder_view(
-                actor, storage, admin_path=admin_path, jobs_path=jobs_path, receipts_path=receipt_path,
-                prompt_path=prompt_path,
+            result["media_folder"] = (
+                _media_folder_view(actor, storage, admin_path=admin_path, jobs_path=jobs_path,
+                                   receipts_path=receipt_path, prompt_path=prompt_path)
+                if not request.query_params.get("cursor") else None
             )
             if scope.audit_everyone:
                 _audit_everyone(actor, "media.library.everyone", admin_path)
