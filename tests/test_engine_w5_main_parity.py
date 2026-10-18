@@ -18,6 +18,7 @@ from tests.support.fake_upstream import fake_upstreams, scenario_from_data  # no
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'engine_w5'
 LIVE = json.loads((FIXTURES / 'live-shape.json').read_text())
+MAIN_PROBES = json.loads((FIXTURES / 'main-probes.json').read_text())
 
 
 @pytest.mark.parametrize('shape', ['seed', 'live'])
@@ -55,8 +56,7 @@ def test_live_shaped_hop_keeps_main_url_headers_body_and_read_timeout(monkeypatc
 def test_each_live_shaped_resource_probe_keeps_main_url_and_headers(monkeypatch, service_id, fake_upstreams):
     saved = LIVE['services'][service_id]
     config = service_registry.runtime_backend_from_service(saved)
-    # Main's resource probe builder is unchanged. Its transport sent no headers.
-    expected_url = proxy._service_resource_probe_url(config)
+    expected_url, expected_headers = MAIN_PROBES[service_id]['resource']
     from urllib.parse import urlsplit
     destination = urlsplit(expected_url)
     fake = fake_upstreams.asgi(scenario_from_data({
@@ -71,3 +71,14 @@ def test_each_live_shaped_resource_probe_keeps_main_url_and_headers(monkeypatch,
     [sent] = fake.calls('health')
     assert sent.path == destination.path
     assert sent.headers['host'] == destination.netloc
+    assert 'authorization' not in sent.headers
+    assert expected_headers == {}
+
+
+@pytest.mark.parametrize('service_id', list(LIVE['services']))
+def test_each_unedited_readiness_probe_keeps_the_main_url_and_headers(service_id):
+    from gateway.lifecycle_drivers import engine_read_request
+    config = service_registry.runtime_backend_from_service(LIVE['services'][service_id])
+    result = engine_read_request(config, config.get('health_endpoint', '/health'))
+    expected = MAIN_PROBES[service_id]['readiness']
+    assert result == (tuple(expected) if expected else None)
