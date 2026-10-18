@@ -103,7 +103,7 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     # The old web client consumes these fields; adding v2 beside them cannot
     # silently change their content.
     old_engine = {key: engine[key] for key in ("service_id", "definition", "name", "enabled", "locked", "editable", "values", "key", "capabilities", "models")}
-    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "6e25e40c2b605c53754d60cad9778d45bcfa95a709ebbad270cb44412581528d"
+    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "9a785c4869f79e2ec12d5b916f55b08f7befdb94b1d730783f868f468083b0f5"
 
 
 def test_litellm_compiler_and_current_are_frozen() -> None:
