@@ -824,8 +824,14 @@ class AdminSQLiteStore:
                 previous = old_services.get(service_id) or {}
                 for field in ("connection", "process", "protocol_operations", "control_file_roots",
                               "offerings", "residency", "observations"):
-                    old_value = (previous.get(field), (previous.get("config") or {}).get(field))
-                    new_value = (record.get(field), (record.get("config") or {}).get(field))
+                    # Migration writes empty blocks; an empty block grants nothing.
+                    old_value = (previous.get(field) or None, (previous.get("config") or {}).get(field) or None)
+                    new_value = (record.get(field) or None, (record.get("config") or {}).get(field) or None)
+                    if field == "process":
+                        # Migration turns an external lifecycle into a process that
+                        # runs nothing; lifecycle_driver_changed below judges whether
+                        # a top-level process controls the host.
+                        old_value, new_value = old_value[1], new_value[1]
                     if old_value != new_value:
                         raise PermissionError(f"Only the owner can change service {field}.")
         changed = service_registry.credential_binding_changes(before_registry, value)
