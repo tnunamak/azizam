@@ -116,6 +116,7 @@ from gateway.engine_protocol.types import CanonicalRequest as AdapterRequest
 from gateway.engine_protocol.types import Connection as AdapterConnection
 from gateway.engine_protocol.types import Reply as AdapterReply
 from gateway.engine_protocol.types import Timeouts as AdapterTimeouts
+from gateway.engine_protocol.errors import UnsupportedByAdapter as ProtocolUnsupportedByAdapter
 from gateway import custom_voices
 from gateway import voice_audio
 from gateway import voices_api
@@ -9361,18 +9362,19 @@ def _graph_history_state(job: dict) -> tuple[str, Optional[str]]:
 
 
 async def _fetch_graph_state() -> tuple[Optional[set[str]], Optional[dict]]:
-    """Fetch ComfyUI authoritative state: (active_prompt_ids, history_map).
+    """Fetch the graph engine's authoritative state: (active_prompt_ids, history_map).
 
     Returns (None, None) on any error. Uses 2s timeouts per the spec.
     """
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=2.0), verify=tls_context()) as client:
-            q_resp = await client.get(f"{COMFY_HOST}/queue")
-            h_resp = await client.get(f"{COMFY_HOST}/history?max_items={_VIDEO_RECONCILE_HISTORY_LIMIT}")
+            graph = _graph(client, "videos")
+            q_resp = await graph.queue()
+            h_resp = await graph.history_page(_VIDEO_RECONCILE_HISTORY_LIMIT)
     except Exception as e:
-        print(f"[proxy] video reconcile: ComfyUI fetch failed ({e})", flush=True)
+        print(f"[proxy] video reconcile: {_graph_adapter('videos').label} fetch failed ({e})", flush=True)
         return (None, None)
-    if q_resp.status_code != 200 or h_resp.status_code != 200:
+    if q_resp.status != 200 or h_resp.status != 200:
         return (None, None)
     # A body that is not the expected JSON object says nothing about the
     # queue: an empty answer here would read as "ComfyUI forgot every prompt"
@@ -9444,7 +9446,7 @@ async def _reconcile_video_progress() -> None:
             # have been GC'd from /history but already terminal locally).
             if current_status in ("queued", "running", None):
                 entry["status"] = "failed"
-                entry["error"] = "orphaned: ComfyUI does not report this prompt_id"
+                entry["error"] = f"orphaned: {_graph_adapter('videos').label} does not report this prompt_id"
                 entry.setdefault("ended_at", now)
                 entry["updated_at"] = now
 
@@ -9499,36 +9501,32 @@ _graph_ws_connected = False
 
 
 async def _graph_ws_listener(stop_event: asyncio.Event) -> None:
-    """Long-lived websocket subscription to ComfyUI with reconnect+backoff."""
-    global _graph_ws_connected
-    try:
-        from websockets.asyncio.client import connect as ws_connect
-    except Exception as e:
-        print(f"[proxy] ComfyUI ws listener disabled (websockets import failed: {e})", flush=True)
-        return
+    """Long-lived subscription to the graph engine's push channel with reconnect+backoff.
 
-    # ComfyUI ws lives at the same host/port as the REST API.
-    ws_url = COMFY_HOST.replace("http://", "ws://").replace("https://", "wss://")
-    ws_url = f"{ws_url}/ws?clientId={COMFY_CLIENT_ID}"
+    The adapter opens the channel (same host/port as the REST API) and decodes its frames: binary preview frames and
+    frames that are not JSON objects never reach here. Core keeps the reconnect loop, the connected flag and the
+    progress records the events feed.
+    """
+    global _graph_ws_connected
+    adapter = _graph_adapter("videos")
+    engine = adapter.label
+    conn = _graph_connection()
     backoff = 1.0
     last_gc = time.time()
 
+    def opened(ws_url: str) -> None:
+        global _graph_ws_connected
+        nonlocal backoff
+        _graph_ws_connected = True
+        backoff = 1.0
+        print(f"[proxy] {engine} ws connected: {ws_url}", flush=True)
+
     while not stop_event.is_set():
         try:
-            async with ws_connect(ws_url, max_size=8 * 1024 * 1024, ping_interval=20, ping_timeout=20) as ws:
-                _graph_ws_connected = True
-                backoff = 1.0
-                print(f"[proxy] ComfyUI ws connected: {ws_url}", flush=True)
-                async for raw in ws:
+            async with contextlib.aclosing(adapter.watch(conn, COMFY_CLIENT_ID, on_open=opened)) as events:
+                async for evt in events:
                     if stop_event.is_set():
                         break
-                    if isinstance(raw, (bytes, bytearray)):
-                        # Binary frames (preview images). Ignore.
-                        continue
-                    try:
-                        evt = json.loads(raw)
-                    except Exception:
-                        continue
                     try:
                         await _record_event(evt)
                     except Exception as e:
@@ -9538,9 +9536,12 @@ async def _graph_ws_listener(stop_event: asyncio.Event) -> None:
                         last_gc = time.time()
         except asyncio.CancelledError:
             raise
+        except ProtocolUnsupportedByAdapter as e:
+            print(f"[proxy] {engine} ws listener disabled (websockets import failed: {e.__cause__})", flush=True)
+            return
         except Exception as e:
             _graph_ws_connected = False
-            print(f"[proxy] ComfyUI ws disconnected ({e}); reconnect in {backoff:.0f}s", flush=True)
+            print(f"[proxy] {engine} ws disconnected ({e}); reconnect in {backoff:.0f}s", flush=True)
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=backoff)
             except asyncio.TimeoutError:
@@ -9692,8 +9693,8 @@ def _prompt_id_from_video_id(video_id: str) -> Optional[str]:
 
 async def _graph_history(client: httpx.AsyncClient, prompt_id: str, headers: dict) -> Optional[dict]:
     try:
-        resp = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers, timeout=15)
-        if resp.status_code != 200:
+        resp = await _graph(client, "videos").history(prompt_id, headers=headers, timeout=15)
+        if resp.status != 200:
             return None
         data = resp.json()
         return data.get(prompt_id) if isinstance(data, dict) else None
@@ -9704,12 +9705,12 @@ async def _graph_history(client: httpx.AsyncClient, prompt_id: str, headers: dic
 async def _graph_queue_status(client: httpx.AsyncClient, prompt_id: str, headers: dict) -> str:
     """Return one of: queued, running, unknown.
 
-    ComfyUI's `/queue` returns {queue_running: [...], queue_pending: [...]}, where
+    The engine's queue answer is {queue_running: [...], queue_pending: [...]}, where
     each entry is a tuple-like list `[priority, prompt_id, ...]`.
     """
     try:
-        resp = await client.get(f"{COMFY_HOST}/queue", headers=headers, timeout=10)
-        if resp.status_code != 200:
+        resp = await _graph(client, "videos").queue(headers=headers, timeout=10)
+        if resp.status != 200:
             return "unknown"
         data = resp.json() or {}
         for entry in data.get("queue_running", []) or []:
@@ -9721,6 +9722,23 @@ async def _graph_queue_status(client: httpx.AsyncClient, prompt_id: str, headers
     except Exception:
         return "unknown"
     return "unknown"
+
+
+def _graph_video_unavailable_response() -> Response:
+    """502 for a video route whose engine could not be reached; the engine's name is the adapter's label."""
+    return Response(
+        content=json.dumps({"error": {"message": _graph_adapter("videos").unavailable_message(_graph_connection()),
+                                      "type": "api_error"}}),
+        status_code=502,
+        media_type="application/json"
+    )
+
+
+def _graph_reply_text(reply: Any) -> str:
+    """The body of an upload or submit answer as text. The reply keeps text for refusals; a 200 body is decoded here."""
+    if reply.text is not None:
+        return reply.text
+    return (reply.raw or b"").decode("utf-8", "replace")
 
 
 def _job_status_from_history(job: dict) -> tuple[str, int]:
@@ -10022,17 +10040,21 @@ async def _load_completed_video_bytes(
         params = {"filename": file_info["filename"], "type": file_info["type"]}
         if file_info["subfolder"]:
             params["subfolder"] = file_info["subfolder"]
-        async with client.stream(
-            "GET", f"{COMFY_HOST}/view",
-            headers={**headers, "accept-encoding": "identity"}, params=params,
-        ) as view:
-            if view.status_code != 200:
-                raise _VideoAssetError(f"ComfyUI /view error: {view.status_code}", param=param, status=502)
-            try:
-                data = await media_fetch.read_bounded_media_response(view)
-            except media_fetch.MediaFetchError as exc:
-                raise _VideoAssetError(str(exc), param=param) from exc
-            return data, Path(file_info["filename"]).name
+        graph = _graph(client, "videos")
+        try:
+            async with graph.view_stream(params, headers={**headers, "accept-encoding": "identity"}) as view:
+                if view.status_code != 200:
+                    raise _VideoAssetError(f"{_graph_adapter('videos').label} /view error: {view.status_code}",
+                                           param=param, status=502)
+                try:
+                    data = await media_fetch.read_bounded_media_response(view)
+                except media_fetch.MediaFetchError as exc:
+                    raise _VideoAssetError(str(exc), param=param) from exc
+                return data, Path(file_info["filename"]).name
+        except TransportFailure as error:
+            # A transport failure of this read has always reached the callers as the client's own error (a media
+            # job records its type name), so the original error is raised again, not the adapter's typed failure.
+            raise error.__cause__ from None
 
 
 def _asset_reference_video_id(value: Any) -> str | None:
@@ -10169,31 +10191,28 @@ async def _upload_video_workflow_assets(
     assets: Mapping[str, tuple[bytes, str, str]],
     auth_context: AuthContext | None,
 ) -> tuple[dict[str, Any], Response | None]:
-    """Upload resolved assets to ComfyUI's input dir; return the body with filenames."""
+    """Upload resolved assets to the graph engine's input dir; return the body with filenames."""
     updated = dict(body)
     extensions = dict(updated.get("extensions") or {})
     block = dict(extensions.get(WORKFLOW_EXTENSION_NAMESPACE) or {})
     headers = configured_downstream_headers(auth_context, "comfyui")
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
+            graph = _graph(client, "videos")
             for name, (data, filename, mime) in assets.items():
-                resp = await client.post(
-                    f"{COMFY_HOST}/upload/image",
-                    headers=headers,
-                    files={"image": (filename, data, mime)},
-                )
-                uploaded = resp.json().get("name") if resp.status_code == 200 else None
+                resp = await graph.upload({"image": (filename, data, mime)}, headers=headers)
+                uploaded = resp.json().get("name") if resp.status == 200 else None
                 if not uploaded:
                     return updated, Response(
                         content=json.dumps({"error": {
-                            "message": f"ComfyUI upload failed for {name}: {resp.text[:200]}",
+                            "message": f"{_graph_adapter('videos').label} upload failed for {name}: {_graph_reply_text(resp)[:200]}",
                             "type": "api_error",
                         }}),
                         status_code=502,
                         media_type="application/json",
                     )
                 block[name] = str(uploaded)
-    except httpx.HTTPError as exc:
+    except TransportFailure as exc:
         return updated, Response(
             content=json.dumps({"error": {"message": f"Asset upload failed: {exc}", "type": "api_error"}}),
             status_code=502,
@@ -10241,17 +10260,16 @@ async def _submit_video_graph(
             if admission is not None:
                 return admission
             # client_id routes ws events for this submission to our listener.
-            resp = await client.post(
-                f"{COMFY_HOST}/prompt",
-                headers=headers,
-                json=_build_graph_submit_payload(workflow, client_id=COMFY_CLIENT_ID),
+            resp = await _graph(client, "videos").submit(
+                _build_graph_submit_payload(workflow, client_id=COMFY_CLIENT_ID), headers=headers,
             )
-            if resp.status_code != 200:
+            if resp.status != 200:
                 # Do NOT record _video_progress here: no prompt_id means there
                 # is nothing to reconcile against, and a partial entry would
                 # leak as a stale "running" job. Surface the error instead.
                 return Response(
-                    content=json.dumps({"error": {"message": f"ComfyUI error: {resp.text[:500]}", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": f"{_graph_adapter('videos').label} error: {resp.text[:500]}",
+                                                  "type": "api_error"}}),
                     status_code=502,
                     media_type="application/json"
                 )
@@ -10430,13 +10448,9 @@ async def _submit_video_graph(
                 headers=response_headers,
             )
 
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
     except Exception as e:
+        if isinstance(e, TransportFailure) and e.kind == "unreachable":
+            return _graph_video_unavailable_response()
         return Response(
             content=json.dumps({"error": {"message": f"Video submit error: {str(e)}", "type": "api_error"}}),
             status_code=502,
@@ -10932,16 +10946,12 @@ async def proxy_graph_video_create(
                 media_type="application/json"
             )
 
-        # Upload to ComfyUI's input cache (same endpoint /upload/image used by image-edit).
+        # Upload to the engine's input cache (same upload used by image-edit).
         upload_headers = configured_downstream_headers(auth_context, "comfyui")
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10)) as upload_client:
                 files = {"image": (image_filename, image_bytes, "image/png")}
-                upload_resp = await upload_client.post(
-                    f"{COMFY_HOST}/upload/image",
-                    headers=upload_headers,
-                    files=files,
-                )
+                upload_resp = await _graph(upload_client, "videos").upload(files, headers=upload_headers)
         except Exception as e:
             return Response(
                 content=json.dumps({
@@ -10950,11 +10960,11 @@ async def proxy_graph_video_create(
                 status_code=502,
                 media_type="application/json"
             )
-        if upload_resp.status_code != 200:
+        if upload_resp.status != 200:
             return Response(
                 content=json.dumps({
                     "error": {
-                        "message": f"ComfyUI image upload failed: {upload_resp.text[:300]}",
+                        "message": f"{_graph_adapter('videos').label} image upload failed: {upload_resp.text[:300]}",
                         "type": "api_error",
                     }
                 }),
@@ -10968,7 +10978,7 @@ async def proxy_graph_video_create(
         if not uploaded_filename:
             return Response(
                 content=json.dumps({
-                    "error": {"message": "ComfyUI did not return uploaded filename", "type": "api_error"}
+                    "error": {"message": f"{_graph_adapter('videos').label} did not return uploaded filename", "type": "api_error"}
                 }),
                 status_code=502,
                 media_type="application/json"
@@ -11264,17 +11274,17 @@ def _parse_chain_shots(body: Mapping[str, Any], *, default_seconds: float, min_s
 
 
 async def _upload_graph_input(data: bytes, filename: str, mime: str, auth_context: AuthContext) -> str:
-    """Upload bytes to ComfyUI's input dir. Return the stored file name."""
+    """Upload bytes to the graph engine's input dir. Return the stored file name."""
     headers = configured_downstream_headers(auth_context, "comfyui")
+    engine = _graph_adapter("videos").label
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
-            resp = await client.post(f"{COMFY_HOST}/upload/image", headers=headers,
-                                     files={"image": (filename, data, mime)})
-    except httpx.HTTPError as exc:
-        raise _VideoAssetError(f"ComfyUI upload failed: {exc}", status=502) from exc
-    name = resp.json().get("name") if resp.status_code == 200 else None
+            resp = await _graph(client, "videos").upload({"image": (filename, data, mime)}, headers=headers)
+    except TransportFailure as exc:
+        raise _VideoAssetError(f"{engine} upload failed: {exc}", status=502) from exc
+    name = resp.json().get("name") if resp.status == 200 else None
     if not name:
-        raise _VideoAssetError(f"ComfyUI upload failed: {resp.text[:200]}", status=502)
+        raise _VideoAssetError(f"{engine} upload failed: {_graph_reply_text(resp)[:200]}", status=502)
     return str(name)
 
 
@@ -11620,20 +11630,16 @@ async def proxy_graph_video_status(video_id: str, auth_context: AuthContext) -> 
             if sora_status == "failed":
                 payload["error"] = _chain_failure_error(
                     _video_job_records.get(prompt_id), job,
-                    _graph_error_message(job) or "ComfyUI execution_error",
+                    _graph_error_message(job) or f"{_graph_adapter('videos').label} execution_error",
                 )
             return Response(
                 content=json.dumps(payload),
                 status_code=200,
                 media_type="application/json"
             )
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
     except Exception as e:
+        if isinstance(e, TransportFailure) and e.kind == "unreachable":
+            return _graph_video_unavailable_response()
         return Response(
             content=json.dumps({"error": {"message": f"Video status error: {str(e)}", "type": "api_error"}}),
             status_code=502,
@@ -11732,10 +11738,11 @@ async def proxy_graph_video_content(
             params = {"filename": file_info["filename"], "type": file_info["type"]}
             if file_info["subfolder"]:
                 params["subfolder"] = file_info["subfolder"]
-            view_resp = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
-            if view_resp.status_code != 200:
+            view_resp = await _graph(client, "videos").view(params, headers=headers)
+            if view_resp.status != 200:
                 return Response(
-                    content=json.dumps({"error": {"message": f"ComfyUI /view error: {view_resp.status_code}", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": f"{_graph_adapter('videos').label} /view error: {view_resp.status}",
+                                                  "type": "api_error"}}),
                     status_code=502,
                     media_type="application/json"
                 )
@@ -11748,7 +11755,7 @@ async def proxy_graph_video_content(
                 ".mkv": "video/x-matroska",
             }.get(ext, "application/octet-stream")
 
-            video_bytes = view_resp.content
+            video_bytes = view_resp.raw
             record = _video_job_records.get(prompt_id) or {}
             person_id = record.get("person_id")
             saved_prompt_id = str(record.get("asset_id") or f"video_{prompt_id}")
@@ -11820,13 +11827,9 @@ async def proxy_graph_video_content(
                     "Content-Disposition": f'inline; filename="{file_info["filename"]}"',
                 },
             )
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
     except Exception as e:
+        if isinstance(e, TransportFailure) and e.kind == "unreachable":
+            return _graph_video_unavailable_response()
         return Response(
             content=json.dumps({"error": {"message": f"Video content error: {str(e)}", "type": "api_error"}}),
             status_code=502,
@@ -11978,7 +11981,7 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
                             if fresh is not None:
                                 entry["completed_at"] = fresh.get("completed_at")
                     if status == "failed":
-                        entry["error"] = _graph_error_message(job) or "ComfyUI execution_error"
+                        entry["error"] = _graph_error_message(job) or f"{_graph_adapter('videos').label} execution_error"
                 else:
                     live = _video_progress_snapshot(prompt_id)
                     if live and live.get("status") in ("queued", "running"):
@@ -11991,12 +11994,10 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
                 entry["status"] = status
                 entry["progress"] = progress
                 data.append(entry)
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
+    except TransportFailure as e:
+        if e.kind != "unreachable":
+            raise
+        return _graph_video_unavailable_response()
 
     return Response(
         content=json.dumps({
@@ -12085,10 +12086,7 @@ async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> 
 
             if current_status in ("queued", "running"):
                 try:
-                    cancel_resp = await client.post(
-                        f"{COMFY_HOST}/api/jobs/{prompt_id}/cancel",
-                        headers=headers,
-                    )
+                    cancel_resp = await _graph(client, "videos").cancel(prompt_id, headers=headers)
                 except Exception as e:
                     return Response(
                         content=json.dumps({"error": {
@@ -12099,10 +12097,10 @@ async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> 
                         status_code=409,
                         media_type="application/json",
                     )
-                if cancel_resp.status_code != 200:
+                if cancel_resp.status != 200:
                     return Response(
                         content=json.dumps({"error": {
-                            "message": f"ComfyUI cancel request failed: HTTP {cancel_resp.status_code}",
+                            "message": f"{_graph_adapter('videos').label} cancel request failed: HTTP {cancel_resp.status}",
                             "type": "api_error",
                             "code": "video_cancel_failed",
                         }}),
@@ -12121,16 +12119,12 @@ async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> 
             # we just cancelled while still queued has no history entry to
             # drop; the delete call is simply a no-op for it.
             try:
-                await client.post(f"{COMFY_HOST}/history", headers=headers, json={"delete": [prompt_id]})
+                await _graph(client, "videos").delete_history([prompt_id], headers=headers)
             except Exception:
                 pass
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
     except Exception as e:
+        if isinstance(e, TransportFailure) and e.kind == "unreachable":
+            return _graph_video_unavailable_response()
         return Response(
             content=json.dumps({"error": {"message": f"Video delete error: {str(e)}", "type": "api_error"}}),
             status_code=502,
