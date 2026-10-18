@@ -383,3 +383,20 @@ def test_embedding_dimension_rejection_retains_request_id(engine):
     response = engine.client.post('/v1/embeddings', json={'model':'prism-embed','input':'hi','dimensions':100})
     assert response.status_code == 400
     assert response.headers.get('x-request-id')
+
+
+@pytest.mark.parametrize('change', ['paid', 'provider', 'address', 'placement'])
+def test_dispatch_refuses_hand_edited_paid_or_remote_record(engine, change):
+    from gateway.engine_protocol.errors import ProtocolError
+    if change == 'paid':
+        engine.record['config']['paid_remote'] = True
+    elif change == 'provider':
+        engine.record['config']['provider_type'] = 'remote'
+    elif change == 'placement':
+        engine.record['config']['placement'] = 'remote'
+    else:
+        engine.record['config']['connection']['address'] = 'https://provider.invalid'
+    with pytest.raises(ProtocolError) as raised:
+        dispatch.resolve(engine.registry, 'prism-chat', 'chat')
+    assert raised.value.code == 'protocol_dispatch_refused'
+    assert not engine.fake.requests
