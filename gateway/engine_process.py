@@ -64,6 +64,18 @@ def _may_signal_group(pid: Any) -> bool:
     return isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and pid not in {os.getpid(), os.getpgrp()}
 
 
+def _idle_stop_s(svc: Mapping[str, Any]) -> float | None:
+    """Seconds of idleness before the gateway stops the engine; 0 for never; None if invalid."""
+    from gateway.engine_contract_view import residency_config
+
+    value = residency_config(svc).get("idle_stop_s")
+    if value is None:
+        return 0.0
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value < float("inf"):
+        return None
+    return float(value)
+
+
 def _configuration(service: Mapping[str, Any]) -> Mapping[str, Any]:
     from gateway.engine_contract_view import process_config
 
@@ -326,6 +338,8 @@ class ProcessDriver:
             raise ValueError("process port must match connection address")
         if not isinstance(observations_config(svc).get("process_ready"), Mapping):
             raise ValueError("process_ready observation is required for owned process readiness")
+        if _idle_stop_s(svc) is None:
+            raise ValueError("residency.idle_stop_s must be a non-negative number")
         return cfg, argv, port
 
     async def _ready(self, svc: Mapping[str, Any], timeout_s: float, ident: str | None = None) -> bool:
@@ -515,11 +529,14 @@ class ProcessDriver:
     def _schedule_idle(self, ident: str, svc: Mapping[str, Any]) -> None:
         from gateway.engine_contract_view import residency_config
 
-        residency = residency_config(svc)
-        if residency.get("idle_owner") != "gateway":
+        # Called from request release hooks, possibly outside the event loop.
+        # A bad value or a missing loop means no idle stop, never an exception.
+        delay = _idle_stop_s(svc)
+        if residency_config(svc).get("idle_owner") != "gateway" or not delay:
             return
-        delay = float(residency.get("idle_stop_s") or 0)
-        if delay <= 0:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
             return
         old = self._idle_tasks.pop(ident, None)
         if old and old is not asyncio.current_task():
@@ -533,7 +550,7 @@ class ProcessDriver:
                 if self._active.get(ident, 0) == 0 and time.monotonic() - self._last_use[ident] >= delay:
                     await self._stop_async(svc, reset_budget=True)
 
-        self._idle_tasks[ident] = asyncio.create_task(idle_stop())
+        self._idle_tasks[ident] = loop.create_task(idle_stop())
 
 
 def _operator_allows_commands() -> bool:

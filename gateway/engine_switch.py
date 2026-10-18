@@ -24,20 +24,19 @@ def _value(result: Any) -> Any:
 
 
 class SwitchLease:
-    """Keep selection locked until the response has finished or been closed."""
+    """Count one request on the scope until its response has finished or been closed.
 
-    def __init__(self, lock: asyncio.Lock, serving: ServingLease) -> None:
-        self._lock = lock
+    The scope is exclusive only while the selection changes. A lease is shared:
+    other requests for the same verified selection run beside it, and a switch
+    to another offering waits for every lease to drain.
+    """
+
+    def __init__(self, serving: ServingLease) -> None:
         self._serving = serving
-        self._released = False
         self.handed_off = False
 
     def release(self) -> None:
-        if self._released:
-            return
-        self._released = True
         self._serving.release()
-        self._lock.release()
 
     def hand_off(self, stream: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
         self.handed_off = True
@@ -52,6 +51,23 @@ class SwitchLease:
         wrapped = owned()
         weakref.finalize(wrapped, self.release)
         return wrapped
+
+
+def _identity(offering: Mapping[str, Any]) -> Any:
+    return offering.get("upstream") or offering.get("id")
+
+
+def _replace_value(value: Any, old: str, new: str) -> tuple[Any, int]:
+    """Copy ``value`` with every string equal to ``old`` replaced; count the replacements."""
+    if isinstance(value, str):
+        return (new, 1) if value == old else (value, 0)
+    if isinstance(value, Mapping):
+        items = {key: _replace_value(item, old, new) for key, item in value.items()}
+        return {key: item for key, (item, _) in items.items()}, sum(count for _, count in items.values())
+    if isinstance(value, list):
+        items = [_replace_value(item, old, new) for item in value]
+        return [item for item, _ in items], sum(count for _, count in items)
+    return value, 0
 
 
 class SwitchController:
@@ -105,45 +121,83 @@ class SwitchController:
             if on_acquired is not None:
                 on_acquired()
                 activity_started = True
+            previous = _value(await self._observe(observation))
+            declared = service.get("observations") or {}
+            ready_name = spec.get("observe_ready") or ("offering_ready" if "offering_ready" in declared else None)
+            if previous == selected_identity and (
+                not ready_name or _value(await self._observe(str(ready_name))) is True
+            ):
+                # Already selected and verified: admit beside the requests in flight.
+                if prepare is not None and not await prepare():
+                    raise SwitchUnavailable("residency could not be prepared")
+                handed_off = True
+                return SwitchLease(self._drain.lease(scope, on_release=on_release))
             drain_timeout = max(0.01, float(spec.get("drain_timeout_s", 30)))
             await self._drain.clear_for_swap(scope, SwapDrainSettings(enabled=True, timeout_s=drain_timeout))
-            previous = _value(await self._observe(observation))
             try:
                 if prepare is not None and not await prepare():
                     raise SwitchUnavailable("residency could not be prepared")
                 await self._invoke(op, args)
                 selected = _value(await self._observe(observation))
-                declared = service.get("observations") or {}
-                ready_name = spec.get("observe_ready") or ("offering_ready" if "offering_ready" in declared else None)
                 ready = True if not ready_name else _value(await self._observe(str(ready_name))) is True
                 if selected != selected_identity or not ready:
                     raise SwitchUnavailable("selection could not be verified")
-            except BaseException as exc:
-                if spec.get("on_failure", "fail") == "restore" and isinstance(previous, str):
-                    restore_args = {
-                        key: previous if value == selected_identity else value for key, value in args.items()
-                    }
-                    try:
-                        from gateway.lifecycle_drivers import _finish_even_if_cancelled
-
-                        await _finish_even_if_cancelled(self._restore(op, restore_args, observation, previous))
-                    except asyncio.CancelledError:
-                        raise
-                    except BaseException as recovery_exc:
-                        raise SwitchUnavailable("selection failed and restore failed") from recovery_exc
-                if isinstance(exc, asyncio.CancelledError):
-                    raise
-                raise SwitchUnavailable("selection failed or is unknown") from exc
-            lease = SwitchLease(lock, self._drain.lease(scope, on_release=on_release))
+            except (asyncio.CancelledError, Exception) as exc:
+                await self._fail(service, spec, op, args, observation, previous, selected_identity, exc)
             handed_off = True
-            return lease
+            return SwitchLease(self._drain.lease(scope, on_release=on_release))
         except SwapDeferred as exc:
             raise SwitchUnavailable(str(exc)) from exc
         finally:
-            if not handed_off:
-                if activity_started and on_release is not None:
+            try:
+                if not handed_off and activity_started and on_release is not None:
                     on_release()
+            finally:
                 lock.release()
+
+    async def _fail(
+        self, service: Mapping[str, Any], spec: Mapping[str, Any], op: str, args: Mapping[str, Any],
+        observation: str, previous: Any, selected_identity: Any, exc: BaseException,
+    ) -> None:
+        """Restore or fail closed after a failed switch. Always raises; cancellation stays cancellation."""
+        cancelled = isinstance(exc, asyncio.CancelledError)
+        if spec.get("on_failure", "fail") == "restore":
+            recorded = self._previous_selection(service, op, args, previous, selected_identity)
+            if recorded is None:
+                if cancelled:
+                    raise exc
+                raise SwitchUnavailable("selection unknown") from exc
+            try:
+                from gateway.lifecycle_drivers import _finish_even_if_cancelled
+
+                await _finish_even_if_cancelled(self._restore(*recorded, observation, previous))
+            except asyncio.CancelledError:
+                raise
+            except Exception as recovery_exc:
+                if cancelled:
+                    raise exc
+                raise SwitchUnavailable("selection failed and restore failed") from recovery_exc
+        if cancelled:
+            raise exc
+        raise SwitchUnavailable("selection failed or is unknown") from exc
+
+    @staticmethod
+    def _previous_selection(
+        service: Mapping[str, Any], op: str, args: Mapping[str, Any], previous: Any, selected_identity: Any,
+    ) -> tuple[str, Mapping[str, Any]] | None:
+        """The whole call that re-applies ``previous``, or None when it is not known."""
+        if not isinstance(previous, str):
+            return None
+        for row in service.get("offerings") or []:
+            if not isinstance(row, Mapping) or _identity(row) != previous:
+                continue
+            selection = row.get("selection")
+            recorded = selection.get("switch") if isinstance(selection, Mapping) else None
+            if (isinstance(recorded, Mapping) and selection.get("mode") == "switch"
+                    and isinstance(recorded.get("call"), str) and isinstance(recorded.get("args"), Mapping)):
+                return recorded["call"], recorded["args"]
+        rewritten, count = _replace_value(args, str(selected_identity), previous)
+        return (op, rewritten) if count else None
 
     async def _restore(self, op: str, args: Mapping[str, Any], observation: str, previous: str) -> None:
         await self._invoke(op, args)
