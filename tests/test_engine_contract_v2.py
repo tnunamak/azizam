@@ -71,6 +71,34 @@ def test_v2_view_accepts_all_legacy_sources(source: str) -> None:
     assert view["offerings"][0]["tasks"][0]["evidence"] == "declared"
 
 
+def test_v2_view_maps_systemd_profile_and_legacy_resources() -> None:
+    record = _service()
+    lifecycle = {"driver": "systemd", "driver_config": {
+        "unit": "example.service", "scope": "user", "dropin": "/synthetic/dropin.conf"}}
+    record["lifecycle"] = copy.deepcopy(lifecycle)
+    record["config"]["lifecycle"] = copy.deepcopy(lifecycle)
+    record["config"]["resources"] = {"gpu": {"devices": [0]}}
+    view = service_registry.service_record_v2(record)
+    assert view["process"]["driver"] == "command"
+    assert view["process"]["start"] == ["systemctl", "--user", "start", "example.service"]
+    assert view["process"]["profile_apply"]["kind"] == "write_env_file_then_restart"
+    assert view["resources"] == {"gpu": {"devices": [0]}}
+
+
+@pytest.mark.parametrize("driver,expected", [("docker", "command"), ("http-load-unload", "none"), ("future-driver", "none")])
+def test_v2_view_never_promotes_legacy_driver_or_shell_string(driver: str, expected: str) -> None:
+    record = _service()
+    lifecycle = {"driver": driver, "driver_config": {"start": "unsafe shell string"}}
+    record["lifecycle"] = copy.deepcopy(lifecycle)
+    record["config"]["lifecycle"] = copy.deepcopy(lifecycle)
+    view = service_registry.service_record_v2(record)
+    assert view["process"]["driver"] == expected
+    assert "start" not in view["process"]
+    assert view["process"]["needs_owner_conversion"] is True
+    if driver == "http-load-unload":
+        assert view["residency"]["needs_owner_conversion"] is True
+
+
 def test_engine_admin_exposes_v2_beside_existing_fields_and_uses_record_permission(tmp_path: Path) -> None:
     record = _service()
     record["config"]["gateway_lifecycle"] = True
