@@ -375,6 +375,14 @@ def test_non_owner_cannot_change_executable_control_recipe(tmp_path):
             store._settle_credential_bindings(changed, actor)
 
 
+def test_control_operation_refuses_nested_absolute_path():
+    service = {"connection": {"address": "http://fixture.test:18091"},
+               "protocol_operations": {"load": {"method": "POST", "path": "/load"}}}
+    runtime = EngineControlRuntime(service, drain=SwapDrain(), lock_for=lambda _scope: asyncio.Lock())
+    with pytest.raises(ValueError, match="allowlisted"):
+        run(runtime.invoke("load", {"options": {"model_path": "/etc/passwd"}}))
+
+
 def test_observations_are_unknown_without_probe_and_inventory_is_not_residency():
     reader = ObservationReader()
     assert run(reader.read({"connection": {"address": "http://127.0.0.1:1"}}, "resident")).known is False
