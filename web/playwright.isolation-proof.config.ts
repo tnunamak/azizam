@@ -12,7 +12,7 @@ export default defineConfig({
   // their own files at project level, which would override the proof's
   // testMatch: they run no proof case.
   projects: base.projects?.map((project) =>
-    ["chromium-global-state-2", "chromium-first-run", "chromium-people"].includes(project.name)
+    ["chromium-global-state-2", "chromium-first-run", "chromium-people"].includes(project.name ?? "")
       ? { ...project, testMatch: "no-test-runs-here.never" }
       : project,
   ),
