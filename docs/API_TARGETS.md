@@ -83,6 +83,12 @@ passthrough itself is reserved for the deeper
 use a key whose App access plan allows the `provider-native` protocol, enables
 `native_passthrough`, and permits the requested provider and operation.
 
+Engine-native access for a configured engine is separate. It uses
+`/native/{engine_id}/{native_path}` and the engine's own `native.allow` rules
+(see [ENGINE_CONTRACT.md section 6](design/ENGINE_CONTRACT.md#6-native-pass-through-f4)).
+Generation follows the App's access plan. Control calls (load, settings,
+restart, file paths) need owner authority.
+
 ## Backend Adapter Targets
 
 | Priority | Backend API | Adapter Role |
@@ -198,7 +204,8 @@ Media and multimodal work should expose three layers:
    backend-specific controls such as ComfyUI graph/queue operations, A1111
    script args, ElevenLabs voice settings, or backend-specific audio/music
    parameters. These routes require `provider-native` protocol access and
-   policy-enabled native passthrough.
+   policy-enabled native passthrough. Engine-native controls under
+   `/native/{engine_id}/...` need owner authority, not an App key.
 
 3. Generic workflow/job layer.
    Durable jobs for video, music, sound effects, long-running image workflows, upscaling batches, and hosted queue-style media APIs.

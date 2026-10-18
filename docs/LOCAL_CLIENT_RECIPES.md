@@ -36,8 +36,9 @@ and run snippets with `.venv/bin/python`. Node recipes require Node.js and
 `npm install openai` in the client project; run the shown imports in an ES module.
 `AZIZAM_BASE_URL` is the gateway root without a trailing slash.
 
-Chat examples assume you registered `my-llama` as in the [README](../README.md),
-or set `AZIZAM_MODEL` to a chat model visible in `/v1/models`. Media examples
+Chat examples read the model name from `AZIZAM_MODEL`. Set it to the public
+name you gave the engine (see the [README](../README.md)), or to any chat model
+visible in `/v1/models`. Media examples
 require their named workflows, engines, and input files. For remix and character
 replacement, set `AZIZAM_VIDEO_ID` or `AZIZAM_SOURCE_VIDEO_ID` to a completed
 video owned by your key. Replace shell asset/video/request ID placeholders
@@ -97,7 +98,8 @@ Per-client recipes follow in this document.
 Concrete engine ids, model ids, timings, GPU names, and systemd unit names in
 this file describe one example deployment. A fresh install exposes the
 capabilities and model names that the operator registered; the README's
-`my-llama` chat alias is the default example used for new client snippets.
+`my-llama` chat alias is only an example name. Client snippets read `AZIZAM_MODEL`
+and do not assume that name.
 
 ## Live Surfaces Today
 
@@ -925,7 +927,10 @@ Provider-native discovery lives at `/gateway/v1/providers` and
 `/gateway/v1/providers/{provider}`; results are projected through the caller's
 App access plan policy. Raw provider-native passthrough, when enabled for a key, is
 reserved for `/gateway/v1/providers/{provider}/{path...}`. It is not exposed by
-root paths. Passthrough preserves
+root paths. Engine-native access for a configured engine uses
+`/native/{engine_id}/{path}`, governed by that engine's allow rules. Generation
+follows the App's access plan. Control calls (load, settings, restart, file
+paths) need owner authority, which generation access never implies. Passthrough preserves
 streamed response bodies such as SSE, NDJSON, and generated media rather than
 buffering the whole upstream response first.
 
@@ -947,8 +952,9 @@ discovering the provider id and confirming the App access plan allows
 Auth semantics are also uniform. `/health`, `/.well-known/azizam`,
 `/.well-known/skills`, `/llms.txt`, `/docs`, and `/openapi.json` are public
 discovery. Protocol frontends, gateway-native
-runtime APIs, and provider-native passthrough require
-`Authorization: Bearer $AZIZAM_API_KEY`. Some SDKs name that field
+runtime APIs, and provider-native passthrough generation require
+`Authorization: Bearer $AZIZAM_API_KEY`. Native control calls need owner authority
+instead; an App key does not grant them. Some SDKs name that field
 `api_key`, `apiKey`, or `x-api-key`; the value is still the gateway `opk_...`
 token, not an upstream OpenAI, Anthropic, or Ollama credential.
 
@@ -1092,8 +1098,11 @@ the gateway does not pull, push, create, copy, or delete local model files.
 
 ```text
 Base URL:  http://127.0.0.1:5000/openai/v1
-API Key:   $AZIZAM_API_KEY
+API Key:   your opk_... App key (paste the value; do not type $AZIZAM_API_KEY)
 ```
+
+For other network layouts, such as Open WebUI in a container or on another
+device, see [Connect an engine by where it runs](FIRST_RUN_SETUP.md#connect-an-engine-by-where-it-runs).
 
 Then refresh models; Open WebUI will call the configured models endpoint and
 populate the selector with whatever aliases and backend models the proxy
@@ -1364,7 +1373,7 @@ from openai import OpenAI
 
 base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
 client = OpenAI(base_url=f"{base_url}/v1", api_key=os.environ["AZIZAM_API_KEY"])
-model = os.environ.get("AZIZAM_MODEL", "my-llama")
+model = os.environ["AZIZAM_MODEL"]
 
 first = client.responses.create(model=model, input="Remember the word mango.")
 second = client.responses.create(
@@ -1417,7 +1426,7 @@ import os
 from openai import OpenAI
 
 base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
-model = os.environ.get("AZIZAM_MODEL", "my-llama")
+model = os.environ["AZIZAM_MODEL"]
 
 client = OpenAI(
     base_url=f"{base_url}/openai/v1",
@@ -1442,7 +1451,7 @@ const client = new OpenAI({
   apiKey: process.env.AZIZAM_API_KEY,
 });
 
-const model = process.env.AZIZAM_MODEL ?? "my-llama";
+const model = process.env.AZIZAM_MODEL;
 const r = await client.chat.completions.create({
   model,
   messages: [{ role: "user", content: "ping" }],
@@ -1455,7 +1464,7 @@ Smoke test (no SDK):
 ```bash
 export AZIZAM_API_KEY='opk_...'
 AZIZAM_BASE_URL="${AZIZAM_BASE_URL:-http://127.0.0.1:5000}"
-AZIZAM_MODEL="${AZIZAM_MODEL:-my-llama}"
+AZIZAM_MODEL="${AZIZAM_MODEL:?set AZIZAM_MODEL to a public model name}"
 curl -s "$AZIZAM_BASE_URL/openai/v1/chat/completions" \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
@@ -1470,7 +1479,7 @@ import os
 from openai import OpenAI
 
 base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
-model = os.environ.get("AZIZAM_MODEL", "my-llama")
+model = os.environ["AZIZAM_MODEL"]
 client = OpenAI(
     base_url=f"{base_url}/openai/v1",
     api_key=os.environ["AZIZAM_API_KEY"],
@@ -1649,7 +1658,10 @@ an exact model or settings. Unknown names pass through unchanged.
 | | `sfx` | `sa3-small-sfx` | |
 
 TTS and STT aliases resolve through **engines**: each tier lists engines in
-order and the first one whose service is deployed wins. Engine ids
+order and the first one whose service is deployed wins. For speech with a named
+voice, the first deployed engine that accepts that voice wins. Fallback happens
+only among engines that accept the voice. If none accepts it, the gateway
+returns `400 voice_not_available`. Engine ids
 (`chatterbox`, `omnivoice`, `supertonic`, `kokoro`, `parakeet-gpu`, `parakeet`, `nemotron-streaming`,
 `canary`, `nemotron-diarize`) are valid `model` values too; an engine that is not deployed (or is
 disabled in the service registry, like `chatterbox` since 2026-10-08) returns

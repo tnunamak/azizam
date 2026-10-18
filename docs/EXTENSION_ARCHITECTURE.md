@@ -354,7 +354,9 @@ Current admin API:
 - `GET /admin/api/extensions`
 - `POST /admin/api/extensions/validate`
 - `POST /admin/api/extensions/enable`
-- `DELETE /admin/api/extensions/{package_id}?mode=remove|disable`
+- `DELETE /admin/api/extensions/{package_id}?mode=remove|disable` removes or
+  disables the package with its installed records. See
+  [KNOWN_WORK item 6](KNOWN_WORK.md#6-finish-extension-package-disableremoval-semantics).
 
 Validation returns package metadata, object counts, normalized candidate
 records, warnings, and errors without mutating state. Enable writes the service
@@ -363,13 +365,20 @@ packages under `data/extensions/installed`. Imported records carry package
 provenance: package id, version, hash, source summary, and resolved commit when
 available.
 
-The package index keeps a SHA-256 digest of each normalized record a package
-installed, with the record's kind and id, and never a copy of the record. A
-record can carry a command or environment secret, and the index is returned by
-the list, enable and remove routes. A stored index written before this change
-is digested once at startup (`installed_records_version: 2` marks the new form).
-A row still matches its install when its digest, its provenance hash and its
-provenance version all match the package; any other row is detached.
+The package index keeps a keyed digest (`mac`, an HMAC-SHA-256 under a key
+derived from the gateway's own key file) of each normalized record a package
+installed, with the record's kind and id, and never a copy of the record. The
+digest is of the record in the form the registry stores it: with secret
+references and not secrets (decision D26), so a record with a short secret has
+no bare hash an offline guess can test. A record can carry a command or
+environment secret, and the index is returned by the list, enable and remove
+routes. A stored index written before the digests is digested once at startup,
+and the schema 11 migration that moves secrets into the store makes every proof
+again (`installed_records_version: 3`): a record that still matched its old
+proof gets the keyed proof of its new form, one an operator had changed gets a
+proof that matches nothing, so removal still detaches it. Removing a package
+deletes the secrets of the records and the source it removed.
+A row still matches its install when its digest, its provenance version all match the package; any other row is detached.
 
 Remove and disable change a package in one write transaction with the registry,
 the index and their audit facts. Remove refuses, with `409

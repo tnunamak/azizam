@@ -12,6 +12,7 @@ import type { EngineView } from "@/lib/engines-api";
  */
 export function StoredRecordSection({ view }: { view: EngineView }) {
   const otherSettings = Object.entries(view.other_settings ?? {});
+  const hiddenSettings = view.hidden_settings ?? 0;
   return (
     <details className="bg-card rounded-panel border">
       <summary className="text-heading flex min-h-12 cursor-pointer items-center px-4 py-3">Technical details</summary>
@@ -46,6 +47,12 @@ export function StoredRecordSection({ view }: { view: EngineView }) {
               ))}
             </dl>
           </div>
+        )}
+        {hiddenSettings > 0 && (
+          <p className="text-meta text-muted-foreground">
+            {hiddenSettings} {hiddenSettings === 1 ? "setting is" : "settings are"} kept but not shown: Azizam does not know what{" "}
+            {hiddenSettings === 1 ? "it holds" : "they hold"}.
+          </p>
         )}
       </section>
     </details>

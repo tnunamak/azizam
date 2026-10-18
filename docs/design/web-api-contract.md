@@ -844,16 +844,20 @@ value is `412 generation_mismatch`; a request without the header uses the curren
 generation.
 
 `200` → `{ "extension_package": { … } | null, "extension_packages": { … }, "service_registry": { … }, "operator_settings_generation": N, "affected_records": [ { "kind", "id", "action" } ] }`,
-with `ETag: "os-N"` and `Cache-Control: no-store`. `service_registry` is the redacted
-projection enable returns: command and environment values are hidden in every service.
+with `ETag: "os-N"` and `Cache-Control: no-store` (the headers a projected response may carry).
+The whole answer is projected (decision D28): `service_registry` as `GET /operator/service-registry`
+shows it, `extension_package` and `extension_packages` with each source URL in public form beside
+`url_entries` (credentials are configured entries, never values), `review` on enable, and
+`affected_records`.
 
 `404 extension_package_not_found` for an unknown id.
 `409 extension_package_referenced` (`remove` only) when an access plan still names a record the
 package would remove; the message names the plan. `409 extension_package_conflict` when
 reinstalling later finds a record an operator kept.
 
-The `installed_records` in `extension_packages` are digests (`{ "kind", "id", "sha256" }`
-per record) with `installed_records_version: 2`, never record copies.
+The `installed_records` in `extension_packages` are keyed digests (`{ "kind", "id", "mac" }`
+per record; `mac` is `null` for a record an operator had changed before the proofs were made again)
+with `installed_records_version: 3`, never record copies.
 
 ### GET /admin/api/operator/overrides  (media-job-admission section)
 

@@ -5,8 +5,13 @@ An engine record sets ``native_passthrough: true`` to open the lane and lists wh
 the query keys it allows, and a class: ``generate`` is plan-scoped, ``control`` (load, settings, restart,
 file paths) is owner-only and never implied by generation access. A call no entry names is refused. An
 entry that declares no ``query`` keys takes no query string; a key it does not declare is refused, and a
-``generate`` entry refuses a value that looks like a file path. Request and reply bytes are capped
-(``native.max_request_bytes``, ``native.max_response_bytes``).
+``generate`` entry refuses a value that looks like a file path, including one still holding an encoded
+slash, backslash or dot after one decode. Request and reply bytes are capped (``native.max_request_bytes``,
+``native.max_response_bytes``).
+
+``native.unlisted_reads`` says what the older provider route does with a GET or HEAD the list does not
+name: ``allow`` (the default) serves it as a ``generate`` read, ``deny`` refuses it. A GET that changes
+state belongs in the list as a ``control`` entry. ``/native/`` refuses every unlisted call either way.
 
 Paths are matched exactly. An engine whose paths are case-insensitive says so with
 ``native.case_insensitive: true`` and is matched case-folded. For any other engine, a request that
@@ -36,6 +41,7 @@ DEFAULT_MAX_REQUEST_BYTES = 8 * 1024 * 1024
 DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024 * 1024
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 CREDENTIAL_CLASSES = {GENERATE: "inference", CONTROL: "control"}
+UNLISTED_READS = ("allow", "deny")
 
 _QUERY_KEY = re.compile(r"[A-Za-z0-9_.\-\[\]]+")
 _HEADER_TOKEN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
@@ -81,6 +87,7 @@ class NativePolicy:
     max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES
     max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES
     case_insensitive: bool = False
+    unlisted_reads: str = "allow"
 
     def resolve(self, method: str, path: str) -> Resolution:
         """The entry for this call. A control entry wins over a generate entry for the same call."""
@@ -131,6 +138,8 @@ def validate_native_block(block: Any) -> None:
             raise ValueError("native.allow query must be a list of query key names")
     if "case_insensitive" in block and not isinstance(block["case_insensitive"], bool):
         raise ValueError("native.case_insensitive must be true or false")
+    if "unlisted_reads" in block and block["unlisted_reads"] not in UNLISTED_READS:
+        raise ValueError(f"native.unlisted_reads must be one of {list(UNLISTED_READS)}")
     for name in ("max_request_bytes", "max_response_bytes"):
         value = block.get(name)
         if value is not None and (type(value) is not int or value < 1):
@@ -144,12 +153,18 @@ def provider_route_resolution(policy: NativePolicy, method: str, path: str) -> R
     """The entry for a call on the provider route: the record's own, else a default by method.
 
     A call the record's allow list names is classed as the list says. Any other GET or HEAD is a
-    ``generate`` read, and any other method is a ``control`` call, which only the owner may make.
+    ``generate`` read (or refused, when the record sets ``native.unlisted_reads: deny``), and any other
+    method is a ``control`` call, which only the owner may make.
     """
     resolution = policy.resolve(method, path)
     if resolution.entry is not None or resolution.ambiguous:
         return resolution
-    klass = GENERATE if method.upper() in READ_METHODS else CONTROL
+    if method.upper() in READ_METHODS:
+        if policy.unlisted_reads == "deny":
+            return Resolution()
+        klass = GENERATE
+    else:
+        klass = CONTROL
     return Resolution(AllowEntry(method.upper(), path, klass, any_query=True))
 
 
@@ -170,12 +185,15 @@ def policy_for(record: Mapping[str, Any]) -> NativePolicy:
         max_request_bytes=block.get("max_request_bytes") or DEFAULT_MAX_REQUEST_BYTES,
         max_response_bytes=block.get("max_response_bytes") or DEFAULT_MAX_RESPONSE_BYTES,
         case_insensitive=block.get("case_insensitive") is True,
+        unlisted_reads=block.get("unlisted_reads") or "allow",
     )
 
 
 # --- query strings ---------------------------------------------------------------------------------
 
 _DRIVE = re.compile(r"[A-Za-z]:")
+# A slash, backslash or dot written as an escape in a value that was already decoded once: a second decoder would read a path.
+_STILL_ENCODED = re.compile(r"%(?:2f|5c|2e)", re.IGNORECASE)
 
 
 def _path_like(value: str) -> bool:
@@ -186,6 +204,7 @@ def _path_like(value: str) -> bool:
         or value.startswith("~") or value in {".", ".."}
         or _DRIVE.match(value) is not None
         or value.lower().startswith("file:")
+        or _STILL_ENCODED.search(value) is not None
     )
 
 
@@ -193,11 +212,12 @@ def query_problem(entry: AllowEntry, raw_query: str) -> tuple[str, str] | None:
     """(code, message) when the query string may not go to the engine for this entry, else None.
 
     Only the keys the entry declares pass, each once; a ``generate`` entry also refuses a value that
-    looks like a file path. Keys and values are read after decoding, as the engine will read them.
+    looks like a file path. Keys and values are read after decoding, as the engine will read them. A
+    call the record does not declare (``any_query``) passes any key that is a plain key name.
     """
     seen: set[str] = set()
     for key, value in parse_qsl(raw_query, keep_blank_values=True):
-        if key not in entry.query and not entry.any_query:
+        if key not in entry.query and not (entry.any_query and _QUERY_KEY.fullmatch(key)):
             return "native_query_not_allowed", (
                 f"The query key {key[:48]!r} is not allowed for {entry.method} {entry.path}."
             )

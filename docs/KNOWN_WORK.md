@@ -213,6 +213,113 @@ Completed:
 Primary references: `docs/LITELLM_SUBSTRATE_DECISION.md`, `start.sh`,
 `gateway/litellm_substrate.py`.
 
+### 10. First-Run ComfyUI Registration Path
+
+Status: open. Product work; no documentation can close this alone.
+
+A new operator has no verified path to register a first ComfyUI server. The
+README quickstart requires an OpenAI-compatible chat engine and checks
+`/v1/models`, which does not describe ComfyUI. The media section describes
+manifests, `GET /gateway/v1/workflows`, and required engine model files, but
+does not walk through one. The recipes say that concrete workflow and model
+IDs belong to one example deployment (`docs/LOCAL_CLIENT_RECIPES.md`, about
+line 97). A new operator cannot tell from the docs which server kind to pick,
+how to import or bind a graph, how to check checkpoint and custom-node
+dependencies, or how to send a first image.
+
+Evidence: first-run journey audit at 5f9a825 (round r0), section 3 "ComfyUI
+persona" and top change 2. The audit could not read every linked guide, so
+the absence of a path is "not found in the reviewed docs", not proven.
+
+Needed: a supported registration flow for a ComfyUI server; one workflow that
+a fresh install can run, with its dependencies listed; a report that names
+each missing dependency; and a documented first request with its receipt.
+Write the docs after the flow exists.
+
+### 11. Correlate A First App Request With Its Receipt
+
+Status: open. Product work for the correlation; the doc contradictions can be
+fixed first.
+
+The docs disagree about which requests get receipts:
+
+- `docs/PRODUCT_STRATEGY.md:19` promises a receipt for every request.
+- `docs/LITELLM_SUBSTRATE_DECISION.md:40-46` says the gateway records receipts
+  after LiteLLM execution.
+- `docs/LOCAL_CLIENT_RECIPES.md` (about lines 1907-1911) says observational
+  receipts exist only for image generation, edit and variation.
+
+The recipes also ask the reader to "capture request_id (header or response body
+depending on protocol)". They do not name the header or field for a first
+OpenAI SDK or Open WebUI request. The recent-receipts list has no key that ties
+one request to its record. The add-engine "real test" sends a request but saves
+no Activity record, which is easy to confuse with a recorded request.
+
+Evidence: first-run journey audit at 5f9a825 (round r0), section 5 and top
+change 5. Runtime behaviour was not verified in that audit.
+
+Needed: one documented request identifier per protocol, a receipt for each
+chat request (or a route coverage table that matches the code), and a Usage
+path that finds the request just sent.
+
+### 12. Add-Engine Health Endpoint And Model Entry When Discovery Finds Nothing
+
+Status: open. Decide the product behaviour, then document it.
+
+The Add engine dialog has no health-endpoint field. The raw registration API
+accepts `health_endpoint` on a record (`docs/FIRST_RUN_SETUP.md`, headless
+section). The README used to ask for a health endpoint in the dialog. That step
+is removed from the docs now.
+
+When discovery finds no models and the operator does not know the backend's
+exact model ID, the dialog gives no way to look it up. The audit reports that
+a mocked test allows creating an engine with `models: []`
+(`web/src/app/engines/add-engine/add-engine-dialog.spec.tsx:317-321`). Real
+server behaviour for that case was not verified.
+
+Evidence: first-run journey audit at 5f9a825 (round r0), section 3 "Detection
+failures and unknowable identifiers". The audit's HIGH rating is conditional.
+
+Needed: decide whether a generic OpenAI-compatible engine needs a health
+endpoint field in the UI; decide whether an engine with no models may be
+created; and make the UI say what happens next.
+
+### 13. Open WebUI In A Container Cannot Reach The Loopback-Published Gateway
+
+Status: open. The docs now give a workaround (host networking, or a reverse
+proxy). A product path is still missing.
+
+Docker Compose publishes the gateway only on `127.0.0.1:5000`
+(`docker-compose.yml`). A client container that uses
+`host.docker.internal:5000` cannot reach that listener. The docs now tell the
+operator to run Open WebUI with `--network host`, or to use an HTTPS reverse
+proxy. Neither is a supported Azizam setup. There is no documented way to
+attach a client container to the Compose network, and no test covers one.
+
+Evidence: first-run journey audit at 5f9a825 (round r0), section 4, Open WebUI
+topology. Compose and README read as shown in that audit.
+
+Needed: a documented, tested path for a client container, or a deliberate
+decision that only host networking and reverse proxies are supported.
+
+### 14. Confirm Native Control Authority And Config Export Authorization
+
+Status: open. Verify with the backend, then align the docs.
+
+Two points disagree or are unverified:
+
+- `GET /admin/api/config/export` (`proxy.py`, the `admin_config_export`
+  handler) says "Admin-auth required (same guard as all /admin/api/* routes)".
+  `docs/CONFIG_SOURCE_OF_TRUTH.md` and `docs/ops/HEADLESS_ACCESS.md` differ on
+  whether export is owner-only. The docs were not changed for this item.
+- `docs/design/ENGINE_CONTRACT.md` describes an operator frontends report. No
+  `/admin/api/operator/frontends` route was found in `gateway/` or `proxy.py`
+  at 5f9a825.
+
+Evidence: docs-currency audit at 5f9a825 (round r0), "Unsettled conflicts".
+
+Needed: decide the export guard and test it; then align the docs in one change.
+
 ## Deliberately Deferred
 
 These are not MVP blockers unless a real target client or local deployment

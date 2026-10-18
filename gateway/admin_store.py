@@ -47,7 +47,7 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 # Schema 7 replaced profiles with access plans (gateway.access_plan_migration).
 _PRE_ACCESS_PLANS_VERSION = 6
 _ACCESS_PLANS_VERSION = 7
@@ -59,6 +59,8 @@ _CREDENTIAL_ORIGIN_VERSION = 8
 # (gateway.signin_rules_migration).
 _SIGNIN_RULES_VERSION = 9
 _ENGINE_RECORD_V2_VERSION = 10
+# Schema 11 moves every inline secret of a stored record into the encrypted store (gateway.secret_externalize_migration).
+_SECRET_REFS_VERSION = 11
 # The OIDC client secret lives in the encrypted secret store; the
 # oidc_provider_config setting holds only this reference to it.
 OIDC_CLIENT_SECRET_REF = "client_secret_ref"
@@ -458,6 +460,12 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         from gateway import engine_record_v2_migration
 
         engine_record_v2_migration.migrate_registry(conn)
+        if int(row[0]) >= _ACCESS_PLANS_VERSION:
+            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+    if row is not None and int(row[0]) < _SECRET_REFS_VERSION:
+        from gateway import secret_externalize_migration
+
+        secret_externalize_migration.migrate(conn)
         if int(row[0]) >= _ACCESS_PLANS_VERSION:
             conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()

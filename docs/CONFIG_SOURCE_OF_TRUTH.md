@@ -28,7 +28,9 @@ For the operator-facing first-run story this model implies, see
 - **A read-only service-registry export is shipped.** Authenticated
   `GET /admin/api/config/export` serializes the current registry's service
   records and omits ephemeral runtime state. It is an operator download, not an
-  authoritative configuration file or a restore command.
+  authoritative configuration file or a restore command. It is owner-only: it
+  keeps each start command and environment value whole so that it round-trips,
+  while every view an administrator reads hides those values.
 - **Instance presentation is dashboard-owned.** The owner settings API stores
   the instance name, public base URL and default theme in the existing
   `admin.db` operator settings table. Bootstrap branding and public URL values
@@ -90,7 +92,8 @@ Concretely:
    and referenced secret stores. Everything the gateway needs to *start*: the
    listener, TLS, optional explicit session signing keys, trust roots,
    secret references, and on-disk model directories. Never dashboard-writable.
-   Restart to apply. Provisioning bundles never carry secrets.
+   Restart to apply, with `scripts/safe-restart`. Provisioning bundles never
+   carry secrets.
 2. **Dashboard plane** — `admin.db`, edited through the web app (and the
    `/admin/api/*` JSON surface). Runtime access policy: the admin user list,
    role grants, Access plans, Apps, App API keys, role→model bindings, admission caps, throttles,
@@ -142,7 +145,7 @@ Implications:
 
 - The dashboard never writes a value that lives in YAML or env. If an
   operator wants such a value to change, the change path is "edit the file
-  and restart" — surfaced in `change_path` and `apply_mode`.
+  and restart with `scripts/safe-restart`" — surfaced in `change_path` and `apply_mode`.
 - The dashboard writes all non-managed service/provider records regardless of
   `source`; source remains provenance after the one-time seed. The managed
   LiteLLM substrate has the limited fields described above.
@@ -169,7 +172,7 @@ Implications:
 
 The gateway ships a narrow, read-only service-registry export at
 `GET /admin/api/config/export`. It serializes service records for operator
-download and excludes ephemeral runtime state. It does not restore a gateway,
+download (owner only, values whole) and excludes ephemeral runtime state. It does not restore a gateway,
 make the downloaded file authoritative, reconcile it with the dashboard, or
 cover all dashboard-owned settings.
 

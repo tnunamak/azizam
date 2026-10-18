@@ -7,6 +7,7 @@ from contextlib import nullcontext
 import asyncio
 import copy
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -1121,16 +1122,19 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             }
         }
 
-        # Downstream auth is operator data on the service record: the admin key
-        # for model-list paths, the api key otherwise.
+        # The engine's own credential for the call's class is the only key sent (contract section 6): the
+        # record's auth_inject rules and the caller's per-identity downstream secrets are not.
         inject = [
             {"paths": ["/v1/models"], "header": "x-admin-key",
-             "secret": "admin_key", "secret_env": "FIXTURE_ADMIN_KEY"},
-            {"header": "x-api-key", "secret": "api_key", "secret_env": "FIXTURE_API_KEY"},
+             "secret": "admin_key", "secret_env": "FIXTURE_INJECT_KEY"},
+            {"header": "x-api-key", "secret": "api_key", "secret_env": "FIXTURE_INJECT_KEY"},
         ]
+        lane_credential = {"credentials": {"inference": {
+            "secret_env": "FIXTURE_LANE_KEY", "header": "x-lane-key", "origin": proxy.KOBOLD_HOST,
+        }}}
         with authenticated_profile(profile, downstream=downstream), patch.dict(
-            proxy.config["backends"]["kobold"], {"auth_inject": inject},
-        ), patch.object(
+            proxy._PROVIDER_NATIVE_TARGETS["kobold"]["record"], {"auth_inject": inject, "connection": lane_credential},
+        ), patch.dict(os.environ, {"FIXTURE_LANE_KEY": "lane-secret", "FIXTURE_INJECT_KEY": "inject-secret"}), patch.object(
             proxy.httpx,
             "AsyncClient",
             _CaptureNativePassthroughClient,
@@ -1160,8 +1164,12 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             ].items()
         }
         self.assertNotIn("authorization", forwarded_headers)
+        self.assertEqual(forwarded_headers["x-lane-key"], "lane-secret")
+        self.assertNotIn("x-admin-key", forwarded_headers)
         self.assertNotEqual(forwarded_headers.get("x-api-key"), "caller-secret")
-        self.assertEqual(forwarded_headers["x-admin-key"], "kobold-admin-key")
+        self.assertNotIn("kobold-api-key", forwarded_headers.values())
+        self.assertNotIn("kobold-admin-key", forwarded_headers.values())
+        self.assertNotIn("inject-secret", forwarded_headers.values())
         for name in ("x-request-id", "cookie", "x-csrf-token", "x-azizam-internal-forward"):
             self.assertNotIn(name, forwarded_headers)
         self.assertEqual(response.headers["x-native-marker"], "1")
@@ -1170,10 +1178,10 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         """Add engine's Request headers reach the engine on its direct route too (add-engine-spec.md §8)."""
         profile = plan_for("engine-native", caps=(), engines=["garage-gpu"], operations=["v1/models"])
         backend = {"native_passthrough": True, "host": "127.0.0.1", "port": 9, "protocol": "openai-compatible",
-                   "headers": [{"name": "X-Tenant", "value": "family"}]}
+                   "headers": [{"name": "X-Tenant", "value": "family", "public": True}]}
         with patch.dict(proxy.config["backends"], {"garage-gpu": backend}):
             target = proxy._build_provider_native_targets()["garage-gpu"]
-        self.assertEqual(target["headers"], {"X-Tenant": "family"})
+        self.assertEqual(proxy._native_engine_headers(target), {"X-Tenant": "family"})
         with authenticated_profile(profile), patch.dict(proxy.config["backends"], {"garage-gpu": backend}), patch.object(
             proxy, "_PROVIDER_NATIVE_TARGETS", {"garage-gpu": target},
         ), patch.object(proxy.httpx, "AsyncClient", _CaptureNativePassthroughClient), patch.object(
@@ -1302,19 +1310,26 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
     def test_provider_native_comfyui_forwards_generic_backend_path(self) -> None:
         profile = plan_for("comfyui-native", caps=(), engines=['comfyui'], operations=['POST /prompt'])
+        # Per-identity downstream headers are not the engine's credential: the route does not send them.
         downstream = {
             "comfyui": {
                 "headers": {
-                    "X-Comfy-Key": "comfy-secret",
+                    "X-Comfy-Key": "identity-secret",
                 }
             }
         }
 
-        # A caller who is not the owner may POST through the provider route only what the record declares.
-        declared = {"native": {"allow": [{"method": "POST", "path": "/prompt", "class": "generate"}]}}
+        # A caller who is not the owner may POST through the provider route only what the record declares,
+        # and the engine gets its own inference credential, bound to its origin.
+        declared = {
+            "native": {"allow": [{"method": "POST", "path": "/prompt", "class": "generate"}]},
+            "connection": {"credentials": {"inference": {
+                "secret_env": "FIXTURE_COMFY_KEY", "header": "x-comfy-key", "origin": proxy.COMFY_HOST,
+            }}},
+        }
         with authenticated_profile(profile, downstream=downstream), patch.dict(
             proxy._PROVIDER_NATIVE_TARGETS["comfyui"]["record"], declared,
-        ), patch.object(
+        ), patch.dict(os.environ, {"FIXTURE_COMFY_KEY": "comfy-secret"}), patch.object(
             proxy.httpx,
             "AsyncClient",
             _CaptureNativePassthroughClient,

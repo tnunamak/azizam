@@ -33,7 +33,7 @@ def _route_row(route: Any) -> dict[str, Any]:
     return {
         # The mount's wrapper (authentication, loss check) is an APIRoute that adds checks before the
         # frozen handler; the graph records it as the APIRoute it replaces.
-        "type": "APIRoute" if type(route).__name__ == "MountedRoute" else type(route).__name__,
+        "type": "APIRoute" if type(route).__name__ in {"MountedRoute", "ManagementRoute"} else type(route).__name__,
         "path": getattr(route, "path", None),
         "methods": sorted(getattr(route, "methods", None) or []) or None,
         "name": getattr(route, "name", None),
