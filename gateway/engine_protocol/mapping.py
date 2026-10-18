@@ -67,23 +67,93 @@ def json_key(value: Any) -> str:
     return json.dumps(value)
 
 
+def _getter(segments: pointer.Segments) -> Callable[[Any], Any]:
+    """A function reading ``segments`` from a document, specialised for short paths (the usual case)."""
+    if len(segments) == 1:
+        (a,) = segments
+
+        def get1(doc: Any) -> Any:
+            return doc.get(a, MISSING) if type(doc) is dict else MISSING
+        return get1
+    if len(segments) == 2:
+        a, b = segments
+
+        def get2(doc: Any) -> Any:
+            inner = doc.get(a, MISSING)
+            if type(inner) is dict:
+                return inner.get(b, MISSING)
+            return MISSING if inner is MISSING else _get(inner, (b,))
+        return get2
+
+    def getn(doc: Any) -> Any:
+        cur = doc
+        try:
+            for key in segments:
+                cur = cur[key]
+        except KeyError:
+            return MISSING
+        except (TypeError, IndexError):  # a list (numeric key), a scalar, or an index out of range: the careful reader decides
+            return _get(doc, segments)
+        return cur
+    return getn
+
+
+def _setter(segments: pointer.Segments) -> Callable[[dict, Any], None]:
+    """A function writing a value at ``segments`` of an output object, specialised for short paths."""
+    numeric = any(key.isascii() and key.isdigit() for key in segments)
+    if len(segments) == 1 and not numeric:
+        (a,) = segments
+
+        def set1(out: dict, value: Any) -> None:
+            out[a] = value
+        return set1
+    if len(segments) == 2 and not numeric:
+        a, b = segments
+
+        def set2(out: dict, value: Any) -> None:
+            inner = out.get(a, MISSING)
+            if type(inner) is dict:
+                inner[b] = value
+            elif inner is MISSING:
+                out[a] = {b: value}
+            else:
+                _set(out, segments, value)
+        return set2
+    return lambda out, value: _set(out, segments, value)
+
+
+def _equality(expected: Any) -> Callable[[Any], bool]:
+    """JSON equality with ``expected`` for a value that may be MISSING."""
+    if isinstance(expected, bool) or expected is None:
+        return lambda value: value is expected
+    if isinstance(expected, str):
+        return lambda value: value == expected and type(value) is str
+    return lambda value: type(value) in (int, float) and value == expected
+
+
 class Program:
     """A compiled map. ``apply`` is the only operation."""
 
-    __slots__ = ("_steps", "_passthrough", "_mapping_s")
+    __slots__ = ("_steps", "_passthrough", "_writes", "_mapping_s")
 
-    def __init__(self, steps: Sequence[Step], *, passthrough: bool, mapping_s: float) -> None:
+    def __init__(self, steps: Sequence[Step], *, passthrough: bool, writes: bool, mapping_s: float) -> None:
         self._steps = tuple(steps)
         self._passthrough = passthrough
+        self._writes = writes
         self._mapping_s = mapping_s
 
     def apply(self, source: Mapping[str, Any]) -> dict:
+        """Build the output. It may share containers with ``source`` where no rule writes below them: read it, do not edit it.
+
+        A passthrough map with no rule that writes returns the body itself. A rule that does write works on a copy, so
+        ``source`` is never changed.
+        """
         started = time.perf_counter()
         if self._passthrough:
             body = source["body"]
             if type(body) is not dict:
                 raise MappingError("A passthrough map needs the body to be a JSON object.")
-            out: dict = _clone(body)
+            out: dict = _clone(body) if self._writes else body
         else:
             out = {}
         for step in self._steps:
@@ -101,6 +171,9 @@ class _Ctx:
         self.budgets = budgets
         self.rules = 0
         self.over_count = False
+        # Every place a rule writes or removes, and every copy with the cell that says whether it must clone.
+        self.writes: list[pointer.Segments] = []
+        self.copies: list[tuple[pointer.Segments, list[bool]]] = []
 
     def bad(self, place: str, message: str) -> None:
         self.problems.append(f"{place}: {message}")
@@ -114,7 +187,10 @@ def compile_program(rules: Any, *, base: str, roots: frozenset[str], place: str,
     steps = _compile_list(rules, ctx, place, depth=0)
     if len(problems) > before:
         return None
-    return Program(steps, passthrough=base == "passthrough", mapping_s=budgets.mapping_s)
+    # A copy shares the source's container unless some rule writes below its target; then it must own a copy.
+    for target, needs_clone in ctx.copies:
+        needs_clone[0] = any(len(w) > len(target) and w[:len(target)] == target for w in ctx.writes)
+    return Program(steps, passthrough=base == "passthrough", writes=bool(ctx.writes), mapping_s=budgets.mapping_s)
 
 
 def build(rules: Sequence[Mapping[str, Any]], *, base: str, roots: frozenset[str], budgets: Budgets = DEFAULT_BUDGETS) -> Program:
@@ -208,11 +284,16 @@ def _c_copy(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
     src, dst = _source(spec["from"], ctx, place), _target(spec["to"], ctx, place)
     if src is None or dst is None:
         return None
+    ctx.writes.append(dst)
+    needs_clone = [True]
+    ctx.copies.append((dst, needs_clone))
+
+    read, write = _getter(src), _setter(dst)
 
     def copy_rule(source: Mapping[str, Any], out: dict) -> None:
-        value = _get(source, src)
+        value = read(source)
         if value is not MISSING:
-            _set(out, dst, _clone(value))
+            write(out, _clone(value) if needs_clone[0] and type(value) in (dict, list) else value)
     return copy_rule
 
 
@@ -220,6 +301,7 @@ def _c_rename(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
     src, dst = _target(spec["from"], ctx, place, "from"), _target(spec["to"], ctx, place)
     if src is None or dst is None:
         return None
+    ctx.writes += [src, dst]
 
     def rename_rule(source: Mapping[str, Any], out: dict) -> None:
         value = _get(out, src)
@@ -234,13 +316,15 @@ def _c_set(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
     ok, value = _constant(spec["value"], ctx, place)
     if dst is None or not ok:
         return None
+    ctx.writes.append(dst)
+    write = _setter(dst)
     if type(value) in (dict, list):
         def set_container(source: Mapping[str, Any], out: dict) -> None:
-            _set(out, dst, _clone(value))
+            write(out, _clone(value))
         return set_container
 
     def set_rule(source: Mapping[str, Any], out: dict) -> None:
-        _set(out, dst, value)
+        write(out, value)
     return set_rule
 
 
@@ -249,10 +333,13 @@ def _c_default(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
     ok, value = _constant(spec["value"], ctx, place)
     if dst is None or not ok:
         return None
+    ctx.writes.append(dst)
+
+    read, write = _getter(dst), _setter(dst)
 
     def default_rule(source: Mapping[str, Any], out: dict) -> None:
-        if _get(out, dst) is MISSING:
-            _set(out, dst, _clone(value))
+        if read(out) is MISSING:
+            write(out, _clone(value))
     return default_rule
 
 
@@ -260,6 +347,7 @@ def _c_drop(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
     target = _target(spec["path"], ctx, place, "path")
     if target is None:
         return None
+    ctx.writes.append(target)
 
     def drop_rule(source: Mapping[str, Any], out: dict) -> None:
         pointer.remove(out, target)
@@ -281,17 +369,19 @@ def _c_enum(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
         ok = False
     if not ok:
         return None
+    ctx.writes.append(dst)
     table = dict(table)
+    read, write = _getter(src), _setter(dst)
 
     def enum_rule(source: Mapping[str, Any], out: dict) -> None:
-        value = _get(source, src)
+        value = read(source)
         if value is MISSING:
             return
         key = value if type(value) is str else json_key(value)
         if key in table:
-            _set(out, dst, table[key])
+            write(out, table[key])
         elif unmapped == "pass":
-            _set(out, dst, _clone(value))
+            write(out, _clone(value))
         elif unmapped == "error":
             raise MappingError(f"The value {key!r} has no entry in the table for {'/'.join(src)}.")
     return enum_rule
@@ -317,9 +407,12 @@ def _c_clamp(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
         ok = False
     if not ok:
         return None
+    ctx.writes.append(target)
+
+    read, write = _getter(target), _setter(target)
 
     def clamp_rule(source: Mapping[str, Any], out: dict) -> None:
-        value = _get(out, target)
+        value = read(out)
         if value is MISSING:
             return
         if not _is_number(value):
@@ -328,7 +421,7 @@ def _c_clamp(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
             value = low
         if high is not None and value > high:
             value = high
-        _set(out, target, value)
+        write(out, value)
     return clamp_rule
 
 
@@ -336,11 +429,14 @@ def _c_stringify(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
     src, dst = _source(spec["from"], ctx, place), _target(spec["to"], ctx, place)
     if src is None or dst is None:
         return None
+    ctx.writes.append(dst)
+
+    read, write = _getter(src), _setter(dst)
 
     def stringify_rule(source: Mapping[str, Any], out: dict) -> None:
-        value = _get(source, src)
+        value = read(source)
         if value is not MISSING:
-            _set(out, dst, json.dumps(value, separators=(",", ":"), ensure_ascii=False))
+            write(out, json.dumps(value, separators=(",", ":"), ensure_ascii=False))
     return stringify_rule
 
 
@@ -362,22 +458,19 @@ def compile_predicate(spec: Any, ctx_roots: frozenset[str], place: str, problems
     if segments is None:
         return None
     kind = chosen[0]
+    read = _getter(segments)
     if kind == "present":
         want = bool(spec["present"])
         if want:
-            return lambda source: _get(source, segments) is not MISSING
-        return lambda source: _get(source, segments) is MISSING
+            return lambda source: read(source) is not MISSING
+        return lambda source: read(source) is MISSING
     if kind == "equals":
-        expected = spec["equals"]
-
-        def equals(source: Mapping[str, Any]) -> bool:
-            value = _get(source, segments)
-            return value is not MISSING and same_json(value, expected)
-        return equals
+        same = _equality(spec["equals"])
+        return lambda source: same(read(source))
     options = list(spec["in"])
 
     def member(source: Mapping[str, Any]) -> bool:
-        value = _get(source, segments)
+        value = read(source)
         return value is not MISSING and any(same_json(value, option) for option in options)
     return member
 

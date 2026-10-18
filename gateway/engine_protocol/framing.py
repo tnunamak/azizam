@@ -54,6 +54,8 @@ class SseDecoder:
 
     @staticmethod
     def _parse(block: bytes) -> SseEvent | None:
+        if block[:6] == b"data: " and b"\n" not in block:  # the usual event: one data line
+            return SseEvent(None, block[6:])
         data: list[bytes] = []
         name: str | None = None
         for line in block.split(b"\n"):

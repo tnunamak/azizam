@@ -135,10 +135,13 @@ def clone(value: Any) -> Any:
     """A copy of a JSON value (containers copied, scalars shared)."""
     kind = type(value)
     if kind is dict:
-        return {key: clone(item) for key, item in value.items()}
+        return {key: clone(item) if type(item) in _CONTAINERS else item for key, item in value.items()}
     if kind is list:
-        return [clone(item) for item in value]
+        return [clone(item) if type(item) in _CONTAINERS else item for item in value]
     return value
+
+
+_CONTAINERS = (dict, list)
 
 
 def depth_exceeds(value: Any, limit: int) -> bool:
