@@ -956,7 +956,10 @@ def service_from_backend_config(
     return record
 
 
-def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_version: int | None = None) -> dict[str, Any]:
+def normalize_service_record(
+    service_id: str, raw: Mapping[str, Any], *, schema_version: int | None = None, check_secrets: bool = True,
+) -> dict[str, Any]:
+    """Return the stored form of ``raw``. ``check_secrets=False`` compares rows without refusing legacy ones."""
     if schema_version is None:
         schema_version = 2 if any(key in raw for key in ("process", "observations", "residency")) else 1
     source = str(raw.get("source") or "ui")
@@ -992,8 +995,9 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_
     secret_refs = raw.get("secret_refs")
     if not isinstance(secret_refs, Mapping):
         secret_refs = {}
-    validate_provider_secret_refs(service_id, config, secret_refs)
-    validate_provider_native_passthrough_disabled(service_id, config)
+    if check_secrets:
+        validate_provider_secret_refs(service_id, config, secret_refs)
+        validate_provider_native_passthrough_disabled(service_id, config)
     if is_remote_provider_config(config):
         config["provider_id"] = canonical_provider_id(
             config.get("provider_id") or service_id
@@ -1067,8 +1071,10 @@ def validate_protocol_dispatch_registry(
 
 
 def _same_stored_row(service_id: str, left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    """Whether two rows store the same thing. Secret checks are skipped: a refused legacy row must still compare."""
     try:
-        return normalize_service_record(service_id, left) == normalize_service_record(service_id, right)
+        return (normalize_service_record(service_id, left, check_secrets=False)
+                == normalize_service_record(service_id, right, check_secrets=False))
     except (TypeError, ValueError):
         return dict(left) == dict(right)
 
