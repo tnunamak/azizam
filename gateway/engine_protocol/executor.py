@@ -77,6 +77,29 @@ def _label(url: str) -> str:
     return f"{scheme}://{host}:{port}"
 
 
+class _Redact:
+    """Around every public call: an error leaves with no secret in its text and none in the chain a log would print."""
+
+    def __init__(self, secrets_: list[str]) -> None:
+        self._secrets = secrets_
+
+    def __enter__(self) -> "_Redact":
+        return self
+
+    def __exit__(self, kind: Any, exc: BaseException | None, tb: Any) -> None:
+        if self._secrets and isinstance(exc, ProtocolError):
+            exc.args = tuple(_scrub(arg, self._secrets) if isinstance(arg, str) else arg for arg in exc.args)
+            exc.__cause__ = exc.__context__ = None  # the original may hold the full URL; the typed text says what happened
+
+
+def _redacting(method: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(method)
+    async def wrapper(self: Any, conn: Connection, *args: Any, **kwargs: Any) -> Any:
+        with _Redact(_secrets(conn)):
+            return await method(self, conn, *args, **kwargs)
+    return wrapper
+
+
 class HttpV1Executor:
     def __init__(self, description: ProtocolDescription, *, transport: Transport | None = None,
                  assets: AssetStore | None = None, budgets: Budgets | None = None) -> None:
@@ -662,29 +685,6 @@ def _scrub(text: str, secrets_: list[str]) -> str:
 
 def _clean_headers(headers: Mapping[str, str], secrets_: list[str]) -> dict[str, str]:
     return {k: _scrub(v, secrets_) for k, v in headers.items()} if secrets_ else dict(headers)
-
-
-class _Redact:
-    """Around every public call: an error leaves with no secret in its text and none in the chain a log would print."""
-
-    def __init__(self, secrets_: list[str]) -> None:
-        self._secrets = secrets_
-
-    def __enter__(self) -> "_Redact":
-        return self
-
-    def __exit__(self, kind: Any, exc: BaseException | None, tb: Any) -> None:
-        if self._secrets and isinstance(exc, ProtocolError):
-            exc.args = tuple(_scrub(arg, self._secrets) if isinstance(arg, str) else arg for arg in exc.args)
-            exc.__cause__ = exc.__context__ = None  # the original may hold the full URL; the typed text says what happened
-
-
-def _redacting(method: Callable[..., Any]) -> Callable[..., Any]:
-    @functools.wraps(method)
-    async def wrapper(self: Any, conn: Connection, *args: Any, **kwargs: Any) -> Any:
-        with _Redact(_secrets(conn)):
-            return await method(self, conn, *args, **kwargs)
-    return wrapper
 
 
 def _scrub_bytes(data: bytes, secrets_: list[str]) -> bytes:
