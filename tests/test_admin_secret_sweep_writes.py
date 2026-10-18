@@ -1,15 +1,15 @@
-"""The oracle of decision D21, second half: no admin or member route that changes something answers with a stored secret.
+"""The oracle of decisions D26 to D32, write side: no admin or member route that changes something answers with a canary.
 
-``test_admin_secret_sweep.py`` reads every GET route. A route that writes can answer with registry
-content too (a delete that returns the whole registry), so this file calls every POST, PUT, PATCH and
-DELETE route under ``/admin/api`` and ``/me/api``, enumerated from ``proxy.app.routes``, as an
-administrator, the owner and a signed-out client. Each call has its own fresh seed, so a delete cannot
-remove what the next call needs. A call that has a built body (an echo of what the page was shown, a
-deliberately no-op edit, a credentialed package source) runs beside three generic ones (no body, an empty
-object, malformed JSON), and success and error answers are both searched for the seeded values.
+``test_admin_secret_sweep.py`` reads every GET route. A route that writes can answer with registry content too (a
+delete that returns the whole registry), so this file calls every POST, PUT, PATCH and DELETE route under ``/admin/api``
+and ``/me/api``, found by walking the route table of the exported app, as an administrator, the owner and a signed-out
+client. Each call has its own fresh seed, so a delete cannot remove what the next call needs. A call that has a built
+body (an echo of what the page was shown, a command, a credentialed package source) runs beside three generic ones (no
+body, an empty object, malformed JSON), and success and error answers are both searched for the canaries.
 
-Where a call is built, the owner's call must succeed: a clean answer from a route that only refused the
-body would prove nothing about the answer a working call gives.
+Where a call is built, the owner's call must succeed: a clean answer from a route that only refused the body would prove
+nothing about the answer a working call gives. Error answers are searched too: a canary sent in an invalid body must not
+come back in the 400 or the 422 (``test_secret_canary_matrix.py`` sends them through the real routes).
 """
 
 from __future__ import annotations
@@ -20,16 +20,18 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pytest
-from starlette.routing import Mount
 
 import proxy
-from gateway import admin_store
+from gateway import admin_store, projection_types
+from tests.support import canary
+from tests.support.route_discovery import discover
 from tests.test_admin_owner_holes_round4 import _git_package
 from tests.test_admin_secret_sweep import (  # noqa: F401  (host_isolated is a fixture)
     PARAMETERS, S, UNSEEDED_ID, _leaf_errors, _leaks, _seed_registry, host_isolated,
 )
-from tests.test_engine_redaction_coverage import MODEL
 from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin  # noqa: F401
+
+MODEL = canary.MODEL
 
 ROOT = Path(__file__).resolve().parent.parent
 MUTATING = ("POST", "PUT", "PATCH", "DELETE")
@@ -44,16 +46,9 @@ EXCLUDED_ROUTES: dict[tuple[str, str], str] = {}
 
 def _mutating_routes() -> list[tuple[str, str]]:
     found: set[tuple[str, str]] = set()
-
-    def walk(routes, prefix: str) -> None:
-        for route in routes:
-            path = prefix + getattr(route, "path", "")
-            if isinstance(route, Mount):
-                walk(route.routes, path)
-            elif path.startswith(("/admin/api", "/me/api")):
-                found.update((method, path) for method in (getattr(route, "methods", None) or ()) if method in MUTATING)
-
-    walk(proxy.app.routes, "")
+    for item in discover(proxy.app):
+        if item.path.startswith(("/admin/api", "/me/api")):
+            found.update((method, item.path) for method in item.methods if method in MUTATING)
     return sorted(found - set(EXCLUDED_ROUTES))
 
 
@@ -64,6 +59,24 @@ class Ctx:
     def registry_echo(self) -> dict[str, Any]:
         return self.admin.get("/admin/api/operator/service-registry").json()["service_registry"]
 
+    def left_out_view(self, record_id: str) -> dict[str, Any]:
+        """The record the registry read shows for a left-out service, as the page would send it back."""
+        excluded = self.admin.get("/admin/api/operator/service-registry").json()["excluded"]
+        return next(item["record"] for item in excluded if item["id"] == record_id)
+
+    def left_out_fixed(self, record_id: str) -> dict[str, Any]:
+        record = self.left_out_view(record_id)
+        record["config"]["models"] = []
+        return record
+
+    def entry_id(self, carrier: str, index: int) -> str:
+        """The id of the ``index``th entry of a carrier of engine-a, read the way a page reads it."""
+        record = self.admin.get("/admin/api/operator/service-registry").json()["service_registry"]["services"]["engine-a"]
+        node: Any = record
+        for part in carrier.split("."):
+            node = node[part]
+        return node[index]["id"]
+
     def engine(self) -> dict[str, Any]:
         return self.admin.get("/admin/api/engines/engine-a").json()["engine"]
 
@@ -73,7 +86,19 @@ class Ctx:
         yaml = (f"id: {name}svc\nname: Plain\nconfig:\n  protocol: openai-compatible\n"
                 "  host: 192.168.1.80\n  port: 8000\n  models:\n    - {id: m, upstream_model: m}\n")
         source = _git_package(self.monkeypatch, self.tmp_path, yaml, name=name)
-        return {**source, "url": f"https://user:{S['package-password']}@git.invalid/{name}.git?access_token={S['package-token']}"}
+        return {**source, "url": f"https://user:{S['package-password']}@git.invalid/{name}.git?access_token={S['package-query']}"}
+
+
+    def enable_package_a(self) -> dict[str, Any]:
+        """Enable the credentialed git package the sweep names ``package-a``, so a call can remove it."""
+        yaml = ("id: packageasvc\nname: Plain\nconfig:\n  protocol: openai-compatible\n"
+                "  host: 192.168.1.80\n  port: 8000\n  models:\n    - {id: m, upstream_model: m}\n")
+        source = {**_git_package(self.monkeypatch, self.tmp_path, yaml, name="package-a"),
+                  "url": f"https://user:{S['package-password']}@git.invalid/package-a.git?access_token={S['package-query']}"}
+        done = self.owner.post("/admin/api/extensions/enable", json={"source": source},
+                               headers={**csrf_for(self.owner), "If-Match": _etag(self.gateway)})
+        assert done.status_code == 200, done.text
+        return {}
 
 
 def _create_provider(ctx: Ctx):
@@ -87,10 +112,10 @@ Built = tuple[str, bool, Callable[[Ctx], dict[str, Any]]]
 
 
 def _engine_body(ctx: Ctx, **extra: Any) -> dict[str, Any]:
-    """What the engine page posts back: the values it was shown, minus the header row named like a key
-    (the page refuses that row; the key goes in the API key field)."""
+    """What the engine page posts back: the values it was shown, without the headers (a header is an entry, changed by
+    the secret-entries commands, and an edit that does not name headers leaves them as stored)."""
     view = ctx.engine()
-    values = {**view["values"], "headers": [row for row in view["values"]["headers"] if row["name"] != "X-Api-Key"]}
+    values = {key: value for key, value in view["values"].items() if key != "headers"}
     return {"definition": view["definition"], "values": values, **extra}
 
 
@@ -110,10 +135,26 @@ BUILT: dict[tuple[str, str], list[Built]] = {
     ],
     ("PATCH", "/admin/api/operator/services/{service_id}"): [
         ("engine page echo", True, lambda c: {"json": _engine_body(c, disabled=True)}),
-        ("engine page moves the host with its markers", False,
-         lambda c: {"json": _engine_body(c, disabled=True, values={
-             "address": "http://moved.invalid:1", "headers": _engine_body(c)["values"]["headers"]})}),
+        ("engine page moves the host", False,
+         lambda c: {"json": _engine_body(c, disabled=True, values={"address": "http://moved.invalid:1"})}),
+        ("engine page names a header", False,
+         lambda c: {"json": _engine_body(c, disabled=True, values={"headers": [{"name": "X-New", "value": S["header-neutral"]}]})}),
         ("form rename", True, lambda c: {"json": {"name": "Engine A"}}),
+    ],
+    ("PUT", "/admin/api/operator/service-registry/excluded/{section}/{record_id}"): [
+        ("fix a left-out service", True, lambda c: {"json": {"record": c.left_out_fixed("held-url")}}),
+        ("edit that stays invalid", False, lambda c: {"json": {"record": c.left_out_view("held-url")}}),
+    ],
+    ("DELETE", "/admin/api/operator/service-registry/excluded/{section}/{record_id}"): [
+        ("remove a left-out service", True, lambda c: {})],
+    ("POST", "/admin/api/operator/services/{service_id}/secret-entries"): [
+        ("add a header", True, lambda c: {"json": {"commands": [
+            {"carrier": "config.headers", "operation": "add", "name": "X-Added", "value": S["header-provider"]}]}}),
+        ("replace and clear by id", True, lambda c: {"json": {"commands": [
+            {"carrier": "config.headers", "operation": "replace", "entry_id": c.entry_id("config.headers", 0), "value": S["header-neutral"]},
+            {"carrier": "config.headers", "operation": "clear", "entry_id": c.entry_id("config.headers", 1)}]}}),
+        ("a refused command", False, lambda c: {"json": {"commands": [
+            {"carrier": "config.headers", "operation": "replace", "entry_id": "ent_" + "0" * 16, "value": S["header-neutral"]}]}}),
     ],
     ("POST", "/admin/api/operator/services/{service_id}/enabled"): [("enable", True, lambda c: {"json": {"enabled": True}})],
     ("POST", "/admin/api/engines/check"): [("check the shown values", False, lambda c: {"json": _engine_body(c, service_id="engine-a")})],
@@ -132,6 +173,10 @@ BUILT: dict[tuple[str, str], list[Built]] = {
     ("PUT", "/admin/api/providers/{provider_id}/models"): [("replace the models", True, lambda c: {"json": {"models": [MODEL]}})],
     ("PUT", "/admin/api/providers/{provider_id}/key"): [("replace the key", True, lambda c: {"json": {"api_key": "synthetic-provider-key-7q"}})],
     ("PUT", "/admin/api/providers/{provider_id}/caps"): [("set the caps", True, lambda c: {"json": {"daily_usd": 6}})],
+    ("DELETE", "/admin/api/providers/{provider_id}/caps"): [("clear the caps", True, lambda c: {})],
+    ("DELETE", "/admin/api/providers/{provider_id}"): [("remove a provider", True, lambda c: {})],
+    ("DELETE", "/admin/api/operator/services/{service_id}"): [("remove an engine", True, lambda c: {})],
+    ("DELETE", "/admin/api/extensions/{package_id}"): [("remove an enabled package", True, lambda c: c.enable_package_a())],
 }
 # Routes that need a provider to exist: one is created (by the owner) before each call.
 NEEDS_PROVIDER_PREFIX = "/admin/api/providers/{provider_id}"
@@ -211,34 +256,39 @@ def _etag(gateway) -> str:
 
 # -- one door -----------------------------------------------------------------------------------------
 
-# Keys of a response body that carry stored records. An admin route that sets one of them must answer
-# through ``engine_redaction.public_json_response``; a bare ``JSONResponse`` is how a route forgot the
-# projection before. A branch that adds a route (a package uninstall, say) meets this test on merge.
-RECORD_CONTENT_KEYS = frozenset({
-    "service_registry", "extension_packages", "extension_package", "overrides", "litellm_config", "review", "engine",
-    "registry", "services",
-})
+# The body keys that carry stored records are the projection types' (gateway/projection_types.py): a route that sets one of them
+# must answer with ``egress.projected_response``; ``plain_json_response`` refuses them at run time, and a bare
+# ``JSONResponse`` is how a route once forgot the projection. A branch that adds a route meets this test on merge.
+RECORD_CONTENT_KEYS = frozenset(projection_types.BODY_KEYS)
+# The modules that make management responses. They build them with ``gateway/egress.py`` only.
+MANAGEMENT_MODULES = ("admin_api.py", "provider_admin.py", "engine_admin.py")
 
 
-def _bare_responses_with_record_content() -> list[str]:
+def _calls_named(tree: ast.AST, name: str) -> list[ast.Call]:
+    return [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+            and getattr(node.func, "id", getattr(node.func, "attr", "")) == name]
+
+
+def test_no_management_module_builds_a_response_without_the_egress_constructors() -> None:
+    bare = []
+    for name in MANAGEMENT_MODULES:
+        path = ROOT / "gateway" / name
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in _calls_named(tree, "JSONResponse") + _calls_named(tree, "StreamingResponse") + _calls_named(tree, "Response"):
+            bare.append(f"gateway/{name}:{node.lineno}")
+    assert not bare, "build it with gateway/egress.py (projected_response, plain_json_response, safe_error_response):\n" + "\n".join(bare)
+
+
+def test_no_route_answers_with_record_content_through_the_plain_constructor() -> None:
     found: list[str] = []
     for path in sorted((ROOT / "gateway").glob("*.py")) + [ROOT / "proxy.py"]:
+        if path.name == "egress.py":
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", "")) == "JSONResponse"):
-                continue
+        for node in _calls_named(tree, "plain_json_response"):
             content = next((kw.value for kw in node.keywords if kw.arg == "content"), node.args[0] if node.args else None)
             if isinstance(content, ast.Dict):
                 keys = {key.value for key in content.keys if isinstance(key, ast.Constant) and isinstance(key.value, str)}
                 if keys & RECORD_CONTENT_KEYS:
                     found.append(f"{path.relative_to(ROOT)}:{node.lineno} {sorted(keys & RECORD_CONTENT_KEYS)}")
-    return found
-
-
-# JSONResponse calls with a record key that are not admin responses carrying stored records; each with its reason.
-BARE_ALLOWED: dict[str, str] = {}
-
-
-def test_no_route_answers_with_record_content_except_through_the_projection() -> None:
-    bare = [line for line in _bare_responses_with_record_content() if line.split(" ")[0] not in BARE_ALLOWED]
-    assert not bare, "answer with engine_redaction.public_json_response instead:\n" + "\n".join(bare)
+    assert not found, "answer with egress.projected_response instead:\n" + "\n".join(found)
