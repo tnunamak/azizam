@@ -353,6 +353,13 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(self.media_folder(), {"state": "mismatch"})
         self.assertFalse((self.cache / ".azizam-media").exists())
 
+    def test_later_pages_do_not_recount_the_folder(self) -> None:
+        self.seed()
+        self.unconfirm_folder()
+        self.current_user = self.owner
+        self.assertEqual(self.client.get("/me/api/media", params={"cursor": "later"}).json()["media_folder"], None)
+        self.assertEqual(self.media_folder()["state"], "unconfirmed")
+
     def test_an_ordinary_media_write_never_creates_the_marker(self) -> None:
         self.unconfirm_folder()
         self._write_asset(asset("B"), ["sha256:alice"], prompt="prompt B")
