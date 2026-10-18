@@ -2240,10 +2240,12 @@ describe("Library items whose files are gone", () => {
     state: "unconfirmed",
     path: "/mnt/media",
     library_items: 5,
-    items_here: 2,
+    items_here: 3,
+    uncheckable_items: 0,
     ...extra,
   });
   const NO_MATCHES = "None of the Library's items have their files in this folder, so Azizam can't confirm it. Check that the media disk is mounted, then try again.";
+  const UNVERIFIABLE = "None of the Library's items can be checked against a file, so Azizam can't tell whether this is the media folder. Confirming it is your call.";
   const UNCONFIRMED = "Azizam can't confirm this is the right media folder yet, so nothing was removed. The owner confirms it once, in Library.";
 
   test("the owner sees one notice with the folder, its count and the confirm action until it is confirmed", async () => {
@@ -2267,8 +2269,9 @@ describe("Library items whose files are gone", () => {
     renderLibrary();
     const notice = await screen.findByRole("region", { name: "Media folder" });
     expect(within(notice).getByText("/mnt/media")).toBeVisible();
-    expect(within(notice).getByText("2 of 5 Library items have their files here.")).toBeVisible();
-    expect(within(notice).getByText(/one-time check/)).toBeVisible();
+    expect(within(notice).getByText("3 of 5 Library items have their files here.")).toBeVisible();
+    expect(within(notice).getByText(/confirm which folder holds the media/)).toBeVisible();
+    expect(notice.textContent).not.toMatch(/installs made before/);
     fireEvent.click(within(notice).getByRole("button", { name: "This is the right media folder" }));
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0].init).toMatchObject({
@@ -2305,6 +2308,72 @@ describe("Library items whose files are gone", () => {
     expect(within(notice).getByText("0 of 5 Library items have their files here.")).toBeVisible();
     expect(within(notice).getByRole("button", { name: "This is the right media folder" })).toBeDisabled();
     expect(within(notice).getByText(NO_MATCHES)).toBeVisible();
+  });
+
+  test("a folder that holds under half the Library asks for a second, explicit confirmation", async () => {
+    session.viewer = { role: "owner", name: "Alex", id: "me" };
+    session.home = { receipts: [], user: { id: "me" }, apps: [] };
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/me/api/session") return Response.json({ csrf_token: "csrf-1" });
+      if (path === "/me/api/media/confirm-folder") {
+        calls.push(path);
+        return Response.json({ confirmed: true });
+      }
+      if (path.startsWith("/me/api/media?")) return list([picture("kept", "A kept kite")], {
+        media_folder: folderState({ items_here: 2 }),
+      });
+      return Response.json({ assets: [], models: [], next_cursor: null });
+    }));
+    renderLibrary();
+    const notice = await screen.findByRole("region", { name: "Media folder" });
+    expect(within(notice).getByText(
+      "Only 2 of 5 items have their files here. If the disk is not mounted, confirming will let Remove missing delete the others.",
+    )).toBeVisible();
+    fireEvent.click(within(notice).getByRole("button", { name: "This is the right media folder" }));
+    expect(within(notice).getByRole("button", { name: "Confirm, even though most items are missing" })).toBeVisible();
+    expect(calls).toHaveLength(0);
+    fireEvent.click(within(notice).getByRole("button", { name: "Confirm, even though most items are missing" }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+  });
+
+  test("a folder that holds half the Library or more confirms on one click without the warning", async () => {
+    session.viewer = { role: "owner", name: "Alex", id: "me" };
+    session.home = { receipts: [], user: { id: "me" }, apps: [] };
+    routeFetch((path) => (path.startsWith("/me/api/media?") ? list([picture("kept", "A kept kite")], {
+      media_folder: folderState({ items_here: 3 }),
+    }) : undefined));
+    renderLibrary();
+    const notice = await screen.findByRole("region", { name: "Media folder" });
+    expect(within(notice).queryByText(/Only \d+ of \d+ items have their files here/)).toBeNull();
+    expect(within(notice).queryByRole("button", { name: /Confirm, even though/ })).toBeNull();
+  });
+
+  test("a Library whose items cannot be checked against files says the folder is unverifiable and asks twice", async () => {
+    session.viewer = { role: "owner", name: "Alex", id: "me" };
+    session.home = { receipts: [], user: { id: "me" }, apps: [] };
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/me/api/session") return Response.json({ csrf_token: "csrf-1" });
+      if (path === "/me/api/media/confirm-folder") {
+        calls.push(path);
+        return Response.json({ confirmed: true });
+      }
+      if (path.startsWith("/me/api/media?")) return list([picture("kept", "A kept kite")], {
+        media_folder: folderState({ library_items: 0, items_here: 0, uncheckable_items: 1 }),
+      });
+      return Response.json({ assets: [], models: [], next_cursor: null });
+    }));
+    renderLibrary();
+    const notice = await screen.findByRole("region", { name: "Media folder" });
+    expect(within(notice).getByText(UNVERIFIABLE)).toBeVisible();
+    expect(within(notice).queryByText(/0 of 0 Library items/)).toBeNull();
+    fireEvent.click(within(notice).getByRole("button", { name: "This is the right media folder" }));
+    expect(calls).toHaveLength(0);
+    fireEvent.click(within(notice).getByRole("button", { name: "Confirm, even though nothing can be checked" }));
+    await waitFor(() => expect(calls).toHaveLength(1));
   });
 
   test("a confirmation the gateway refuses says why, without a delete message", async () => {
