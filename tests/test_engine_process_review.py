@@ -722,6 +722,14 @@ def test_a_parent_relative_path_is_refused(tmp_path):
     assert calls == []
 
 
+@pytest.mark.parametrize("value", ["models/../../x", "org/..", "a\\..\\b"])
+def test_an_undeclared_value_with_a_parent_segment_is_a_path_and_refused(tmp_path, value):
+    calls = []
+    with pytest.raises(ValueError, match="allowlisted"):
+        run(_control([str(tmp_path / "allowed")], calls).invoke("load", {"model_path": value}))
+    assert calls == []
+
+
 @pytest.mark.parametrize("value", ["weights.gguf", "org/model"])
 def test_a_relative_value_of_a_declared_path_argument_is_checked_and_refused(tmp_path, value):
     calls = []
