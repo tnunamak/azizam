@@ -62,6 +62,7 @@ ENGINE_PATHS = ("/admin/api/engine-definitions", "/admin/api/engines/")
 DELETED_PRESETS = "/admin/api/operator/service-presets"
 THUMBNAIL_PATH, THUMBNAIL_SIBLING = "/v1/assets/sample/thumbnail", "/v1/assets/sample/content"
 REMOVE_MISSING_PATH, REMOVE_MISSING_SIBLING = "/me/api/media/remove-missing", "/me/api/media/sample"
+REMOVE_MISSING_ROUTE = "/me/api/media/remove-missing remove_missing_media"
 
 
 SHARDS = 4
@@ -199,9 +200,11 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
                 f"{m} /setup/console" for m in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS")}:
             continue
-        if kind == "remove_missing" and key not in old and (
-                _method_of(key) == "POST" or outcome == new.get(_remove_missing_sibling(key))):
-            continue
+        if kind == "remove_missing" and key not in old:
+            # POST is the new route itself and must say so; every other method answers as the sibling does.
+            expected = REMOVE_MISSING_ROUTE if _method_of(key) == "POST" else new.get(_remove_missing_sibling(key))
+            if outcome == expected:
+                continue
         if kind == "thumbnail" and key not in old:
             same_as_content = new.get(_thumbnail_sibling(key), "").replace("/content", "/thumbnail").replace(
                 "assets_content", "assets_thumbnail")
@@ -235,10 +238,11 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
             continue
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue
-        if kind == "remove_missing" and key not in old and (
-                _method_of(key) == "POST" or _same_as_sibling_or_needs_a_key(
-                    BASELINE["live"].get(_remove_missing_sibling(key)), new.get(key))):
-            continue
+        if kind == "remove_missing" and key not in old:
+            # A POST has a real handler, so it is never a live row; the others answer as the sibling did.
+            assert _method_of(key) != "POST", key
+            if _same_as_sibling_or_needs_a_key(BASELINE["live"].get(_remove_missing_sibling(key)), new.get(key)):
+                continue
         if kind == "html404" and _now_needs_a_key_any(old.get(key), new.get(key)):
             continue
         if kind == "thumbnail" and key not in old and new.get(key) == new.get(_thumbnail_sibling(key)) is not None:
@@ -275,3 +279,12 @@ def test_api_protocol_paths_keep_their_r18_answers(current, live_client):
     for key in sorted(required):
         assert live[key] == BASELINE["live"][key], key
     assert _flat(current["routing"])["HEAD /api/blobs/sample"] == _flat(BASELINE["routing"])["HEAD /api/blobs/sample"]
+
+
+def test_remove_missing_is_a_session_route_that_other_callers_cannot_use(current, live_client):
+    assert _flat(current["routing"])[f"POST {REMOVE_MISSING_PATH}"] == REMOVE_MISSING_ROUTE
+    client, principals = live_client
+    answers = {name: client.post(REMOVE_MISSING_PATH, headers=headers).status_code
+               for name, headers in principals.items()}
+    assert answers["none"] == 401
+    assert all(400 <= status < 500 for status in answers.values()), answers

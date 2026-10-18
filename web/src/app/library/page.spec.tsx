@@ -2105,6 +2105,15 @@ describe("Library items whose files are gone", () => {
       unavailable_reason: "missing_or_expired",
       created_at: Date.UTC(2026, 9, 5) / 1000,
     });
+  // Made a second before, and exactly at, the moment the expiry was removed (2026-10-11T16:59:31Z).
+  const justBefore = (id: string) =>
+    picture(id, "Just before", {
+      available: false, unavailable_reason: "missing_or_expired", created_at: Date.UTC(2026, 9, 11, 16, 59, 30) / 1000,
+    });
+  const atCutoff = (id: string) =>
+    picture(id, "At the cutoff", {
+      available: false, unavailable_reason: "missing_or_expired", created_at: Date.UTC(2026, 9, 11, 16, 59, 31) / 1000,
+    });
   const newGone = (id: string, prompt: string) =>
     picture(id, prompt, { available: false, unavailable_reason: "missing_or_expired" });
 
@@ -2132,7 +2141,9 @@ describe("Library items whose files are gone", () => {
     fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open An old fox, ") }));
     let dialog = await screen.findByRole("dialog");
     expect(
-      within(dialog).getByText("This file was deleted on or before Oct 11 and can’t be recovered. The prompt is below."),
+      within(dialog).getByText(
+        /^This file was deleted on or before Oct 1[12], \d{1,2}:59 [AP]M [A-Z0-9+:]+ and can’t be recovered\. The prompt is below\.$/,
+      ),
     ).toBeVisible();
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -2142,6 +2153,26 @@ describe("Library items whose files are gone", () => {
     dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("This file is no longer stored. The prompt is below.")).toBeVisible();
     expect(within(dialog).queryByText(/Oct 11/)).toBeNull();
+  });
+
+  test("the cutoff is the exact moment, not a day boundary", async () => {
+    routeFetch((path) =>
+      path.startsWith("/me/api/media?")
+        ? list([justBefore("before"), atCutoff("at")])
+        : path.includes("/download?") ? Response.json({}, { status: 404 }) : undefined,
+    );
+    renderLibrary();
+    fireEvent.click(await screen.findByText("Show them"));
+    for (const [name, expected] of [
+      ["Just before", /^This file was deleted on or before .* and can’t be recovered\./],
+      ["At the cutoff", /^This file is no longer stored\./],
+    ] as const) {
+      fireEvent.click(screen.getByRole("button", { name: (label) => label.startsWith(`Open ${name}, `) }));
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByText(expected)).toBeVisible();
+      fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    }
   });
 
   function routeRemoval(removed: { calls: Array<{ path: string; init?: RequestInit }> }) {
