@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import time
 from contextvars import ContextVar
+from itertools import filterfalse
 from typing import Any, Callable, Mapping, Sequence
 
 from gateway.engine_protocol import pointer
@@ -34,7 +35,7 @@ RESPONSE_ROOTS = frozenset({"body", "status", "headers", "params", "event"})
 Step = Callable[[Mapping[str, Any], dict], None]
 Predicate = Callable[[Mapping[str, Any]], bool]
 MISSING = pointer.MISSING
-_get, _set, _clone = pointer.get, pointer.set_value, pointer.clone
+_get = pointer.get
 # The running map's (deadline, mapping_s), so a rule nested in a condition can stop the map too.
 _RUNNING: ContextVar[tuple[float, float] | None] = ContextVar("engine_protocol_mapping_deadline", default=None)
 
@@ -52,6 +53,168 @@ _RULE_KEYS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "when": (frozenset({"if", "then"}), frozenset({"else"})),
 }
 _EACH_RUNNING: ContextVar[list[int] | None] = ContextVar("engine_protocol_each_selected", default=None)
+
+# Per-invocation facts retain their objects so a recycled id can never hit stale data.
+_FACTS: ContextVar[_JsonFacts | None] = ContextVar("engine_protocol_json_facts", default=None)
+_CLOCK_STEPS: ContextVar[list[int] | None] = ContextVar("engine_protocol_clock_steps", default=None)
+
+
+class _JsonFacts:
+    """Exact compact UTF-8 size and container depth, shared by source and owned copies.
+
+    Writes invalidate ancestor facts before changing a container. Unchanged subtrees
+    keep their facts, including across defensive copies. Unknown non-JSON source
+    values are allowed until selected, as they were before this accounting pass.
+    """
+
+    def __init__(self, budgets: Budgets) -> None:
+        self.budgets = budgets
+        self.nodes: dict[int, tuple[Any, int | None, int]] = {}
+        self.scalars: dict[tuple[type, Any], int] = {}
+        self.numbers: dict[type, dict[Any, int]] = {int: {}, float: {}}
+
+    def measure(self, value: Any, level: int = 1) -> tuple[int | None, int]:
+        kind = type(value)
+        if kind not in (dict, list):
+            if kind not in (str, int, float, bool, type(None)):
+                return None, 0
+            key = (kind, repr(value) if kind is float and value == 0 else value)
+            size = self.scalars.get(key)
+            if size is None:
+                try:
+                    if kind is str and len(value) > 4096:
+                        size = 2
+                        for start in range(0, len(value), 4096):
+                            _check_deadline(force=True)
+                            size += _json_size(value[start:start + 4096]) - 2
+                    else:
+                        size = _json_size(value)
+                except (TypeError, ValueError, UnicodeEncodeError):
+                    return None, 0
+                if len(self.scalars) < 4096:
+                    self.scalars[key] = size
+            return size, 0
+        cached = self.nodes.get(id(value))
+        if cached is not None:
+            _, size, depth = cached
+            if level + depth - 1 > self.budgets.max_json_depth:
+                raise BudgetExceeded("max_json_depth", "A mapped value nests too deep.")
+            return size, depth
+        if level > self.budgets.max_json_depth:
+            raise BudgetExceeded("max_json_depth", "A mapped value nests too deep.")
+        if kind is list and value and type(value[0]) in (int, float):
+            numeric_size = self.numeric_list_size(value)
+            if numeric_size is not None:
+                self.nodes[id(value)] = (value, numeric_size, 1)
+                return numeric_size, 1
+        size, depth = 2, 1
+        for index, (key, item) in enumerate(value.items() if kind is dict else enumerate(value)):
+            if index % 64 == 0:
+                _check_deadline(force=index > 0)
+            child_size, child_depth = self.measure(item, level + 1)
+            depth = max(depth, 1 + child_depth)
+            if kind is dict:
+                # Match json.dumps' spelling of non-string JSON object keys too.
+                if type(key) is str:
+                    key_size, _ = self.measure(key)
+                elif type(key) in (int, float, bool, type(None)):
+                    key_size, _ = self.measure(json.dumps(key))
+                else:
+                    key_size = None
+                if size is not None:
+                    size = None if key_size is None else size + key_size + 1
+            if size is not None:
+                size = None if child_size is None else size + child_size + 1
+        if value and size is not None:
+            size -= 1  # no trailing comma
+        self.nodes[id(value)] = (value, size, depth)
+        return size, depth
+
+    def numeric_list_size(self, value: list) -> int | None:
+        # C-level set/map/sum avoid a Python recursive call for every number.
+        # Chunks bound uninterrupted work, including on lists supplied directly
+        # by a caller rather than the byte-limited HTTP parser.
+        size = len(value) + 1
+        for start in range(0, len(value), 256):
+            _check_deadline(force=True)
+            chunk = value[start:start + 256]
+            kinds = set(map(type, chunk))
+            if len(kinds) != 1 or not kinds <= {int, float}:
+                return None
+            kind = next(iter(kinds))
+            sizes = self.numbers[kind]
+            missing = set(chunk).difference(sizes)
+            # Bound per-invocation scalar cache growth on unique-valued input.
+            if len(sizes) + len(missing) > 4096:
+                sizes = {}
+                missing = set(chunk)
+            try:
+                for number in missing:
+                    _check_deadline()
+                    sizes[number] = _json_size(number)
+                if kind is float and 0.0 in chunk:
+                    sizes[0.0] = 3
+                    # filterfalse scans in C; only zero values need sign inspection.
+                    size += sum(1 for zero in filterfalse(None, chunk) if repr(zero).startswith("-"))
+                size += sum(map(sizes.__getitem__, chunk))
+            except (ValueError, OverflowError):
+                return None
+        return size
+
+    def invalidate(self, out: Any, segments: pointer.Segments) -> None:
+        cur = out
+        for key in segments:
+            self.nodes.pop(id(cur), None)
+            cur = _get(cur, (key,))
+            if cur is MISSING:
+                break
+
+    def clone(self, value: Any) -> Any:
+        kind = type(value)
+        if kind not in (dict, list):
+            return value
+        cached = self.nodes.get(id(value))
+        if kind is list:
+            result = []
+            flat = cached is not None and cached[2] == 1
+            for start in range(0, len(value), 256):
+                _check_deadline()
+                chunk = value[start:start + 256]
+                result.extend(chunk if flat else (self.clone(item) for item in chunk))
+        else:
+            result = {}
+            for index, (key, item) in enumerate(value.items()):
+                if index % 64 == 0:
+                    _check_deadline()
+                result[key] = self.clone(item)
+        if cached is not None:
+            self.nodes[id(result)] = (result, cached[1], cached[2])
+        return result
+
+
+def _clone(value: Any) -> Any:
+    facts = _FACTS.get()
+    if facts is None:
+        return pointer.clone(value)
+    _check_deadline(force=True)
+    result = facts.clone(value)
+    _check_deadline(force=True)
+    return result
+
+
+def _set(out: Any, segments: pointer.Segments, value: Any) -> None:
+    facts = _FACTS.get()
+    if facts is not None:
+        facts.invalidate(out, segments)
+    pointer.set_value(out, segments, value)
+
+
+def _remove(out: Any, segments: pointer.Segments) -> None:
+    facts = _FACTS.get()
+    if facts is not None:
+        facts.invalidate(out, segments)
+    pointer.remove(out, segments)
+
 
 _PREDICATE_KEYS = ("present", "equals", "in")
 _UNMAPPED = ("pass", "drop", "error")
@@ -104,7 +267,7 @@ def _getter(segments: pointer.Segments) -> Callable[[Any], Any]:
     return getn
 
 
-def _setter(segments: pointer.Segments) -> Callable[[dict, Any], None]:
+def _raw_setter(segments: pointer.Segments) -> Callable[[dict, Any], None]:
     """A function writing a value at ``segments`` of an output object, specialised for short paths."""
     numeric = any(key.isascii() and key.isdigit() for key in segments)
     if len(segments) == 1 and not numeric:
@@ -126,6 +289,17 @@ def _setter(segments: pointer.Segments) -> Callable[[dict, Any], None]:
                 _set(out, segments, value)
         return set2
     return lambda out, value: _set(out, segments, value)
+
+
+def _setter(segments: pointer.Segments) -> Callable[[dict, Any], None]:
+    write = _raw_setter(segments)
+
+    def set_value(out: dict, value: Any) -> None:
+        facts = _FACTS.get()
+        if facts is not None:
+            facts.invalidate(out, segments)
+        write(out, value)
+    return set_value
 
 
 def _equality(expected: Any) -> Callable[[Any], bool]:
@@ -163,25 +337,30 @@ class Program:
             raise MappingError("A passthrough map needs the body to be a JSON object.")
         token = _RUNNING.set((deadline, self._mapping_s))
         each_token = _EACH_RUNNING.set([0]) if self._each_budgets else None
+        facts_token = _FACTS.set(_JsonFacts(self._each_budgets)) if self._each_budgets else None
+        clock_token = _CLOCK_STEPS.set([0]) if self._each_budgets else None
         try:  # the executor checks depth before it maps; the RecursionError net is for a caller that does not
             if self._each_budgets:
                 for value in source.values():
-                    _check_depth(value, self._each_budgets)
+                    _FACTS.get().measure(value)
             out: dict = (_clone(body) if self._writes else body) if self._passthrough else {}
             for step in self._steps:
                 step(source, out)
                 if time.perf_counter() > deadline:  # between rules, so a slow map stops while it runs, not after
                     raise BudgetExceeded("mapping_s", f"A mapping took longer than {self._mapping_s:g} s.")
             if self._each_budgets:
-                _check_depth(out, self._each_budgets)
-                _check_size(_json_size(out), self._each_budgets, self._output_budget)
-                _check_deadline()
+                size, _ = _FACTS.get().measure(out)
+                _check_size(_json_size(out) if size is None else size, self._each_budgets, self._output_budget)
+                _check_deadline(force=True)
         except RecursionError:
             raise BudgetExceeded("max_json_depth", "A mapped value nests too deep.") from None
         finally:
             _RUNNING.reset(token)
             if each_token is not None:
                 _EACH_RUNNING.reset(each_token)
+            if facts_token is not None:
+                _FACTS.reset(facts_token)
+                _CLOCK_STEPS.reset(clock_token)
         return out
 
 
@@ -333,7 +512,7 @@ def _c_rename(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
     def rename_rule(source: Mapping[str, Any], out: dict) -> None:
         value = _get(out, src)
         if value is not MISSING:
-            pointer.remove(out, src)
+            _remove(out, src)
             _set(out, dst, value)
     return rename_rule
 
@@ -377,7 +556,7 @@ def _c_drop(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
     ctx.writes.append(target)
 
     def drop_rule(source: Mapping[str, Any], out: dict) -> None:
-        pointer.remove(out, target)
+        _remove(out, target)
     return drop_rule
 
 
@@ -530,7 +709,12 @@ def _c_when(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
     return when_rule
 
 
-def _check_deadline() -> None:
+def _check_deadline(*, force: bool = False) -> None:
+    steps = _CLOCK_STEPS.get()
+    if not force and steps is not None:
+        steps[0] += 1
+        if steps[0] % 64:
+            return
     running = _RUNNING.get()
     if running is not None and time.perf_counter() > running[0]:
         raise BudgetExceeded("mapping_s", f"A mapping took longer than {running[1]:g} s.")
@@ -542,6 +726,23 @@ def _check_depth(value: Any, budgets: Budgets) -> None:
 
 
 def _json_size(value: Any) -> int:
+    kind = type(value)
+    if kind is str:
+        return len(json.encoder.encode_basestring(value).encode("utf-8"))
+    if kind is int:
+        return len(str(value))
+    if kind is float:
+        if value != value:
+            return 3  # NaN, matching json.dumps' default allow_nan=True
+        if value == float("inf"):
+            return 8
+        if value == -float("inf"):
+            return 9
+        return len(repr(value))
+    if value is None or value is True:
+        return 4
+    if value is False:
+        return 5
     return len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
 
 
@@ -576,6 +777,7 @@ def _c_each(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
             return
         if type(values) is not list:
             raise MappingError("The source of each must be an array.")
+        _check_deadline(force=True)
         selected = _EACH_RUNNING.get()
         assert selected is not None
         selected[0] += len(values)
@@ -592,8 +794,8 @@ def _c_each(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
             for step in children:
                 step(local, mapped)
                 _check_deadline()
-            _check_depth(mapped, budgets)
-            size += _json_size(mapped) + (1 if index else 0)
+            item_size, _ = _FACTS.get().measure(mapped)
+            size += (_json_size(mapped) if item_size is None else item_size) + (1 if index else 0)
             _check_size(size, budgets, output_budget)
             result.append(mapped)
         write(out, result)

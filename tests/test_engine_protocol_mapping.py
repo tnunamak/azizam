@@ -451,13 +451,16 @@ def test_each_output_byte_budget_utf8_boundary_and_envelope(roots, name):
 
 def test_each_stops_growth_early_without_serializing_accumulating_list(monkeypatch):
     calls = []
-    real_size = mapping._json_size
+    real_measure = mapping._JsonFacts.measure
 
-    def sized(value):
-        calls.append(value)
-        return real_size(value)
+    def measured(facts, value, level=1):
+        # Count fresh mapped objects, excluding the source accounting pass and
+        # cache hits when the final envelope reuses completed item facts.
+        if type(value) is dict and ("v" in value or "data" in value) and id(value) not in facts.nodes:
+            calls.append(value)
+        return real_measure(facts, value, level)
 
-    monkeypatch.setattr(mapping, "_json_size", sized)
+    monkeypatch.setattr(mapping._JsonFacts, "measure", measured)
     rules = [_each([{"set": {"to": "/v", "value": "x" * 20}}])]
     program = mapping.build(rules, base="empty", roots=mapping.REQUEST_ROOTS,
                             budgets=Budgets(max_request_bytes=100))
@@ -469,7 +472,7 @@ def test_each_stops_growth_early_without_serializing_accumulating_list(monkeypat
     calls.clear()
     program = mapping.build(rules, base="empty", roots=mapping.REQUEST_ROOTS)
     assert len(program.apply({"body": {"models": list(range(100))}})["data"]) == 100
-    assert len(calls) == 101  # each element once, then the finished output once
+    assert len(calls) == 101  # each element measured once, then the final envelope
 
 
 def test_each_owns_existing_root_values_and_nested_siblings():
