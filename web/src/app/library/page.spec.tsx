@@ -2268,6 +2268,7 @@ describe("Library items whose files are gone", () => {
     const notice = await screen.findByRole("region", { name: "Media folder" });
     expect(within(notice).getByText("/mnt/media")).toBeVisible();
     expect(within(notice).getByText("2 of 5 Library items have their files here.")).toBeVisible();
+    expect(within(notice).getByText(/one-time check/)).toBeVisible();
     fireEvent.click(within(notice).getByRole("button", { name: "This is the right media folder" }));
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0].init).toMatchObject({
