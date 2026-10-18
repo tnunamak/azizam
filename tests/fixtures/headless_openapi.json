@@ -31448,7 +31448,9 @@
       "typical_seconds": null
     },
     {
-      "aliases": [],
+      "aliases": [
+        "video-quality"
+      ],
       "description": "Make a video with stereo sound from a description.",
       "display_name": "MiniMax H3 T2V",
       "execution": {
