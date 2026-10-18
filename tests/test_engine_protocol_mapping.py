@@ -249,3 +249,14 @@ def test_a_copy_shares_a_container_only_when_no_rule_writes_below_it() -> None:
         out = program.apply({"body": body, "params": {}, "files": {}})
         assert out["opts"] is not body["opts"], write
         assert json.dumps(body) == snapshot, write
+
+
+def test_a_deep_source_is_a_budget_error_inside_the_map_not_a_recursion_error() -> None:
+    node: dict = {"x": 1}
+    for _ in range(5000):
+        node = {"n": node}
+    with pytest.raises(BudgetExceeded) as raised:
+        run([{"set": {"to": "/flag", "value": True}}], node, base="passthrough")  # a write: the body is cloned
+    assert raised.value.budget == "max_json_depth"
+    with pytest.raises(BudgetExceeded):
+        run([{"copy": {"from": "/body/n", "to": "/n"}}, {"set": {"to": "/n/flag", "value": True}}], node)  # a copy that must own its copy

@@ -560,6 +560,36 @@ def test_response_size_depth_and_selection_budgets() -> None:
         run(ex.invoke(conn(), req("models")))
 
 
+def deep_dict(depth: int) -> dict:
+    node: dict = {"x": 1}
+    for _ in range(depth - 1):
+        node = {"n": node}
+    return node
+
+
+@pytest.mark.parametrize("depth", [500, 1005, 5000, 200_000])
+@pytest.mark.parametrize("encoding", ["passthrough with a write", "multipart json part"])
+def test_a_very_deep_body_is_a_budget_error_and_never_a_recursion_error(depth: int, encoding: str) -> None:
+    if encoding == "passthrough with a write":  # a write below the body makes the map clone it
+        body = {"encoding": "json", "base": "passthrough", "map": [{"set": {"to": "/flag", "value": True}}, {"copy": {"from": "/body/n", "to": "/n"}}]}
+    else:
+        body = {"encoding": "multipart", "parts": [{"name": "opts", "kind": "json", "from": "/body"}]}
+    ops = {"chat": {"class": "generate", "request": {"method": "POST", "path": "/v1/chat", "body": body}, "response": {"framing": "json"}}}
+    ex, fake = make(ops, lambda r: httpx.Response(200, json={}))
+    with pytest.raises(BudgetExceeded) as raised:
+        run(ex.invoke(conn(), req("chat", deep_dict(depth))))
+    assert raised.value.budget == "max_json_depth"
+    assert fake.requests == []
+
+
+def test_a_very_deep_params_value_cannot_crash_the_request() -> None:
+    ops = {"get": {"class": "inventory", "request": {"method": "GET", "path": "/v1/x", "query": [{"name": "q", "from": "/params/q"}]}, "response": {"framing": "json"}}}
+    ex, fake = make(ops, lambda r: httpx.Response(200, json={}))
+    with pytest.raises((BudgetExceeded, MappingError)):
+        run(ex.invoke(conn(), req("get", params={"q": deep_dict(5000)})))
+    assert fake.requests == []
+
+
 def test_a_mapped_body_that_nests_too_deep_is_refused() -> None:
     ops = {"echo": {"class": "generate", "request": {"method": "POST", "path": "/e", "body": {"encoding": "json"}}, "response": {"framing": "json"}}}
     ex, fake = make(ops, lambda r: httpx.Response(200, json={}), budgets=Budgets(max_json_depth=5))
