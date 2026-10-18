@@ -477,3 +477,60 @@ def test_a_full_save_that_names_the_excluded_record_replaces_it(live, monkeypatc
     assert response.json()["excluded"] == []
     assert "models" not in _stored(live)["services"]["bad-engine"]["config"]  # the replacement, not the stored value
     assert "bad-engine" in proxy.config["backends"]
+
+
+# --- engines with key rules that the provider route does not send ------------------------------------
+
+
+def _overview_items(client) -> list[dict]:
+    response = client.get("/admin/api/overview")
+    assert response.status_code == 200, response.text[:300]
+    return [item for item in response.json()["attention"] if "key rules" in item["title"]]
+
+
+def _with_rules(service_id: str, **config) -> dict:
+    return _service(service_id, auth_inject=[{"header": "X-Key", "secret": "env:SOME_KEY"}], **config)
+
+
+def test_the_overview_warns_about_key_rules_on_an_engine_the_provider_route_reaches(live, monkeypatch):
+    client = _owner_client(monkeypatch)
+    registry = proxy.ADMIN_STORE.get_service_registry()
+    registry["services"]["ruled"] = service_registry.normalize_service_record("ruled", _with_rules("ruled", native_passthrough=True))
+    write_service_registry_for_test(registry, path=live)
+
+    [item] = _overview_items(client)
+
+    assert "ruled" in item["title"] and "provider route" in item["title"]
+    assert item["severity"] == "attention"
+
+
+@pytest.mark.parametrize("config", [
+    {"native_passthrough": False},   # no provider route to reach it by
+    {},                              # the same
+])
+def test_the_overview_does_not_warn_without_a_provider_route(live, monkeypatch, config):
+    client = _owner_client(monkeypatch)
+    registry = proxy.ADMIN_STORE.get_service_registry()
+    registry["services"]["ruled"] = service_registry.normalize_service_record("ruled", _with_rules("ruled", **config))
+    write_service_registry_for_test(registry, path=live)
+
+    assert _overview_items(client) == []
+
+
+def test_the_overview_does_not_warn_about_an_engine_with_a_provider_route_and_no_rules(live, monkeypatch):
+    client = _owner_client(monkeypatch)
+    registry = proxy.ADMIN_STORE.get_service_registry()
+    registry["services"]["plain"] = service_registry.normalize_service_record("plain", _service("plain", native_passthrough=True))
+    write_service_registry_for_test(registry, path=live)
+
+    assert _overview_items(client) == []
+
+
+def test_the_overview_does_not_warn_about_a_disabled_engine(live, monkeypatch):
+    client = _owner_client(monkeypatch)
+    registry = proxy.ADMIN_STORE.get_service_registry()
+    record = service_registry.normalize_service_record("off", {**_with_rules("off", native_passthrough=True), "enabled": False})
+    registry["services"]["off"] = record
+    write_service_registry_for_test(registry, path=live)
+
+    assert _overview_items(client) == []
