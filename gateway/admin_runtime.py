@@ -822,10 +822,12 @@ class AdminSQLiteStore:
             old_services = before_registry.get("services") or {}
             for service_id, record in (value.get("services") or {}).items():
                 previous = old_services.get(service_id) or {}
-                old_process = previous.get("process", (previous.get("config") or {}).get("process"))
-                new_process = record.get("process", (record.get("config") or {}).get("process"))
-                if old_process != new_process:
-                    raise PermissionError("Only the owner can change a service process driver.")
+                for field in ("process", "protocol_operations", "control_file_roots",
+                              "offerings", "residency", "observations"):
+                    old_value = previous.get(field, (previous.get("config") or {}).get(field))
+                    new_value = record.get(field, (record.get("config") or {}).get(field))
+                    if old_value != new_value:
+                        raise PermissionError(f"Only the owner can change service {field}.")
         changed = service_registry.credential_binding_changes(before_registry, value)
         if not changed:
             return value
