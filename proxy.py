@@ -100,6 +100,12 @@ from gateway import stable_aliases
 from gateway import model_metadata
 from gateway import engine_check
 from gateway import speech_stream
+from gateway.engine_protocol import inline_tts as tts_adapter
+from gateway.engine_protocol.errors import TransportFailure
+from gateway.engine_protocol.types import CanonicalRequest as AdapterRequest
+from gateway.engine_protocol.types import Connection as AdapterConnection
+from gateway.engine_protocol.types import Reply as AdapterReply
+from gateway.engine_protocol.types import Timeouts as AdapterTimeouts
 from gateway import custom_voices
 from gateway import voice_audio
 from gateway import voices_api
@@ -742,6 +748,13 @@ tts_cfg = config.get("backends", {}).get("tts", {})
 TTS_ENABLED = bool_from_config(tts_cfg.get("enabled"), True)
 TTS_HOST = f"http://{tts_cfg.get('host', '127.0.0.1')}:{tts_cfg.get('port', 8880)}"
 TTS_TIMEOUT = int(tts_cfg.get("timeout", 120))
+# The in-tree speech client, reached through the adapter interface (contract v2.1 section 4).
+_TTS_ADAPTER = tts_adapter.InlineTtsAdapter()
+
+
+def _tts_connection(address: str) -> AdapterConnection:
+    """The speech engine at ``address``, with the read timeout every speech call has always had."""
+    return AdapterConnection(address=address, timeouts=AdapterTimeouts(connect_s=10, first_byte_s=TTS_TIMEOUT, total_s=TTS_TIMEOUT))
 
 # STT backend
 stt_cfg = config.get("backends", {}).get("stt", {})
@@ -3720,29 +3733,34 @@ async def _stream_tts_upstream(
     ``sse`` (``speech.audio.delta`` events). An upstream error status is
     returned as a normal response before any streaming starts.
     """
-    client = httpx.AsyncClient(timeout=httpx.Timeout(TTS_TIMEOUT, connect=10))
     upstream = None
     streaming = False
     # Until the body is handed to the StreamingResponse this function owns the
-    # client and the upstream body, on every exit including cancellation.
+    # adapter's stream (its upstream response and client), on every exit
+    # including cancellation.
     try:
         try:
-            upstream = await client.send(client.build_request("POST", url, headers=headers, content=body), stream=True)
-            if not 200 <= upstream.status_code < 300:
-                content = await upstream.aread()
-                if _speech_allocation_failed(upstream.status_code, content.decode("utf-8", "replace")):
+            upstream = await _TTS_ADAPTER.invoke(
+                _tts_connection(url.removesuffix(tts_adapter.SPEECH_PATH)), "speech.stream",
+                AdapterRequest(op="speech.stream", headers=headers, raw_body=body),
+            )
+            if isinstance(upstream, AdapterReply):
+                refused, upstream = upstream, None
+                if _speech_allocation_failed(refused.status, refused.raw.decode("utf-8", "replace")):
                     return _tts_gpu_memory_response()
-                retry_after = upstream.headers.get("retry-after")
+                retry_after = refused.headers.get("retry-after")
                 return Response(
-                    content=content,
-                    status_code=upstream.status_code,
-                    media_type=upstream.headers.get("content-type", "application/json"),
+                    content=refused.raw,
+                    status_code=refused.status,
+                    media_type=refused.headers.get("content-type", "application/json"),
                     headers={"Retry-After": retry_after} if retry_after else None,
                 )
-        except httpx.TimeoutException:
-            return _tts_error("TTS request timeout", 504)
-        except httpx.ConnectError:
-            return _tts_error(f"TTS backend unavailable at {url}", 502, "tts_backend_unavailable")
+        except TransportFailure as e:
+            if e.kind == "timeout":
+                return _tts_error("TTS request timeout", 504)
+            if e.kind == "unreachable":
+                return _tts_error(f"TTS backend unavailable at {url}", 502, "tts_backend_unavailable")
+            return _tts_error(f"TTS proxy error: {e}", 502)
         except Exception as e:  # noqa: BLE001
             return _tts_error(f"TTS proxy error: {e}", 502)
 
@@ -3750,11 +3768,11 @@ async def _stream_tts_upstream(
         # first and fails inside the stream when GPU0 is full, so the status alone cannot be
         # trusted. Read the first chunk before committing a 200 to the client: a stream that
         # dies before any audio becomes a 503 and the tier falls back to its next engine.
-        raw_chunks = upstream.aiter_raw()
+        raw_chunks = upstream.__aiter__()
         try:
             first_chunk = await anext(raw_chunks, b"")
-        except (httpx.TransportError, httpx.StreamError) as e:
-            print(f"[proxy] TTS engine at {url} dropped the stream before any audio: {e!r}", flush=True)
+        except TransportFailure as e:
+            print(f"[proxy] TTS engine at {url} dropped the stream before any audio: {e}", flush=True)
             return _tts_error("TTS engine failed before sending audio (likely GPU0 memory pressure)", 503, "tts_engine_stream_failed")
         if not first_chunk:
             return _tts_error("TTS engine returned no audio", 502, "tts_engine_empty_stream")
@@ -3777,7 +3795,6 @@ async def _stream_tts_upstream(
                     yield chunk
             finally:
                 await upstream.aclose()
-                await client.aclose()
 
         media_type = "text/event-stream" if stream_format == "sse" else TTS_RESPONSE_MEDIA_TYPES[response_format]
         response = StreamingResponse(
@@ -3788,10 +3805,8 @@ async def _stream_tts_upstream(
         streaming = True
         return response
     finally:
-        if not streaming:
-            if upstream is not None:
-                await upstream.aclose()
-            await client.aclose()
+        if not streaming and upstream is not None:
+            await upstream.aclose()
 
 
 async def proxy_tts_request(request: Request, auth_context: AuthContext, *, receipt: RouteReceipt | None = None) -> Response:
@@ -4019,83 +4034,88 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         )
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(TTS_TIMEOUT, connect=10)) as client:
-            resp = await client.post(url, headers=headers, content=body)
+        # The adapter owns the HTTP client; the answer handling below is unchanged.
+        resp = await _TTS_ADAPTER.invoke(
+            _tts_connection(_tts_host), "speech.synthesize",
+            AdapterRequest(op="speech.synthesize", headers=headers, raw_body=body),
+        )
 
-            if not 200 <= resp.status_code < 300:
-                if _speech_allocation_failed(resp.status_code, resp.text):
-                    return _tts_gpu_memory_response()
-                return openai_error_response(
-                    "TTS backend rejected the speech request.",
-                    status_code=resp.status_code if 400 <= resp.status_code < 600 else 502,
-                    error_type="invalid_request_error" if 400 <= resp.status_code < 500 else "api_error",
-                    code="tts_backend_error",
-                )
-
-            # TTS returns audio data, stream it back
-            content = resp.content
-            content_type = resp.headers.get("content-type", TTS_RESPONSE_MEDIA_TYPES["wav"])
-            if 200 <= resp.status_code < 300 and requested_response_format not in {"wav", "mp3"}:
-                try:
-                    content = await asyncio.to_thread(
-                        convert_wav_to_audio_format,
-                        resp.content,
-                        requested_response_format,
-                    )
-                    content_type = TTS_RESPONSE_MEDIA_TYPES[requested_response_format]
-                except Exception as e:
-                    return Response(
-                        content=json.dumps({"error": {"message": f"TTS audio conversion failed: {e}", "type": "api_error"}}),
-                        status_code=502,
-                        media_type="application/json",
-                    )
-            elif 200 <= resp.status_code < 300 and requested_response_format == "mp3":
-                try:
-                    content = await asyncio.to_thread(convert_wav_to_mp3, resp.content)
-                    content_type = TTS_RESPONSE_MEDIA_TYPES["mp3"]
-                except Exception as e:
-                    return Response(
-                        content=json.dumps({"error": {"message": f"TTS audio conversion failed: {e}", "type": "api_error"}}),
-                        status_code=502,
-                        media_type="application/json",
-                    )
-            elif 200 <= resp.status_code < 300:
-                content_type = TTS_RESPONSE_MEDIA_TYPES.get(requested_response_format, content_type)
-            if 200 <= resp.status_code < 300 and receipt is not None and stream_format != "sse":
-                from gateway import media_ingestion
-                await asyncio.to_thread(media_ingestion.store_audio_response, content, content_type, receipt, store_asset=store_asset_bytes)
-            if 200 <= resp.status_code < 300 and stream_format == "sse":
-                # Engine cannot stream: still answer in the SSE shape, as one delta.
-                async def one_delta():
-                    yield content
-                return StreamingResponse(
-                    speech_stream.pcm_to_sse(one_delta()),
-                    media_type="text/event-stream",
-                    headers={"Cache-Control": "no-cache"},
-                )
-            if (
-                200 <= resp.status_code < 300
-                and media_delivery.current_mode() == provenance.METADATA_NONE
-            ):
-                # Buffered (non-streaming) speech only: strip container tags
-                # losslessly. Streams are delivered as the engine produced them.
-                try:
-                    content = await asyncio.to_thread(
-                        media_delivery.deliver_bytes, content, content_type, provenance.METADATA_NONE
-                    )
-                except media_metadata.MediaMetadataError as exc:
-                    print(f"[proxy] speech metadata strip failed: {exc}", flush=True)
-                    return _tts_error("Could not prepare audio for delivery", 502)
-            return Response(
-                content=content,
-                status_code=resp.status_code,
-                media_type=content_type
+        if not 200 <= resp.status < 300:
+            if _speech_allocation_failed(resp.status, resp.raw.decode("utf-8", "replace")):
+                return _tts_gpu_memory_response()
+            return openai_error_response(
+                "TTS backend rejected the speech request.",
+                status_code=resp.status if 400 <= resp.status < 600 else 502,
+                error_type="invalid_request_error" if 400 <= resp.status < 500 else "api_error",
+                code="tts_backend_error",
             )
 
-    except httpx.TimeoutException:
-        return _tts_error("TTS request timeout", 504)
-    except httpx.ConnectError:
-        return _tts_error(f"TTS backend unavailable at {_tts_host}", 502, "tts_backend_unavailable")
+        # TTS returns audio data, stream it back
+        content = resp.raw
+        content_type = resp.headers.get("content-type", TTS_RESPONSE_MEDIA_TYPES["wav"])
+        if 200 <= resp.status < 300 and requested_response_format not in {"wav", "mp3"}:
+            try:
+                content = await asyncio.to_thread(
+                    convert_wav_to_audio_format,
+                    resp.raw,
+                    requested_response_format,
+                )
+                content_type = TTS_RESPONSE_MEDIA_TYPES[requested_response_format]
+            except Exception as e:
+                return Response(
+                    content=json.dumps({"error": {"message": f"TTS audio conversion failed: {e}", "type": "api_error"}}),
+                    status_code=502,
+                    media_type="application/json",
+                )
+        elif 200 <= resp.status < 300 and requested_response_format == "mp3":
+            try:
+                content = await asyncio.to_thread(convert_wav_to_mp3, resp.raw)
+                content_type = TTS_RESPONSE_MEDIA_TYPES["mp3"]
+            except Exception as e:
+                return Response(
+                    content=json.dumps({"error": {"message": f"TTS audio conversion failed: {e}", "type": "api_error"}}),
+                    status_code=502,
+                    media_type="application/json",
+                )
+        elif 200 <= resp.status < 300:
+            content_type = TTS_RESPONSE_MEDIA_TYPES.get(requested_response_format, content_type)
+        if 200 <= resp.status < 300 and receipt is not None and stream_format != "sse":
+            from gateway import media_ingestion
+            await asyncio.to_thread(media_ingestion.store_audio_response, content, content_type, receipt, store_asset=store_asset_bytes)
+        if 200 <= resp.status < 300 and stream_format == "sse":
+            # Engine cannot stream: still answer in the SSE shape, as one delta.
+            async def one_delta():
+                yield content
+            return StreamingResponse(
+                speech_stream.pcm_to_sse(one_delta()),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache"},
+            )
+        if (
+            200 <= resp.status < 300
+            and media_delivery.current_mode() == provenance.METADATA_NONE
+        ):
+            # Buffered (non-streaming) speech only: strip container tags
+            # losslessly. Streams are delivered as the engine produced them.
+            try:
+                content = await asyncio.to_thread(
+                    media_delivery.deliver_bytes, content, content_type, provenance.METADATA_NONE
+                )
+            except media_metadata.MediaMetadataError as exc:
+                print(f"[proxy] speech metadata strip failed: {exc}", flush=True)
+                return _tts_error("Could not prepare audio for delivery", 502)
+        return Response(
+            content=content,
+            status_code=resp.status,
+            media_type=content_type
+        )
+
+    except TransportFailure as e:
+        if e.kind == "timeout":
+            return _tts_error("TTS request timeout", 504)
+        if e.kind == "unreachable":
+            return _tts_error(f"TTS backend unavailable at {_tts_host}", 502, "tts_backend_unavailable")
+        return _tts_error(f"TTS proxy error: {str(e)}", 502)
     except Exception as e:
         return _tts_error(f"TTS proxy error: {str(e)}", 502)
 
