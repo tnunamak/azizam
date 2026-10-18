@@ -308,6 +308,36 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertTrue((self.cache / ".azizam-media").is_file())
 
+    def test_an_id_that_is_not_a_digest_is_not_counted_as_here_or_in_the_library(self) -> None:
+        """A legacy id cannot be checked against the folder, so it is neither here nor in the count."""
+        self.seed()
+        self.unconfirm_folder()
+        self._receipt(self.app_a["id"], "req_legacy")
+        media_jobs.create(media_jobs.MediaJob(
+            request_id="req_legacy", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
+            assets=[{"asset_id": "img_legacy123", "media_type": "image/png"}]), path=self.jobs_db)
+        self.current_user = self.owner
+        self.assertEqual(self.media_folder(), {
+            "state": "unconfirmed", "path": str(self.cache), "library_items": 5, "items_here": 2,
+            "uncheckable_items": 1,
+        })
+        self.assertEqual(self.client.post(CONFIRM_FOLDER, headers=VALID).status_code, 200)
+        rows = admin_store.list_audit(action_prefix="media.folder.confirm", limit=10, path=self.admin_db)
+        self.assertEqual(rows[0]["metadata"], {"library_items": 5, "items_here": 2})
+
+    def test_a_library_whose_only_ids_are_not_digests_reads_as_unverifiable(self) -> None:
+        self.empty_the_folder()
+        self.unconfirm_folder()
+        self._receipt(self.app_a["id"], "req_legacy")
+        media_jobs.create(media_jobs.MediaJob(
+            request_id="req_legacy", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
+            assets=[{"asset_id": "img_legacy123", "media_type": "image/png"}]), path=self.jobs_db)
+        self.current_user = self.owner
+        self.assertEqual(self.media_folder(), {
+            "state": "unconfirmed", "path": str(self.cache), "library_items": 0, "items_here": 0,
+            "uncheckable_items": 1,
+        })
+
     def test_a_member_is_refused_before_the_folder_is_looked_up(self) -> None:
         self.client = self.make_client(self._asset_path, storage_provider=lambda: None)
         self.assertEqual(self.client.post(CONFIRM_FOLDER, headers=VALID).status_code, 403)
