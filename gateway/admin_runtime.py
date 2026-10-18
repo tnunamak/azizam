@@ -823,7 +823,11 @@ class AdminSQLiteStore:
             for service_id, record in (value.get("services") or {}).items():
                 previous = old_services.get(service_id) or {}
                 if previous:
-                    old_config, new_config = previous.get("config") or {}, record.get("config") or {}
+                    old_config, new_config = dict(previous.get("config") or {}), dict(record.get("config") or {})
+                    # The legacy PATCH form fills model_group from id. That
+                    # representation change grants no new offering or route.
+                    for config_values in (old_config, new_config):
+                        config_values["models"] = service_registry._form_models_to_config(config_values.get("models"))
                     defaults = {"base_path": "/v1", "scheme": "http", "timeout": 600,
                                 "headers": [], "models": [], "transforms": []}
                     for section, keys in {

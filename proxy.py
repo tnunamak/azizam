@@ -27645,7 +27645,12 @@ async def _forward_current_loaded_openai_request(
                 owner.report(status="failed", reason="failed")
                 return policy_error
             query = backend_query_string(request.url.query)
-            url = f"{target.host}{request_path}"
+            record = (ADMIN_STORE.get_service_registry().get("services") or {}).get(target.backend)
+            connection = inference_connection(
+                record, request_path.removeprefix("/v1"), fallback_address=f"{target.host}/v1",
+                fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
+            )
+            url = connection.url
             if query:
                 url = f"{url}?{query}"
 
@@ -27657,6 +27662,7 @@ async def _forward_current_loaded_openai_request(
             )
             headers.setdefault("content-type", "application/json")
             headers.setdefault("accept", "application/json")
+            headers.update(connection.headers)
 
             if execution_body is None:
                 execution_body = json.dumps(body).encode()
@@ -27665,7 +27671,7 @@ async def _forward_current_loaded_openai_request(
                 url=url,
                 headers=headers,
                 body=execution_body,
-                read_timeout=UPSTREAM_READ_TIMEOUT,
+                read_timeout=connection.read_timeout,
             )
 
             record_request_shape_stage(
