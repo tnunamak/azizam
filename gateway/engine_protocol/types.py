@@ -80,6 +80,9 @@ class CanonicalRequest:
     # Headers the caller already prepared for this engine. The http-v1 executor ignores them (it builds headers from the
     # description and the connection); a reviewed in-tree adapter that wraps an older client may send them as they are.
     headers: Mapping[str, str] = field(default_factory=dict)
+    # A body the caller already serialized. Like ``headers``: ignored by the http-v1 executor, sent as is by a reviewed
+    # adapter that wraps an older client (so the bytes on the wire do not change).
+    raw_body: bytes | None = None
 
 
 class JobState(str, Enum):

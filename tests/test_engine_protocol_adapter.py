@@ -230,6 +230,15 @@ def test_speech_is_posted_exactly_as_the_proxy_always_did(monkeypatch) -> None:
     assert (reply.status, reply.raw, reply.headers["content-type"]) == (200, b"RIFFdata", "audio/wav")
 
 
+def test_a_body_the_caller_already_serialized_is_sent_untouched(monkeypatch) -> None:
+    _Capture.instances = []
+    _Capture.reply = httpx.Response(200, content=b"x")
+    monkeypatch.setattr(httpx, "AsyncClient", _Capture)
+    raw = b'{"input":"compact"}'
+    run(InlineTtsAdapter().invoke(Connection(address="http://h:1"), "speech.synthesize", CanonicalRequest(op="x", raw_body=raw, headers={})))
+    assert _Capture.instances[0].posted[0][2] is raw
+
+
 def test_speech_refusals_come_back_as_replies_and_transport_errors_as_typed_failures(monkeypatch) -> None:
     _Capture.instances = []
     _Capture.reply = httpx.Response(500, content=b"CUDA out of memory")

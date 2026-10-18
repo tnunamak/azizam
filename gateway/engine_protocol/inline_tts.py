@@ -61,7 +61,7 @@ class InlineTtsAdapter:
         if op not in OPERATIONS:
             raise UnknownOperation(f"The speech adapter has no operation '{op}'.")
         url = f"{conn.address}{SPEECH_PATH}"
-        body = json.dumps(request.body).encode()
+        body = request.raw_body if request.raw_body is not None else json.dumps(request.body).encode()
         headers = request.headers
         timeout = httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)
         if op == "speech.synthesize":
