@@ -92,6 +92,9 @@ def test_a_data_only_frontend_serves_chat_through_a_fake_engine_and_writes_a_rec
     receipt = receipt_store.get(response.headers["x-azizam-request-id"], audience="internal")
     assert receipt is not None
     assert receipt["path"] == "/v1/chat/completions"
+    # An identity frontend carries every field: its loss report is empty, so it has no header.
+    assert "x-azizam-loss" not in response.headers
+    assert "loss" not in (receipt.get("metadata") or {})
 
 
 def test_the_acme_route_is_gone_once_the_row_is_removed(monkeypatch):

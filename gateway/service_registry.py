@@ -29,7 +29,7 @@ from typing import Any
 
 import yaml
 
-from gateway import admin_store
+from gateway import admin_store, native_lane
 from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
@@ -864,6 +864,10 @@ def validate_provider_native_passthrough_disabled(
         raise ValueError(
             f"remote provider {service_id!r} cannot enable native_passthrough"
         )
+    try:
+        native_lane.validate_native_block(config.get("native"))
+    except ValueError as error:
+        raise ValueError(f"service {service_id!r}: {error}") from error
 
 
 def is_remote_provider_config(config: Mapping[str, Any]) -> bool:
