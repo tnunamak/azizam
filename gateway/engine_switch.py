@@ -7,12 +7,16 @@ import weakref
 from contextlib import aclosing
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping
 
+from fastapi import HTTPException
+
 from gateway.engine_observations import Observation
 from gateway.swap_drain import ServingLease, SwapDeferred, SwapDrain, SwapDrainSettings
 
 
-class SwitchUnavailable(Exception):
-    retry_after_s = 30
+class SwitchUnavailable(HTTPException):
+    def __init__(self, detail: str, *, retry_after_s: int = 30) -> None:
+        self.retry_after_s = retry_after_s
+        super().__init__(status_code=503, detail=detail, headers={"Retry-After": str(retry_after_s)})
 
 
 def _value(result: Any) -> Any:
@@ -69,8 +73,10 @@ class SwitchController:
         self, service: Mapping[str, Any], offering_id: str, selection: Mapping[str, Any]
     ) -> SwitchLease:
         offerings = service.get("offerings") or []
-        if offering_id not in {row.get("id") for row in offerings if isinstance(row, Mapping)}:
+        offering = next((row for row in offerings if isinstance(row, Mapping) and row.get("id") == offering_id), None)
+        if offering is None:
             raise ValueError("unknown offering")
+        selected_identity = offering.get("upstream") or offering_id
         if selection.get("mode") != "switch":
             raise ValueError("selection.mode must be switch")
         spec = selection.get("switch") or {}
@@ -93,20 +99,30 @@ class SwitchController:
             drain_timeout = max(0.01, float(spec.get("drain_timeout_s", 30)))
             await self._drain.clear_for_swap(scope, SwapDrainSettings(enabled=True, timeout_s=drain_timeout))
             previous = _value(await self._observe(observation))
-            await self._invoke(op, args)
-            selected = _value(await self._observe(observation))
-            ready_name = spec.get("observe_ready")
-            ready = True if not ready_name else _value(await self._observe(str(ready_name))) is True
-            if selected != offering_id or not ready:
+            try:
+                await self._invoke(op, args)
+                selected = _value(await self._observe(observation))
+                declared = service.get("observations") or {}
+                ready_name = spec.get("observe_ready") or ("offering_ready" if "offering_ready" in declared else None)
+                ready = True if not ready_name else _value(await self._observe(str(ready_name))) is True
+                if selected != selected_identity or not ready:
+                    raise SwitchUnavailable("selection could not be verified")
+            except BaseException as exc:
                 if spec.get("on_failure", "fail") == "restore" and isinstance(previous, str):
-                    restore_args = {key: previous if value == offering_id else value for key, value in args.items()}
+                    restore_args = {
+                        key: previous if value == selected_identity else value for key, value in args.items()
+                    }
                     try:
-                        await self._invoke(op, restore_args)
-                        if _value(await self._observe(observation)) != previous:
-                            raise SwitchUnavailable("previous selection could not be verified")
-                    except Exception as exc:
-                        raise SwitchUnavailable("selection failed and restore failed") from exc
-                raise SwitchUnavailable("selection could not be verified")
+                        from gateway.lifecycle_drivers import _finish_even_if_cancelled
+
+                        await _finish_even_if_cancelled(self._restore(op, restore_args, observation, previous))
+                    except asyncio.CancelledError:
+                        raise
+                    except BaseException as recovery_exc:
+                        raise SwitchUnavailable("selection failed and restore failed") from recovery_exc
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                raise SwitchUnavailable("selection failed or is unknown") from exc
             lease = SwitchLease(lock, self._drain.lease(scope))
             handed_off = True
             return lease
@@ -115,3 +131,8 @@ class SwitchController:
         finally:
             if not handed_off:
                 lock.release()
+
+    async def _restore(self, op: str, args: Mapping[str, Any], observation: str, previous: str) -> None:
+        await self._invoke(op, args)
+        if _value(await self._observe(observation)) != previous:
+            raise SwitchUnavailable("previous selection could not be verified")

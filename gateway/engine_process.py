@@ -90,10 +90,14 @@ class ProcessDriver:
                 ready = await self._ready(svc, min(timeout_s, float(cfg.get("ready_timeout_s", timeout_s))))
                 if ready:
                     self._schedule_idle(ident, svc)
+                else:
+                    self._stop(svc, reset_budget=False)
                 return ready
-            if not self._restart_available(ident, cfg):
-                return False
+            if self._identity_matches(self._read_state(ident)):
+                self._stop(svc, reset_budget=False)
             if self._port_in_use(port):
+                return False
+            if not self._restart_available(ident, cfg):
                 return False
             await self._backoff(ident, cfg)
             self.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -176,6 +180,35 @@ class ProcessDriver:
         """Stop only processes this gateway instance started or adopted."""
         for service in list(self._services.values()):
             self.stop(service)
+
+    def recover(self, services: Mapping[str, Mapping[str, Any]]) -> None:
+        """At boot, adopt matching process groups; terminate stale recipes.
+
+        Recovery never launches a process. A PID whose kernel start tick no
+        longer matches is forgotten without sending a signal.
+        """
+        if not self.state_dir.is_dir():
+            return
+        for path in self.state_dir.glob("*.json"):
+            ident = path.stem
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", ident):
+                continue
+            state = self._read_state(ident)
+            if not self._identity_matches(state):
+                self._remove_state(ident)
+                continue
+            svc = {**(services.get(ident) or {}), "id": ident}
+            cfg = _configuration(svc)
+            try:
+                validated = self._validated(svc)
+            except ValueError:
+                validated = None
+            if self._commands_allowed() and cfg and validated and self._live_identity(
+                ident, validated[2], validated[1]
+            ):
+                self._services[ident] = svc
+                continue
+            self._stop(svc, reset_budget=False)
 
     async def status(self, svc: Mapping[str, Any]) -> str:
         try:

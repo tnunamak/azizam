@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -43,6 +43,9 @@ def _select(document: Any, pointer: str) -> Any:
 class ObservationReader:
     """Read one declared HTTP fact without guessing from another fact."""
 
+    def __init__(self, *, client_factory: Callable[..., httpx.AsyncClient] = httpx.AsyncClient) -> None:
+        self._client_factory = client_factory
+
     async def read(self, service: Mapping[str, Any], name: str) -> Observation:
         declared = service.get("observations")
         spec = declared.get(name) if isinstance(declared, Mapping) else None
@@ -64,7 +67,7 @@ class ObservationReader:
         if urlsplit(url).netloc != origin.netloc:
             return UNKNOWN
         try:
-            async with httpx.AsyncClient(follow_redirects=False, trust_env=False) as client:
+            async with self._client_factory(follow_redirects=False, trust_env=False) as client:
                 response = await client.get(url, timeout=float(http.get("timeout_s", 2)))
             if response.status_code != expected:
                 return UNKNOWN

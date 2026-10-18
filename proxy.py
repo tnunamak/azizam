@@ -12481,6 +12481,8 @@ async def lifespan(app: FastAPI):
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
     await asyncio.to_thread(_adopt_bootstrap_signin_lists)
+    from gateway.lifecycle_drivers import _process_driver
+    await asyncio.to_thread(_process_driver.recover, config.get("backends") or {})
     print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
     print(f"[proxy] STT backend: {STT_HOST} (enabled: {STT_ENABLED})", flush=True)
