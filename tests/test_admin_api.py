@@ -2645,9 +2645,18 @@ execution: job
 
         resp = client.delete("/admin/api/extensions/demo-package?mode=purge", headers=_auth())
 
-        self.assertEqual(resp.status_code, 400, resp.text)
-        self.assertEqual(resp.json()["error"]["code"], "invalid_extension_package_mode")
+        self.assertEqual(resp.status_code, 422, resp.text)
         self.assertIn("demo-package", store.extension_package_index["packages"])
+
+    def test_admin_remove_declares_mode_as_remove_or_disable_in_the_schema(self) -> None:
+        client, _ = _make_client()
+
+        operation = client.app.openapi()["paths"]["/admin/api/extensions/{package_id}"]["delete"]
+        mode = next(item for item in operation["parameters"] if item["name"] == "mode")
+
+        self.assertEqual(mode["in"], "query")
+        self.assertEqual(mode["schema"]["enum"], ["remove", "disable"])
+        self.assertEqual(mode["schema"]["default"], "remove")
 
     def test_admin_remove_honours_if_match_when_the_client_sends_it(self) -> None:
         client, store = _make_client()
