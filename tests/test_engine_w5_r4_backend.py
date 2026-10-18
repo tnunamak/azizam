@@ -157,3 +157,24 @@ def test_protocol_root_requires_a_public_endpoint(address):
         engine_admin.clean_values(load_engine_catalog().definition('openai-compatible'), {
             'address': address, 'dispatch': 'protocol', 'protocol_description': 'openai-compatible',
         })
+
+
+def test_retain_response_does_not_pair_old_entries_with_a_new_revision(tmp_path, monkeypatch):
+    from gateway.admin_runtime import AdminContext, AdminSQLiteStore
+    store = AdminSQLiteStore(tmp_path / 'admin.db')
+    admin_store.init_db(store.path)
+    saved = record(api_key_env='EDITOR_KEY', credential_origin='http://127.0.0.1:8080')
+    admin_store.write_service_registry({'schema_version': 2, 'services': {'editor': saved}}, expected_generation=0, path=store.path)
+    snapshot = admin_store.get_service_registry_with_generation(path=store.path)
+    later = copy.deepcopy(snapshot)
+    later['operator_settings_generation'] += 1
+    later['value']['services']['editor']['name'] = 'Changed elsewhere'
+    calls = []
+    def changing_snapshot(**kwargs):
+        calls.append(True)
+        return copy.deepcopy(snapshot if len(calls) == 1 else later)
+    monkeypatch.setattr(admin_store, 'get_service_registry_with_generation', changing_snapshot)
+    actor = AdminContext(subject='editor-owner', actor_kind='user', actor_id='editor-owner', actor_label='Owner', roles=('owner',))
+    result = store.apply_secret_commands(service_id='editor', commands=[{'carrier': 'config.api_key', 'operation': 'retain', 'entry_id': secret_commands.provider_key_entry_id(saved)}], actor=actor, expected_generation=1)
+    assert result['operator_settings_generation'] == snapshot['operator_settings_generation']
+    assert result['value']['services']['editor']['name'] == snapshot['value']['services']['editor']['name']

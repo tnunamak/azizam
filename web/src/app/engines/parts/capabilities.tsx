@@ -277,7 +277,15 @@ function CapabilityRowView({
           <TestResultBlock
             test={test}
             label={row.label}
-            note={test.status === "stored" ? (storedNote ?? testNote) : testNote}
+            note={
+              test.status === "stored"
+                ? (storedNote ?? testNote)
+                : test.status === "done"
+                  ? test.result.via === "saved"
+                    ? "Tested the saved settings from the gateway’s computer. This test is not listed in Activity."
+                    : "Tested your unsaved changes from the gateway’s computer. The test did not save your changes and is not listed in Activity."
+                  : testNote
+            }
             disabled={readOnly || !onTest}
             onTestAgain={() => onTest?.(row.id)}
           />

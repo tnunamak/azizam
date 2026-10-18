@@ -1190,7 +1190,8 @@ class AdminSQLiteStore:
         self._fire_registry_changed(record)
         fresh = admin_store.get_service_registry_with_generation(path=self.path)
         if fresh and fresh["operator_settings_generation"] != record["operator_settings_generation"]:
-            record = {**fresh, "value": self.get_service_registry(), "excluded": self.get_service_registry_exclusions()}
+            fresh_registry, fresh_excluded = service_registry.read_registry(fresh["value"])
+            record = {**fresh, "value": fresh_registry, "excluded": fresh_excluded}
         return record
 
     def _write_registry_for_persist(self, document: Mapping[str, Any], value: Mapping[str, Any], action: str, actor: AdminContext,
@@ -1439,7 +1440,7 @@ class AdminSQLiteStore:
                     secret_refs.delete(ref, db_path=self.path)
                 raise
             if not outcome.changed:
-                return {**(admin_store.get_service_registry_with_generation(path=self.path) or {}), "value": registry,
+                return {**(snapshot or {}), "value": registry,
                         "excluded": self.get_service_registry_exclusions()}
             registry["services"][sid] = new_record
             try:

@@ -195,7 +195,7 @@ export function ConnectionFacts({
     const elsewhere = keyHere && requestOrigin && originOf(origin) !== requestOrigin;
     const unavailable = view.attention?.some((item) => item.code === "engine_credential_unavailable");
     rows.push([
-      "Inference key is sent to",
+      "Inference key destination",
       elsewhere ? (
         <span key="dest">
           No inference key is sent: the key belongs to {mono(originOf(origin) || origin)} but this engine’s address is {mono(requestOrigin)}.
@@ -206,6 +206,8 @@ export function ConnectionFacts({
         "The saved key’s destination is unknown."
       ) : keyHere && !requestOrigin ? (
         "Unknown. The request address is unavailable."
+      ) : keyHere && view.key.availability !== "available" ? (
+        <span key="dest">Configured for {mono(origin)}. Availability is checked when the key is used.</span>
       ) : keyHere ? (
         <span key="dest">
           {mono(origin)} only. Azizam never sends it to another address.
@@ -257,10 +259,18 @@ export function OfferingFacts({ v2 }: { v2: EngineRecordV2 | undefined }) {
     <div className="flex flex-col gap-2" data-testid="offering-facts">
       {switching && (
         <p className="text-meta">
-          Selected now:{" "}
+          Last observed selection:{" "}
           {v2?.selected_offering ? (
             <>{mono(v2.selected_offering)} <span className="text-muted-foreground">
-              {v2.observations.selected?.last?.ok === true ? "Verified by a check." : "Not verified by a check."}
+              {v2.observations.selected?.last?.ok === true && v2.observations.selected.last.at
+                ? "Verified by a check."
+                : v2.observations.selected?.last?.ok === true
+                  ? "Historical result; age unknown."
+                  : v2.observations.selected?.last?.ok === false
+                    ? "The last check did not verify this selection."
+                    : v2.observations.selected?.last
+                      ? "The last result is incomplete; verification is unknown."
+                      : "Verification is unknown."}
               {v2.observations.selected?.last?.at ? <> <RelativeTime ts={v2.observations.selected.last.at} fallback="" />.</> : " Check time unknown."}
               {" "}Source: {v2.observations.selected?.last?.source ?? "saved record"}.
             </span></>
@@ -458,7 +468,7 @@ export function ObservationList({ view, latestCheck }: { view: EngineView; lates
       </li>}
       {rows.map(([key, label, o]) => (
         <li key={key} className="text-meta flex items-start gap-2 p-3">
-          <Evidence ok={o?.last?.ok} />
+          <Evidence ok={o?.last?.at && typeof o.last.ok === "boolean" ? o.last.ok : undefined} />
           <span className="min-w-0 [overflow-wrap:anywhere]">
             <span className="block font-medium">{label}</span>
             <span className="text-muted-foreground block">
@@ -471,13 +481,18 @@ export function ObservationList({ view, latestCheck }: { view: EngineView; lates
                     <>
                       Saved result:{" "}
                       {o.last.detail ??
-                        (o.last.ok ? "as expected" : "not as expected")}
+                        (typeof o.last.ok === "boolean"
+                          ? o.last.ok ? "as expected" : "not as expected"
+                          : "Result incomplete; success or failure is unknown")}
+                      {typeof o.last.ok !== "boolean" && o.last.detail
+                        ? ". Result incomplete; success or failure is unknown"
+                        : ""}
                       {o.last.at ? (
                         <>
                           , <RelativeTime ts={o.last.at} fallback="" />
                         </>
                       ) : null}
-                      . Source: {o.last.source ?? "saved check"}. {o.last.at ? "" : "Check time unknown."}
+                      . Source: {o.last.source ?? "saved check"}. {o.last.at ? "" : "Historical result; Check time unknown."}
                     </>
                   ) : (
                     "No result yet, so it is unknown."

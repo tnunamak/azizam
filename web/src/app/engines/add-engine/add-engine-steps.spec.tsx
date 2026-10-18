@@ -99,7 +99,7 @@ describe("f: what a detected server can do", () => {
     expect(within(group).getByText(/^A test of embeddings.*passed at .* using unsaved settings\./)).toBeVisible();
     expect(within(group).getByText("POST http://192.168.1.50:8080/v1/embeddings")).toBeVisible();
     expect(
-      within(group).getByText("Ran on the gateway’s computer with the values on this screen. Nothing was saved, and it is not in Activity."),
+      within(group).getByText("Tested your unsaved changes from the gateway’s computer. The test did not save your changes and is not listed in Activity."),
     ).toBeVisible();
     expect(within(group).getByRole("button", { name: "Test again" })).toBeVisible();
     expect(within(dialog).queryByText("See it in Activity")).toBeNull();

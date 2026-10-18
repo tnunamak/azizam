@@ -22,7 +22,7 @@ it.each(["failed", "not_started"] as const)("enabled with %s evidence never clai
   await screen.findByRole("heading", { level: 1 });
   const header = document.querySelector("header")!;
   expect(header).toHaveTextContent("On");
-  expect(header).toHaveTextContent(status === "failed" ? "Check failed" : "Unknown");
+  expect(header).toHaveTextContent(status === "failed" ? "Saved check failed" : "Unknown");
   expect(header).not.toHaveTextContent("Ready");
 });
 it("protocol mismatch disables checks and explains the reason", async () => {
@@ -78,15 +78,20 @@ it.each(["path", "header", "model"])("discarding tested draft %s changes leaves 
   if (field === "header") {
     await user.click(screen.getByRole("button", { name: "Add a header" }));
     await user.type(screen.getByLabelText("Header name"), "X-Tenant");
-    await user.type(screen.getByLabelText("Value"), "draft");
+    await user.type(screen.getByLabelText("Value for X-Tenant"), "draft");
   }
   if (field === "model") await user.click(screen.getByRole("checkbox", { name: /Offer qwen/ }));
   const run = vi.spyOn(enginesApi, "test").mockResolvedValue({ ...testResult("chat_pass"), via: "draft" });
   const update = vi.spyOn(enginesApi, "update");
   await user.click(screen.getByRole("button", { name: "Run a real test for Chat" }));
-  expect(await screen.findByText(/Tested your unsaved changes/)).toBeVisible();
-  expect(run).toHaveBeenCalledTimes(1);
-  expect(run.mock.calls[0][0]).toMatchObject({ models: expect.any(Array) });
+  if (field === "header") {
+    expect(await screen.findByText(/Save the secret changes before running a test\./)).toBeVisible();
+    expect(run).not.toHaveBeenCalled();
+  } else {
+    expect(await screen.findByText(/Tested your unsaved changes/)).toBeVisible();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0][0]).toMatchObject({ models: expect.any(Array) });
+  }
   await user.click(screen.getByRole("button", { name: "Discard" }));
   expect(screen.queryByLabelText("Real test of Chat")).toBeNull();
   expect(update).not.toHaveBeenCalled();

@@ -45,9 +45,11 @@ describe("i: the engine record page", () => {
     expect(screen.getByText("On")).toBeVisible();
     expect(screen.getByText(/^Last checked/)).toBeVisible();
     expect(screen.getByRole("switch", { name: "Enabled" })).toBeChecked();
-    expect(screen.getByText("Configured")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Replace key" })).toBeVisible();
-    expect(screen.getByTestId("check-line")).toHaveTextContent(/^Reached the server\. Key accepted\. 2 models found\. Checked/);
+    expect(within(screen.getByRole("group", { name: "Saved key" })).getByText("Configured")).toBeVisible();
+    expect(screen.getByLabelText("API key")).toHaveValue("");
+    expect(screen.getByLabelText("API key")).toHaveAttribute("type", "password");
+    expect(screen.queryByRole("button", { name: "Replace key" })).toBeNull();
+    expect(screen.getByTestId("check-line")).toHaveTextContent(/^Reached the server\. A key was sent\. Acceptance was not recorded\. 2 models found\. Checked/);
     expect(screen.getAllByTestId("call-line")[0]).toHaveTextContent("Connection check: GET http://192.168.1.50:8080/v1/models");
     expect(screen.getByRole("checkbox", { name: "Chat" })).toBeChecked();
     expect(screen.getAllByRole("checkbox", { name: /^(Chat|Embeddings|Images|Reranking|Speech to text|Text to speech|Live voice)$/ })).toHaveLength(2);
@@ -168,29 +170,28 @@ describe("who can use the models", () => {
 });
 
 describe("N2: editing the address", () => {
-  it("withholds the key, blocks Save until a check passes, and says Save removes the key", async () => {
+  it("withholds the old key, disables secret edits and requires a check or an explicit keep-off save", async () => {
     const user = userEvent.setup();
     mount();
     const address = await screen.findByLabelText("Address");
     await user.clear(address);
     await user.type(address, "http://192.168.1.51:8080/v1");
     expect(screen.getByText("Your saved key won’t be sent to a new address. Re-enter it, or keep the old address.")).toBeVisible();
-    expect(screen.getByPlaceholderText("Paste the key again")).toHaveAttribute("type", "password");
-    expect(screen.getByText("Key not sent to this address yet. Re-enter it to check.")).toBeVisible();
-    expect(screen.queryByText("Configured")).toBeNull();
-    expect(screen.queryByText(/Key accepted/)).toBeNull();
+    expect(screen.getByLabelText("API key")).toHaveValue("");
+    expect(screen.getByLabelText("API key")).toBeDisabled();
+    expect(screen.getByText(/Save the address before editing secrets/)).toBeVisible();
     expect(screen.getByTestId("check-line")).toHaveTextContent("Out of date. Check again.");
     expect(screen.getByTestId("check-line")).toHaveTextContent(/Last result, for the old address: reached the server\. 2 models found\./);
     expect(screen.getByText(/Saving removes the old key from this engine\./)).toBeVisible();
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save and keep off" })).toBeVisible();
 
-    const run = vi.spyOn(enginesApi, "check").mockResolvedValue({ ...check("oai_ok"), key_withheld: true });
+    const run = vi.spyOn(enginesApi, "check").mockResolvedValue({ ...check("oai_ok"), key_sent: false, key_withheld: true });
     await user.click(screen.getByRole("button", { name: "Check again" }));
-    expect(await screen.findByText(/Reached the server at the new address\. No key was sent\./)).toBeVisible();
+    expect(await screen.findByText(/Reached the server at the new address\. No key was sent for this check\./)).toBeVisible();
     expect(run.mock.calls[0][0]).toMatchObject({ service_id: "garage-gpu", values: { address: "http://192.168.1.51:8080/v1" } });
     expect(run.mock.calls[0][0].values).not.toHaveProperty("api_key");
-    expect(screen.queryByText(/Key accepted/)).toBeNull();
+    expect(screen.queryByText(/A key was sent and accepted/)).toBeNull();
     const update = vi.spyOn(enginesApi, "update").mockImplementation(async () => {
       view = { ...view, values: { ...view.values, address: "http://192.168.1.51:8080/v1" }, key: { state: "none" } };
       return registry;
@@ -199,25 +200,45 @@ describe("N2: editing the address", () => {
     await waitFor(() => expect(update).toHaveBeenCalled());
     expect(update.mock.calls[0][1].values).toMatchObject({ address: "http://192.168.1.51:8080/v1" });
     expect(update.mock.calls[0][1].values).not.toHaveProperty("api_key");
-    expect(await screen.findByText("No key")).toBeVisible();
-    expect(screen.queryByText("Configured")).toBeNull();
+    expect(await within(screen.getByRole("group", { name: "Saved key" })).findByText("No key configured")).toBeVisible();
   });
 
-  it("a re-entered key that passes the check may say Key accepted", async () => {
+  it("saves the new address kept off before adding its key, then checks with the saved secret", async () => {
     const user = userEvent.setup();
-    mount();
+    mount({ revision: '"os-7"' });
     const address = await screen.findByLabelText("Address");
     await user.clear(address);
     await user.type(address, "http://192.168.1.51:8080/v1");
-    await user.type(screen.getByPlaceholderText("Paste the key again"), "sk-new");
+    const update = vi.spyOn(enginesApi, "update").mockImplementation(async () => {
+      view = { ...view, enabled: false, revision: '"os-8"', check: { status: "not_started" }, values: { ...view.values, address: "http://192.168.1.51:8080/v1" }, key: { state: "none" } };
+      return registry;
+    });
+    await user.click(screen.getByRole("button", { name: "Save and keep off" }));
+    await waitFor(() => expect(screen.getByLabelText("API key")).toBeEnabled());
+    expect(update.mock.calls[0][1]).toMatchObject({ disabled: true, values: { address: "http://192.168.1.51:8080/v1" } });
+    expect(update.mock.calls[0][1].values).not.toHaveProperty("api_key");
+    const commands = vi.spyOn(enginesApi, "secretEntries").mockImplementation(async () => {
+      view = { ...view, revision: '"os-9"', key: { state: "configured", source: "stored", entry_id: "ent_new_origin", origin: "http://192.168.1.51:8080" } };
+      return registry;
+    });
     const run = vi.spyOn(enginesApi, "check").mockResolvedValue(check("oai_ok_key"));
-    await user.click(screen.getByRole("button", { name: "Check again" }));
-    expect(await screen.findByText(/Reached the server at the new address\. Key accepted\./)).toBeVisible();
-    expect(run.mock.calls[0][0].values).toMatchObject({ api_key: "sk-new" });
-    expect(screen.queryByText(/Saving removes the old key/)).toBeNull();
+    await user.type(screen.getByLabelText("API key"), "new-origin-key");
+    expect(screen.getByLabelText("Address")).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: /Check (again|now)/ }));
+    expect(await screen.findByText(/Save the secret changes before checking this engine/)).toBeVisible();
+    expect(run).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(commands).toHaveBeenCalledWith("garage-gpu", [{ carrier: "config.api_key", operation: "add", value: "new-origin-key" }], '"os-8"'));
+    await waitFor(() => expect(screen.getByLabelText("API key")).toHaveValue(""));
+    expect(update).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: /Check (again|now)/ }));
+    expect(await screen.findByText(/Reached the server\. A key was sent and accepted\./)).toBeVisible();
+    expect(run.mock.calls[0][0]).toMatchObject({ service_id: "garage-gpu", values: { address: "http://192.168.1.51:8080/v1" } });
+    expect(run.mock.calls[0][0].values).not.toHaveProperty("api_key");
+    expect(JSON.stringify(commands.mock.calls)).not.toContain("[redacted]");
   });
 
-  it("a new path on the same server keeps the key: it is still sent, so no N2 warning", async () => {
+  it("a new path on the same server keeps the key binding while requiring a fresh check", async () => {
     const user = userEvent.setup();
     mount();
     const address = await screen.findByLabelText("Address");
@@ -225,12 +246,13 @@ describe("N2: editing the address", () => {
     await user.type(address, "http://192.168.1.50:8080/api/v1");
     expect(screen.queryByText(/Your saved key won’t be sent/)).toBeNull();
     expect(screen.queryByText(/Saving removes the old key/)).toBeNull();
-    expect(screen.getByText("Configured")).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Saved key" })).getByText("Configured")).toBeVisible();
+    expect(screen.getByLabelText("API key")).toBeDisabled();
     expect(screen.getByTestId("check-line")).toHaveTextContent("Out of date. Check again.");
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
   });
 
-  it("Keep the old address undoes the edit", async () => {
+  it("Keep the old address undoes the edit and restores an empty editable key input", async () => {
     const user = userEvent.setup();
     mount();
     const address = await screen.findByLabelText("Address");
@@ -238,16 +260,19 @@ describe("N2: editing the address", () => {
     await user.type(address, "http://10.0.0.9:8080/v1");
     await user.click(screen.getByRole("button", { name: "Keep the old address" }));
     expect(address).toHaveValue("http://192.168.1.50:8080/v1");
-    expect(screen.getByText("Configured")).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Saved key" })).getByText("Configured")).toBeVisible();
+    expect(screen.getByLabelText("API key")).toBeEnabled();
+    expect(screen.getByLabelText("API key")).toHaveValue("");
     expect(screen.queryByText("You have unsaved changes.")).toBeNull();
   });
 
-  it("an administrator cannot change the address, so no new-address key warning appears", async () => {
+  it("an administrator cannot change the address or secret entry", async () => {
     viewer.current = { ...viewer.current, role: "admin" };
     mount();
     expect(await screen.findByLabelText("Address")).toBeDisabled();
-    expect(screen.getByText("Only the owner can replace the key.")).toBeVisible();
-    expect(screen.queryByPlaceholderText("Paste the key again")).toBeNull();
+    expect(screen.getByLabelText("API key")).toBeDisabled();
+    expect(screen.getByLabelText("API key")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Clear API key" })).toBeDisabled();
   });
 });
 
@@ -269,36 +294,80 @@ describe("kept-off engines", () => {
     mount({ enabled: false, check: { status: "not_started", reason: "needkey" }, key: { state: "none" }, capabilities: [], models: [] });
     expect(await screen.findByText("Waiting for the owner to add a key")).toBeVisible();
     expect(screen.getByRole("switch", { name: "Enabled" })).toBeDisabled();
-    expect(screen.getByText("No key yet")).toBeVisible();
-    expect(screen.getByText("The server needs one. Only the owner can add it.")).toBeVisible();
+    expect(within(screen.getByRole("group", { name: "Saved key" })).getByText("No key configured")).toBeVisible();
+    expect(screen.getByLabelText("API key")).toBeDisabled();
+  });
+});
+
+describe("inference key commands", () => {
+  it("replaces a configured key by stable id and keeps the ordinary record free of key input", async () => {
+    const user = userEvent.setup();
+    mount({ revision: '"os-12"' });
+    const input = await screen.findByLabelText("API key");
+    expect(input).toHaveValue("");
+    const commands = vi.spyOn(enginesApi, "secretEntries").mockResolvedValue(registry);
+    const update = vi.spyOn(enginesApi, "update");
+    const test = vi.spyOn(enginesApi, "test");
+    await user.type(input, "replacement-key");
+    expect(screen.getByLabelText("Address")).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Run a real test for Chat" }));
+    expect(await screen.findByText(/Save the secret changes before running a test/)).toBeVisible();
+    expect(test).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(commands).toHaveBeenCalledWith("garage-gpu", [
+      { carrier: "config.api_key", operation: "replace", entry_id: "ent_fixture_key", value: "replacement-key" },
+    ], '"os-12"'));
+    expect(update).not.toHaveBeenCalled();
+    expect(JSON.stringify(commands.mock.calls)).not.toContain("[redacted]");
+    await waitFor(() => expect(screen.getByLabelText("API key")).toHaveValue(""));
+  });
+
+  it("clears an environment key binding explicitly by its stable id", async () => {
+    const user = userEvent.setup();
+    mount({ revision: '"os-20"', key: { state: "configured", source: "env", env_name: "ENGINE_KEY", entry_id: "ent_env_key", origin: "http://192.168.1.50:8080" } });
+    const saved = await screen.findByRole("group", { name: "Saved key" });
+    expect(saved).toHaveTextContent("Read from ENGINE_KEY");
+    expect(screen.getByLabelText("API key")).toHaveValue("");
+    const commands = vi.spyOn(enginesApi, "secretEntries").mockImplementation(async () => {
+      view = { ...view, key: { state: "none" } };
+      return registry;
+    });
+    const update = vi.spyOn(enginesApi, "update");
+    await user.click(screen.getByRole("button", { name: "Clear API key" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(commands).toHaveBeenCalledWith("garage-gpu", [
+      { carrier: "config.api_key", operation: "clear", entry_id: "ent_env_key" },
+    ], '"os-20"'));
+    expect(update).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole("group", { name: "Saved key" })).not.toHaveTextContent("ENGINE_KEY"));
+    expect(screen.getByRole("group", { name: "Saved key" })).toHaveTextContent("No key configured");
   });
 });
 
 describe("headers", () => {
-  it("are plain text rows with no secret toggle, for the owner and for an administrator", async () => {
-    const headers = [
-      { name: "X-Client", value: "azizam-home" },
-      { name: "X-Region", value: "lan" },
-    ];
-    mount({ values: { ...engineView().values, headers } });
-    const more = await screen.findByText("More options", { selector: "summary span" });
-    expect(more.closest("details")).toHaveAttribute("open");
-    expect(screen.getAllByLabelText("Value").map((v) => (v as HTMLInputElement).value)).toEqual(["azizam-home", "lan"]);
-    for (const value of screen.getAllByLabelText("Value")) expect(value).not.toHaveAttribute("type", "password");
-    expect(screen.queryByRole("checkbox", { name: "Secret" })).toBeNull();
-    expect(screen.queryByText("Secret")).toBeNull();
-    expect(screen.queryByText(/secret values/i)).toBeNull();
-    expect(screen.getByText(/They are saved as plain text, so don’t put a key here\./)).toBeVisible();
+  const headers = [{ id: "ent_client", name: "X-Client", configured: true }, { id: "ent_region", name: "X-Region", configured: true }];
+  const record = { ...engineView().record, config: { headers } };
+
+  it("shows configured entries with empty write-only inputs and restricts administrators to reading metadata", async () => {
+    mount({ record });
+    const group = await screen.findByRole("group", { name: "Request headers" });
+    expect(within(group).getAllByText("Configured")).toHaveLength(2);
+    for (const header of headers) {
+      const input = within(group).getByLabelText(`Value for ${header.name}`);
+      expect(input).toHaveValue("");
+      expect(input).toHaveAttribute("type", "password");
+    }
+    expect(within(group).queryByRole("checkbox")).toBeNull();
+    expect(within(group).getByText(/Header values are stored as secrets/)).toBeVisible();
+    expect(screen.queryByText(/saved as plain text/)).toBeNull();
     cleanup();
     viewer.current = { ...viewer.current, role: "admin" };
-    mount({ values: { ...engineView().values, headers } });
-    await screen.findByText("More options", { selector: "summary span" });
-    // An administrator reads them; only the owner changes the connection.
-    for (const value of screen.getAllByLabelText("Value")) expect(value).toBeDisabled();
-    expect(screen.queryByRole("button", { name: /^Replace X-/ })).toBeNull();
+    mount({ record });
+    const locked = await screen.findByRole("group", { name: "Request headers" });
+    for (const header of headers) expect(within(locked).getByLabelText(`Value for ${header.name}`)).toBeDisabled();
   });
 
-  it("a timeout edit preserves headers and adjustments; a new header has no secret flag", async () => {
+  it("a timeout edit omits untouched headers and preserves adjustments; adding a header uses a command", async () => {
     const user = userEvent.setup();
     const transforms = [
       "reasoning-effort-final-chat",
@@ -306,28 +375,30 @@ describe("headers", () => {
       { kind: "param-map" as const, from: "a", to: "b" },
       { kind: "param-map" as const, from: "c", to: "d" },
     ];
-    const headers = [{ name: "X-Client", value: "azizam-home" }];
-    mount({ values: { ...engineView().values, headers, transforms } });
+    mount({ record, values: { ...engineView().values, transforms } });
     const name = await screen.findByLabelText("Name");
     await user.type(name, "!");
-    await user.click(screen.getByText("More options", { selector: "summary span" }));
+    const more = screen.getByText("More options", { selector: "summary span" });
+    if (!more.closest("details")?.open) await user.click(more);
     await user.clear(screen.getByLabelText("Time to wait for a reply"));
     await user.type(screen.getByLabelText("Time to wait for a reply"), "300");
     const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
+    const commands = vi.spyOn(enginesApi, "secretEntries").mockResolvedValue(registry);
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(update).toHaveBeenCalled());
-    expect(update.mock.calls[0][1]).toMatchObject({ name: "garage-gpu!", values: { headers, transforms } });
+    expect(update.mock.calls[0][1]).toMatchObject({ name: "garage-gpu!", values: { transforms, reply_timeout_s: 300 } });
+    expect(update.mock.calls[0][1].values).not.toHaveProperty("headers");
+    expect(commands).not.toHaveBeenCalled();
     update.mockClear();
     await user.click(screen.getByRole("button", { name: "Add a header" }));
     const names = screen.getAllByLabelText("Header name");
-    await user.type(names[1], "X-Region");
-    await user.type(screen.getAllByLabelText("Value")[1], "lan");
+    await user.type(names[2], "X-New-Region");
+    await user.type(screen.getByLabelText("Value for X-New-Region"), "lan");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(update).toHaveBeenCalled());
-    expect(update.mock.calls[0][1].values?.headers).toEqual([
-      { name: "X-Client", value: "azizam-home" },
-      { name: "X-Region", value: "lan" },
-    ]);
+    await waitFor(() => expect(commands).toHaveBeenCalled());
+    expect(commands.mock.calls[0][1]).toEqual([{ carrier: "config.headers", operation: "add", name: "X-New-Region", value: "lan" }]);
+    expect(update).not.toHaveBeenCalled();
+    expect(JSON.stringify(commands.mock.calls)).not.toContain("[redacted]");
   });
 });
 

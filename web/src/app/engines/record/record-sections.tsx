@@ -24,8 +24,9 @@ export function StoredRecordSection({ view }: { view: EngineView }) {
             Copy
           </CopyButton>
         </div>
+        {!!view.hidden_settings_count && <p className="text-meta text-muted-foreground">{view.hidden_settings_count} {view.hidden_settings_count === 1 ? "setting" : "settings"} hidden: not classified</p>}
         <p className="text-meta text-muted-foreground">Saved configuration for troubleshooting. Secrets are hidden.</p>
-        <p className="text-meta text-muted-foreground">Exactly what the gateway saved. You cannot edit it here.</p>
+        <p className="text-meta text-muted-foreground">Public settings and configured secret entries. Unclassified settings are omitted. You cannot edit this view here.</p>
         <pre
           tabIndex={0}
           aria-label="Stored record, read only"
@@ -52,7 +53,7 @@ export function StoredRecordSection({ view }: { view: EngineView }) {
             <p className="text-meta text-muted-foreground mb-2">
               These saved settings have no editor on this page.
             </p>
-            <dl className="text-meta grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-1">
+            <dl className="text-meta grid sm:grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-1">
               {otherSettings.map(([key, value]) => (
                 <div key={key} className="contents">
                   <dt className="font-mono [overflow-wrap:anywhere]">{key}</dt>

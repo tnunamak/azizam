@@ -42,6 +42,7 @@ import { AccessAsk, accessModels } from "../parts/access-answer";
 import { addedMessage, fieldOf, keptOffMessage, looksLikeAddress, trimAddress } from "./draft";
 import { ConnectionFields, SummaryLine, type ConnectionDraft, type FieldErrors } from "./step-address";
 import { StepKind } from "./step-kind";
+import { ProtocolChoice, type ProtocolDraft } from "../parts/protocol-choice";
 
 export const engineDefinitionsKey = ["engineDefinitions"] as const;
 
@@ -140,6 +141,8 @@ function Wizard({
   const [def, setDef] = useState<EngineDefinition | null>(null);
   const [query, setQuery] = useState("");
   const [conn, setConn] = useState<ConnectionDraft>({ address: "", key: "", envOpen: false, envName: "" });
+  const [protocol, setProtocol] = useState<ProtocolDraft>({ dispatch: "", protocol: "" });
+  const [protocolError, setProtocolError] = useState<string | null>(null);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [check, setCheck] = useState<CheckResult | null>(null);
   const [finding, setFinding] = useState<Finding | null>(null);
@@ -186,6 +189,10 @@ function Wizard({
 
   function connectionValues(draft = conn): EngineValues {
     const values: EngineValues = { address: draft.address.trim() };
+    if (protocol.dispatch === "protocol") {
+      values.dispatch = "protocol";
+      values.protocol_description = protocol.protocol;
+    }
     if (owner) {
       if (draft.envOpen) {
         if (draft.envName.trim()) values.api_key_env = draft.envName.trim();
@@ -218,6 +225,11 @@ function Wizard({
 
   function runCheck(draft = conn) {
     if (!def) return;
+    if (protocol.dispatch === "protocol" && !protocol.protocol) {
+      setProtocolError("Choose an installed protocol description before continuing.");
+      focusInvalid();
+      return;
+    }
     const address = fieldOf(def, "address");
     const next: FieldErrors = {};
     if (!looksLikeAddress(draft.address))
@@ -557,6 +569,13 @@ function Wizard({
           onOpenExisting={onOpenEngine}
           onRecheck={() => runCheck()}
         />
+        <ProtocolChoice value={protocol} disabled={checking} onChange={(value) => {
+          setProtocol(value);
+          setProtocolError(null);
+          setFinding(null);
+          setAcknowledged(false);
+        }} />
+        {protocolError && <p role="alert" className="text-meta text-danger">{protocolError}</p>}
         {!checking && <p className="text-meta text-muted-foreground">{fine}</p>}
       </Frame>
     );

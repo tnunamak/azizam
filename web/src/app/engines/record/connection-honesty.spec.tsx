@@ -71,11 +71,14 @@ describe("a direct record with no saved timeout", () => {
     await user.click(screen.getByText("More options", { selector: "summary span" }));
     await user.click(screen.getByRole("button", { name: "Add a header" }));
     await user.type(screen.getByLabelText("Header name"), "X-Region");
-    await user.type(screen.getByLabelText("Value"), "lan");
+    await user.type(screen.getByLabelText("Value for X-Region"), "lan");
     const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
+    const commands = vi.spyOn(enginesApi, "secretEntries").mockResolvedValue(registry);
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(update).toHaveBeenCalled());
-    expect(update.mock.calls[0][1].values?.reply_timeout_s).toBe("");
+    await waitFor(() => expect(commands).toHaveBeenCalled());
+    expect(commands.mock.calls[0][1]).toEqual([{ carrier: "config.headers", operation: "add", name: "X-Region", value: "lan" }]);
+    expect(update).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Time to wait for a reply")).toHaveValue("");
   });
 });
 
@@ -89,36 +92,42 @@ describe("attention from the gateway", () => {
   });
 });
 
-describe("a header the gateway does not send", () => {
-  const blocked = { name: "Authorization", value: "[redacted]", secret: true, not_sent: true };
-  const plain = { name: "X-Client", value: "azizam-home" };
+describe("configured header entries", () => {
+  const headers = [{ id: "ent_auth", name: "Authorization", configured: true }, { id: "ent_client", name: "X-Client", configured: true }];
+  const record = { ...engineView().record, config: { headers } };
 
-  it("says Not sent, cannot be edited, and keeps its metadata on save", async () => {
+  it("shows configured metadata with empty inputs and omits untouched entries from an unrelated save", async () => {
     const user = userEvent.setup();
-    mount({ values: { ...engineView().values, headers: [blocked, plain] } });
-    await screen.findByText("More options", { selector: "summary span" });
-    const more = screen.getByText("More options", { selector: "summary span" }).closest("details") as HTMLElement;
-    const group = await within(more).findByRole("region", { name: "Request headers" });
-    expect(within(group).getByText("Not sent")).toBeVisible();
-    expect(screen.getByDisplayValue("Authorization")).toBeDisabled();
-    expect(screen.getByDisplayValue("[redacted]")).toBeDisabled();
-    // A change to another setting goes through the engine update; a rename alone would not.
+    mount({ record });
+    const group = await screen.findByRole("group", { name: "Request headers" });
+    for (const header of headers) {
+      const input = within(group).getByLabelText(`Value for ${header.name}`);
+      expect(input).toHaveValue("");
+      expect(input).toHaveAttribute("type", "password");
+    }
+    expect(within(group).getAllByText("Configured")).toHaveLength(2);
+    expect(screen.queryByDisplayValue("[redacted]")).toBeNull();
     await user.clear(screen.getByLabelText("Time to wait for a reply"));
     await user.type(screen.getByLabelText("Time to wait for a reply"), "300");
     const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
+    const commands = vi.spyOn(enginesApi, "secretEntries").mockResolvedValue(registry);
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(update).toHaveBeenCalled());
-    expect(update.mock.calls[0][1].values?.headers).toEqual([blocked, plain]);
+    expect(update.mock.calls[0][1].values).not.toHaveProperty("headers");
+    expect(commands).not.toHaveBeenCalled();
   });
 
-  it("can be removed", async () => {
+  it("removes a configured header with an explicit clear keyed by its stable id", async () => {
     const user = userEvent.setup();
-    mount({ values: { ...engineView().values, headers: [blocked, plain] } });
+    mount({ record });
     await user.click(await screen.findByRole("button", { name: "Remove header Authorization" }));
     const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
+    const commands = vi.spyOn(enginesApi, "secretEntries").mockResolvedValue(registry);
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(update).toHaveBeenCalled());
-    expect(update.mock.calls[0][1].values?.headers).toEqual([plain]);
+    await waitFor(() => expect(commands).toHaveBeenCalled());
+    expect(commands.mock.calls[0][1]).toEqual([{ carrier: "config.headers", operation: "clear", entry_id: "ent_auth" }]);
+    expect(update).not.toHaveBeenCalled();
+    expect(JSON.stringify(commands.mock.calls)).not.toContain("[redacted]");
   });
 });
 
@@ -126,7 +135,7 @@ describe("Inference key is sent to", () => {
   it("names the origin when the request goes to the same origin", async () => {
     mount({ request_path: requestPath("http://192.168.1.50:8080/v1/chat/completions") });
     await screen.findByRole("heading", { level: 1, name: "garage-gpu" });
-    expect(screen.getByTestId("connection-facts")).toHaveTextContent("Inference key is sent tohttp://192.168.1.50:8080 only.");
+    expect(screen.getByTestId("connection-facts")).toHaveTextContent("Inference key destinationConfigured for http://192.168.1.50:8080. Availability is checked when the key is used.");
   });
 
   it("says no key is sent when the engine address is another origin", async () => {

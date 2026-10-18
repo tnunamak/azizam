@@ -10,7 +10,7 @@
  */
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, CircleAlert, CircleCheck, CircleX, Loader2, Lock, RefreshCw } from "lucide-react";
+import { ChevronLeft, CircleAlert, CircleCheck, CircleX, Loader2, RefreshCw } from "lucide-react";
 import { api, ApiError, queryKeys, type ServiceRegistry } from "@/lib/api";
 import {
   checkFromError,
@@ -23,7 +23,9 @@ import {
   type FindingAction,
   type UpdateEngineBody,
 } from "@/lib/engines-api";
-import { cn } from "@/lib/cn";
+import { ProtocolChoice, type ProtocolDraft } from "../parts/protocol-choice";
+import { SecretFields } from "./secret-fields";
+import { secretDrafts, secretCommands, secretProblem, endpointProblem } from "./secret-edits";
 import { useViewer } from "@/components/shell/session";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +39,7 @@ import { AccessAnswer, AccessAsk, accessModels } from "../parts/access-answer";
 import { CallLine } from "../parts/call-line";
 import { CapabilityList, rowsFromCheck, type CapabilityRow, type TestState } from "../parts/capabilities";
 import { FindingCard } from "../parts/finding-card";
-import { FormField, LinkButton, Note, Tag, describedBy, focusFirstInvalid } from "../parts/form";
+import { FormField, LinkButton, Note, describedBy, focusFirstInvalid } from "../parts/form";
 import { ModelsBlock, draftsFromCheck, duplicateNames, modelsBody, type ModelDraft } from "../parts/models-block";
 import {
   ARGV_REASON,
@@ -60,7 +62,6 @@ import {
   FieldGroups,
   MoreOptions,
   changedCount,
-  headersBody,
   headersFrom,
   optionFields,
   type HeaderDraft,
@@ -269,18 +270,22 @@ function RecordForm({
   // a full engine payload would carry settings this person or this record can't change.
   const metadataOnly = settingsLocked || mismatched;
   const allOptions = optionFields(definition).filter((f) => !(f.key in unsupported));
-  const connectionFields = allOptions.filter((f) => fieldPart(f) === "connection");
+  const connectionFields = allOptions.filter((f) => fieldPart(f) === "connection" && f.type !== "keyvalue");
   const offeringFields = allOptions.filter((f) => fieldPart(f) === "offerings");
-  const processFields = allOptions.filter((f) => fieldPart(f) === "process");
+  const processFields = allOptions.filter((f) => fieldPart(f) === "process" && !["lifecycle_start", "lifecycle_stop"].includes(f.key) && (f.key !== "lifecycle_mode" || view.values.lifecycle_mode === "managed"));
   const offeringsEditable = view.can_edit_offerings !== false;
   const fieldsOf = (part: ReturnType<typeof fieldPart>) => definition.fields.filter((f) => fieldPart(f) === part);
 
   const [name, setName] = useState(view.name);
   const [address, setAddress] = useState(saved.address);
-  const [newKey, setNewKey] = useState("");
-  const [keyEditing, setKeyEditing] = useState(false);
+  const newKey = "";
   const [options, setOptions] = useState<OptionValues>(() => optionValuesFrom(definition, view));
-  const [headers, setHeaders] = useState<HeaderDraft[]>(() => headersFrom(view.values.headers));
+  const [headers, setHeaders] = useState<HeaderDraft[]>([]);
+  const [protocol, setProtocol] = useState<ProtocolDraft>(() => ({ dispatch: view.values.dispatch ?? "", protocol: view.values.protocol_description ?? "" }));
+  const [secrets, setSecrets] = useState(() => secretDrafts(view.record, view.key));
+  const commands = secretCommands(secrets);
+  const commandProblem = secretProblem(secrets);
+  const addressProblem = endpointProblem(address);
   const [cards, setCards] = useState<AdjustmentCard[]>(() => cardsFromTransforms(view.values.transforms));
   const [ticked, setTicked] = useState<Set<string>>(() => new Set(view.capabilities));
   const [models, setModels] = useState<ModelDraft[]>(() =>
@@ -315,23 +320,20 @@ function RecordForm({
   const root = useRef<HTMLDivElement>(null);
   const checkText = useId();
   const saveText = useId();
-  const keyErrorId = useId();
   const [enabling, setEnabling] = useState<boolean | null>(null);
   const [enableError, setEnableError] = useState<string | null>(null);
   const [enableWarning, setEnableWarning] = useState<Finding | null>(null);
 
   function bodyValues(at = address): Record<string, unknown> {
-    const keys = new Set(definition.fields.map((f) => f.key));
     const values: Record<string, unknown> = { address: at.trim() };
-    if (newKey && !("api_key" in unsupported)) values.api_key = newKey;
-    if (view.key.source === "env" && view.key.env_name && keys.has("api_key_env")) values.api_key_env = view.key.env_name;
+    if (protocol.dispatch !== (view.values.dispatch ?? "") || protocol.protocol !== (view.values.protocol_description ?? "")) { values.dispatch = protocol.dispatch; values.protocol_description = protocol.protocol; }
     for (const field of optionFields(definition)) {
       if (field.key in unsupported) continue;
       if (!offeringsEditable && fieldPart(field) === "offerings") continue;
       // Start and stop is the owner's; anyone else leaves the stored block as it is.
       if (field.owner_only && (!owner || !view.lifecycle_editable || locked)) continue;
       if (field.show_if && options[field.show_if.field] !== String(field.show_if.equals)) continue;
-      if (field.type === "keyvalue") values[field.key] = headersBody(headers);
+      if (field.type === "keyvalue" || ["lifecycle_start", "lifecycle_stop"].includes(field.key)) continue;
       else if (field.items === "transform") values[field.key] = transformsFromCards(cards);
       else if (field.type === "duration" || field.type === "number") {
         const text = String(options[field.key] ?? "").trim();
@@ -355,16 +357,16 @@ function RecordForm({
   }
   const [initialBody] = useState(() => JSON.stringify(saveBody()));
   const bodyNow = JSON.stringify(saveBody());
-  const configurationSnapshot = JSON.stringify({ ...saveBody(), name: undefined });
+  const configurationSnapshot = JSON.stringify({ ...saveBody(), name: undefined, secretCommands: commands });
   const [initialConfiguration] = useState(configurationSnapshot);
   const currentTests = Object.fromEntries(Object.entries(tests).filter(([, t]) => !("snapshot" in t) || t.snapshot === configurationSnapshot));
   // Without the right to change settings, only the name can be unsaved.
-  const dirty = settingsLocked ? name.trim() !== view.name : Boolean(newKey) || bodyNow !== initialBody;
+  const dirty = settingsLocked ? name.trim() !== view.name : Boolean(newKey) || commands.length > 0 || bodyNow !== initialBody;
   // Only the name changed: it saves through the plain service edit when the record needs that.
-  const nameOnly = !newKey && JSON.stringify({ ...saveBody(), name: view.name }) === initialBody;
+  const nameOnly = !newKey && commands.length === 0 && JSON.stringify({ ...saveBody(), name: view.name }) === initialBody;
   const optionKeys = new Set(optionFields(definition).map((f) => f.key));
   // A refusal belongs to the form that was sent. Once the owner edits it, the message steps aside.
-  const refusal = saveError && saveError.body === bodyNow ? saveError : null;
+  const refusal = saveError && saveError.body === JSON.stringify({ body: saveBody(), commands }) ? saveError : null;
   const refusedField = refusal?.field ?? null;
   const refusedFinding = refusal?.finding;
   const findingInline = Boolean(refusedFinding && (refusedField === "address" || refusedField === "key"));
@@ -379,9 +381,8 @@ function RecordForm({
   // The server withholds a stored key from another origin (resolve_key), and drops it on Save.
   const keyOrigin = view.key.origin || originOf(saved.address);
   const n2 = keyStored && originOf(address) !== keyOrigin;
-  const fresh = session && session.address === trimAddress(address) && session.key === newKey && (!session.snapshot || session.snapshot === JSON.stringify(bodyValues())) ? session : null;
+  const fresh = session && session.address === trimAddress(address) && session.key === newKey && (!session.snapshot || session.snapshot === JSON.stringify({ values: bodyValues(), commands })) ? session : null;
   const freshPassed = Boolean(fresh && fresh.result.outcome !== "error");
-  const keyAcceptedHere = Boolean(fresh && freshPassed && fresh.result.key_sent && fresh.result.auth === "accepted");
   const blocked = addressChanged && !freshPassed;
   const notStarted = view.check.status === "not_started" && !session;
   const needKey = view.check.reason === "needkey" && view.key.state === "none";
@@ -391,12 +392,14 @@ function RecordForm({
   const processReason = unsupported.lifecycle_mode ?? (storedArgv ? ARGV_REASON : UNSUPPORTED_REASON);
 
   async function runCheck(detectModels = false, at = address) {
+    if (addressProblem) { setCheckError(addressProblem); return; }
+    if (commands.length) { setCheckError("Save the secret changes before checking this engine."); return; }
     setChecking(true);
     setCheckError(null);
     setDetectNote(null);
     try {
       const result = await enginesApi.check({ definition: definition.definition, values: bodyValues(at) as never, service_id: view.service_id });
-      setSession({ result, address: trimAddress(at), key: newKey, snapshot: JSON.stringify(bodyValues(at)) });
+      setSession({ result, address: trimAddress(at), key: newKey, snapshot: JSON.stringify({ values: bodyValues(at), commands }) });
       // A check never changes what someone who can't edit the settings sees saved.
       if (result.outcome !== "error" && !settingsLocked) {
         if (view.check.status === "not_started" && ticked.size === 0) setTicked(new Set(result.capabilities.filter((c) => c.ticked).map((c) => c.id)));
@@ -415,6 +418,8 @@ function RecordForm({
   }
 
   async function runTest(capability: string) {
+    if (addressProblem) { setCheckError(addressProblem); return; }
+    if (commands.length) { setCheckError("Save the secret changes before running a test."); return; }
     const snapshot = configurationSnapshot;
     const values = bodyValues();
     setTests((t) => ({ ...t, [capability]: { status: "running", snapshot } }));
@@ -508,12 +513,18 @@ function RecordForm({
     setSaveError(null);
     try {
       let registry: ServiceRegistry;
-      if (settingsLocked || nameOnly) registry = await api.services.edit(view.service_id, { name: name.trim() });
+      if (commandProblem || addressProblem) throw new Error(commandProblem || addressProblem || "");
+      if (commands.length && bodyNow === initialBody) registry = await enginesApi.secretEntries(view.service_id, commands, view.revision);
+      else if (settingsLocked || nameOnly) registry = await api.services.edit(view.service_id, { name: name.trim() });
       else {
         const body = saveBody();
         if (options.keepOff) body.disabled = true;
         if (options.acknowledge) body.acknowledge_warnings = true;
         registry = await enginesApi.update(view.service_id, body);
+        if (commands.length) {
+          try { registry = await enginesApi.secretEntries(view.service_id, commands); }
+          catch (error) { throw new Error(`The other settings were saved. Secret changes were not saved. ${errorText(error)}`); }
+        }
       }
       queryClient.setQueryData(queryKeys.serviceRegistry, registry);
       await onSaved(
@@ -525,10 +536,9 @@ function RecordForm({
       const refused = checkFromError(error);
       const finding = refused?.findings.find((f) => f.severity === "error") ?? refused?.findings[0];
       const field = saveField(fieldFromError(error) ?? finding?.field ?? null);
-      setSaveError({ message: errorText(error), finding, field, body: JSON.stringify(saveBody()) });
+      setSaveError({ message: errorText(error), finding, field, body: JSON.stringify({ body: saveBody(), commands }) });
       // Show the field the server named: open what hides it, and let the effect below move focus.
       if (field && connectionFields.some((f) => f.key === field)) setMoreOpen(true);
-      if (field === "key" && owner && !locked) setKeyEditing(true);
     } finally {
       setSaving(false);
     }
@@ -536,7 +546,7 @@ function RecordForm({
 
   // ---- What it can do
   const rows: CapabilityRow[] = (() => {
-    const fromSession = session?.result.capabilities;
+    const fromSession = fresh?.result.capabilities;
     if (fromSession?.length) return rowsFromCheck(fromSession);
     const stored = view.check.capabilities;
     if (stored?.length && !notStarted)
@@ -596,15 +606,9 @@ function RecordForm({
     );
   } else if (fresh) {
     const r = fresh.result;
-    const keyWords = addressChanged
-      ? keyAcceptedHere
-        ? "Key accepted. "
-        : keyStored || r.key_withheld
-          ? "No key was sent. "
-          : "No key was sent for this check. "
-      : r.key_sent && r.auth === "accepted"
-        ? "Key accepted. "
-        : "No key was sent for this check. ";
+    const keyWords = r.key_sent
+      ? r.auth === "accepted" ? "A key was sent and accepted. " : "A key was sent. Acceptance was not established. "
+      : "No key was sent for this check. ";
     checkLine = (
       <>
         <CircleCheck aria-hidden="true" className="text-success mr-1 inline size-4" />
@@ -634,7 +638,7 @@ function RecordForm({
     checkLine = (
       <>
         <CircleCheck aria-hidden="true" className="text-success mr-1 inline size-4" />
-        Reached the server. {view.check.key_sent ? "Key accepted. " : "No key was sent for this check. "}
+        Reached the server. {view.check.key_sent ? "A key was sent. Acceptance was not recorded. " : "No key was sent for this check. "}
         {detail(view.check.model_count ?? 0)}
         {view.check.checked_at ? (
           <>
@@ -661,11 +665,6 @@ function RecordForm({
         : undefined;
   const checkFindingFor = (field: Finding["field"]) => checkFinding?.field === field && checkFinding.severity === "error";
   /** What the key box says is wrong: a refused Save, or a check that found the key at fault. */
-  const keyInvalid = Boolean(refusedField === "key" || checkFindingFor("key"));
-  const keyDescription = describedBy(
-    refusedField === "key" && (refusedFinding ? saveText : keyErrorId),
-    checkFinding?.field === "key" && checkText,
-  );
   const saveCard = (inline: boolean) =>
     refusedFinding && (inline ? findingInline : !findingInline) ? (
       <FindingCard
@@ -683,111 +682,11 @@ function RecordForm({
       />
     ) : null;
 
-  // ---- Key
-  let keyArea: ReactNode;
-  if (n2) {
-    keyArea = owner ? (
-      <div className="flex flex-col gap-1.5">
-        <p className={cn("text-meta", keyAcceptedHere ? "text-success" : "text-muted-foreground")}>
-          {keyAcceptedHere ? "Key accepted at the new address." : "Key not sent to this address yet. Re-enter it to check."}
-        </p>
-        <Input
-          type="password"
-          aria-labelledby="engine-key-label"
-          aria-invalid={keyInvalid ? true : undefined}
-          aria-describedby={keyDescription}
-          autoComplete="new-password"
-          placeholder="Paste the key again"
-          value={newKey}
-          onChange={(event) => setNewKey(event.target.value)}
-        />
-        <p className="text-meta text-muted-foreground">
-          Leave it empty if the server at the new address has no key. Azizam checks it when you press Check again.
-        </p>
-      </div>
-    ) : (
-      <div className="flex flex-wrap items-center gap-2">
-        <Tag tone="changed">
-          <Lock aria-hidden="true" className="size-3" />
-          Not sent to the new address
-        </Tag>
-        <span className="text-meta text-muted-foreground">Only the owner can enter the key again.</span>
-      </div>
-    );
-  } else if (keyEditing && owner) {
-    keyArea = (
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-center gap-2">
-          <Input
-            type="password"
-            aria-labelledby="engine-key-label"
-            aria-invalid={keyInvalid ? true : undefined}
-            aria-describedby={keyDescription}
-            autoComplete="new-password"
-            placeholder="Paste the key"
-            value={newKey}
-            onChange={(event) => setNewKey(event.target.value)}
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setKeyEditing(false);
-              setNewKey("");
-            }}
-          >
-            Cancel
-          </Button>
-        </div>
-        <p className="text-meta text-muted-foreground">Azizam checks the key against the address when you save.</p>
-      </div>
-    );
-  } else if (needKey) {
-    keyArea = (
-      <div className="flex flex-wrap items-center gap-2">
-        <Tag tone="changed">No key yet</Tag>
-        {owner ? (
-          <Button type="button" variant="outline" size="sm" onClick={() => setKeyEditing(true)}>
-            Add the key
-          </Button>
-        ) : (
-          <span className="text-meta text-muted-foreground">The server needs one. Only the owner can add it.</span>
-        )}
-      </div>
-    );
-  } else if (!keyStored) {
-    keyArea = (
-      <div className="flex flex-wrap items-center gap-2">
-        <Tag>No key</Tag>
-        {owner ? (
-          <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => setKeyEditing(true)}>
-            Add a key
-          </Button>
-        ) : (
-          <span className="text-meta text-muted-foreground">Only the owner can add a key.</span>
-        )}
-      </div>
-    );
-  } else {
-    keyArea = (
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-badge text-badge bg-success-tint text-success inline-flex h-5 items-center px-1.5">Configured</span>
-        {view.key.source === "env" && view.key.env_name && (
-          <span className="text-meta text-muted-foreground">
-            Read from <span className="font-mono">{view.key.env_name}</span> on the gateway’s computer.
-          </span>
-        )}
-        {owner ? (
-          <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => setKeyEditing(true)}>
-            Replace key
-          </Button>
-        ) : (
-          <span className="text-meta text-muted-foreground">Only the owner can replace the key.</span>
-        )}
-      </div>
-    );
-  }
+  const keyArea = <div className="text-meta flex flex-col gap-1">
+    <span>{keyStored ? "Configured" : "No key configured"}</span>
+    {view.key.source === "env" && view.key.env_name && <span>Read from <code>{view.key.env_name}</code> on the gateway’s computer.</span>}
+    {n2 && <p>The configured key belongs to the previous address. Save the address before replacing the key for this origin.</p>}
+  </div>;
 
   const capabilityIds = definition.capabilities.filter((c) => ticked.has(c.id)).map((c) => c.id);
   const modelNames = models.filter((m) => m.on).map((m) => m.public_name.trim() || m.id);
@@ -807,7 +706,7 @@ function RecordForm({
           <h1 className="text-title [overflow-wrap:anywhere]">{view.name}</h1>
           <div className="text-meta text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
             {view.enabled ? <StateWord tone="off" word="On" /> : <StateWord tone="off" word="Off" />}
-            <span data-testid="engine-health">{view.check.checked_at && view.check.status === "ok" ? "Connection checked" : view.check.checked_at && view.check.status === "failed" ? "Check failed" : "Unknown: no connection check result"}</span>
+            <span data-testid="engine-health">{fresh ? fresh.result.outcome === "error" ? "Latest check failed" : fresh.result.outcome === "warning" ? "Latest check has a warning" : "Latest connection check passed" : view.check.checked_at && view.check.status === "ok" ? "Saved connection check passed" : view.check.checked_at && view.check.status === "failed" ? "Saved check failed" : "Unknown: no connection check result"}</span>
             {offWord ? (
               <span>
                 {view.check.reason === "needkey"
@@ -916,7 +815,6 @@ function RecordForm({
                           className="w-fit"
                           onClick={() => {
                             setAddress(saved.address);
-                            setNewKey("");
                             setSession(null);
                           }}
                         >
@@ -937,6 +835,7 @@ function RecordForm({
                         : undefined)
                     }
                     type="url"
+                    disabled={commands.length > 0}
                     value={address}
                     autoComplete="off"
                     spellCheck={false}
@@ -949,16 +848,16 @@ function RecordForm({
               </FormField>
               )}
               {fieldOf(definition, "api_key") && !("api_key" in unsupported) && (
-                <div role="group" aria-labelledby="engine-key-label" className="flex flex-col gap-1.5">
+                <div role="group" aria-label="Saved key" className="flex flex-col gap-1.5">
                   <span id="engine-key-label" className="text-meta font-medium">
-                    {fieldOf(definition, "api_key")?.label}
+                    Saved key
                   </span>
                   {keyArea}
                   {refusedField === "key" &&
                     (refusedFinding ? (
                       saveCard(true)
                     ) : (
-                      <p id={keyErrorId} className="text-meta text-danger">
+                      <p id="engine-key-error" className="text-meta text-danger">
                         {refusal?.message}
                       </p>
                     ))}
@@ -1000,6 +899,11 @@ function RecordForm({
           )}
         </div>
       </section>
+
+      {addressChanged && <p className="text-meta text-muted-foreground">Save the address before editing secrets. A key for a new origin must be configured after that address is saved.</p>}
+      <SecretFields drafts={secrets} onChange={setSecrets} part="connection" disabled={settingsLocked || addressChanged} />
+
+      <div className="bg-card rounded-panel border p-4"><ProtocolChoice value={protocol} onChange={setProtocol} disabled={settingsLocked} /></div>
 
       <section aria-label="More options">
         <MoreOptions
@@ -1132,6 +1036,7 @@ function RecordForm({
           />
           {view.lifecycle_editable && <UnsupportedNote fields={fieldsOf("process")} unsupported={unsupported} />}
         </div>
+        {view.values.lifecycle_mode !== "managed" && !secrets.some(d => d.kind === "argv") && <Note>No process is configured. This page can edit existing process settings; it cannot create process control.</Note>}
         {/* Start and stop edits only the kinds this page can save; others show above as stored. */}
         {processFields.length > 0 && !locked && view.lifecycle_editable && (
           <div className="bg-card rounded-panel border">
@@ -1152,6 +1057,7 @@ function RecordForm({
             />
           </div>
         )}
+        <SecretFields drafts={secrets} onChange={setSecrets} part="process" disabled={settingsLocked} />
       </section>
 
       <section aria-labelledby="engine-checks" className="flex flex-col gap-2">
@@ -1182,6 +1088,8 @@ function RecordForm({
         </div>
       )}
 
+      {addressProblem && <p role="alert" className="text-meta text-danger">{addressProblem}</p>}
+      {commandProblem && <p role="alert" className="text-meta text-danger">{commandProblem}</p>}
       {(dirty || addressChanged) && (
         <div role="status" className="bg-card rounded-panel shadow-overlay sm:sticky sm:bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 border px-4 py-3">
           <span className="text-meta">
@@ -1193,14 +1101,14 @@ function RecordForm({
               Discard
             </Button>
             {blocked && (
-              <Button type="button" variant="outline" size="md" disabled={saving} onClick={() => void save({ keepOff: true })}>
+              <Button type="button" variant="outline" size="md" disabled={saving || !!commandProblem || !!addressProblem} onClick={() => void save({ keepOff: true })}>
                 Save and keep off
               </Button>
             )}
             <Button
               type="button"
               size="md"
-              disabled={blocked || saving || !name.trim() || cards.some((c) => cardProblem(c) !== null) || duplicateNames(models).size > 0}
+              disabled={!!commandProblem || !!addressProblem || (protocol.dispatch === "protocol" && !protocol.protocol) || blocked || saving || !name.trim() || cards.some((c) => cardProblem(c) !== null) || duplicateNames(models).size > 0}
               onClick={() => void save()}
             >
               {saving && <Loader2 aria-hidden="true" className="animate-spin" />}

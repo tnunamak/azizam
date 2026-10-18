@@ -27,7 +27,7 @@ function isServiceRegistryMutation(path: string, method: string): boolean {
   }
   if (
     method === "POST" &&
-    /^\/admin\/api\/operator\/services\/[^/]+\/enabled$/.test(path)
+    /^\/admin\/api\/operator\/services\/[^/]+\/(enabled|secret-entries)$/.test(path)
   ) {
     return true;
   }

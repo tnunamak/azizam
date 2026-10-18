@@ -64,7 +64,7 @@ describe("More options", () => {
         reply_timeout_s: 300,
         transforms: ["reasoning-effort-final-chat", { kind: "drop-params", drop: ["user"] }],
         lifecycle_mode: "managed",
-        lifecycle_start: "systemctl --user start garage-llm",
+        lifecycle_start: undefined,
         lifecycle_stop: "",
         lifecycle_ready_s: 180,
       },
@@ -73,9 +73,10 @@ describe("More options", () => {
     // More options holds the connection settings only; adjustments and start and stop have their own sections.
     expect(within(more).getByText("1 changed from default")).toBeVisible();
     expect(within(more).getByText("Changed · default 600 s")).toBeVisible();
-    for (const heading of ["Request headers", "Timeouts", "Extra path"]) {
+    for (const heading of ["Timeouts", "Extra path"]) {
       expect(within(more).getByRole("heading", { name: new RegExp(`^${heading}`) })).toBeVisible();
     }
+    expect(screen.getByRole("group", { name: "Request headers" })).toBeVisible();
     const offers = screen.getByRole("heading", { level: 2, name: "What it offers" }).closest("section") as HTMLElement;
     expect(within(offers).getByRole("heading", { name: /^Request adjustments/ })).toBeVisible();
     const runs = screen.getByRole("heading", { level: 2, name: "How it runs" }).closest("section") as HTMLElement;
@@ -203,31 +204,23 @@ describe("Request adjustments: the six typed forms", () => {
 });
 
 describe("Start and stop", () => {
-  it("the owner edits it as a typed form", async () => {
-    const user = userEvent.setup();
+  it("does not offer process creation when no process command is configured", async () => {
     const more = await section({}, "How it runs");
-    await user.selectOptions(within(more).getByLabelText("Who starts and stops this server"), "managed");
-    await user.type(within(more).getByLabelText("Start command"), "systemctl --user start garage-llm");
-    expect(within(more).getByLabelText("Wait for it to be ready")).toHaveValue("120");
-    expect(within(more).getByText(/Azizam starts this server when it is needed, so it cannot check it now\./)).toBeVisible();
-    const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(update).toHaveBeenCalled());
-    expect(update.mock.calls[0][1].values).toMatchObject({
-      lifecycle_mode: "managed",
-      lifecycle_start: "systemctl --user start garage-llm",
-    });
+    expect(within(more).queryByLabelText("Who starts and stops this server")).toBeNull();
+    expect(within(more).getByText("No process is configured. This page can edit existing process settings; it cannot create process control.")).toBeVisible();
+    expect(within(more).queryByRole("button", { name: /Add .*command argument/ })).toBeNull();
   });
 
   it("an administrator reads it with the lock text", async () => {
     viewer.current = { ...viewer.current, role: "admin" };
     const more = await section(
       {
+        record: { ...engineView().record, lifecycle: { driver: "command", driver_config: { start: ["systemctl", "--user", "start", "garage-llm"], stop: ["systemctl", "--user", "stop", "garage-llm"] } } },
         values: {
           ...engineView().values,
           lifecycle_mode: "managed",
-          lifecycle_start: "systemctl --user start garage-llm",
-          lifecycle_stop: "systemctl --user stop garage-llm",
+          lifecycle_start: undefined,
+          lifecycle_stop: undefined,
           lifecycle_ready_s: 180,
         },
       },
@@ -235,6 +228,7 @@ describe("Start and stop", () => {
     );
     expect(within(more).getByText(/Only the owner can change this\. Azizam starts and stops this server with the commands below\./)).toBeVisible();
     expect(within(more).queryByLabelText("Who starts and stops this server")).toBeNull();
-    expect(within(more).getByText("systemctl --user start garage-llm")).toBeVisible();
+    expect(within(more).getByLabelText("lifecycle.driver_config start command Program")).toHaveValue("systemctl");
+    for (const input of within(more).getAllByRole("textbox")) expect(input).toBeDisabled();
   });
 });

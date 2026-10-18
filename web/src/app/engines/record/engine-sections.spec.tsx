@@ -203,7 +203,7 @@ describe("the six sections mirror the record", () => {
       "Azizam sends requests directly to this address. From this engine’s saved connection settings.",
     );
     expect(facts).toHaveTextContent(
-      "Inference key is sent tohttp://192.168.1.50:8080 only.",
+      "Inference key destinationConfigured for http://192.168.1.50:8080.",
     );
     expect(screen.getByLabelText("Address")).toBeEnabled();
     expect(screen.queryByText(OWNER_ONLY)).toBeNull();
@@ -289,7 +289,7 @@ describe("the six sections mirror the record", () => {
     expect(screen.getByLabelText("Address")).toBeEnabled();
     expect(
       within(section("What it offers")).getByTestId("offering-facts"),
-    ).toHaveTextContent("Selected now: b");
+    ).toHaveTextContent("Last observed selection: b Verification is unknown. Check time unknown. Source: saved record.");
     const runs = section("How it runs");
     const process = within(runs).getByTestId("process-facts");
     expect(process).toHaveTextContent(
@@ -321,7 +321,7 @@ describe("the six sections mirror the record", () => {
       within(checks)
         .getByText("The server is up")
         .closest("li")
-        ?.querySelector('[aria-label="Verified by a check"]'),
+        ?.querySelector('[aria-label="Unknown"]'),
     ).not.toBeNull();
     expect(
       within(section("Resources")).getByTestId("resource-facts"),
@@ -375,6 +375,7 @@ describe("the six sections mirror the record", () => {
   it("administrator: every owner-only part is read-only with the exact words; name and Enabled still change", async () => {
     viewer.current = { ...viewer.current, role: "admin" };
     mount({
+      record: { ...engineView().record, config: { headers: [{ id: "ent_client", name: "X-Client", configured: true }] }, lifecycle: { driver: "command", driver_config: { start: ["systemctl", "--user", "start", "garage-llm"], stop: ["systemctl", "--user", "stop", "garage-llm"] } } },
       values: {
         ...engineView().values,
         headers: [{ name: "X-Client", value: "home" }],
@@ -403,11 +404,9 @@ describe("the six sections mirror the record", () => {
           .length,
       ).toBeGreaterThan(0);
     expect(screen.getByLabelText("Address")).toBeDisabled();
-    expect(
-      screen.getByText("Only the owner can replace the key."),
-    ).toBeVisible();
-    for (const value of screen.getAllByLabelText("Value"))
-      expect(value).toBeDisabled();
+    expect(screen.getByLabelText("API key")).toBeDisabled();
+    expect(screen.getByLabelText("API key")).toHaveValue("");
+    expect(screen.getByLabelText("Value for X-Client")).toBeDisabled();
     expect(screen.getByLabelText("Time to wait for a reply")).toBeDisabled();
     const offers = section("What it offers");
     for (const box of within(offers).getAllByRole("checkbox"))
@@ -499,9 +498,13 @@ describe("the six sections mirror the record", () => {
   });
 
   it("the owner's edits to every shown field reach the save body", async () => {
-    mount();
+    mount({ values: { ...engineView().values, lifecycle_mode: "managed", lifecycle_ready_s: 180 },
+      record: { ...engineView().record, lifecycle: { driver: "command", driver_config: { start: ["run-old"], stop: ["stop-old"] } } },
+      v2: v2({ process: { driver: "command", start: ["run-old"], stop: ["stop-old"] } }),
+    });
     const user = userEvent.setup();
     const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
+    const commands = vi.spyOn(enginesApi, "secretEntries").mockResolvedValue(registry);
     await user.click(
       await screen.findByText("More options", { selector: "summary span" }),
     );
@@ -512,14 +515,17 @@ describe("the six sections mirror the record", () => {
       screen.getByLabelText("Who starts and stops this server"),
       "managed",
     );
-    await user.type(screen.getByLabelText("Start command"), "run-it");
+    const program = screen.getByLabelText("lifecycle.driver_config start command Program");
+    await user.clear(program);
+    await user.type(program, "run-it");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(update).toHaveBeenCalled());
+    await waitFor(() => expect(commands).toHaveBeenCalled());
     expect(update.mock.calls[0][1].values).toMatchObject({
       reply_timeout_s: 300,
       lifecycle_mode: "managed",
-      lifecycle_start: "run-it",
     });
+    expect(update.mock.calls[0][1].values).not.toHaveProperty("lifecycle_start");
+    expect(commands.mock.calls[0][1]).toEqual([{ carrier: "lifecycle.driver_config.start", operation: "set", items: [{ literal: "run-it" }], clear: [] }]);
   });
 });
 
@@ -600,7 +606,7 @@ describe("saved contract facts acceptance", () => {
     const view = engineView({ v2: record, credential_destination: null, key: { state: "configured" } });
     renderWithClient(<ConnectionFacts view={view} definition={{ ...definitions.definitions[0], fields: [] }} />);
     const facts = screen.getByTestId("connection-facts");
-    expect(facts).toHaveTextContent("Inference key is sent toThe saved key’s destination is unknown.");
+    expect(facts).toHaveTextContent("Inference key destinationThe saved key’s destination is unknown.");
     expect(facts).toHaveTextContent("Control key destinationhttps://control.example");
     expect(facts).not.toHaveTextContent("No inference key is configured.");
   });
@@ -617,7 +623,7 @@ describe("saved contract facts acceptance", () => {
   });
   it("does not turn unknown selection or unknown process settings into verified claims", () => {
     renderWithClient(<OfferingFacts v2={v2({ offerings: [{ id: "a", kind: "model", selection: { mode: "switch" } }], selected_offering: "a" })} />);
-    expect(screen.getByTestId("offering-facts")).toHaveTextContent("Not verified by a check.");
+    expect(screen.getByTestId("offering-facts")).toHaveTextContent("Verification is unknown. Check time unknown. Source: saved record.");
   });
   it("shows declared check methods, inventory meaning and source next to saved evidence", () => {
     const record = v2({ observations: { inventory: { http: { path: "/inventory", method: "POST" } as never, means: "loaded",

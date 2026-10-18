@@ -17,28 +17,19 @@ import { FormField, NativeSelect, Note, OwnerOnlyTag, Tag } from "../parts/form"
 import { transformsFromCards, type AdjustmentCard } from "./adjustments";
 import { AdjustmentsEditor } from "./adjustment-forms";
 
-/** A header row while it is being typed. Values are plain text. */
-export type HeaderDraft = HeaderRow;
+/** Inline header input is used only when creating a new entry. */
+export type HeaderDraft = HeaderRow & { value: string };
 
 /** Scalar settings stay text while typed; command arguments keep their array shape. */
 export type OptionValues = Record<string, string | string[]>;
 
-/** Keeps the gateway's flags on a row (secret, not_sent) so a save sends the hidden row back as it came. */
-function headerRow(h: HeaderRow): HeaderRow {
-  return {
-    name: h.name,
-    value: h.value,
-    ...(h.secret ? { secret: true } : {}),
-    ...(h.not_sent ? { not_sent: true } : {}),
-  };
-}
-
 export function headersFrom(rows: HeaderRow[] | undefined): HeaderDraft[] {
-  return (rows ?? []).map(headerRow);
+  return (rows ?? []).map(row => ({ ...row, value: row.configured ? "" : row.value ?? "" }));
 }
 
+/** Existing entries change through secret-entries commands, never an inline values write. */
 export function headersBody(rows: HeaderDraft[]): HeaderRow[] {
-  return rows.map(headerRow);
+  return rows.filter(row => !row.id).map(row => ({ name: row.name, value: row.value }));
 }
 
 function unitWord(unit: EngineField["unit"]): string {
@@ -507,8 +498,7 @@ function HeadersEditor({
     <ErrorGroup label={field.label} error={error}>
       {field.help && <p className="text-meta text-muted-foreground">{field.help}</p>}
       {rows.map((row, i) => {
-        // A hidden value cannot be read or changed here; the row can only be removed.
-        const hidden = Boolean(row.secret || row.not_sent);
+        const hidden = Boolean(row.configured);
         return (
         <div key={i} className="grid items-end gap-2 sm:grid-cols-[1fr_1fr_auto]">
           <FormField label="Header name">
@@ -532,7 +522,7 @@ function HeadersEditor({
                 {...control}
                 size="sm"
                 className="font-mono"
-                value={row.value}
+                value={hidden ? "" : row.value}
                 disabled={disabled || hidden}
                 autoComplete="off"
                 spellCheck={false}
@@ -541,7 +531,6 @@ function HeadersEditor({
             )}
           </FormField>
           <div className="flex items-center gap-2">
-          {row.not_sent && <Tag tone="changed">Not sent</Tag>}
           <Button
             type="button"
             variant="ghost"

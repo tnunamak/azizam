@@ -187,19 +187,20 @@ interface PhaseFields {
   [extra: string]: unknown;
 }
 
-/** A request header. The value is saved as plain text; a key goes in the API key field. */
+/** A new header has write-only input; a stored header exposes only entry metadata. */
 export interface HeaderRow {
+  id?: string;
   name: string;
-  value: string;
-  /** The stored value is hidden: the gateway shows "[redacted]" in its place. */
-  secret?: boolean;
-  /** The gateway does not send this header (it cannot override credentials or transport settings). */
-  not_sent?: boolean;
+  value?: string;
+  configured?: boolean;
+  public?: boolean;
 }
 
 /** Draft values, keyed by the definition's field keys. */
 export interface EngineValues {
   address: string;
+  dispatch?: "" | "protocol";
+  protocol_description?: string;
   api_key?: string;
   api_key_env?: string;
   headers?: HeaderRow[];
@@ -249,6 +250,7 @@ export interface EngineAccess {
 
 export interface EngineView {
   service_id: string;
+  revision?: string;
   definition: string;
   definition_version: number;
   /** True when the record predates definitions and the kind was inferred. */
@@ -261,7 +263,7 @@ export interface EngineView {
   /** False only for the system record (the managed substrate). */
   editable?: boolean;
   values: EngineValues;
-  key: { state: "none" | "configured"; source?: "stored" | "env"; env_name?: string; origin?: string };
+  key: { state: "none" | "configured"; source?: "stored" | "env"; env_name?: string; origin?: string; entry_id?: string; availability?: "available" | "unavailable" | "unknown" };
   capabilities: string[];
   models: { id: string; public_name: string; context_window: number | null; enabled: boolean; use?: string }[];
   tests: Record<string, StoredTest>;
@@ -281,6 +283,7 @@ export interface EngineView {
   access: EngineAccess;
   calls: string;
   other_settings: Record<string, unknown>;
+  hidden_settings_count?: number;
   /** The stored record, secrets shown as "configured". */
   record: Record<string, unknown>;
   /** The engine record as the engine contract reads it (docs/design/ENGINE_CONTRACT.md section 2). */
@@ -441,6 +444,10 @@ export const enginesApi = {
       method: "POST",
       body,
     }).then((r) => ({ registry: r.service_registry, serviceId: r.service_id })),
+  secretEntries: (serviceId: string, commands: import("@/app/engines/record/secret-edits").SecretCommand[], revision?: string) =>
+    adminRegistryMutation<ServiceRegistryResponse>(`/admin/api/operator/services/${encodeURIComponent(serviceId)}/secret-entries`, {
+      method: "POST", body: { commands }, ...(revision ? { headers: { "If-Match": revision } } : {}),
+    }).then(r => r.service_registry),
   update: (serviceId: string, body: UpdateEngineBody) =>
     adminRegistryMutation<ServiceRegistryResponse>(`/admin/api/operator/services/${encodeURIComponent(serviceId)}`, {
       method: "PATCH",
