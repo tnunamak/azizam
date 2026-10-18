@@ -303,3 +303,36 @@ while working, not a gate: `scripts/ci-local` still runs everything.
   allocate one ("Pool overlaps with other one on this address space"), the
   run fails. `--skip-compose` records the step as skipped, and the run then
   cannot pass.
+
+## Installed dependency cache
+
+The gate keeps successful web `node_modules` and browser Python environments in
+`~/Documents/azizam/ci-cache` (`AZIZAM_CI_CACHE` overrides it). This directory is
+outside the scratch reaper. Delete its entries while no gate runs to reclaim disk
+or force a cold dependency install. Download caches and Docker layers are separate;
+a cold installed-cache run does not clear them.
+
+`scripts/ci/install_cached.py` keys entries on the manifests and lockfile contents,
+Node and npm versions or the resolved Python interpreter and uv version, platform,
+installer configuration, installer environment, and the helper implementation.
+The Python key includes uv configuration files and interpreter build settings.
+The npm key includes effective npm configuration. Root install hooks, workspaces
+and local dependencies bypass the npm cache because they can read arbitrary source.
+Keys contain hashes; configuration and environment values are never logged.
+
+A key lock serializes population. An install failure publishes no completed entry.
+Only a complete entry can be reused. Each run gets an ordinary private copy
+(`cp -a --reflink=auto`, with a full-copy fallback), so test or tool writes cannot
+change the cache or another run. Python console launchers are relocatable. The
+fresh-instance journey and hermetic pytest still create clean environments from
+the hashed lock on every run. Every test still runs, including on cache hits.
+
+Browser Python setup and browser installation start beside the web build and unit
+suite after web dependencies are ready. Browsers still wait for all these steps,
+Compose and conformance. Compose cannot overlap Chromium because Docker network
+changes abort in-flight browser requests. The gate enables the existing two-server
+global-state split (`UI_E2E_GLOBAL=2`); each server owns separate state and ports.
+The parallel pool, Try serialization, all three browser configurations, unchanged
+build check, journey clock, case aggregation and policy checks remain in the gate.
+`--target main` also selects the local `origin/main` budget comparison without
+posting signoff. Signoff still requires `--signoff --force` and remote checks.

@@ -37,19 +37,30 @@ def install(kind: str, destination: Path) -> None:
         package = json.loads(manifest.read_text())
         # Local dependencies and project lifecycle scripts can read arbitrary
         # source files. Preserve npm ci semantics instead of guessing their inputs.
-        local = any(str(v).startswith(("file:", "link:", "workspace:"))
+        lockfile = Path("package-lock.json").read_text()
+        locked = json.loads(lockfile)
+        local = bool(package.get("workspaces")) or any(str(v).startswith(("file:", "link:", "workspace:"))
                     for group in ("dependencies", "devDependencies", "optionalDependencies")
                     for v in package.get(group, {}).values())
         hooks = set(package.get("scripts", {})) & {"preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare"}
+        local = local or any(item.get("link") or str(item.get("resolved", "")).startswith(("file:", "link:"))
+                             for item in locked.get("packages", {}).values())
         if local or hooks:
             subprocess.run(["npm", "ci", "--no-audit", "--no-fund"], check=True)
             return
         inputs.update(node=output("node", "--version"), npm=output("npm", "--version"),
                       config=output("npm", "config", "list", "--json"),
-                      manifest=manifest.read_text(), lock=Path("package-lock.json").read_text())
+                      manifest=manifest.read_text(), lock=lockfile)
         command = ["npm", "ci", "--no-audit", "--no-fund"]
     elif kind == "venv":
         interpreter = output("uv", "python", "find", "3.12")
+        configs = [parent / name for parent in (Path.cwd(), *Path.cwd().parents)
+                   for name in ("uv.toml", "pyproject.toml")]
+        configs += [Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "uv/uv.toml",
+                    Path("/etc/uv/uv.toml")]
+        if os.environ.get("UV_CONFIG_FILE"):
+            configs.append(Path(os.environ["UV_CONFIG_FILE"]))
+        inputs["uv_configs"] = [hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None for p in configs]
         inputs.update(uv=output("uv", "--version"),
                       python=output(interpreter, "-c", "import sys,sysconfig; print((sys.version,sys.executable,sysconfig.get_config_vars()))"),
                       lock=Path("tests/requirements-hermetic.lock").read_text())
