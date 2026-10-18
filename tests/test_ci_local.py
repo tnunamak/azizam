@@ -213,7 +213,8 @@ def world(tmp_path: Path):
 def test_signoff_posts_to_the_tested_sha_then_writes_the_receipt(world: World) -> None:
     sha = _git(world.repo, "rev-parse", "HEAD")
     result = world.run("--signoff", "--target", "main")
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == 0, (result.stdout + result.stderr
+        + (world.receipts / "logs/web-npm-ci.log").read_text())
     assert world.posts() == [f"api --method POST repos/{{owner}}/{{repo}}/statuses/{sha} -f state=success "
                              "-f context=signoff -f description=Gate Tester signed off --jq .url"]
     receipt = dict(line.split("\t", 1) for line in (world.receipts / f"signoff-{sha}.tsv").read_text().splitlines())
