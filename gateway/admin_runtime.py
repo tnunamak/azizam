@@ -1259,20 +1259,29 @@ class AdminSQLiteStore:
         generation = int(record["operator_settings_generation"]) if record else 0
         if expected_generation is None:
             expected_generation = generation
-        references = {
-            f"access plan {plan['id']}": plan["plan"]
-            for plan in admin_store.list_access_plans(path=self.path)
-        } if mode == "remove" else {}
+        index = self.get_extension_package_index()
         try:
-            package_index, registry, affected = extension_packages.change_package_lifecycle(
-                self.get_extension_package_index(), registry, package_id,
-                mode=mode, references=references,
+            package_index, next_registry, affected = extension_packages.change_package_lifecycle(
+                index, registry, package_id, mode=mode,
             )
         except KeyError as exc:
             raise ValueError(str(exc)) from exc
+
+        def refuse_if_a_plan_names_the_package(conn: sqlite3.Connection) -> None:
+            # Runs after the write lock is held, so a plan saved after this read waits and is
+            # either checked here or saved after the removal commits; no plan is read stale.
+            if mode != "remove":
+                return
+            references = {
+                f"access plan {plan['id']}": plan["plan"]
+                for plan in admin_store.list_access_plans_in(conn)
+            }
+            extension_packages.change_package_lifecycle(index, registry, package_id, mode=mode, references=references)
+
         registry_record, index_record = admin_store.write_service_registry_and_setting_with_audits(
-            registry,
+            next_registry,
             expected_generation=expected_generation,
+            precheck=refuse_if_a_plan_names_the_package,
             updated_by=actor.subject,
             setting_key=EXTENSION_PACKAGE_INDEX_SETTING_KEY,
             setting_value=package_index,

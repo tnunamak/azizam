@@ -1423,6 +1423,12 @@ def list_access_plans(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
     return [_plan_row_to_dict(row) for row in rows]
 
 
+def list_access_plans_in(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """:func:`list_access_plans` as one open transaction sees it."""
+    rows = conn.execute("SELECT * FROM access_plans ORDER BY name COLLATE NOCASE, id").fetchall()
+    return [_plan_row_to_dict(row) for row in rows]
+
+
 def update_access_plan(
     plan_id: str, doc: Mapping[str, Any], *, now: int | None = None, path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
@@ -3193,14 +3199,17 @@ def write_service_registry_and_setting_with_audits(
     audits: Iterable[Mapping[str, Any]],
     now: int | None = None,
     path: Path = DB_PATH,
+    precheck: Callable[[sqlite3.Connection], None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Commit a registry revision, one ordinary setting and their audit facts atomically.
 
     Each audit mapping carries ``action`` plus the optional ``actor_kind``,
     ``actor_id``, ``actor_label``, ``target_kind``, ``target_id`` and
     ``metadata`` fields of :func:`record_audit`. Any failure rolls back every
-    row, including the generation bump. Artifact publication and reload stay
-    with the caller, after the commit.
+    row, including the generation bump. ``precheck`` runs inside the same write
+    lock, before any row is written, and may raise to refuse the whole change;
+    a caller that must read other tables consistently with the write reads them
+    there. Artifact publication and reload stay with the caller, after the commit.
     """
     setting_name = str(setting_key or "").strip()
     if not setting_name or setting_name in {"service_registry", "prompt_memory"}:
@@ -3212,6 +3221,8 @@ def write_service_registry_and_setting_with_audits(
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            if precheck is not None:
+                precheck(conn)
             next_generation = write_service_registry_in_transaction(
                 conn,
                 registry,
