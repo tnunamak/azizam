@@ -422,6 +422,22 @@ def package_registry_snapshot(
     }
 
 
+def _matches_install(
+    record: Mapping[str, Any], expected: Mapping[str, Any] | None, package: Mapping[str, Any],
+    disabled_state: bool | None,
+) -> bool:
+    """True when the row is still exactly what the package installed (its disable aside)."""
+    comparable = copy.deepcopy(dict(record))
+    if disabled_state is not None and comparable.get("enabled") is False:
+        comparable["enabled"] = disabled_state
+    provenance = record.get("provenance") or {}
+    return (
+        expected is not None and comparable == expected
+        and provenance.get("package_hash") == package.get("package_hash")
+        and provenance.get("package_version") == package.get("version")
+    )
+
+
 def change_package_lifecycle(
     index: Mapping[str, Any], registry: Mapping[str, Any], package_id: str,
     *, mode: str = "remove", references: Mapping[str, Any] | None = None,
@@ -436,35 +452,49 @@ def change_package_lifecycle(
     out = copy.deepcopy(dict(registry))
     snapshot = package.get("installed_records") or {}
     disabled_states = package.setdefault("disabled_states", {})
-    affected = []
     owned = package_registry_snapshot(out, package_id)
+    # A row the operator changed is detached and kept, so it survives the removal.
+    unchanged = {
+        kind: {
+            record_id for record_id, record in records.items()
+            if _matches_install(
+                record, (snapshot.get(kind) or {}).get(record_id), package,
+                disabled_states.get(kind, {}).get(record_id),
+            )
+        }
+        for kind, records in owned.items()
+    } if mode == "remove" else {}
     if mode == "remove":
-        # Match actual routing identifiers as well as the service id. Access
-        # plans may refer to the public model name instead of its service.
-        # A model alias the package owns goes with its base model; only a
-        # reference from outside the package keeps the package installed.
-        targets = {record_id for records in owned.values() for record_id in records}
-        for record in owned["services"].values():
-            for model in (record.get("config") or {}).get("models") or []:
+        gone = {(kind, record_id) for kind, ids in unchanged.items() for record_id in ids}
+        # Match routing identifiers as well as service ids: access plans name
+        # the public model, not its service. A model the removed rows define
+        # dies with them, so only a surviving reference can keep the package.
+        targets = {record_id for _, record_id in gone}
+        for kind, record_id in gone:
+            if kind != "services":
+                continue
+            for model in (out[kind][record_id].get("config") or {}).get("models") or []:
                 if isinstance(model, Mapping):
-                    targets.update(str(model[key]) for key in ("id", "model_group")
-                                   if model.get(key))
+                    targets.update(str(model[key]) for key in ("id", "model_group") if model.get(key))
+
         def referenced(value: Any) -> bool:
             if isinstance(value, Mapping):
                 return any(referenced(item) for item in value.values())
             if isinstance(value, (list, tuple)):
                 return any(referenced(item) for item in value)
             return isinstance(value, str) and value in targets
+
         for label, document in (references or {}).items():
             if referenced(document):
                 raise PackageInUse(f"cannot remove package {package_id!r}: referenced by {label}")
-        # References from records that will remain must also be preserved.
+        # Every row that stays, including an edited row of this package, must not name a target.
         for kind in sorted(DATA_OBJECT_KINDS):
             for record_id, record in (out.get(kind) or {}).items():
-                if record_id not in owned[kind] and referenced(record):
+                if (kind, record_id) not in gone and referenced(record):
                     raise PackageInUse(
                         f"cannot remove package {package_id!r}: referenced by {kind}/{record_id}"
                     )
+    affected = []
     for kind, records in owned.items():
         states = disabled_states.setdefault(kind, {})
         for record_id, record in records.items():
@@ -480,29 +510,18 @@ def change_package_lifecycle(
                 if current.get("enabled") is False:
                     current["enabled"] = previous_enabled
                 action = "enabled" if current["enabled"] else "restored_disabled"
+            elif record_id in unchanged[kind]:
+                del out[kind][record_id]
+                action = "removed"
             else:
-                expected = copy.deepcopy((snapshot.get(kind) or {}).get(record_id))
-                comparable = copy.deepcopy(record)
-                if record_id in states and comparable.get("enabled") is False:
-                    comparable["enabled"] = states[record_id]
-                provenance = record.get("provenance") or {}
-                matches = (
-                    expected is not None and comparable == expected
-                    and provenance.get("package_hash") == package.get("package_hash")
-                    and provenance.get("package_version") == package.get("version")
-                )
-                if matches:
-                    del out[kind][record_id]
-                    action = "removed"
-                else:
-                    provenance = dict(current.get("provenance") or {})
-                    for key in ("package_id", "package_version", "package_hash"):
-                        provenance.pop(key, None)
-                    current["provenance"] = provenance
-                    # The package's disable does not outlive the package; an operator's edit stays.
-                    if record_id in states and current.get("enabled") is False:
-                        current["enabled"] = states[record_id]
-                    action = "detached"
+                provenance = dict(current.get("provenance") or {})
+                for key in ("package_id", "package_version", "package_hash"):
+                    provenance.pop(key, None)
+                current["provenance"] = provenance
+                # The package's disable does not outlive the package; an operator's edit stays.
+                if record_id in states and current.get("enabled") is False:
+                    current["enabled"] = states[record_id]
+                action = "detached"
             affected.append({"kind": kind, "id": record_id, "action": action})
     if mode == "remove":
         del out_index["packages"][package_id]
