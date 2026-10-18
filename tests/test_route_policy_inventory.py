@@ -738,6 +738,16 @@ def _metadata_contract(method, template, response, row):
     row["detail"] = ""
 
 
+def _media_folder_refusal(method, template, response, row):
+    """Remove missing items answers a typed 503 when the media folder cannot be seen; no model runs."""
+    if (method, template) != ("POST", "/me/api/media/remove-missing") or response.status_code != 503:
+        return
+    if response.json().get("error", {}).get("code") == "media_folder_unavailable":
+        row["outcome"] = "refused (contract)"
+        row["rule"] = "no media folder was seen, so nothing was removed; runs no model"
+        row["detail"] = ""
+
+
 # API families the gateway does not implement: every method answers before
 # any model or policy with the named code. Route-specific, never a status wildcard.
 _UNSUPPORTED_CONTRACT = {
@@ -1117,6 +1127,7 @@ def _http_inventory(gateway, title=None, report=True):
                     row["outcome"] = "coverage gap"
                     row["rule"] = "server/harness failure is not policy proof"
                     row["detail"] = _validation_message(response)
+                _media_folder_refusal(method, template, response, row)
                 if member and response.status_code == 401:
                     row["outcome"] = "coverage gap"
                     row["rule"] = "member session did not reach policy"
