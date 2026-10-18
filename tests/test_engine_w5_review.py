@@ -144,3 +144,34 @@ def test_env_mask_is_the_same_in_both_record_views(tmp_path):
     shown = view(record(lifecycle={'driver': 'command', 'driver_config': {'start': 'server', 'env': {'TOKEN': 'test-env'}}}), tmp_path)
     assert shown['record']['lifecycle']['driver_config']['env']['TOKEN'] == '[redacted]'
     assert shown['v2']['process']['env']['TOKEN'] == '[redacted]'
+
+
+@pytest.mark.parametrize('start', ['runner --token test-private-value', ['runner', '--token', 'test-private-value']])
+def test_echoed_command_markers_leave_the_stored_process_unchanged(tmp_path, start):
+    lifecycle = {'driver': 'command', 'driver_config': {'start': start, 'env': {'MODE': 'private-env-value'}}}
+    saved = record(lifecycle=lifecycle)
+    store = Store(saved, tmp_path / 'admin.db')
+    service = engine_admin.EngineService(store)
+    shown = service.view('review', SimpleNamespace(roles=('owner',)))
+    asyncio.run(service.update(SimpleNamespace(roles=('owner',)), 'review', {
+        'definition': shown['definition'], 'disabled': True, 'values': shown['values'],
+    }, expected_generation=0))
+    assert store.written['lifecycle'] == service_registry.legacy_lifecycle_from_service(saved)
+
+
+def test_hidden_header_markers_are_bound_to_the_stored_header_name(tmp_path):
+    saved = record(headers=[{'name': 'X-Token', 'value': 'private-a'},
+                            {'name': 'X-Api-Key', 'value': 'private-b'}])
+    store = Store(saved, tmp_path / 'admin.db')
+    service = engine_admin.EngineService(store)
+    shown = service.view('review', SimpleNamespace(roles=('owner',)))
+    rows = list(reversed(shown['values']['headers']))
+    asyncio.run(service.update(SimpleNamespace(roles=('owner',)), 'review', {
+        'definition': shown['definition'], 'disabled': True, 'values': {'headers': rows},
+    }, expected_generation=0))
+    assert store.written['headers'] == list(reversed(saved['config']['headers']))
+    rows[0]['name'] = 'X-Changed-Token'
+    with pytest.raises(engine_admin.DraftError):
+        asyncio.run(service.update(SimpleNamespace(roles=('owner',)), 'review', {
+            'definition': shown['definition'], 'disabled': True, 'values': {'headers': rows},
+        }, expected_generation=0))

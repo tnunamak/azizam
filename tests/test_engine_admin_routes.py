@@ -1012,8 +1012,12 @@ def test_page_masks_environment_values_and_ignored_credential_headers(gateway, f
     assert "test-private-header-value" not in response.text
     assert "test-explicit-secret-header-value" not in response.text
     view = response.json()["engine"]
-    assert view["v2"]["process"]["env"] == {"WORKSPACE": "configured"}
-    assert view["values"]["headers"] == [{"name": "X-Workspace", "value": "public-value"}]
+    assert view["v2"]["process"]["env"] == {"WORKSPACE": "[redacted]"}
+    assert view["values"]["headers"] == [
+        {"name": "Authorization", "value": "[redacted]", "secret": True, "not_sent": True},
+        {"name": "X-Client", "value": "[redacted]", "secret": True, "not_sent": True},
+        {"name": "X-Workspace", "value": "public-value"},
+    ]
     assert view["ignored_headers"] == ["Authorization", "X-Client"]
 
 
