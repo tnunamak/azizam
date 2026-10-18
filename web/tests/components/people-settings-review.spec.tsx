@@ -122,6 +122,7 @@ beforeEach(() => {
       overrides: { revisions: { media_job_admission_overrides: "7" } },
     },
     "/admin/api/extensions": { extension_packages: { packages: {} } },
+    "/admin/api/operator/host-commands": { enabled: false, revision: "0" },
     "/admin/api/settings/receipts": { retention_days: null, revision: "0" },
     "/admin/api/settings/prompt-memory": {
       prompt_memory: {
@@ -595,7 +596,7 @@ describe("People and Settings red-team regressions", () => {
     ).toBeInTheDocument();
     expect(
       container.querySelectorAll("[data-slot=settings-section]"),
-    ).toHaveLength(9); // Includes the engine command permission section added by W2.
+    ).toHaveLength(9);
     const receipts = screen.getByRole("region", { name: "Receipts" });
     expect(
       within(receipts).getByRole("combobox", { name: "Keep receipts" }),
