@@ -151,7 +151,7 @@ def test_forget_seeded_digest_does_not_allow_prompt_guessing(stores):
 
 def test_backend_execution_error_never_copies_input(stores):
     sentinel = "private words quoted in backend error"
-    summary = proxy._comfy_execution_error_message({"status": {"messages": [["execution_error", {"node_id": "6", "node_type": "TextEncode", "exception_message": sentinel}]]}})
+    summary = proxy._graph_error_message({"status": {"messages": [["execution_error", {"node_id": "6", "node_type": "TextEncode", "exception_message": sentinel}]]}})
     assert sentinel not in summary
     assert "TextEncode" in summary and "6" in summary and "execution failed" in summary
 

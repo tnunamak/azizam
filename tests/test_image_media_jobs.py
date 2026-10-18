@@ -74,12 +74,12 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
 
         idle = FakeClient(False)
         with patch.object(proxy.asyncio, "sleep", return_value=None):
-            self.assertTrue(asyncio.run(proxy._free_comfy_models_if_idle(idle)))
+            self.assertTrue(asyncio.run(proxy._free_graph_models_if_idle(idle)))
         self.assertEqual(len(idle.posts), 1)
         self.assertEqual(idle.posts[0][1], {"unload_models": True, "free_memory": True})
 
         busy = FakeClient(True)
-        self.assertFalse(asyncio.run(proxy._free_comfy_models_if_idle(busy)))
+        self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(busy)))
         self.assertEqual(busy.posts, [])
 
         class PendingClient(FakeClient):
@@ -87,7 +87,7 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
                 return FakeResponse({"queue_running": [], "queue_pending": [1]})
 
         pending = PendingClient(False)
-        self.assertFalse(asyncio.run(proxy._free_comfy_models_if_idle(pending)))
+        self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(pending)))
         self.assertEqual(pending.posts, [])
 
         class UnknownQueueClient(FakeClient):
@@ -95,7 +95,7 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
                 return FakeResponse({"queue_running": []})
 
         unknown = UnknownQueueClient(False)
-        self.assertFalse(asyncio.run(proxy._free_comfy_models_if_idle(unknown)))
+        self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(unknown)))
         self.assertEqual(unknown.posts, [])
 
     def test_seeded_requests_get_stable_hashed_request_id(self) -> None:

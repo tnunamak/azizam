@@ -347,7 +347,7 @@ class TestVideosList(VideoRegistryTestCase):
     async def test_failed_entry_includes_error(self) -> None:
         self._seed("p1", created_at=1000)
         with patch.object(
-            proxy, "_comfy_execution_error_message", lambda _job: "CUDA out of memory"
+            proxy, "_graph_error_message", lambda _job: "CUDA out of memory"
         ):
             client = _FakeVideoAsyncClient(history={"p1": {"status": {"completed": True}, "outputs": {}}})
             # Force failed by patching _job_status_from_history for this test.

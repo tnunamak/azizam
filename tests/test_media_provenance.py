@@ -477,7 +477,7 @@ class ImageRouteTests(unittest.IsolatedAsyncioTestCase):
             return None, [comfy_png()]
 
         receipt = proxy.start_image_route_receipt("/v1/images/generations", auth_context)
-        with patch.object(proxy, "_comfy_run_round", fake_round), patch.object(
+        with patch.object(proxy, "_graph_run_round", fake_round), patch.object(
             proxy, "get_vram_estimate", lambda *_a, **_k: 1024), patch.object(
             proxy, "comfy_free_vram_bytes", AsyncMock(return_value=10**10)
         ), patch.object(proxy, "_service_availability_response", lambda *_a, **_k: None), patch.object(
@@ -636,7 +636,7 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         ), patch.dict(proxy._video_job_records, {prompt_id: record}, clear=False), patch.object(
             proxy, "_comfy_history", AsyncMock(return_value={"outputs": {}})
         ), patch.object(proxy, "_job_status_from_history", lambda _j: ("succeeded", None)), patch.object(
-            proxy, "_extract_video_output", lambda _j: {"filename": "v.mp4", "type": "output", "subfolder": ""}
+            proxy, "_first_video_output", lambda _j: {"filename": "v.mp4", "type": "output", "subfolder": ""}
         ), patch.object(proxy.httpx, "AsyncClient", lambda *a, **k: Client()), patch.object(
             proxy, "configured_downstream_headers", lambda *_a: {}
         ), patch.object(proxy, "authenticate_request", lambda *_a: auth), patch.object(
@@ -1034,7 +1034,7 @@ class UiGraphSubmitTests(unittest.TestCase):
             "__ui_workflow__": {"nodes": [], "stale": True},
         }
         with patch.object(proxy, "_comfy_object_info", lambda ct: self.OBJECT_INFO.get(ct)):
-            payload = proxy._build_comfy_submit_payload(graph)
+            payload = proxy._build_graph_submit_payload(graph)
         ui = payload["extra_data"]["extra_pnginfo"]["workflow"]
         self.assertNotIn("stale", ui)
         self.assertEqual(sorted(n["id"] for n in ui["nodes"]), [1, 2])
@@ -1049,7 +1049,7 @@ class UiGraphSubmitTests(unittest.TestCase):
             "__ui_workflow__": {"nodes": [], "twin": True},
         }
         with patch.object(proxy, "_comfy_object_info", lambda ct: None):
-            payload = proxy._build_comfy_submit_payload(graph)
+            payload = proxy._build_graph_submit_payload(graph)
         self.assertTrue(payload["extra_data"]["extra_pnginfo"]["workflow"]["twin"])
 
 

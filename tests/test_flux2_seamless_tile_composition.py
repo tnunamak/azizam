@@ -374,7 +374,7 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
                 _FakeAsyncClient,
             ), patch.object(
                 proxy,
-                "_comfy_run_round",
+                "_graph_run_round",
                 fake_run_round,
             ):
                 response = await proxy.proxy_comfy_request(

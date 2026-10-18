@@ -327,6 +327,10 @@ class NodeGraphAdapter:
         async with httpx.AsyncClient(**client_kwargs) as client:
             yield GraphSession(conn, client)
 
+    def attach(self, conn: Connection, client: Any) -> GraphSession:
+        """A session over a client the caller already holds, so its requests go through this adapter."""
+        return GraphSession(conn, client)
+
     @asynccontextmanager
     async def _use(self, conn: Connection, session: GraphSession | None) -> AsyncIterator[GraphSession]:
         if session is not None:

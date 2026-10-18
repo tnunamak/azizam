@@ -1,6 +1,6 @@
 """Image completion polling latency and wait-budget contracts.
 
-The gateway's ComfyUI round (``proxy._comfy_run_round``) against the FK comfyui
+The gateway's ComfyUI round (``proxy._graph_run_round``) against the FK comfyui
 fake. The poll back-off sleeps through ``proxy.asyncio.sleep``; the tests
 record those sleeps instead of waiting (the gateway has no clock seam).
 """
@@ -45,7 +45,7 @@ def _run_round(fakes: FakeUpstreams, monkeypatch, name: str, *, wire: bool = Fal
     async def call():
         timeout = httpx.Timeout(HANG_BOUND_SECONDS, read=60.0)
         async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient(timeout=timeout) as client:
-            return await proxy._comfy_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "poll test", max_wait_s=2)
+            return await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "poll test", max_wait_s=2)
 
     with patch.object(proxy.asyncio, "sleep", sleep), patch.object(proxy, "COMFY_TIMEOUT", 100):
         error, images = asyncio.run(call())
@@ -98,7 +98,7 @@ def test_a_refused_submit_connection_gives_a_502(fake_upstreams, monkeypatch) ->
 
     async def call():
         async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient() as client:
-            return await proxy._comfy_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "refused", max_wait_s=2)
+            return await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "refused", max_wait_s=2)
 
     error, images = asyncio.run(call())
 

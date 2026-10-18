@@ -68,7 +68,7 @@ def test_submit_payload_embeds_workflow(path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(proxy, "_comfy_object_info", OBJECT_INFO.get)
     workflow = proxy._load_comfy_workflow_file(path)
     assert workflow is not None, "gateway rejects this workflow"
-    payload = proxy._build_comfy_submit_payload(workflow)
+    payload = proxy._build_graph_submit_payload(workflow)
     ui = payload["extra_data"]["extra_pnginfo"]["workflow"]
     assert ui["nodes"] and not any(k.startswith("__") for k in payload["prompt"])
 

@@ -270,7 +270,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
             source="request",
         )
         with patch.object(
-            proxy, "_comfy_run_round", fake_run_round
+            proxy, "_graph_run_round", fake_run_round
         ), patch.object(
             proxy, "get_vram_estimate", lambda *_a, **_k: 1024
         ), patch.object(
@@ -316,10 +316,10 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
 
         free_models = AsyncMock(return_value=freed)
         meta = {"batch_size_node": "b", "batch_size_field": "batch_size"}
-        with patch.object(proxy, "_comfy_run_round", fake_run_round), patch.object(
+        with patch.object(proxy, "_graph_run_round", fake_run_round), patch.object(
             proxy, "get_vram_estimate", lambda *_a, **_k: estimate
         ), patch.object(proxy, "comfy_free_vram_bytes", fake_free), patch.object(
-            proxy, "_free_comfy_models_if_idle", free_models
+            proxy, "_free_graph_models_if_idle", free_models
         ), patch.object(proxy, "IMAGE_VRAM_RESERVE_BYTES", 1 << 30), patch.object(
             proxy, "IMAGE_FREE_VRAM_ON_EXHAUSTION", True
         ):

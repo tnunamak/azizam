@@ -153,8 +153,8 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
             return outcomes.pop(0)
 
         free = AsyncMock(return_value=True)
-        with patch.object(proxy, "_comfy_run_round", side_effect=run), patch.object(
-            proxy, "_free_comfy_models_if_idle", free
+        with patch.object(proxy, "_graph_run_round", side_effect=run), patch.object(
+            proxy, "_free_graph_models_if_idle", free
         ), patch.object(proxy, "compute_max_batch", return_value=2):
             response = await self.batch()
         self.assertEqual(response.status_code, 200, response.body)
@@ -173,8 +173,8 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
                 )
                 run = AsyncMock(return_value=(oom, []))
                 free = AsyncMock(return_value=can_free)
-                with patch.object(proxy, "_comfy_run_round", run), patch.object(
-                    proxy, "_free_comfy_models_if_idle", free
+                with patch.object(proxy, "_graph_run_round", run), patch.object(
+                    proxy, "_free_graph_models_if_idle", free
                 ):
                     response = await self.batch()
                 self.assertIs(response, oom)
@@ -187,7 +187,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
         ):
             with self.subTest(first=first):
                 run = AsyncMock(side_effect=[(None, first)] + [(None, [])] * 4)
-                with patch.object(proxy, "_comfy_run_round", run):
+                with patch.object(proxy, "_graph_run_round", run):
                     response = await self.batch()
                 self.assertEqual(response.status_code, expected_status, response.body)
                 self.assertEqual(run.await_count, expected_rounds)
@@ -267,7 +267,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
                              for k, v in right._form._items]
         before = copy.deepcopy(self.workflow)
         fake = self.serve("upload-ok-any")
-        with patch.object(proxy, "_comfy_run_round", side_effect=run):
+        with patch.object(proxy, "_graph_run_round", side_effect=run):
             responses = await asyncio.wait_for(asyncio.gather(
                 proxy.proxy_comfy_edit_request(left, proxy.NO_AUTH_CONTEXT),
                 proxy.proxy_comfy_edit_request(right, proxy.NO_AUTH_CONTEXT),
@@ -287,7 +287,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
 
         before = copy.deepcopy(self.workflow)
         self.serve("upload-ok-any")
-        with patch.object(proxy, "_comfy_run_round", side_effect=run):
+        with patch.object(proxy, "_graph_run_round", side_effect=run):
             response = await proxy.proxy_comfy_edit_request(
                 self.edit_request(n=2, seed=41), proxy.NO_AUTH_CONTEXT,
             )
@@ -361,9 +361,9 @@ class ImageRoundCancellationGapTests(IsolatedAsyncioTestCase):
         fake = self.serve("round-client-disconnect")
         probe = SimpleNamespace(start=Mock(), stop=AsyncMock())
         request = SimpleNamespace(is_disconnected=AsyncMock(return_value=True))
-        with patch.object(proxy, "_build_comfy_submit_payload", side_effect=lambda w: {"prompt": w}):
+        with patch.object(proxy, "_build_graph_submit_payload", side_effect=lambda w: {"prompt": w}):
             async with httpx.AsyncClient() as client:
-                error, images = await asyncio.wait_for(proxy._comfy_run_round(
+                error, images = await asyncio.wait_for(proxy._graph_run_round(
                     client, {}, {}, "disconnect", request=request, vram_probe=probe,
                 ), timeout=HANG_BOUND_SECONDS)
         self.assertEqual(error.status_code, 499)
@@ -378,9 +378,9 @@ class ImageRoundCancellationGapTests(IsolatedAsyncioTestCase):
             with self.subTest(cancel_status=cancel_status):
                 fake = self.serve("round-task-cancelled", cancel_status=cancel_status)
                 probe = SimpleNamespace(start=Mock(), stop=AsyncMock())
-                with patch.object(proxy, "_build_comfy_submit_payload", side_effect=lambda w: {"prompt": w}):
+                with patch.object(proxy, "_build_graph_submit_payload", side_effect=lambda w: {"prompt": w}):
                     async with httpx.AsyncClient() as client:
-                        task = asyncio.create_task(proxy._comfy_run_round(
+                        task = asyncio.create_task(proxy._graph_run_round(
                             client, {}, {}, "cancel", vram_probe=probe,
                         ))
                         try:
