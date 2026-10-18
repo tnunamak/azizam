@@ -65,6 +65,7 @@ _KNOWN_CONFIG_KEYS = frozenset({
 })
 _RECORD_KEYS = frozenset({"id", "name", "kind", "source", "enabled", "priority", "role", "capabilities", "config",
                           "secret_refs", "lifecycle", "process", "observations", "residency", "resources",
+                          "connection", "offerings", "protocol_operations", "control_file_roots",
                           "provenance", "editable"})
 # An engine lists at most this many models in one access question.
 MAX_ACCESS_MODELS = 500
@@ -591,7 +592,8 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     values["path_prefix"] = config.get("path_prefix") or ""
     values["reply_timeout_s"] = config.get("timeout") or _field_default(definition, "reply_timeout_s", 600)
     values["headers"] = [{"name": h.get("name"), "value": h.get("value", "")}
-                         for h in config.get("headers") or () if isinstance(h, Mapping) and "value" in h]
+                         for h in config.get("headers") or () if isinstance(h, Mapping) and "value" in h
+                         and not h.get("secret") and not header_problem(str(h.get("name") or ""), str(h["value"]))]
     values["transforms"] = copy.deepcopy(config.get("transforms") or [])
     lifecycle = service_registry.legacy_lifecycle_from_service(record)
     driver_config = lifecycle.get("driver_config") or {}
@@ -638,6 +640,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
             base = request_base
             operations.append({"capability": cap_id, "method": "POST", "url": join_url(base, route["path"])})
     v2 = service_registry.service_record_v2(record)
+    v2["process"] = _redact_record_value(v2.get("process"))
     v2["connection"]["address"] = address
     return {
         "service_id": record.get("id"),
@@ -656,12 +659,14 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "tests": copy.deepcopy(config.get("engine_tests") or {}),
         "check": copy.deepcopy(config.get("engine_check") or {}),
         "calls": call_line(definition, values),
-        "other_settings": copy.deepcopy(other),
+        "other_settings": _redact_record_value(other),
         "record": redacted_record(record),
         "v2": v2,
         "request_path": {"mode": "gateway_lifecycle" if hop_routed else "direct", "source": "service record",
                          "url": operations[0]["url"] if operations else "", "operations": operations},
         "credential_destination": key.get("origin") or origin_of(address),
+        "ignored_headers": [str(row.get("name") or "(unnamed)") for row in config.get("headers") or ()
+                            if isinstance(row, Mapping) and (row.get("secret") or header_problem(str(row.get("name") or ""), str(row.get("value") or "")))],
         "unsupported_fields": unsupported_fields,
         "can_edit_offerings": schema_matches,
     }
@@ -679,27 +684,31 @@ def _caps_from_record(catalog: EngineCatalog, definition: Mapping[str, Any], rec
     return out
 
 
+def _redact_record_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        masked = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if lowered == "env" and isinstance(item, Mapping):
+                masked[key] = {name: "configured" for name in item}
+            elif lowered.endswith("_secret_id") or lowered in ("api_key", "secret_ref"):
+                masked[key] = "configured" if item else item
+            elif lowered == "value" and "name" in value and header_problem(str(value.get("name") or ""), str(item)):
+                masked[key] = "configured"
+            else:
+                masked[key] = _redact_record_value(item)
+        return masked
+    if isinstance(value, list):
+        return [_redact_record_value(item) for item in value]
+    return value
+
+
 def redacted_record(record: Mapping[str, Any]) -> dict[str, Any]:
-    """The stored record as the page shows it: secret ids and references masked, never a value."""
+    """The stored record as the page shows it, with references and environment values masked."""
     out = copy.deepcopy({k: v for k, v in record.items() if k in _RECORD_KEYS})
     if "lifecycle" not in out:
         out["lifecycle"] = copy.deepcopy(dict(service_registry.legacy_lifecycle_from_service(record)))
-
-    def mask(value: Any) -> Any:
-        if isinstance(value, Mapping):
-            masked = {}
-            for key, item in value.items():
-                lowered = str(key).lower()
-                if lowered.endswith("_secret_id") or lowered == "api_key":
-                    masked[key] = "configured"
-                else:
-                    masked[key] = mask(item)
-            return masked
-        if isinstance(value, list):
-            return [mask(item) for item in value]
-        return value
-
-    out = mask(out)
+    out = _redact_record_value(out)
     if isinstance(out.get("secret_refs"), Mapping):
         out["secret_refs"] = {k: "configured" for k in out["secret_refs"]}
     return out

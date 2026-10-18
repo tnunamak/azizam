@@ -288,6 +288,7 @@ export interface EngineView {
   can_edit_offerings?: boolean;
   /** The origin a saved key is sent to. Nowhere else gets it. */
   credential_destination?: string | { origin?: string } | null;
+  ignored_headers?: string[];
 }
 
 export interface RequestPath {

@@ -979,3 +979,25 @@ def test_legacy_host_edit_updates_the_effective_page_address(gateway, fake_upstr
     assert view["values"]["address"] == "http://after-legacy-edit.fk.test:80/v1"
     assert view["v2"]["connection"]["address"] == view["values"]["address"]
     assert view["request_path"]["url"] == "http://after-legacy-edit.fk.test:80/v1/chat/completions"
+
+
+@pytest.mark.parametrize("administrator", [False, True])
+def test_page_masks_environment_values_and_ignored_credential_headers(gateway, fake_upstreams, administrator):
+    owner, _, _, admin = owner_and_admin(gateway)
+    fake = _silent(fake_upstreams, "masked-process.fk.test")
+    assert _create(owner, {"definition": "openai-compatible", "name": "masked-process", "disabled": True,
+                           "values": {"address": fake.base_url}}).status_code == 201
+    registry = _registry(gateway)
+    record = registry["services"]["masked-process"]
+    record["process"] = {"driver": "process", "start": ["server"], "env": {"WORKSPACE": "test-private-env-value"}}
+    record["config"]["headers"] = [{"name": "Authorization", "value": "test-private-header-value"},
+                                      {"name": "X-Workspace", "value": "public-value"}]
+    _put_registry(gateway, registry)
+    response = (admin if administrator else owner).get("/admin/api/engines/masked-process")
+    assert response.status_code == 200
+    assert "test-private-env-value" not in response.text
+    assert "test-private-header-value" not in response.text
+    view = response.json()["engine"]
+    assert view["v2"]["process"]["env"] == {"WORKSPACE": "configured"}
+    assert view["values"]["headers"] == [{"name": "X-Workspace", "value": "public-value"}]
+    assert view["ignored_headers"] == ["Authorization"]

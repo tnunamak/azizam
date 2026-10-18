@@ -135,6 +135,14 @@ describe("the six sections mirror the record", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it("explains why stored credential headers are hidden", async () => {
+    mount({ ignored_headers: ["Authorization"] });
+    await screen.findByRole("heading", { level: 1, name: "garage-gpu" });
+    expect(screen.getByTestId("connection-facts")).toHaveTextContent(
+      "Headers not sentAuthorization. These stored headers cannot override credentials or HTTP transport settings.",
+    );
+  });
+
   it("direct: shows the effective request path, the key's destination, the offering and an unknown observation", async () => {
     mount();
     await screen.findByRole("heading", { level: 1, name: "garage-gpu" });

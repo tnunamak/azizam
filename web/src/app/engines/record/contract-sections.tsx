@@ -176,6 +176,11 @@ export function ConnectionFacts({
   }
   const protocol = view.v2?.connection.protocol;
   if (protocol) rows.push(["Protocol", mono(protocol)]);
+  if (view.ignored_headers?.length)
+    rows.push([
+      "Headers not sent",
+      `${view.ignored_headers.join(", ")}. These stored headers cannot override credentials or HTTP transport settings. Use the API key field for a credential.`,
+    ]);
   return <Facts rows={rows} testId="connection-facts" />;
 }
 
