@@ -180,6 +180,26 @@ def test_process_crash_restart_budget_and_orphan_adoption(tmp_path):
         first.stop(svc)
 
 
+def test_process_boot_recovery_adopts_matching_recipe_and_terminates_disabled_one(tmp_path):
+    svc = process_service(tmp_path)
+    svc["residency"]["idle_owner"] = "engine"
+    original = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
+
+    async def scenario():
+        assert await original.ensure_ready(svc, 2)
+        adopted = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
+        adopted.recover({"fixture": svc})
+        assert await adopted.status(svc) == "running"
+        disabled = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: False)
+        disabled.recover({"fixture": svc})
+        assert await disabled.status(svc) == "stopped"
+
+    try:
+        run(scenario())
+    finally:
+        original.stop(svc)
+
+
 def test_observations_are_unknown_without_probe_and_inventory_is_not_residency():
     reader = ObservationReader()
     assert run(reader.read({"connection": {"address": "http://127.0.0.1:1"}}, "resident")).known is False
