@@ -817,7 +817,16 @@ class AdminSQLiteStore:
         is recorded with it.
         """
         value = service_registry.normalize_service_registry(registry)
-        changed = service_registry.credential_binding_changes(self.get_service_registry(), value)
+        before_registry = self.get_service_registry()
+        if "owner" not in actor.roles:
+            old_services = before_registry.get("services") or {}
+            for service_id, record in (value.get("services") or {}).items():
+                previous = old_services.get(service_id) or {}
+                old_process = previous.get("process", (previous.get("config") or {}).get("process"))
+                new_process = record.get("process", (record.get("config") or {}).get("process"))
+                if old_process != new_process:
+                    raise PermissionError("Only the owner can change a service process driver.")
+        changed = service_registry.credential_binding_changes(before_registry, value)
         if not changed:
             return value
         if "owner" not in actor.roles:

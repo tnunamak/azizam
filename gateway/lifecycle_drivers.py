@@ -340,6 +340,21 @@ async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
     Reads host, port, health_endpoint from the svc (config["backends"][id]) dict.
     Polls every 0.5 s.  Returns False immediately if host/port are missing.
     """
+    from gateway.engine_contract_view import observations_config
+
+    if observations_config(svc).get("process_ready"):
+        from gateway.engine_observations import ObservationReader
+
+        reader = ObservationReader()
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        while True:
+            result = await reader.read(svc, "process_ready")
+            if result.known and result.value is True:
+                return True
+            if asyncio.get_running_loop().time() >= deadline:
+                return False
+            await asyncio.sleep(min(0.5, deadline - asyncio.get_running_loop().time()))
+
     import httpx  # local import to avoid circular at module level
 
     host = svc.get("host", "127.0.0.1")
@@ -651,12 +666,19 @@ class CommandDriver:
 
     _DEFAULT_CMD_TIMEOUT_S: float = 30.0
 
+    def __init__(self, *, commands_allowed: Callable[[], bool] | None = None) -> None:
+        from gateway.engine_process import _operator_allows_commands
+
+        self._commands_allowed = commands_allowed or _operator_allows_commands
+
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
 
     async def ensure_ready(self, svc: Mapping[str, Any], timeout_s: float) -> bool:
         """Start the service (if status says it isn't running) then poll health."""
+        if not self._commands_allowed():
+            return False
         driver_cfg = self._driver_config(svc)
         if not self._command(driver_cfg, "start"):
             return False
@@ -680,6 +702,8 @@ class CommandDriver:
 
     def stop(self, svc: Mapping[str, Any]) -> None:
         """Run the operator's stop command synchronously (best-effort)."""
+        if not self._commands_allowed():
+            return
         driver_cfg = self._driver_config(svc)
         argv = self._command(driver_cfg, "stop")
         if not argv:
@@ -697,6 +721,8 @@ class CommandDriver:
             pass  # best-effort; the operator's supervisor owns the process
 
     async def status(self, svc: Mapping[str, Any]) -> str:
+        if not self._commands_allowed():
+            return ProcessState.UNKNOWN
         driver_cfg = self._driver_config(svc)
         running = await self._status_ok(driver_cfg)
         if running is None:
@@ -714,6 +740,8 @@ class CommandDriver:
 
     async def preflight(self, svc: Mapping[str, Any]) -> Optional[str]:
         """Read-only: confirm a start command is configured."""
+        if not self._commands_allowed():
+            return "Allow Azizam to run commands on this computer is off"
         driver_cfg = self._driver_config(svc)
         if not self._command(driver_cfg, "start"):
             return "command driver_config.start is required but not set"
@@ -736,6 +764,11 @@ class CommandDriver:
 
     @staticmethod
     def _driver_config(svc: Mapping[str, Any]) -> Mapping[str, Any]:
+        from gateway.engine_contract_view import process_config
+
+        process = process_config(svc)
+        if isinstance(svc.get("process"), Mapping) and process.get("driver") == "command":
+            return {**process, "_v2": True}
         lifecycle = svc.get("lifecycle") or {}
         if isinstance(lifecycle, Mapping):
             return lifecycle.get("driver_config") or {}
@@ -755,6 +788,10 @@ class CommandDriver:
         raw = driver_cfg.get(key)
         if not raw:
             return []
+        if driver_cfg.get("_v2") and not (
+            isinstance(raw, list) and raw and all(isinstance(part, str) and part and "\x00" not in part for part in raw)
+        ):
+            return []
         if isinstance(raw, str):
             return shlex.split(raw)
         if isinstance(raw, (list, tuple)):
@@ -770,10 +807,12 @@ class CommandDriver:
 
     @staticmethod
     def _env(driver_cfg: Mapping[str, Any]) -> Optional[dict]:
+        from gateway.engine_process import inherited_command_environment
+
         extra = driver_cfg.get("env")
         if not isinstance(extra, Mapping):
-            return None
-        merged = dict(os.environ)
+            return inherited_command_environment() if driver_cfg.get("_v2") else None
+        merged = inherited_command_environment() if driver_cfg.get("_v2") else dict(os.environ)
         merged.update({str(k): str(v) for k, v in extra.items()})
         return merged
 
@@ -1717,6 +1756,7 @@ class HttpLoadUnloadDriver:
 # ---------------------------------------------------------------------------
 
 _DRIVER_MAP: dict[str, Any] = {
+    "none":             ExternalDriver,
     "external":         ExternalDriver,
     "docker":           DockerDriver,
     "command":          CommandDriver,
@@ -1730,6 +1770,8 @@ _docker_driver             = DockerDriver()
 _command_driver            = CommandDriver()
 _systemd_driver            = SystemdDriver()
 _http_load_unload_driver   = HttpLoadUnloadDriver()
+from gateway.engine_process import ProcessDriver
+_process_driver = ProcessDriver()
 
 
 def driver_for_service(service_id: str, config_backends: Optional[Mapping[str, Any]] = None) -> LifecycleDriver:
@@ -1764,12 +1806,16 @@ def driver_for_service(service_id: str, config_backends: Optional[Mapping[str, A
     if not isinstance(lifecycle, Mapping):
         lifecycle = {}
 
-    driver_name = (lifecycle.get("driver") or "external").strip().lower()
+    from gateway.engine_contract_view import process_config
+
+    driver_name = str(process_config(bcfg).get("driver") or "none").strip().lower()
 
     if driver_name == "docker":
         return _docker_driver
     if driver_name == "command":
         return _command_driver
+    if driver_name == "process":
+        return _process_driver
     if driver_name == "systemd":
         return _systemd_driver
     if driver_name == "http-load-unload":

@@ -1379,6 +1379,12 @@ async def _ensure_target(
     from gateway.lifecycle_drivers import driver_for_service, supports_swap, SwapContext
 
     bcfg = (config.get("backends") or {}).get(backend) or {}
+    # The legacy backend projection keys records by id; owned-process state
+    # needs that immutable id even before the v2 registry projection lands.
+    if (bcfg.get("process") or {}).get("driver") == "process" or (
+        (bcfg.get("lifecycle") or {}).get("driver") == "process"
+    ):
+        bcfg = {**bcfg, "id": backend}
     driver = driver_for_service(backend, config.get("backends"))
 
     # Non-swap driver, or no model requested → just make the backend ready.
@@ -12497,9 +12503,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] firehose replay failed: {e}", flush=True)
 
-    # The gateway does not start engines. They are brought up by the operator's
-    # supervisor (systemd / docker / a `command` LifecycleDriver) and reached
-    # lazily via ensure_target on the first request that needs them.
+    # Engines are reached lazily. A declared process driver may start one on
+    # the first request when the owner has enabled host command execution.
 
     # Log the loop thread's stack whenever the event loop stops answering.
     watchdog = loop_watchdog.start(float(get_env("AZIZAM_LOOP_WATCHDOG_THRESHOLD_S", "1.0")))
@@ -12684,7 +12689,8 @@ async def lifespan(app: FastAPI):
             await receipts_maintenance_task
         except asyncio.CancelledError:
             pass
-    # No engine processes to stop — the gateway never owned an engine's existence.
+    from gateway.lifecycle_drivers import _process_driver
+    await asyncio.to_thread(_process_driver.shutdown)
 
 
 # Build the shared TLS context now, at import, so no request builds it on the event loop.

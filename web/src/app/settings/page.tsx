@@ -75,6 +75,7 @@ const keys = {
   instance: ["settings", "instance"],
   defaults: ["settings", "defaults"],
   media: ["settings", "media"],
+  hostCommands: ["settings", "host-commands"],
   extensions: ["settings", "extensions"],
   effective: ["settings", "effective"],
 };
@@ -228,12 +229,12 @@ function Field({
     </div>
   );
 }
-function Save({ pending, label }: { pending: boolean; label: string }) {
+function Save({ pending, label, disabled = false }: { pending: boolean; label: string; disabled?: boolean }) {
   return (
     <Button
       type="submit"
       className="h-auto! min-h-11 max-w-full py-2 whitespace-normal!"
-      disabled={pending}
+      disabled={pending || disabled}
     >
       {pending && <Loader2 className="animate-spin" />}
       {pending ? "Saving…" : label}
@@ -643,6 +644,90 @@ function MediaSection() {
         />
       )}
     </Section>
+  );
+}
+function HostCommandsSection() {
+  const owner = useViewer().role === "owner";
+  const client = useQueryClient();
+  const { data, isPending, isError, error, refetch } = useQuery({
+    queryKey: keys.hostCommands,
+    staleTime: 15_000,
+    queryFn: () =>
+      adminFetch<{ enabled: boolean; revision: string }>(
+        "/admin/api/operator/host-commands",
+      ),
+  });
+  return (
+    <Section
+      title="Computer commands"
+      summary={data ? { label: data.enabled ? "Allowed" : "Off" } : undefined}
+      description="Controls whether Azizam can start processes or run commands declared for engines."
+    >
+      {isPending ? (
+        <Loading label="Loading computer command setting" />
+      ) : isError ? (
+        <SettingsError
+          error={error}
+          message="Computer command setting could not be loaded."
+          onRetry={() => void refetch()}
+        />
+      ) : owner ? (
+        <HostCommandsForm initial={data} onSaved={(saved) => {
+          client.setQueryData(keys.hostCommands, saved);
+          toast.success("Computer command setting saved");
+        }} />
+      ) : (
+        <p className="text-muted-foreground text-meta">Only the owner can change this.</p>
+      )}
+    </Section>
+  );
+}
+
+function HostCommandsForm({
+  initial,
+  onSaved,
+}: {
+  initial: { enabled: boolean; revision: string };
+  onSaved: (saved: { enabled: boolean; revision: string }) => void;
+}) {
+  const [draft, setDraft] = useDraft(initial);
+  const mutation = useMutation({
+    mutationFn: () =>
+      adminFetch<{ enabled: boolean; revision: string }>(
+        "/admin/api/operator/host-commands",
+        {
+          method: "PUT",
+          body: { enabled: draft.enabled },
+          headers: { "If-Match": draft.revision },
+        },
+      ),
+    onSuccess: (saved) => {
+      setDraft(saved);
+      onSaved(saved);
+    },
+  });
+  return (
+    <form className="space-y-5" onSubmit={(event) => {
+      event.preventDefault();
+      mutation.mutate();
+    }}>
+      <Toggle
+        id="allow-host-commands"
+        label="Allow Azizam to run commands on this computer"
+        help="Engine start, stop and status recipes run as the gateway user."
+        checked={draft.enabled}
+        onChange={(enabled) => setDraft({ ...draft, enabled })}
+      />
+      {draft.enabled !== initial.enabled && (
+        <p className="text-muted-foreground text-meta" role="status">
+          {draft.enabled
+            ? "After you save, configured engines may start processes and run commands on this computer."
+            : "After you save, Azizam will block new process starts and external manager commands."}
+        </p>
+      )}
+      <MutationError error={mutation.error} />
+      <Save pending={mutation.isPending} disabled={draft.enabled === initial.enabled} label="Save computer command setting" />
+    </form>
   );
 }
 function mediaFields(initial: Partial<MediaAdmission>) {
@@ -1099,6 +1184,7 @@ export default function SettingsPage() {
         <HouseholdPromptsSection />
         <ReceiptsSection />
         <MediaSection />
+        <HostCommandsSection />
         <ExtensionsSection />
         <AdvancedSection />
       </div>
