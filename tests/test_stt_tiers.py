@@ -14,7 +14,7 @@ import httpx
 from starlette.requests import Request
 
 import proxy
-from tests.support.access import access_context
+from tests.support.access import access_context, plan_for
 from gateway import speech_stream
 
 from tests.speech_tier_helpers import HAVE_FFMPEG, SttCase, _Chunks, _multipart, _wav_bytes
@@ -60,7 +60,7 @@ class SttServiceSelectionTests(SttCase):
         self.assertEqual(self._post([("model", "stt-fast")], file_first=True).status_code, 200)
         self.assertEqual(seen[0].url.port, 8012)
 
-    def _post_file_first_past_peek(self, fields, *, audio=None, operation="transcriptions"):
+    def _post_file_first_past_peek(self, fields, *, audio=None, operation="transcriptions", auth_context=None):
         body, ctype = _multipart(
             fields,
             audio if audio is not None else _wav_bytes(16000, 1, 1.5),
@@ -82,7 +82,7 @@ class SttServiceSelectionTests(SttCase):
         )
 
         async def dispatch_and_drain():
-            response = await proxy._dispatch_selected_stt_route(request, access_context(), operation=operation)
+            response = await proxy._dispatch_selected_stt_route(request, auth_context or access_context(), operation=operation)
             captured = b""
             if getattr(response, "body_iterator", None) is not None:
                 captured = b"".join([chunk async for chunk in response.body_iterator])
@@ -371,6 +371,15 @@ class SttRuntimeFallbackTests(SttCase):
         self.assertEqual(response.headers["x-azizam-fallback"], "parakeet-gpu->parakeet (gpu_oom)")
         receipts = [call.args[0] for call in proxy.receipt_store.begin.call_args_list]
         self.assertIn("parakeet-gpu->parakeet (gpu_oom)", receipts[-1].fallback_reasons)
+
+    def test_file_first_fallback_keeps_the_callers_alias_for_policy(self) -> None:
+        seen = self._engines(lambda _r: httpx.Response(500, json={"error": {"message": "Failed to allocate tensors"}}))
+        context = access_context(plan_for(models=["whisper-1"]))
+        response, body = SttServiceSelectionTests._post_file_first_past_peek(
+            self, [("model", "whisper-1")], auth_context=context,
+        )
+        self.assertEqual((response.status_code, json.loads(body).get("text")), (200, "cpu"), body)
+        self.assertEqual([r.url.port for r in seen], [8017, 5092])
 
     def test_skipped_primary_engine_is_reported_without_runtime_retry(self) -> None:
         self.cfg["backends"]["stt-parakeet-gpu"]["enabled"] = False
