@@ -400,3 +400,25 @@ def test_dispatch_refuses_hand_edited_paid_or_remote_record(engine, change):
         dispatch.resolve(engine.registry, 'prism-chat', 'chat')
     assert raised.value.code == 'protocol_dispatch_refused'
     assert not engine.fake.requests
+
+
+def test_protocol_issues_reach_the_status_page_existing_health_signal_contract(engine, monkeypatch, tmp_path):
+    from unittest.mock import AsyncMock
+    from gateway.admin_api import derive_admin_health_projection
+    from gateway.engine_protocol import inventory
+    (tmp_path/'prism.yml').write_text((FIXTURE/'prism.yml').read_text())
+    (tmp_path/'broken.yml').write_text('id: broken\n')
+    loader = description.load_registry.__closure__[0].cell_contents
+    monkeypatch.setattr(description, 'load_registry', lambda: loader(tmp_path))
+    monkeypatch.setattr(proxy.status_endpoint, 'get_cached_status', AsyncMock(return_value={'backends':[], 'health_sources':{}}))
+    def no_capabilities(*a, **k):
+        raise RuntimeError('capability projection unavailable in this fixture')
+    monkeypatch.setattr(proxy, '_gateway_capabilities_for_auth_context', no_capabilities)
+    inventory._issues[engine.record['id']] = 'The engine model list is unavailable or invalid.'
+    payload = asyncio.run(proxy._status_payload_with_availability())
+    health = derive_admin_health_projection(engine.registry, payload, observation_available=True)
+    signal = next(row for row in health['signals'] if row['source'] == 'engine_protocol')
+    assert signal['tone'] == 'warn'
+    assert any('broken.yml' in reason for reason in signal['reasons'])
+    assert any(engine.record['id'] in reason for reason in signal['reasons'])
+    assert str(tmp_path) not in json.dumps(signal)
