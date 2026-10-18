@@ -73,6 +73,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { expiryNote } from "@/lib/library-expiry";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -429,15 +430,10 @@ function confirmedGone(reason?: string | null): boolean {
   return /missing or expired/i.test(reason?.replace(/[_-]+/g, " ") ?? "");
 }
 
-// The gateway deleted every generated file 24 hours after it was made until
-// 2026-10-11. A gone file made before the end of that day went that way.
-const AUTOMATIC_EXPIRY_ENDED_S = Date.UTC(2026, 9, 12) / 1000;
-
 /** What a confirmed-gone file's note says; older files were deleted and are not coming back. */
 function goneNote(asset: MediaAsset): string {
-  return typeof asset.created_at === "number" && asset.created_at < AUTOMATIC_EXPIRY_ENDED_S
-    ? "This file was deleted on or before Oct 11 and can’t be recovered."
-    : "This file is no longer stored.";
+  const made = toDateValue(asset.created_at);
+  return (made && expiryNote(made.getTime() / 1000)) || "This file is no longer stored.";
 }
 
 /**
