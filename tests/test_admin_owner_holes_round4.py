@@ -192,6 +192,23 @@ def test_an_administrator_can_still_set_an_external_lifecycle(gateway):
     assert created.status_code == 201, created.text
 
 
+def test_host_command_setting_defaults_off_and_only_owner_can_enable_it(gateway):
+    owner, _, _, admin = owner_and_admin(gateway)
+    path = "/admin/api/operator/host-commands"
+    default = owner.get(path)
+    assert default.status_code == 200
+    assert default.json()["enabled"] is False
+    assert default.json()["revision"] == "0"
+    denied = admin.put(path, headers={**csrf_for(admin), "If-Match": "0"}, json={"enabled": True})
+    assert denied.status_code == 403
+    enabled = owner.put(path, headers={**csrf_for(owner), "If-Match": "0"}, json={"enabled": True})
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["enabled"] is True
+    assert owner.get(path).json()["enabled"] is True
+    stale = owner.put(path, headers={**csrf_for(owner), "If-Match": "0"}, json={"enabled": False})
+    assert stale.status_code == 409
+
+
 @pytest.mark.parametrize("key", ["admin_key_env", "token_ref", "x_secret_id", "api_key", "vault_env"])
 def test_credential_references_flag_any_reference_shaped_key_at_any_depth(key):
     record = {"config": {"nested": [{"deep": {key: "X"}}]}, "lifecycle": {"driver_config": {key: "X"}}}

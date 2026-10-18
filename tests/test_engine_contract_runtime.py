@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import socket
 import sys
 from pathlib import Path
 
 import pytest
+import httpx
 
 from gateway.engine_observations import ObservationReader
 from gateway.engine_process import ProcessDriver
@@ -36,6 +38,7 @@ def engine_script(tmp_path: Path) -> Path:
         " def do_GET(self):\n"
         "  self.send_response(200); self.end_headers(); self.wfile.write(b'{}')\n"
         " def log_message(self, *args): pass\n"
+        "if os.environ.get('TEST_SECRET'): print(os.environ['TEST_SECRET'], flush=True)\n"
         "time.sleep(float(sys.argv[2]))\n"
         "http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), Handler).serve_forever()\n"
     )
@@ -100,8 +103,57 @@ def test_process_readiness_timeout_and_disabled_command_gate(tmp_path):
     assert run(driver.status(svc)) == "stopped"
 
 
+def test_process_idle_stop_only_with_gateway_owner_and_shutdown(tmp_path):
+    svc = process_service(tmp_path)
+    driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
+
+    async def scenario():
+        assert await driver.ensure_ready(svc, 2)
+        driver.request_started(svc)
+        await asyncio.sleep(0.16)
+        assert await driver.status(svc) == "running"
+        driver.request_finished(svc)
+        await asyncio.sleep(0.16)
+        assert await driver.status(svc) == "stopped"
+        svc["residency"]["idle_owner"] = "engine"
+        assert await driver.ensure_ready(svc, 2)
+        await asyncio.sleep(0.16)
+        assert await driver.status(svc) == "running"
+        driver.shutdown()
+        assert await driver.status(svc) == "stopped"
+
+    run(scenario())
+
+
+def test_process_log_redacts_declared_secret_and_stays_capped(tmp_path):
+    svc = process_service(tmp_path)
+    svc["process"]["env"] = {"TEST_SECRET": "test-secret-value"}
+    svc["process"]["log_max_bytes"] = 1024
+    driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
+
+    async def scenario():
+        assert await driver.ensure_ready(svc, 2)
+        await asyncio.sleep(0.05)
+        driver.shutdown()
+
+    run(scenario())
+    log = (tmp_path / "state" / "fixture.log").read_bytes()
+    assert b"test-secret-value" not in log
+    assert b"[redacted]" in log
+    assert len(log) <= 1024
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object boundary")
+def test_windows_process_driver_fails_closed_without_job_object(tmp_path):
+    svc = process_service(tmp_path)
+    driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
+    assert run(driver.ensure_ready(svc, 0.1)) is False
+    assert not (tmp_path / "state").exists()
+
+
 def test_process_crash_restart_budget_and_orphan_adoption(tmp_path):
     svc = process_service(tmp_path)
+    svc["residency"]["idle_owner"] = "engine"
     first = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
 
     async def scenario():
@@ -110,9 +162,16 @@ def test_process_crash_restart_budget_and_orphan_adoption(tmp_path):
         second = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
         assert await second.ensure_ready(svc, 2)
         assert json.loads((tmp_path / "state" / "fixture.json").read_text())["pid"] == pid
-        second.stop(svc)
+        os.killpg(pid, signal.SIGKILL)
+        await asyncio.sleep(0.05)
         assert await second.ensure_ready(svc, 2)
-        second.stop(svc)
+        restarted = json.loads((tmp_path / "state" / "fixture.json").read_text())["pid"]
+        os.killpg(restarted, signal.SIGKILL)
+        await asyncio.sleep(0.05)
+        assert await second.ensure_ready(svc, 2)
+        restarted = json.loads((tmp_path / "state" / "fixture.json").read_text())["pid"]
+        os.killpg(restarted, signal.SIGKILL)
+        await asyncio.sleep(0.05)
         assert await second.ensure_ready(svc, 2) is False
 
     try:
@@ -126,6 +185,37 @@ def test_observations_are_unknown_without_probe_and_inventory_is_not_residency()
     assert run(reader.read({"connection": {"address": "http://127.0.0.1:1"}}, "resident")).known is False
     assert reader.inventory_means({"inventory": {"means": "available"}}) == "available"
     assert reader.inventory_means({"inventory": {"http": {"path": "/models"}}}) == "unknown"
+
+
+def test_http_observation_uses_expected_status_and_json_pointer():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, str(request.url)))
+        return httpx.Response(200, json={"data": [{"id": "a"}, {"id": "b"}], "resident": False})
+
+    client_type = httpx.AsyncClient
+    reader = ObservationReader()
+    svc = {"connection": {"address": "http://fixture.test:18091"}, "observations": {
+        "inventory": {"http": {"path": "/v1/models", "expect": 200, "select": "/data/*/id"},
+                      "means": "available"},
+        "resident": {"http": {"path": "/state", "expect": 200, "select": "/resident"}},
+        "selected": {"http": {"path": "/state", "expect": 201, "select": "/selected"}},
+    }}
+
+    async def scenario():
+        from unittest.mock import patch
+
+        with patch("gateway.engine_observations.httpx.AsyncClient", side_effect=lambda **kw:
+                   client_type(transport=httpx.MockTransport(handler), follow_redirects=False)):
+            assert (await reader.read(svc, "inventory")).value == ["a", "b"]
+            assert (await reader.read(svc, "resident")).value is False
+            assert (await reader.read(svc, "selected")).known is False
+
+    run(scenario())
+    assert seen == [("GET", "http://fixture.test:18091/v1/models"),
+                    ("GET", "http://fixture.test:18091/state"),
+                    ("GET", "http://fixture.test:18091/state")]
 
 
 def test_switch_refuses_unknown_name_and_holds_lease_through_stream():
