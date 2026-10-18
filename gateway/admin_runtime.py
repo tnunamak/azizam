@@ -822,7 +822,7 @@ class AdminSQLiteStore:
             old_services = before_registry.get("services") or {}
             for service_id, record in (value.get("services") or {}).items():
                 previous = old_services.get(service_id) or {}
-                for field in ("process", "protocol_operations", "control_file_roots",
+                for field in ("connection", "process", "protocol_operations", "control_file_roots",
                               "offerings", "residency", "observations"):
                     old_value = (previous.get(field), (previous.get("config") or {}).get(field))
                     new_value = (record.get(field), (record.get("config") or {}).get(field))

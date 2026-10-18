@@ -107,10 +107,10 @@ class SwitchController:
                 activity_started = True
             drain_timeout = max(0.01, float(spec.get("drain_timeout_s", 30)))
             await self._drain.clear_for_swap(scope, SwapDrainSettings(enabled=True, timeout_s=drain_timeout))
-            if prepare is not None and not await prepare():
-                raise SwitchUnavailable("residency could not be prepared")
             previous = _value(await self._observe(observation))
             try:
+                if prepare is not None and not await prepare():
+                    raise SwitchUnavailable("residency could not be prepared")
                 await self._invoke(op, args)
                 selected = _value(await self._observe(observation))
                 declared = service.get("observations") or {}

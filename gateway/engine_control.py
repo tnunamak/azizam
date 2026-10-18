@@ -80,15 +80,24 @@ class EngineControlRuntime:
         if not isinstance(roots, list) or any(not isinstance(root, str) for root in roots):
             raise ValueError("invalid control file roots")
         allowed = [Path(root).expanduser().resolve() for root in roots]
-        def inspect(value: Any) -> None:
+        def inspect(value: Any, *, path_field: bool = False) -> None:
             if isinstance(value, Mapping):
-                for item in value.values():
-                    inspect(item)
+                for key, item in value.items():
+                    is_path = isinstance(key, str) and (
+                        key in {"file", "path"} or key.endswith(("_file", "_path")))
+                    inspect(item, path_field=path_field or is_path)
             elif isinstance(value, list):
                 for item in value:
-                    inspect(item)
-            elif isinstance(value, str) and Path(value).is_absolute():
-                path = Path(value).expanduser().resolve()
+                    inspect(item, path_field=path_field)
+            elif isinstance(value, str):
+                expanded = Path(value).expanduser()
+                if not path_field and not expanded.is_absolute():
+                    return
+                # A relative path has a meaning only in the backend's working
+                # directory, which this gateway cannot safely determine.
+                if not expanded.is_absolute():
+                    raise ValueError("control file path is outside owner allowlisted roots")
+                path = expanded.resolve()
                 if not any(path.is_relative_to(root) for root in allowed):
                     raise ValueError("control file path is outside owner allowlisted roots")
 
