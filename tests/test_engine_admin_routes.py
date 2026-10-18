@@ -399,7 +399,6 @@ def test_an_administrator_can_rename_an_engine_that_holds_a_key_and_start_comman
     # Schema v2 stores the legacy driver payload under process and keeps it
     # unchanged when the owner edits only the name.
     assert after["process"] == before["process"]
-    assert after["config"]["models"][0]["id"] == "offering"
     assert "lifecycle" not in after
 
 
@@ -835,6 +834,7 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
     assert saved.status_code == 200, saved.text
     after = _record(gateway, service_id)
     assert after["process"] == before["process"]
+    assert after["config"]["models"][0]["id"] == "offering"
     assert _edit(owner, service_id, {"enabled": True}).status_code == 200
     view = owner.get(f"/admin/api/engines/{service_id}").json()["engine"]
     assert view["request_path"]["mode"] == "gateway_lifecycle"
