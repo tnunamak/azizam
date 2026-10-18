@@ -14,6 +14,7 @@ import os
 import re
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -39,6 +40,28 @@ def _start_time(pid: int) -> str | None:
         return None if fields[0] == "Z" else fields[19]
     except (OSError, IndexError):
         return None
+
+
+_SUPERVISOR = Path(__file__).resolve().with_name("engine_supervisor.py")
+
+
+def _argv_digest(argv: list[str]) -> str:
+    return hashlib.sha256(json.dumps(argv).encode()).hexdigest()
+
+
+def _supervised_argv(pid: int) -> list[str] | None:
+    """The owner argv a live supervisor was started with, or None if it is not ours."""
+    try:
+        parts = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[:-1]
+        cmdline = [part.decode("utf-8", "surrogateescape") for part in parts]
+        return cmdline[2:] if len(cmdline) > 2 and Path(cmdline[1]).resolve() == _SUPERVISOR else None
+    except (OSError, ValueError):
+        return None
+
+
+def _may_signal_group(pid: Any) -> bool:
+    """Never signal group 0, init's group, or the gateway's own group."""
+    return isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and pid not in {os.getpid(), os.getpgrp()}
 
 
 def _configuration(service: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -109,7 +132,8 @@ class ProcessDriver:
             if not self._restart_available(ident, cfg):
                 return False
             await self._backoff(ident, cfg)
-            self.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if not self._trusted_state_dir(create=True):
+                return False
             try:
                 child = subprocess.Popen(
                     [sys.executable, str(Path(__file__).with_name("engine_supervisor.py")), *argv],
@@ -184,6 +208,8 @@ class ProcessDriver:
         return ident, pid, timeout_s, self._children.get(ident)
 
     def _terminate_group(self, pid: int, timeout_s: float, child: subprocess.Popen | None) -> None:
+        if not _may_signal_group(pid):
+            return
         try:
             os.killpg(pid, signal.SIGTERM)
         except (OSError, ProcessLookupError):
@@ -222,7 +248,7 @@ class ProcessDriver:
         Recovery never launches a process. A PID whose kernel start tick no
         longer matches is forgotten without sending a signal.
         """
-        if not self.state_dir.is_dir():
+        if not self._trusted_state_dir():
             return
         for path in self.state_dir.glob("*.json"):
             ident = path.stem
@@ -331,6 +357,8 @@ class ProcessDriver:
 
     @staticmethod
     def _group_alive(pid: int) -> bool:
+        if not _may_signal_group(pid):
+            return False
         try:
             os.killpg(pid, 0)
             return True
@@ -351,19 +379,42 @@ class ProcessDriver:
     def _state_path(self, ident: str) -> Path:
         return self.state_dir / f"{ident}.json"
 
-    def _read_state(self, ident: str) -> dict | None:
+    def _trusted_state_dir(self, *, create: bool = False) -> bool:
+        """The state directory is ours alone: not a link, our uid, mode 0700."""
+        path = self.state_dir
         try:
-            state = json.loads(self._state_path(ident).read_text())
+            info = os.lstat(path)
+        except FileNotFoundError:
+            if not create:
+                return False
+            path.mkdir(parents=True, exist_ok=True)
+            os.chmod(path, 0o700)
+            info = os.lstat(path)
+        except OSError:
+            return False
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+            return False
+        if info.st_mode & 0o077:
+            os.chmod(path, 0o700)
+        return True
+
+    def _read_state(self, ident: str) -> dict | None:
+        path = self._state_path(ident)
+        try:
+            info = os.lstat(path)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                return None
+            state = json.loads(path.read_text())
             return state if isinstance(state, dict) else None
         except (OSError, ValueError):
             return None
 
     def _write_state(self, ident: str, pid: int, start: str, port: int, argv: list[str]) -> None:
         path = self._state_path(ident)
-        payload = {"pid": pid, "start_time": start, "port": port,
-                   "argv_sha256": hashlib.sha256(json.dumps(argv).encode()).hexdigest()}
+        payload = {"pid": pid, "start_time": start, "port": port, "argv_sha256": _argv_digest(argv)}
         temp = path.with_suffix(".tmp")
-        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w") as handle:
             json.dump(payload, handle)
             handle.flush()
@@ -378,17 +429,28 @@ class ProcessDriver:
 
     @staticmethod
     def _identity_matches(state: dict | None) -> bool:
-        if not state or not isinstance(state.get("pid"), int):
+        """A state file is a claim. Believe it only when the kernel agrees."""
+        if not isinstance(state, dict):
             return False
-        return _start_time(state["pid"]) == state.get("start_time")
+        pid, start = state.get("pid"), state.get("start_time")
+        if not _may_signal_group(pid) or not isinstance(start, str) or not start:
+            return False
+        if _start_time(pid) != start:
+            return False
+        try:
+            if os.getpgid(pid) != pid:
+                return False
+        except OSError:
+            return False
+        argv = _supervised_argv(pid)
+        return argv is not None and state.get("argv_sha256") == _argv_digest(argv)
 
     def _live_identity(self, ident: str, port: int, argv: list[str]) -> bool:
         state = self._read_state(ident)
         if not self._identity_matches(state):
             self._remove_state(ident)
             return False
-        expected = hashlib.sha256(json.dumps(argv).encode()).hexdigest()
-        if state.get("port") != port or state.get("argv_sha256") != expected:
+        if state.get("port") != port or state.get("argv_sha256") != _argv_digest(argv):
             return False
         return True
 
@@ -440,7 +502,9 @@ class ProcessDriver:
             line = re.sub(rb"\b(?:opk_|oak_)[A-Za-z0-9_-]+", b"[redacted]", line)
             line = line[:limit]
             try:
-                with log_path.open("ab") as output:
+                fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "ab") as output:
                     if output.tell() + len(line) > limit:
                         output.seek(0)
                         output.truncate()
