@@ -2321,7 +2321,7 @@ describe("Library items whose files are gone", () => {
 
   test("a removal refused for an unconfirmed folder shows the gateway's reason and the notice", async () => {
     session.viewer = { role: "owner", name: "Alex", id: "me" };
-    session.home = { receipts: [], user: { id: "me" }, apps: [] };
+    session.home = { receipts: [], user: { id: "me" }, apps: [{ id: "my-app" }] };
     const removals: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
@@ -2330,7 +2330,10 @@ describe("Library items whose files are gone", () => {
         removals.push(path);
         return Response.json({ error: { code: "media_folder_unconfirmed", message: UNCONFIRMED } }, { status: 503 });
       }
-      if (path.startsWith("/me/api/media?")) return list([oldGone("old", "An old fox")], { media_folder: folderState() });
+      if (path.startsWith("/me/api/media?")) return list([{
+        ...oldGone("old", "An old fox"),
+        source: { id: "app:my-app", kind: "app", app_id: "my-app", person_id: "me", label: "My app" },
+      }], { media_folder: folderState() });
       return Response.json({ assets: [], models: [], next_cursor: null });
     }));
     renderLibrary();
@@ -2350,7 +2353,7 @@ describe("Library items whose files are gone", () => {
       media_folder: { state: "confirmed" },
     }) : undefined));
     renderLibrary();
-    await screen.findByText("A kept kite");
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open A kept kite, ") });
     expect(screen.queryByRole("region", { name: "Media folder" })).toBeNull();
   });
 
