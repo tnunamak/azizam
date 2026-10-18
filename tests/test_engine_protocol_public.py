@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 import proxy
 from gateway import media_jobs, receipt_store
-from gateway.engine_protocol import description, transport
+from gateway.engine_protocol import description, transport, executor
 from tests.support.access import authenticated, identity, plan_for
 from tests.support.fake_upstream import HandlerTransport
 from tests.support.protocol_upstream import ProtocolUpstream
@@ -29,7 +29,7 @@ def engine(monkeypatch, tmp_path):
     original = description.load_registry
     monkeypatch.setattr(description, 'load_registry', lambda directory=FIXTURE: original(directory))
     wire = transport.HttpxTransport.for_tests(HandlerTransport(fake))
-    monkeypatch.setattr(transport, 'HttpxTransport', lambda: wire)
+    monkeypatch.setattr(executor, 'HttpxTransport', lambda: wire)
     monkeypatch.setattr(proxy, '_litellm_runtime_config', lambda: SimpleNamespace(enabled=False))
     monkeypatch.setattr(proxy, 'config', {**proxy.config,'model_aliases':{},'backends':{},'roles':{},'models':[]})
     monkeypatch.setattr(proxy, 'IMAGE_CACHE_DIR', tmp_path/'assets')

@@ -28362,7 +28362,7 @@ async def _protocol_image_result(runtime, body, request, auth_context, receipt, 
             app_id=caller.app_id if caller else None, owner_key_hash=_asset_owner_key(auth_context),
             api_key_name=caller.name if caller else None, app_profile=plan_ref(caller))
         created = media_jobs.create(job, path=media_jobs.DB_PATH)
-        job_id = receipt.job_id = created["job_id"]
+        job_id = receipt.job_id = created.job_id
         media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, path=media_jobs.DB_PATH)
     try:
         operation = runtime.target.description.operations["images"]
@@ -28443,8 +28443,11 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
     intent = intents[op]
     owns_receipt = receipt is None
     if receipt is None:
-        receipt = _start_litellm_route_receipt(request_path=request.url.path, auth_context=auth_context,
-            requested_model=str(body.get("model")), protocol=_protocol_for_intent(intent), intent=intent)
+        caller = auth_context.identity
+        receipt = RouteReceipt(path=request.url.path, protocol=_protocol_for_intent(intent), intent=intent,
+            requested_model=str(body.get("model")), app_id=caller.app_id if caller else None,
+            app_profile=plan_ref(caller), owner_key_hash=_asset_owner_key(auth_context),
+            api_key_name=caller.name if caller else None, visibility=_access_for_auth_context(auth_context).receipt_detail)
     receipt.backend = target.engine_id
     receipt.resolved_model = target.upstream
     receipt.metadata.update({"execution_backend":"http-v1", "engine_id":target.engine_id,
@@ -28518,7 +28521,6 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
 
 async def _protocol_models_payload(auth_context):
     from gateway.engine_protocol import dispatch as protocol_dispatch
-    from gateway.engine_protocol.adapter import AdapterRegistry
     from gateway.engine_protocol.types import CanonicalRequest
     data = []
     for engine_id, service in (ADMIN_STORE.get_service_registry().get("services") or {}).items():
