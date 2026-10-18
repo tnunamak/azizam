@@ -1218,6 +1218,7 @@ model_aliases:
       video: video-ltx-2.5-t2v             # text-to-video; input_reference switches to image-to-video
       video-fast: video-ltx-2.5-t2v          # same graph as `video`; 960x512 default is the quick setting
       video-long: video-ltx-2.5-long
+      video-quality: video-minimax-h3-t2v  # slower, highest quality; input_reference switches to image-to-video (r/StableDiffusion, Oct 2026)
       video-remix: video-bernini-r-remix     # needs extensions.source_video; also what POST /v1/videos/{id}/remix runs
       character-replace: video-scail-2-replace  # needs extensions.source_video + reference_image
     openai:

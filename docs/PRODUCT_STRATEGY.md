@@ -6,6 +6,55 @@ This document is the product source of truth for the gateway. Where it conflicts
 with older product or UI notes, this document wins unless a later decision record
 updates it.
 
+## Identity
+
+Azizam is the one trusted front door between the people and apps an owner shares
+AI with and whatever AI the owner runs or buys. It decides who may use what,
+keeps an honest record of every request, and shares scarce machines fairly. It
+does not care what sits behind it or how callers speak to it.
+
+**Opinionated (owned in core, the product's value):**
+
+1. Who may do what: identity, keys, access plans, spend caps; deny by default.
+2. Honesty: a receipt for every request, plain errors that name the real cause,
+   no control that does nothing, no "upstream" label on the gateway's own refusal.
+3. Fair sharing of scarce resources: what wakes, sleeps or waits when engines
+   compete for a GPU, and why.
+4. Safety of the owner's machine and secrets: write-only keys, SSRF-safe outbound
+   checks, no silent change to the owner's system.
+5. A front door that stays put for callers: one address, one key, stable names.
+6. Simple to use, every power reachable: plain words, no internal ids, the same
+   capabilities in the UI, REST, MCP and the CLI.
+
+**Unopinionated (must flex, preferably as owner data):**
+
+1. What sits behind it: any engine, provider or kind of service, local or remote,
+   known today or not.
+2. How callers speak to it: any API shape or SDK, including one released tomorrow.
+3. Which models or workflows are best: Azizam suggests (Recommended aliases, a
+   registry of popular setups) and never forces.
+4. Wiring and topology: one box or many, local and cloud, other proxies in front
+   or behind.
+5. Platform and packaging: Linux, macOS, Windows, Docker, remote machines.
+6. How engines are installed and run: launch flags, model files and service units
+   belong to the owner's system.
+
+**Not trying to be:** an inference engine or model runner, an installer or model
+downloader, a replacement for the client apps that call it (Try and Library exist
+to test and keep results), a repairer of broken engines (it detects and advises),
+or a home for per-engine or per-vendor code.
+
+**How flexibility is delivered: the support ladder.** Worst: code in core. Better:
+a reviewed, permissioned extension package (docs/EXTENSION_ARCHITECTURE.md).
+Best: data the owner configures in the UI, starting from a registry of popular
+entries. Push each concern as far up the ladder as it goes. The test: can an owner
+support a new engine, vendor API or wiring today, before any release?
+
+**Essential complexity is allowed; confusing UX is not.** The data model can be
+rich. The UI layers it: pick from the registry for common cases, a guided check
+and form for the middle, full data editing for experts. Each layer is a view of
+the same contract, so the simple path never lies about the deep one.
+
 ## Product promise
 
 **Your own AI provider.** One endpoint and one key give existing clients every
@@ -215,3 +264,15 @@ independent UX review fixes, and upgrade notes.
    and screenshots.
 6. The hermetic suite and CI are green, with no regression in the live clients
    the gateway is meant to support.
+7. An owner can add any engine the r/LocalLLaMA and r/StableDiffusion
+   communities commonly run (llama.cpp, vLLM, Ollama, LM Studio, ComfyUI, Forge,
+   speech servers, a remote OpenAI-compatible provider) as data, with no field
+   that is locked or does nothing, and Azizam starts and stops it when the owner
+   asks it to.
+8. Every item in docs/KNOWN_WORK.md marked must-have is closed or deferred with a
+   written reason.
+9. The test gate is measured (wall clock, CPU, peak memory) and optimized, and
+   its numbers are recorded.
+10. Docs match the shipped behavior, and live end-to-end checks pass on the
+    reference machine: setup, add engine, connect an app, keys and plans, chat,
+    image, audio and video, receipts.
