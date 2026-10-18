@@ -2259,7 +2259,7 @@ def create_admin_router(
             content={"service_availability": record},
         )
 
-    @router.get("/operator/frontends")
+    @router.get("/operator/frontends", include_in_schema=False)
     def list_frontends(request: Request) -> JSONResponse:
         """Every protocol frontend and whether its routes are mounted, broken (with why) or disabled."""
         ctx = _guard(request)
