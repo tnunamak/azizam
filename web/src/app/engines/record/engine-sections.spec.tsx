@@ -154,7 +154,7 @@ describe("the six sections mirror the record", () => {
     const offers = section("What it offers");
     expect(within(offers).getByText(/the model-list editor cannot preserve/)).toBeVisible();
     expect(within(offers).getByTestId("offering-facts")).toHaveTextContent("Each request runs the whole workflow.");
-    expect(within(offers).queryByLabelText("Public name")).toBeNull();
+    expect(within(offers).queryByLabelText("Name apps use")).toBeNull();
     expect(screen.getByLabelText("Address")).toBeEnabled();
     for (const button of within(offers).queryAllByRole("button")) expect(button).toBeDisabled();
   });
@@ -357,7 +357,7 @@ describe("the six sections mirror the record", () => {
     expect(screen.getByLabelText("Address")).toBeDisabled();
     expect(screen.getByLabelText("Name")).toBeEnabled();
     expect(
-      screen.queryByRole("button", { name: "Detect models again" }),
+      screen.queryByRole("button", { name: "Find new models" }),
     ).toBeNull();
     expect(screen.queryByRole("button", { name: "Remove engine" })).toBeNull();
     const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
@@ -412,7 +412,7 @@ describe("the six sections mirror the record", () => {
     for (const box of within(offers).getAllByRole("checkbox"))
       expect(box).toBeDisabled();
     expect(
-      within(offers).queryByRole("button", { name: "Detect models again" }),
+      within(offers).queryByRole("button", { name: "Find new models" }),
     ).toBeNull();
     expect(within(offers).queryByText("Add an adjustment")).toBeNull();
     const runs = section("How it runs");
@@ -464,7 +464,7 @@ describe("the six sections mirror the record", () => {
     const offers = section("What it offers");
     expect(within(offers).getByTestId("unsupported-note")).toHaveTextContent(why);
     expect(within(offers).queryByRole("checkbox")).toBeNull();
-    expect(within(offers).queryByLabelText("Public name")).toBeNull();
+    expect(within(offers).queryByLabelText("Name apps use")).toBeNull();
     expect(within(offers).queryByText("Add an adjustment")).toBeNull();
     expect(within(offers).getByTestId("offering-facts")).toHaveTextContent("qwen3-32b");
     const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
@@ -545,7 +545,7 @@ describe("a test traces exactly what it sent", () => {
     await user.click(
       await screen.findByRole("button", { name: "Run a real test for Chat" }),
     );
-    const trace = await screen.findByLabelText("Exact request sent");
+    const trace = await screen.findByLabelText("Request sent, with secrets hidden");
     expect(trace).toHaveTextContent(
       "POST http://192.168.1.50:8080/v1/chat/completions",
     );

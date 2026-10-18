@@ -35,8 +35,8 @@ export function StoredRecordSection({ view }: { view: EngineView }) {
         </pre>
         {view.v2 && (
           <div className="flex flex-col gap-1">
-            <h3 className="text-body font-medium">As the engine record reads it</h3>
-            <p className="text-meta text-muted-foreground">The same record in its parts: connection, offerings, process, observations, residency and resources.</p>
+            <h3 className="text-body font-medium">Organized engine settings</h3>
+            <p className="text-meta text-muted-foreground">The same settings grouped by connection, models and workflows, process control, checks, memory management, and resources.</p>
             <pre
               tabIndex={0}
               aria-label="Engine record, read only"
@@ -50,7 +50,7 @@ export function StoredRecordSection({ view }: { view: EngineView }) {
           <div>
             <h3 className="text-meta mb-1 font-medium">Other settings</h3>
             <p className="text-meta text-muted-foreground mb-2">
-              Azizam kept these values, but this form has no field for them. They are not lost.
+              These saved settings have no editor on this page.
             </p>
             <dl className="text-meta grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-1">
               {otherSettings.map(([key, value]) => (
@@ -72,7 +72,7 @@ export function RemoveSection({ onRemove }: { onRemove: () => void }) {
     <section aria-labelledby="engine-remove" className="bg-card rounded-panel flex flex-wrap items-center justify-between gap-3 border p-4">
       <div>
         <h2 id="engine-remove" className="text-heading">Remove this engine</h2>
-        <p className="text-meta text-muted-foreground">Apps lose its models at once. You can add it again later.</p>
+        <p className="text-meta text-muted-foreground">This engine stops providing models or workflows to apps. Other engines may still provide the same public names.</p>
       </div>
       <Button type="button" variant="destructive" size="sm" onClick={onRemove}>
         Remove engine

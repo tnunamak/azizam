@@ -48,7 +48,7 @@ describe("i: the engine record page", () => {
     expect(screen.getByText("Configured")).toBeVisible();
     expect(screen.getByRole("button", { name: "Replace key" })).toBeVisible();
     expect(screen.getByTestId("check-line")).toHaveTextContent(/^Reached the server\. Key accepted\. 2 models\. Checked/);
-    expect(screen.getAllByTestId("call-line")[0]).toHaveTextContent("Azizam will call GET http://192.168.1.50:8080/v1/models");
+    expect(screen.getAllByTestId("call-line")[0]).toHaveTextContent("Connection check: GET http://192.168.1.50:8080/v1/models");
     expect(screen.getByRole("checkbox", { name: "Chat" })).toBeChecked();
     expect(screen.getAllByRole("checkbox", { name: /^(Chat|Embeddings|Images|Reranking|Speech to text|Text to speech|Live voice)$/ })).toHaveLength(2);
     expect(screen.queryByRole("checkbox", { name: "Images" })).toBeNull();
@@ -107,7 +107,7 @@ describe("who can use the models", () => {
   it("editing a public name asks the route with the new name, and labels the answer as after you save", async () => {
     const user = userEvent.setup();
     mount();
-    const names = await screen.findAllByLabelText("Public name");
+    const names = await screen.findAllByLabelText("Name apps use");
     await user.clear(names[0]);
     await user.type(names[0], "my-chat");
     await waitFor(() => expect(enginesApi.access).toHaveBeenCalled(), { timeout: 3000 });
@@ -134,7 +134,7 @@ describe("who can use the models", () => {
   it("after Save, the reloaded view's answer is shown", async () => {
     const user = userEvent.setup();
     mount();
-    const names = await screen.findAllByLabelText("Public name");
+    const names = await screen.findAllByLabelText("Name apps use");
     await user.clear(names[0]);
     await user.type(names[0], "my-chat");
     const update = vi.spyOn(enginesApi, "update").mockImplementation(async () => {
@@ -154,7 +154,7 @@ describe("who can use the models", () => {
   it("says when the route fails and offers Try again, without blocking Save", async () => {
     const user = userEvent.setup();
     mount();
-    const names = await screen.findAllByLabelText("Public name");
+    const names = await screen.findAllByLabelText("Name apps use");
     await user.clear(names[0]);
     // The first question goes out as soon as the list changes; the one after the last keystroke fails.
     await waitFor(() => expect(enginesApi.access).toHaveBeenCalledTimes(1));

@@ -72,10 +72,10 @@ export const engineViewKey = (serviceId: string) => ["engineView", serviceId] as
 /** Section links: 44 px tall on a phone, with room to tap. */
 const NAV_LINK = "text-link inline-flex items-center px-2 hover:underline max-sm:min-h-11";
 
-const SAVED_TEST_NOTE = "Ran on the gateway’s computer with the saved settings. It is not in Activity.";
-const GATEWAY_TEST_NOTE = "Sent through the gateway, the way an app would.";
-const DRAFT_TEST_NOTE = "Ran on the gateway’s computer with the values on this screen. Nothing was saved, and it is not in Activity.";
-const STORED_TEST_NOTE = "Ran on the gateway’s computer when the engine was added. It is not in Activity.";
+const SAVED_TEST_NOTE = "Tested the saved settings from the gateway’s computer. This test is not listed in Activity.";
+const GATEWAY_TEST_NOTE = "Tested through Azizam’s app-facing route.";
+const DRAFT_TEST_NOTE = "Tested your unsaved changes from the gateway’s computer. The test did not save your changes and is not listed in Activity.";
+const STORED_TEST_NOTE = "A previous test passed using the settings saved at that time. It is not listed in Activity.";
 
 export function EngineRecordPage({
   serviceId,
@@ -355,6 +355,9 @@ function RecordForm({
   }
   const [initialBody] = useState(() => JSON.stringify(saveBody()));
   const bodyNow = JSON.stringify(saveBody());
+  const configurationSnapshot = JSON.stringify({ ...saveBody(), name: undefined });
+  const [initialConfiguration] = useState(configurationSnapshot);
+  const currentTests = Object.fromEntries(Object.entries(tests).filter(([, t]) => !("snapshot" in t) || t.snapshot === configurationSnapshot));
   // Without the right to change settings, only the name can be unsaved.
   const dirty = settingsLocked ? name.trim() !== view.name : Boolean(newKey) || bodyNow !== initialBody;
   // Only the name changed: it saves through the plain service edit when the record needs that.
@@ -412,7 +415,9 @@ function RecordForm({
   }
 
   async function runTest(capability: string) {
-    setTests((t) => ({ ...t, [capability]: { status: "running" } }));
+    const snapshot = configurationSnapshot;
+    const values = bodyValues();
+    setTests((t) => ({ ...t, [capability]: { status: "running", snapshot } }));
     const label = definition.capabilities.find((c) => c.id === capability)?.label.toLowerCase() ?? "";
     const uses = new Map((session?.result.models ?? []).map((m) => [m.id, m.use]));
     const offered = models.filter((m) => m.on);
@@ -420,19 +425,19 @@ function RecordForm({
     try {
       const result = await enginesApi.test({
         definition: definition.definition,
-        values: bodyValues() as never,
+        values: values as never,
         capability,
         ...(model ? { model } : {}),
         service_id: view.service_id,
       });
-      setTests((t) => ({ ...t, [capability]: { status: "done", result } }));
+      setTests((t) => ({ ...t, [capability]: { status: "done", result, snapshot } }));
       // A pass is stored only when it ran with the saved connection.
-      if (result.ok && !metadataOnly && !addressChanged && !newKey) {
+      if (result.ok && result.via === "saved" && result.evidence_token && !metadataOnly) {
         // Keeping the pass is a convenience: the test itself passed even if this is refused.
         try {
           const registry = await enginesApi.update(view.service_id, {
             definition: definition.definition,
-            tests: { [capability]: { ok: true, at: result.at, seconds: result.seconds } },
+            tests: { [capability]: { ok: true, at: result.at, seconds: result.seconds, evidence_token: result.evidence_token } },
           });
           queryClient.setQueryData(queryKeys.serviceRegistry, registry);
         } catch {
@@ -440,7 +445,7 @@ function RecordForm({
         }
       }
     } catch (error) {
-      setTests((t) => ({ ...t, [capability]: { status: "error", message: error instanceof Error ? error.message : "" } }));
+      setTests((t) => ({ ...t, [capability]: { status: "error", message: error instanceof Error ? error.message : "", snapshot } }));
     }
   }
 
@@ -544,7 +549,7 @@ function RecordForm({
       const test = view.tests?.[c.id];
       if (notStarted || !ticked.has(c.id)) return { id: c.id, label: c.label, level: "unchecked" as const };
       if (test?.ok)
-        return { id: c.id, label: c.label, level: "likely" as const, evidence: `A real test passed at ${clockTime(test.at)}. That shows the server can do this.` };
+        return { id: c.id, label: c.label, level: "likely" as const, evidence: `A previous test of ${c.label.toLowerCase()}${test.model ? ` with ${test.model}` : ""} passed at ${new Date(test.at * 1000).toLocaleString()} using the settings saved at that time.` };
       return {
         id: c.id,
         label: c.label,
@@ -553,13 +558,13 @@ function RecordForm({
       };
     });
   })().map((row) => {
-    const t = tests[row.id];
+    const t = currentTests[row.id];
     return t?.status === "done" && t.result.ok && row.level !== "declared"
-      ? { ...row, level: "likely" as const, evidence: `A real test passed at ${clockTime(t.result.at)}. That shows the server can do this.`, why: undefined }
+      ? { ...row, level: "likely" as const, evidence: `A test of ${row.label.toLowerCase()}${t.result.model ? ` with ${t.result.model}` : ""} passed at ${new Date(t.result.at * 1000).toLocaleString()} using ${t.result.via === "saved" ? "saved" : "unsaved"} settings.`, why: undefined }
       : row;
   });
-  const shownTests = { ...storedTests(view), ...tests };
-  const via = Object.values(tests).find((t) => t.status === "done");
+  const shownTests = { ...(configurationSnapshot === initialConfiguration ? storedTests(view) : {}), ...currentTests };
+  const via = Object.values(currentTests).find((t) => t.status === "done");
   const testNote =
     via?.status === "done"
       ? (via.result.via as string) === "gateway"
@@ -567,10 +572,10 @@ function RecordForm({
         : via.result.via === "saved"
           ? SAVED_TEST_NOTE
           : DRAFT_TEST_NOTE
-      : SAVED_TEST_NOTE;
+      : configurationSnapshot === initialConfiguration ? SAVED_TEST_NOTE : DRAFT_TEST_NOTE;
 
   // ---- The check line
-  const detail = (count: number) => `${count} models. `;
+  const detail = (count: number) => `${count} ${count === 1 ? "model" : "models"} found. `;
   let checkLine: ReactNode;
   let checkButton = "Check again";
   if (checking) checkLine = <><Loader2 aria-hidden="true" className="size-4 animate-spin" /> Checking…</>;
@@ -597,10 +602,10 @@ function RecordForm({
         ? "Key accepted. "
         : keyStored || r.key_withheld
           ? "No key was sent. "
-          : "No key needed. "
+          : "No key was sent for this check. "
       : r.key_sent && r.auth === "accepted"
         ? "Key accepted. "
-        : "No key needed. ";
+        : "No key was sent for this check. ";
     checkLine = (
       <>
         <CircleCheck aria-hidden="true" className="text-success mr-1 inline size-4" />
@@ -630,7 +635,7 @@ function RecordForm({
     checkLine = (
       <>
         <CircleCheck aria-hidden="true" className="text-success mr-1 inline size-4" />
-        Reached the server. {view.check.key_sent ? "Key accepted. " : "No key needed. "}
+        Reached the server. {view.check.key_sent ? "Key accepted. " : "No key was sent for this check. "}
         {detail(view.check.model_count ?? 0)}
         {view.check.checked_at ? (
           <>
@@ -802,7 +807,8 @@ function RecordForm({
         <div className="min-w-0">
           <h1 className="text-title [overflow-wrap:anywhere]">{view.name}</h1>
           <div className="text-meta text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-            {view.enabled ? <StateWord tone="ok" word="Ready" /> : <StateWord tone="off" word="Off" />}
+            {view.enabled ? <StateWord tone="off" word="On" /> : <StateWord tone="off" word="Off" />}
+            <span data-testid="engine-health">{view.check.checked_at && view.check.status === "ok" ? "Connection checked" : view.check.checked_at && view.check.status === "failed" ? "Check failed" : "Unknown: no connection check result"}</span>
             {offWord ? (
               <span>
                 {view.check.reason === "needkey"
@@ -825,7 +831,7 @@ function RecordForm({
           Enabled
         </label>
       </header>
-      {enableError && <Callout as="div" severity="critical" title="Enabled could not change" meta={enableError} />}
+      {enableError && <Callout as="div" severity="critical" title={`Couldn’t turn this engine ${enabledNow ? "off" : "on"}.`} meta={enableError} />}
       {enableWarning && (
         <FindingCard
           finding={enableWarning}
@@ -972,13 +978,14 @@ function RecordForm({
               type="button"
               variant={blocked ? "default" : "outline"}
               size="sm"
-              disabled={checking || locked || (needKey && !owner && view.check.status === "not_started")}
+              disabled={checking || locked || mismatched || (needKey && !owner && view.check.status === "not_started")}
               onClick={() => void runCheck()}
             >
               <RefreshCw aria-hidden="true" />
               {checkButton}
             </Button>
           </div>
+          {mismatched && <p className="text-meta text-muted-foreground px-4 pb-3">This protocol cannot be checked from this page yet.</p>}
           {(checkFinding || checkError) && (
             <div className="px-4 pb-4">
               {checkFinding ? (
@@ -1020,7 +1027,7 @@ function RecordForm({
         {reason && !locked && <LockedNote reason={reason} view={view} />}
         <UnsupportedNote fields={fieldsOf("offerings")} unsupported={unsupported} />
         {!offeringsEditable && !fieldsOf("offerings").some((f) => f.key in unsupported) && <Note tone="lock">{view.offering_edit_reason ?? UNSUPPORTED_REASON}</Note>}
-        <fieldset disabled={settingsLocked || !offeringsEditable} className="flex min-w-0 flex-col gap-4">
+        <div className="flex min-w-0 flex-col gap-4">
           {offeringsEditable ? (
             <>
               <div className="flex flex-col gap-2">
@@ -1030,8 +1037,8 @@ function RecordForm({
                     {notStarted
                       ? "Not known yet. Azizam looks the first time the engine starts, or when you press Check now."
                       : settingsLocked
-                        ? "What is turned on. A real test proves it."
-                        : "Tick what you want to use. A real test proves it."}
+                        ? "What is turned on. Run a test to check one request with the selected model."
+                        : "Tick what you want to use. Run a test to check one request with the selected model."}
                   </p>
                 </div>
                 <CapabilityList
@@ -1046,7 +1053,7 @@ function RecordForm({
                     })
                   }
                   tests={shownTests}
-                  onTest={locked ? undefined : (id) => void runTest(id)}
+                  onTest={locked || mismatched ? undefined : (id) => void runTest(id)}
                   testNote={testNote}
                   storedNote={STORED_TEST_NOTE}
                   readOnly={settingsLocked}
@@ -1059,7 +1066,7 @@ function RecordForm({
                   {!settingsLocked && (
                     <Button type="button" variant="outline" size="sm" disabled={checking} onClick={() => void runCheck(true)}>
                       <RefreshCw aria-hidden="true" />
-                      Detect models again
+                      Find new models
                     </Button>
                   )}
                 </div>
@@ -1069,7 +1076,7 @@ function RecordForm({
                   onChange={setModels}
                   readOnly={settingsLocked}
                   error={refusedHere("models")}
-                  emptyText="No models yet. Azizam lists them the first time the engine starts. You can also add one by name below."
+                  emptyText="No models are listed yet. Check the server to find them, or add a model by the name the server uses."
                 />
                 {modelsChanged ? (
                   <AccessAsk
@@ -1077,7 +1084,7 @@ function RecordForm({
                     models={accessModels(models, definition.capabilities)}
                     debounceMs={400}
                     qualifier="After you save"
-                    errorText="Azizam couldn’t read the access plans. You can still save; check who can use the models on this page afterwards."
+                    errorText="Azizam couldn’t read the access plans. Try again or open Access plans."
                   />
                 ) : (
                   <AccessAnswer access={view.access} />
@@ -1085,7 +1092,7 @@ function RecordForm({
               </div>
             </>
           ) : (
-            <AccessAnswer access={view.access} />
+            <AccessAnswer access={view.access} workflows />
           )}
 
           <div className="flex flex-col gap-2">
@@ -1112,7 +1119,7 @@ function RecordForm({
               />
             </div>
           )}
-        </fieldset>
+        </div>
       </section>
 
       <section aria-labelledby="engine-runs" className="flex flex-col gap-2">
@@ -1153,13 +1160,13 @@ function RecordForm({
         <p className="text-meta text-muted-foreground">
           What Azizam can see for itself. Anything it can’t see shows as unknown, never as fine.
         </p>
-        {reason && !locked ? <LockedNote reason={reason} view={view} /> : !locked && <Note tone="lock">{UNSUPPORTED_REASON}</Note>}
+        {reason && !locked ? <LockedNote reason={reason} view={view} /> : !locked && <Note tone="lock">These checks are read-only here. This page has no editor for their settings.</Note>}
         <ObservationList view={view} />
       </section>
 
       <section aria-labelledby="engine-resources" className="flex flex-col gap-2">
         <h2 id="engine-resources" className="text-heading scroll-mt-20">Resources</h2>
-        {reason && !locked ? <LockedNote reason={reason} view={view} /> : !locked && <Note tone="lock">{UNSUPPORTED_REASON}</Note>}
+        {reason && !locked ? <LockedNote reason={reason} view={view} /> : !locked && <Note tone="lock">Resource settings are read-only here. This page has no editor for them.</Note>}
         <div className="bg-card rounded-panel border p-4">
           <ResourceFacts v2={view.v2} />
         </div>
@@ -1177,7 +1184,7 @@ function RecordForm({
       )}
 
       {(dirty || addressChanged) && (
-        <div role="status" className="bg-card rounded-panel shadow-overlay sticky bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 border px-4 py-3">
+        <div role="status" className="bg-card rounded-panel shadow-overlay sm:sticky sm:bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 border px-4 py-3">
           <span className="text-meta">
             {blocked ? "The address changed. Check it again before you save, or save and keep the engine off." : "You have unsaved changes."}
             {n2 && !newKey ? " Saving removes the old key from this engine." : ""}

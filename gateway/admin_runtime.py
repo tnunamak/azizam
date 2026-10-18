@@ -838,8 +838,15 @@ class AdminSQLiteStore:
                         config_values["lifecycle"] = service_registry.legacy_lifecycle_from_service(service)
                     defaults = {"base_path": "/v1", "scheme": "http", "timeout": 600,
                                 "headers": [], "models": [], "transforms": [], "role": "required", "managed": False}
-                    metadata_keys = {"name", "enabled", "note"}
-                    keys = (old_config.keys() | new_config.keys()) - metadata_keys
+                    # Compare settings that grant connection, routing or host control.
+                    # Metadata and check bookkeeping may be written by administrators.
+                    keys = {
+                        "host", "port", "scheme", "base_path", "base_url", "api_base", "default_base_url",
+                        "base_url_env", "api_base_env", "address", "path_prefix", "protocol", "native_passthrough",
+                        "timeout", "headers", "models", "transforms", "lifecycle", "managed", "role",
+                        "gateway_lifecycle", "gateway_lifecycle_base_url", "probe_with_inference_connection",
+                        "health_endpoint", "api_key", "api_key_env", "api_key_ref", "api_key_secret_id", "credential_origin",
+                    }
                     if any((old_config.get(key) or defaults.get(key)) != (new_config.get(key) or defaults.get(key))
                            for key in keys):
                         raise PermissionError("Only the owner can change service settings.")

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { enginesApi, type EngineView } from "@/lib/engines-api";
 import { accessAnswer, definitions, engineView, renderWithClient, testResult } from "../__fixtures__/test-utils";
@@ -60,7 +60,7 @@ it("editing after a test starts cannot relabel it as proof of the new draft", as
   await user.click(await screen.findByRole("button", { name: "Run a real test for Chat" }));
   await user.click(screen.getByText("More options", { selector: "summary span" }));
   await user.type(screen.getByLabelText("Extra path"), "/changed");
-  complete({ ...testResult("chat_pass"), via: "saved" });
-  await waitFor(() => expect(screen.queryByText(/Tested the saved settings/)).toBeNull());
-  expect(screen.queryByLabelText("Real test of Chat")).toBeNull();
+  await act(async () => complete({ ...testResult("chat_pass"), via: "saved" }));
+  await waitFor(() => expect(screen.queryByLabelText("Real test of Chat")).toBeNull());
+  expect(screen.queryByText(/Tested the saved settings/)).toBeNull();
 });

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
+import json
 import os
 import re
 import secrets
@@ -557,19 +559,15 @@ def build_raw(
     return raw
 
 
-def _clean_tests(definition: Mapping[str, Any], tests: Any) -> dict[str, Any]:
-    """Real-test results the dialog shows; stored as data on the record (time, outcome, how it ran)."""
-    out: dict[str, Any] = {}
-    if not isinstance(tests, Mapping):
-        return out
-    for cap_id, row in tests.items():
-        if cap_id in definition["capabilities"] and isinstance(row, Mapping):
-            via = row.get("via") if row.get("via") in ("draft", "saved") else "draft"
-            item = {"ok": bool(row.get("ok")), "at": int(row.get("at") or time.time()), "via": via}
-            if isinstance(row.get("seconds"), (int, float)):
-                item["seconds"] = float(row["seconds"])
-            out[cap_id] = item
-    return out
+def _test_binding(definition: Mapping[str, Any], values: Mapping[str, Any], key: KeyInput,
+                  service_id: str, models: Any) -> str:
+    """Fingerprint all tested connection inputs and model settings without retaining credentials."""
+    connection = {name: value for name, value in values.items()
+                  if name not in (*_LIFECYCLE_FIELDS, "api_key")}
+    snapshot = {"service_id": service_id, "definition": definition["definition"],
+                "connection": connection, "credential": key.value, "withheld": key.withheld,
+                "models": model_rows(models)}
+    return hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -659,10 +657,11 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     schema_matches = not config.get("protocol") or config["protocol"] == definition["record"]["protocol"]
     declared_offerings = isinstance(record.get("offerings"), list) or isinstance(config.get("offerings"), list)
     unsupported_fields = {} if schema_matches else {
-        key: "The stored protocol has no matching definition schema, so this page cannot edit this setting safely."
+        key: "This saved protocol does not match the settings this form supports, so these fields are read-only."
         for key in field_keys
     }
     values = {k: v for k, v in values.items() if k in field_keys}
+    values["address"] = engine_redaction.redact_text(address)
     other = {k: v for k, v in config.items() if k not in _KNOWN_CONFIG_KEYS and k != "engine_capabilities"}
     other = engine_redaction.redact_service({"config": other})["config"]
     request_base = inference_base_url(config)
@@ -671,10 +670,10 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         route = (catalog.capability(cap_id) or {}).get("route") or {}
         if route.get("path"):
             base = request_base
-            operations.append({"capability": cap_id, "method": "POST", "url": join_url(base, route["path"])})
+            operations.append({"capability": cap_id, "method": "POST", "url": engine_redaction.redact_text(join_url(base, route["path"]))})
     v2 = service_registry.service_record_v2(record)
-    v2["connection"]["address"] = address
-    v2 = _redact_record_value(v2)
+    v2["connection"]["address"] = engine_redaction.redact_text(address)
+    v2 = engine_redaction.redact_service(_redact_record_value(v2))
     return {
         "service_id": record.get("id"),
         "definition": definition["definition"],
@@ -688,8 +687,11 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "values": values,
         "reply_timeout": {"seconds": effective_timeout, "source": timeout_source},
         "attention": ([{"code": "engine_credential_unavailable",
-                        "message": f"Key not available: {env_name} is not set"}] if env_name and not env(str(env_name)) else []),
-        "key": key,
+                        "message": f"Key not available: {env_name} is not set"}] if env_name and not env(str(env_name)) else [])
+                      + ([{"code": "engine_credential_origin_mismatch",
+                           "message": "The saved key is bound to a different address and will not be sent to this engine."}]
+                         if key["state"] == "configured" and key.get("origin") != origin_of(address) else []),
+        "key": _redact_record_value(key),
         "capabilities": caps,
         "models": models,
         "tests": copy.deepcopy(config.get("engine_tests") or {}),
@@ -700,12 +702,12 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "v2": v2,
         "request_path": {"mode": "gateway_lifecycle" if hop_routed else "direct", "source": "service record",
                          "url": operations[0]["url"] if operations else "", "operations": operations},
-        "credential_destination": key.get("origin") or origin_of(address),
+        "credential_destination": engine_redaction.redact_text(key.get("origin") or origin_of(address)),
         "ignored_headers": [str(row.get("name") or "(unnamed)") for row in config.get("headers") or ()
                             if isinstance(row, Mapping) and (row.get("secret") or header_problem(str(row.get("name") or ""), str(row.get("value") or "")))],
         "unsupported_fields": unsupported_fields,
         "can_edit_offerings": schema_matches and not declared_offerings,
-        "offering_edit_reason": "These offerings declare selection or workflow settings that the model-list editor cannot preserve. They are shown as stored." if declared_offerings else None,
+        "offering_edit_reason": "These models or workflows have selection settings this form cannot safely edit. Their saved settings are shown below." if declared_offerings else None,
     }
 
 
@@ -732,14 +734,8 @@ def _restore_lifecycle_markers(ctx: Any, values: dict[str, Any], shown: Mapping[
 
 
 def _restore_hidden_scalars(values: dict[str, Any], shown: Mapping[str, Any], stored_config: Mapping[str, Any]) -> dict[str, Any]:
-    """Put back what the page was not shown: a header value behind its marker, an address as shown.
-
-    A marker keeps the stored value of the header row of the same name; a row renamed with the marker
-    still in it is dropped. An address sent back unchanged is the stored address, not its hidden form.
-    """
+    """Restore an unchanged hidden address. Header markers are bound once, in _clean_headers."""
     restored = dict(values)
-    if isinstance(values.get("headers"), list):
-        restored["headers"] = engine_redaction.restore_headers(values["headers"], stored_config.get("headers"))
     stored_address = str(stored_config.get("address") or service_registry.service_base_url(stored_config) or "")
     if values.get("address") == shown.get("address") and stored_address:
         restored["address"] = stored_address
@@ -774,6 +770,8 @@ def _redact_record_value(value: Any) -> Any:
         return masked
     if isinstance(value, list):
         return [_redact_record_value(item) for item in value]
+    if isinstance(value, str):
+        return re.sub(r'https?://[^\s<>"\']+', lambda match: engine_redaction.redact_text(match.group()), value)
     return value
 
 
@@ -891,6 +889,9 @@ class EngineService:
         self.fetch = fetch or make_http_fetch()
         self.env = env or (lambda name: os.environ.get(name) or None)
         self.hop_timeout = hop_timeout or (lambda: 600.0)
+        # Opaque receipts contain only server results and secret-free fingerprints.
+        # They expire on restart and oldest-first; draft tests never get receipts.
+        self._test_evidence: dict[str, tuple[str, dict[str, Any]]] = {}
 
     @property
     def db_path(self) -> Path:
@@ -902,16 +903,38 @@ class EngineService:
         except EngineDefinitionError as exc:
             raise EngineRouteError(status.HTTP_503_SERVICE_UNAVAILABLE, "engine_definitions_invalid", str(exc)) from None
 
+    def _probe_record(self, catalog: EngineCatalog, definition: Mapping[str, Any],
+                      registry: Mapping[str, Any], service_id: Any) -> Mapping[str, Any] | None:
+        if not service_id:
+            return None
+        record = (registry.get("services") or {}).get(service_id)
+        if record is None:
+            raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
+        config = record.get("config") or {}
+        if (infer_definition(catalog, record) != definition["definition"]
+                or config.get("protocol") not in (None, "", definition["record"]["protocol"])):
+            raise DraftError("This protocol cannot be checked from this page yet.", field="definition")
+        return record
+
+    def _saved_test_inputs(self, catalog: EngineCatalog, definition: Mapping[str, Any], record: Mapping[str, Any],
+                           ctx: Any) -> tuple[dict[str, Any], KeyInput]:
+        shown = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)
+        values = _restore_hidden_scalars(shown["values"], shown["values"], record.get("config") or {})
+        clean = clean_values(definition, values, stored_headers=(record.get("config") or {}).get("headers") or ())
+        key = resolve_key(clean, ctx, record=record, db_path=self.db_path, env=self.env)
+        return clean, key
+
     async def check(self, ctx: Any, body: Mapping[str, Any]) -> dict[str, Any]:
         catalog = self.catalog()
         definition = _definition(catalog, body.get("definition"))
         values = body.get("values") if isinstance(body.get("values"), Mapping) else {}
         registry = self.store.get_service_registry()
         service_id = body.get("service_id")
-        record = (registry.get("services") or {}).get(service_id) if service_id else None
-        if service_id and record is None:
-            raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
+        record = self._probe_record(catalog, definition, registry, service_id)
         _header_credentials_are_the_owners(ctx, body.get("values"))
+        if record is not None:
+            shown = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)
+            values = _restore_hidden_scalars(dict(values), shown["values"], record.get("config") or {})
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         existing = _existing_engines(registry, exclude=service_id)
@@ -920,8 +943,9 @@ class EngineService:
             if comparable_address(clean["address"]) == comparable_address(saved.get("address") or ""):
                 # Checking an engine where it already is: the duplicate rule is for moving onto another's address.
                 existing = []
-        return await run_check(catalog, definition, clean, key=key, fetch=self.fetch, existing=existing,
-                               viewer_role="owner" if _is_owner(ctx) else "admin")
+        result = await run_check(catalog, definition, clean, key=key, fetch=self.fetch, existing=existing,
+                                 viewer_role="owner" if _is_owner(ctx) else "admin")
+        return _redact_record_value(result)
 
     async def test(self, ctx: Any, body: Mapping[str, Any]) -> dict[str, Any]:
         catalog = self.catalog()
@@ -929,18 +953,37 @@ class EngineService:
         values = body.get("values") if isinstance(body.get("values"), Mapping) else {}
         registry = self.store.get_service_registry()
         service_id = body.get("service_id")
-        record = (registry.get("services") or {}).get(service_id) if service_id else None
+        record = self._probe_record(catalog, definition, registry, service_id)
         _header_credentials_are_the_owners(ctx, body.get("values"))
+        if record is not None:
+            shown = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)
+            values = _restore_hidden_scalars(dict(values), shown["values"], record.get("config") or {})
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         capability = str(body.get("capability") or "")
         model = str(body.get("model") or "").strip() or None
         result = await run_real_test(catalog, definition, clean, capability, key=key, fetch=self.fetch, model=model,
                                      viewer_role="owner" if _is_owner(ctx) else "admin")
+        result = _redact_record_value(result)
         result["key_sent"] = bool(key.value)
         result["key_withheld"] = key.withheld
+        result["capability"] = capability
+        result["model"] = model
+        result["via"] = "draft"
         if record is not None:
-            result["via"] = "saved"
+            saved_clean, saved_key = self._saved_test_inputs(catalog, definition, record, ctx)
+            models = (record.get("config") or {}).get("models") or []
+            binding = _test_binding(definition, clean, key, str(service_id), models)
+            known_model = model is None or any(row.get("upstream_model") == model for row in model_rows(models))
+            if known_model and binding == _test_binding(definition, saved_clean, saved_key, str(service_id), models):
+                result["via"] = "saved"
+                token = secrets.token_urlsafe(32)
+                result["evidence_token"] = token
+                stored_result = {name: copy.deepcopy(result[name]) for name in
+                                 ("capability", "ok", "at", "via", "seconds", "model", "evidence_token") if name in result}
+                self._test_evidence[token] = (binding, stored_result)
+                if len(self._test_evidence) > 256:
+                    del self._test_evidence[next(iter(self._test_evidence))]
         return result
 
     def access(self, ctx: Any, body: Mapping[str, Any]) -> dict[str, Any]:
@@ -1061,7 +1104,7 @@ class EngineService:
         record = self._write(ctx, catalog, definition, clean, service_id=service_id, name=name, capabilities=capabilities,
                              models=models, enabled=not disabled,
                              check=_check_summary(check, address=clean["address"], disabled=disabled, reason=str(body.get("keep_off_reason") or "")),
-                             tests=_clean_tests(definition, body.get("tests")), key=key, existing=None,
+                             tests={}, key=key, existing=None,
                              expected_generation=expected_generation, action="create")
         return {**record, "service_id": service_id}
 
@@ -1102,7 +1145,9 @@ class EngineService:
             != _same_text(before["values"].get(key, _field_default(definition, key, "")))
             for key in _LIFECYCLE_FIELDS
         )
-        if lifecycle_changed and not before["lifecycle_editable"]:
+        command_changed = any(_same_text(values.get(key)) != _same_text(before["values"].get(key))
+                              for key in _LIFECYCLE_FIELDS if key != "lifecycle_ready_s")
+        if command_changed and not before["lifecycle_editable"]:
             raise DraftError("The stored process uses argument lists or a different driver. These text fields cannot edit it safely.", field="lifecycle_mode")
         values = _restore_lifecycle_markers(ctx, values, before["values"], record)
         stored_config = record.get("config") or {}
@@ -1112,6 +1157,15 @@ class EngineService:
         _header_credentials_are_the_owners(ctx, body.get("values"))
         clean = clean_values(definition, values, stored_headers=(record.get("config") or {}).get("headers") or ())
         _admin_limits(ctx, {**values, **clean}, definition, before=before)
+        if not _is_owner(ctx):
+            saved_clean, saved_key = self._saved_test_inputs(catalog, definition, record, ctx)
+            current_key = resolve_key(clean, ctx, record=record, db_path=self.db_path, env=self.env)
+            old_models = (record.get("config") or {}).get("models") or []
+            next_models = _models_config(definition, clean, body.get("models", before["models"]), old_models)
+            if (_test_binding(definition, clean, current_key, service_id, next_models)
+                    != _test_binding(definition, saved_clean, saved_key, service_id, old_models)
+                    or body.get("capabilities", before["capabilities"]) != before["capabilities"]):
+                raise _owner_only("Only the owner can change service settings.")
         name = str(body.get("name") or before["name"] or service_id).strip()
         disabled = bool(body.get("disabled"))
         enabled = False if disabled else bool(body.get("enabled", before["enabled"]))
@@ -1144,10 +1198,20 @@ class EngineService:
         capabilities_sent = isinstance(body.get("capabilities"), list)
         capabilities = body.get("capabilities") if capabilities_sent else before["capabilities"]
         models = body.get("models") if isinstance(body.get("models"), list) else before["models"]
-        tests = dict(before["tests"])
-        if connection_changed:
-            tests = {}
-        tests.update(_clean_tests(definition, body.get("tests")))
+        saved_clean, saved_key = self._saved_test_inputs(catalog, definition, record, ctx)
+        stored_models = (record.get("config") or {}).get("models") or []
+        proposed_models = _models_config(definition, clean, models, stored_models)
+        binding = _test_binding(definition, clean, key, service_id, proposed_models)
+        saved_binding = _test_binding(definition, saved_clean, saved_key, service_id, stored_models)
+        tests = dict(before["tests"]) if binding == saved_binding else {}
+        # A caller can return a receipt, but cannot choose its result, model, timestamp or binding.
+        submitted_tests = body.get("tests")
+        for cap_id, row in submitted_tests.items() if isinstance(submitted_tests, Mapping) else ():
+            receipt = self._test_evidence.get(str(row.get("evidence_token") or "")) if isinstance(row, Mapping) else None
+            if receipt and receipt[0] == binding and cap_id in definition["capabilities"]:
+                result = receipt[1]
+                if result["capability"] == cap_id:
+                    tests[cap_id] = copy.deepcopy(result)
         has = {f["key"] for f in definition["fields"]}
         unmodelled = {key for field, keys in _FIELD_CONFIG_KEYS.items() if field not in has for key in keys}
         keep = {k: v for k, v in (record.get("config") or {}).items()

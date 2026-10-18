@@ -124,7 +124,7 @@ describe("b: address and key", () => {
     expect(within(dialog).getByText("Azizam shows the exact request it will make here.")).toBeVisible();
     await typeAddress(user, "http://192.168.1.50:8080/v1/");
     expect(within(dialog).getByTestId("call-line")).toHaveTextContent(
-      "Azizam will call GET http://192.168.1.50:8080/v1/models",
+      "Connection check: GET http://192.168.1.50:8080/v1/models",
     );
     await user.click(within(dialog).getByRole("button", { name: "Read the key from a server environment variable instead" }));
     expect(within(dialog).getByLabelText("Environment variable name")).toHaveAttribute("placeholder", "LAN_SERVER_KEY");
@@ -139,7 +139,7 @@ describe("b: address and key", () => {
     mount();
     let dialog = await pickKind(user, /Server with its own model list/);
     await typeAddress(user, "http://192.168.1.50:11434");
-    expect(within(dialog).getByTestId("call-line")).toHaveTextContent("Azizam will call GET http://192.168.1.50:11434/api/tags");
+    expect(within(dialog).getByTestId("call-line")).toHaveTextContent("Connection check: GET http://192.168.1.50:11434/api/tags");
     for (const label of [/^Path on the server/, /Key header name/, /Time to connect/, /Stop when idle/]) {
       expect(within(dialog).queryByLabelText(label)).toBeNull();
     }

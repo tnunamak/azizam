@@ -91,8 +91,8 @@ for (const width of [1280, 390]) {
       await page.getByRole("button", { name: "Run a real test for Chat" }).click();
       const realTest = page.getByRole("status", { name: "Real test of Chat" });
       await expect(realTest).toBeVisible();
-      await realTest.getByText("Exact request sent", { exact: true }).click();
-      const trace = realTest.getByLabel("Exact request sent");
+      await realTest.getByText("Request sent, with secrets hidden", { exact: true }).click();
+      const trace = realTest.getByLabel("Request sent, with secrets hidden");
       await expect(trace).toContainText(`POST ${address}/chat/completions`);
       await expect(trace).toContainText("Bearer [redacted]");
       await expect(trace).not.toContainText("sk-journey-local-key");

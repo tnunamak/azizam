@@ -274,12 +274,12 @@ for (const theme of ["light", "dark"]) {
       await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
       await address.fill(originalAddress);
       await expect(page.getByText("Out of date. Check again.")).toHaveCount(0);
-      await page.getByRole("button", { name: "Detect models again" }).click();
+      await page.getByRole("button", { name: "Find new models" }).click();
       const offer = page.getByRole("checkbox", { name: "Offer strict-chat" });
       await expect(offer).toBeVisible();
       await offer.check();
-      const row = page.locator("div").filter({ has: offer }).filter({ has: page.getByLabel("Public name") }).last();
-      await row.getByLabel("Public name").fill(publicName);
+      const row = page.locator("div").filter({ has: offer }).filter({ has: page.getByLabel("Name apps use") }).last();
+      await row.getByLabel("Name apps use").fill(publicName);
       await checkVisuals(page, `engines-preview-${suffix}`);
       const saved = page.waitForResponse(
         (response) =>
@@ -421,7 +421,7 @@ test("a registry conflict keeps the typed model name for retry", { tag: GLOBAL_S
       }, { status: 412 });
   });
   await page.goto("/engines/?engine=capture-engine");
-  const publicName = page.getByLabel("Public name").first();
+  const publicName = page.getByLabel("Name apps use").first();
   await publicName.fill("draft-chat");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "changed elsewhere" })).toBeVisible();

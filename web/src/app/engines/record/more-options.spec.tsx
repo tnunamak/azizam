@@ -104,7 +104,7 @@ describe("More options", () => {
     await openMore(user, more);
     await user.type(within(more).getByLabelText("Extra path before every request"), "/v1");
     expect(within(more).getByTestId("call-line")).toHaveTextContent(
-      "Azizam will call GET http://192.168.1.50:8080/v1/v1/models. The address already ends in /v1, so that part is sent twice. Clear the extra path or shorten the address.",
+      "Connection check: GET http://192.168.1.50:8080/v1/v1/models. The address already ends in /v1, so that part is sent twice. Clear the extra path or shorten the address.",
     );
   });
 });

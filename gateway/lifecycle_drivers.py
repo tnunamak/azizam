@@ -348,7 +348,8 @@ def engine_read_request(
     inference credential, bound to its origin, may go with it; control
     credentials never do. ``endpoint`` is written from the server root, like
     ``health_endpoint``: ``/v1/...`` joins the protocol base, so a base that
-    ends in /v1 is not doubled; any other path joins that base without /v1.
+    ends in /v1 is not doubled. Health paths keep the saved explicit base URL
+    or the host/port root; other read paths join that base without /v1.
     Legacy records retain their original root-relative, keyless probes.
     A missing inference key does not prevent an unauthenticated probe.
     """
@@ -386,6 +387,15 @@ def engine_read_request(
         # already supplies /v1; a saved protocol base replaces that prefix.
         path = endpoint.removeprefix("/v1") if urlsplit(base).path.strip("/") else endpoint
         url = join_url(base, path)
+    elif endpoint == str(config.get("health_endpoint") or "/health"):
+        # A connection save adds safe headers/auth, but must not move existing
+        # health endpoints. Explicit base URLs retain their entire path;
+        # host/port records historically probe from the server root.
+        from urllib.parse import urlsplit, urlunsplit
+        explicit_base = config.get("base_url") or config.get("api_base") or config.get("default_base_url")
+        parts = urlsplit(base)
+        health_base = base if explicit_base else urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+        url = join_url(health_base, endpoint)
     else:
         url = join_url(base.removesuffix("/v1"), endpoint)
     return url, {name: value for name, value in connection.headers.items() if name != "content-type"}

@@ -241,6 +241,7 @@ function GroupBody({
   const out: ReactNode[] = [];
   const plain: EngineField[] = [];
   for (const field of group) {
+    if (field.show_if && values[field.show_if.field] !== String(field.show_if.equals)) continue;
     if (field.type === "keyvalue")
       out.push(<HeadersEditor key={field.key} field={field} rows={headers} onChange={onHeaders} disabled={locked} error={errors[field.key]} />);
     else if (field.items === "transform")
@@ -366,13 +367,13 @@ function OwnerOnlyGroup({
   if (!editable) {
     return (
       <>
-        <p className="text-meta text-muted-foreground">Only needed when Azizam should start this server itself.</p>
+        <p className="text-meta text-muted-foreground">Use these settings when Azizam should ask your process manager to start and stop this server.</p>
         <Note tone="lock">
           {lockText}{" "}
           {managed ? "Azizam starts and stops this server with the commands below." : "Azizam leaves this server running."}
         </Note>
         {managed && (
-          <dl className="text-meta grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+          <dl className="text-meta grid sm:grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-1">
             {shown.map((f) => (
               <div key={f.key} className="contents">
                 <dt className="text-muted-foreground">{f.label}</dt>
@@ -391,7 +392,7 @@ function OwnerOnlyGroup({
   const durations = shown.filter((f) => f.type === "duration");
   return (
     <>
-      <p className="text-meta text-muted-foreground">Only needed when Azizam should start this server itself.</p>
+      <p className="text-meta text-muted-foreground">Use these settings when Azizam should ask your process manager to start and stop this server.</p>
       {mode && (
         <PlainField field={mode} value={values[mode.key] ?? defaultText(mode)} error={errors[mode.key]} onChange={(v) => onValues({ [mode.key]: v })} />
       )}
