@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import gc
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -154,16 +153,17 @@ def test_clear_for_swap_times_out_with_swap_deferred() -> None:
 def test_an_old_lease_still_defers_the_swap_and_reports_its_age(capsys) -> None:
     """A lease never ages out: an hours-old one is a long stream as far as the
     drain can tell. The swap is deferred and the deferral names its age."""
-    offset = [0.0]
-    drain = SwapDrain(clock=lambda: time.monotonic() + offset[0])
+    loop = VirtualEventLoop()
+    drain = SwapDrain(clock=loop.time)
     lease = drain.lease("llm")
-    offset[0] += 3 * 3600
+    loop.now += 3 * 3600
 
     async def scenario() -> None:
         with pytest.raises(SwapDeferred):
             await drain.clear_for_swap("llm", _settings(timeout_s=0.05))
 
-    asyncio.run(scenario())
+    with asyncio.Runner(loop_factory=lambda: loop) as runner:
+        runner.run(scenario())
     assert drain.in_flight("llm") == 1
     assert "oldest 10800s" in capsys.readouterr().out
     lease.release()
