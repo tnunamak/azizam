@@ -64,14 +64,14 @@ def test_a_read_through_the_provider_route_passes_an_ordinary_query(fake_upstrea
 
 @pytest.mark.parametrize("query", ["filename=/etc/passwd", "file=%2Fetc%2Fpasswd", "path=../../keys", "f=file:///etc/passwd"])
 def test_a_read_cannot_carry_a_file_path_in_a_query_value(fake_upstreams, query):
-    engine = fake_upstreams.loopback(_models_scenario())
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
     response = _call("GET", f"{PROVIDER}/v1/models?{query}", "prov-query-path", engine.base_url)
     _denied(response, "native_query_value_refused")
     assert engine.requests == []
 
 
 def test_a_non_owner_cannot_make_a_control_call_through_the_provider_route(fake_upstreams):
-    engine = fake_upstreams.loopback(_unload_scenario())
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
     response = _call("DELETE", f"{PROVIDER}/v1/models/demo-chat", "prov-control", engine.base_url)
     _denied(response, "native_owner_only")
     assert engine.requests == []
@@ -104,7 +104,7 @@ def test_a_write_the_record_declares_generate_is_open_to_a_non_owner(fake_upstre
 
 
 def test_a_read_the_record_declares_control_is_owner_only(fake_upstreams):
-    engine = fake_upstreams.loopback(_models_scenario())
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
     allow = {"allow": [{"method": "GET", "path": "/v1/models", "class": "control"}]}
     response = _call("GET", f"{PROVIDER}/v1/models", "prov-read-control", engine.base_url, native=allow)
     _denied(response, "native_owner_only")
@@ -112,7 +112,7 @@ def test_a_read_the_record_declares_control_is_owner_only(fake_upstreams):
 
 
 def test_a_declared_generate_call_keeps_its_query_allow_list(fake_upstreams):
-    engine = fake_upstreams.loopback(_models_scenario())
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
     allow = {"allow": [{"method": "GET", "path": "/v1/models", "class": "generate", "query": ["limit"]}]}
     response = _call("GET", f"{PROVIDER}/v1/models?debug=1", "prov-allow-query", engine.base_url, native=allow)
     _denied(response, "native_query_not_allowed")
