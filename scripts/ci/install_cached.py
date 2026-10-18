@@ -7,6 +7,7 @@ No test result or mutable test environment is shared.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
@@ -43,6 +44,77 @@ def fingerprint(directory: Path) -> str:
     return digest.hexdigest()
 
 
+CACHE_MARKER = ".azizam-ci-cache"
+CACHE_ID = "azizam dependency cache v1\n"
+
+
+def prepare_root(root: Path) -> None:
+    # Check the nearest existing ancestor before creating anything. A cache
+    # below /tmp or /dev/shm must not evade the check by not existing yet.
+    ancestor = root
+    while not ancestor.exists():
+        if ancestor.is_symlink():
+            raise PermissionError("dependency cache root must not be a dangling symlink")
+        ancestor = ancestor.parent
+    filesystem = output("stat", "-f", "-c", "%T", "--", str(ancestor))
+    device = output("findmnt", "-n", "-o", "SOURCE", "--target", str(ancestor))
+    if filesystem.lower() in {"tmpfs", "ramfs", "devtmpfs"} or re.match(r"^/dev/(?:ram|zram)\d", device):
+        raise ValueError("dependency cache must not be on a memory-backed filesystem")
+    created = False
+    try:
+        root.mkdir(mode=0o700, parents=True)
+        created = True
+    except FileExistsError:
+        pass
+    if root.is_symlink() or not root.is_dir() or root.stat().st_uid != os.getuid():
+        raise PermissionError("dependency cache root must be a directory owned by the current user")
+    marker = root / CACHE_MARKER
+    if created:
+        with marker.open("x") as handle:
+            handle.write(CACHE_ID)
+    elif marker.exists() or marker.is_symlink():
+        if (marker.is_symlink() or not marker.is_file()
+                or marker.stat().st_uid != os.getuid() or marker.read_text() != CACHE_ID):
+            raise PermissionError("refusing invalid dependency cache marker")
+    elif stat.S_IMODE(root.stat().st_mode) != 0o700:
+        # Existing private caches predate the marker. Use them without
+        # changing permissions; never chmod an unmarked directory.
+        raise PermissionError("refusing unmarked dependency cache directory that is not private")
+    if created or marker.exists():
+        root.chmod(0o700)
+
+
+@contextmanager
+def key_lock(root: Path, entry: Path):
+    # Readers register/open their key while prune is excluded. Never unlink
+    # a key lock without this exclusive registry lock: waiters could otherwise
+    # retain the old inode while a new installer locks a replacement inode.
+    with (root / ".prune.lock").open("a") as registry:
+        fcntl.flock(registry, fcntl.LOCK_SH)
+        lock = (root / f"{entry.name}.lock").open("a")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        except BaseException:
+            lock.close()
+            raise
+    try:
+        yield
+    finally:
+        lock.close()
+
+
+def reset_entry(entry: Path) -> None:
+    try:
+        shutil.rmtree(entry)
+    except FileNotFoundError:
+        pass
+    # An empty directory recreated between removal and mkdir is harmless.
+    # Do not mask failed removals or accept a replacement symlink/file.
+    entry.mkdir(exist_ok=True)
+    if entry.is_symlink() or any(entry.iterdir()):
+        raise FileExistsError(f"dependency cache entry is not empty: {entry}")
+
+
 def prune(root: Path, kind: str, current: Path) -> None:
     """Keep the current snapshot and one recent peer; never remove an active key."""
     with (root / ".prune.lock").open("a") as pruning:
@@ -69,6 +141,18 @@ def prune(root: Path, kind: str, current: Path) -> None:
                 except FileNotFoundError:
                     continue
                 print(f"dependency cache pruned: {path.name}", flush=True)
+        for lockpath in root.iterdir():
+            if (not re.fullmatch(rf"{kind}-[a-f0-9]{{64}}\.lock", lockpath.name)
+                    or lockpath.is_symlink() or not lockpath.is_file()
+                    or lockpath.with_suffix("").exists()):
+                continue
+            with lockpath.open("a") as candidate:
+                try:
+                    fcntl.flock(candidate, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    continue
+                if os.fstat(candidate.fileno()).st_size == 0:
+                    lockpath.unlink()
 
 
 def install(kind: str, destination: Path) -> None:
@@ -77,10 +161,8 @@ def install(kind: str, destination: Path) -> None:
     if destination.exists() or destination.is_symlink():
         raise FileExistsError(f"dependency destination already exists: {destination}")
     root = Path(os.environ.get("AZIZAM_CI_CACHE", str(Path.home() / "Documents/azizam/ci-cache")))
-    root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if root.is_symlink() or root.stat().st_uid != os.getuid():
-        raise PermissionError("dependency cache root must be a directory owned by the current user")
-    root.chmod(0o700)
+    root = root.absolute()
+    prepare_root(root)
     # Session metadata must not invalidate installs between shells. Explicit
     # installer inputs still separate snapshots with different configuration.
     prefixes = ("npm_config_", "NPM_", "NODE_", "UV_", "PIP_", "PYTHON")
@@ -90,7 +172,8 @@ def install(kind: str, destination: Path) -> None:
         "helper": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "platform": [platform.platform(), platform.machine(), platform.libc_ver()],
         "environment": {k: v for k, v in os.environ.items()
-                        if k.startswith(prefixes) or k.upper() in variables},
+                        if k.startswith(prefixes) or k.upper() in variables
+                        or k.upper().endswith(("_BINARY_PATH", "_BROWSERS_PATH"))},
     }
     manifest = Path("package.json")
     package = json.loads(manifest.read_text())
@@ -117,8 +200,7 @@ def install(kind: str, destination: Path) -> None:
     command = ["npm", "ci", "--no-audit", "--no-fund"]
     key = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
     entry = root / f"{kind}-{key}"
-    with (root / f"{kind}-{key}.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with key_lock(root, entry):
         complete = entry / "complete"
         valid = False
         if complete.is_file() and (entry / "environment").is_dir():
@@ -128,8 +210,7 @@ def install(kind: str, destination: Path) -> None:
                 pass
         if not valid:
             print(f"dependency cache miss: {kind} {key}", flush=True)
-            shutil.rmtree(entry, ignore_errors=True)
-            entry.mkdir()
+            reset_entry(entry)
             try:
                 subprocess.run(command, check=True)
                 subprocess.run(["cp", "-a", "--reflink=auto", str(destination), str(entry / "environment")], check=True)
@@ -141,7 +222,7 @@ def install(kind: str, destination: Path) -> None:
             print(f"dependency cache hit: {kind} {key}", flush=True)
             subprocess.run(["cp", "-a", "--reflink=auto", str(entry / "environment"), str(destination)], check=True)
         os.utime(complete, None)
-        prune(root, kind, entry)
+    prune(root, kind, entry)
 
 
 if __name__ == "__main__":

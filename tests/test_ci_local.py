@@ -788,3 +788,200 @@ def test_lockfile_change_invalidates_node_cache(world: World) -> None:
     result = world.run(npm_config_registry="https://registry.example.test")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "cache hit: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
+
+
+# Focused, offline cache regressions: no World fixture or external installer.
+@pytest.fixture
+def cache_unit(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location("cache_unit", ROOT / "scripts/ci/install_cached.py")
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    root = tmp_path / "cache"
+    monkeypatch.setenv("AZIZAM_CI_CACHE", str(root))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "package.json").write_text("{}")
+    (tmp_path / "package-lock.json").write_text('{"packages":{}}')
+    monkeypatch.setattr(helper, "output", lambda *args: "ext4" if args[0] == "stat"
+                        else "/dev/sda1" if args[0] == "findmnt" else "fixed")
+    monkeypatch.setattr(helper.platform, "platform", lambda: "test-platform")
+    monkeypatch.setattr(helper.platform, "machine", lambda: "test-machine")
+    monkeypatch.setattr(helper.platform, "libc_ver", lambda: ("test-libc", "1"))
+    calls = []
+    def run(command, **kwargs):
+        if command[0] == "npm":
+            calls.append(tuple(command))
+            (tmp_path / "node_modules").mkdir()
+            (tmp_path / "node_modules/payload").write_text("installed")
+        elif command[0] == "cp":
+            shutil.copytree(command[-2], command[-1])
+        else:
+            raise AssertionError(command)
+    monkeypatch.setattr(helper.subprocess, "run", run)
+    def install():
+        destination = tmp_path / "node_modules"
+        if destination.exists():
+            shutil.rmtree(destination)
+        helper.install("node", destination)
+    return helper, root, calls, install
+
+
+@pytest.mark.parametrize("name", ["ESBUILD_BINARY_PATH", "PLAYWRIGHT_BROWSERS_PATH",
+                                  "CUSTOM_BINARY_PATH", "CUSTOM_BROWSERS_PATH"])
+def test_cache_unit_binary_environment(cache_unit, monkeypatch, name):
+    helper, root, calls, install = cache_unit
+    monkeypatch.setenv(name, "/first")
+    install()
+    install()
+    assert len(calls) == 1
+    monkeypatch.setenv(name, "/second")
+    install()
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize(("filesystem", "device"), [
+    ("tmpfs", "tmpfs"), ("ramfs", "ramfs"), ("devtmpfs", "udev"),
+    ("ext4", "/dev/ram0"), ("ext4", "/dev/zram1"),
+])
+def test_cache_unit_refuses_memory_filesystems(cache_unit, monkeypatch, filesystem, device):
+    helper, root, calls, install = cache_unit
+    monkeypatch.setattr(helper, "output", lambda *args: filesystem if args[0] == "stat"
+                        else device if args[0] == "findmnt" else "fixed")
+    with pytest.raises(ValueError, match="memory-backed"):
+        install()
+    assert not root.exists() and not calls
+
+
+def test_cache_unit_preserves_unmarked_directory(cache_unit):
+    helper, root, calls, install = cache_unit
+    root.mkdir(mode=0o755)
+    (root / "unrelated").write_text("keep")
+    before = root.stat().st_mode
+    with pytest.raises(PermissionError, match="unmarked"):
+        install()
+    assert root.stat().st_mode == before
+    assert (root / "unrelated").read_text() == "keep"
+    assert list(root.iterdir()) == [root / "unrelated"]
+    assert not calls
+
+
+def test_cache_unit_uses_existing_private_unmarked_cache_without_chmod(cache_unit, monkeypatch):
+    helper, root, calls, install = cache_unit
+    root.mkdir(mode=0o700)
+    def unexpected_chmod(*_args, **_kwargs):
+        raise AssertionError("existing unmarked cache must not be chmodded")
+    monkeypatch.setattr(Path, "chmod", unexpected_chmod)
+    install()
+    assert len(calls) == 1
+    assert root.stat().st_mode & 0o777 == 0o700
+    assert not (root / helper.CACHE_MARKER).exists()
+
+
+def test_cache_unit_marks_and_secures_owned_root(cache_unit):
+    helper, root, calls, install = cache_unit
+    install()
+    assert (root / ".azizam-ci-cache").is_file()
+    root.chmod(0o755)
+    install()
+    assert root.stat().st_mode & 0o777 == 0o700
+    assert len(calls) == 1
+
+
+def test_cache_unit_recreated_empty_entry(cache_unit, monkeypatch):
+    helper, root, calls, install = cache_unit
+    original = helper.shutil.rmtree
+    def recreate(path, *args, **kwargs):
+        if Path(path).parent == root:
+            original(path, ignore_errors=True)
+            Path(path).mkdir()
+        else:
+            original(path, *args, **kwargs)
+    monkeypatch.setattr(helper.shutil, "rmtree", recreate)
+    install()
+    assert len(calls) == 1
+    assert len(list(root.glob("node-*/complete"))) == 1
+
+
+def test_cache_unit_does_not_hide_removal_errors(cache_unit, monkeypatch):
+    helper, root, calls, install = cache_unit
+    install()
+    entry = next(root.glob("node-*/complete")).parent
+    (entry / "complete").unlink()
+    original = helper.shutil.rmtree
+    def denied(path, *args, **kwargs):
+        if Path(path) == entry:
+            if not kwargs.get("ignore_errors"):
+                raise PermissionError("fixture removal denied")
+        else:
+            original(path, *args, **kwargs)
+    monkeypatch.setattr(helper.shutil, "rmtree", denied)
+    with pytest.raises(PermissionError, match="fixture removal denied"):
+        install()
+    assert len(calls) == 1
+
+
+def test_cache_unit_prunes_only_idle_empty_locks(cache_unit):
+    helper, root, calls, install = cache_unit
+    install()
+    current = next(root.glob("node-*/complete")).parent
+    stale = root / ("node-" + "0" * 64 + ".lock")
+    active = root / ("node-" + "1" * 64 + ".lock")
+    nonempty = root / ("node-" + "2" * 64 + ".lock")
+    stale.touch()
+    nonempty.write_text("keep")
+    with active.open("a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        helper.prune(root, "node", current)
+        assert not stale.exists()
+        assert active.exists() and nonempty.read_text() == "keep"
+    helper.prune(root, "node", current)
+    assert not active.exists()
+    assert (root / ".prune.lock").exists()
+
+
+def test_cache_unit_key_open_is_guarded_against_unlink(cache_unit, monkeypatch):
+    helper, root, calls, install = cache_unit
+    original = Path.open
+    observed = []
+    def checked_open(path, *args, **kwargs):
+        if path.parent == root and re.fullmatch(r"node-[a-f0-9]{64}\.lock", path.name):
+            with original(root / ".prune.lock", "a") as competing:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(competing, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            observed.append(path)
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "open", checked_open)
+    install()
+    assert observed
+
+
+def test_cache_unit_releases_key_before_pruning(cache_unit, monkeypatch):
+    helper, root, calls, install = cache_unit
+    original = helper.prune
+    visited = []
+    def checked_prune(root, kind, current):
+        with (root / f"{current.name}.lock").open("a") as competing:
+            # A blocking waiter holds the shared registry lock. Pruning while
+            # retaining this key would deadlock with that waiter.
+            fcntl.flock(competing, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        visited.append(current)
+        original(root, kind, current)
+    monkeypatch.setattr(helper, "prune", checked_prune)
+    install()
+    assert visited
+
+
+def test_cache_unit_pruned_entries_lose_their_lock(cache_unit):
+    helper, root, calls, install = cache_unit
+    install()
+    current = next(root.glob("node-*/complete")).parent
+    old = root / ("node-" + "a" * 64)
+    recent = root / ("node-" + "b" * 64)
+    for stamp, entry in enumerate((old, recent), 1):
+        entry.mkdir()
+        (entry / "complete").write_text("fixture")
+        os.utime(entry / "complete", (stamp, stamp))
+        (root / f"{entry.name}.lock").touch()
+    helper.prune(root, "node", current)
+    assert not old.exists()
+    assert not (root / f"{old.name}.lock").exists()
+    assert recent.exists() and (root / f"{recent.name}.lock").exists()
