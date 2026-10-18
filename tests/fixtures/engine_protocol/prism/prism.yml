@@ -254,7 +254,7 @@ operations:
             ABORTED: cancelled
         error: /problem/text
         assets: /outputs/*/key
-        interval_s: 0.001
+        interval_s: 0.05
         max_wait_s: 300
       fetch:
         request:

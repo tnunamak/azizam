@@ -80,7 +80,7 @@ def test_public_models_invokes_the_description(engine):
 @pytest.mark.parametrize('sync', [False,True])
 def test_public_images_use_core_assets_and_jobs(engine, sync):
     if sync:
-        doc = description.parse_description_text((FIXTURE/'prism.yml').read_text())
+        doc = description.parse_description_text((FIXTURE/'prism.yml').read_text(), source='prism.yml')
         from dataclasses import replace
         doc = replace(doc, operations={**doc.operations,'images':doc.operations['images_sync']})
         from unittest.mock import patch
