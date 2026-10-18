@@ -1173,3 +1173,73 @@ def test_a_plan_save_waits_for_a_removal_in_its_transaction(tmp_path, monkeypatc
     saver.join(10)
     assert saved.is_set()
     assert "lifecycle" not in store.get_extension_package_index()["packages"]
+
+
+def test_a_surviving_row_of_another_kind_that_shares_an_id_does_not_block_removal():
+    # A row's own id names the row; only the references it carries can name a removed record.
+    from gateway.extension_packages import change_package_lifecycle
+    index, registry = _lifecycle_fixture()
+    registry["capabilities"]["services-one"] = {"id": "services-one", "enabled": True, "name": "unrelated"}
+    result, rows, affected = change_package_lifecycle(index, registry, "pkg")
+    assert result["packages"] == {}
+    assert rows["capabilities"]["services-one"]["name"] == "unrelated"
+    assert {"kind": "services", "id": "services-one", "action": "removed"} in affected
+
+
+def test_a_refusal_names_the_plan_by_its_name(tmp_path, monkeypatch):
+    import pytest
+    from gateway import extension_packages
+    store, actor, _source, _installed = _installed_lifecycle_store(tmp_path, monkeypatch)
+    _plan_naming_the_package_service(store.path, "Family plan")
+    with pytest.raises(extension_packages.PackageInUse, match="access plan Family plan"):
+        store.remove_extension_package(package_id="lifecycle", actor=actor)
+    assert "lifecycle" in store.get_extension_package_index()["packages"]
+
+
+def test_reinstalling_over_a_record_an_operator_kept_says_why(tmp_path, monkeypatch):
+    import pytest
+    from gateway import service_registry
+    store, actor, source, installed = _installed_lifecycle_store(tmp_path, monkeypatch)
+    registry = store.get_service_registry()
+    registry["services"]["lifecycle-service"]["name"] = "edited by the operator"
+    edited = store.update_service_registry(
+        data=registry, actor=actor, expected_generation=installed["operator_settings_generation"],
+    )
+    removed = store.remove_extension_package(
+        package_id="lifecycle", actor=actor, expected_generation=edited["operator_settings_generation"],
+    )
+    assert removed["affected_records"] == [{"kind": "services", "id": "lifecycle-service", "action": "detached"}]
+
+    with pytest.raises(service_registry.ServiceRegistryConflict, match="was kept when an earlier install was removed"):
+        store.enable_extension_package(
+            source=source, actor=actor, expected_generation=removed["operator_settings_generation"],
+        )
+
+
+def test_a_row_under_another_package_hash_or_version_is_detached_not_removed():
+    # The provenance hash and version must still name this package, or the row is no longer its install.
+    from gateway.extension_packages import change_package_lifecycle
+    for field, value in (("package_hash", "other"), ("version", "2")):
+        index, registry = _lifecycle_fixture()
+        index["packages"]["pkg"][field] = value
+        _, _rows, affected = change_package_lifecycle(index, registry, "pkg")
+        assert {"kind": "services", "id": "services-one", "action": "detached"} in affected, field
+
+
+def test_reinstalling_a_disabled_package_restores_it_through_the_lifecycle_path(tmp_path, monkeypatch):
+    from gateway import admin_store
+    store, actor, source, _installed = _installed_lifecycle_store(tmp_path, monkeypatch)
+    disabled = store.remove_extension_package(package_id="lifecycle", actor=actor, mode="disable")
+    enabled = store.enable_extension_package(
+        source=source, actor=actor, expected_generation=disabled["operator_settings_generation"],
+    )
+    assert enabled["service_registry"]["services"]["lifecycle-service"]["enabled"] is True
+    # The restore is the lifecycle's own enable, which records what it changed; a re-merge would not.
+    audits = admin_store.list_audit(path=store.path)
+    assert any(
+        row.get("action") == "operator.extension_package.enable"
+        and row.get("metadata", {}).get("affected_records") == [
+            {"kind": "services", "id": "lifecycle-service", "action": "enabled"},
+        ]
+        for row in audits
+    )
