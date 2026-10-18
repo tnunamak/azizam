@@ -802,6 +802,25 @@ def derive_admin_health_projection(
     })
 
 
+def _registry_problem_item(problem: Mapping[str, Any]) -> dict[str, Any]:
+    """The Overview item for a stored service registry that is not what the gateway is running."""
+    mode = str(problem.get("mode") or "")
+    error = " ".join(str(problem.get("error") or "").split())[:240]
+    left_out = problem.get("left_out") if isinstance(problem.get("left_out"), Mapping) else {}
+    if mode == "partial":
+        names = ", ".join(sorted(str(name) for name in left_out)) or "some services"
+        title = "The stored service registry is only partly applied"
+        detail = (f"{problem.get('served', 0)} services are serving. Left out: {names}. "
+                  f"Fix them under Services, then reload. {error}")
+    elif mode == "empty":
+        title = "The stored service registry could not be applied"
+        detail = f"No stored services are serving. {error}"
+    else:
+        title = "The last registry change is saved but not live"
+        detail = f"The gateway is still running its previous config. {error}"
+    return _attention_item(kind="registry", severity="problem", title=title, detail=detail.strip())
+
+
 def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Return "things that want a look" — the operator's actual landing screen.
 
@@ -857,6 +876,10 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
                 detail="Mint a key so it can reach the gateway.",
                 target_kind="app", target_id=app_id, target_name=name,
             ))
+
+    problem = snapshot.get("registry_problem")
+    if isinstance(problem, Mapping):
+        items.append(_registry_problem_item(problem))
 
     for frontend in snapshot.get("frontends") or []:
         if not isinstance(frontend, Mapping) or frontend.get("status") != "broken":
@@ -1608,6 +1631,7 @@ def create_admin_router(
     known_model_names_getter: Callable[[], frozenset[str]] | None = None,
     engine_fetch: engine_check.Fetch | None = None,
     frontend_status: Callable[[], list[dict[str, Any]]] | None = None,
+    registry_problem: Callable[[], Mapping[str, Any] | None] | None = None,
     prefix: str = "/admin/api",
 ) -> APIRouter:
     """Build an admin-plane router.
@@ -1702,7 +1726,9 @@ def create_admin_router(
             availability_evidence=status_snap.get("_availability_evidence") if isinstance(status_snap.get("_availability_evidence"), Mapping) else None,
         )
         frontends = frontend_status() if frontend_status is not None else []
+        registry_apply = registry_problem() if registry_problem is not None else None
         attention = derive_admin_attention({
+            "registry_problem": registry_apply,
             "apps": apps,
             "credentials": credentials,
             "frontends": frontends,
@@ -1736,6 +1762,8 @@ def create_admin_router(
             "current_health": current_health,
             # Every protocol frontend and whether its routes are mounted, broken (with why) or disabled.
             "frontends": frontends,
+            # Why the running service config is not the stored registry, or None when it is.
+            "registry_apply": registry_apply,
         }
         return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
 

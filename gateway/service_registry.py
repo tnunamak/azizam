@@ -335,9 +335,10 @@ def _validate_model_policy_graphs(services: Mapping[str, Mapping[str, Any]]) -> 
             visit(model_id)
 
 
-def _validate_public_alias_uniqueness(services: Mapping[str, Mapping[str, Any]]) -> None:
-    """Make unscoped public-alias resolution deterministic across services."""
+def _public_alias_conflicts(services: Mapping[str, Mapping[str, Any]]) -> list[tuple[str, str, str]]:
+    """(alias, first service, other service) for each public alias two services both claim."""
     owners: dict[str, str] = {}
+    conflicts: list[tuple[str, str, str]] = []
     for service_id, service in services.items():
         config = service.get("config") if isinstance(service, Mapping) else None
         records = config.get("models") if isinstance(config, Mapping) else None
@@ -352,11 +353,68 @@ def _validate_public_alias_uniqueness(services: Mapping[str, Mapping[str, Any]])
                     continue
                 owner = owners.get(alias)
                 if owner is not None and owner != service_id:
-                    raise ValueError(
-                        f"public alias {alias!r} is ambiguous across services "
-                        f"{owner!r} and {service_id!r}"
-                    )
+                    conflicts.append((alias, owner, service_id))
                 owners[alias] = service_id
+    return conflicts
+
+
+def _validate_public_alias_uniqueness(services: Mapping[str, Mapping[str, Any]]) -> None:
+    """Make unscoped public-alias resolution deterministic across services."""
+    for alias, owner, service_id in _public_alias_conflicts(services)[:1]:
+        raise ValueError(
+            f"public alias {alias!r} is ambiguous across services "
+            f"{owner!r} and {service_id!r}"
+        )
+
+
+def servable_part_of_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """The stored records that validate, and why each of the others was left out (keyed by ``id`` or ``kind:id``).
+
+    Boot uses this when the whole registry will not normalize (``normalize_service_registry`` refuses it
+    all for one bad record). A service that fails its own checks is left out, and so is every service in
+    an ambiguous public alias, because neither can be trusted to route. The frontends, workflows and
+    capabilities are read record by record the same way. Nothing is written back.
+    """
+    left_out: dict[str, str] = {}
+
+    def keep(kind: str, collection: Any, normalize: Any) -> dict[str, Any]:
+        kept: dict[str, Any] = {}
+        for raw_id, raw in (collection or {}).items():
+            if not isinstance(raw, Mapping):
+                continue
+            record_id = normalize_id(raw.get("id") or raw_id)
+            if not record_id:
+                continue
+            try:
+                record = normalize(record_id, raw)
+            except Exception as error:  # noqa: BLE001 - any refusal of this record leaves it out; the rest still serve
+                left_out[record_id if kind == "service" else f"{kind}:{record_id}"] = f"{type(error).__name__}: {error}"[:300]
+                continue
+            kept[record["id"] if kind in ("workflow", "capability") else record_id] = record
+        return kept
+
+    def service(service_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
+        record = normalize_service_record(service_id, raw)
+        _validate_model_policy_schema_markers({service_id: record})
+        _validate_model_policy_graphs({service_id: record})
+        return record
+
+    services = keep("service", value.get("services"), service)
+    for _alias, owner, other in _public_alias_conflicts(services):
+        for service_id in (owner, other):
+            if service_id in services:
+                del services[service_id]
+                left_out[service_id] = "its public model alias is also claimed by another service"
+    return {
+        "schema_version": int(value.get("schema_version") or SERVICE_REGISTRY_SCHEMA_VERSION),
+        "services": services,
+        "protocol_frontends": keep("frontend", value.get("protocol_frontends"), normalize_protocol_frontend),
+        "workflows": keep("workflow", value.get("workflows"), normalize_workflow_record),
+        "capabilities": keep("capability", value.get("capabilities"), normalize_capability_record),
+        "seeded_from": str(value.get("seeded_from") or ""),
+        "seed_hash": str(value.get("seed_hash") or ""),
+        "updated_at": int(value.get("updated_at") or time.time()),
+    }, left_out
 
 
 def backfill_seed_catalog_metadata(
@@ -1213,6 +1271,11 @@ def _names_credential(key: str) -> bool:
     )
 
 
+def _is_inject_secret(path: str, key: str) -> bool:
+    """An ``auth_inject`` rule's ``secret`` names a downstream secret, though no suffix says it is a reference."""
+    return key.strip().lower() == "secret" and "auth_inject[" in path
+
+
 def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
     """Every field of a service record that names a credential, keyed by its path.
 
@@ -1226,7 +1289,7 @@ def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
         if isinstance(value, Mapping):
             for key, item in value.items():
                 here = f"{path}.{key}" if path else str(key)
-                if _names_credential(str(key)) or path == "secret_refs":
+                if _names_credential(str(key)) or path == "secret_refs" or _is_inject_secret(path, str(key)):
                     found[here] = repr(item)
                 else:
                     walk(item, here)
@@ -1325,8 +1388,9 @@ def credential_binding_changes(
     A service is listed when it gains or changes a credential reference, when it
     sets the base of the gateway's own internal key, when it already carries a
     credential and its origin moves, when its lifecycle driver is set, changed
-    or removed (a driver runs commands or sends a stored key), or when it sets a
-    field that makes the gateway write a file or read process command lines.
+    or removed (a driver runs commands or sends a stored key), when its
+    ``auth_inject`` rules change, or when it sets a field that makes the
+    gateway write a file or read process command lines.
     The value says which.
     """
     old = (normalize_service_registry(old_registry).get("services")) or {}
@@ -1344,6 +1408,9 @@ def credential_binding_changes(
             reasons.append("host")
         if lifecycle_driver_changed(before, record):
             reasons.append("lifecycle")
+        if (config.get("auth_inject") or None) != (before_config.get("auth_inject") or None):
+            # The rules name the keys the gateway sends to the host, and are never edited through the admin surface.
+            reasons.append("config.auth_inject")
         for key in OWNER_ONLY_CONFIG_KEYS:
             if config.get(key) and config.get(key) != before_config.get(key):
                 reasons.append(f"config.{key}")

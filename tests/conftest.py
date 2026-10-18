@@ -155,6 +155,17 @@ def _fresh_read_caches() -> None:
         module._RESOURCE_FACT_CACHE.clear()
 
 
+@pytest.fixture(autouse=True)
+def _no_registry_apply_report_from_an_earlier_test() -> None:
+    """A reload that fails reports itself on the Overview until one succeeds (proxy.REGISTRY_APPLY_PROBLEM).
+    That is process state, so a test that fails a reload on purpose must not leave it for the next."""
+    import sys
+
+    module = sys.modules.get("proxy")
+    if module is not None:
+        module.REGISTRY_APPLY_PROBLEM = None
+
+
 @pytest.fixture(scope="session")
 def gateway_test_state_dir() -> Path:
     return _STATE_DIR

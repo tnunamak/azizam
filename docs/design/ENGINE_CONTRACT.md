@@ -225,6 +225,21 @@ when a reload fails.
   converter, a repeated parameter name) is skipped like a colliding row, and
   never stops boot or a reload. An admin save whose hot reload fails is stored
   and answers `500 registry_saved_not_applied`.
+- **A registry that cannot be applied.** A hot reload that fails for any
+  reason (the stored registry does not normalize, the store cannot be read, a
+  route cannot be built) keeps the old config, constants and routes, and
+  raises; it never falls back to the bootstrap file's backends. Reloads run one
+  at a time under one lock, so the config that stays live is the one read
+  last. The Overview lists the state (`kind: registry`, `registry_apply` in the
+  JSON) until a reload succeeds. Boot cannot keep an old config, so it serves
+  the stored services that validate on their own (the `partial` mode), reads
+  the frontends, workflows and capabilities record by record the same way, and
+  leaves out and logs each service that does not validate or that shares a
+  public model alias with another. When the store cannot be read at all it
+  starts with no registry backends (the `empty` mode). Boot never serves the
+  bootstrap file's backends in place of the registry, and it leaves the
+  LiteLLM config file as it is. Both modes log the cause and are listed on the
+  Overview as a problem.
 - **Authentication.** The mount runs an authenticator before every operation
   that does not check the caller itself, on any path prefix, so a row at
   `/x/{provider}` gets a 401 without a key. The operations that check the
@@ -239,7 +254,8 @@ when a reload fails.
   opens its path with a parameter; the mount checks again, and a stored row
   that claims `builtin` for an id the seed does not hold is a package row. A
   builtin's id belongs to the seed: a stored or imported record that takes it
-  (and is not the builtin) is refused on write and on package import, and at
+  (and is not the builtin) is refused on write, at package review and on
+  package import, and at
   mount it is ignored and reported as broken while the builtin mounts from the
   seed. A write that adds a row the router rejects is refused.
 
@@ -288,8 +304,10 @@ template, through `native.allow`.
   each bound to the origin it was attached for. A class with no credential
   sends none, and never the other class's. It never forwards the client's auth
   or cookies, and it does not use the service record's single `auth_inject`
-  key. A credential that is not bound to the address it would go to is not
-  sent, and the call is refused.
+  key or a caller's per-identity downstream secrets. (`auth_inject` rules stay
+  for the older chat paths, and only the owner may add, change or remove them:
+  any change to a record's rules is a credential binding change.) A credential that is not
+  bound to the address it would go to is not sent, and the call is refused.
 - Request and response bytes are capped. Redirects are refused. Configured
   hosts are SSRF-checked with `gateway/engine_check.py`: the address as written
   when the record is saved, the lookup result when it is saved and on every
@@ -299,12 +317,27 @@ template, through `native.allow`.
   engine's origin. Azizam relays the body decoded, so it drops the engine's
   `Content-Encoding` and `Content-Length`.
 - The older route `/gateway/v1/providers/{provider}/{path}` reaches the same
-  engine record and keeps these rules, with one difference: it has no deny
-  default for reads. A call the record's `native.allow` names is classed as the
-  list says. Any other `GET` or `HEAD` is a `generate` read: its query keys
-  pass, but a value that looks like a file path is refused. Any other method is
-  a `control` call, which only the owner may make. Reply headers, the request
+  engine record and keeps these rules, with two differences. It sends the
+  same per-class credential and no other (never `auth_inject`), and it drops a
+  body sent with a `GET` or `HEAD`. A call the record's `native.allow` names is
+  classed as the list says. Any other `GET` or `HEAD` is a `generate` read: its
+  query keys must be plain key names (letters, digits, `_`, `.`, `-`, `[`, `]`),
+  and a value that looks like a file path is refused. Any other method is a
+  `control` call, which only the owner may make. Reply headers, the request
   and reply caps and the per-request SSRF check are the same as on `/native/`.
+- `native.unlisted_reads` sets what that route does with a `GET` or `HEAD` the
+  list does not name: `allow` (the default) serves it as a `generate` read,
+  `deny` refuses it with `native_not_allowed`. A `GET` that changes state (a
+  stop, a reload, a delete by URL) cannot be told from a read, so list it as a
+  `control` entry, for example `{method: GET, path: /admin/stop, class:
+  control}`, and set `unlisted_reads: deny` so a state-changing `GET` you did
+  not list is refused rather than served. `/native/{engine}/` refuses every
+  call the list does not name, whatever this value is.
+- A `generate` value is also refused when it still holds an encoded `/`, `\`
+  or `.` (`%2F`, `%5C`, `%2E`) after the one decode the lane does, because the
+  engine may decode it again. A `control` value passes.
+- The caps are data: `native.max_request_bytes` (default 8 MiB) and
+  `native.max_response_bytes` (default 256 MiB), on both routes.
 - The receipt records the operation and says "cost unknown" when usage can't be
   measured.
 - Remote providers have no native lane in this version. That is an intentional,
