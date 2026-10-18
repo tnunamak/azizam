@@ -22510,7 +22510,7 @@ async def images_variations(request: Request):
 
     Routed through an edit-capable workflow (images.variations.default_workflow
     in proxy_config.yml) with a fixed generic prompt -- see
-    proxy_graph_image_variations_request for why.
+    proxy_comfy_variations_request for why.
     """
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/variations"))
     if isinstance(auth_context, Response):
