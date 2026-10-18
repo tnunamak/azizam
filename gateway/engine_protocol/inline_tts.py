@@ -14,6 +14,16 @@ Operations
 - ``speech.stream``: the same POST, streamed. A non-2xx answer is a buffered
   ``Reply``. Otherwise a ``StreamReply`` of raw upstream chunks; a transport
   error while reading becomes ``TransportFailure("aborted")``.
+- ``speech.voice_check``: POST ``/v1/audio/voice-check`` with ``request.body``
+  as httpx ``json=`` (compact), as the custom-voice quality probe always sent
+  it (Chatterbox answers it with a speaker similarity).
+- ``speech.design``: POST ``/v1/audio/speech`` with ``request.body`` as httpx
+  ``json=``, as voice design always sent it.
+
+The two voice operations answer a ``WireReply`` (``json()`` raises a parse
+error where it is called). Only httpx errors become ``TransportFailure`` (the
+original exception is its ``__cause__``); any other error passes through, as
+it did from the call they replace.
 
 ``health`` is unknown: readiness of these engines belongs to the lifecycle
 driver today. Inventory, jobs and recovery are not implemented.
@@ -28,12 +38,16 @@ import httpx
 
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION
 from gateway.engine_protocol.errors import TransportFailure, UnknownOperation, UnsupportedByAdapter
+from gateway.engine_protocol.httpx_wire import failure, reply_from
 from gateway.engine_protocol.types import (
     AssetRef, CanonicalRequest, Connection, Health, Inventory, JobEvent, JobRef, JobStatus, Reply, StreamReply,
 )
 
 SPEECH_PATH = "/v1/audio/speech"
-OPERATIONS = ("speech.synthesize", "speech.stream")
+VOICE_CHECK_PATH = "/v1/audio/voice-check"
+# The voice operations post ``request.body`` as httpx ``json=``; each names its route.
+_JSON_ROUTES = {"speech.voice_check": VOICE_CHECK_PATH, "speech.design": SPEECH_PATH}
+OPERATIONS = ("speech.synthesize", "speech.stream", *_JSON_ROUTES)
 
 
 def _lower(headers: httpx.Headers) -> dict[str, str]:
@@ -60,6 +74,9 @@ class InlineTtsAdapter:
     async def invoke(self, conn: Connection, op: str, request: CanonicalRequest) -> Reply | StreamReply:
         if op not in OPERATIONS:
             raise UnknownOperation(f"The speech adapter has no operation '{op}'.")
+        if op in _JSON_ROUTES:
+            return await self._posted_json(f"{conn.address}{_JSON_ROUTES[op]}", request.body, conn,
+                                           parse_json=op == "speech.voice_check")
         url = f"{conn.address}{SPEECH_PATH}"
         body = request.raw_body if request.raw_body is not None else json.dumps(request.body).encode()
         headers = request.headers
@@ -67,6 +84,15 @@ class InlineTtsAdapter:
         if op == "speech.synthesize":
             return await self._buffered(url, headers, body, timeout)
         return await self._streamed(url, headers, body, timeout)
+
+    @staticmethod
+    async def _posted_json(url: str, payload: Any, conn: Connection, *, parse_json: bool) -> Reply:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)) as client:
+                resp = await client.post(url, json=payload)
+        except httpx.HTTPError as error:
+            raise failure(error) from error
+        return reply_from(resp, parse_json=parse_json)
 
     @staticmethod
     async def _buffered(url: str, headers: Any, body: bytes, timeout: httpx.Timeout) -> Reply:

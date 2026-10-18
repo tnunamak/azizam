@@ -38,7 +38,8 @@ def http_adapter(operations, handler, **extra):
 
 def test_the_interface_is_versioned_and_complete() -> None:
     assert adapter.ADAPTER_INTERFACE_VERSION == 1
-    for impl in (HttpV1Adapter, InlineTtsAdapter):
+    from gateway.engine_protocol.chunked_stt import ChunkedSttAdapter
+    for impl in (HttpV1Adapter, InlineTtsAdapter, ChunkedSttAdapter):
         assert impl.interface_version == adapter.ADAPTER_INTERFACE_VERSION
         for name in INTERFACE:
             assert inspect.iscoroutinefunction(getattr(impl, name)) or inspect.isasyncgenfunction(getattr(impl, name)) or name == "events", (impl, name)
@@ -284,3 +285,292 @@ def test_the_speech_adapter_declares_what_it_does_not_implement() -> None:
                  a.recover(conn, JobRef("x", "1")), a.fetch_assets(conn, JobRef("x", "1"), None)):
         with pytest.raises(UnsupportedByAdapter):
             run(call)
+
+
+# --- the speech engine's voice operations ------------------------------------------------------
+
+
+def _wire(request: httpx.Request) -> tuple:
+    """What reached the engine, with a multipart boundary (random per request) replaced by one name."""
+    content_type = request.headers.get("content-type", "")
+    boundary = content_type.split("boundary=", 1)[1] if "boundary=" in content_type else None
+
+    def same(value):
+        if boundary is None:
+            return value
+        return value.replace(boundary.encode(), b"BOUNDARY") if isinstance(value, bytes) else value.replace(boundary, "BOUNDARY")
+    return (request.method, str(request.url), [(k, same(v)) for k, v in request.headers.multi_items()], same(request.content),
+            request.extensions["timeout"])
+
+
+VOICE_OPERATIONS = [
+    ("speech.voice_check", "/v1/audio/voice-check", {"voice_ref": "/data/voices/k é/reference.wav"}, 120),
+    ("speech.design", "/v1/audio/speech", {"input": "Hé, there.", "instructions": "calm", "seed": 3}, 180),
+]
+
+
+@pytest.mark.parametrize("op, path, payload, read_s", VOICE_OPERATIONS)
+def test_voice_operations_send_what_the_old_json_call_sent(fake_upstreams, op, path, payload, read_s) -> None:
+    seen = _serve(fake_upstreams, lambda r: httpx.Response(200, json={"speaker_similarity": 0.5}))
+
+    async def old_call():
+        async with httpx.AsyncClient(timeout=httpx.Timeout(read_s, connect=10)) as client:
+            return await client.post(f"{SPEECH}{path}", json=payload)
+    old = run(old_call())
+    conn = Connection(address=SPEECH, timeouts=Timeouts(connect_s=10, first_byte_s=read_s, total_s=read_s))
+    reply = run(InlineTtsAdapter().invoke(conn, op, CanonicalRequest(op=op, body=payload)))
+    assert _wire(seen[1]) == _wire(seen[0])
+    assert b'", "' not in seen[1].content  # httpx json= is compact; speech.synthesize keeps json.dumps defaults
+    assert (reply.status, reply.raw) == (old.status_code, old.content)
+    assert reply.json() == (old.json() if op == "speech.voice_check" else None)  # a designed voice is audio: never parsed
+
+
+def test_voice_operations_keep_httpx_failures_typed_and_pass_other_errors_through(fake_upstreams) -> None:
+    errors: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise errors[0]
+    _serve(fake_upstreams, handler)
+    conn = Connection(address=SPEECH)
+    for op, _path, payload, _read_s in VOICE_OPERATIONS:
+        for error, kind in ((httpx.ReadTimeout("slow"), "timeout"), (httpx.ConnectError("refused"), "unreachable"),
+                            (httpx.RemoteProtocolError("reset"), "aborted")):
+            errors[:] = [error]
+            with pytest.raises(TransportFailure) as raised:
+                run(InlineTtsAdapter().invoke(conn, op, CanonicalRequest(op=op, body=payload)))
+            assert (raised.value.kind, str(raised.value), type(raised.value.__cause__)) == (kind, str(error), type(error))
+        errors[:] = [KeyError("not httpx")]
+        with pytest.raises(KeyError):
+            run(InlineTtsAdapter().invoke(conn, op, CanonicalRequest(op=op, body=payload)))
+
+
+def test_a_voice_check_answer_that_is_not_json_raises_where_it_is_read(fake_upstreams) -> None:
+    _serve(fake_upstreams, lambda r: httpx.Response(200, content=b"not json"))
+    reply = run(InlineTtsAdapter().invoke(Connection(address=SPEECH), "speech.voice_check", CanonicalRequest(op="x", body={})))
+    with pytest.raises(ValueError):
+        reply.json()
+
+
+def test_each_reviewed_speech_adapter_implements_the_operations_its_description_names() -> None:
+    from gateway.engine_protocol import chunked_stt, inline_tts
+    docs = description.load_registry()
+    assert set(inline_tts.OPERATIONS) == set(docs["inline-tts"].operations)
+    assert set(chunked_stt.OPERATIONS) == set(docs["chunked-stt"].operations)
+
+
+# --- the in-tree transcription client, behind the interface ------------------------------------
+
+STT_HOST = "stt.fk.test:5092"
+STT = f"http://{STT_HOST}"
+
+
+def _serve_stt(fake_upstreams, handler) -> list:
+    seen: list = []
+
+    def record(request: httpx.Request) -> httpx.Response:
+        request.read()
+        seen.append(request)
+        return handler(request)
+    fake_upstreams.router.add_transport(STT_HOST, HandlerTransport(record))
+    return seen
+
+
+def _stt_adapter():
+    from gateway.engine_protocol.chunked_stt import ChunkedSttAdapter
+    return ChunkedSttAdapter(description.load_registry()["chunked-stt"])
+
+
+def _stt_execution(**chunking):
+    from pathlib import Path
+    from gateway import stt_chunking
+    record = {"host": "stt.fk.test", "port": 5092, "timeout": 30, "chunking": {"enabled": False, "spool_dir": "spool", **chunking}}
+    return stt_chunking.SttExecutionConfig.from_service(service_id="stt", service_config=record, config_directory=Path("/nonexistent-root"))
+
+
+class _Upload:
+    def __init__(self, path, filename="clip.ogg", content_type="audio/ogg"):
+        self.file = open(path, "rb")
+        self.filename = filename
+        self.content_type = content_type
+
+
+def _stt_run(tmp_path, uploads, *, stream=False, op="stt.transcribe", **chunking):
+    import time
+    from gateway import stt_chunking
+    from gateway.engine_protocol.chunked_stt import SttRun
+    seen = {"outcomes": [], "attempts": [], "cancelled": 0}
+    run_call = SttRun(
+        op=op, headers={"authorization": "Bearer t", "x-request-id": "r1"}, execution=_stt_execution(**chunking),
+        fields=[("model", "m-1"), ("stream", "true")] if stream else [("model", "m-1")],
+        multipart_fields={"model": "m-1", "stream": "true"} if stream else {"model": "m-1"},
+        uploads=uploads, workspace=tmp_path, cleanup=stt_chunking.SttCleanupOwner(), cancellation_waiters=(),
+        deadline_at=time.monotonic() + 60, on_cancel=lambda: seen.__setitem__("cancelled", seen["cancelled"] + 1),
+        on_attempt_started=seen["attempts"].append, on_outcome=seen["outcomes"].append, stream=stream,
+    )
+    return run_call, seen
+
+
+STT_CONN = Connection(address=STT, timeouts=Timeouts(connect_s=10, first_byte_s=30, total_s=30))
+
+
+def test_the_transcription_adapter_implements_the_interface_and_declares_what_it_does_not() -> None:
+    a = _stt_adapter()
+    assert a.interface_version == adapter.ADAPTER_INTERFACE_VERSION and isinstance(a, adapter.EngineAdapter)
+    for name in INTERFACE:
+        assert inspect.iscoroutinefunction(getattr(type(a), name)) or inspect.isasyncgenfunction(getattr(type(a), name)), name
+    assert a.label == "STT backend"
+    conn = Connection(address=STT)
+    assert run(a.health(conn)).state == "unknown"
+    with pytest.raises(UnknownOperation):
+        run(a.invoke(conn, "stt.nope", CanonicalRequest(op="x")))
+    with pytest.raises(UnsupportedByAdapter):
+        run(a.invoke(conn, "stt.transcribe", CanonicalRequest(op="x")))
+
+    async def events():
+        async for _ in a.events(conn, JobRef("x", "1")):
+            pass
+    for call in (a.inventory(conn), a.submit(conn, "x", CanonicalRequest(op="x")), a.poll(conn, JobRef("x", "1")),
+                 a.cancel(conn, JobRef("x", "1")), a.recover(conn, JobRef("x", "1")), a.fetch_assets(conn, JobRef("x", "1"), None),
+                 events()):
+        with pytest.raises(UnsupportedByAdapter):
+            run(call)
+
+
+def test_a_short_clip_is_posted_as_the_old_multipart_call_did(fake_upstreams) -> None:
+    from gateway.engine_protocol.chunked_stt import SttUpload
+    seen = _serve_stt(fake_upstreams, lambda r: httpx.Response(200, json={"text": "the words"}))
+    files = {"file": ("reference.wav", b"RIFF\x00\x01wav-bytes", "audio/wav")}
+    data = {"model": "m-1"}
+
+    async def old_call():
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
+            return await client.post(f"{STT}/v1/audio/transcriptions", files=files, data=data)
+    run(old_call())
+    conn = Connection(address=STT, timeouts=Timeouts(connect_s=10, first_byte_s=120, total_s=120))
+    reply = run(_stt_adapter().invoke(conn, "stt.transcribe", SttUpload(op="stt.transcribe", body=data, parts=files)))
+    assert _wire(seen[1]) == _wire(seen[0])
+    assert (reply.status, reply.json()) == (200, {"text": "the words"})
+
+    def refuse(request):
+        raise httpx.ConnectError("refused")
+    fake_upstreams.router._routes[STT_HOST] = HandlerTransport(refuse)
+    with pytest.raises(TransportFailure) as raised:
+        run(_stt_adapter().invoke(conn, "stt.transcribe", SttUpload(op="stt.transcribe", body=data, parts=files)))
+    assert (raised.value.kind, str(raised.value)) == ("unreachable", "refused")
+
+
+@pytest.mark.parametrize("op, route", [("stt.transcribe", "transcriptions"), ("stt.translate", "translations")])
+def test_a_direct_upload_is_the_old_streamed_multipart_request(fake_upstreams, tmp_path, op, route) -> None:
+    from gateway import stt_chunking
+    audio = tmp_path / "upload.bin"
+    audio.write_bytes(b"OggS" + bytes(range(256)) * 4)
+    seen = _serve_stt(fake_upstreams, lambda r: httpx.Response(200, json={"text": "hi"}, headers={"x-engine": "e"}))
+
+    async def go():
+        call, notes = _stt_run(tmp_path, [("file", _Upload(audio))], op=op)
+        old = httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10.0))
+        with audio.open("rb") as handle:
+            outgoing = old.build_request("POST", f"{STT}/v1/audio/{route}", headers=call.headers, data=call.multipart_fields,
+                                         files=[("file", ("clip.ogg", handle, "audio/ogg"))])
+            answer = await old.send(outgoing, stream=True)
+            await answer.aread()
+            await answer.aclose()
+        await old.aclose()
+        reply = await _stt_adapter().invoke(STT_CONN, op, call)
+        names = [name for name, _action in call.cleanup._actions]
+        await call.cleanup.aclose()
+        return reply, notes, names
+    reply, notes, names = run(go())
+    assert _wire(seen[1]) == _wire(seen[0])
+    assert (reply.mode, reply.status, reply.raw, reply.headers["x-engine"]) == ("direct", 200, b'{"text":"hi"}', "e")
+    assert notes["outcomes"] == [stt_chunking.ChunkingOutcome("passthrough", 0, "ineligible_envelope")]
+    assert names == ["http_client"]  # every upload handle and the response were released in order
+
+
+def test_several_uploads_skip_the_planner_and_go_in_one_request(fake_upstreams, tmp_path) -> None:
+    from gateway import stt_chunking
+    first, second = tmp_path / "a.bin", tmp_path / "b.bin"
+    first.write_bytes(b"one")
+    second.write_bytes(b"two")
+    seen = _serve_stt(fake_upstreams, lambda r: httpx.Response(200, json={"text": "x"}))
+
+    async def go():
+        call, notes = _stt_run(tmp_path, [("file", _Upload(first, "a.wav", None)), ("extra", _Upload(second, None, "audio/wav"))])
+        reply = await _stt_adapter().invoke(STT_CONN, "stt.transcribe", call)
+        await call.cleanup.aclose()
+        return reply, notes
+    reply, notes = run(go())
+    assert reply.mode == "direct" and notes["outcomes"] == [stt_chunking.ChunkingOutcome("passthrough", 0, "multiple_files")]
+    body = seen[0].content
+    assert b'name="file"; filename="a.wav"\r\nContent-Type: application/octet-stream\r\n\r\none' in body
+    assert b'name="extra"; filename="audio"\r\nContent-Type: audio/wav\r\n\r\ntwo' in body
+
+
+@pytest.mark.parametrize("error, kind, text", [
+    (httpx.ReadTimeout("slow"), "SttBackendTimeout", "STT backend timed out"),
+    (httpx.ConnectError("refused"), "SttBackendUnavailable", "STT backend is unavailable"),
+    (httpx.RemoteProtocolError("reset"), "SttBackendConnectionLost", "STT backend dropped the connection"),
+])
+def test_transport_failures_of_an_upload_are_the_typed_stt_failures(fake_upstreams, tmp_path, error, kind, text) -> None:
+    from gateway import stt_chunking
+    audio = tmp_path / "upload.bin"
+    audio.write_bytes(b"x")
+
+    def handler(request):
+        raise error
+    _serve_stt(fake_upstreams, handler)
+
+    async def go():
+        call, _notes = _stt_run(tmp_path, [("file", _Upload(audio))])
+        try:
+            await _stt_adapter().invoke(STT_CONN, "stt.transcribe", call)
+        finally:
+            await call.cleanup.aclose()
+    with pytest.raises(stt_chunking.SttExecutionError) as raised:
+        run(go())
+    assert (type(raised.value).__name__, str(raised.value), raised.value.__cause__) == (kind, text, error)
+
+
+def test_a_native_stream_is_relayed_raw_within_the_byte_budget(fake_upstreams, tmp_path) -> None:
+    from gateway import stt_chunking
+    from gateway.engine_protocol.types import StreamReply
+    audio = tmp_path / "upload.bin"
+    audio.write_bytes(b"x")
+
+    class Events(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"data: {\"delta\": \"he\"}\n\n"
+            yield b"data: {\"delta\": \"llo\"}\n\n"
+    seen = _serve_stt(fake_upstreams, lambda r: httpx.Response(200, stream=Events(), headers={"content-type": "text/event-stream"}))
+
+    async def go(**chunking):
+        call, _notes = _stt_run(tmp_path, [("file", _Upload(audio))], stream=True, **chunking)
+        reply = await _stt_adapter().invoke(STT_CONN, "stt.transcribe", call)
+        names = [name for name, _action in call.cleanup._actions]
+        try:
+            return reply, [chunk async for chunk in reply], names
+        finally:
+            await reply.aclose()
+            await call.cleanup.aclose()
+    reply, chunks, names = run(go())
+    assert isinstance(reply, StreamReply) and reply.status == 200
+    assert b"".join(chunks) == b'data: {"delta": "he"}\n\ndata: {"delta": "llo"}\n\n'
+    assert names == ["http_client", "stream_upload_handle", "upstream_response"]  # core's cleanup closes them after the relay
+    assert b'filename="clip.ogg"\r\nContent-Type: application/octet-stream' in seen[0].content
+    with pytest.raises(stt_chunking.SttResponseLimitExceeded):
+        run(go(max_response_bytes=30))
+
+
+def test_a_refused_stream_is_a_buffered_reply(fake_upstreams, tmp_path) -> None:
+    audio = tmp_path / "upload.bin"
+    audio.write_bytes(b"x")
+    _serve_stt(fake_upstreams, lambda r: httpx.Response(503, content=b'{"error":"busy"}'))
+
+    async def go():
+        call, _notes = _stt_run(tmp_path, [("file", _Upload(audio))], stream=True)
+        try:
+            return await _stt_adapter().invoke(STT_CONN, "stt.transcribe", call)
+        finally:
+            await call.cleanup.aclose()
+    reply = run(go())
+    assert (reply.mode, reply.status, reply.raw) == ("stream_refused", 503, b'{"error":"busy"}')

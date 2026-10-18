@@ -4,7 +4,9 @@
 # (gateway/engine_protocol/inline_tts.py) sends the caller's prepared body to
 # the engine's speech route, buffered or streamed, and returns the engine's
 # status, headers and bytes untouched. Policy, voice choice and audio
-# conversion stay in core.
+# conversion stay in core. The voice operations post a JSON body the
+# custom-voice code built: speech.voice_check (a speaker-similarity check of a
+# reference clip) and speech.design (one render of a described voice).
 protocol_version: 1
 id: inline-tts
 title: OpenAI-shaped speech route
@@ -15,3 +17,4 @@ operations:
   speech.synthesize: {class: generate}
   speech.stream: {class: generate}
   speech.voice_check: {class: generate}
+  speech.design: {class: generate}
