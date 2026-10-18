@@ -421,6 +421,21 @@ def test_non_owner_cannot_change_executable_control_recipe(tmp_path):
             store._settle_credential_bindings(changed, actor)
 
 
+def test_non_owner_cannot_hide_control_recipe_behind_empty_top_level(tmp_path):
+    from gateway.admin_api import AdminContext
+    from gateway.admin_runtime import AdminSQLiteStore
+
+    old = {"services": {"fixture": {"id": "fixture", "protocol_operations": {}, "config": {}}}}
+    changed = {"services": {"fixture": {"id": "fixture", "protocol_operations": {},
+        "config": {"protocol_operations": {"switch": {"method": "POST", "path": "/control"}}}}}}
+    store = AdminSQLiteStore(path=tmp_path / "admin.db")
+    actor = AdminContext(subject="admin", roles=frozenset({"admin"}))
+    with patch("gateway.admin_runtime.service_registry.normalize_service_registry", return_value=changed), \
+         patch.object(store, "get_service_registry", return_value=old):
+        with pytest.raises(PermissionError, match="owner"):
+            store._settle_credential_bindings(changed, actor)
+
+
 def test_control_operation_refuses_nested_absolute_path():
     service = {"connection": {"address": "http://fixture.test:18091"},
                "protocol_operations": {"load": {"method": "POST", "path": "/load"}}}

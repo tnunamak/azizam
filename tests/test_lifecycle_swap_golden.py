@@ -1413,5 +1413,36 @@ def test_offering_identity_survives_legacy_upstream_activation_name():
     _run(scenario())
 
 
+def test_owned_process_counts_request_while_waiting_for_switch_lease():
+    from gateway import lifecycle_drivers
+
+    svc = {"process": {"driver": "process", "ready_timeout_s": 1},
+           "offerings": [{"id": "target", "selection": {"mode": "switch",
+               "switch": {"call": "select", "args": {"model": "target"},
+                          "observe_selected": "selected"}}}]}
+    fake_driver = MagicMock()
+    fake_driver._SWAPPABLE = False
+    fake_driver.ensure_ready = AsyncMock(return_value=True)
+    fake_runtime = MagicMock()
+    lease = MagicMock()
+
+    async def wait_for_switch(*_args, **_kwargs):
+        assert fake_driver.request_started.called
+        return lease
+
+    fake_runtime.select = AsyncMock(side_effect=wait_for_switch)
+    activation = proxy.LocalModelActivation(backend="fixture-wait", model="target", offering_id="target")
+
+    async def scenario():
+        with patch.dict(proxy.config["backends"], {"fixture-wait": svc}), \
+             patch.object(lifecycle_drivers, "_process_driver", fake_driver), \
+             patch("gateway.engine_control.EngineControlRuntime", return_value=fake_runtime), \
+             patch.object(proxy, "_swap_drain_settings", return_value=proxy.SwapDrainSettings(enabled=False)):
+            ready, returned = await proxy._ensure_target_leased("fixture-wait", activation)
+            assert ready and returned is lease
+
+    _run(scenario())
+
+
 if __name__ == "__main__":
     unittest.main()
