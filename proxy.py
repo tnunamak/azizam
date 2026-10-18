@@ -4671,7 +4671,10 @@ async def _dispatch_selected_stt_route(
     if decision is not None and decision.denied:
         return _policy_denied_response(decision)
     remaining = [(engine, service) for engine, service in fallbacks if service]
-    body = _ReplayableBody(request, execution.spool_dir) if remaining else None
+    # A model field hidden behind the upload (file first, past the peek budget) is only known after
+    # parsing, so such a request is recorded too and learns its fallbacks from the first attempt.
+    body = _ReplayableBody(request, execution.spool_dir) if remaining or model_unpeeked else None
+    resolved: dict[str, Any] = {}
     engine_id = peeked_engine
     model_override: str | None = None
     notes: list[str] = list(skipped_notes)
@@ -4696,8 +4699,13 @@ async def _dispatch_selected_stt_route(
                     route_receipt=receipt,
                     model_unpeeked=model_unpeeked,
                     model_override=model_override,
+                    resolved_model=resolved,
                 )
                 reason = _speech_fallback_reason(response) if body is not None else None
+                if model_unpeeked and resolved and requested_name is None:
+                    requested_name = resolved["requested"]
+                    engine_id = resolved["engine"]
+                    remaining = [(engine, service) for engine, service in resolved["fallbacks"] if service]
             else:
                 response, reason = not_ready, "start_failed"
             if reason is None:
@@ -4812,6 +4820,7 @@ async def proxy_stt_request(
     route_receipt: RouteReceipt | None = None,
     model_unpeeked: bool = False,
     model_override: str | None = None,
+    resolved_model: dict[str, Any] | None = None,
 ) -> Response:
     """Forward one bounded STT request using one selected service snapshot.
 
@@ -4880,6 +4889,9 @@ async def proxy_stt_request(
 
             requested_model = model_override or str(parsed.form.get("model", "whisper-1"))
             model_resolution = resolve_model_for_operation(operation, requested_model)
+            if resolved_model is not None and model_resolution.alias is not None:
+                resolved_model.update(
+                    requested=requested_model, engine=model_resolution.alias.engine, fallbacks=model_resolution.alias.fallbacks)
             watcher = RequestDisconnectWatcher(request.receive)
             cleanup.add("disconnect_watcher", watcher.aclose)
             if cancellation is None:

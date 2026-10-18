@@ -360,6 +360,18 @@ class SttRuntimeFallbackTests(SttCase):
         self.assertIn(b"\r\n\r\nparakeet-tdt-0.6b-v3\r\n", seen[1].content)
         self.assertIn(b'name="file"', seen[1].content)
 
+    def test_gpu_allocation_failure_falls_back_when_the_model_field_follows_a_large_file(self) -> None:
+        # A long recording is uploaded file first; its model field sits past the peek budget.
+        msg = {"error": {"message": "Failed to allocate Parakeet TDT encoder graph tensors", "type": "server_error"}}
+        seen = self._engines(lambda r: httpx.Response(500, json=msg))
+        proxy.receipt_store.begin.reset_mock()
+        response, body = SttServiceSelectionTests._post_file_first_past_peek(self, [("model", "whisper-1")])
+        self.assertEqual((response.status_code, json.loads(body)["text"]), (200, "cpu"), body)
+        self.assertEqual([r.url.port for r in seen], [8017, 5092])
+        self.assertEqual(response.headers["x-azizam-fallback"], "parakeet-gpu->parakeet (gpu_oom)")
+        receipts = [call.args[0] for call in proxy.receipt_store.begin.call_args_list]
+        self.assertIn("parakeet-gpu->parakeet (gpu_oom)", receipts[-1].fallback_reasons)
+
     def test_skipped_primary_engine_is_reported_without_runtime_retry(self) -> None:
         self.cfg["backends"]["stt-parakeet-gpu"]["enabled"] = False
         seen = self._json_upstream("cpu")
