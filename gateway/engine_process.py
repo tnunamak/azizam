@@ -17,7 +17,6 @@ import socket
 import stat
 import subprocess
 import sys
-import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -54,7 +53,8 @@ def _supervised_argv(pid: int) -> list[str] | None:
     try:
         parts = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[:-1]
         cmdline = [part.decode("utf-8", "surrogateescape") for part in parts]
-        return cmdline[2:] if len(cmdline) > 2 and Path(cmdline[1]).resolve() == _SUPERVISOR else None
+        # Isolated mode (-I): the owner's working directory never shadows a stdlib module.
+        return cmdline[3:] if len(cmdline) > 3 and cmdline[1] == "-I" and Path(cmdline[2]).resolve() == _SUPERVISOR else None
     except (OSError, ValueError):
         return None
 
@@ -152,23 +152,27 @@ class ProcessDriver:
             await self._backoff(ident, cfg)
             if not self._trusted_state_dir(create=True):
                 return False
+            self._remove_state(ident)
+            log_fd = self._open_log(ident)
             try:
                 child = subprocess.Popen(
-                    [sys.executable, str(Path(__file__).with_name("engine_supervisor.py")), *argv],
-                    cwd=cfg.get("cwd") or None, env=self._environment(cfg),
-                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    [sys.executable, "-I", str(_SUPERVISOR), *argv],
+                    cwd=cfg.get("cwd") or None, env=self._supervisor_environment(ident, cfg, port),
+                    stdin=subprocess.DEVNULL, stdout=log_fd, stderr=log_fd,
                     start_new_session=True, shell=False,
                 )
-            except (OSError, ValueError):
+            except (OSError, ValueError, TypeError):
                 return False
+            finally:
+                os.close(log_fd)
             self._children[ident] = child
             self._services[ident] = svc
-            start = _start_time(child.pid)
-            if start is None:
-                await self._stop_async(svc, reset_budget=True)
+            # The supervisor writes its own state file before it starts the
+            # engine, so a crash here cannot leave an untracked orphan.
+            if not await self._confirmed(ident, child):
+                await asyncio.to_thread(self._terminate_group, child.pid, 1.0, child)
+                self._finish_stop(ident, reset_budget=True)
                 return False
-            self._write_state(ident, child.pid, start, port, argv)
-            threading.Thread(target=self._copy_logs, args=(ident, child, cfg), daemon=True).start()
             # A waiter that gives up does not own the start. The process keeps
             # running, and the next request probes it like any live engine.
             ready = await self._ready(svc, float(cfg.get("ready_timeout_s", timeout_s)), ident)
@@ -344,6 +348,9 @@ class ProcessDriver:
             raise ValueError("process port must match connection address")
         if not isinstance(observations_config(svc).get("process_ready"), Mapping):
             raise ValueError("process_ready observation is required for owned process readiness")
+        cwd = cfg.get("cwd")
+        if cwd is not None and (not isinstance(cwd, str) or not cwd or "\x00" in cwd):
+            raise ValueError("process.cwd must be a non-empty string path")
         if _idle_stop_s(svc) is None:
             raise ValueError("residency.idle_stop_s must be a non-negative number")
         return cfg, argv, port
@@ -429,18 +436,6 @@ class ProcessDriver:
         except (OSError, ValueError):
             return None
 
-    def _write_state(self, ident: str, pid: int, start: str, port: int, argv: list[str]) -> None:
-        path = self._state_path(ident)
-        payload = {"pid": pid, "start_time": start, "port": port, "argv_sha256": _argv_digest(argv)}
-        temp = path.with_suffix(".tmp")
-        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w") as handle:
-            json.dump(payload, handle)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp, path)
-
     def _remove_state(self, ident: str) -> None:
         try:
             self._state_path(ident).unlink()
@@ -503,34 +498,39 @@ class ProcessDriver:
         env.update(extra)
         return env
 
-    def _copy_logs(self, ident: str, child: subprocess.Popen, cfg: Mapping[str, Any]) -> None:
+    def _open_log(self, ident: str) -> int:
+        """The supervisor's own stdout and stderr: the log file, never a pipe to the gateway."""
+        try:
+            fd = os.open(self.state_dir / f"{ident}.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+            os.fchmod(fd, 0o600)
+            return fd
+        except OSError:  # an unwritable log must not stop the engine from starting
+            return os.open(os.devnull, os.O_WRONLY)
+
+    def _supervisor_environment(self, ident: str, cfg: Mapping[str, Any], port: int) -> dict[str, str]:
+        env = self._environment(cfg)
+        declared = cfg.get("env") if isinstance(cfg.get("env"), Mapping) else {}
         limit = max(1024, min(int(cfg.get("log_max_bytes", 65536)), 1048576))
-        log_path = self.state_dir / f"{ident}.log"
-        secrets = [value.encode() for value in (cfg.get("env") or {}).values() if isinstance(value, str) and len(value) >= 4]
-        if child.stdout is None:
-            return
-        while True:
-            line = child.stdout.readline(4096)
-            if not line:
-                return
-            if len(line) == 4096 and not line.endswith(b"\n"):
-                while line and not line.endswith(b"\n"):
-                    line = child.stdout.readline(4096)
-                line = b"[oversized log line omitted]\n"
-            for secret in secrets:
-                line = line.replace(secret, b"[redacted]")
-            line = re.sub(rb"\b(?:opk_|oak_)[A-Za-z0-9_-]+", b"[redacted]", line)
-            line = line[:limit]
-            try:
-                fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
-                os.fchmod(fd, 0o600)
-                with os.fdopen(fd, "ab") as output:
-                    if output.tell() + len(line) > limit:
-                        output.seek(0)
-                        output.truncate()
-                    output.write(line)
-            except OSError:
-                return
+        env.update({
+            "AZIZAM_SUPERVISOR_STATE_FILE": str(self._state_path(ident)),
+            "AZIZAM_SUPERVISOR_PORT": str(port),
+            "AZIZAM_SUPERVISOR_LOG_FILE": str(self.state_dir / f"{ident}.log"),
+            "AZIZAM_SUPERVISOR_LOG_MAX_BYTES": str(limit),
+            "AZIZAM_SUPERVISOR_REDACT_ENV": ",".join(sorted(declared)),
+        })
+        return env
+
+    async def _confirmed(self, ident: str, child: subprocess.Popen, timeout_s: float = 5.0) -> bool:
+        """Wait for the supervisor's own state file to name this child."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            state = self._read_state(ident)
+            if state and state.get("pid") == child.pid and self._identity_matches(state):
+                return True
+            if child.poll() is not None:
+                return False
+            await asyncio.sleep(0.01)
+        return False
 
     def _schedule_idle(self, ident: str, svc: Mapping[str, Any]) -> None:
         from gateway.engine_contract_view import residency_config
