@@ -7,12 +7,14 @@ never a receipt.
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
 import sqlite3
 import unittest
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import FastAPI
@@ -40,7 +42,7 @@ class RemoveMissingTests(unittest.TestCase):
         # Existing fixtures represent a known, mounted volume.
         prompt_memory.confirm_media_folder(self.cache, owner=True, path=self.jobs_db)
 
-    def make_client(self, asset_path_resolver) -> TestClient:
+    def make_client(self, asset_path_resolver, storage_provider=None) -> TestClient:
         # The route reads the media folder through this provider; without it, it refuses.
         app = FastAPI()
         app.include_router(me_media.create_me_media_router(
@@ -52,7 +54,7 @@ class RemoveMissingTests(unittest.TestCase):
             asset_deleter=self._delete_unshared,
             asset_catalog_provider=self._catalog,
             asset_metadata_reader=self._asset_metadata,
-            asset_storage_provider=me_media.create_storage_snapshot_provider(self.cache),
+            asset_storage_provider=storage_provider or me_media.create_storage_snapshot_provider(self.cache),
             admin_db_path=self.admin_db,
             media_jobs_path=self.jobs_db,
             receipts_path=self.receipts_db,
@@ -157,21 +159,23 @@ class RemoveMissingTests(unittest.TestCase):
         with sqlite3.connect(self.jobs_db) as conn:
             conn.execute("DELETE FROM media_volume_identity")
         self.current_user = self.owner
+        # The owner has nothing missing, so there is nothing to remove and nothing to bootstrap.
         response = self.client.post(REMOVE, headers=VALID)
-        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"removed_assets": 0, "removed_jobs": 0})
         self.assertFalse((self.cache / ".azizam-media").exists())
         self.assert_nothing_changed()
 
-    def test_an_empty_index_does_not_recreate_a_marker_or_adopt_existing_files(self) -> None:
+    def test_an_empty_index_does_not_create_a_marker_on_a_remove(self) -> None:
         (self.cache / ".azizam-media").unlink()
         response = self.client.post(REMOVE, headers=VALID)
-        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.status_code, 200, response.text)
         self.assertFalse((self.cache / ".azizam-media").exists())
         with sqlite3.connect(self.jobs_db) as conn:
             conn.execute("DELETE FROM media_volume_identity")
         (self.cache / ("f" * 64 + ".png")).write_bytes(b"orphaned media")
         response = self.client.post(REMOVE, headers=VALID)
-        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.status_code, 200, response.text)
         self.assertFalse((self.cache / ".azizam-media").exists())
 
     def test_an_invalid_marker_is_refused_without_touching_entries(self) -> None:
@@ -211,6 +215,243 @@ class RemoveMissingTests(unittest.TestCase):
         self.assert_nothing_changed()
         with sqlite3.connect(self.jobs_db) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM media_hidden_assets").fetchone()[0], 0)
+
+    # Folder state, the one-time owner confirmation and first-read adoption.
+
+    NO_MATCHES = (
+        "None of the Library's items have their files in this folder, so Azizam can't confirm it. "
+        "Check that the media disk is mounted, then try again."
+    )
+
+    def media_folder(self) -> dict:
+        response = self.client.get("/me/api/media")
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()["media_folder"]
+
+    def unconfirm_folder(self) -> None:
+        """An install that never confirmed: no marker on disk and no recorded identity."""
+        (self.cache / ".azizam-media").unlink(missing_ok=True)
+        with sqlite3.connect(self.jobs_db) as conn:
+            conn.execute("DELETE FROM media_volume_identity")
+
+    def recorded_volume(self) -> str:
+        with sqlite3.connect(self.jobs_db) as conn:
+            return conn.execute("SELECT volume_id FROM media_volume_identity WHERE singleton=1").fetchone()[0]
+
+    def refused_unconfirmed(self) -> None:
+        response = self.client.post(REMOVE, headers=VALID)
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"], "media_folder_unconfirmed")
+        self.assert_nothing_changed()
+
+    def test_the_owner_sees_the_state_the_path_and_how_many_items_are_here(self) -> None:
+        self.seed()
+        self.unconfirm_folder()
+        self.current_user = self.owner
+        self.assertEqual(self.media_folder(), {
+            "state": "unconfirmed", "path": str(self.cache), "library_items": 5, "items_here": 2,
+        })
+
+    def test_a_member_is_told_only_the_state(self) -> None:
+        self.seed()
+        self.unconfirm_folder()
+        self.assertEqual(self.media_folder(), {"state": "unconfirmed"})
+
+    def test_a_confirmed_folder_reports_confirmed_and_a_changed_volume_reports_mismatch(self) -> None:
+        self.seed()
+        self.assertEqual(self.media_folder(), {"state": "confirmed"})
+        marker = self.cache / ".azizam-media"
+        value = json.loads(marker.read_text())
+        value["volume_id"] = "0" * 32
+        marker.write_text(json.dumps(value))
+        self.assertEqual(self.media_folder(), {"state": "mismatch"})
+        self.refused_unconfirmed()
+
+    def test_a_marker_without_a_recorded_identity_is_not_trusted(self) -> None:
+        self.seed()
+        with sqlite3.connect(self.jobs_db) as conn:
+            conn.execute("DELETE FROM media_volume_identity")
+        self.assertEqual(self.media_folder(), {"state": "unconfirmed"})
+        self.refused_unconfirmed()
+
+    def test_confirm_refuses_an_empty_folder_while_the_library_has_entries(self) -> None:
+        self.seed()
+        self.unconfirm_folder()
+        for letter in "BD":
+            self._asset_path(asset(letter)).unlink()
+            self._meta_path(asset(letter)).unlink()
+        self.assertEqual(os.listdir(self.cache), [])
+        self.current_user = self.owner
+        response = self.client.post(CONFIRM_FOLDER, headers=VALID)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["error"]["code"], "media_folder_no_matches")
+        self.assertEqual(response.json()["error"]["message"], self.NO_MATCHES)
+        self.assertFalse((self.cache / ".azizam-media").exists())
+        self.assertEqual(admin_store.list_audit(action_prefix="media.folder.", limit=10, path=self.admin_db), [])
+
+    def test_confirm_allows_a_folder_that_holds_part_of_the_library_and_audits_it(self) -> None:
+        self.seed()
+        self.unconfirm_folder()
+        self.current_user = self.owner
+        response = self.client.post(CONFIRM_FOLDER, headers=VALID)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.media_folder(), {"state": "confirmed"})
+        rows = admin_store.list_audit(action_prefix="media.folder.confirm", limit=10, path=self.admin_db)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["actor_id"], self.owner["id"])
+        self.assertEqual(rows[0]["metadata"], {"library_items": 5, "items_here": 2})
+
+    def test_confirm_allows_an_empty_folder_when_the_library_is_empty(self) -> None:
+        self.unconfirm_folder()
+        self.current_user = self.owner
+        response = self.client.post(CONFIRM_FOLDER, headers=VALID)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue((self.cache / ".azizam-media").is_file())
+
+    def test_a_member_is_refused_before_the_folder_is_looked_up(self) -> None:
+        self.client = self.make_client(self._asset_path, storage_provider=lambda: None)
+        self.assertEqual(self.client.post(CONFIRM_FOLDER, headers=VALID).status_code, 403)
+
+    def test_remove_with_nothing_missing_on_an_unconfirmed_folder_is_a_normal_success(self) -> None:
+        self._write_asset(asset("B"), ["sha256:alice"], prompt="prompt B")
+        self._receipt(self.app_a["id"], "req_b")
+        self._job("req_b", asset("B"))
+        self.unconfirm_folder()
+        response = self.client.post(REMOVE, headers=VALID)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"removed_assets": 0, "removed_jobs": 0})
+        self.assertFalse((self.cache / ".azizam-media").exists())
+
+    def test_the_first_library_read_adopts_a_fresh_folder_and_ignores_its_non_media_files(self) -> None:
+        self.unconfirm_folder()
+        (self.cache / ".url_signing_secret").write_text("not a media file")
+        (self.cache / ("a" * 64 + ".meta.json")).write_text(json.dumps({"asset_id": "img_" + "a" * 64}))
+        (self.cache / ("a" * 64 + ".png.tmp")).write_bytes(b"half written")
+        self.assertEqual(self.media_folder(), {"state": "confirmed"})
+        self.assertTrue((self.cache / ".azizam-media").is_file())
+
+    def test_a_folder_that_holds_media_is_not_adopted_on_read(self) -> None:
+        self.unconfirm_folder()
+        (self.cache / ("a" * 64 + ".png")).write_bytes(b"media")
+        self.assertEqual(self.media_folder(), {"state": "unconfirmed"})
+        self.assertFalse((self.cache / ".azizam-media").exists())
+
+    def test_a_prompt_entry_or_a_job_blocks_adoption_even_when_no_file_is_here(self) -> None:
+        self.unconfirm_folder()
+        prompt_memory.put(asset("A"), self.alice["id"], "prompt A", kept_until=None, path=self.prompt_db)
+        self.assertEqual(self.media_folder(), {"state": "unconfirmed"})
+        self.assertFalse((self.cache / ".azizam-media").exists())
+        with sqlite3.connect(self.prompt_db) as conn:
+            conn.execute("DELETE FROM asset_prompts")
+        self._receipt(self.app_a["id"], "req_a")
+        self._job("req_a", asset("A"))
+        self.assertEqual(self.media_folder(), {"state": "unconfirmed"})
+        self.assertFalse((self.cache / ".azizam-media").exists())
+
+    def test_a_recorded_identity_is_never_recreated_by_a_read(self) -> None:
+        (self.cache / ".azizam-media").unlink()
+        self.assertEqual(self.media_folder(), {"state": "mismatch"})
+        self.assertFalse((self.cache / ".azizam-media").exists())
+
+    def test_an_ordinary_media_write_never_creates_the_marker(self) -> None:
+        self.unconfirm_folder()
+        self._write_asset(asset("B"), ["sha256:alice"], prompt="prompt B")
+        self.assertFalse((self.cache / ".azizam-media").exists())
+
+    def test_adoption_works_on_a_filesystem_without_hard_links(self) -> None:
+        self.unconfirm_folder()
+        with patch.object(os, "link", side_effect=OSError(errno.EPERM, "Operation not permitted")):
+            self.assertEqual(self.media_folder(), {"state": "confirmed"})
+        self.assertTrue((self.cache / ".azizam-media").is_file())
+
+    def test_owner_confirmation_works_on_a_filesystem_without_hard_links(self) -> None:
+        self.seed()
+        self.unconfirm_folder()
+        self.current_user = self.owner
+        with patch.object(os, "link", side_effect=OSError(errno.EPERM, "Operation not permitted")):
+            response = self.client.post(CONFIRM_FOLDER, headers=VALID)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.media_folder(), {"state": "confirmed"})
+
+    def test_adoption_never_overwrites_a_marker_that_appears_after_the_check(self) -> None:
+        self.unconfirm_folder()
+        marker = self.cache / ".azizam-media"
+        foreign = json.dumps({"volume_id": "1" * 32, "created_at": 5})
+        marker.write_text(foreign)
+        real = prompt_memory._read_media_marker
+        reads: list[Path] = []
+
+        def absent_once_then_real(folder: Path) -> dict | None:
+            reads.append(folder)
+            return None if len(reads) == 1 else real(folder)
+
+        with patch.object(prompt_memory, "_read_media_marker", side_effect=absent_once_then_real):
+            self.assertEqual(self.client.get("/me/api/media").json()["media_folder"], {"state": "unconfirmed"})
+        self.assertEqual(marker.read_text(), foreign)
+
+    def test_a_marker_symlink_is_never_followed(self) -> None:
+        self.seed()
+        marker = self.cache / ".azizam-media"
+        target = self.root / "elsewhere.json"
+        target.write_text(marker.read_text())
+        marker.unlink()
+        marker.symlink_to(target)
+        self.assertEqual(self.media_folder(), {"state": "mismatch"})
+        self.refused_unconfirmed()
+
+    def test_a_marker_that_is_not_a_regular_file_is_refused_without_blocking(self) -> None:
+        self.seed()
+        marker = self.cache / ".azizam-media"
+        for kind in ("directory", "fifo"):
+            with self.subTest(kind=kind):
+                marker.unlink()
+                if kind == "directory":
+                    marker.mkdir()
+                else:
+                    os.mkfifo(marker)
+                try:
+                    self.assertEqual(self.media_folder(), {"state": "mismatch"})
+                    self.refused_unconfirmed()
+                finally:
+                    if kind == "directory":
+                        marker.rmdir()
+                    else:
+                        marker.unlink()
+                    marker.write_text(json.dumps({"volume_id": self.recorded_volume(), "created_at": 1}))
+
+    def test_a_folder_replaced_after_it_was_listed_removes_nothing(self) -> None:
+        self.seed()
+        snapshot = me_media.create_storage_snapshot_provider(self.cache)()
+        self.cache.rename(self.root / "cache-before-swap")
+        shutil.copytree(self.root / "cache-before-swap", self.cache)
+        self.client = self.make_client(self._asset_path, storage_provider=lambda: snapshot)
+        self.refused()
+
+    def test_a_folder_swapped_while_it_is_listed_is_not_read(self) -> None:
+        self.seed()
+        real_listdir = os.listdir
+        swapped: list[Path] = []
+
+        def swap_while_listing(path):
+            names = real_listdir(path)
+            if Path(path) == self.cache and not swapped:
+                swapped.append(self.cache)
+                self.cache.rename(self.root / "cache-moved")
+                self.cache.mkdir()
+            return names
+
+        with patch("gateway.me_media.os.listdir", side_effect=swap_while_listing):
+            self.assertIsNone(me_media.create_storage_snapshot_provider(self.cache)())
+        self.assertEqual(len(swapped), 1)
+
+    def test_the_removal_checks_the_marker_before_it_deletes_anything(self) -> None:
+        self.seed()
+        (self.cache / ".azizam-media").unlink()
+        with patch.object(media_jobs, "hide_assets_in", wraps=media_jobs.hide_assets_in) as hidden, \
+                patch.object(media_jobs, "delete_succeeded_in", wraps=media_jobs.delete_succeeded_in) as deleted:
+            self.refused_unconfirmed()
+        hidden.assert_not_called()
+        deleted.assert_not_called()
 
     def test_library_lists_the_gone_items_before_the_removal(self) -> None:
         self.seed()
@@ -284,7 +525,9 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(len(self.job_ids("req_e")), 1)
         kept = prompt_memory.get_person_prompts(self.alice["id"], path=self.prompt_db)
         self.assertEqual(set(kept), {asset(letter) for letter in "ABCD"} | written)
-        self.assertEqual(admin_store.list_audit(action_prefix="media.", limit=50, path=self.admin_db), [])
+        # The one-time owner confirmation is an audited change of its own, so it is not "nothing changed".
+        audit = admin_store.list_audit(action_prefix="media.", limit=50, path=self.admin_db)
+        self.assertEqual([row for row in audit if row["action"] != "media.folder.confirm"], [])
 
     def refused(self, message: str = UNSEEN) -> None:
         response = self.client.post(REMOVE, headers=VALID)
