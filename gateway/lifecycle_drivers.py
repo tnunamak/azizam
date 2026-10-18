@@ -370,7 +370,11 @@ def engine_read_request(
     if not base:
         return None
     if endpoint == "/v1" or endpoint.startswith("/v1/"):
-        url = join_url(base, endpoint.removeprefix("/v1"))
+        from urllib.parse import urlsplit
+        # A legacy root URL names no protocol path. Its declared endpoint
+        # already supplies /v1; a saved protocol base replaces that prefix.
+        path = endpoint.removeprefix("/v1") if urlsplit(base).path.strip("/") else endpoint
+        url = join_url(base, path)
     else:
         url = join_url(base.removesuffix("/v1"), endpoint)
     return url, {name: value for name, value in connection.headers.items() if name != "content-type"}

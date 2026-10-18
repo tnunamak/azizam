@@ -234,6 +234,10 @@ class TestContextWindowProbe:
         backends = {service_id: _path_service(5051, **fields), "other": _path_service(5052, **fields)}
         with patch.object(proxy, "config", {"backends": backends}), patch.object(
             proxy, "LLM_BACKEND_HOSTS", {service_id: fake.base_url, "other": "http://unreachable.fk.test"}
+        ), patch.object(
+            proxy.ADMIN_STORE, "get_service_registry", return_value={"services": {
+                service_id: {"config": {**backends[service_id], "base_url": f"{fake.base_url}/v1"}},
+            }}
         ), patch.object(proxy, "_MODEL_CONTEXT_CACHE", {}):
             first = asyncio.run(proxy._context_window_for_model_id("m", {"azizam_backend": service_id}))
             second = asyncio.run(proxy._context_window_for_model_id("m", {"azizam_backend": service_id}))

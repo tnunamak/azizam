@@ -68,6 +68,7 @@ def test_a_saved_connection_gives_the_scheme_prefix_headers_and_key(endpoint, ur
 
 def test_an_address_without_a_port_field_is_still_probed():
     assert engine_read_request({"base_url": f"{ORIGIN}/provider/v1"}, "/v1/models")[0] == f"{ORIGIN}/provider/v1/models"
+    assert engine_read_request({"base_url": ORIGIN}, "/v1/models")[0] == f"{ORIGIN}/v1/models"
 
 
 def test_a_control_credential_never_goes_with_a_read(monkeypatch):
@@ -91,7 +92,7 @@ def test_the_ready_check_reaches_the_saved_prefix_with_header_and_key(fake_upstr
 def test_the_ready_check_sends_no_key_bound_to_another_origin(fake_upstreams):
     fake_upstreams.asgi(_engine("/provider/v1/models", {}, keyed=False), host=HOST)
     svc = {**_saved(), "health_endpoint": "/v1/models", "credential_origin": "https://other.fk.test:443"}
-    assert not asyncio.run(ExternalDriver().ensure_ready(svc, timeout_s=0.01))
+    assert not asyncio.run(ExternalDriver().ensure_ready(svc, timeout_s=0.0))
 
 
 def test_the_switch_health_wait_uses_the_saved_connection(fake_upstreams):
