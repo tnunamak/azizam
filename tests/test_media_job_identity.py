@@ -8,8 +8,10 @@ real plan check runs at submit time and again in the worker.
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import json
+import secrets
 import tempfile
 import unittest
 from dataclasses import replace
@@ -18,10 +20,10 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-from fastapi import Response
+from fastapi import Request, Response
 
 import proxy
-from gateway import accounts, admin_store, media_jobs
+from gateway import accounts, admin_store, mcp_oauth, media_jobs
 from tests.support.access import store_plan
 
 FLUX = "image.generate.flux2-klein-4b"
@@ -97,10 +99,25 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
             status_code=200, media_type="application/json")
 
     def mcp_context(self) -> proxy.AuthContext:
-        """What an MCP OAuth access token authenticates as (``_authenticate_mcp_access_token``)."""
-        identity = proxy._mcp_identity_for_person(self.person["id"])
-        assert identity is not None and identity.denial is None
-        return proxy.AuthContext(identity=replace(identity, name="ChatGPT (MCP)"))
+        """What a real MCP OAuth access token authenticates as on a core route the adapter calls."""
+        store = proxy.MCP_OAUTH.deps.store
+        client = store.put_client(client_id="https://chatgpt.example/client.json", kind="cimd", name="ChatGPT",
+                                  redirect_uris=["https://chatgpt.example/cb"], grant_types=["authorization_code"],
+                                  auth_method="none", secret_hash=None, metadata={})
+        self.grant = store.create_grant(person_id=self.person["id"], client=client,
+                                        redirect_uri="https://chatgpt.example/cb", resource="https://gw.test/mcp",
+                                        scope=mcp_oauth.SCOPE)
+        token = mcp_oauth.ACCESS_TOKEN_PREFIX + secrets.token_urlsafe(24)
+        store.save_token(token, kind="access", grant_id=self.grant.id, client_id=client.client_id,
+                         scope=mcp_oauth.SCOPE, ttl=3600)
+        request = Request({"type": "http", "method": "POST", "path": "/gateway/v1/media/jobs", "query_string": b"",
+                           "client": ("127.0.0.1", 40000), "headers": [
+                               (b"authorization", f"Bearer {token}".encode()),
+                               (proxy._MCP_DISPATCH_HEADER.encode(), proxy._MCP_DISPATCH_SECRET.encode())]})
+        auth = proxy.authenticate_request(request, "/gateway/v1/media/jobs")
+        assert isinstance(auth, proxy.AuthContext) and auth.identity is not None, auth
+        self.assertEqual(auth.identity.name, "ChatGPT (MCP)")
+        return auth
 
     async def submit(self, auth_context: proxy.AuthContext, model: str = "flux2-klein-4b") -> str:
         response = await proxy._dispatch_gateway_media_job_submission(
@@ -249,6 +266,129 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(identity.app_id, self.session_app["id"])
                 self.assertEqual(identity.person_id, self.person["id"])
                 self.assertEqual(identity.name, "ChatGPT (MCP)")
+
+    # -- round 2: the caller is checked again, at every step -----------------
+
+    async def test_revoked_mcp_connection_stops_its_job(self) -> None:
+        job_id = await self.submit(self.mcp_context())
+        proxy.MCP_OAUTH.deps.store.revoke_grant(self.grant.id, "test")
+
+        await proxy._run_image_media_job(job_id)
+
+        job = media_jobs.get(job_id, audience="internal", path=self.jobs)
+        self.assertEqual(job["status"], media_jobs.STATUS_FAILED)
+        self.assertEqual(job["error_code"], "caller_unavailable")
+        self.assertEqual(self.backend_calls, 0)
+
+    def test_trusted_address_job_is_tied_to_its_address(self) -> None:
+        owner = self.person["id"]
+        lan = admin_store.create_app("Kitchen tablet", kind="service", owner_user_id=owner,
+                                     access_plan=self.images["id"], path=self.admin)
+        admin_store.add_trusted_address(lan["id"], "192.0.2.7", max_entries=10, path=self.admin)
+        admin_store.add_trusted_address(lan["id"], "192.0.2.8", max_entries=10, path=self.admin)
+        context = proxy.AuthContext(identity=proxy.runtime_identity_for_trusted_address(
+            ipaddress.ip_address("192.0.2.7"), path=self.admin))
+        payload = self.payload_for(context)
+        self.assertIsNotNone(proxy._auth_context_from_image_job_payload(payload))
+        # The address the job came from is no longer trusted; another one of the App is.
+        entry = next(e for e in admin_store.list_trusted_addresses(lan["id"], path=self.admin)
+                     if e["address"].startswith("192.0.2.7"))
+        admin_store.delete_trusted_address(lan["id"], entry["id"], path=self.admin)
+        self.assertIsNone(proxy._auth_context_from_image_job_payload(payload))
+        # Now the address is trusted again, but for a different App: still refused.
+        other = admin_store.create_app("Hall tablet", kind="service", owner_user_id=owner,
+                                       access_plan=self.images["id"], path=self.admin)
+        admin_store.add_trusted_address(other["id"], "192.0.2.7", max_entries=10, path=self.admin)
+        self.assertIsNone(proxy._auth_context_from_image_job_payload(payload))
+
+    async def test_image_retry_runs_under_the_callers_current_plan(self) -> None:
+        job_id = await self.submit(self.mcp_context())
+        calls = 0
+
+        async def busy_then_downgraded(**_kwargs: Any) -> Response:
+            nonlocal calls
+            calls += 1
+            # The owner moves the person to a plan without this workflow while the job waits to retry.
+            accounts.change_person(self.person["id"], "test", path=self.admin, plan_id=self.other["id"])
+            return Response(content=json.dumps({"error": {"message": "Insufficient free VRAM",
+                                                          "code": "vram_exhausted"}}),
+                            status_code=503, media_type="application/json", headers={"Retry-After": "0"})
+
+        with patch.object(proxy, "IMAGE_MEDIA_JOB_MAX_ATTEMPTS", 3), \
+                patch.object(proxy, "_generate_images_with_adaptive_batching", busy_then_downgraded):
+            await proxy._run_image_media_job(job_id)
+
+        job = media_jobs.get(job_id, audience="internal", path=self.jobs)
+        self.assertEqual(calls, 1)
+        self.assertEqual(job["status"], media_jobs.STATUS_FAILED)
+        self.assertEqual(job["error_category"], "authorization")
+
+    async def test_image_retry_stops_when_the_connection_is_revoked(self) -> None:
+        job_id = await self.submit(self.mcp_context())
+        calls = 0
+
+        async def busy_then_revoked(**_kwargs: Any) -> Response:
+            nonlocal calls
+            calls += 1
+            proxy.MCP_OAUTH.deps.store.revoke_grant(self.grant.id, "test")
+            return Response(content=json.dumps({"error": {"message": "Insufficient free VRAM",
+                                                          "code": "vram_exhausted"}}),
+                            status_code=503, media_type="application/json", headers={"Retry-After": "0"})
+
+        with patch.object(proxy, "IMAGE_MEDIA_JOB_MAX_ATTEMPTS", 3), \
+                patch.object(proxy, "_generate_images_with_adaptive_batching", busy_then_revoked):
+            await proxy._run_image_media_job(job_id)
+
+        job = media_jobs.get(job_id, audience="internal", path=self.jobs)
+        self.assertEqual(calls, 1)
+        self.assertEqual(job["error_code"], "caller_unavailable")
+
+    async def run_video_job(self, status_reply: dict[str, Any], *, change) -> tuple[dict[str, Any], list[str]]:
+        """Run a video job that is already rendering upstream; ``change`` runs after the first poll."""
+        video = store_plan("Video", path=self.admin, caps=("image", "video"))
+        accounts.change_person(self.person["id"], "test", path=self.admin, plan_id=video["id"])
+        context = self.mcp_context()
+        job = media_jobs.MediaJob(intent="video.generate", workflow="ltx-2.5-t2v", request_id="req_video",
+                                  metadata={"mode": "async_video_generation", "upstream_video_id": "video_abc"})
+        media_jobs.create(job, path=self.jobs)
+        payload = {**self.payload_for(context), "body": {"model": "video-ltx-2.5-t2v", "prompt": "x"},
+                   "headers": {}, "url": {}}
+        calls: list[str] = []
+
+        async def status(_video_id, _auth_context):
+            calls.append("status")
+            if len(calls) == 1:
+                change()
+            return Response(content=json.dumps(status_reply), status_code=200, media_type="application/json")
+
+        async def content(*_args, **_kwargs):
+            calls.append("content")
+            return Response(content=b"\x00\x00\x00\x18ftypmp42", status_code=200, media_type="video/mp4")
+
+        with patch.object(proxy, "_load_video_media_job_payload", lambda _job_id: payload), \
+                patch.object(proxy, "_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS", 0), \
+                patch.object(proxy, "COMFY_VIDEO_TIMEOUT", 1), \
+                patch.object(proxy, "proxy_comfy_video_status", status), \
+                patch.object(proxy, "proxy_comfy_video_content", content):
+            await asyncio.wait_for(proxy._run_video_media_job(job.job_id), 10)
+        return media_jobs.get(job.job_id, audience="internal", path=self.jobs), calls
+
+    async def test_video_poll_stops_when_the_plan_no_longer_allows_video(self) -> None:
+        job, calls = await self.run_video_job(
+            {"status": "in_progress", "progress": 10},
+            change=lambda: accounts.change_person(self.person["id"], "test", path=self.admin,
+                                                  plan_id=self.images["id"]))
+        self.assertEqual(calls, ["status"])
+        self.assertEqual(job["status"], media_jobs.STATUS_FAILED)
+        self.assertEqual(job["error_category"], "authorization")
+
+    async def test_video_content_is_not_fetched_after_the_connection_is_revoked(self) -> None:
+        job, calls = await self.run_video_job(
+            {"status": "completed", "progress": 100},
+            change=lambda: proxy.MCP_OAUTH.deps.store.revoke_grant(self.grant.id, "test"))
+        self.assertEqual(calls, ["status"])
+        self.assertEqual(job["status"], media_jobs.STATUS_FAILED)
+        self.assertEqual(job["error_code"], "caller_unavailable")
 
 
 if __name__ == "__main__":
