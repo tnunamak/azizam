@@ -166,6 +166,15 @@ def test_the_current_aliases_wait_for_the_current_service_reply_time(saved, rout
     for alias in ("current", "current-fast"):
         assert entries[alias]["litellm_params"]["timeout"] == router
         assert router_reply_timeout(registry, alias) == router
+    # The active backend can change without rebuilding the dynamic aliases.
+    # A second engine's longer reply limit must not be clipped by the first.
+    secondary = _lifecycle_registry(900)["services"]["hopped"]
+    secondary.update(id="secondary", priority=200)
+    registry["services"]["secondary"] = secondary
+    entries = {row["model_name"]: row for row in compile_litellm_config_from_registry(registry)["model_list"]}
+    for alias in ("current", "current-fast"):
+        assert entries[alias]["litellm_params"]["timeout"] == max(router, 900.0)
+        assert router_reply_timeout(registry, alias) == max(router, 900.0)
 
 
 def test_a_header_stored_by_a_raw_edit_is_sent_only_when_it_is_safe():
