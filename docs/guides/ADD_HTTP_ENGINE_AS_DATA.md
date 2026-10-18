@@ -203,6 +203,8 @@ container hostnames and public hostnames have unknown placement under the
 existing classifier and are refused without a DNS lookup. A record marked paid
 or remote, or an address classified remote by the existing registry rules, is
 refused at save because this lane has no paid-provider access or spend ledger.
+An older refused record can remain unchanged while you edit other services, or
+you can disable it. Other edits and re-enabling it must pass the current check.
 Use the existing provider route for those records. At every HTTP exchange the
 gateway resolves the hostname once, checks all answers, and dials only those
 checked addresses. It refuses link-local and cloud metadata addresses, its own

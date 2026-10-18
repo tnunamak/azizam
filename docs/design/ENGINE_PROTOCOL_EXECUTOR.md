@@ -358,3 +358,19 @@ shares containers; the SSE decode/map case was 3.10x. These are separate costs,
 not evidence that every isolated primitive is below 3x. No real network,
 provider inference, admission database or public-handler latency is measured
 by this microbenchmark.
+
+### W6a Round 2 bounded iteration measurement
+
+`scripts/bench_engine_protocol.py --each --json` compares `each` with a
+hand-written mapper that enforces the same iteration, depth, deadline, byte and
+ownership checks, including the final JSON write. For 1, 32 and 256 scalar
+items, the measured ratios were 1.11x, 1.14x and 1.20x. The 256-item case took
+911 µs versus 761 µs. Mutable-item cases measured 0.91x and 1.12x; the result
+below 1 is timing noise, not evidence of a speed advantage.
+
+The two implementations share safety helpers, which account for much of their
+cost. A separate comparison with a bare hand-written mapper plus JSON, without
+those checks, measured 4.92x, 11.94x and 13.84x. Thus the roughly 3x aim holds
+for the same safety guarantees, but does not hold against a bare mapper. The
+[Round 2 evidence](../verification/ENGINE_W6A_ROUND2.md) records both baselines
+and the limits of the measurement.
