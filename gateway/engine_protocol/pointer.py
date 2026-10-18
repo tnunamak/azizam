@@ -67,7 +67,7 @@ def get(doc: Any, segments: Segments) -> Any:
     return cur
 
 
-def select_all(doc: Any, segments: Segments, *, limit: int) -> list[Any]:
+def select_all(doc: Any, segments: Segments, *, limit: int, budget: str = "max_selected") -> list[Any]:
     """Every value a pointer with ``*`` segments reaches, in document order. More than ``limit`` is a budget failure."""
     found: list[Any] = []
 
@@ -85,7 +85,7 @@ def select_all(doc: Any, segments: Segments, *, limit: int) -> list[Any]:
                 return
             position += 1
         if len(found) >= limit:
-            raise BudgetExceeded("max_selected", f"A selecting pointer reached more than {limit} values.")
+            raise BudgetExceeded(budget, f"A selecting pointer reached more than {limit} values.")
         found.append(cur)
 
     walk(doc, 0)

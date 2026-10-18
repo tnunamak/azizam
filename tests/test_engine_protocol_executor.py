@@ -293,7 +293,7 @@ def test_a_bad_json_answer_is_a_malformed_response() -> None:
 
 
 def test_a_compressed_answer_is_refused() -> None:
-    ex, _ = make(MODELS, lambda r: httpx.Response(200, content=b"x", headers={"content-encoding": "gzip"}))
+    ex, _ = make(MODELS, lambda r: httpx.Response(200, stream=Chunks([b"x"]), headers={"content-encoding": "gzip"}))
     with pytest.raises(MalformedResponse):
         run(ex.invoke(conn(), req("models")))
 
@@ -540,7 +540,6 @@ def test_a_job_is_submitted_polled_fetched_and_cancelled_with_typed_references()
     async def go():
         ref = await ex.submit(conn(), req("render", {"prompt": "a cat"}))
         seen = [(await ex.poll(conn(), ref)).state for _ in range(3)]
-        status = await ex.poll(conn(), ref) if False else None
         return ref, seen
     ref, seen = run(go())
     assert (ref.op, ref.id) == ("render", "42")
@@ -558,7 +557,7 @@ def test_finished_job_assets_are_fetched_per_selected_handle() -> None:
         return status, await ex.fetch_assets(conn(), ref, status)
     status, refs = run(go())
     assert status.state is JobState.succeeded and status.assets == ("a.png", "b c.png")
-    assert [assets.get(r) for r in refs] == [b"bytes-of-a.png", b"bytes-of-b%20c.png"]
+    assert [assets.get(r) for r in refs] == [b"bytes-of-a.png", b"bytes-of-b c.png"]
     assert all(r.content_type == "image/png" for r in refs)
     assert [r.url.raw_path for r in fake.requests if "/files/" in r.url.path] == [b"/jobs/42/files/a.png", b"/jobs/42/files/b%20c.png"]
 
@@ -607,3 +606,32 @@ def test_fetch_asset_count_is_bounded() -> None:
         return await ex.poll(conn(), ref)
     with pytest.raises(BudgetExceeded):
         run(go())
+
+
+# --- preview, terminals ----------------------------------------------------------------------
+
+
+def test_preview_shows_the_effective_request_with_the_key_masked_and_sends_nothing() -> None:
+    ops = {"chat": {"class": "generate", "request": {"method": "POST", "path": "/api/v3/converse", "query": [{"name": "k", "from": "/params/k"}],
+                                                      "body": {"encoding": "json", "map": [{"copy": {"from": "/body/model", "to": "/m"}}]}},
+                    "response": {"framing": "json"}}}
+    ex, fake = make(ops, lambda r: httpx.Response(200, json={}), auth={"inference": {"kind": "bearer"}})
+    shown = run(ex.preview(conn(credentials={"inference": Credential(SECRET)}), req("chat", {"model": "m1"}, params={"k": "v"})))
+    assert shown == {
+        "method": "POST", "url": f"{BASE}/api/v3/converse?k=v",
+        "headers": {"accept-encoding": "identity", "authorization": "<configured>", "content-type": "application/json"},
+        "body": '{"m":"m1"}',
+    }
+    assert fake.requests == [] and SECRET not in json.dumps(shown)
+
+
+def test_an_sse_event_name_can_end_the_stream_and_an_ndjson_tail_without_a_newline_is_kept() -> None:
+    ops = {"s": {"class": "generate", "request": {"method": "GET", "path": "/s"}, "response": {"framing": "sse", "terminal": {"event": "done"}}},
+           "n": {"class": "generate", "request": {"method": "GET", "path": "/n"}, "response": {"framing": "ndjson"}}}
+    def handler(r):
+        if r.url.path == "/s":
+            return httpx.Response(200, stream=Chunks([b"event: tok\ndata: 1\n\nevent: done\ndata: {}\n\ndata: after\n\n"]))
+        return httpx.Response(200, stream=Chunks([b'{"a":1}\n{"b":', b"2}"]))
+    ex, _ = make(ops, handler)
+    assert collect(run(ex.invoke(conn(), req("s")))) == [b"1"]
+    assert collect(run(ex.invoke(conn(), req("n")))) == [b'{"a":1}', b'{"b":2}']

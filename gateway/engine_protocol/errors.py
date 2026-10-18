@@ -78,6 +78,12 @@ class UpstreamError(ProtocolError):
         self.advice = advice
 
 
+class MalformedResponse(ProtocolError):
+    """The engine answered 2xx but not in the shape its description promises (not JSON, no job id, an unknown status)."""
+
+    code = "malformed_response"
+
+
 class UnknownOperation(ProtocolError):
     code = "unknown_operation"
 
