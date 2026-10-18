@@ -102,6 +102,8 @@ PACKAGE_RECORD = register(Obj("PackageRecord", {
     "object_counts": JSON, "services": seq(STR), "protocol_frontends": seq(STR), "capabilities": seq(STR),
     "workflows": seq(STR), "adapters": seq(STR), "translators": seq(STR), "code_objects": JSON,
     "requires_code_trust": BOOL, "warnings": seq(STR), "updated_at": INT,
+    # The install proofs are keyed digests (``mac``) of records, never records; the disable states are booleans.
+    "installed_records": JSON, "installed_records_version": INT, "disabled_states": JSON,
 }))
 PACKAGE_INDEX = register(Obj("PackageIndex", {
     "schema_version": INT, "sources": seq(PACKAGE_SOURCE), "packages": mapping(PACKAGE_RECORD), "updated_at": INT,
@@ -178,6 +180,7 @@ EFFECTIVE_CONFIG = register(Obj("EffectiveConfig", {
 # A route answers with a mapping; each key is a registered type. A key that is not here is a programming error:
 # the projector refuses the whole body, so a new route cannot answer with a field nobody classified.
 EXCLUDED_LIST = seq(EXCLUDED_ITEM)
+AFFECTED_RECORD = Obj("AffectedRecord", {"kind": SHORT, "id": SHORT, "action": SHORT})
 BODY_KEYS: dict[str, Policy] = {
     "service_registry": REGISTRY_DOC,
     "excluded": EXCLUDED_LIST,
@@ -188,6 +191,7 @@ BODY_KEYS: dict[str, Policy] = {
     "provider": PROVIDER_VIEW,
     "overrides": OVERRIDES,
     "operator_settings_generation": INT,
+    "affected_records": seq(AFFECTED_RECORD),
     "service_id": STR,
     "engine": ENGINE_VIEW,
     "config": EFFECTIVE_CONFIG,

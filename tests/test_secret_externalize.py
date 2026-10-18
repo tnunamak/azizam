@@ -219,3 +219,24 @@ def test_the_admin_key_of_a_load_unload_driver_is_one_entry(db):
     moved, paths = record_carriers.externalize_service(record, Recorder(db))
     assert paths == ["lifecycle.admin_key"] and S["env"] not in json.dumps(moved)
     assert runtime_secrets.scalar(moved["lifecycle"], "admin_key") == S["env"]
+
+
+@pytest.mark.parametrize("value", [1234, 12.5, ["a", "b"], {"k": "v"}])
+def test_a_header_value_that_is_not_text_is_moved_too_a_yaml_number_is_as_secret_as_a_string(db, value):
+    record = {"id": "e", "config": {"host": "h", "port": 1, "headers": [{"name": "X-Vendor", "value": value}]}}
+
+    moved, paths = record_carriers.externalize_service(record, Recorder(db))
+
+    assert paths == ["config.headers"] and "value" not in moved["config"]["headers"][0]
+    assert secret_refs.is_secret_entry(moved["config"]["headers"][0])
+    assert record_carriers.legacy_secret_texts(record), "an error message about the unmoved record would still scrub it"
+
+
+@pytest.mark.parametrize("value", ["text-secret", 1234, 12.5])
+def test_a_name_to_value_header_mapping_moves_each_value_whatever_its_type(db, value):
+    record = {"id": "e", "config": {"host": "h", "port": 1, "headers": {"X-Vendor": value}}}
+
+    moved, paths = record_carriers.externalize_service(record, Recorder(db))
+
+    assert paths == ["config.headers"] and secret_refs.is_secret_entry(moved["config"]["headers"]["X-Vendor"])
+    assert str(value) not in json.dumps(moved)

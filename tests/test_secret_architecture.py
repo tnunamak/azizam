@@ -117,3 +117,16 @@ def test_no_route_module_decides_what_is_secret_by_a_key_name():
     for relative in ("gateway/projection.py", "gateway/projection_types.py", "gateway/egress.py", "gateway/admin_api.py", "gateway/engine_admin.py"):
         source = (ROOT / relative).read_text(encoding="utf-8")
         assert "looks_like_credential" not in source and "names_credential" not in source and "is_secret_key" not in source, relative
+
+
+def test_only_the_secret_store_and_the_integrity_module_read_the_key_file():
+    """The install proofs are keyed by the file that protects the store; one small module derives that key."""
+    readers = {relative for relative in _production_files()
+               if any(isinstance(node, (ast.Attribute, ast.Name)) and getattr(node, "attr", getattr(node, "id", "")) in {
+                   "load_secret_key", "load_or_create_secret_key"} for node in ast.walk(_tree(relative)))}
+    assert readers == {"gateway/secret_store.py", "gateway/record_integrity.py"}, readers
+
+
+def test_only_the_package_code_and_the_migration_import_the_integrity_module():
+    importers = {relative for relative in _production_files() if any(name.endswith("record_integrity") for name in _imports(_tree(relative)))}
+    assert importers <= {"gateway/extension_packages.py", "gateway/admin_runtime.py", "gateway/secret_externalize_migration.py"}, importers

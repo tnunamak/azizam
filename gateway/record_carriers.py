@@ -25,6 +25,7 @@ are read here once, by the migration and by ingestion, and turned into entries; 
 from __future__ import annotations
 
 import copy
+import json
 import re
 import shlex
 from typing import Any, Iterator, Mapping
@@ -274,6 +275,17 @@ def _legacy_command_items(command: Any, put: Put) -> list[Any] | None:
 # ---------------------------------------------------------------------------
 
 
+def _value_text(value: Any) -> str:
+    """The text a header value is stored as: a number a YAML file wrote (``value: 1234``) is as much a secret as a string."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (list, dict)) and value:
+        return json.dumps(value, sort_keys=True)
+    return ""
+
+
 def externalize_service(record: Mapping[str, Any], put: Put) -> tuple[dict[str, Any], list[str]]:
     """``record`` with every inline secret moved into the store, and the paths that were moved. Idempotent.
 
@@ -294,10 +306,11 @@ def externalize_service(record: Mapping[str, Any], put: Put) -> tuple[dict[str, 
                 # A row has the fields of its type and no others: an extra field inside a carrier is a place for a
                 # value that no view or migration looks at, so it is not kept.
                 row = {key: row[key] for key in HEADER_ROW_KEYS if key in row}
-            if (isinstance(row, Mapping) and "value" in row and not row.get("public") and isinstance(row.get("value"), str)
+            if (isinstance(row, Mapping) and "value" in row and not row.get("public")
                     and not secret_refs.is_secret_entry(row)):
-                if row["value"]:
-                    rows.append(secret_refs.entry(put(row["value"], origin), name=row.get("name")))
+                text = _value_text(row["value"])
+                if text:
+                    rows.append(secret_refs.entry(put(text, origin), name=row.get("name")))
                     moved.append(HEADER_PATH)
                 else:
                     rows.append(dict(row))  # an empty value holds nothing to move
@@ -308,8 +321,9 @@ def externalize_service(record: Mapping[str, Any], put: Put) -> tuple[dict[str, 
         # A name-to-value mapping is not the shape the gateway sends from, but it is still a place a value can be
         # written: every value moves to the store and the mapping keeps one entry per name, so nothing stays inline.
         for name, value in list(headers.items()):
-            if isinstance(value, str) and value and not secret_refs.is_secret_entry(value):
-                headers[name] = secret_refs.entry(put(value, origin))
+            text = _value_text(value) if not secret_refs.is_secret_entry(value) else ""
+            if text:
+                headers[name] = secret_refs.entry(put(text, origin))
                 moved.append(HEADER_PATH)
 
     for path in ENV_CONTAINERS:

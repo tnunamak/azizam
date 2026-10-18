@@ -22,6 +22,7 @@ Nothing here decides what is secret: that is the projection and the data model (
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any, Awaitable, Callable, Iterable, Mapping
 
 from fastapi import Request
@@ -84,8 +85,16 @@ class SafeErrorResponse(ApprovedResponse):
     pass
 
 
+# The headers a projected response may carry besides its body: the revision of the registry it shows (``ETag``) and the
+# instruction that nothing in it is kept (``Cache-Control``), and the file name of an export. They are named here so the fresh tree the projector builds
+# cannot lose them and a handler cannot attach another header to a record answer by this constructor.
+PROJECTED_HEADERS = frozenset({"etag", "cache-control", "content-disposition"})
+
+
 def projected_response(content: Mapping[str, Any], *, status_code: int = 200, headers: Mapping[str, str] | None = None) -> ProjectedResponse:
     """A response whose every top-level key is a registered projection type (``projection_types.BODY_KEYS``)."""
+    if any(str(name).lower() not in PROJECTED_HEADERS for name in (headers or {})):
+        raise ProjectionViolation("a projected response may carry only the headers registered for it")
     return ProjectedResponse(content=projection_types.project_body(dict(content)).tree, status_code=status_code,
                              headers=dict(headers or {}))
 
@@ -174,7 +183,11 @@ def verify_and_freeze(app: Any) -> frozenset[tuple[str, str]]:
         if isinstance(route, ManagementRoute):
             managed.update((method, path) for method in methods)
             continue
-        module = getattr(getattr(route, "endpoint", None), "__module__", "?")
+        endpoint = getattr(route, "endpoint", None)
+        module = getattr(endpoint, "__module__", "?")
+        # The gateway module may be loaded under another name (a test loads proxy.py as ``proxy_under_test``): the file decides.
+        if module not in UNMANAGED_ADMIN_MODULES and getattr(getattr(endpoint, "__code__", None), "co_filename", "").endswith("/proxy.py"):
+            module = "proxy"
         if module not in UNMANAGED_ADMIN_MODULES:
             unregistered.append(f"{','.join(methods) or 'WS'} {path} ({module})")
     if unregistered:
@@ -195,6 +208,22 @@ def _log_failure(scope: Scope, exc: BaseException) -> None:
     frames = traceback.extract_tb(exc.__traceback__)
     where = f"{frames[-1].filename.rsplit('/', 1)[-1]}:{frames[-1].lineno}" if frames else "?"
     print(f"[egress] management request failed: {type(exc).__name__} at {where}", flush=True)
+
+
+def _framework_shaped(start: Message, body: bytes) -> bool:
+    """True for an error answer the framework wrote (``{"detail": ...}``, or plain text), which can quote a request body.
+
+    A handler of a route outside the managed list answers with its own ``{"error": {...}}``; that is its own contract
+    (a code a page reads) and is left alone.
+    """
+    content_type = next((value for key, value in start.get("headers", ()) if key.lower() == b"content-type"), b"").decode("latin-1")
+    if not content_type.startswith("application/json"):
+        return True  # Starlette's plain-text 404, 405 and 500
+    try:
+        decoded = json.loads(body or b"null")
+    except ValueError:
+        return True
+    return not (isinstance(decoded, dict) and "error" in decoded and "detail" not in decoded)
 
 
 class EgressGate:
@@ -237,15 +266,17 @@ class EgressGate:
             return
         if scope.get(MANAGEMENT_KEY):
             await self._send(send, safe_error_response(500, *_BLOCKED))
-        elif status in _FIXED:
-            await self._send(send, fixed_error_response(status))
+        elif status in _FIXED and _framework_shaped(start, bytes(body)):
+            # The fixed body replaces what the framework wrote; the ``Allow`` header of a 405 is routing data and stays.
+            allow = [(key, value) for key, value in start.get("headers", ()) if key.lower() == b"allow"]
+            await self._send(send, fixed_error_response(status), extra=allow)
         else:
             await send(start)
             await send({"type": "http.response.body", "body": bytes(body)})
 
     @staticmethod
-    async def _send(send: Send, response: ApprovedResponse) -> None:
-        headers = [(key.lower().encode("latin-1"), value.encode("latin-1")) for key, value in response.headers.items()]
+    async def _send(send: Send, response: ApprovedResponse, extra: Iterable[tuple[bytes, bytes]] = ()) -> None:
+        headers = [(key.lower().encode("latin-1"), value.encode("latin-1")) for key, value in response.headers.items()] + list(extra)
         await send({"type": "http.response.start", "status": response.status_code, "headers": headers})
         await send({"type": "http.response.body", "body": response.body})
 

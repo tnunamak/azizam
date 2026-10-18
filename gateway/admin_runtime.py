@@ -27,7 +27,7 @@ from typing import Any, Iterable, Mapping
 
 from fastapi import Request, status
 
-from gateway import admin_store, engine_check, extension_packages, projection, projection_types, record_carriers, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
+from gateway import admin_store, engine_check, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
 from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
@@ -1505,10 +1505,11 @@ class AdminSQLiteStore:
             raise
         package_id = str((review.get("package") or {}).get("id") or "")
         # The snapshot keeps a digest of each normalized record the package wrote, not a copy.
+        # They are digested in the form the registry stores them (references, not secrets), under the gateway's own key.
         package_index["packages"][package_id].update(extension_packages.installed_records_proof({
             kind: {record_id: registry[kind][record_id] for record_id in imported[kind]}
             for kind in sorted(extension_packages.DATA_OBJECT_KINDS)
-        }))
+        }, key=record_integrity.install_key(self.path)))
         # Registry, package index and both audit facts commit together: a
         # failure at any step leaves the generation and every row unchanged.
         document, excluded = self._with_excluded_records(registry)
@@ -1595,7 +1596,7 @@ class AdminSQLiteStore:
         index = self.get_extension_package_index()
         try:
             package_index, next_registry, affected = extension_packages.change_package_lifecycle(
-                index, registry, package_id, mode=mode,
+                index, registry, package_id, mode=mode, key=self._install_key(index),
             )
         except KeyError as exc:
             raise ValueError(str(exc)) from exc
@@ -1609,7 +1610,8 @@ class AdminSQLiteStore:
                 f"access plan {plan['name']}": plan["plan"]
                 for plan in admin_store.list_access_plans_in(conn)
             }
-            extension_packages.change_package_lifecycle(index, registry, package_id, mode=mode, references=references)
+            extension_packages.change_package_lifecycle(
+                index, registry, package_id, mode=mode, references=references, key=self._install_key(index))
 
         registry_record, index_record = admin_store.write_service_registry_and_setting_with_audits(
             next_registry,
@@ -1629,6 +1631,14 @@ class AdminSQLiteStore:
             }],
             path=self.path,
         )
+        # What a removal took out of the registry and the index no longer needs its secrets: the entries of the removed
+        # records and of the package's own source. A record the package left (detached, kept) keeps its entries.
+        gone = [registry[item["kind"]][item["id"]] for item in affected
+                if item["action"] == "removed" and isinstance((registry.get(item["kind"]) or {}).get(item["id"]), Mapping)]
+        gone_refs = {ref for record in gone for ref in record_carriers.refs_in(record)}
+        gone_refs |= set(record_carriers.refs_in((index["packages"].get(package_id) or {}).get("source")))
+        still_used = set(record_carriers.refs_in(next_registry)) | set(record_carriers.refs_in(index_record["value"]))
+        self._discard_secrets(sorted(gone_refs - still_used))
         self.write_litellm_config(registry_record["value"])
         self._fire_registry_changed(registry_record)
         return {
@@ -1638,6 +1648,16 @@ class AdminSQLiteStore:
             "operator_settings_generation": registry_record["operator_settings_generation"],
             "affected_records": affected,
         }
+
+    def _install_key(self, index: Mapping[str, Any]) -> bytes | None:
+        """The key of the install proofs, when the index holds a keyed proof (a store with none is not given a key file)."""
+        keyed = any(
+            isinstance(entry, Mapping) and "mac" in entry
+            for package in (index.get("packages") or {}).values() if isinstance(package, Mapping)
+            for records in (package.get("installed_records") or {}).values() if isinstance(records, Mapping)
+            for entry in records.values()
+        )
+        return record_integrity.install_key(self.path) if keyed else None
 
     def get_oidc_config_setting(self) -> dict[str, Any] | None:
         """Return the DB-stored OIDC provider config with secrets redacted.

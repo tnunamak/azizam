@@ -2878,18 +2878,18 @@ def create_admin_router(
         )
 
     def _extension_package_response(result: Mapping[str, Any]) -> JSONResponse:
-        """Answer a package change with the registry as a caller may see it.
+        """Answer a package change: enable and remove share this one answer, so the projection is switched in one place.
 
-        Enable and remove share this one answer, so a new projection (D21) is switched in one place.
+        The whole result goes through the projection, not only the registry: the package index and the package carry
+        source URLs (public form, credentials as entries), the review appears on enable, and ``affected_records`` is
+        listed. The ETag from the registry generation and ``Cache-Control: no-store`` are headers of the response, not
+        of the projected tree.
         """
-        if isinstance(result.get("service_registry"), Mapping):
-            result = {**result, "service_registry": engine_redaction.redact_registry(result["service_registry"])}
-        response = JSONResponse(status_code=status.HTTP_200_OK, content=result)
+        headers = {"Cache-Control": "no-store"}
         generation = result.get("operator_settings_generation")
         if generation is not None:
-            response.headers["ETag"] = f'"os-{generation}"'
-        response.headers["Cache-Control"] = "no-store"
-        return response
+            headers["ETag"] = f'"os-{generation}"'
+        return egress.projected_response(result, status_code=status.HTTP_200_OK, headers=headers)
 
     @router.get("/extensions")
     def list_extension_packages(request: Request) -> JSONResponse:
