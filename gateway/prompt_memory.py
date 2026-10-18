@@ -851,13 +851,21 @@ def _holds_media(folder: Path) -> bool:
     return any(directory_index.stored_digest(name) is not None for name in os.listdir(folder))
 
 
-def _adopt_fresh_folder(conn: sqlite3.Connection, folder: Path, *, prompt_path: Path | None,
-                        path: Path | None) -> None:
+def _adopt_fresh_folder(folder: Path, *, prompt_path: Path | None, path: Path | None) -> None:
     """Record this folder for a fresh Library: no entries in either store, no media file, no marker.
 
     Anything else needs the owner's confirmation. Failing to write quietly leaves the
-    folder unconfirmed, which the Library shows as such.
+    folder unconfirmed, which the Library shows as such. Only a fresh install opens
+    this connection; the steady state reads through the request's own connection.
     """
+    conn = _connect(path)
+    try:
+        _adopt_in(conn, folder, prompt_path=prompt_path, path=path)
+    finally:
+        conn.close()
+
+
+def _adopt_in(conn: sqlite3.Connection, folder: Path, *, prompt_path: Path | None, path: Path | None) -> None:
     if os.path.lexists(folder / MEDIA_FOLDER_MARKER) or _has_library_entries(conn):
         return
     if prompt_path is not None and Path(prompt_path) != Path(path or media_jobs.DB_PATH):
@@ -899,22 +907,21 @@ def media_folder_state(
     volume needs the owner's confirmation. Raises PublicFailure when the folder cannot be seen.
     """
     _folder_identity(folder, expected)
-    conn = _connect(path)
-    try:
-        if _recorded_volume(conn) is None:
-            _adopt_fresh_folder(conn, folder, prompt_path=prompt_path, path=path)
+    with _read_connection(path) as conn:
         recorded = _recorded_volume(conn)
-        try:
-            marker = _read_media_marker(folder)
-        except (OSError, ValueError, UnicodeError):
-            marker = None  # an unusable marker matches nothing
-        if recorded is None:
-            return "unconfirmed"
-        if marker is None or marker["volume_id"] != recorded:
-            return "mismatch"
-        return "confirmed"
-    finally:
-        conn.close()
+    if recorded is None:
+        _adopt_fresh_folder(folder, prompt_path=prompt_path, path=path)
+        with _read_connection(path) as conn:
+            recorded = _recorded_volume(conn)
+    try:
+        marker = _read_media_marker(folder)
+    except (OSError, ValueError, UnicodeError):
+        marker = None  # an unusable marker matches nothing
+    if recorded is None:
+        return "unconfirmed"
+    if marker is None or marker["volume_id"] != recorded:
+        return "mismatch"
+    return "confirmed"
 
 
 def confirm_media_folder(
