@@ -123,9 +123,9 @@ def _no_comfy_object_info(monkeypatch: pytest.MonkeyPatch) -> None:
     """Submitting a ComfyUI prompt derives the embedded UI workflow from
     ComfyUI's /object_info. Tests must not reach for a live ComfyUI, so the
     lookup reports "unavailable" unless a test patches it."""
-    from gateway import comfy_object_info
+    from gateway.engine_protocol import node_info
 
-    monkeypatch.setattr(comfy_object_info, "lookup", lambda _host, _class_type: None)
+    monkeypatch.setattr(node_info, "lookup", lambda _host, _class_type: None)
 
 
 @pytest.fixture(autouse=True)

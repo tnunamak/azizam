@@ -92,7 +92,7 @@ from gateway import (
 from gateway import secret_store
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
 from gateway.http_tls import tls_context
-from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
+from gateway import media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
@@ -116,6 +116,9 @@ from gateway.engine_protocol.types import CanonicalRequest as AdapterRequest
 from gateway.engine_protocol.types import Connection as AdapterConnection
 from gateway.engine_protocol.types import Reply as AdapterReply
 from gateway.engine_protocol.types import Timeouts as AdapterTimeouts
+from gateway.engine_protocol import node_info
+from gateway.engine_protocol import node_ui_graph
+from gateway.engine_protocol.node_validation import validate_workflow_graph
 from gateway import custom_voices
 from gateway import voice_audio
 from gateway import voices_api
@@ -263,7 +266,6 @@ from gateway.chat_extensions import (
     validate_chat_completions_extensions,
     validate_responses_extensions,
 )
-from gateway.comfyui_workflow_validation import validate_comfyui_workflow_graph
 from gateway.transforms import (
     REGISTRY as _TRANSFORM_REGISTRY,
     TransformContext as _TransformContext,
@@ -5207,7 +5209,7 @@ def load_graph_workflow(model_name: str) -> Optional[dict]:
 
 def _graph_node_info(class_type: str) -> Optional[dict]:
     """A node type's slot definitions from ComfyUI /object_info (cached), or None."""
-    return comfy_object_info.lookup(COMFY_HOST, class_type)
+    return node_info.lookup(_graph_connection().address, class_type)
 
 
 def _derive_ui_workflow(api: Mapping[str, Any]) -> Optional[dict]:
@@ -5215,12 +5217,12 @@ def _derive_ui_workflow(api: Mapping[str, Any]) -> Optional[dict]:
 
     So generated media embed the 'workflow' chunk/tag (re-openable in the
     ComfyUI frontend). Uses /object_info for each node's slot ordering; see
-    ``gateway.comfy_ui_graph``. Best-effort: None if ComfyUI is unreachable or
+    ``gateway.engine_protocol.node_ui_graph``. Best-effort: None if ComfyUI is unreachable or
     any node type is unknown, in which case the caller falls back to a
     hand-authored twin or omits the chunk.
     """
     try:
-        return comfy_ui_graph.derive_ui_workflow(api, _graph_node_info)
+        return node_ui_graph.derive_ui_workflow(api, _graph_node_info)
     except Exception as exc:  # noqa: BLE001 - never fail a render over metadata
         print(f"[proxy] UI workflow derivation failed: {type(exc).__name__}: {exc}", flush=True)
         return None
@@ -5229,7 +5231,7 @@ def _derive_ui_workflow(api: Mapping[str, Any]) -> Optional[dict]:
 def _load_graph_workflow_file(workflow_path: Path) -> Optional[dict]:
     with open(workflow_path) as f:
         workflow = json.load(f)
-    errors = validate_comfyui_workflow_graph(workflow)
+    errors = validate_workflow_graph(workflow)
     if errors:
         print(
             f"[proxy] invalid ComfyUI workflow {workflow_path}: {'; '.join(errors)}",
@@ -9602,7 +9604,7 @@ def _load_video_workflow_file(workflow_cfg: dict) -> Optional[dict]:
         return None
     with open(p) as f:
         workflow = json.load(f)
-    errors = validate_comfyui_workflow_graph(workflow)
+    errors = validate_workflow_graph(workflow)
     if errors:
         print(
             f"[proxy] invalid video ComfyUI workflow {p}: {'; '.join(errors)}",
@@ -12519,7 +12521,7 @@ async def lifespan(app: FastAPI):
     print(f"[proxy] Model compatibility: {'enabled' if MODEL_COMPAT_ENABLED else 'disabled'}", flush=True)
     # Keep the last good ComfyUI node definitions on disk, so embedding a workflow
     # in generated media survives a ComfyUI that is restarting at submit time.
-    comfy_object_info.DISK_CACHE_DIR = Path(__file__).resolve().parent / "cache" / "comfy_object_info"
+    node_info.DISK_CACHE_DIR = Path(__file__).resolve().parent / "cache" / "comfy_object_info"
 
     # Replay persisted firehose metrics so per-key counters and the recent-event
     # timeline survive proxy restarts. The window stays bounded at 24h; older
@@ -23278,7 +23280,7 @@ def _load_audio_workflow_file(workflow_cfg: dict):
         return None
     with open(p) as f:
         workflow = json.load(f)
-    errors = validate_comfyui_workflow_graph(workflow)
+    errors = validate_workflow_graph(workflow)
     if errors:
         print(
             f"[proxy] invalid audio ComfyUI workflow {p}: {'; '.join(errors)}",

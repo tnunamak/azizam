@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway.comfyui_workflow_validation import (  # noqa: E402
-    validate_comfyui_workflow_graph,
+from gateway.engine_protocol.node_validation import (  # noqa: E402
+    validate_workflow_graph,
 )
 from gateway.discovery import WorkflowRegistry  # noqa: E402
 
@@ -30,29 +30,29 @@ class TestComfyUIWorkflowValidation(unittest.TestCase):
             "__ui_workflow__": {"nodes": []},
         }
 
-        self.assertEqual(validate_comfyui_workflow_graph(workflow), [])
+        self.assertEqual(validate_workflow_graph(workflow), [])
 
     def test_workflow_must_be_mapping(self) -> None:
         self.assertEqual(
-            validate_comfyui_workflow_graph([]),
+            validate_workflow_graph([]),
             ["workflow must be a mapping of node ids to node definitions"],
         )
 
     def test_workflow_must_have_non_meta_node(self) -> None:
         self.assertEqual(
-            validate_comfyui_workflow_graph({"_meta": {"title": "No nodes"}}),
+            validate_workflow_graph({"_meta": {"title": "No nodes"}}),
             ["workflow must contain at least one node"],
         )
 
     def test_node_must_be_mapping(self) -> None:
         self.assertEqual(
-            validate_comfyui_workflow_graph({"3": "KSampler"}),
+            validate_workflow_graph({"3": "KSampler"}),
             ["node '3' must be a mapping"],
         )
 
     def test_node_requires_class_type_and_inputs_mapping(self) -> None:
         self.assertEqual(
-            validate_comfyui_workflow_graph({"3": {"class_type": "", "inputs": []}}),
+            validate_workflow_graph({"3": {"class_type": "", "inputs": []}}),
             [
                 "node '3'.class_type must be a non-empty string",
                 "node '3'.inputs must be a mapping",

@@ -232,8 +232,8 @@ def test_lifespan_cancels_and_joins_all_owned_worker_registries(jobs, tmp_path, 
                         lambda: tmp_path / "migration.json")
     monkeypatch.setattr(proxy.state, "shutdown_requested", False)
     # Remember the previous value so monkeypatch restores the lifespan assignment.
-    monkeypatch.setattr(proxy.comfy_object_info, "DISK_CACHE_DIR",
-                        proxy.comfy_object_info.DISK_CACHE_DIR)
+    monkeypatch.setattr(proxy.node_info, "DISK_CACHE_DIR",
+                        proxy.node_info.DISK_CACHE_DIR)
 
     async def parked(*args, **kwargs):
         await asyncio.Event().wait()
