@@ -51,6 +51,14 @@ async function boot(name: string, register: "scoped" | "pi-default") {
 	else runtime.registerNativeProvider(provider);
 	await Promise.all(refreshes);
 	await provider.prefetch(runtime);
+	// Registration and prefetch can queue refresh work on the next turn. Drain
+	// every observed refresh and one event-loop turn before checking commands.
+	for (;;) {
+		const pending = refreshes.splice(0);
+		await Promise.all(pending);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		if (refreshes.length === 0) break;
+	}
 	return { runtime, provider, auth };
 }
 

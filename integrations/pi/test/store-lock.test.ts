@@ -2,7 +2,8 @@
 // mkdir and registration must not stall our startup past its budget; a lock a live process refreshes must survive.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { after, mock, test, type TestContext } from "node:test";
@@ -60,7 +61,7 @@ function holder(path: string, mode: "refresh" | "crash") {
 	return { child, ready };
 }
 
-test("orphaned lock from a crashed holder is reclaimed and the start completes within budget", async () => {
+test("orphaned lock from a crashed holder is reclaimed without stalling", async () => {
 	const { path, lock } = freshDir("crash");
 	const { child, ready } = holder(path, "crash");
 	await ready;
@@ -69,24 +70,35 @@ test("orphaned lock from a crashed holder is reclaimed and the start completes w
 	assert.ok(existsSync(lock));
 	const old = new Date(Date.now() - 20_000);
 	utimesSync(lock, old, old);
-	const store = await createRepairingModelsStore(path, { lockBudgetMs: 3000 });
-	await store.write("azizam", { models: [model] });
-	assert.equal((await store.read("azizam"))?.models.length, 1);
-	assert.ok(!existsSync(lock), "lock released after use");
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await Promise.race([
+			(async () => {
+				const store = await createRepairingModelsStore(path, { lockBudgetMs: 3000 });
+				await store.write("azizam", { models: [model] });
+				assert.equal((await store.read("azizam"))?.models.length, 1);
+				assert.ok(!existsSync(lock), "lock released after use");
+			})(),
+			new Promise<never>((_resolve, reject) => {
+				timer = setTimeout(() => reject(new Error("orphan reclaim stalled beyond 2.2 seconds")), 2200);
+			}),
+		]);
+	} finally { if (timer) clearTimeout(timer); }
 });
 
 test("a lock refreshed by a live holder is never removed; the store degrades within budget and logs the lock path", { timeout: 30_000 }, async (t) => {
 	const { path, lock } = freshDir("live");
-	const { child, ready } = holder(path, "refresh");
-	t.after(() => child.kill("SIGKILL"));
-	await ready;
+	const lockfile = createRequire(import.meta.url)("proper-lockfile");
+	t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+	const release = await lockfile.lock(path, { realpath: false, stale: 2000, retries: 0 });
+	t.after(async () => { await release(); t.mock.timers.reset(); });
 	const logged = mock.method(console, "error", () => {});
 	t.after(() => logged.mock.restore());
-	// Model a recent heartbeat after the lock has crossed the orphan age.
-	const stale = new Date(Date.now() - 5_000);
-	utimesSync(lock, stale, stale);
-	const refreshed = new Date();
-	utimesSync(lock, refreshed, refreshed);
+	const beforeRefresh = statSync(lock).mtimeMs;
+	t.mock.timers.tick(1500);
+	for (let i = 0; i < 10 && statSync(lock).mtimeMs <= beforeRefresh; i++)
+		await new Promise(setImmediate); // let proper-lockfile's asynchronous heartbeat write finish
+	assert.ok(statSync(lock).mtimeMs > beforeRefresh, "live holder must refresh the lock itself");
 	const controlled = controlledBudgets(t);
 	const store = await createRepairingModelsStore(path, { lockBudgetMs: 1200, orphanStaleMs: 1800 });
 	const read = store.read("azizam");
