@@ -201,6 +201,24 @@ def test_process_boot_recovery_adopts_matching_recipe_and_terminates_disabled_on
         original.stop(svc)
 
 
+def test_adopted_process_that_never_passes_readiness_is_stopped(tmp_path):
+    svc = process_service(tmp_path)
+    svc["residency"]["idle_owner"] = "engine"
+    original = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
+
+    async def scenario():
+        assert await original.ensure_ready(svc, 2)
+        svc["observations"]["process_ready"]["http"]["expect"] = 201
+        adopted = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
+        assert await adopted.ensure_ready(svc, 0.05) is False
+        assert await adopted.status(svc) == "stopped"
+
+    try:
+        run(scenario())
+    finally:
+        original.stop(svc)
+
+
 def test_observations_are_unknown_without_probe_and_inventory_is_not_residency():
     reader = ObservationReader()
     assert run(reader.read({"connection": {"address": "http://127.0.0.1:1"}}, "resident")).known is False
