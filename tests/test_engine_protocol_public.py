@@ -288,3 +288,27 @@ def test_async_submission_receives_the_same_offering_parameters_as_sync(engine,m
     response=engine.client.post('/v1/images/generations',json={'model':'prism-image','prompt':'blue'})
     assert response.status_code==200,response.text
     assert str(engine.fake.requests[0].url)=='http://prism.test:9100/prefix/api/v3/renders?offering=prism-image&model=render'
+
+
+@pytest.mark.parametrize('failure',['blocked',503])
+def test_core_job_poll_keeps_typed_errors_and_retries_only_transient_failures(engine,monkeypatch,failure):
+    from gateway.engine_protocol.errors import TransportFailure
+    original=engine.fake.__call__; polls=[]
+    def handler(request):
+        if request.url.path=='/prefix/api/v3/renders/job-1' and request.method=='GET':
+            polls.append(1)
+            if failure=='blocked':
+                raise TransportFailure('blocked','Destination refused')
+            if len(polls)==1:
+                return httpx.Response(503,text='temporarily busy')
+        return original(request)
+    wire=transport.HttpxTransport.for_tests(HandlerTransport(handler))
+    monkeypatch.setattr(executor,'HttpxTransport',lambda:wire)
+    response=engine.client.post('/v1/images/generations',json={'model':'prism-image','prompt':'blue'})
+    if failure=='blocked':
+        assert response.status_code==502,response.text
+        assert response.json()['error']['code']=='transport_failed'
+        assert polls==[1]
+    else:
+        assert response.status_code==200,response.text
+        assert len(polls)==2
