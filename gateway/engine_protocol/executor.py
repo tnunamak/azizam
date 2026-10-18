@@ -428,18 +428,24 @@ class HttpV1Executor:
             parts.append(chunk)
         return b"".join(parts)
 
-    def _parse_json(self, data: bytes) -> Any:
-        if not data.strip():
-            return None
+    def _loads(self, data: bytes, noun: str) -> Any:
+        """Parse JSON under the depth budget. Every JSON the engine sends (answer, job step, stream event) comes through here."""
         try:
             parsed = json.loads(data)
         except RecursionError:
-            raise BudgetExceeded("max_json_depth", "The engine's answer nests too deep.") from None
+            raise BudgetExceeded("max_json_depth", f"{noun} nests too deep.") from None
         except ValueError:
-            raise MalformedResponse("The engine's answer is not JSON.") from None
-        if pointer.depth_exceeds(parsed, self.budgets.max_json_depth):
-            raise BudgetExceeded("max_json_depth", f"The engine's answer nests deeper than {self.budgets.max_json_depth}.")
+            raise MalformedResponse(f"{noun} is not JSON.") from None
+        limit = self.budgets.max_json_depth
+        # Each level of nesting needs an opening bracket, so a value with few of them cannot be too deep: skip the walk.
+        if data.count(b"{") + data.count(b"[") > limit and pointer.depth_exceeds(parsed, limit):
+            raise BudgetExceeded("max_json_depth", f"{noun} nests deeper than {limit}.")
         return parsed
+
+    def _parse_json(self, data: bytes) -> Any:
+        if not data.strip():
+            return None
+        return self._loads(data, "The engine's answer")
 
     async def _read_json(self, response: WireResponse) -> Any:
         return self._parse_json(await self._read_all(response, self.budgets.max_response_bytes, "max_response_bytes"))
@@ -523,12 +529,7 @@ class HttpV1Executor:
                 return True, data, False
             if not data:
                 return False, None, False
-            try:
-                obj = json.loads(data)
-            except RecursionError:
-                raise BudgetExceeded("max_json_depth", "A stream event nests too deep.") from None
-            except ValueError:
-                raise MalformedResponse("A stream event is not JSON.") from None
+            obj = self._loads(data, "A stream event")
             last = False
             if end_path is not None:
                 found = pointer.get(obj, end_path)
