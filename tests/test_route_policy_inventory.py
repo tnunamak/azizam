@@ -740,12 +740,27 @@ def _metadata_contract(method, template, response, row):
 
 
 def _media_folder_refusal(method, template, response, row):
-    """Remove missing items answers a typed 503 when the media folder cannot be seen; no model runs."""
+    """Remove missing items answers a typed 503 when the media folder is not seen or not confirmed; no model runs."""
     if (method, template) != ("POST", "/me/api/media/remove-missing") or response.status_code != 503:
         return
-    if response.json().get("error", {}).get("code") == "media_folder_unavailable":
+    code = response.json().get("error", {}).get("code")
+    if code == "media_folder_unavailable":
         row["outcome"] = "metadata (contract)"
         row["rule"] = "no media folder was seen, so nothing was removed; runs no model"
+        row["detail"] = ""
+    elif code == "media_folder_unconfirmed":
+        row["outcome"] = "metadata (contract)"
+        row["rule"] = "the media folder is not the one recorded, so nothing was removed; runs no model"
+        row["detail"] = ""
+
+
+def _media_folder_owner_refusal(method, template, response, row):
+    """Confirming the media folder is owner-only: other callers get a typed 403 before any marker is written."""
+    if (method, template) != ("POST", "/me/api/media/confirm-folder") or response.status_code != 403:
+        return
+    if response.json().get("error", {}).get("code") == "media_folder_owner_required":
+        row["outcome"] = "metadata (contract)"
+        row["rule"] = "only the owner may confirm the media folder; refused before the marker is written; runs no model"
         row["detail"] = ""
 
 
@@ -1129,6 +1144,7 @@ def _http_inventory(gateway, title=None, report=True):
                     row["rule"] = "server/harness failure is not policy proof"
                     row["detail"] = _validation_message(response)
                 _media_folder_refusal(method, template, response, row)
+                _media_folder_owner_refusal(method, template, response, row)
                 if member and response.status_code == 401:
                     row["outcome"] = "coverage gap"
                     row["rule"] = "member session did not reach policy"
