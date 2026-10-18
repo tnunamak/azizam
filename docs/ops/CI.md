@@ -22,7 +22,7 @@ were still stored.
 - It writes receipts to `~/.tmp/azizam-ci-receipts/<tree>/`: `run.tsv`
   (SHA, seed, layout), `steps.tsv` (step, exit code, whole seconds, wall
   seconds, CPU seconds (user plus system), peak RSS kB), `cost.json` (totals,
-  and the critical path: the longest chain of steps, each starting when the
+  the `journey` section, and the critical path: the longest chain of steps, each starting when the
   steps it waits for finish), `logs/`, `raw/` (each framework's report),
   `cases.jsonl`, and browser evidence only when a run fails. A tree that
   already passed is not run again (`--force` reruns it).
@@ -233,8 +233,10 @@ interrupted run, lock waiting, and a killed controller.
   Compose bring-up (`docker compose pull`, `build`, `up` until `/health`
   answers) to `raw/compose-bringup.json`; `first-run.spec.ts` writes its browser
   time to `raw/first-run-ui.json`. The step `journey-clock`
-  (`scripts/ci/journey_clock.py`) adds them, writes `cost.json` in the receipts
-  directory and fails at 600 s or more, or when either half is missing. Cached
+  (`scripts/ci/journey_clock.py`) adds them into the `journey` section of
+  `cost.json` (`compose_bringup_s`, `first_run_ui_s`, `total_s`, `limit_s`: 600,
+  `passed`) and fails at 600 s or more, or when either half is missing;
+  `gate_cost.py report` keeps that section when it writes the rest. Cached
   Docker layers make the bring-up a floor, not a ceiling.
 - The browser steps share one completed web directory, read-only: no per-lane
   copies and no npm install or build while they run. The runner writes
