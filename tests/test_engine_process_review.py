@@ -653,3 +653,123 @@ def test_driver_resolution_keeps_every_live_lifecycle_shape(name):
     }
     backend = record if flat else service_registry.runtime_backend_from_service(record)
     assert lifecycle_drivers.driver_for_service("svc", {"svc": backend}) is drivers[expected]
+
+
+# -- finding 7: every path-like control argument stays under the allowlist ----
+
+import httpx  # noqa: E402
+
+from gateway.engine_control import EngineControlRuntime  # noqa: E402
+from tests.support.fake_upstream.observation_client import observation_client  # noqa: E402
+
+
+def _control(roots, calls=None):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if calls is not None:
+            calls.append(json.loads(request.content or b"{}"))
+        return httpx.Response(204)
+
+    service = {"connection": {"address": "http://fixture.test:18091"},
+               "control_file_roots": roots,
+               "protocol_operations": {"load": {"method": "POST", "path": "/load"}}}
+    return EngineControlRuntime(service, drain=SwapDrain(), lock_for=lambda _scope: asyncio.Lock(),
+                                client_factory=observation_client(handler))
+
+
+@pytest.mark.parametrize("value", [
+    "../../etc/passwd", "/etc/passwd", "~/private/model.gguf", "models/model.gguf", "./model.gguf",
+    "org/model-name", "file:///etc/passwd",
+])
+@pytest.mark.parametrize("shape", ["plain key", "nested list"])
+def test_any_path_like_string_is_checked_whatever_its_key_is_called(tmp_path, value, shape):
+    calls = []
+    runtime = _control([str(tmp_path / "allowed")], calls)
+    args = {"prompt": value} if shape == "plain key" else {"items": [{"x": [value]}]}
+    with pytest.raises(ValueError, match="allowlisted"):
+        run(runtime.invoke("load", args))
+    assert calls == []
+
+
+def test_a_bare_name_that_exists_in_the_working_directory_is_a_path(tmp_path, monkeypatch):
+    (tmp_path / "weights.bin").write_text("x")
+    monkeypatch.chdir(tmp_path)
+    calls = []
+    runtime = _control([str(tmp_path / "allowed")], calls)
+    with pytest.raises(ValueError, match="allowlisted"):
+        run(runtime.invoke("load", {"name": "weights.bin"}))
+    assert calls == []
+
+
+def test_relative_allowlist_roots_are_refused(tmp_path):
+    calls = []
+    runtime = _control(["allowed/models"], calls)
+    with pytest.raises(ValueError, match="control file roots"):
+        run(runtime.invoke("load", {"model": "plain"}))
+    assert calls == []
+
+
+def test_allowed_paths_are_sent_resolved_and_plain_values_untouched(tmp_path):
+    root = tmp_path / "allowed"
+    (root / "real").mkdir(parents=True)
+    weights = root / "real" / "m.gguf"
+    weights.write_text("x")
+    (root / "link.gguf").symlink_to(weights)
+    calls = []
+    runtime = _control([str(root)], calls)
+    run(runtime.invoke("load", {"model": "qwen", "layers": 3, "model_path": str(root / "link.gguf"),
+                                "extra": [str(weights), True, None]}))
+    assert calls == [{"model": "qwen", "layers": 3, "model_path": str(weights.resolve()),
+                      "extra": [str(weights.resolve()), True, None]}]
+
+
+def test_symlink_inside_the_root_that_points_outside_is_refused(tmp_path):
+    root = tmp_path / "allowed"
+    root.mkdir()
+    outside = tmp_path / "secret.gguf"
+    outside.write_text("x")
+    (root / "m.gguf").symlink_to(outside)
+    calls = []
+    with pytest.raises(ValueError, match="allowlisted"):
+        run(_control([str(root)], calls).invoke("load", {"model": "x", "model_path": str(root / "m.gguf")}))
+    assert calls == []
+
+
+def test_a_symlink_swapped_in_after_the_check_is_refused_before_the_request(tmp_path):
+    root = tmp_path / "allowed"
+    root.mkdir()
+    target = root / "m.gguf"
+    target.write_text("x")
+    outside = tmp_path / "secret.gguf"
+    outside.write_text("y")
+    calls = []
+
+    def swap_after_check(*_args, **_kwargs):
+        target.unlink()
+        target.symlink_to(outside)
+        return {}
+
+    runtime = _control([str(root)], calls)
+    with patch("gateway.engine_control.credential_headers", side_effect=swap_after_check):
+        with pytest.raises(ValueError, match="changed|allowlisted"):
+            run(runtime.invoke("load", {"model_path": str(target)}))
+    assert calls == []
+
+
+def test_a_file_replaced_by_another_file_after_the_check_is_refused(tmp_path):
+    root = tmp_path / "allowed"
+    root.mkdir()
+    target = root / "m.gguf"
+    target.write_text("x")
+    calls = []
+
+    def replace_after_check(*_args, **_kwargs):
+        replacement = root / "other"
+        replacement.write_text("z")
+        os.replace(replacement, target)
+        return {}
+
+    runtime = _control([str(root)], calls)
+    with patch("gateway.engine_control.credential_headers", side_effect=replace_after_check):
+        with pytest.raises(ValueError, match="changed"):
+            run(runtime.invoke("load", {"model_path": str(target)}))
+    assert calls == []
