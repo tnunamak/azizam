@@ -321,7 +321,8 @@ The engine preset list is gone. Engine kinds are data in
   person's plan to allow the request. It saves nothing.
 - `GET /admin/api/engines/{service_id}` → `{engine}`: the record as typed values,
   key state (never the key), capabilities, models, tests, last check, other
-  settings, the stored record with secrets shown as `configured`, `access` for
+  settings, the stored record with credential references shown as `configured` and secret
+  values as `[redacted]`, `access` for
   its turned-on models (as above), `editable`, and the Connection facts below.
   `editable` is false only for a record the gateway derives itself; an edit
   that names a definition then answers 403 `service_not_editable`, and the page

@@ -100,9 +100,8 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
 
     catalog = load_engine_catalog()
     engine = engine_admin.engine_view(catalog, _service(), db_path=tmp_path / "empty.db")
-    # W5 deliberately makes lifecycle-hop records editable and shows an
-    # unsaved timeout as absent instead of inventing 600 seconds. All other
-    # catalog fields remain frozen with these named contract changes.
+    # W5 shows an unsaved timeout as absent instead of inventing 600 seconds.
+    # All other catalog fields remain frozen with this named contract change.
     old_engine = {key: engine[key] for key in ("service_id", "definition", "name", "enabled", "locked", "editable", "values", "key", "capabilities", "models")}
     assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "e4be4df70e3ab15ee7db581f005d4188078d45e500356fe20b6391dbbf606a84"
 

@@ -150,7 +150,7 @@ test("a header-only save keeps an absent reply timeout and hidden header rows", 
     await page.goto(`/engines/?engine=${serviceId}`);
     await expect(page.getByRole("heading", { level: 1, name: "Header preservation journey" })).toBeVisible();
     await expect(page.getByTestId("connection-facts")).toContainText("default for engines Azizam starts");
-    const connection = page.getByRole("region", { name: "Connection", exact: true });
+    const connection = page.getByRole("region", { name: "More options", exact: true });
     await expect(connection.getByText("Not sent", { exact: true })).toHaveCount(2);
     await connection.getByRole("button", { name: "Add a header" }).click();
     await connection.getByLabel("Header name", { exact: true }).last().fill("X-Tenant");
