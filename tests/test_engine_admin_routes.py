@@ -486,8 +486,8 @@ def test_an_edit_keeps_what_the_page_does_not_show(gateway, fake_upstreams):
                 "capabilities": ["chat", "completions"], "gateway_lifecycle": True,
                 "models": [{"model_group": "hopped-chat", "upstream_model": "hopped"}]}),
 ])
-def test_an_engine_the_router_does_not_call_at_its_own_address_is_shown_not_edited(gateway, fake_upstreams, service_id, config):
-    """Its address path, headers and reply time would not reach the engine, so the page saves none of them."""
+def test_engine_records_remain_editable_regardless_of_router_path(gateway, fake_upstreams, service_id, config):
+    """Routing through the gateway no longer locks the whole engine page."""
     owner, *_ = owner_and_admin(gateway)
     _silent(fake_upstreams, f"{service_id}.fk.test")
     registry = _registry(gateway)
@@ -495,11 +495,8 @@ def test_an_engine_the_router_does_not_call_at_its_own_address_is_shown_not_edit
     _put_registry(gateway, registry)
     before = _record(gateway, service_id)
     view = owner.get(f"/admin/api/engines/{service_id}").json()["engine"]
-    assert view["editable"] is False and "can’t change how Azizam reaches this engine" in view["not_editable_reason"]
-    refused = _edit(owner, service_id, {"definition": "openai-compatible", "name": "Renamed", "values": {}})
-    assert refused.status_code == 409, refused.text
-    assert refused.json()["error"]["code"] == "engine_not_editable_here"
-    assert _record(gateway, service_id) == before
+    assert view["editable"] is True
+    assert "not_editable_reason" not in view
     # Renaming stays possible through the plain service edit.
     renamed = _edit(owner, service_id, {"name": "Renamed"})
     assert renamed.status_code == 200, renamed.text
@@ -787,3 +784,74 @@ def test_invalid_probe_limit_configuration_keeps_safe_defaults(monkeypatch, inva
     for name, default in (("AZIZAM_ENGINE_CHECK_MAX_CONCURRENT", 2), ("AZIZAM_ENGINE_CHECKS_PER_MINUTE", 30)):
         monkeypatch.setenv(name, invalid)
         assert engine_admin._probe_limit(name, default) == default
+
+
+@pytest.mark.parametrize("service_id", ["workshop", "second-engine"])
+def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstreams, monkeypatch, service_id):
+    """An owner edit drives the final HTTP hop, including its real client timeout."""
+    from unittest.mock import AsyncMock
+    import proxy
+
+    owner, *_ = owner_and_admin(gateway)
+    old = _silent(fake_upstreams, "old-hop.fk.test")
+    upstream = fake_upstreams.asgi(scenario_from_data({
+        "protocol": "openai-compatible", "name": "edited-hop",
+        "provenance": {"source": "hand-written", "reference": "ENGINE_CONTRACT section 9: edits drive the effective request"},
+        "exchanges": [{"id": "chat", "match": {
+            "method": "POST", "path": "/provider/v1/chat/completions",
+            "headers": {"x-workspace": "new-value", "authorization": {"$absent": True}, "cookie": {"$absent": True}},
+            "json": {"model": "new-upstream"},
+        }, "response": {"status": 200, "json": {"choices": [{"message": {"content": "edited"}}]}}}],
+    }), host="new-hop.fk.test")
+    registry = _registry(gateway)
+    registry["services"][service_id] = service_registry.service_from_backend_config(service_id, {
+        "name": "Hop engine", "host": "old-hop.fk.test", "port": 80, "base_path": "/v1",
+        "address": f"{old.base_url}/v1", "protocol": "openai-compatible", "gateway_lifecycle": True,
+        "capabilities": ["chat", "openai"], "timeout": 600,
+        "models": [{"id": "offering", "model_group": "hop-chat", "upstream_model": "old-upstream"}],
+        "lifecycle": {"driver": "process", "driver_config": {"start": ["server"], "port": {"fixed": 1234}}},
+    }, source="ui")
+    _put_registry(gateway, registry)
+    before = _record(gateway, service_id)
+    saved = _edit(owner, service_id, {
+        "definition": "openai-compatible", "disabled": True,
+        "values": {"address": f"{upstream.base_url}/provider", "path_prefix": "/v1", "reply_timeout_s": 37,
+                   "headers": [{"name": "X-Workspace", "value": "new-value"}]},
+        "models": [{"id": "new-upstream", "public_name": "hop-chat"}],
+    })
+    assert saved.status_code == 200, saved.text
+    after = _record(gateway, service_id)
+    assert after["process"] == before["process"]
+    assert _edit(owner, service_id, {"enabled": True}).status_code == 200
+    view = owner.get(f"/admin/api/engines/{service_id}").json()["engine"]
+    assert view["request_path"]["mode"] == "gateway_lifecycle"
+    assert view["request_path"]["url"] == f"{upstream.base_url}/provider/v1/chat/completions"
+    monkeypatch.setenv("AZIZAM_INTERNAL_LITELLM_KEY", "internal-test-key")
+    monkeypatch.setattr(proxy, "_service_availability_response", lambda *a, **kw: None)
+    monkeypatch.setattr(proxy, "_ensure_target_leased", AsyncMock(return_value=(True, None)))
+    clients = fake_upstreams.track_clients(proxy)
+    response = owner.post(f"/internal/litellm/local/{service_id}/v1/chat/completions",
+                          headers={"Authorization": "Bearer internal-test-key", "X-Workspace": "untrusted"},
+                          json={"model": "new-upstream", "messages": [{"role": "user", "content": "hi"}]})
+    assert response.status_code == 200, response.text
+    assert response.json()["choices"][0]["message"]["content"] == "edited"
+    assert clients[-1].timeout.read == 37
+    assert len(upstream.requests) == 1
+    assert old.requests == []
+
+
+@pytest.mark.parametrize("body", [
+    {"values": {"reply_timeout_s": 12}},
+    {"values": {"headers": [{"name": "X-Workspace", "value": "changed"}]}},
+    {"models": [{"id": "new", "public_name": "new"}], "values": {}},
+])
+def test_administrator_cannot_change_existing_owner_engine_fields(gateway, fake_upstreams, body):
+    owner, _, _, admin = owner_and_admin(gateway)
+    fake = _silent(fake_upstreams, "owner-fields.fk.test")
+    created = _create(owner, {"definition": "openai-compatible", "name": "owned", "disabled": True,
+                              "values": {"address": f"{fake.base_url}/v1"}})
+    assert created.status_code == 201, created.text
+    before = _record(gateway, "owned")
+    changed = _edit(admin, "owned", {"definition": "openai-compatible", "disabled": True, **body})
+    assert changed.status_code == 403, changed.text
+    assert _record(gateway, "owned") == before
