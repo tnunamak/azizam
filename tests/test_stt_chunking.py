@@ -158,20 +158,48 @@ class SttChunkMergeTests(unittest.TestCase):
             [("response_format", "verbose_json")], file_count=1
         ))
 
-    def test_silence_only_plan_never_hard_cuts(self) -> None:
-        self.assertIsNone(stt_chunking.plan_silence_only_segments(
-            duration_seconds=80,
-            silences=[(18, 19)],
-            target_seconds=20,
-            search_seconds=8,
-        ))
-        segments = stt_chunking.plan_silence_only_segments(
-            duration_seconds=80,
-            silences=[(19, 21), (39, 41), (59, 61)],
-            target_seconds=20,
-            search_seconds=8,
+    def test_silence_preferred_plan_forces_missing_seams(self) -> None:
+        for silences in ([], [(29, 31), (89, 91)]):
+            with self.subTest(silences=silences):
+                self.assertEqual(stt_chunking.plan_silence_preferred_segments(
+                    duration_seconds=125, silences=silences,
+                    target_seconds=30, search_seconds=10, max_segments=64,
+                ), [(0.0, 30), (30, 60), (60, 90), (90, 125)])
+
+    def test_silence_preferred_plan_covers_short_targets_and_tails(self) -> None:
+        for duration, target in ((80, 20), (31, 2), (60, 30), (30.001, 30), (125, 45), (1321.62, 30)):
+            with self.subTest(duration=duration, target=target):
+                segments = stt_chunking.plan_silence_preferred_segments(
+                    duration_seconds=duration, silences=[],
+                    target_seconds=target, search_seconds=10, max_segments=64,
+                )
+                self.assertGreater(len(segments), 1)
+                self.assertEqual(segments[0][0], 0)
+                self.assertEqual(segments[-1][1], duration)
+                self.assertEqual([end for _, end in segments[:-1]], [start for start, _ in segments[1:]])
+                self.assertTrue(all(0 < end - start <= target + min(30, target) for start, end in segments))
+                self.assertAlmostEqual(sum(end - start for start, end in segments), duration)
+        self.assertEqual(stt_chunking.plan_silence_preferred_segments(
+            duration_seconds=80, silences=[(19, 21), (39, 41), (59, 61)],
+            target_seconds=20, search_seconds=8, max_segments=64,
+        ), [(0.0, 20), (20, 40), (40, 60), (60, 80)])
+
+    def test_silence_preferred_plan_bounds_opposing_offsets(self) -> None:
+        segments = stt_chunking.plan_silence_preferred_segments(
+            duration_seconds=121, silences=[(19, 21), (69, 71), (0, 121)],
+            target_seconds=30, search_seconds=10, max_segments=64,
         )
-        self.assertEqual(segments, [(0.0, 20.0), (20.0, 40.0), (40.0, 80)])
+        self.assertEqual(segments[0][0], 0)
+        self.assertEqual(segments[-1][1], 121)
+        self.assertEqual([b for _, b in segments[:-1]], [a for a, _ in segments[1:]])
+        self.assertTrue(all(0 < b - a <= 70 for a, b in segments))
+
+    def test_silence_preferred_plan_rejects_excessive_work(self) -> None:
+        with self.assertRaises(stt_chunking.SttResourceLimitExceeded):
+            stt_chunking.plan_silence_preferred_segments(
+                duration_seconds=1321.62, silences=[], target_seconds=0.000001,
+                search_seconds=0.0000001, max_segments=3,
+            )
 
     def test_sdk_exact_usage_null_integer_and_optional_detail_contracts(self) -> None:
         parsed = [
@@ -320,6 +348,56 @@ class BoundedMultipartTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_plan_budget_rejects_before_extraction_or_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.wav"
+            source.write_bytes(b"source")
+            config = _config(root, target_seconds=30, threshold_seconds=40, max_segments=2, max_duration_seconds=150)
+            extract = AsyncMock()
+            post = AsyncMock()
+            with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(125, 8000, 1))), patch.object(stt_chunking, "detect_silences", new=AsyncMock(return_value=[])), patch.object(stt_chunking, "extract_segment", new=extract):
+                with self.assertRaises(stt_chunking.SttResourceLimitExceeded):
+                    await stt_chunking.execute_chunking(
+                        source_path=source, source_stem="source", fields=[("response_format", "json")],
+                        config=config, cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10,
+                        on_cancel=None, post_file=post,
+                    )
+            extract.assert_not_awaited()
+            post.assert_not_awaited()
+
+    async def test_missing_silence_posts_only_bounded_segments(self) -> None:
+        for silences in ([], [(29, 31), (89, 91)]):
+            with self.subTest(silences=silences), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                source = root / "source.wav"
+                source.write_bytes(b"original")
+                config = _config(root, target_seconds=30, threshold_seconds=40, silence_search_seconds=10, max_duration_seconds=150)
+                extracted = []
+                posted = []
+
+                async def extract(_source, destination, *, start_seconds, end_seconds, **_kwargs):
+                    extracted.append((start_seconds, end_seconds))
+                    Path(destination).write_bytes(b"chunk")
+
+                async def post(path, _filename):
+                    self.assertNotEqual(path, source)
+                    self.assertEqual(Path(path).read_bytes(), b"chunk")
+                    posted.append(path)
+                    return stt_chunking.UpstreamResponse(200, b'{"text":"repeat"}', {})
+
+                with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(125, 8000, 1))), patch.object(stt_chunking, "detect_silences", new=AsyncMock(return_value=silences)), patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)):
+                    outcome = await stt_chunking.execute_chunking(
+                        source_path=source, source_stem="source", fields=[("response_format", "json")],
+                        config=config, cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10,
+                        on_cancel=None, post_file=post,
+                    )
+                self.assertEqual(outcome.mode, "chunked")
+                self.assertEqual(outcome.attempts_started, 4)
+                self.assertEqual(extracted, [(0.0, 30), (30, 60), (60, 90), (90, 125)])
+                self.assertEqual(len(posted), 4)
+                self.assertEqual(outcome.merged_payload, {"text": "repeat repeat repeat repeat"})
+
     async def test_media_child_is_killed_and_reaped_on_task_cancellation(self) -> None:
         class BlockingReader:
             def __init__(self, entered: asyncio.Event) -> None:
@@ -559,7 +637,7 @@ class RequestWorkspaceIsolationTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(stt_chunking, "GLOBAL_STT_RESOURCE_GATE", stt_chunking.SttResourceGate()),
                 patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(75, 8000, 1))),
                 patch.object(stt_chunking, "detect_silences", new=AsyncMock(return_value=[])),
-                patch.object(stt_chunking, "plan_silence_only_segments", return_value=[(0.0, 1.0), (1.0, 2.0)]),
+                patch.object(stt_chunking, "plan_silence_preferred_segments", return_value=[(0.0, 1.0), (1.0, 2.0)]),
                 patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)),
                 patch.object(proxy.receipt_store, "begin"),
                 patch.object(proxy.receipt_store, "finalize", return_value=True),
