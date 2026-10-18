@@ -2310,6 +2310,10 @@ def create_admin_router(
             )
         return int(generation_text)
 
+    def _optional_registry_match(request: Request) -> int | None:
+        """The If-Match precondition when the client sends one; a request without it is not refused."""
+        return _registry_match(request) if "if-match" in request.headers else None
+
     def _registry_response(
         record: Mapping[str, Any], *, response_status: int = status.HTTP_200_OK
     ) -> JSONResponse:
@@ -2818,8 +2822,11 @@ def create_admin_router(
             ).as_response()
         try:
             result = store.remove_extension_package(
-                package_id=package_id, actor=ctx, mode=mode
+                package_id=package_id, actor=ctx, mode=mode,
+                expected_generation=_optional_registry_match(request),
             )
+        except _RouteError as exc:
+            return exc.as_response()
         except extension_packages.PackageInUse as exc:
             return _RouteError(
                 status.HTTP_409_CONFLICT,
