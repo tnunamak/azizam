@@ -189,12 +189,17 @@ export function ConnectionFacts({
     const requestOrigin = path?.url ? originOf(path.url) : "";
     const keyHere = view.key.state === "configured" && origin;
     const elsewhere = keyHere && requestOrigin && originOf(origin) !== requestOrigin;
+    const unavailable = view.attention?.some((item) => item.code === "engine_credential_unavailable");
     rows.push([
       "Key is sent to",
       elsewhere ? (
         <span key="dest">
           No key is sent: the key belongs to {mono(originOf(origin) || origin)} but this engine’s address is {mono(requestOrigin)}.
         </span>
+      ) : keyHere && unavailable ? (
+        "No key is sent. The configured key is not available."
+      ) : keyHere && !requestOrigin ? (
+        "Unknown. The request address is unavailable."
       ) : keyHere ? (
         <span key="dest">
           {mono(origin)} only. Azizam never sends it to another address.
