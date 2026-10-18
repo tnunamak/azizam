@@ -179,6 +179,7 @@ def test_the_current_aliases_wait_for_the_current_service_reply_time(saved, rout
 
 def test_a_header_stored_by_a_raw_edit_is_sent_only_when_it_is_safe():
     rows = [{"name": "X-Tenant", "value": "family"}, {"name": "X-Api-Key", "value": "sk-raw"},
+            {"name": "X-Client", "value": "unbound-private-value", "secret": True},
             {"name": "Host", "value": "elsewhere"}, {"name": "X-Bad", "value": "a\r\nX-Injected: 1"},
             {"name": "bad name", "value": "x"}, {"name": "X-Empty", "value": ""}]
     assert engine_headers({"headers": rows}) == {"X-Tenant": "family"}

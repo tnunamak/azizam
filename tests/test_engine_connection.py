@@ -47,6 +47,7 @@ def test_plain_headers_cannot_override_credentials_or_http_framing(tmp_path):
     result = connection({"address": "http://server.invalid/v1", "headers": [
         {"name": "Authorization", "value": "unbound"},
         {"name": "Host", "value": "other.invalid"},
+        {"name": "X-Client", "value": "unbound-private-value", "secret": True},
         {"name": "X-Workspace", "value": "tenant"},
     ]}, tmp_path)
     assert result.headers == {"content-type": "application/json", "x-workspace": "tenant"}

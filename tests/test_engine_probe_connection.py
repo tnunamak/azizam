@@ -92,7 +92,7 @@ def test_the_ready_check_reaches_the_saved_prefix_with_header_and_key(fake_upstr
 def test_legacy_secret_reference_survives_the_actual_readiness_path(monkeypatch, fake_upstreams):
     from gateway import service_registry
 
-    fake_upstreams.asgi(_engine("/provider/v1/models", MODELS), host=HOST)
+    fake_upstreams.asgi(_engine("/provider/v1/models", MODELS, times=2), host=HOST)
     monkeypatch.setenv("AZIZAM_DOWNSTREAM_API_KEY", KEY)
     raw = {**_saved(), "health_endpoint": "/v1/models"}
     raw.pop("api_key_env")
@@ -101,6 +101,10 @@ def test_legacy_secret_reference_survives_the_actual_readiness_path(monkeypatch,
     projected = service_registry.runtime_backend_from_service(service)
     monkeypatch.setattr(proxy, "config", {"backends": {"legacy-key": projected}})
     assert asyncio.run(proxy._ensure_target("legacy-key", None, None, None, take_lease=False)) == (True, None)
+    monkeypatch.setattr(proxy, "config", {"backends": {}})
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: {"services": {"legacy-key": service}})
+    monkeypatch.setattr(proxy, "_RESOURCE_FACT_CACHE", {})
+    assert asyncio.run(proxy.check_service_health("legacy-key"))
 
 
 def test_the_ready_check_sends_no_key_bound_to_another_origin(fake_upstreams):
