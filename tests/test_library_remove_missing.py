@@ -102,3 +102,19 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(self.client.post(REMOVE, headers={**VALID, "x-azizam-csrf": "bad"}).status_code, 403)
         self.assertEqual(self.library()[asset("A")], False)
         self.assertEqual(len(self.job_ids("req_a")), 1)
+
+
+class DeleteSucceededTests(unittest.TestCase):
+    setUp, tearDown = base.MeMediaRouterTests.setUp, base.MeMediaRouterTests.tearDown
+
+    def test_only_succeeded_jobs_are_deleted_with_their_events(self) -> None:
+        done = media_jobs.create(media_jobs.MediaJob(job_id="done", intent="image.generate",
+                                                     status=media_jobs.STATUS_SUCCEEDED), path=self.jobs_db)
+        running = media_jobs.create(media_jobs.MediaJob(job_id="running", intent="image.generate",
+                                                        status=media_jobs.STATUS_RUNNING), path=self.jobs_db)
+        media_jobs.append_event(done.job_id, "queued", {"progress": 0}, path=self.jobs_db)
+        deleted = media_jobs.delete_succeeded(["done", "running", "unknown", ""], path=self.jobs_db)
+        self.assertEqual(deleted, 1)
+        self.assertIsNone(media_jobs.get("done", path=self.jobs_db))
+        self.assertIsNotNone(media_jobs.get(running.job_id, path=self.jobs_db))
+        self.assertEqual(media_jobs.delete_succeeded([], path=self.jobs_db), 0)

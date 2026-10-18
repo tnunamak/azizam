@@ -2096,3 +2096,109 @@ describe("Library paging regressions", () => {
     expect(within(screen.getByRole("group", { name: "Creations" })).getAllByRole("button", { name: /^Open / })).toHaveLength(2);
   });
 });
+
+describe("Library items whose files are gone", () => {
+  // Written before the 24-hour expiry ended on 2026-10-11.
+  const oldGone = (id: string, prompt: string) =>
+    picture(id, prompt, {
+      available: false,
+      unavailable_reason: "missing_or_expired",
+      created_at: Date.UTC(2026, 9, 5) / 1000,
+    });
+  const newGone = (id: string, prompt: string) =>
+    picture(id, prompt, { available: false, unavailable_reason: "missing_or_expired" });
+
+  beforeEach(() => {
+    navigation.searchParams = new URLSearchParams();
+    session.viewer = { role: "member", name: "Alex" };
+    session.home = { receipts: [] };
+    window.history.replaceState(null, "", "/");
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  test("an item from before Oct 11 says it was deleted and cannot be recovered", async () => {
+    routeFetch((path) =>
+      path.startsWith("/me/api/media?") ? list([oldGone("old", "An old fox"), newGone("new", "A new owl")]) : undefined,
+    );
+    renderLibrary();
+    fireEvent.click(await screen.findByText("Show them"));
+
+    fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open An old fox, ") }));
+    let dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText("This file was deleted on or before Oct 11 and can’t be recovered. The prompt is below."),
+    ).toBeVisible();
+    fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // A file lost after that date has no such explanation to give.
+    fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open A new owl, ") }));
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("This file is no longer stored. The prompt is below.")).toBeVisible();
+    expect(within(dialog).queryByText(/Oct 11/)).toBeNull();
+  });
+
+  function routeRemoval(removed: { calls: Array<{ path: string; init?: RequestInit }> }) {
+    let remaining = [oldGone("old", "An old fox"), newGone("new", "A new owl"), picture("kept", "A kept kite")];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/me/api/session") return Response.json({ csrf_token: "csrf-1" });
+        if (path === "/me/api/media/remove-missing") {
+          removed.calls.push({ path, init });
+          remaining = remaining.filter((asset) => asset.asset_id === "kept");
+          return Response.json({ removed_assets: 2, removed_jobs: 1 });
+        }
+        if (path.startsWith("/me/api/media?")) return list(remaining);
+        return Response.json({ assets: [], models: [], next_cursor: null });
+      }),
+    );
+  }
+
+  test("Remove missing items asks first, then removes only the missing ones", async () => {
+    const removed = { calls: [] as Array<{ path: string; init?: RequestInit }> };
+    routeRemoval(removed);
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+
+    const dialog = await screen.findByRole("alertdialog").catch(() => screen.findByRole("dialog"));
+    expect(within(dialog).getByText("Remove 2 missing items?")).toBeVisible();
+    expect(
+      within(dialog).getByText(/Removes them and their prompts from your Library\. Receipts and every stored file stay\./),
+    ).toBeVisible();
+    expect(removed.calls).toEqual([]);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(removed.calls).toHaveLength(1));
+    expect(removed.calls[0].init?.method).toBe("POST");
+    expect(removed.calls[0].init?.headers).toEqual({ "x-azizam-user-action": "1", "x-azizam-csrf": "csrf-1" });
+    expect(await screen.findByText("Removed 2 missing items from your Library.")).toBeVisible();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Remove missing items" })).toBeNull());
+    expect(screen.getByRole("button", { name: (name) => name.startsWith("Open A kept kite, ") })).toBeVisible();
+    expect(screen.queryByText("Show them")).toBeNull();
+  });
+
+  test("cancelling the confirmation removes nothing", async () => {
+    const removed = { calls: [] as Array<{ path: string; init?: RequestInit }> };
+    routeRemoval(removed);
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(removed.calls).toEqual([]);
+    expect(screen.getByRole("button", { name: "Remove missing items" })).toBeVisible();
+  });
+
+  test("a Library with nothing missing offers no removal", async () => {
+    routeFetch((path) => (path.startsWith("/me/api/media?") ? list([picture("kept", "A kept kite")]) : undefined));
+    renderLibrary();
+    await screen.findByRole("button", { name: (name) => name.startsWith("Open A kept kite, ") });
+    expect(screen.queryByRole("button", { name: "Remove missing items" })).toBeNull();
+  });
+});
