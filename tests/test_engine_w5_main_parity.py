@@ -14,6 +14,7 @@ from starlette.requests import Request
 import proxy
 from gateway import service_registry
 from gateway.litellm_substrate import compile_litellm_config_from_registry
+from tests.support.fake_upstream import fake_upstreams, scenario_from_data  # noqa: F401
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'engine_w5'
 LIVE = json.loads((FIXTURES / 'live-shape.json').read_text())
@@ -51,20 +52,22 @@ def test_live_shaped_hop_keeps_main_url_headers_body_and_read_timeout(monkeypatc
 
 
 @pytest.mark.parametrize('service_id', list(LIVE['services']))
-def test_each_live_shaped_resource_probe_keeps_main_url_and_headers(monkeypatch, service_id):
+def test_each_live_shaped_resource_probe_keeps_main_url_and_headers(monkeypatch, service_id, fake_upstreams):
     saved = LIVE['services'][service_id]
     config = service_registry.runtime_backend_from_service(saved)
     # Main's resource probe builder is unchanged. Its transport sent no headers.
     expected_url = proxy._service_resource_probe_url(config)
-    sent = []
-    class Client:
-        def __init__(self, **kwargs): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *args): pass
-        async def get(self, url, **kwargs):
-            sent.append((url, kwargs.get('headers', {})))
-            return SimpleNamespace(status_code=200)
+    from urllib.parse import urlsplit
+    destination = urlsplit(expected_url)
+    fake = fake_upstreams.asgi(scenario_from_data({
+        'protocol': 'openai-compatible', 'name': f'legacy-health-{service_id}',
+        'provenance': {'source': 'hand-written', 'reference': 'main resource probe transport, see fixture README'},
+        'exchanges': [{'id': 'health', 'match': {'method': 'GET', 'path': destination.path,
+                        'headers': {'authorization': {'$absent': True}}},
+                       'response': {'status': 200, 'json': {'ok': True}}}],
+    }), host=destination.netloc)
     monkeypatch.setenv('W5_TEST_LITELLM_KEY', 'invented-test-key')
-    monkeypatch.setattr(proxy.httpx, 'AsyncClient', Client)
     assert asyncio.run(proxy._probe_service_resource_fact(config)) == {'status': 'available'}
-    assert sent == [(expected_url, {})]
+    [sent] = fake.calls('health')
+    assert sent.path == destination.path
+    assert sent.headers['host'] == destination.netloc

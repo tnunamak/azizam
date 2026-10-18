@@ -17,7 +17,9 @@
       "/v1/images/edits",
       "/v1/rerank",
       "/health",
-      "/v1/health"
+      "/v1/health",
+      "/api/v1/health",
+      "/health/liveliness"
     ],
     "framing": "sse-data",
     "stream_media_type": "text/event-stream",

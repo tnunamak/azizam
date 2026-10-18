@@ -101,19 +101,21 @@ def test_missing_key_still_allows_health_and_resource_checks(monkeypatch, fake_u
     ({'host': '127.0.0.1', 'port': 6061, 'base_path': '/openai', 'api_key_env': 'W5_PROBE_KEY',
       'credential_origin': 'http://127.0.0.1:6061'}, 'http://127.0.0.1:6061/health'),
 ])
-def test_unedited_resource_probes_keep_the_main_url_and_no_key(config, url, monkeypatch):
+def test_unedited_resource_probes_keep_the_main_url_and_no_key(config, url, monkeypatch, fake_upstreams):
     monkeypatch.setenv('W5_PROBE_KEY', 'test-only-value')
-    sent = []
-    class Client:
-        def __init__(self, **kwargs): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *args): pass
-        async def get(self, address, **kwargs):
-            sent.append((address, kwargs.get('headers', {})))
-            return SimpleNamespace(status_code=200)
-    monkeypatch.setattr(proxy.httpx, 'AsyncClient', Client)
+    from urllib.parse import urlsplit
+    destination = urlsplit(url)
+    fake = fake_upstreams.asgi(scenario_from_data({
+        'protocol': 'openai-compatible', 'name': 'legacy-resource-health',
+        'provenance': {'source': 'hand-written', 'reference': 'M3: retain main URL and keyless headers'},
+        'exchanges': [{'id': 'health', 'match': {'method': 'GET', 'path': destination.path,
+                        'headers': {'authorization': {'$absent': True}}},
+                       'response': {'status': 200, 'json': {'ok': True}}}],
+    }), host=destination.netloc)
     assert asyncio.run(proxy._probe_service_resource_fact(config)) == {'status': 'available'}
-    assert sent == [(url, {})]
+    [sent] = fake.calls('health')
+    assert sent.path == destination.path
+    assert sent.headers['host'] == destination.netloc
 
 
 def test_unedited_lifecycle_probe_keeps_the_root_path_and_no_key(monkeypatch):
