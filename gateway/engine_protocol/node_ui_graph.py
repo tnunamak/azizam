@@ -22,7 +22,14 @@ from __future__ import annotations
 
 import json
 import uuid
+from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
+
+# The engine's names for its dynamic input types (V3 nodes) are data: node_ui_types.json.
+_DYNAMIC_INPUT_TYPES = json.loads(Path(__file__).with_name("node_ui_types.json").read_text(encoding="utf-8"))
+_DYNAMIC_COMBO_TYPE = _DYNAMIC_INPUT_TYPES["dynamic_combo"]
+_AUTOGROW_TYPE = _DYNAMIC_INPUT_TYPES["autogrow"]
+_MATCH_TYPE = _DYNAMIC_INPUT_TYPES["match_type"]
 
 WIDGET_TYPES = frozenset({"INT", "FLOAT", "STRING", "BOOLEAN", "COMBO", "COLORCODE"})
 _UPLOAD_SUFFIX = {"image_upload": "image", "video_upload": "video", "audio_upload": "audio"}
@@ -115,7 +122,7 @@ def _plan_inputs(entries: list, api_inputs: Mapping, prefix: str, plan: dict) ->
         full = prefix + name
         raw = api_inputs.get(full)
         linked = _is_link(raw)
-        if typ == "COMFY_DYNAMICCOMBO_V3":
+        if typ == _DYNAMIC_COMBO_TYPE:
             options = cfg.get("options") or []
             keys = [o.get("key") for o in options if isinstance(o, Mapping)]
             value = raw if full in api_inputs and not linked else (keys[0] if keys else "")
@@ -128,7 +135,7 @@ def _plan_inputs(entries: list, api_inputs: Mapping, prefix: str, plan: dict) ->
                 nested = _spec_entries(sub.get("required")) + [
                     (n, t, c, False) for n, t, c, _ in _spec_entries(sub.get("optional"))]
                 _plan_inputs(nested, api_inputs, full + ".", plan)
-        elif typ == "COMFY_AUTOGROW_V3":
+        elif typ == _AUTOGROW_TYPE:
             template = cfg.get("template") or {}
             tmpl_in = _spec_entries((template.get("input") or {}).get("required")) + _spec_entries(
                 (template.get("input") or {}).get("optional"))
@@ -139,7 +146,7 @@ def _plan_inputs(entries: list, api_inputs: Mapping, prefix: str, plan: dict) ->
                 if _is_link(api_inputs[k]):
                     conns.append({"name": k, "type": str(tmpl_in[0][1]) if tmpl_in else "*",
                                   "link_src": api_inputs[k], "shape": 7})
-        elif typ == "COMFY_MATCHTYPE_V3":
+        elif typ == _MATCH_TYPE:
             if linked or required:
                 conns.append({"name": full, "type": "*", "link_src": raw if linked else None,
                               "shape": None if required else 7, "match": True})
@@ -279,7 +286,7 @@ def derive_ui_workflow(
             ins.append({"name": w["name"], "localized_name": w["name"], "type": w["type"],
                         "widget": {"name": w["name"]}, "link": None})
         outs = [{"name": n, "localized_name": n,
-                 "type": match_type if t == "COMFY_MATCHTYPE_V3" else t,
+                 "type": match_type if t == _MATCH_TYPE else t,
                  "links": None, "slot_index": i}
                 for i, (n, t) in enumerate(plan["outputs"])]
         n_widgets = len(plan["widgets"])

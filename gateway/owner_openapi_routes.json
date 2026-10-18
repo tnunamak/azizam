@@ -474,5 +474,9 @@
   "DELETE /admin/api/operator/service-registry/excluded/{section}/{record_id}": {
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "GET /admin/api/engine-protocols": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   }
 }

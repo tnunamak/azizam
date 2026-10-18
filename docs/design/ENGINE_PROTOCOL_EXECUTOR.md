@@ -1,8 +1,8 @@
 # Engine protocol descriptions, the http-v1 executor and the adapter interface
 
-Status: implemented on `engine/w4-executor`, reviewed fixes on `engine/w4-executor-fix` (engine contract v2.1, section 4).
+Status: implemented on `engine/w4-executor`, reviewed fixes on `engine/w4-executor-fix` (engine contract v2.1, section 4). W6b moved the in-tree graph, speech and transcription clients behind reviewed adapters.
 Code: `gateway/engine_protocol/`. Data: `registry/protocols/`.
-Tests: `tests/test_engine_protocol_*.py`, `tests/test_tts_adapter_seam.py`.
+Tests: `tests/test_engine_protocol_*.py`, `tests/test_node_graph_adapter.py`, `tests/test_tts_adapter_seam.py`, `tests/test_adapter_differential*.py`.
 
 This document says what the code does. The reasons are in the engine
 contract (section 4) and in divan `engine-request-shapes-fit-about-24-fixed-data-primitives-…`.
@@ -24,7 +24,11 @@ description and an engine record. It needs no code and no release.
 | Executor `http-v1` | `executor.py`, `transport.py`, `assets.py` |
 | Adapter interface, registry, record reader | `adapter.py` |
 | Generic adapter (description + executor) | `http_adapter.py` |
-| First reviewed adapter (speech client) | `inline_tts.py` |
+| Selecting a reviewed adapter from a record | `reviewed.py` |
+| httpx boundary shared by the reviewed adapters | `httpx_wire.py` |
+| Reviewed adapter `node-graph` (graph engine client) | `node_graph.py`, `node_info.py`, `node_ui_graph.py`, `node_catalog.py`, `node_validation.py` |
+| Reviewed adapter `inline-tts` (speech client) | `inline_tts.py` |
+| Reviewed adapter `chunked-stt` (transcription client) | `chunked_stt.py` |
 
 The seed `openai-compatible.yml` describes the operations Azizam sends to an
 engine that serves the OpenAI-shaped API: `models`, `chat`, `embeddings`,
@@ -91,7 +95,8 @@ observations compile into bounded executor operations; `{op: name}` can also
 select the `value` field from a declared operation. No-switch permissions are
 checked while the selection lock is held.
 
-Text completions, transcription and graph clients keep their current paths.
+Text completions, transcription and graph clients keep their current dispatch;
+their clients are reviewed adapters (below), not `http-v1` descriptions.
 The [worked example](../guides/ADD_HTTP_ENGINE_AS_DATA.md) uses only test data;
 no production module names the fictional engine.
 
@@ -282,39 +287,87 @@ by name. `connection_from_record` reads the `connection` block of an engine
 record (contract section 2) into a `Connection`, looking secrets up by
 reference.
 
-### The first adapter: the speech client
+### Reviewed in-tree adapters
 
-`inline_tts.py` wraps the call the speech dispatch always made. It changes where
-the request leaves the gateway, not what it sends: same URL, same headers (the
-caller prepares them), same body bytes, same timeouts, same failure texts.
-`proxy.py` still decides the engine, voice, headers and audio conversion.
-Operations: `speech.synthesize` (buffered) and `speech.stream` (raw chunks).
+An adapter description (`executor: adapter:<id>`) lists operation names only; the
+adapter owns every request. Three optional description keys serve adapters:
+`serves` (capability tokens for which the adapter answers when a record names no
+protocol), `label` (how caller-facing messages name the engine) and `binding`
+(the key under a workflow manifest's `bindings` that holds this engine's graph).
+All three are data, and `serves` is refused on an `http-v1` description.
 
-### Mapping of the other in-tree clients (later slice)
+**How a record selects an adapter.** `reviewed.adapter_for_backend(record,
+capability)`: the record's `protocol` (or `connection.protocol`) names a
+description; when it is an adapter description the factory registered under its
+id builds the adapter. Otherwise the adapter whose description lists
+`capability` in `serves` answers, so records stored before the key existed need
+no change. The shipped descriptions are the floor: when the active registry
+(shipped files plus the operator directory) holds no adapter for the capability,
+the shipped one answers, so a broken operator file cannot take the media routes
+away. A package adapter registers a factory with `reviewed.register(id, factory)`.
 
-**ComfyUI (graph patching).** Cannot be `http-v1`: the graph is patched by node
-id from the workflow manifest, and progress comes over a WebSocket.
-- `health`: system stats. `inventory`: node and model lists.
-- `submit`: upload input assets, patch the graph, post the prompt. The `JobRef`
-  holds the prompt id.
-- `poll`: history and queue, mapped to `JobState`. `events`: the WebSocket
-  (`executing`, `progress`, `executed`) as `JobEvent`.
-- `cancel`: interrupt or delete from the queue. `recover`: look the prompt id up
-  in history and queue after a restart; `None` if neither knows it.
-- `fetch_assets`: read each output file into an `AssetRef`.
-- Today's tests that must stay green: `tests/test_upstream_faults_comfyui*.py`,
-  the workflow validation and catalog tests.
+All three adapters send the call the gateway always made: the same URL, headers,
+body bytes, keyword arguments and timeouts, so the wire is unchanged and the
+older tests, which fake `httpx.AsyncClient`, still see the same calls. A failure
+to get an answer is a `TransportFailure` (`timeout`, `unreachable` or
+`aborted`, with the original text); a non-success answer a graph job asks for is
+an `UpstreamError`. A reply is a `WireReply`: a `Reply` that also answers
+`json()` (raising a parse error where it is asked for, as the response did),
+`text` and `raw`.
 
-**Speech-to-text (chunked transcription).** Each upstream call is a multipart
-POST that `http-v1` could describe. The chunk planner, the probe of accepted
-formats, and the merge of text, timestamps and speakers across chunks are
-stateful, so they stay code.
-- `invoke("transcribe", …)` runs the planner and the per-chunk calls and merges.
-- `health` and `inventory` can come from the description (`models`).
-- Long audio becomes a job: `submit` plans and stores chunks, `poll` reports
-  chunks done, `fetch_assets` returns the transcript. Core owns retries.
-- Tests that must stay green: `tests/test_stt_tiers.py`,
-  `tests/test_stt_chunking*.py`.
+**`inline-tts` (speech).** `speech.synthesize` (one buffered POST),
+`speech.stream` (the same POST, streamed), `speech.voice_check` and
+`speech.design` (JSON bodies serialized by httpx). `proxy.py` still decides the
+engine, voice, headers and audio conversion. `health` is unknown (the lifecycle
+driver observes readiness); inventory and jobs are unsupported.
+
+**`node-graph` (graph engine).** One session per client (`adapter.attach(conn,
+client)` wraps a client the caller holds; `adapter.open(conn)` makes one). Session
+methods: `submit`, `history`, `history_page`, `queue`, `view`, `view_stream`,
+`upload`, `cancel`, `delete_history`, `stats`, `free`, `object_info`. The
+interface maps onto them:
+- `health`: system stats. `inventory`: the node classes.
+- `submit`: post the finished payload; the `JobRef` holds the prompt id. A refusal
+  is an `UpstreamError` carrying the engine's text; a missing id is
+  `MalformedResponse`.
+- `poll`: one history read, mapped to `JobState`: not there yet is `pending`, an
+  execution error is `failed` with a short safe summary, `completed` is
+  `succeeded` with one handle per output file. Core decides whether to look
+  again after a `TransportFailure` or `UpstreamError`.
+- `events` and `watch`: the push channel as decoded frames and typed `JobEvent`s.
+  Core keeps the reconnect loop and the progress records.
+- `cancel`, `recover` (history, then queue; `None` when neither knows the
+  prompt), `fetch_outputs` (bytes, a file that cannot be read is skipped) and
+  `fetch_assets` (into the media store, with the served-type check).
+Pure readers of the engine's answers live here too: `execution_error_message`,
+`history_state`, `queue_position`, `queue_prompt_ids`, `first_video_output`,
+`first_audio_output`, `build_submit_payload`. Node-class inspection (a cached
+`object_info` lookup), the UI-graph derivation, the workflow catalog check and
+the graph validator (the missing-node report) are adapter modules too.
+Image generation, image edit and variations, video, audio and the manifest
+workflow run reach the engine only through these methods. The image round is
+written on `submit`, `poll`, `cancel` and `fetch_outputs`; the other flows keep
+their own cadence and branching on the session methods, because their old
+requests differ in timing and error handling and the slice preserves them.
+
+**`chunked-stt` (transcription).** `stt.transcribe` and `stt.translate` take a
+typed `SttRun` (the parsed uploads, the form fields, the execution limits and
+core's cleanup owner, cancellation waiters, deadline and hooks) or an `SttUpload`
+(one buffered post of audio core holds in memory). The adapter owns the client,
+the 16 kHz preparation, the chunk plan, the chunk posts and their merge
+(`stt_chunking.execute_chunking`), the bounded read, the event-stream relay and
+the mapping of httpx errors to the `Stt*` failures. It registers what it opens on
+core's cleanup owner under the names and in the order core always used. Core
+keeps admission, the resource gate, receipts, the deadline and the response
+shaping.
+
+A long recording is still one request, so `submit`, `poll` and the other job
+methods raise `UnsupportedByAdapter` for the speech and transcription adapters.
+
+**Not behind an adapter.** The host-process VRAM probe, the status page's own
+reads of the engine, the long-video graph builders that carry graph node names,
+and the capability tables that key on the backend id. `docs/design/ENGINE_CONTRACT.md`
+section 4 lists them with the ratchet counts.
 
 ## What `http-v1` does not cover
 

@@ -49,7 +49,7 @@ for (const width of [1280, 390]) {
       await dialog.getByRole("button", { name: "Continue" }).click();
 
       await expect(dialog.getByRole("heading", { name: "Name and create" })).toBeVisible();
-      await dialog.getByLabel(/^Name/).fill(name);
+      await dialog.getByRole("textbox", { name: "Name", exact: true }).fill(name);
       // Who can use the models: the gateway's answer, shown before Create. The
       // fixture plans allow all chat models and the signed-in owner holds one.
       await expect(dialog.getByRole("heading", { name: "Who can use these models" })).toBeVisible();
@@ -77,6 +77,39 @@ for (const width of [1280, 390]) {
       await expect(page.getByText(/^Usable by:/)).toBeVisible();
       await expect(page.getByRole("link", { name: "Access plans" })).toBeVisible();
 
+      // The record page exposes all six contract sections. A real save is
+      // followed by a reload so local form state cannot make this pass.
+      for (const section of ["Connection", "What it offers", "How it runs", "What Azizam can check", "Resources", "Stored record"]) {
+        await expect(page.getByRole("heading", { name: section, exact: true })).toBeVisible();
+      }
+      await expect(page.getByTestId("connection-facts")).toContainText(`${address}/chat/completions`);
+      const storedTest = page.waitForResponse((response) =>
+        response.request().method() === "PATCH" &&
+        response.url().endsWith(`/admin/api/operator/services/${serviceId}`) &&
+        Boolean(response.request().postDataJSON()?.tests),
+      );
+      await page.getByRole("button", { name: "Run a real test for Chat" }).click();
+      const realTest = page.getByRole("status", { name: "Real test of Chat" });
+      await expect(realTest).toBeVisible();
+      await realTest.getByText("Request sent, with secrets hidden", { exact: true }).click();
+      const trace = realTest.getByLabel("Request sent, with secrets hidden");
+      await expect(trace).toContainText(`POST ${address}/chat/completions`);
+      await expect(trace).toContainText("Authorization: [redacted]");
+      await expect(trace).not.toContainText("sk-journey-local-key");
+      await expect(trace).toContainText('"messages"');
+      // The successful real test records its result in a separate registry write.
+      // Complete that write before this journey edits the same record.
+      expect((await storedTest).status()).toBe(200);
+      await page.getByRole("textbox", { name: "Name", exact: true }).fill(`${name} edited`);
+      const saved = page.waitForResponse(
+        (response) => response.request().method() === "PATCH" && response.url().endsWith(`/admin/api/operator/services/${serviceId}`),
+      );
+      await page.getByRole("button", { name: "Save changes" }).click();
+      expect((await saved).status()).toBe(200);
+      await page.reload();
+      await expect(page.getByRole("heading", { level: 1, name: `${name} edited` })).toBeVisible();
+      await expect(page.getByTestId("connection-facts")).toContainText(`${address}/chat/completions`);
+
       // N2: an edited address never gets the saved key, and the page says so before Save.
       await page.getByLabel(/^Address/).fill(`http://127.0.0.1:${enginePort + 5}/v1`);
       await expect(page.getByText("Your saved key won’t be sent to a new address. Re-enter it, or keep the old address.")).toBeVisible();
@@ -99,3 +132,55 @@ for (const width of [1280, 390]) {
     }
   });
 }
+
+test("a header-only save keeps an absent reply timeout and hidden header rows", { tag: GLOBAL_STATE_TAG }, async ({ page, baseURL }) => {
+  const session = await (await page.request.get("/admin/api/session")).json();
+  const registry = async () => {
+    const res = await page.request.get("/admin/api/operator/service-registry");
+    return { value: (await res.json()).service_registry, etag: res.headers().etag };
+  };
+  const headers = (etag: string) => ({ "x-azizam-csrf": session.actor.csrf_token, "if-match": etag });
+  let serviceId = "";
+  try {
+    const created = await page.request.post("/admin/api/operator/services", {
+      headers: headers((await registry()).etag),
+      data: { definition: "openai-compatible", name: "Header preservation journey", disabled: true,
+        values: { address: `http://127.0.0.1:${Number(new URL(baseURL!).port) + 1}/provider/v1` } },
+    });
+    expect(created.status()).toBe(201);
+    serviceId = (await created.json()).service_id;
+    const seed = await registry();
+    const config = seed.value.services[serviceId].config;
+    delete config.timeout;
+    config.gateway_lifecycle = true;
+    config.headers = [{ name: "X-Api-Key", value: "test-only-hidden-header" }, { name: "X-Private", value: "test-only-private-header", secret: true }];
+    expect((await page.request.put("/admin/api/operator/service-registry", { headers: headers(seed.etag), data: seed.value })).ok()).toBe(true);
+    await page.goto(`/engines/?engine=${serviceId}`);
+    await expect(page.getByRole("heading", { level: 1, name: "Header preservation journey" })).toBeVisible();
+    await expect(page.getByTestId("connection-facts")).toContainText("default for engines Azizam starts");
+    const connection = page.getByRole("region", { name: "More options", exact: true });
+    await expect(connection.getByText("Not sent", { exact: true })).toHaveCount(2);
+    await connection.getByRole("button", { name: "Add a header" }).click();
+    await connection.getByLabel("Header name", { exact: true }).last().fill("X-Tenant");
+    await connection.getByLabel("Value", { exact: true }).last().fill("household");
+    const saved = page.waitForResponse(res => res.request().method() === "PATCH" && res.url().endsWith(`/services/${serviceId}`));
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    expect((await saved).status()).toBe(200);
+    const after = (await registry()).value.services[serviceId].config;
+    expect(after).not.toHaveProperty("timeout");
+    expect(after.headers).toHaveLength(3);
+    expect(after.headers).toContainEqual({ name: "X-Tenant", value: "household" });
+    await page.reload();
+    await expect(page.getByTestId("connection-facts")).toContainText("default for engines Azizam starts");
+    await expect(connection.getByText("Not sent", { exact: true })).toHaveCount(2);
+    await connection.getByRole("button", { name: "Remove header X-Api-Key" }).click();
+    const removed = page.waitForResponse(res => res.request().method() === "PATCH" && res.url().endsWith(`/services/${serviceId}`));
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    expect((await removed).status()).toBe(200);
+    const final = (await registry()).value.services[serviceId].config;
+    expect(final.headers.map((row: { name: string }) => row.name)).toEqual(["X-Private", "X-Tenant"]);
+    expect(final).not.toHaveProperty("timeout");
+  } finally {
+    if (serviceId) await page.request.delete(`/admin/api/operator/services/${serviceId}`, { headers: headers((await registry()).etag) });
+  }
+});

@@ -1,0 +1,258 @@
+{
+  "assets": [
+    {
+      "json": {
+        "asset_id": "aud_a3fb99bc8032af9c3f1625560262c6d48b85a89cbe86a391019de2cd25ff5b5e",
+        "owner_key_hashes": [
+          "app:app_test"
+        ],
+        "updated_at": "<time>"
+      },
+      "name": "a3fb99bc8032af9c3f1625560262c6d48b85a89cbe86a391019de2cd25ff5b5e.meta.json",
+      "size": 148,
+      "suffix": ".json"
+    },
+    {
+      "name": "a3fb99bc8032af9c3f1625560262c6d48b85a89cbe86a391019de2cd25ff5b5e.wav",
+      "sha256": "a3fb99bc8032af9c3f1625560262c6d48b85a89cbe86a391019de2cd25ff5b5e",
+      "size": 24044,
+      "suffix": ".wav"
+    }
+  ],
+  "caller": [
+    {
+      "label": "first engine 503, second engine serves",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"model\":\"tts-fast\",\"voice\":\"shimmer\",\"input\":\"hello\",\"response_format\":\"wav\"}"
+        },
+        "headers": {
+          "content-length": "78",
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/audio/speech",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "binary",
+          "len": 24044,
+          "magic": "52494646e45d0000",
+          "sha256": "a3fb99bc8032af9c3f1625560262c6d48b85a89cbe86a391019de2cd25ff5b5e"
+        },
+        "headers": {
+          "content-length": "24044",
+          "content-type": "audio/wav",
+          "x-azizam-fallback": "supertonic->omnivoice (busy)",
+          "x-request-id": "<req:1>"
+        },
+        "status": 200
+      }
+    }
+  ],
+  "description": "The first engine answers 503; the tier's second engine serves the request and the receipt records it",
+  "engine_requests": [
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"model\": \"supertonic\", \"voice\": \"F4\", \"input\": \"hello\", \"response_format\": \"wav\"}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "identity",
+        "connection": "keep-alive",
+        "content-length": "82",
+        "content-type": "application/json",
+        "host": "127.0.0.1:8010"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 503
+      },
+      "path": "/v1/audio/speech",
+      "query": [],
+      "step": 0,
+      "to": "127.0.0.1:8010"
+    },
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"model\": \"k2-fsa/OmniVoice\", \"voice\": \"shimmer\", \"input\": \"hello\", \"response_format\": \"wav\"}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "identity",
+        "connection": "keep-alive",
+        "content-length": "93",
+        "content-type": "application/json",
+        "host": "127.0.0.1:8002"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/v1/audio/speech",
+      "query": [],
+      "step": 0,
+      "to": "127.0.0.1:8002"
+    }
+  ],
+  "gateway_sleeps": [],
+  "media_jobs": {
+    "media_jobs": [
+      {
+        "api_key_name": "test-app",
+        "app_profile": "plan_everything",
+        "backend": "tts",
+        "created_at": "<time>",
+        "error": null,
+        "intent": "speech.synthesis",
+        "job_id": "<job:1>",
+        "job_json": {
+          "accepted_at": "<time>",
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "assets": [
+            {
+              "asset_id": "aud_a3fb99bc8032af9c3f1625560262c6d48b85a89cbe86a391019de2cd25ff5b5e",
+              "filename": "audio.wav",
+              "kind": "audio",
+              "media_type": "audio/wav",
+              "size_bytes": 24464
+            }
+          ],
+          "attempt_number": 1,
+          "backend": "tts",
+          "cancel_requested": false,
+          "created_at": "<time>",
+          "creating_receipt_id": "<req:1>",
+          "error": null,
+          "error_category": null,
+          "error_code": null,
+          "finished_at": "<time>",
+          "first_output_at": "<time>",
+          "input_hash": "<digest>",
+          "intent": "speech.synthesis",
+          "job_id": "<job:1>",
+          "metadata": {
+            "mode": "sync_media_route"
+          },
+          "owner_key_hash": "app:app_test",
+          "owner_scope": "app:app_test",
+          "parent_request_id": null,
+          "previous_attempts": [],
+          "progress": 100,
+          "queued_at": null,
+          "request_id": "<req:1>",
+          "retryable": null,
+          "started_at": null,
+          "status": "succeeded",
+          "updated_at": "<time>",
+          "upstream_http_status": null,
+          "workflow": null
+        },
+        "parent_request_id": null,
+        "progress": 100,
+        "request_id": "<req:1>",
+        "status": "succeeded",
+        "updated_at": "<time>",
+        "workflow": null
+      }
+    ],
+    "media_jobs_schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "notes": {},
+  "receipts": {
+    "receipts": [
+      {
+        "api_key_name": "test-app",
+        "app_id": "app_test",
+        "app_profile": "plan_everything",
+        "created_at": "<time>",
+        "intent": "speech.synthesis",
+        "job_id": "<job:1>",
+        "parent_request_id": null,
+        "path": "/v1/audio/speech",
+        "protocol": "openai.audio",
+        "receipt_json": {
+          "accepted_at_ms": "<time>",
+          "accepted_inputs": [],
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "attempt_number": 1,
+          "backend": "tts",
+          "client_address": null,
+          "client_hint": null,
+          "connection_id": null,
+          "cost": null,
+          "effective_output_limit": null,
+          "fallback_reasons": [
+            "supertonic->omnivoice (busy)"
+          ],
+          "finished_at_ms": "<time>",
+          "first_output_at_ms": null,
+          "ignored_inputs": {},
+          "intent": "speech.synthesis",
+          "job_id": "<job:1>",
+          "latency_ms": "<duration>",
+          "manifest_hash": null,
+          "manifest_id": null,
+          "manifest_version": null,
+          "metadata": {
+            "status_code": 200,
+            "terminal_reason": "http_200"
+          },
+          "owner_key_hash": "app:app_test",
+          "parent_request_id": null,
+          "path": "/v1/audio/speech",
+          "policy_decision": "allowed",
+          "policy_reasons": [
+            "route_authorized",
+            "allowed by your access plan",
+            "allowed by your access plan"
+          ],
+          "policy_sources": [
+            "runtime_route_policy",
+            "access_plan:plan_everything",
+            "access_plan:plan_everything"
+          ],
+          "protocol": "openai.audio",
+          "queued_at_ms": null,
+          "rejected_inputs": {},
+          "remote": false,
+          "request_id": "<req:1>",
+          "requested_model": "tts-fast",
+          "requested_workflow": null,
+          "resolved_model": "k2-fsa/OmniVoice",
+          "resolved_workflow": null,
+          "source_kind": "app",
+          "source_label": "test-app",
+          "started_at_ms": null,
+          "status": "succeeded",
+          "stream": false,
+          "updated_at_ms": "<time>",
+          "usage": null,
+          "visibility": "full",
+          "warnings": []
+        },
+        "request_id": "<req:1>",
+        "status": "succeeded"
+      }
+    ],
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "tts_fallback_to_second_engine",
+  "schema": 1
+}

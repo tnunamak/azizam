@@ -119,7 +119,7 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(proxy.httpx, "AsyncClient", FakeClient), patch.object(
             proxy, "_service_availability_response", return_value=None
         ):
-            response = await proxy.proxy_comfy_video_create(
+            response = await proxy.proxy_graph_video_create(
                 _JsonRequest(body), access_context()  # type: ignore[arg-type]
             )
         payload = json.loads(response.body)

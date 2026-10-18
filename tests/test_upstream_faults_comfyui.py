@@ -1,7 +1,7 @@
 """ComfyUI wire protocol: the image round, normal and faulted.
 
 The gateway submits a prompt, polls ``/history/{id}`` and downloads ``/view``
-(``proxy._comfy_run_round``). Each case serves one FK scenario
+(``proxy._graph_run_round``). Each case serves one FK scenario
 (tests/support/fake_upstream/scenarios/comfyui/) and asserts the complete
 result the caller gets plus the forwarded requests. ComfyUI does not stream
 SSE, so the "split event" fault is the history JSON arriving in pieces.
@@ -41,7 +41,7 @@ async def _round(fakes: FakeUpstreams, *, release_waits: int = 0, read_budget: f
 
     async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient(timeout=httpx.Timeout(HANG_BOUND_SECONDS, read=read_budget)) as client:
         releaser = asyncio.create_task(pump())
-        result = await proxy._comfy_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "fk", max_wait_s=2)
+        result = await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "fk", max_wait_s=2)
         await releaser
         return result
 

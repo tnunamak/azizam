@@ -223,11 +223,11 @@ class OpenAICompatValidationTests(unittest.TestCase):
 
             with self.subTest(path=path), patch.object(
                 proxy,
-                "proxy_comfy_request",
+                "proxy_graph_image_request",
                 side_effect=AssertionError("image variation must not forward to generation backend"),
             ), patch.object(
                 proxy,
-                "proxy_comfy_edit_request",
+                "proxy_graph_image_edit_request",
                 fake_edit_request,
             ):
                 resp = self.client.post(
@@ -249,11 +249,11 @@ class OpenAICompatValidationTests(unittest.TestCase):
         either backend function."""
         with patch.object(
             proxy,
-            "proxy_comfy_request",
+            "proxy_graph_image_request",
             side_effect=AssertionError("image variation must not forward to generation backend"),
         ), patch.object(
             proxy,
-            "proxy_comfy_edit_request",
+            "proxy_graph_image_edit_request",
             side_effect=AssertionError("image variation must not forward to edit backend"),
         ):
             resp = self.client.post(
@@ -285,11 +285,11 @@ class OpenAICompatValidationTests(unittest.TestCase):
         )
         with patch.object(proxy, "_apply_image_route_policy", return_value=denied), patch.object(
             proxy,
-            "proxy_comfy_request",
+            "proxy_graph_image_request",
             side_effect=AssertionError("image variation must not forward to generation backend"),
         ), patch.object(
             proxy,
-            "proxy_comfy_edit_request",
+            "proxy_graph_image_edit_request",
             side_effect=AssertionError("image variation must not forward to edit backend"),
         ):
             resp = self.client.post(
