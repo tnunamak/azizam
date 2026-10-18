@@ -69,6 +69,11 @@ class RuntimeIdentity:
     person_id: str | None = None
     accountable_person_id: str | None = None
     denial: str | None = None
+    # How a keyless caller got in, so work done later on its behalf can check
+    # the same thing again: the MCP sign-in connection (grant id), or the
+    # trusted client address the request came from.
+    connection_id: str | None = None
+    trusted_address: str | None = None
 
 
 def plan_ref(identity: "RuntimeIdentity | None") -> str | None:

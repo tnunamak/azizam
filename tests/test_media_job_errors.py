@@ -68,6 +68,24 @@ class FailureClassificationTests(unittest.TestCase):
         _message, info = proxy._media_job_failure(_json(502, {"message": "x", "code": f"{PROMPT}!"}))
         self.assertEqual(info["error_code"], "upstream_error")
 
+    def test_only_known_error_codes_are_copied(self) -> None:
+        # A plain token can still carry prompt words; only codes the gateway knows pass.
+        for status in (400, 502, 504):
+            with self.subTest(status=status):
+                _message, info = proxy._media_job_failure(_json(status, {"message": "x", "code": "red_fox_at_dawn"}))
+                self.assertNotIn("fox", info["error_code"])
+        _message, info = proxy._media_job_failure(_json(503, {"message": "x", "code": "vram_exhausted"}))
+        self.assertEqual(info["error_code"], "vram_exhausted")
+
+    def test_access_errors_are_the_gateways_refusal(self) -> None:
+        for code in proxy.ACCESS_ERROR_MESSAGES:
+            with self.subTest(code=code):
+                message, info = proxy._media_job_failure(proxy.access_error(code))
+                self.assertEqual(info["error_category"], "authorization")
+                self.assertEqual(info["error_code"], code)
+                self.assertNotIn("upstream_http_status", info)
+                self.assertNotIn("upstream", message)
+
 
 class JobErrorFieldsTests(unittest.TestCase):
     def setUp(self) -> None:

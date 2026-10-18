@@ -14,6 +14,8 @@ It intentionally keeps two planes separate:
 from __future__ import annotations
 
 import copy
+import ipaddress
+from dataclasses import replace
 import functools
 import secrets
 import json
@@ -1819,13 +1821,15 @@ def runtime_identity_for_trusted_address(
         row = admin_store.runtime_access_row(connection, app_id=str(entry["app_id"]))
     if row is None or row["on_session_app"]:
         return None
-    return identity_from_access_row(
+    identity = identity_from_access_row(
         row, key_hash=f"app:{row['app_id']}", name=str(row.get("app_name") or row["app_id"]), person_id=None,
     )
+    return replace(identity, trusted_address=str(client))
 
 
 def runtime_identity_for_trusted_app(
     app_id: str,
+    address: str,
     *,
     path: Path = admin_store.DB_PATH,
 ) -> RuntimeIdentity | None:
@@ -1833,20 +1837,17 @@ def runtime_identity_for_trusted_app(
 
     A media job accepted from a trusted address runs later in a worker, which
     has no client address of its own that may count. The job keeps its App
-    while the owner still trusts some address for it; removing the App's last
-    trusted address stops its queued work. The App passes the same checks as
-    ``runtime_identity_for_trusted_address``. Returns None when the App has no
-    trusted address or is a session App.
+    only while ``address``, the one the request came from, still matches this
+    App, by the same narrowest-entry rule as ``runtime_identity_for_trusted_address``.
+    Another address the App is trusted for does not count. Returns None when
+    the address no longer maps to this App.
     """
-    with admin_store.runtime_auth_connection(path) as connection:
-        if not admin_store.list_trusted_addresses(app_id, connection=connection):
-            return None
-        row = admin_store.runtime_access_row(connection, app_id=app_id)
-    if row is None or row["on_session_app"]:
+    try:
+        client = ipaddress.ip_address(address)
+    except ValueError:
         return None
-    return identity_from_access_row(
-        row, key_hash=f"app:{row['app_id']}", name=str(row.get("app_name") or row["app_id"]), person_id=None,
-    )
+    identity = runtime_identity_for_trusted_address(client, path=path)
+    return identity if identity is not None and identity.app_id == app_id else None
 
 
 def create_admin_service_account_key(

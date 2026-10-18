@@ -745,6 +745,16 @@ class McpOAuth:
         store.touch_grant(grant)
         return Connection(grant.id, grant.person_id, grant.client_id, grant.client_name, record.scope)
 
+    def connection_active(self, grant_id: str, person_id: str) -> bool:
+        """Whether a connection's grant is still in force for ``person_id``.
+
+        Work a connection started (a queued media job) holds no access token,
+        so it checks the grant itself: the same grant and scope test
+        ``verify_access_token`` applies. Revoking the connection stops it.
+        """
+        grant = self.deps.store.active_grant(grant_id)
+        return grant is not None and grant.person_id == person_id and SCOPE in scope_to_list(grant.scope)
+
     # ---- helpers
 
     def _maybe_prune(self) -> None:

@@ -436,9 +436,10 @@
               "capacity",
               "timeout",
               "safety",
+              "internal",
               null
             ],
-            "description": "Who refused: the gateway (authorization, invalid_input, capacity) or the work."
+            "description": "Who refused: the gateway (authorization, invalid_input, capacity), the work (upstream, timeout, safety), or a gateway bug (internal)."
           },
           "retryable": {
             "type": [
