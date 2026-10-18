@@ -54,7 +54,7 @@ class Store:
 
 
 def test_echoed_connection_timeout_does_not_create_a_stored_limit(tmp_path):
-    saved = record()
+    saved = record(definition="openai-compatible", definition_version=1)
     store = Store(saved, tmp_path / 'admin.db')
     service = engine_admin.EngineService(store, hop_timeout=lambda: 1800.0)
     before = service.view('review', SimpleNamespace(roles=('owner',)))
