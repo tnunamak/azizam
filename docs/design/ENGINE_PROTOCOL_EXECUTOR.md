@@ -28,8 +28,40 @@ description and an engine record. It needs no code and no release.
 
 The seed `openai-compatible.yml` describes the operations Azizam sends to an
 engine that serves the OpenAI-shaped API: `models`, `chat`, `embeddings`,
-`speech`, `transcribe`. LiteLLM still executes chat. The chat entry serves
-probes, inventory and the direct executor, and must equal what LiteLLM sends.
+`speech`, `transcribe`. LiteLLM still executes chat. The seed stays on its existing execution path. Public execution requires the
+record opt-in described below.
+
+## Public dispatch (W6a)
+
+Set `config.connection.dispatch: protocol` on a stored engine record, name an
+`http-v1` description in `connection.protocol`, and declare `config.offerings`.
+Top-level contract blocks are also read. Without that flag the runtime uses
+its existing dispatch, even when the description says `http-v1`. Seeded
+engines remain unchanged.
+
+The fixed operation names served are `chat` (JSON and streams), `models`,
+`embeddings`, `images` (sync binary/mapped base64 or submit/poll/fetch), and
+buffered `speech` when declared. They reach the public OpenAI routes;
+frontend aliases use the same handlers. The offering's upstream id becomes
+`/body/model` and `/params/model`; `/params/offering` carries its public id.
+An unsupported task is refused before upstream I/O. Inventory lists only
+configured offerings present in the mapped answer. Streaming responses are
+framed as OpenAI SSE, including multiline raw events and the final `[DONE]`.
+A broken upstream stream produces a typed error event and a failed receipt.
+
+Core keeps policy, admission, receipts, owner-scoped asset storage, image-job
+state and replay. The queued image API uses the same dispatch. A saved upstream
+job id is polled on a retry; an ambiguous submit is never blindly repeated.
+Startup keeps the existing policy of failing uncertain running jobs. Queued
+protocol jobs can resume independently of unrelated engines. Switch-mode
+requests use W2's lock, drain, verification and final-byte lease. HTTP
+observations compile into bounded executor operations; `{op: name}` can also
+select the `value` field from a declared operation. No-switch permissions are
+checked while the selection lock is held.
+
+Text completions, transcription and graph clients keep their current paths.
+The [worked example](../guides/ADD_HTTP_ENGINE_AS_DATA.md) uses only test data;
+no production module names the fictional engine.
 
 ## The grammar (`executor: http-v1`, protocol_version 1)
 
@@ -43,7 +75,7 @@ template that starts with `/` and holds `{name}` placeholders (values are
 percent-encoded; no host, query, fragment, `..` or backslash is allowed in the
 template. Each placeholder must be a single segment: slash, backslash, percent,
 semicolon, control characters (including NUL), Unicode dot look-alikes that
-NFKC-normalize to dots, and NFKC-normalized `.` or `..` are refused with a
+NFKC-normalize to dots, lone surrogates, and NFKC-normalized `.` or `..` are refused with a
 mapping error. Slash-containing organization/model IDs belong in query or body fields);
 `query`, a list of `{name, from, default}`; `headers`, constant non-credential
 headers; `body`.
@@ -133,11 +165,15 @@ await executor.preview(conn, request) -> {method, url, headers (key masked), bod
 - `wait` polls every `interval_s` and raises `BudgetExceeded(max_wait_s)` when
   the job has not ended after `max_wait_s`; the limit also cuts a poll that
   hangs. Transport failures and HTTP 5xx are retried at the declared interval,
-  bounded by that same deadline; HTTP 4xx and malformed statuses are not retried.
+  bounded by that same deadline; HTTP 4xx, DNS, TLS and blocked-address failures,
+  and malformed statuses are not retried. A deadline error includes the last
+  scrubbed failure. The schema requires `interval_s >= 0.5`; no shipped
+  description needs a lower interval.
   No poll starts at or after the deadline. `cancel` skips its request only when
   a poll positively reports succeeded, failed or cancelled. Poll failures,
   including unmapped states and 404, still lead to the cancel request with its
-  own total timeout; caller cancellation still propagates. `wait` is an executor method, not
+  own total timeout. A cancel response of 404, 409 or 410 means the job already
+  ended; repeated cancellation succeeds. Caller cancellation still propagates. `wait` is an executor method, not
   part of the adapter interface: core keeps the durable job state and may poll
   on its own clock.
 - All reads of one `fetch_assets` call share one total deadline and one size
@@ -156,7 +192,8 @@ await executor.preview(conn, request) -> {method, url, headers (key masked), bod
   secrets; this deliberately favors secrecy even when ordinary error text is
   masked. Error bodies are scrubbed before the 64 KiB diagnostic cap, with
   bounded credential-length lookahead and trailing partial credential prefixes
-  removed at the cut (also for the 160-byte message excerpt).
+  removed at the cut. The message excerpt is capped at 160 characters after
+  scrubbing, without splitting UTF-8 or retaining a partial credential prefix.
   Successful response bodies are returned as the engine sent them.
 - An unmapped stream is relayed as raw bytes without a JSON parse. A mapped
   stream yields dicts. SSE and NDJSON retain mutable buffers and scan offsets;

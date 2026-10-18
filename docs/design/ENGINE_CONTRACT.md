@@ -47,6 +47,7 @@ connection:
   transport: http                   # http | websocket | tcp | unix (non-http needs an adapter)
   address: http://127.0.0.1:8080    # root; the protocol joins operation paths
   protocol: openai-compatible       # protocol description id (section 4)
+  dispatch: protocol                # explicit public http-v1 execution opt-in; absent keeps the current path
   credentials:                      # per operation class, each bound to the address origin (F5)
     inference: {secret_ref: null, header: Authorization, scheme: Bearer}
     control: null                   # load, unload, switch, admin; owner-only
@@ -182,6 +183,24 @@ load, unload and so on), `auth`, `errors` (advice rows) and an `executor`.
   arbitrary expressions, no side effects, and size, depth and time budgets.
   The claim "a new HTTP-shaped engine needs no code" applies exactly to this
   grammar. It is proven by a second-engine fixture for each pattern.
+Public execution is opt-in in W6a. A stored service uses
+`config.connection.dispatch: protocol`, a `protocol` id resolving to
+`executor: http-v1`, and `config.offerings`. The runtime also accepts top-level
+contract blocks. With no opt-in, even an `http-v1` description leaves the
+existing path in charge. No seeded engine opts in during this slice.
+
+The public handlers serve `chat` (JSON and streaming SSE/NDJSON mapped to
+OpenAI SSE), `models`, `embeddings`, `images` (synchronous binary or mapped
+base64, and submit/poll/fetch), and declared buffered `speech`. The operation
+names are fixed canonical intents, not engine names. Offerings declare the
+tasks they serve; generation uses their upstream id in body and parameters.
+Core applies access plans and admission, finalizes receipts, and owns durable
+media jobs, idempotency, cancellation settlement and asset access. Queued image
+jobs use this same dispatch. Startup keeps the existing fail-closed policy for
+uncertain running work rather than resubmitting it. Text completions,
+transcription, graph workflows and other existing paths are not migrated here.
+See [Add an HTTP engine as data](../guides/ADD_HTTP_ENGINE_AS_DATA.md).
+
 - **`executor: adapter:<id>`** is a reviewed adapter, for anything outside
   http-v1: graph patching (ComfyUI), framed or socket protocols (Wyoming),
   chunked speech-to-text merge, novel stateful streams. Divan 5d1bed8 names
