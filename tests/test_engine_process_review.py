@@ -829,7 +829,8 @@ def test_adopted_engine_keeps_a_working_stdout_after_the_gateway_lets_go(tmp_pat
         for pipe in (child.stdout, child.stderr):  # what a gateway restart does to its end of a pipe
             if pipe:
                 pipe.close()
-        before = int(marker.read_text() or 0)
+        assert _wait_for(lambda: marker.exists() and marker.read_text() != "")
+        before = int(marker.read_text())
         await asyncio.sleep(0.4)
         assert int(marker.read_text()) > before + 3
         assert not Path(str(marker) + ".err").exists(), Path(str(marker) + ".err").read_text()
