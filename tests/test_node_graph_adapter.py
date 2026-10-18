@@ -547,3 +547,13 @@ def test_the_adapter_reads_its_manifest_binding_key_from_the_description() -> No
     assert NodeGraphAdapter(doc).binding == doc.binding
     assert reviewed.adapter_for_backend({}, "audio.generate").binding == doc.binding
     assert NodeGraphAdapter().binding == ""
+
+
+def test_a_broken_operator_file_cannot_take_the_reviewed_adapters_away(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "node-graph.yml").write_text("protocol_version: 1\nid: node-graph\nexecutor: [broken\n", encoding="utf-8")
+    (tmp_path / "inline-tts.yml").write_text(
+        "protocol_version: 1\nid: inline-tts\nexecutor: http-v1\noperations:\n  m: {class: inventory, request: {method: GET, path: /m}}\n",
+        encoding="utf-8")
+    monkeypatch.setenv("AZIZAM_PROTOCOLS_DIR", str(tmp_path))
+    assert reviewed.protocol_for_backend({}, "images").adapter_id == "node-graph"
+    assert reviewed.protocol_for_backend({}, "speech").adapter_id == "inline-tts"

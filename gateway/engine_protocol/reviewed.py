@@ -64,9 +64,8 @@ def _named_protocol(record: Mapping[str, Any]) -> str | None:
     return None
 
 
-def protocol_for_backend(record: Mapping[str, Any], capability: str) -> description.ProtocolDescription:
-    """The adapter protocol description that serves ``capability`` for ``record``."""
-    documents = description.load_registry()
+def _adapter_description(documents: Mapping[str, description.ProtocolDescription], record: Mapping[str, Any],
+                         capability: str) -> description.ProtocolDescription | None:
     named = _named_protocol(record)
     chosen = documents.get(named) if named else None
     if chosen is not None and chosen.adapter_id is not None:
@@ -75,7 +74,22 @@ def protocol_for_backend(record: Mapping[str, Any], capability: str) -> descript
         candidate = documents[protocol_id]
         if candidate.adapter_id is not None and capability in candidate.serves:
             return candidate
-    raise ProtocolError(f"No reviewed adapter is registered for '{capability}'.", code="adapter_not_registered")
+    return None
+
+
+def protocol_for_backend(record: Mapping[str, Any], capability: str) -> description.ProtocolDescription:
+    """The adapter protocol description that serves ``capability`` for ``record``.
+
+    The shipped descriptions are the floor: an operator file that replaces or breaks one of them can change what a
+    record selects, but it cannot take the media routes down, so when the active registry holds no adapter for the
+    capability the shipped one answers.
+    """
+    found = _adapter_description(description.load_registry(), record, capability)
+    if found is None:
+        found = _adapter_description(description.load_registry(description.REGISTRY_DIR), record, capability)
+    if found is None:
+        raise ProtocolError(f"No reviewed adapter is registered for '{capability}'.", code="adapter_not_registered")
+    return found
 
 
 def adapter_for_backend(record: Mapping[str, Any], capability: str) -> EngineAdapter:
