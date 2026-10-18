@@ -595,3 +595,87 @@ def test_a_secret_whose_stored_bytes_are_damaged_is_unavailable_and_not_a_crypto
     assert "R3-DAMAGED" not in str(raised.value) and ref not in str(raised.value)
     with pytest.raises(runtime_secrets.SecretUnavailable):
         runtime_secrets.resolve("sref_" + "0" * 24)
+
+
+# ---------------------------------------------------------------------------
+# L6: package install proofs on a live-shaped registry that holds no secret
+# ---------------------------------------------------------------------------
+
+from pathlib import Path  # noqa: E402
+
+from gateway import extension_packages, record_integrity  # noqa: E402
+from gateway.admin_api import AdminContext  # noqa: E402
+from gateway.admin_runtime import AdminSQLiteStore  # noqa: E402
+from tests.test_secret_externalize import FIXTURE, _v10_database  # noqa: E402
+
+PACKAGE_PROVENANCE = {"package_id": "pk", "package_hash": "h1", "package_version": "1"}
+
+
+def _live_shaped_package_database(path: Path):
+    """The live registry with two records a package installed (one since changed by the operator) and a bare-digest proof."""
+    registry = json.loads(FIXTURE.read_text())
+    unchanged, changed = list(registry["services"])[:2]
+    for service_id in (unchanged, changed):
+        registry["services"][service_id]["provenance"] = dict(PACKAGE_PROVENANCE)
+    installed = {"services": {service_id: copy.deepcopy(registry["services"][service_id]) for service_id in (unchanged, changed)}}
+    package = {"id": "pk", "name": "pk", "version": "1", "enabled": True, "source": {"type": "local_directory", "path": "/x"},
+               "services": [unchanged, changed], "package_hash": "h1", **extension_packages._legacy_digest_proof(installed)}
+    registry["services"][changed]["name"] = "changed by the operator"
+    _v10_database(path, registry, {"schema_version": 1, "sources": [], "packages": {"pk": package}, "updated_at": 1})
+    return registry, unchanged, changed
+
+
+def _package(path: Path) -> dict:
+    with sqlite3.connect(path) as conn:
+        return json.loads(conn.execute("SELECT value_json FROM operator_settings WHERE key='extension_package_index'").fetchone()[0])["packages"]["pk"]
+
+
+def test_a_live_shaped_registry_keeps_its_records_and_gets_keyed_proofs_that_still_tell_changed_from_unchanged(tmp_path):
+    path = tmp_path / "admin.db"
+    registry, unchanged, changed = _live_shaped_package_database(path)
+    before = json.dumps(registry)
+
+    admin_store.init_db(path)
+
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0] == before, "the registry is not touched"
+        audit = conn.execute("SELECT metadata_json FROM audit_events WHERE action='operator.secrets.externalize'").fetchall()
+    assert [json.loads(row[0]) for row in audit] == [{"package_proofs": 1}]
+    package = _package(path)
+    assert package["installed_records_version"] == extension_packages.INSTALLED_RECORDS_VERSION
+    entries = package["installed_records"]["services"]
+    assert all("sha256" not in entry and set(entry) == {"kind", "id", "mac"} for entry in entries.values())
+    key = record_integrity.install_key(path)
+    stored = json.loads(before)["services"]
+    assert entries[unchanged]["mac"] and extension_packages._matches_install(stored[unchanged], entries[unchanged], package, None, key)
+    assert entries[changed]["mac"] is None and not extension_packages._matches_install(stored[changed], entries[changed], package, None, key)
+
+
+def test_the_proof_migration_is_idempotent_on_a_live_shaped_registry(tmp_path):
+    path = tmp_path / "admin.db"
+    _live_shaped_package_database(path)
+    admin_store.init_db(path)
+    with sqlite3.connect(path) as conn:
+        first = [conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (key,)).fetchone()[0]
+                 for key in ("service_registry", "extension_package_index")]
+        generation = conn.execute("SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key='extension_package_index'").fetchone()[0]
+
+    admin_store.init_db(path)
+
+    with sqlite3.connect(path) as conn:
+        again = [conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (key,)).fetchone()[0]
+                 for key in ("service_registry", "extension_package_index")]
+        assert conn.execute("SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key='extension_package_index'").fetchone()[0] == generation
+        assert conn.execute("SELECT count(*) FROM audit_events WHERE action='operator.secrets.externalize'").fetchone()[0] == 1
+    assert again == first
+
+
+def test_removing_the_package_removes_the_unchanged_record_and_detaches_the_changed_one(tmp_path):
+    path = tmp_path / "admin.db"
+    _, unchanged, changed = _live_shaped_package_database(path)
+    admin_store.init_db(path)
+
+    removed = AdminSQLiteStore(path).remove_extension_package(
+        package_id="pk", actor=AdminContext(subject="owner", roles=frozenset({"owner"}), actor_kind="user"))
+
+    assert {item["id"]: item["action"] for item in removed["affected_records"]} == {unchanged: "removed", changed: "detached"}
