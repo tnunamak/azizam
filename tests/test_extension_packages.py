@@ -863,3 +863,190 @@ def test_remove_extension_package_rejects_unknown_package() -> None:
         assert "missing-package" in str(exc)
     else:  # pragma: no cover - assertion guard
         raise AssertionError("expected KeyError")
+
+
+def _lifecycle_fixture():
+    import copy
+    from gateway.extension_packages import DATA_OBJECT_KINDS
+    registry = {kind: {kind + "-one": {
+        "id": kind + "-one", "enabled": True, "name": kind,
+        "provenance": {"package_id": "pkg", "package_version": "1", "package_hash": "hash"},
+    }} for kind in sorted(DATA_OBJECT_KINDS)}
+    index = {"packages": {"pkg": {
+        "id": "pkg", "enabled": True, "version": "1", "package_hash": "hash",
+        "installed_records": copy.deepcopy(registry),
+    }}}
+    return index, registry
+
+
+def test_package_lifecycle_removes_unchanged_all_kinds():
+    import copy
+    from gateway.extension_packages import change_package_lifecycle
+    index, registry = _lifecycle_fixture()
+    before = copy.deepcopy((index, registry))
+    result, rows, affected = change_package_lifecycle(index, registry, "pkg")
+    assert result["packages"] == {}
+    assert all(not rows[kind] for kind in registry)
+    assert len(affected) == 4
+    assert {item["action"] for item in affected} == {"removed"}
+    assert (index, registry) == before
+
+
+def test_package_lifecycle_detaches_any_edited_field():
+    from gateway.extension_packages import change_package_lifecycle
+    for key, value in (("name", "edited"), ("enabled", False), ("custom", {"value": 1})):
+        index, registry = _lifecycle_fixture()
+        registry["services"]["services-one"][key] = value
+        _, rows, affected = change_package_lifecycle(index, registry, "pkg")
+        kept = rows["services"]["services-one"]
+        assert kept[key] == value
+        assert kept["provenance"] == {}
+        assert {"kind": "services", "id": "services-one", "action": "detached"} in affected
+
+
+def test_package_lifecycle_detaches_unproven_legacy_and_copy():
+    import copy
+    from gateway.extension_packages import change_package_lifecycle
+    index, registry = _lifecycle_fixture()
+    del index["packages"]["pkg"]["installed_records"]
+    registry["services"]["copy"] = copy.deepcopy(registry["services"]["services-one"])
+    registry["services"]["copy"]["id"] = "copy"
+    _, rows, affected = change_package_lifecycle(index, registry, "pkg")
+    assert len(rows["services"]) == 2
+    assert all(item["action"] == "detached" for item in affected)
+
+
+def test_package_lifecycle_disable_enable_restores_each_state():
+    from gateway.extension_packages import change_package_lifecycle
+    index, registry = _lifecycle_fixture()
+    registry["services"]["services-one"]["enabled"] = False
+    index, rows, _ = change_package_lifecycle(index, registry, "pkg", mode="disable")
+    index, rows, _ = change_package_lifecycle(index, rows, "pkg", mode="disable")
+    rows["workflows"]["workflows-one"]["custom"] = "preserve me"
+    index, rows, _ = change_package_lifecycle(index, rows, "pkg", mode="enable")
+    assert index["packages"]["pkg"]["enabled"] is True
+    assert rows["services"]["services-one"]["enabled"] is False
+    assert rows["workflows"]["workflows-one"]["enabled"] is True
+    assert rows["workflows"]["workflows-one"]["custom"] == "preserve me"
+
+
+def test_package_lifecycle_remove_disabled_is_not_operator_edit():
+    from gateway.extension_packages import change_package_lifecycle
+    index, registry = _lifecycle_fixture()
+    index, rows, _ = change_package_lifecycle(index, registry, "pkg", mode="disable")
+    index, rows, affected = change_package_lifecycle(index, rows, "pkg")
+    assert index["packages"] == {}
+    assert {item["action"] for item in affected} == {"removed"}
+
+
+def test_package_lifecycle_refuses_plan_reference_without_mutation():
+    import copy
+    import pytest
+    from gateway.extension_packages import change_package_lifecycle
+    index, registry = _lifecycle_fixture()
+    before = copy.deepcopy((index, registry))
+    with pytest.raises(ValueError, match="access plan"):
+        change_package_lifecycle(index, registry, "pkg", references={
+            "access plan p": {"direct_engine_access": {"engines": ["services-one"]}},
+        })
+    assert (index, registry) == before
+
+
+def test_package_lifecycle_removes_an_alias_the_package_owns_with_its_base():
+    from gateway.extension_packages import change_package_lifecycle
+    index, registry = _lifecycle_fixture()
+    registry["services"]["services-one"]["config"] = {"models": [
+        {"id": "base"}, {"id": "alias", "base_model_id": "base"},
+    ]}
+    result, rows, affected = change_package_lifecycle(index, registry, "pkg")
+    assert result["packages"] == {}
+    assert rows["services"] == {}
+    assert {"kind": "services", "id": "services-one", "action": "removed"} in affected
+
+
+def test_package_lifecycle_restores_enabled_on_an_edited_record_the_package_disabled():
+    from gateway.extension_packages import change_package_lifecycle
+    index, registry = _lifecycle_fixture()
+    index, registry, _ = change_package_lifecycle(index, registry, "pkg", mode="disable")
+    assert registry["services"]["services-one"]["enabled"] is False
+    registry["services"]["services-one"]["name"] = "edited by the operator"
+    _, rows, affected = change_package_lifecycle(index, registry, "pkg")
+    kept = rows["services"]["services-one"]
+    assert kept["name"] == "edited by the operator"
+    assert kept["enabled"] is True
+    assert kept["provenance"] == {}
+    assert {"kind": "services", "id": "services-one", "action": "detached"} in affected
+
+
+def test_package_lifecycle_refuses_reference_from_surviving_record():
+    import pytest
+    from gateway.extension_packages import change_package_lifecycle
+    index, registry = _lifecycle_fixture()
+    registry["capabilities"]["external"] = {"id": "external", "backend": "services-one"}
+    with pytest.raises(ValueError, match="capabilities/external"):
+        change_package_lifecycle(index, registry, "pkg")
+
+
+def _installed_lifecycle_store(tmp_path, monkeypatch):
+    from gateway import admin_store
+    from gateway.admin_api import AdminContext
+    from gateway.admin_runtime import AdminSQLiteStore
+    package = _write_package(tmp_path, """schema_version: 1
+kind: extension_package
+id: lifecycle
+version: "1"
+objects:
+  services: [service.yml]
+""", {"service.yml": """id: lifecycle-service
+name: Lifecycle service
+config:
+  base_url: http://localhost:9999
+"""})
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    store = AdminSQLiteStore(path=db)
+    monkeypatch.setattr(store, "write_litellm_config", lambda registry: None)
+    actor = AdminContext(subject="owner", roles=frozenset({"owner"}))
+    source = {"type": "local_directory", "path": str(package)}
+    installed = store.enable_extension_package(source=source, actor=actor, expected_generation=0)
+    return store, actor, source, installed
+
+
+def test_package_lifecycle_runtime_index_registry_audit_agree(tmp_path, monkeypatch):
+    from gateway import admin_store
+    store, actor, source, installed = _installed_lifecycle_store(tmp_path, monkeypatch)
+    disabled = store.remove_extension_package(package_id="lifecycle", actor=actor, mode="disable")
+    assert disabled["extension_package"]["enabled"] is False
+    assert disabled["service_registry"]["services"]["lifecycle-service"]["enabled"] is False
+    enabled = store.enable_extension_package(
+        source=source, actor=actor,
+        expected_generation=disabled["operator_settings_generation"],
+    )
+    assert enabled["service_registry"]["services"]["lifecycle-service"]["enabled"] is True
+    removed = store.remove_extension_package(package_id="lifecycle", actor=actor)
+    assert "lifecycle" not in store.get_extension_package_index()["packages"]
+    assert "lifecycle-service" not in store.get_service_registry()["services"]
+    assert removed["affected_records"] == [
+        {"kind": "services", "id": "lifecycle-service", "action": "removed"},
+    ]
+    # The durable audit representation is checked through the store API.
+    audits = admin_store.list_audit(path=store.path)
+    assert any(
+        row.get("action") == "operator.extension_package.remove"
+        and row.get("metadata", {}).get("affected_records") == removed["affected_records"]
+        for row in audits
+    )
+
+
+def test_package_lifecycle_runtime_stale_generation_is_atomic(tmp_path, monkeypatch):
+    import pytest
+    from gateway import admin_store
+    store, actor, _, installed = _installed_lifecycle_store(tmp_path, monkeypatch)
+    before_index = store.get_extension_package_index()
+    before_registry = store.get_service_registry()
+    with pytest.raises(admin_store.OperatorSettingsGenerationConflict):
+        store.remove_extension_package(
+            package_id="lifecycle", actor=actor, expected_generation=0,
+        )
+    assert store.get_extension_package_index() == before_index
+    assert store.get_service_registry() == before_registry
