@@ -436,3 +436,24 @@ def test_the_seed_marks_exactly_the_routes_that_read_a_multipart_body():
         for route in record.get("registered_routes") or []:
             if route.get("body") == "multipart":
                 assert route["translator"] == "identity" and "carries" not in route
+
+
+# --- on the live gateway ----------------------------------------------------------------------------
+
+def test_the_live_anthropic_and_ollama_routes_report_what_they_drop():
+    from tests.support.access import plan_for
+    from tests.test_runtime_route_policy import AUTH_HEADERS, authenticated_profile
+
+    client = TestClient(proxy.app)
+    with authenticated_profile(plan_for("loss-live", caps=())):
+        anthropic_response = client.post("/v1/messages/count_tokens", headers=AUTH_HEADERS, json={
+            "model": "m", "messages": [{"role": "user", "content": "hi", "cache": 1}], "service_tier": "auto",
+        })
+        ollama_response = client.post("/api/embed", headers=AUTH_HEADERS, json={
+            "model": "m", "input": "x", "truncate": True, "options": {"num_ctx": 8},
+        })
+        alias_response = client.post("/ollama/api/embed", headers=AUTH_HEADERS, json={"model": "m", "input": "x"})
+
+    assert json.loads(anthropic_response.headers["x-azizam-loss"])["dropped"] == ["messages[].cache", "service_tier"]
+    assert json.loads(ollama_response.headers["x-azizam-loss"])["dropped"] == ["truncate", "options"]
+    assert json.loads(alias_response.headers["x-azizam-loss"])["dropped"] == []
