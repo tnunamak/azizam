@@ -824,11 +824,14 @@ class AdminSQLiteStore:
                 previous = old_services.get(service_id) or {}
                 if previous:
                     old_config, new_config = previous.get("config") or {}, record.get("config") or {}
+                    defaults = {"base_path": "/v1", "scheme": "http", "timeout": 600,
+                                "headers": [], "models": [], "transforms": []}
                     for section, keys in {
                         "connection": ("address", "host", "port", "scheme", "base_path", "path_prefix", "protocol", "timeout", "headers"),
                         "offerings": ("models", "transforms"),
                     }.items():
-                        if any(old_config.get(key) != new_config.get(key) for key in keys):
+                        if any((old_config.get(key) or defaults.get(key)) != (new_config.get(key) or defaults.get(key))
+                               for key in keys):
                             raise PermissionError(f"Only the owner can change service {section}.")
                 for field in ("connection", "process", "protocol_operations", "control_file_roots",
                               "offerings", "residency", "observations"):

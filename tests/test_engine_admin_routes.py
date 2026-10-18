@@ -818,6 +818,9 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
         "models": [{"id": "offering", "model_group": "hop-chat", "upstream_model": "old-upstream"}],
         "lifecycle": {"driver": "process", "driver_config": {"start": ["server"], "port": {"fixed": 1234}}},
     }, source="ui")
+    service = registry["services"][service_id]
+    service["process"] = service_registry._v2_process(service.pop("lifecycle"))
+    service["config"].pop("lifecycle", None)
     _put_registry(gateway, registry)
     before = _record(gateway, service_id)
     saved = _edit(owner, service_id, {
