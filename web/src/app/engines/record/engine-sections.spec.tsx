@@ -158,6 +158,26 @@ describe("the six sections mirror the record", () => {
     for (const button of within(offers).queryAllByRole("button")) expect(button).toBeDisabled();
   });
 
+  it("a connection save omits read-only offering adjustments even when the serializer fills defaults", async () => {
+    mount({
+      can_edit_offerings: false,
+      offering_edit_reason: "Structured offerings are shown as stored.",
+      values: { ...engineView().values, transforms: [{ kind: "message-inject", text: "Be brief." }] },
+    });
+    const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
+    const user = userEvent.setup();
+    await user.click(await screen.findByText("More options", { selector: "summary span" }));
+    await user.clear(screen.getByLabelText("Time to wait for a reply"));
+    await user.type(screen.getByLabelText("Time to wait for a reply"), "37");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    const body = update.mock.calls[0][1];
+    expect(body.values).toMatchObject({ reply_timeout_s: 37 });
+    expect(body.values).not.toHaveProperty("transforms");
+    expect(body).not.toHaveProperty("models");
+    expect(body).not.toHaveProperty("capabilities");
+  });
+
   it("direct: shows the effective request path, the key's destination, the offering and an unknown observation", async () => {
     mount();
     await screen.findByRole("heading", { level: 1, name: "garage-gpu" });

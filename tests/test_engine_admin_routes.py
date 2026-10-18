@@ -247,19 +247,27 @@ def test_a_stored_key_is_never_sent_to_an_edited_address(gateway, fake_upstreams
     assert again.json()["check"]["key_sent"] is True
 
 
-def test_saving_a_new_address_without_a_new_key_removes_the_old_key(gateway, fake_upstreams):
+@pytest.mark.parametrize("legacy_reference", [False, True])
+def test_saving_a_new_address_without_a_new_key_removes_the_old_key(gateway, fake_upstreams, monkeypatch, legacy_reference):
     owner, *_ = owner_and_admin(gateway)
     home = _chat_server(fake_upstreams)
     _chat_server(fake_upstreams, host="new-home.fk.test")
     assert _create(owner, {"definition": "openai-compatible", "name": "keyed", "acknowledge_warnings": True,
                            "values": {"address": f"{home.base_url}/v1", "api_key": KEY}}).status_code == 201
     old_secret = _record(gateway, "keyed")["config"]["api_key_secret_id"]
+    if legacy_reference:
+        registry = _registry(gateway)
+        registry["services"]["keyed"]["config"].pop("api_key_secret_id")
+        registry["services"]["keyed"]["secret_refs"] = {"api_key": "<external-secret>"}
+        monkeypatch.setenv("AZIZAM_DOWNSTREAM_API_KEY", KEY)
+        _put_registry(gateway, registry)
     saved = _edit(owner, "keyed", {"definition": "openai-compatible", "acknowledge_warnings": True,
                                    "values": {"address": "http://new-home.fk.test/v1"}})
     assert saved.status_code == 200, saved.text
     config = _record(gateway, "keyed")["config"]
     assert "api_key_secret_id" not in config
-    assert secret_store.provider_secret_status(old_secret, db_path=gateway.path).state == "missing"
+    if not legacy_reference:
+        assert secret_store.provider_secret_status(old_secret, db_path=gateway.path).state == "missing"
     view = owner.get("/admin/api/engines/keyed").json()["engine"]
     assert view["key"]["state"] == "none"
     assert view["check"]["key_sent"] is False
