@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ViewerContext } from "@/components/shell/session";
 import UsagePage from "./page";
@@ -39,8 +40,8 @@ const noOwner = {
   person_label: "Unattributed request", app_label: "Local network · no key",
 };
 
-function open(receipt: Record<string, unknown>, summary: unknown[] = []) {
-  window.history.replaceState(null, "", `/usage/?receipt=${receipt.request_id}`);
+function open(receipt: Record<string, unknown>, summary: unknown[] = [], deepLink = true) {
+  if (deepLink) window.history.replaceState(null, "", `/usage/?receipt=${receipt.request_id}`);
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.startsWith("/me/api/receipts/")) return Response.json(receipt);
@@ -97,6 +98,8 @@ test("a receipt from an app with no owner says it is unattributed", async () => 
 });
 
 test("the receipts list shows the workflow when a receipt has no model", async () => {
-  open(chat, [{ ...jobSubmission, request_id: "req_listed" }]);
-  expect(await screen.findByText("image.generate.flux2-klein-4b")).toBeInTheDocument();
+  open(chat, [{ ...jobSubmission, request_id: "req_listed" }], false);
+  await userEvent.click(await screen.findByRole("button", { name: "View recent requests" }));
+  const row = await screen.findByRole("button", { name: /Receipt details for/ });
+  expect(within(row).getByText("image.generate.flux2-klein-4b")).toBeInTheDocument();
 });
