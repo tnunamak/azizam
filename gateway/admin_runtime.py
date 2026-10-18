@@ -1273,7 +1273,7 @@ class AdminSQLiteStore:
             if mode != "remove":
                 return
             references = {
-                f"access plan {plan['id']}": plan["plan"]
+                f"access plan {plan['name']}": plan["plan"]
                 for plan in admin_store.list_access_plans_in(conn)
             }
             extension_packages.change_package_lifecycle(index, registry, package_id, mode=mode, references=references)

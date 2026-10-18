@@ -545,7 +545,9 @@ def change_package_lifecycle(
         # Every row that stays, including an edited row of this package, must not name a target.
         for kind in sorted(DATA_OBJECT_KINDS):
             for record_id, record in (out.get(kind) or {}).items():
-                if (kind, record_id) not in gone and referenced(record):
+                # A row's own id names the row; only what it carries can name a removed record.
+                carried = {key: value for key, value in record.items() if key != "id"}
+                if (kind, record_id) not in gone and referenced(carried):
                     raise PackageInUse(
                         f"cannot remove package {package_id!r}: referenced by {kind}/{record_id}"
                     )
