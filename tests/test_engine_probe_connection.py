@@ -141,6 +141,14 @@ def test_the_current_model_and_context_window_probes_use_the_saved_connection(mo
     assert asyncio.run(proxy._probed_context_window("probe-llm")) == 32768
 
 
+def test_active_backend_health_uses_the_same_prefixed_keyed_connection(monkeypatch, fake_upstreams):
+    fake_upstreams.asgi(_engine("/provider/health", {"status": "ok"}), host=HOST)
+    monkeypatch.setattr(proxy, "config", {"backends": {"health-probe": _saved()}})
+    monkeypatch.setattr(proxy, "LLM_BACKEND_HOSTS", {"health-probe": "http://stale.invalid:1"})
+    monkeypatch.setattr(proxy, "_RESOURCE_FACT_CACHE", {})
+    assert asyncio.run(proxy.get_active_backend()) == "health-probe"
+
+
 def test_a_backend_without_a_saved_record_keeps_the_boot_host(monkeypatch):
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: {"services": {}})
     monkeypatch.setitem(proxy.LLM_BACKEND_HOSTS, "probe-legacy", "http://127.0.0.1:5099")
