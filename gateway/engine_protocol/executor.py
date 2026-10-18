@@ -304,12 +304,7 @@ class HttpV1Executor:
             mapped = spec.body.program.apply(source)
             if pointer.depth_exceeds(mapped, budgets.max_json_depth):
                 raise BudgetExceeded("max_json_depth", f"The request body nests deeper than {budgets.max_json_depth}.")
-            try:
-                body = json.dumps(mapped, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
-            except RecursionError:
-                raise BudgetExceeded("max_json_depth", "The request body nests too deep.") from None
-            except ValueError as exc:
-                raise MappingError(f"The request body cannot be written as JSON: {exc}") from None
+            body = _dump_json(mapped, "The request body")
             headers["content-type"] = "application/json"
         elif encoding == "multipart":
             body, headers["content-type"] = await self._multipart(spec, source)
@@ -348,7 +343,7 @@ class HttpV1Executor:
                     raise MappingError(f"The request needs '{'/'.join(part.segments)}' for the form field '{part.name}'.")
                 continue
             if part.kind == "json":
-                parts.append(framing.Part(part.name, json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode(), content_type="application/json"))
+                parts.append(framing.Part(part.name, _dump_json(value, f"The form field '{part.name}'"), content_type="application/json"))
             else:
                 if isinstance(value, (dict, list)):
                     raise MappingError(f"The form field '{part.name}' must be a plain value; use kind json for structures.")
@@ -575,6 +570,15 @@ class HttpV1Executor:
                 raise TransportFailure("aborted", "The stream ended in the middle of an event.")
         finally:
             await response.aclose()
+
+
+def _dump_json(value: Any, what: str) -> bytes:
+    try:
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except RecursionError:
+        raise BudgetExceeded("max_json_depth", f"{what} nests too deep.") from None
+    except (TypeError, ValueError) as exc:  # a value JSON has no spelling for: an asset reference, a non-text key, NaN
+        raise MappingError(f"{what} cannot be written as JSON: {exc}") from None
 
 
 @contextlib.asynccontextmanager

@@ -440,7 +440,10 @@ def _c_stringify(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
     def stringify_rule(source: Mapping[str, Any], out: dict) -> None:
         value = read(source)
         if value is not MISSING:
-            write(out, json.dumps(value, separators=(",", ":"), ensure_ascii=False))
+            try:
+                write(out, json.dumps(value, separators=(",", ":"), ensure_ascii=False))
+            except (TypeError, ValueError) as exc:  # an asset reference, a non-text key
+                raise MappingError(f"Cannot stringify {'/'.join(src)}: {exc}") from None
     return stringify_rule
 
 
