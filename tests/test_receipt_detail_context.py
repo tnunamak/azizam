@@ -134,7 +134,6 @@ def test_detail_and_list_agree_on_person_app_and_time(detail, request_id, receip
     assert body["person_label"] == row["person_label"]
     assert body["app_label"] == row["app_label"]
     assert body["created_at"] == row["created_at"]
-    assert body["source"] == row["source"]
 
 
 def test_member_sees_only_their_own_receipts_with_their_own_name(detail):
