@@ -90,6 +90,8 @@ GOLDEN = {
         "This item isn't in your Library. Return to the Library and choose another item."),
     'asset_unavailable': ('library',
         'This file is no longer available in the Library. Check a downloaded copy, or make it again.'),
+    'media_folder_unavailable': ('library',
+        "Azizam can't see its media folder right now, so nothing was removed."),
     'prompt_not_accessible': ('library',
         'Only the person who made this can download it with its prompt, and only while the prompt is kept. Download it without the prompt.'),
     'job_not_found': ('library',

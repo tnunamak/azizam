@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import math
+import os
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -88,6 +90,7 @@ def create_me_media_router(
     asset_deleter: AssetDeleter,
     asset_catalog_provider: AssetCatalogProvider | None = None,
     asset_metadata_reader: AssetMetadataReader | None = None,
+    asset_storage_provider: StorageSnapshotProvider | None = None,
     admin_db_path: PathProvider = admin_store.DB_PATH,
     media_jobs_path: PathProvider = media_jobs.DB_PATH,
     receipts_path: PathProvider = receipt_store.DB_PATH,
@@ -273,6 +276,8 @@ def create_me_media_router(
     def remove_missing_media(request: Request) -> JSONResponse:
         """Drop the caller's Library and job entries whose files are gone.
 
+        Refuses unless the media folder is seen to hold media. A file counts as
+        gone only when nothing in the folder holds its digest, under any suffix.
         Stored files and receipts are never touched.
         """
         try:
@@ -285,45 +290,42 @@ def create_me_media_router(
             jobs_path = _resolve_path(media_jobs_path)
             prompt_path = _resolve_path(prompt_memory_path)
             actor = _actor_from_session(session, admin_path)
-            entries = _media_entries(
-                request=request,
-                scope=_member_media_scope(actor.user_id, admin_path),
-                signed_url_builder=signed_url_builder,
-                asset_path_resolver=asset_path_resolver,
-                asset_media_type_resolver=asset_media_type_resolver,
-                asset_catalog_provider=asset_catalog_provider,
-                asset_metadata_reader=asset_metadata_reader,
-                admin_db_path=admin_path,
-                media_jobs_path=jobs_path,
-                receipts_path=_resolve_path(receipts_path),
-                prompt_memory_path=prompt_path,
+            storage = asset_storage_provider() if asset_storage_provider is not None else None
+            if storage is None or not storage.files:
+                raise PublicFailure("media_folder_unavailable", 503)
+            scope = _member_media_scope(actor.user_id, admin_path)
+            plan = _plan_removal(
+                _scoped_jobs(scope, jobs_path=jobs_path, receipts_path=_resolve_path(receipts_path)),
+                is_stored=lambda asset_id: _is_stored(asset_id, storage, asset_path_resolver),
+                already_hidden=(
+                    _deleted_asset_ids(scope, admin_path),
+                    media_jobs.hidden_assets(scope.user_ids or (), path=jobs_path),
+                ),
             )
-            gone = {
-                entry.asset_id: entry for entry in entries
-                if not _file_is_stored(asset_path_resolver(entry.asset_id))
-            }
-            for entry in gone.values():
-                prompt_memory.delete_asset_for_person(entry.asset_id, actor.user_id, path=prompt_path)
-                admin_store.record_audit(
-                    "media.asset.delete",
-                    actor_kind="user",
-                    actor_id=actor.user_id,
-                    actor_label=str(actor.user.get("email") or actor.user_id),
-                    target_kind="media_asset",
-                    target_id=entry.asset_id,
-                    metadata={"physical_removed": False, "job_id": entry.job_id, "reason": "file_missing"},
-                    path=admin_path,
+            if plan.gone_assets or plan.job_ids:
+                if prompt_path != jobs_path:
+                    for asset_id in plan.gone_assets:
+                        prompt_memory.delete_asset_for_person(asset_id, actor.user_id, path=prompt_path)
+                removed_jobs = prompt_memory.remove_missing_media(
+                    actor.user_id, plan.gone_assets if prompt_path == jobs_path else (), plan.hides, plan.job_ids,
+                    path=jobs_path,
                 )
-            # A job entry goes only when every file it made is gone.
-            made_by_job: dict[str, list[str]] = {}
-            for entry in entries:
-                if entry.job_id:
-                    made_by_job.setdefault(entry.job_id, []).append(entry.asset_id)
-            removed_jobs = media_jobs.delete_succeeded(
-                [job_id for job_id, ids in made_by_job.items() if all(asset_id in gone for asset_id in ids)],
-                path=jobs_path,
-            )
-            return _json({"removed_assets": len(gone), "removed_jobs": removed_jobs})
+                counts = {"removed_assets": len(plan.gone_assets), "removed_jobs": removed_jobs}
+                try:
+                    admin_store.record_audit(
+                        "media.library.remove_missing",
+                        actor_kind="user",
+                        actor_id=actor.user_id,
+                        actor_label=str(actor.user.get("email") or actor.user_id),
+                        target_kind="media_library",
+                        target_id=actor.user_id,
+                        metadata=counts,
+                        path=admin_path,
+                    )
+                except Exception:  # the removal is committed; the summary is a record, not the removal
+                    logging.getLogger(__name__).exception("could not record the remove-missing summary")
+                return _json(counts)
+            return _json({"removed_assets": 0, "removed_jobs": 0})
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
 
@@ -387,6 +389,93 @@ def create_me_media_router(
             return _error_response(exc)
 
     return router
+
+
+@dataclass(frozen=True)
+class StorageSnapshot:
+    """The media folder as it was listed: ``files`` maps a digest to the files that hold its bytes."""
+
+    files: Mapping[str, tuple[str, ...]]
+
+
+StorageSnapshotProvider = Callable[[], "StorageSnapshot | None"]
+
+
+def create_storage_snapshot_provider(cache_dir: Path) -> StorageSnapshotProvider:
+    """List the media folder, or return None when it cannot be seen.
+
+    None covers a folder that is missing, not a directory, unreadable or listed
+    without any media in it. An unmounted volume looks the same as every file
+    being gone, so it must never be read as "gone".
+    """
+
+    def snapshot() -> StorageSnapshot | None:
+        try:
+            if not cache_dir.is_dir():
+                return None
+            names = os.listdir(cache_dir)
+        except OSError:
+            return None
+        files: dict[str, list[str]] = {}
+        for name in names:
+            digest = directory_index.stored_digest(name)
+            if digest is not None:
+                files.setdefault(digest, []).append(name)
+        return StorageSnapshot({digest: tuple(sorted(found)) for digest, found in files.items()}) if files else None
+
+    return snapshot
+
+
+def _is_stored(asset_id: str, storage: StorageSnapshot, resolver: AssetPathResolver) -> bool:
+    """Whether a file holds the asset's bytes. An id that cannot be checked counts as stored."""
+    digest = asset_id.split("_", 1)[1] if isinstance(asset_id, str) and "_" in asset_id else ""
+    if len(digest) != 64:
+        return True
+    return digest in storage.files or _file_is_stored(resolver(asset_id))
+
+
+@dataclass(frozen=True)
+class _Removal:
+    gone_assets: tuple[str, ...]
+    hides: tuple[tuple[str, str], ...]
+    job_ids: tuple[str, ...]
+
+
+def _plan_removal(
+    jobs: Iterable[tuple[Mapping[str, Any], Mapping[str, Any] | None]],
+    *,
+    is_stored: Callable[[str], bool],
+    already_hidden: tuple[set[str], set[tuple[str, str]]],
+) -> _Removal:
+    """What to remove, decided from each job's own record and the files, not from the Library listing.
+
+    A job goes only when every asset its record names is gone. Otherwise each gone asset is
+    hidden as that job made it.
+    """
+    deleted, hidden = already_hidden
+    gone_assets: dict[str, None] = {}
+    hides: list[tuple[str, str]] = []
+    job_ids: list[str] = []
+    for job, _receipt in jobs:
+        if job.get("status") != media_jobs.STATUS_SUCCEEDED:
+            continue
+        named = [str(asset.get("asset_id") or asset.get("id") or "") for asset in _iter_job_assets(job)]
+        named = [asset_id for asset_id in dict.fromkeys(named) if asset_id]
+        if not named:
+            continue
+        gone = [asset_id for asset_id in named if not is_stored(asset_id)]
+        job_id = str(job.get("job_id") or "")
+        if not gone or not job_id:
+            continue
+        everything_gone = len(gone) == len(named)
+        for asset_id in gone:
+            if asset_id not in deleted and (asset_id, job_id) not in hidden:
+                gone_assets[asset_id] = None
+            if not everything_gone and (asset_id, job_id) not in hidden:
+                hides.append((asset_id, job_id))
+        if everything_gone:
+            job_ids.append(job_id)
+    return _Removal(tuple(gone_assets), tuple(hides), tuple(job_ids))
 
 
 def _resolve_path(provider: PathProvider) -> Path:
@@ -761,7 +850,6 @@ class _Entry:
     prompt: str | None
     source_id: str | None
     build: Callable[[bool], dict[str, Any]]
-    job_id: str | None = None
 
     @property
     def sort_key(self) -> tuple[int, str]:
@@ -770,6 +858,31 @@ class _Entry:
 
 def _media_items(**kwargs: Any) -> list[dict[str, Any]]:
     return [entry.build(True) for entry in _media_entries(**kwargs)]
+
+
+def _scoped_jobs(
+    scope: _MediaScope, *, jobs_path: Path, receipts_path: Path,
+) -> list[tuple[dict[str, Any], Mapping[str, Any] | None]]:
+    """Every finished job in scope, newest first, with its receipt. Reads the jobs in one query and their receipts in a few."""
+    jobs = media_jobs.recent(
+        limit=media_jobs.count(path=jobs_path),
+        audience="internal",
+        status=media_jobs.STATUS_SUCCEEDED,
+        path=jobs_path,
+    )
+    receipts = receipt_store.get_many(
+        [request_id for job in jobs for request_id in _job_receipt_ids(job)],
+        audience="internal", path=receipts_path,
+    )
+    scoped = []
+    for job in jobs:
+        receipt = next((receipts[key] for key in _job_receipt_ids(job) if key in receipts), None)
+        if receipt is not None and not _receipt_in_scope(receipt, scope):
+            continue
+        if receipt is None and not _job_in_scope(job, scope):
+            continue
+        scoped.append((job, receipt))
+    return scoped
 
 
 def _media_entries(
@@ -791,31 +904,17 @@ def _media_entries(
     Reads the jobs in one query and their receipts in a few, so the query
     count does not grow with the Library. Files are not opened here.
     """
-    jobs = media_jobs.recent(
-        limit=media_jobs.count(path=media_jobs_path),
-        audience="internal",
-        status=media_jobs.STATUS_SUCCEEDED,
-        path=media_jobs_path,
-    )
-    receipts = receipt_store.get_many(
-        [request_id for job in jobs for request_id in _job_receipt_ids(job)],
-        audience="internal", path=receipts_path,
-    )
     apps = _Apps(admin_db_path)
     out: list[_Entry] = []
     seen: set[str] = set()
     prompts = prompt_memory.get_person_prompts(scope.viewer_person_id, path=prompt_memory_path)
     deleted = _deleted_asset_ids(scope, admin_db_path)
-    for job in jobs:
-        receipt = next((receipts[key] for key in _job_receipt_ids(job) if key in receipts), None)
-        if receipt is not None and not _receipt_in_scope(receipt, scope):
-            continue
-        if receipt is None and not _job_in_scope(job, scope):
-            continue
+    hidden = media_jobs.hidden_assets(scope.user_ids, path=media_jobs_path) if scope.user_ids else set()
+    for job, receipt in _scoped_jobs(scope, jobs_path=media_jobs_path, receipts_path=receipts_path):
         job_source = None
         for asset in _iter_job_assets(job):
             asset_id = str(asset.get("asset_id") or asset.get("id") or "")
-            if not asset_id or asset_id in seen or asset_id in deleted:
+            if not asset_id or asset_id in seen or asset_id in deleted or (asset_id, job.get("job_id")) in hidden:
                 continue
             seen.add(asset_id)
             if job_source is None:
@@ -831,7 +930,6 @@ def _media_entries(
                 workflow=_workflow_for_asset(asset, job, receipt),
                 prompt=prompt_record.get("prompt_text") if prompt_record else None,
                 source_id=_source_id(job_source),
-                job_id=job.get("job_id"),
                 build=partial(
                     _build_job_item, asset_id=asset_id, asset=asset, job=job, receipt=receipt,
                     created_at=created_at, prompt_record=prompt_record, source=job_source, request=request,
