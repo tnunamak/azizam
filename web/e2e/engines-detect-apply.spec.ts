@@ -303,9 +303,15 @@ for (const theme of ["light", "dark"]) {
       expect(
         registry.services[serviceId].config.model_policy_schema_version,
       ).toBe(1);
-      expect(registry.services[serviceId].config.custom_operator_field).toBe(
-        "preserve",
-      );
+      // D34: an unclassified key is not readable here; the engine view still counts it as kept.
+      expect(
+        registry.services[serviceId].config.custom_operator_field,
+      ).toBeUndefined();
+      const keptView = (
+        await (await page.request.get(`/admin/api/engines/${serviceId}`)).json()
+      ).engine;
+      expect(keptView.hidden_settings).toBe(1);
+      expect(JSON.stringify(keptView)).not.toContain("custom_operator_field");
       expect(registry.services[serviceId].enabled).toBe(true);
       const unchanged = (
         await (await page.request.get("/admin/api/access-plans")).json()
