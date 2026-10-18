@@ -35,7 +35,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, category_enforcement, egress, projection, secret_commands, secret_store, service_registry, transforms
+from gateway import admin_store, category_enforcement, egress, projection, record_carriers, secret_commands, secret_store, service_registry, transforms
 from gateway.access_plans import PlanError, plan_from_document
 from gateway.engine_access import who_can_use
 from gateway.engine_check import (
@@ -315,6 +315,12 @@ def clean_values(definition: Mapping[str, Any], values: Mapping[str, Any], *,
             raise DraftError("Choose a valid installed HTTP protocol description.", field="protocol_description")
 
     out["address"] = normalize_address(values.get("address"), placeholder=fields["address"].get("placeholder", ""))
+    if dispatch == "protocol":
+        from urllib.parse import urlsplit
+
+        endpoint = urlsplit(out["address"])
+        if endpoint.username is not None or endpoint.password is not None or endpoint.query or endpoint.fragment:
+            raise DraftError("Use a public protocol endpoint without URL credentials, query or fragment.", field="address")
     prefix = str(values.get("path_prefix") or "").strip()
     if prefix and (not prefix.startswith("/") or any(ch in prefix for ch in "?# \\")):
         raise DraftError("The extra path starts with /, for example /openai.", field="path_prefix")
@@ -618,11 +624,32 @@ def infer_definition(catalog: EngineCatalog, record: Mapping[str, Any]) -> str:
     return catalog.data["definitions"][0]["definition"]
 
 
+# This page projects only the settings its engine contract declares. Arbitrary
+# config extensions remain stored, but must not become a management read surface.
+_ENGINE_CONFIG_FIELDS = _KNOWN_CONFIG_KEYS | frozenset({
+    "connection", "offerings", "process", "observations", "residency", "resources", "env", "engine_capabilities",
+    "gateway_lifecycle", "gateway_lifecycle_base_url", "base_url", "api_base", "default_base_url", "health_endpoint",
+}) | frozenset(path.removeprefix("config.") for path in record_carriers.URL_FIELD_PATHS
+              if path.startswith("config.") and "." not in path.removeprefix("config."))
+
+
+def _projected_engine_record(stored: Mapping[str, Any]) -> dict[str, Any]:
+    record = projection.project("ServiceRecord", stored).tree or {}
+    config = record.get("config")
+    if isinstance(config, dict):
+        if "connection" in config:
+            config["connection"] = projection.project("EngineConnection", config["connection"]).tree
+        record["config"] = {name: value for name, value in config.items()
+                            if name in _ENGINE_CONFIG_FIELDS
+                            or name.removesuffix("_entries") in _ENGINE_CONFIG_FIELDS and name.endswith("_entries")}
+    return record
+
+
 def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: Path,
                 hop_timeout: float = 600, env: Callable[[str], str | None] = os.environ.get) -> dict[str, Any]:
     """What the record page reads. Everything a caller sees is read from the projection of the stored record
     (``gateway/projection_types.py``): a secret shows as an entry with an id and a configured flag, never a value."""
-    record = projection.project("ServiceRecord", stored).tree or {}
+    record = _projected_engine_record(stored)
     config = record.get("config") or {}
     stored_config = stored.get("config") if isinstance(stored.get("config"), Mapping) else {}
     definition = catalog.definition(infer_definition(catalog, record))
@@ -726,6 +753,9 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         "check": copy.deepcopy(config.get("engine_check") or {}),
         "calls": call_line(definition, values),
         "other_settings": copy.deepcopy(other),
+        "hidden_settings_count": sum(name not in _ENGINE_CONFIG_FIELDS and not (
+            name.endswith("_entries") and name.removesuffix("_entries") in _ENGINE_CONFIG_FIELDS
+        ) for name in stored_config),
         "record": redacted_record(stored),
         "v2": service_registry.service_record_v2(record),
         "request_path": {"mode": "gateway_lifecycle" if hop_routed else "direct", "source": "service record",
@@ -769,10 +799,8 @@ def _caps_from_record(catalog: EngineCatalog, definition: Mapping[str, Any], rec
 
 def redacted_record(stored: Mapping[str, Any]) -> dict[str, Any]:
     """The stored record as the page shows it: the projection, which shows each secret as a configured entry."""
-    record = projection.project("ServiceRecord", stored).tree or {}
+    record = _projected_engine_record(stored)
     out = copy.deepcopy({k: v for k, v in record.items() if k in _RECORD_KEYS})
-    if "lifecycle" not in out:
-        out["lifecycle"] = copy.deepcopy(dict(service_registry.legacy_lifecycle_from_service(record)))
     # The page reads a stored key as the word it has always shown: configured, or nothing.
     config = out.get("config")
     if isinstance(config, dict) and isinstance(config.get("api_key_secret_id"), dict):

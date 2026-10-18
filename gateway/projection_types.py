@@ -54,6 +54,16 @@ PROCESS = Obj("Process", {
     "health_endpoint": URL, "health_endpoint" + record_carriers.SECRETS_SUFFIX: URL_ENTRIES,
 })
 
+ENGINE_CREDENTIAL = Obj("EngineCredential", {
+    "secret_ref": CONFIGURED, "secret_env": SHORT, "origin": URL, "header": SHORT, "scheme": SHORT,
+})
+ENGINE_CONNECTION = register(Obj("EngineConnection", {
+    "dispatch": SHORT, "protocol": SHORT, "transport": SHORT, "address": URL,
+    "credentials": Obj("EngineCredentials", {"inference": ENGINE_CREDENTIAL, "control": ENGINE_CREDENTIAL}),
+    "headers": HEADERS,
+    "timeouts": Obj("EngineTimeouts", {"connect_s": NUM, "first_byte_s": NUM, "total_s": NUM}),
+}))
+
 CONFIG = Obj("ServiceConfig", {
     "headers": HEADERS, "env": ENV, "process": PROCESS, "lifecycle": LIFECYCLE,
     "api_key_secret_id": CONFIGURED,
@@ -157,7 +167,7 @@ ENGINE_VIEW = register(Obj("EngineView", {
     "other_settings": JSON, "record": JSON, "v2": JSON, "access": JSON,
     "reply_timeout": JSON, "attention": JSON, "request_path": JSON, "credential_destination": STR,
     "ignored_headers": JSON, "unsupported_fields": JSON, "can_edit_offerings": BOOL, "offering_edit_reason": ANY_SCALAR,
-    "revision": ANY_SCALAR, "registry_generation": ANY_SCALAR,
+    "revision": ANY_SCALAR, "registry_generation": ANY_SCALAR, "hidden_settings_count": INT,
 }))
 
 # --- the effective configuration -------------------------------------------------------------------------------------------

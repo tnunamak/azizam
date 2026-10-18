@@ -170,7 +170,7 @@ resources:
     (owner only; `If-Match: "os-N"` is required) takes
     `{"commands": [...]}`. Each command names a `carrier` (`config.headers`,
     `process.env`, `config.env`, `process.start`, `lifecycle.driver_config.start`,
-    `config.base_url`, ...) and an `operation`:
+    `config.base_url`, `config.api_key`, ...) and an `operation`:
     `add` (`name`, `value`, optional `public: true` for a header or variable that is
     not a secret), `replace` (`entry_id`, `value`), `rename` (`entry_id`, `name`; headers),
     `retain` (`entry_id`; no value; it checks the id exists), `clear` (`entry_id`),
@@ -188,6 +188,17 @@ resources:
     `reserved_value`, `invalid_name`, `duplicate_name`, `unmentioned_entry`,
     `credential_in_literal`, `carrier_unavailable`, `owner_required` (403),
     `service_not_found` (404), `generation_mismatch` (412).
+    The engine's inference key uses the `config.api_key` carrier: `add` takes
+    `value`; `replace`, `retain` and `clear` name `key.entry_id` from the engine
+    view. A replacement is bound to the engine's current origin and removes an
+    existing environment-variable binding; a clear removes either source. A key
+    entry keeps its identity when replaced. The view also reports `availability`:
+    `available` for a populated environment source, `unavailable` for a missing
+    environment value or stored row, and `unknown` for stored ciphertext that
+    has not been read. A management read never decrypts it.
+    `GET /admin/api/engines/{service_id}` returns `engine.revision` as `"os-N"`
+    from the same registry snapshot as the displayed record. Use that revision
+    for commands against those entries. A retain-only call also checks it.
   - **Writing a whole record** (the registry `PUT`, `POST` and `PATCH` of a
     service, the engine page, the left-out record `PUT`). A carrier that holds
     entries comes back exactly as the read showed it, or is left out (then it is
@@ -197,8 +208,10 @@ resources:
     owner may send it. The engine page therefore leaves `values.headers` out unless it
     adds headers (on create every row is a new secret header; on an engine that
     already has entries, headers change only through the commands). The view shows a
-    start or stop command that holds an entry as `null`. The key field keeps its
-    mask for now (phase 2).
+    start or stop command that holds an entry as `null`; the page edits its
+    structured argument list from the projected stored record through commands.
+    Existing key edits also use `config.api_key` commands. Empty fields and
+    displayed configured metadata never stand for a retain command.
   - A record the registry leaves out goes through the same projection. One that
     parses into its type is listed with its error and its record and can be edited
     or removed on the Services page (`PUT` and `DELETE` under
@@ -207,15 +220,18 @@ resources:
     error, the fields that failed and the secret entries it holds. A service the
     schema 2 migration refused is such a record: its error is rebuilt from its
     blocks, and the owner keeps one block and drops `migration_refused`.
-  - **Config extras are public** (decision D28). `config` is a typed map: the fields the
-    engine type declares, the carriers above, and any other key as public JSON (an engine
-    definition can carry any setting). A secret goes in a carrier (a header, an environment
-    value, a command argument, a URL credential) or in the provider key route; a string, list
-    or mapping written under any other `config` key is public data, shown as written, whatever
-    the key is called. A field that is not a declared field of a *record type* (the engine
-    record, a header row, a package source, a provider view) is never shown. A header row has `id`, `name`, `secret_ref`, and for a row declared `public: true`
-    a `value`; any other field of a row is dropped. A record's id must equal the key it is
-    stored under, and two records may not end up with one id.
+  - **Unknown configuration stays hidden** (decision D34). The engine page
+    exposes only its declared engine fields and secret carriers, including in
+    Stored record. An unregistered configuration extension is kept on write
+    but omitted from this view; `hidden_settings_count` reports the count.
+    The connection uses a typed projection too, so unknown nested fields are
+    dropped and per-class credential references show only configured metadata.
+    Phase 1 round 2 applies this rule to the shared
+    registry projection; its earlier `config` projection still treated extras
+    as public JSON. A header row has `id`, `name`, `secret_ref`, and for a row
+    declared `public: true` a `value`; other row fields are dropped. A record's
+    id must equal the key it is stored under, and two records may not end up
+    with one id.
   - **The router config** (decision D30). `GET /admin/api/operator/litellm-config`
     answers with a preview (a header's name with `<configured>`, an endpoint without
     credentials). The executable config is rendered only by `gateway/litellm_runtime.py`,
@@ -244,7 +260,7 @@ resources:
     classification, response shapes). Positive controls show the canaries reached
     the store, the runtime resolves each, and the detector can fail.
   - What phase 2 still does: MCP, CLI, logs and receipts through the same projection
-    library; the engine page on the command protocol; a restorable encrypted secret
+    library; a restorable encrypted secret
     backup; moving the remaining admin routers (settings, sign-in, accounts, categories,
     home, activity) onto `ManagementRoute`; Schemathesis and a Hypothesis state machine.
   - Credentials are per operation class and bound to the address origin.
@@ -332,6 +348,15 @@ See [Add an HTTP engine as data](../guides/ADD_HTTP_ENGINE_AS_DATA.md).
 - **Core owns the durable job state machine** (F8): idempotency keys, retry
   boundaries, event order, asset lifetime and access, and receipt
   finalization. Adapters return typed result, job, event or asset references.
+
+The engine page and Add engine list validated installed descriptions from
+`GET /admin/api/engine-protocols`. The list uses the dispatch loader's seed and
+persistent user directories. The editor sends `values.dispatch: protocol` and
+`values.protocol_description: <selected id>`; a save validates that the id is
+installed and has the `http-v1` executor, then writes
+`config.connection: {dispatch: protocol, protocol: <id>, address: <root>, transport: http}`.
+Protocol endpoints must have no user info, query or fragment. The existing
+local-only dispatch validation still applies.
 
 ## 5. Inbound frontends (how callers talk to Azizam) (F7)
 

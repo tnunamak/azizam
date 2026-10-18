@@ -102,3 +102,58 @@ def test_lifecycle_inference_sends_the_secret_header_value_instead_of_its_previe
         assert connection.headers['x-tenant'] == 'private-runtime-tenant'
     finally:
         runtime_secrets.configure(None)
+
+
+def test_test_receipts_do_not_publish_an_unkeyed_digest_of_a_secret():
+    import hashlib
+    import json
+    from gateway.engine_check import KeyInput
+    definition = load_engine_catalog().definition('openai-compatible')
+    values = {'address': 'http://127.0.0.1:8080'}
+    key = KeyInput('short-key', 'pasted')
+    snapshot = {'service_id': 'editor', 'definition': definition['definition'], 'connection': values,
+                'credential': key.value, 'withheld': key.withheld, 'models': []}
+    guessable = hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    assert engine_admin._test_binding(definition, values, key, 'editor', []) != guessable
+
+
+def test_engine_view_hides_unregistered_configuration_in_the_stored_record(tmp_path):
+    saved = record(operator_extension='PRIVATE-UNKNOWN-CONFIG', extension_block={'password': 'PRIVATE-NESTED-CONFIG'})
+    shown = engine_admin.engine_view(load_engine_catalog(), saved, db_path=tmp_path / 'admin.db')
+    assert 'PRIVATE-UNKNOWN-CONFIG' not in str(shown)
+    assert 'PRIVATE-NESTED-CONFIG' not in str(shown)
+    assert shown['record']['config']['host'] == '127.0.0.1'
+    assert shown['hidden_settings_count'] == 2
+
+
+def test_stored_record_never_synthesizes_a_lifecycle_secret_carrier(tmp_path):
+    saved = record()
+    saved.pop('lifecycle', None)
+    saved['config'].pop('lifecycle', None)
+    saved['process'] = {'driver': 'command', 'start': ['runner']}
+    shown = engine_admin.engine_view(load_engine_catalog(), saved, db_path=tmp_path / 'admin.db')
+    assert 'lifecycle' not in shown['record']
+    assert shown['record']['process']['start'] == ['runner']
+
+
+def test_declared_connection_projects_credentials_and_hides_unknown_nested_fields(tmp_path):
+    saved = record(connection={
+        'dispatch': 'protocol', 'protocol': 'openai-compatible', 'transport': 'http',
+        'address': 'http://user:INLINE-CREDENTIAL@127.0.0.1:8080?private=INLINE-QUERY',
+        'neutral_extension': 'NESTED-CONNECTION-CANARY',
+        'credentials': {'inference': {'secret_ref': 'opaque-private-reference', 'header': 'Authorization', 'scheme': 'Bearer',
+                                      'origin': 'http://127.0.0.1:8080', 'neutral': 'NESTED-CREDENTIAL-CANARY'}},
+    })
+    shown = engine_admin.engine_view(load_engine_catalog(), saved, db_path=tmp_path / 'admin.db')
+    for canary in ('INLINE-CREDENTIAL', 'INLINE-QUERY', 'NESTED-CONNECTION-CANARY', 'opaque-private-reference', 'NESTED-CREDENTIAL-CANARY'):
+        assert canary not in str(shown)
+    connection = shown['record']['config']['connection']
+    assert connection['dispatch'] == 'protocol' and connection['credentials']['inference']['secret_ref'] == {'configured': False}
+
+
+@pytest.mark.parametrize('address', ['http://user:private@127.0.0.1:8080', 'http://127.0.0.1:8080?key=private', 'http://127.0.0.1:8080#private'])
+def test_protocol_root_requires_a_public_endpoint(address):
+    with pytest.raises(engine_admin.DraftError):
+        engine_admin.clean_values(load_engine_catalog().definition('openai-compatible'), {
+            'address': address, 'dispatch': 'protocol', 'protocol_description': 'openai-compatible',
+        })

@@ -712,7 +712,9 @@ def _agreed_lifecycle(service_id: str, record: Mapping[str, Any]) -> dict[str, A
     config = record.get("config")
     nested = config.get("lifecycle") if isinstance(config, Mapping) else None
     nested = dict(nested) if isinstance(nested, Mapping) else {}
-    top = normalize_service_record(service_id, record, schema_version=1)["lifecycle"]
+    # This helper reconciles lifecycle structure, including already-projected
+    # records whose credential references are configured metadata.
+    top = normalize_service_record(service_id, record, schema_version=1, check_secrets=False)["lifecycle"]
 
     def check(dst: Mapping[str, Any], src: Mapping[str, Any], path: str) -> None:
         for key, value in src.items():
