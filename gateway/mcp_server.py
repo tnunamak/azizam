@@ -35,7 +35,7 @@ base64 blobs. A feature the core cannot do returns an explicit tool error.
 """
 from __future__ import annotations
 
-from gateway.media_jobs import PHASE_FIELDS, is_terminal
+from gateway.media_jobs import ERROR_FIELDS, PHASE_FIELDS, is_terminal
 
 import asyncio
 import base64
@@ -505,6 +505,8 @@ class Tools:
             out["assets"] = await self._job_assets(job_id, out.get("target") or "result")
         elif state["status"] in ("failed", "canceled"):
             out["error"] = state["error"] or state["status"]
+            # Who refused: the gateway (an access plan, inputs, capacity) or the upstream work.
+            out.update({name: state["raw"][name] for name in ERROR_FIELDS if state["raw"].get(name) is not None})
         else:
             out["next"] = "Call `job` with this job_id to keep waiting (set wait_seconds)."
         return out

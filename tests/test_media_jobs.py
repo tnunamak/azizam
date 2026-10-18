@@ -57,6 +57,7 @@ def test_audience_contract_is_independent_of_implementation_tables():
         "created_at", "updated_at", "parent_request_id", "accepted_at", "queued_at",
         "started_at", "first_output_at", "finished_at", "attempt_number",
         "previous_attempts", "cancel_requested",
+        "error_code", "error_category", "retryable", "upstream_http_status",
     }
     admin_keys = {"workflow", "backend", "app_profile", "app_id", "api_key_name"}
     internal_keys = {
@@ -539,7 +540,8 @@ def test_audience_contract_is_independent_of_implementation_tables():
         "error", "created_at", "updated_at", "parent_request_id",
         "accepted_at", "queued_at", "started_at", "first_output_at",
         "finished_at", "attempt_number", "previous_attempts",
-        "cancel_requested",
+        "cancel_requested", "error_code", "error_category", "retryable",
+        "upstream_http_status",
     }
     admin_keys = {"workflow", "backend", "app_profile", "app_id", "api_key_name"}
     internal_keys = {

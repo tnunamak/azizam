@@ -488,6 +488,17 @@ _MEDIA_JOB_SCHEMA = {
         "status": {"type": "string", "enum": _MEDIA_JOB_STATUSES},
         "progress": {"type": "integer", "minimum": 0, "maximum": 100},
         "error": {"type": ["string", "object", "null"]},
+        "error_code": {"type": ["string", "null"], "description": "A short token naming the failure."},
+        "error_category": {
+            "type": ["string", "null"],
+            "enum": ["authorization", "invalid_input", "upstream", "capacity", "timeout", "safety", None],
+            "description": "Who refused: the gateway (authorization, invalid_input, capacity) or the work.",
+        },
+        "retryable": {"type": ["boolean", "null"], "description": "Whether the same job may succeed later."},
+        "upstream_http_status": {
+            "type": ["integer", "null"],
+            "description": "The HTTP status of an upstream failure; null when the gateway refused.",
+        },
         "assets": {
             "type": "array",
             "items": {

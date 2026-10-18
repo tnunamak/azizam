@@ -32,6 +32,7 @@ from gateway.compat import get_env
 from gateway.sqlite_startup import connect, store_startup
 
 import json
+import re
 import hashlib
 import os
 import sqlite3
@@ -60,6 +61,13 @@ SCHEMA_VERSION = 2
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "canceled"]
 PHASE_FIELDS = ("accepted_at", "queued_at", "started_at", "first_output_at", "finished_at")
+# Typed facts about a failure, beside the plain ``error`` sentence. The category
+# says who refused: the gateway (authorization, invalid_input, capacity) or the
+# work itself (upstream, timeout, safety). ``upstream_http_status`` is set only
+# for an upstream failure. None means not recorded (older or unclassified jobs).
+ERROR_FIELDS = ("error_code", "error_category", "retryable", "upstream_http_status")
+ERROR_CATEGORIES = frozenset({"authorization", "invalid_input", "upstream", "capacity", "timeout", "safety"})
+_ERROR_CODE_RE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
 
 
 # Status values. Mirrors the minimum lifecycle in CORE_CONTRACTS.md.
@@ -120,6 +128,7 @@ CLIENT_VISIBLE_FIELDS = frozenset(
         "updated_at",
         "parent_request_id",
         *PHASE_FIELDS,
+        *ERROR_FIELDS,
         "attempt_number",
         "previous_attempts",
         "cancel_requested",
@@ -205,6 +214,10 @@ class MediaJob:
     previous_attempts: list[dict[str, Any]] = field(default_factory=list)
     # Durable provenance, independent of the reusable request/idempotency key.
     creating_receipt_id: str | None = None
+    error_code: str | None = None
+    error_category: str | None = None
+    retryable: bool | None = None
+    upstream_http_status: int | None = None
 
     def __post_init__(self) -> None:
         if not self.intent:
@@ -252,6 +265,7 @@ class MediaJob:
             "attempt_number": self.attempt_number,
             "previous_attempts": [dict(attempt) for attempt in self.previous_attempts],
             **{name: getattr(self, name) for name in PHASE_FIELDS},
+            **{name: getattr(self, name) for name in ERROR_FIELDS},
         }
         return _filter_for_audience(data, audience)
 
@@ -283,7 +297,7 @@ def for_audience(job: Mapping[str, Any], audience: str) -> dict[str, Any]:
 
 
 def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, Any]:
-    data = {**dict.fromkeys((*PHASE_FIELDS, "attempt_number")), **data}
+    data = {**dict.fromkeys((*PHASE_FIELDS, *ERROR_FIELDS, "attempt_number")), **data}
     data.setdefault("previous_attempts", [])
     data["cancel_requested"] = (
         holds_resources(data.get("status", STATUS_QUEUED))
@@ -468,6 +482,7 @@ def _coerce_to_job(job_or_dict: Any) -> MediaJob:
             attempt_number=data.get("attempt_number"),
             previous_attempts=list(data.get("previous_attempts") or []),
             **{name: data.get(name) for name in PHASE_FIELDS},
+            **{name: data.get(name) for name in ERROR_FIELDS},
         )
     raise TypeError(f"job must be MediaJob or mapping, got {type(job_or_dict).__name__}")
 
@@ -910,12 +925,39 @@ def list_jobs(*args, **kwargs):
     return recent(*args, **kwargs)
 
 
+def validate_error_info(info: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the typed failure facts, or raise ValueError.
+
+    Only known fields; a known category; a plain code token, never free text
+    (which could carry a prompt); an HTTP status only for an upstream failure.
+    """
+    unknown = set(info) - set(ERROR_FIELDS)
+    if unknown:
+        raise ValueError(f"unknown error fields: {sorted(unknown)}")
+    category = info.get("error_category")
+    if category not in ERROR_CATEGORIES:
+        raise ValueError(f"error_category must be one of {sorted(ERROR_CATEGORIES)}")
+    code = info.get("error_code")
+    if not isinstance(code, str) or not _ERROR_CODE_RE.fullmatch(code):
+        raise ValueError("error_code must be a short lowercase token")
+    retryable = info.get("retryable")
+    if not isinstance(retryable, bool):
+        raise ValueError("retryable must be a boolean")
+    upstream = info.get("upstream_http_status")
+    if upstream is not None and (category != "upstream" or type(upstream) is not int
+                                 or not 100 <= upstream <= 599):
+        raise ValueError("upstream_http_status must be an HTTP status of an upstream failure")
+    return {"error_code": code, "error_category": category, "retryable": retryable,
+            "upstream_http_status": upstream}
+
+
 def update_status(
     job_id: str,
     status: str,
     *,
     progress: int | None = None,
     error: str | None = None,
+    error_info: Mapping[str, Any] | None = None,
     add_assets: Iterable[Mapping[str, Any]] | None = None,
     metadata_patch: Mapping[str, Any] | None = None,
     expected_status: str | None = None,
@@ -923,6 +965,9 @@ def update_status(
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
     """Apply a status transition. Returns the updated internal job dict.
+
+    ``error_info`` holds the typed failure facts (``ERROR_FIELDS``) that go
+    with ``error``; ``validate_error_info`` checks them.
 
     Rejects illegal transitions (e.g. succeeded -> running). Same-state writes
     are accepted so progress updates during ``running`` are idempotent. With
@@ -935,6 +980,7 @@ def update_status(
         progress = _clamp_progress(progress)
     if metadata_patch is not None:
         _assert_safe_mapping("metadata_patch", metadata_patch)
+    error_facts = validate_error_info(error_info) if error_info is not None else None
     assets_list: list[dict[str, Any]] = []
     if add_assets is not None:
         for asset in add_assets:
@@ -975,6 +1021,8 @@ def update_status(
             current["progress"] = 100
         if error is not None:
             current["error"] = error
+        if error_facts is not None:
+            current.update(error_facts)
         if assets_list:
             existing_assets = list(current.get("assets") or [])
             existing_assets.extend(assets_list)
@@ -1264,6 +1312,9 @@ __all__ = [
     "TERMINAL_STATUSES",
     "JobStatus",
     "PHASE_FIELDS",
+    "ERROR_FIELDS",
+    "ERROR_CATEGORIES",
+    "validate_error_info",
     "is_terminal",
     "holds_resources",
     "IdempotencyConflict",

@@ -13829,7 +13829,8 @@ class _SessionMakeRuntime:
             str(auth.get("app_id") or ""), str(auth.get("person_id") or ""), path=ADMIN_STORE.path,
         )
         if identity is None or identity.denial:
-            raise me_make.MakeBackendError("This account can no longer make things", http_status=403)
+            raise me_make.MakeBackendError("This account can no longer make things", http_status=403,
+                                           error_info=_MEDIA_JOB_CALLER_GONE_INFO)
         auth_context = AuthContext(identity=identity)
         body = copy.deepcopy(dict(payload.get("body") or {}))
         body["response_format"] = "url"
@@ -13864,8 +13865,8 @@ class _SessionMakeRuntime:
             response = _policy_denied_response(decision)
         elif refusal is not None:
             finish_image_route_receipt(receipt, refusal)
-            raise me_make.MakeBackendError(_admission_refusal_message(refusal),
-                                           http_status=int(refusal.status_code))
+            message, error_info = _media_job_failure(refusal)
+            raise me_make.MakeBackendError(message, http_status=int(refusal.status_code), error_info=error_info)
         else:
             # Erasure fences compare against when the person asked, not when it ran.
             token = _MEDIA_JOB_PROMPT_STARTED_AT.set(int(payload.get("created_at") or time.time()))
@@ -13881,8 +13882,8 @@ class _SessionMakeRuntime:
                 _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
         finish_image_route_receipt(receipt, response)
         if not 200 <= int(response.status_code) < 300:
-            raise me_make.MakeBackendError(_media_job_failure_message(response),
-                                           http_status=int(response.status_code))
+            message, error_info = _media_job_failure(response)
+            raise me_make.MakeBackendError(message, http_status=int(response.status_code), error_info=error_info)
         return _assets_from_image_response(response)
 
 
@@ -17973,11 +17974,11 @@ def _policy_denied_response(decision: PolicyDecision) -> Response:
     if decision.side:
         error["details"] = {"side": decision.side, "plans": [s.split(":", 1)[1] for s in decision.sources
                                                          if s.startswith("access_plan:")]}
-    return Response(
+    return _gateway_refusal(Response(
         content=json.dumps({"error": error}),
         status_code=403,
         media_type="application/json",
-    )
+    ), "authorization")
 
 
 _RUNTIME_ROUTE_POLICY: dict[str, dict[str, Any]] = route_registry.runtime_route_policy(
@@ -20156,9 +20157,59 @@ def _image_response_error(response: Response) -> tuple[str, str | None]:
     return f"image generation failed with HTTP {response.status_code}", None
 
 
-def _media_job_failure_message(response: Response) -> str:
-    """Keep transport evidence, never backend error text that may echo a prompt."""
-    return f"Media generation failed (upstream HTTP {int(response.status_code)})."
+_JOB_FAILURE_COPY = {
+    "authorization": ("not_in_access_plan", "This workflow isn't in your access plan."),
+    "invalid_input": ("invalid_input", "The gateway did not accept this job's inputs."),
+    "capacity": ("capacity", "The gateway is too busy to run this job now. Try again later."),
+    "timeout": ("timeout", "The backend did not finish this job in time."),
+    "safety": ("content_policy_violation", "The backend refused this job's content."),
+}
+_JOB_ERROR_CODE_RE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
+
+
+def _gateway_refusal(response: Response, category: str) -> Response:
+    """Mark a refusal the gateway itself made (``authorization``, ``capacity``).
+
+    The mark lives on the in-process object only, so a job worker can tell the
+    gateway's own refusal from an upstream failure. Nothing on the wire, which
+    an upstream could imitate, decides that.
+    """
+    response.gateway_refusal = category  # type: ignore[attr-defined]
+    return response
+
+
+def _media_job_failure(response: Response) -> tuple[str, dict[str, Any]]:
+    """The plain error sentence and typed facts (``media_jobs.ERROR_FIELDS``) of a failed attempt.
+
+    Never backend error text, which may echo a prompt: the sentence is fixed
+    copy, and a backend's error code is kept only when it is a plain token.
+    """
+    status = int(getattr(response, "status_code", 0) or 0)
+    error = _image_response_json(response).get("error")
+    code = error.get("code") if isinstance(error, Mapping) else None
+    code = code if isinstance(code, str) and _JOB_ERROR_CODE_RE.fullmatch(code) else None
+    category = getattr(response, "gateway_refusal", None)
+    if category is None:
+        if code == "content_policy_violation":
+            category = "safety"
+        elif status in (408, 504):
+            category = "timeout"
+        elif status == 429:
+            category = "capacity"
+        elif status in (400, 404, 409, 413, 415, 422):
+            category = "invalid_input"
+        else:
+            category = "upstream"
+    if category == "upstream":
+        return f"Media generation failed (upstream HTTP {status}).", {
+            "error_code": code or "upstream_error", "error_category": "upstream",
+            "retryable": status >= 500, "upstream_http_status": status,
+        }
+    default_code, message = _JOB_FAILURE_COPY[category]
+    if category == "capacity" and getattr(response, "gateway_refusal", None):
+        message = _admission_refusal_message(response)
+    return message, {"error_code": code or default_code, "error_category": category,
+                     "retryable": category in ("capacity", "timeout")}
 
 
 def _retry_after_seconds(response: Response) -> float | None:
@@ -20344,6 +20395,8 @@ def _media_job_content_preflight_response(auth_context: AuthContext) -> Response
 
 
 _MEDIA_JOB_CALLER_GONE = "The account that asked for this job can no longer use the gateway."
+_MEDIA_JOB_CALLER_GONE_INFO = {"error_code": "caller_unavailable", "error_category": "authorization",
+                               "retryable": False}
 
 
 def _auth_context_from_image_job_payload(payload: Mapping[str, Any]) -> AuthContext | None:
@@ -20431,6 +20484,7 @@ def _mark_image_media_job_failed(
     message: str,
     *,
     http_status: int | None = None,
+    error_info: Mapping[str, Any] | None = None,
 ) -> None:
     metadata_patch: dict[str, Any] = {}
     if http_status is not None:
@@ -20440,6 +20494,7 @@ def _mark_image_media_job_failed(
             job_id,
             media_jobs.STATUS_FAILED,
             error=message[:500],
+            error_info=error_info,
             metadata_patch=metadata_patch or None,
             path=media_jobs.DB_PATH,
         )
@@ -20481,13 +20536,14 @@ async def _run_image_media_job(job_id: str) -> None:
 
         auth_context = _auth_context_from_image_job_payload(payload)
         if auth_context is None:
-            _mark_image_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE)
+            _mark_image_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE, error_info=_MEDIA_JOB_CALLER_GONE_INFO)
             return
         admission = _media_job_admission_response(
             "image.generate", count_queue=False, auth_context=auth_context,
         )
         if admission is not None:
-            _mark_image_media_job_failed(job_id, _admission_refusal_message(admission))
+            message, error_info = _media_job_failure(admission)
+            _mark_image_media_job_failed(job_id, message, error_info=error_info)
             return
 
         try:
@@ -20670,11 +20726,12 @@ async def _run_image_media_job(job_id: str) -> None:
                 await asyncio.sleep(delay)
                 continue
 
-            message = _media_job_failure_message(response)
+            message, error_info = _media_job_failure(response)
             _mark_image_media_job_failed(
                 job_id,
                 message,
                 http_status=status_code,
+                error_info=error_info,
             )
             return
 
@@ -20913,8 +20970,8 @@ def _dispatch_admission_response(
     advised = resource_admission_http.admission_http_response(
         decision, wait_deadline=evidence["wait_deadline"], protocol=protocol,
     )
-    return Response(content=json.dumps(advised.body), status_code=advised.status_code,
-                    media_type="application/json", headers=dict(advised.headers))
+    return _gateway_refusal(Response(content=json.dumps(advised.body), status_code=advised.status_code,
+                                     media_type="application/json", headers=dict(advised.headers)), "capacity")
 
 
 def _model_dispatch_admission_response(
@@ -21034,7 +21091,7 @@ def _media_job_admission_response(
                         media_type="application/json", headers=dict(advised.headers))
     # Trusted in-process handoff for session submission's owned receipt.
     response.resource_decision = evidence
-    return response
+    return _gateway_refusal(response, "capacity")
 
 
 
@@ -21106,6 +21163,7 @@ def _mark_audio_media_job_failed(
     message: str,
     *,
     http_status: int | None = None,
+    error_info: Mapping[str, Any] | None = None,
 ) -> None:
     metadata_patch: dict[str, Any] = {}
     if http_status is not None:
@@ -21115,6 +21173,7 @@ def _mark_audio_media_job_failed(
             job_id,
             media_jobs.STATUS_FAILED,
             error=message[:500],
+            error_info=error_info,
             metadata_patch=metadata_patch or None,
             path=media_jobs.DB_PATH,
         )
@@ -21152,13 +21211,14 @@ async def _run_audio_media_job(job_id: str) -> None:
 
         auth_context = _auth_context_from_image_job_payload(payload)
         if auth_context is None:
-            _mark_audio_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE)
+            _mark_audio_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE, error_info=_MEDIA_JOB_CALLER_GONE_INFO)
             return
         admission = _media_job_admission_response(
             str(job.get("intent") or "audio.generate"), count_queue=False, auth_context=auth_context,
         )
         if admission is not None:
-            _mark_audio_media_job_failed(job_id, _admission_refusal_message(admission))
+            message, error_info = _media_job_failure(admission)
+            _mark_audio_media_job_failed(job_id, message, error_info=error_info)
             return
 
         try:
@@ -21196,8 +21256,8 @@ async def _run_audio_media_job(job_id: str) -> None:
 
         status_code = int(getattr(response, "status_code", 0) or 0)
         if not 200 <= status_code < 300:
-            message = _media_job_failure_message(response)
-            _mark_audio_media_job_failed(job_id, message, http_status=status_code)
+            message, error_info = _media_job_failure(response)
+            _mark_audio_media_job_failed(job_id, message, http_status=status_code, error_info=error_info)
             return
 
         content = bytes(getattr(response, "body", b"") or b"")
@@ -21542,6 +21602,7 @@ def _mark_video_media_job_failed(
     message: str,
     *,
     http_status: int | None = None,
+    error_info: Mapping[str, Any] | None = None,
 ) -> None:
     metadata_patch: dict[str, Any] = {}
     if http_status is not None:
@@ -21551,6 +21612,7 @@ def _mark_video_media_job_failed(
             job_id,
             media_jobs.STATUS_FAILED,
             error=message[:500],
+            error_info=error_info,
             metadata_patch=metadata_patch or None,
             path=media_jobs.DB_PATH,
         )
@@ -21629,7 +21691,7 @@ async def _run_video_media_job(job_id: str) -> None:
 
         auth_context = _auth_context_from_image_job_payload(payload)
         if auth_context is None:
-            _mark_video_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE)
+            _mark_video_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE, error_info=_MEDIA_JOB_CALLER_GONE_INFO)
             return
         video_id = (job.get("metadata") or {}).get("upstream_video_id")
         if not video_id:
@@ -21639,7 +21701,8 @@ async def _run_video_media_job(job_id: str) -> None:
                 INTENT_VIDEO_GENERATE, count_queue=False, auth_context=auth_context,
             )
             if admission is not None:
-                _mark_video_media_job_failed(job_id, _admission_refusal_message(admission))
+                message, error_info = _media_job_failure(admission)
+                _mark_video_media_job_failed(job_id, message, error_info=error_info)
                 return
             try:
                 media_jobs.update_status(
@@ -21676,8 +21739,8 @@ async def _run_video_media_job(job_id: str) -> None:
 
             submit_status = int(getattr(submit_response, "status_code", 0) or 0)
             if not 200 <= submit_status < 300:
-                message = _media_job_failure_message(submit_response)
-                _mark_video_media_job_failed(job_id, message, http_status=submit_status)
+                message, error_info = _media_job_failure(submit_response)
+                _mark_video_media_job_failed(job_id, message, http_status=submit_status, error_info=error_info)
                 return
 
             submit_payload = _image_response_json(submit_response)
@@ -21727,8 +21790,8 @@ async def _run_video_media_job(job_id: str) -> None:
             status_response = await proxy_comfy_video_status(video_id, auth_context)
             status_code = int(getattr(status_response, "status_code", 0) or 0)
             if status_code >= 500:
-                message = _media_job_failure_message(status_response)
-                _mark_video_media_job_failed(job_id, message, http_status=status_code)
+                message, error_info = _media_job_failure(status_response)
+                _mark_video_media_job_failed(job_id, message, http_status=status_code, error_info=error_info)
                 return
             status_value, progress = _video_response_status(status_response)
             if status_value in {"queued", "running"}:
@@ -21753,8 +21816,8 @@ async def _run_video_media_job(job_id: str) -> None:
                     )
                 continue
             if status_value == "failed":
-                message = _media_job_failure_message(status_response)
-                _mark_video_media_job_failed(job_id, message, http_status=status_code)
+                message, error_info = _media_job_failure(status_response)
+                _mark_video_media_job_failed(job_id, message, http_status=status_code, error_info=error_info)
                 return
             if status_value != "succeeded":
                 continue
@@ -21762,8 +21825,8 @@ async def _run_video_media_job(job_id: str) -> None:
             content_response = await proxy_comfy_video_content(video_id, auth_context, index_library=False, metadata_mode=provenance.METADATA_NONE)
             content_status = int(getattr(content_response, "status_code", 0) or 0)
             if not 200 <= content_status < 300:
-                message = _media_job_failure_message(content_response)
-                _mark_video_media_job_failed(job_id, message, http_status=content_status)
+                message, error_info = _media_job_failure(content_response)
+                _mark_video_media_job_failed(job_id, message, http_status=content_status, error_info=error_info)
                 return
 
             # A cancel that arrived during the fetch must not leave a stored asset behind.
