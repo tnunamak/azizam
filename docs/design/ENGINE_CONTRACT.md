@@ -140,33 +140,112 @@ resources:
   - Every change is owner-only, recorded and shown as a dry run first.
   - Server-side file paths in control calls must sit under owner-allowlisted
     roots.
-  - No view of a record shows a secret (decision D21). One projection,
-    `engine_redaction.public_service_record` (and `public_registry`,
-    `public_value`), turns stored data into what a caller reads. It denies by
-    default: every string, list and mapping in a record is examined, so a new
-    field is covered without a new rule. A caller sees each credential argument
-    of `start`, `stop`, `status` and `reload` replaced by `[redacted]` (a flag is
-    a credential when its name has a whole credential word in it, so
-    `--api-key` and `--auth-token` are hidden and `--tokenizer`, `--max-tokens`
-    and `--keyfile` are not), `env` as names with `[redacted]` values, a header
-    value that holds a credential as `[redacted]`, any other credential value as
-    `<redacted>`, and an address or path without its user name, password, query
-    and fragment. A marker also tells a caller that the slot is set. A save that
-    sends a marker back keeps the stored value, bound by path, by flag (in order)
-    or by header name (in order). A marker with no stored value, a marker inside
-    a longer value, and a save that changes how many values a flag or a header
-    name holds beside a marker are refused with a 400. A create has nothing
-    stored, so a marker in it is refused. The v2 `process` block is an
-    allow-list of fields, never a copy of the stored one.
-  - A save that would keep a stored secret while the record's host moves is
-    owner-only: `credential_references` counts every value the projection hides
-    as a reference. The configuration export (`/admin/api/config/export`) is the
-    owner's backup and keeps every value (decision D18).
-  - `tests/test_admin_secret_sweep.py` is the oracle for all of this. It seeds a
-    store with a secret in every place one can live, reads every GET and HEAD
-    route the app mounts (from `proxy.app.routes`) as an administrator, the
-    owner and a signed-out client, and fails if a seeded value appears in a body
-    or header.
+  - **A record holds no secret** (decision D26). A header value, an environment
+    value, a command argument that is a secret, the user info, query and fragment
+    of a URL, a package source credential and a provider key live in the
+    encrypted, origin-bound store (`gateway/secret_store.py`). A record holds an
+    *entry* that points at it (`gateway/record_carriers.py` defines the carriers;
+    `gateway/secret_refs.py` creates, replaces and deletes secrets and never reads
+    one). One module reads a secret back, `gateway/runtime_secrets.py`, at the
+    moment an engine request is sent, a process or command starts, the router
+    config is written, or a package is cloned; an architecture test lists the
+    modules that import it. Schema 11 moves what older records held, once and
+    idempotently; a registry with nothing inline is not touched.
+  - **What a read shows** (decision D28). Every management response is built from
+    a registered projection type (`gateway/projection_types.py`): each field is
+    classified once as public data, a reference to the store, a carrier of
+    entries, or omitted; a field nobody named is dropped; `projection_types.verify`
+    fails startup and CI when the code that builds a record writes a field no
+    type classifies. A secret is never a value and never a reference id: a header
+    is `{"id", "name", "configured"}`; an environment value is
+    `{NAME: {"id", "configured"}}`; a command is a list of public literals
+    (strings) and `{"id", "configured", "prefix"?}`; a URL field is its public form
+    (no user info, no query) beside `<field>_entries`
+    (`{"userinfo": {...}, "query": [{"id", "name", "configured"}], "fragment": {...}}`);
+    a stored provider key is `{"configured": bool}`. A value the type does not
+    expect (text where a mapping belongs) is left out and reported, never shown.
+  - **How a secret changes** (decision D27). Never by a marker, an empty string,
+    `null` or a position. `POST /admin/api/operator/services/{service_id}/secret-entries`
+    (owner only; `If-Match: "os-N"` is required) takes
+    `{"commands": [...]}`. Each command names a `carrier` (`config.headers`,
+    `process.env`, `config.env`, `process.start`, `lifecycle.driver_config.start`,
+    `config.base_url`, ...) and an `operation`:
+    `add` (`name`, `value`, optional `public: true` for a header or variable that is
+    not a secret), `replace` (`entry_id`, `value`), `rename` (`entry_id`, `name`; headers),
+    `retain` (`entry_id`; no value; it checks the id exists), `clear` (`entry_id`),
+    `set` (a command: `items` in order, each `{"literal"}`, `{"retain": entry_id}` or
+    `{"secret": value, "prefix"?}`, and `clear`: every stored entry the list drops
+    must be named there), `set_credentials` (`url`) and `clear_credentials` (a URL
+    field). Ids are server-issued (`ent_...`) and stable across reorder, rename and
+    replace. A value that is one of the marker texts (`[redacted]`, `<redacted>`,
+    `<configured>`), empty, not text, over 8 KiB or holding NUL is refused. Unknown
+    keys, unknown carriers, a repeated entry and an id that is not in that carrier
+    are refused before anything is stored; a refused or stale call (`412`) stores
+    nothing. The answer is the answer of `GET /admin/api/operator/service-registry`.
+    Error codes: `invalid_commands`, `invalid_command`, `unknown_carrier`,
+    `invalid_entry_id`, `duplicate_entry`, `unknown_entry`, `invalid_value`,
+    `reserved_value`, `invalid_name`, `duplicate_name`, `unmentioned_entry`,
+    `credential_in_literal`, `carrier_unavailable`, `owner_required` (403),
+    `service_not_found` (404), `generation_mismatch` (412).
+  - **Writing a whole record** (the registry `PUT`, `POST` and `PATCH` of a
+    service, the engine page, the left-out record `PUT`). A carrier that holds
+    entries comes back exactly as the read showed it, or is left out (then it is
+    kept); anything else is refused with a `400` that names `secret-entries`.
+    Inline input (a header with a `value`, an environment value, a command argument
+    after a credential flag, a URL with user info) becomes a new entry, and only the
+    owner may send it. The engine page therefore leaves `values.headers` out unless it
+    adds headers (on create every row is a new secret header; on an engine that
+    already has entries, headers change only through the commands). The view shows a
+    start or stop command that holds an entry as `null`. The key field keeps its
+    mask for now (phase 2).
+  - A record the registry leaves out goes through the same projection. One that
+    parses into its type is listed with its error and its record and can be edited
+    or removed on the Services page (`PUT` and `DELETE` under
+    `/admin/api/operator/service-registry/excluded/<section>/<id>`, body
+    `{"record": ...}`); one that cannot be read is listed only with its id, its
+    error, the fields that failed and the secret entries it holds. A service the
+    schema 2 migration refused is such a record: its error is rebuilt from its
+    blocks, and the owner keeps one block and drops `migration_refused`.
+  - **Config extras are public** (decision D28). `config` is a typed map: the fields the
+    engine type declares, the carriers above, and any other key as public JSON (an engine
+    definition can carry any setting). A secret goes in a carrier (a header, an environment
+    value, a command argument, a URL credential) or in the provider key route; a string, list
+    or mapping written under any other `config` key is public data, shown as written, whatever
+    the key is called. A field that is not a declared field of a *record type* (the engine
+    record, a header row, a package source, a provider view) is never shown. A header row has `id`, `name`, `secret_ref`, and for a row declared `public: true`
+    a `value`; any other field of a row is dropped. A record's id must equal the key it is
+    stored under, and two records may not end up with one id.
+  - **The router config** (decision D30). `GET /admin/api/operator/litellm-config`
+    answers with a preview (a header's name with `<configured>`, an endpoint without
+    credentials). The executable config is rendered only by `gateway/litellm_runtime.py`,
+    from references, into a file only this user can read.
+  - **One egress** (decision D31). A management handler answers only with
+    `egress.projected_response`, `plain_json_response` or `safe_error_response`;
+    a router built with `egress.ManagementRoute` refuses anything else, and the
+    `EgressGate` middleware holds a management response until it is admitted and gives
+    framework 404, 405, 422 and 500 a fixed envelope that never echoes a body or an
+    exception. Startup fails for an admin route that is neither a management route
+    nor in `egress.UNMANAGED_ADMIN_MODULES`, and freezes the table of management routes.
+    The configuration export (`GET /admin/api/config/export`, owner only) goes through
+    the same projection: public configuration and configured entries, never a value.
+  - **The oracle** (decision D32). `tests/test_secret_canary_matrix.py` plants distinct
+    canaries (provider-shaped and unremarkable) through the real write routes in every
+    carrier and searches every GET route as three clients, error answers, the export, the
+    audit log and the process logs; `tests/test_admin_secret_sweep.py` and
+    `tests/test_admin_secret_sweep_writes.py` walk the route table of the exported app
+    (mounts and WebSockets included) and call every route, requiring a success from each
+    management GET route; `tests/test_secret_noninterference.py` replaces every secret
+    with different bytes and requires identical management output;
+    `tests/test_wire_compat_with_main.py` compares what an engine receives with what
+    `origin/main` sent for the same records. `tests/test_review_w1_r3_cases.py` carries each
+    finding of the independent review of the earlier projection (opaque header values, the host
+    move, containers, neutral strings, ids that disagree with keys, error text, route
+    classification, response shapes). Positive controls show the canaries reached
+    the store, the runtime resolves each, and the detector can fail.
+  - What phase 2 still does: MCP, CLI, logs and receipts through the same projection
+    library; the engine page on the command protocol; a restorable encrypted secret
+    backup; moving the remaining admin routers (settings, sign-in, accounts, categories,
+    home, activity) onto `ManagementRoute`; Schemathesis and a Hypothesis state machine.
   - Credentials are per operation class and bound to the address origin.
     Cross-origin redirects are refused.
 

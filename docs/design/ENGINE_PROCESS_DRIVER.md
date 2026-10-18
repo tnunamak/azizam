@@ -60,13 +60,16 @@ every other service, leaves the refused record as stored, and adds a
 and the two blocks, and holds no command or environment value. The audit entry
 `operator.engine_record_v2.migrate` lists the left-out service ids.
 
-A record with a `migration_refused` field does not validate. At boot the gateway
-serves the stored services that validate, and the Overview shows "The stored
-service registry is only partly applied" with the left-out service named. To
-recover, decide which block should run the engine and delete the other from the
-service record, then delete the `migration_refused` field from the same record
-(in `admin.db`, or through the service registry API once the record validates)
-and reload. Two equal blocks need no action.
+A record with a `migration_refused` field does not validate. It is a left-out
+record like any other: at boot the gateway serves the stored services that
+validate, the Overview shows "The stored service registry is only partly
+applied" with the left-out service named, and the Services page lists it under
+"Left out" with an error that says which two blocks conflict (the error is
+rebuilt from the record's blocks, never read from the stored field). To
+recover, press Edit on that record, decide which block should run the engine and
+delete the other, delete the `migration_refused` field, and save (values shown
+as `<redacted>` or `[redacted]` keep their stored value). The save applies
+the record at once. Two equal blocks need no action.
 
 **systemd `KillMode`.** When the gateway itself runs as a systemd unit with the
 default `KillMode=control-group`, stopping or restarting that unit kills every
