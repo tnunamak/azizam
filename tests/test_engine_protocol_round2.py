@@ -24,6 +24,16 @@ def wire(monkeypatch, handler):
     monkeypatch.setattr(executor, 'HttpxTransport', lambda: client)
 
 
+def guard_inventory_hang(monkeypatch, inventory):
+    """Turn a missing controlled cancellation into a failure, not a hung suite."""
+    models = inventory.models
+
+    async def guarded(registry):
+        return await asyncio.wait_for(models(registry), timeout=30)
+
+    monkeypatch.setattr(inventory, 'models', guarded)
+
+
 def control_listing_deadline(monkeypatch, inventory, started, expected, all_started):
     state = {'scheduled': [], 'fired': False}
 
@@ -187,6 +197,9 @@ def test_protocol_image_entry_is_neutral():
 
 def test_inventory_timeout_leaves_healthy_results_and_status_issue(engine, monkeypatch):
     from gateway.engine_protocol import inventory
+    inventory._cache.clear()
+    inventory._issues.clear()
+    guard_inventory_hang(monkeypatch, inventory)
     monkeypatch.setattr(inventory, 'ENGINE_TIMEOUT_S', .04)
     monkeypatch.setattr(inventory, 'LIST_TIMEOUT_S', .08)
     monkeypatch.setattr(inventory, '_descriptions', lambda budget: asyncio.sleep(0, result=description.load_registry()))
@@ -332,6 +345,7 @@ def test_total_inventory_deadline_reports_cancelled_engines(engine, monkeypatch)
     from gateway.engine_protocol import inventory
     inventory._cache.clear()
     inventory._issues.clear()
+    guard_inventory_hang(monkeypatch, inventory)
     monkeypatch.setattr(inventory, 'ENGINE_TIMEOUT_S', 5)
     monkeypatch.setattr(inventory, 'LIST_TIMEOUT_S', .03)
     monkeypatch.setattr(inventory, '_descriptions', lambda budget: asyncio.sleep(0, result=description.load_registry()))

@@ -35,6 +35,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -120,11 +121,13 @@ describe("no fake progress while the check runs", () => {
     mount();
     const dialog = await pickKind(user);
     await typeAddress(user, "http://192.168.1.50:8080/v1");
-    await user.click(within(dialog).getByRole("button", { name: "Continue" }));
-    const rows = await within(dialog).findByRole("list", { name: "Check progress" });
+    vi.useFakeTimers();
+    const timedUser = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await timedUser.click(within(dialog).getByRole("button", { name: "Continue" }));
+    const rows = within(dialog).getByRole("list", { name: "Check progress" });
     expect(within(dialog).getByText("Checking the server. This may take a few seconds.")).toBeVisible();
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1600));
+      await vi.advanceTimersByTimeAsync(1600);
     });
     expect(rows.querySelector(".lucide-circle-check")).toBeNull();
     expect(within(rows).queryByText("Reached the server")).toBeNull();

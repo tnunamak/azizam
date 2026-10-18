@@ -208,7 +208,7 @@ def test_M1_slow_description_load_cannot_outlive_the_listing_deadline(monkeypatc
             release_load.set()
             if load_started.is_set():
                 await load_finished.wait()
-    out = asyncio.run(run())
+    out = asyncio.run(asyncio.wait_for(run(), timeout=30))
     assert out == []
     assert deadline['scheduled'] == [inventory.DESCRIPTION_LOAD_S]
     assert deadline['fired']
@@ -246,7 +246,7 @@ def test_M1_timed_out_reload_serves_the_last_good_description(monkeypatch, fresh
             release_load.set()
             if load_started.is_set():
                 await load_finished.wait()
-    out = asyncio.run(run())
+    out = asyncio.run(asyncio.wait_for(run(), timeout=30))
     assert [item['id'] for item in out] == ['m0']
     assert deadline['scheduled'] == [inventory.DESCRIPTION_LOAD_S]
     assert deadline['fired']
@@ -503,7 +503,7 @@ def test_probe_forty_hanging_engines_share_one_listing_budget(monkeypatch, fresh
             cancelled.add(engine_id)
     monkeypatch.setattr(dispatch.Runtime, 'invoke', hang)
 
-    out = asyncio.run(inventory.models(_registry_of(40)))
+    out = asyncio.run(asyncio.wait_for(inventory.models(_registry_of(40)), timeout=30))
     assert out == []
     expected = {f'e{i}' for i in range(40)}
     assert started == expected
