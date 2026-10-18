@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import shutil
 import subprocess
 import tempfile
@@ -61,6 +62,55 @@ def empty_extension_package_index() -> dict[str, Any]:
     }
 
 
+# A package's install snapshot holds a digest per record, not the record: a record can carry a
+# command or environment secret, and the index is returned to callers. Version 2 is this shape;
+# an entry without the version is a legacy copy and is digested the first time it is read.
+INSTALLED_RECORDS_VERSION = 2
+
+
+def installed_record_digest(record: Mapping[str, Any]) -> str:
+    """Proof that an installed record is unchanged: a digest of its normalized JSON form."""
+    encoded = json.dumps(record, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def installed_records_proof(records_by_kind: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """The install snapshot a package keeps: kind -> id -> {kind, id, sha256}, never the records."""
+    return {
+        "installed_records_version": INSTALLED_RECORDS_VERSION,
+        "installed_records": {
+            kind: {
+                record_id: {"kind": kind, "id": record_id, "sha256": installed_record_digest(record)}
+                for record_id, record in (records_by_kind.get(kind) or {}).items()
+                if isinstance(record, Mapping)
+            }
+            for kind in sorted(DATA_OBJECT_KINDS)
+        },
+    }
+
+
+def _digest_legacy_installed_records(package: Mapping[str, Any]) -> dict[str, Any]:
+    """A package whose snapshot still holds record copies, with each copy replaced by its digest."""
+    out = dict(package)
+    if "installed_records" not in out or out.get("installed_records_version") == INSTALLED_RECORDS_VERSION:
+        return out
+    legacy = out.get("installed_records")
+    legacy = legacy if isinstance(legacy, Mapping) else {}
+    out.update(installed_records_proof({kind: legacy.get(kind) or {} for kind in DATA_OBJECT_KINDS}))
+    return out
+
+
+def needs_installed_records_migration(value: Any) -> bool:
+    """True when a stored index still holds a record copy, so the one-time migration has work to do."""
+    if not isinstance(value, Mapping) or not isinstance(value.get("packages"), Mapping):
+        return False
+    return any(
+        isinstance(package, Mapping) and "installed_records" in package
+        and package.get("installed_records_version") != INSTALLED_RECORDS_VERSION
+        for package in value["packages"].values()
+    )
+
+
 def normalize_extension_package_index(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return empty_extension_package_index()
@@ -77,7 +127,7 @@ def normalize_extension_package_index(value: Any) -> dict[str, Any]:
         "schema_version": int(value.get("schema_version") or 1),
         "sources": [dict(source) for source in sources if isinstance(source, Mapping)],
         "packages": {
-            str(package_id): dict(package)
+            str(package_id): _digest_legacy_installed_records(package)
             for package_id, package in packages.items()
             if isinstance(package, Mapping)
         },
@@ -426,13 +476,18 @@ def _matches_install(
     record: Mapping[str, Any], expected: Mapping[str, Any] | None, package: Mapping[str, Any],
     disabled_state: bool | None,
 ) -> bool:
-    """True when the row is still exactly what the package installed (its disable aside)."""
+    """True when the row is still exactly what the package installed (its disable aside).
+
+    The expected entry is the digest the install stored. The provenance hash and version must
+    also still name this package, so a row that was rewritten under another package does not match.
+    """
     comparable = copy.deepcopy(dict(record))
     if disabled_state is not None and comparable.get("enabled") is False:
         comparable["enabled"] = disabled_state
     provenance = record.get("provenance") or {}
     return (
-        expected is not None and comparable == expected
+        expected is not None
+        and expected.get("sha256") == installed_record_digest(comparable)
         and provenance.get("package_hash") == package.get("package_hash")
         and provenance.get("package_version") == package.get("version")
     )

@@ -701,9 +701,40 @@ def init_db(path: Path = DB_PATH) -> None:
         try:
             _apply_pragmas(conn)
             _exec_schema(conn)
+            _migrate_extension_package_digests(conn)
             _move_oidc_client_secret_to_store(conn, path)
         finally:
             conn.close()
+
+
+def _migrate_extension_package_digests(conn: sqlite3.Connection) -> None:
+    """Replace the record copies a stored package index holds with their digests, once.
+
+    The index is returned to callers, and a copy can carry a command or environment secret.
+    The rewrite runs in one immediate transaction and only when the stored index still holds
+    a copy, so a later start finds nothing to do.
+    """
+    from gateway import extension_packages
+
+    key = extension_packages.EXTENSION_PACKAGE_INDEX_SETTING_KEY
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (key,)).fetchone()
+        if row is not None:
+            try:
+                value = json.loads(row[0])
+            except (TypeError, json.JSONDecodeError):
+                value = None
+            if extension_packages.needs_installed_records_migration(value):
+                migrated = extension_packages.normalize_extension_package_index(value)
+                payload = json.dumps(migrated, ensure_ascii=False, sort_keys=True)
+                _upsert_setting_in_transaction(conn, key, payload, _now(), None)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def _move_oidc_client_secret_to_store(conn: sqlite3.Connection, path: Path) -> None:

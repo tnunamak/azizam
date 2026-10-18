@@ -1178,13 +1178,11 @@ class AdminSQLiteStore:
             source=source,
         )
         package_id = str((review.get("package") or {}).get("id") or "")
-        package_index["packages"][package_id]["installed_records"] = {
-            kind: {
-                record_id: copy.deepcopy(registry[kind][record_id])
-                for record_id in imported[kind]
-            }
+        # The snapshot keeps a digest of each normalized record the package wrote, not a copy.
+        package_index["packages"][package_id].update(extension_packages.installed_records_proof({
+            kind: {record_id: registry[kind][record_id] for record_id in imported[kind]}
             for kind in sorted(extension_packages.DATA_OBJECT_KINDS)
-        }
+        }))
         # Registry, package index and both audit facts commit together: a
         # failure at any step leaves the generation and every row unchanged.
         registry_record, index_record = admin_store.write_service_registry_and_setting_with_audits(
