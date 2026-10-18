@@ -1,11 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { AUTOMATIC_EXPIRY_ENDED_MS, expiryNote } from "./library-expiry";
+import { EXPIRY_CUTOFF_MS, expiryNote } from "./library-expiry";
 
-const cutoffS = AUTOMATIC_EXPIRY_ENDED_MS / 1000;
+const cutoffS = EXPIRY_CUTOFF_MS / 1000;
 
 describe("the note on a file the 24-hour expiry deleted", () => {
-  test("the cutoff is the moment the expiry was removed, 2026-10-11 11:59:31 CDT", () => {
-    expect(new Date(AUTOMATIC_EXPIRY_ENDED_MS).toISOString()).toBe("2026-10-11T16:59:31.000Z");
+  test("the cutoff is 24 hours before the expiry was removed: 2026-10-10 11:59:31 CDT", () => {
+    expect(new Date(EXPIRY_CUTOFF_MS).toISOString()).toBe("2026-10-10T16:59:31.000Z");
   });
 
   test("a file made one second before the cutoff was deleted; one made at the cutoff was not", () => {
