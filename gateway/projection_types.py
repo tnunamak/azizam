@@ -363,9 +363,38 @@ def excluded_view(section: str, record_id: str, error: str, record: Any, *, conf
     }
     if parsed:
         out["record"] = shown.tree
+        blanked = _blank_invalid_numbers(record, out["record"]) if section == "services" else []
+        if blanked:
+            out["failed_fields"] = blanked
     else:
         out["failed_fields"] = failed_fields
     return out
+
+
+def _blank_invalid_numbers(raw: dict[str, Any], shown: dict[str, Any]) -> list[str]:
+    """Take a port or priority that is not a number out of a left-out record's view, and name the fields.
+
+    The record is left out because of that value, and the value may be text typed in the wrong slot (a key pasted into
+    the port field), so the view does not repeat it: the operator types the field again. Returns the fields blanked.
+    """
+    from gateway import service_registry
+
+    blanked: list[str] = []
+    config = raw.get("config") if isinstance(raw.get("config"), dict) else {}
+    shown_config = shown.get("config") if isinstance(shown.get("config"), dict) else {}
+    for field in ("port", "priority"):
+        try:
+            service_registry.validate_service_numbers("x", {field: config.get(field)})
+        except ValueError:
+            shown_config.pop(field, None)
+            blanked.append(field)
+    try:
+        service_registry._priority("x", raw.get("priority"))
+    except ValueError:
+        shown.pop("priority", None)
+        if "priority" not in blanked:
+            blanked.append("priority")
+    return blanked
 
 
 def project_body(body: Any, *, configured=None) -> Projection:

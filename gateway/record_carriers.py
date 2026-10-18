@@ -659,6 +659,28 @@ def legacy_secret_texts(record: Any) -> list[str]:
     return sorted({text for text in found if len(text) >= 4}, key=len, reverse=True)
 
 
+def typed_value_texts(record: Any, *, minimum: int = 8) -> list[str]:
+    """The longer text values a record holds in its plain slots (not its id or name), longest first.
+
+    An error about a record the registry leaves out can quote a value of a slot that is not a secret slot: text typed into
+    a numeric field, say. The caller scrubs these from the message, so naming the record is enough to find it.
+    """
+    found: set[str] = set()
+
+    def walk(node: Any, key: str = "") -> None:
+        if isinstance(node, Mapping):
+            for name, item in node.items():
+                walk(item, str(name))
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                walk(item, key)
+        elif isinstance(node, str) and len(node) >= minimum and key not in ("id", "name"):
+            found.add(node)
+
+    walk(record)
+    return sorted(found, key=len, reverse=True)
+
+
 def inline_carriers(record: Mapping[str, Any]) -> list[str]:
     """Paths where a record still holds a legacy inline carrier: what the migration would move, without moving it."""
     class _Probe:

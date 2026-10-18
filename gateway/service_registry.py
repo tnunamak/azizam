@@ -250,7 +250,8 @@ def servable_part_of_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any],
 
 def registry_error_text(text: str, value: Mapping[str, Any]) -> str:
     """``text``, an error about a stored registry, without any value a left-out record of it holds."""
-    secrets = [secret for item in read_registry(value)[1] for secret in record_carriers.legacy_secret_texts(item.record)]
+    secrets = [secret for item in read_registry(value)[1]
+               for secret in (*record_carriers.legacy_secret_texts(item.record), *record_carriers.typed_value_texts(item.record))]
     return projection.scrub_text(text, secrets)
 
 
@@ -284,7 +285,8 @@ def _read_registry(value: Mapping[str, Any], *, strict: bool) -> tuple[dict[str,
                 if strict:
                     raise
                 message = str(error) if isinstance(error, ValueError) else f"{type(error).__name__}: {error}"
-                message = projection.scrub_text(message[:300], record_carriers.legacy_secret_texts(raw))
+                message = projection.scrub_text(
+                    message[:300], [*record_carriers.legacy_secret_texts(raw), *record_carriers.typed_value_texts(raw)])
                 excluded.append(ExcludedRecord(section, str(raw_key), record_id or str(raw_key), message, copy.deepcopy(raw)))
                 continue
             kept[key] = record
@@ -1108,6 +1110,30 @@ def _same_imported_package_record(
     )
 
 
+def _priority(service_id: str, value: Any) -> int:
+    """A record's priority as a whole number (100 when unset). The refusal names the record and never the value."""
+    try:
+        return int(value or 100)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"service {service_id!r} has a priority that is not a whole number") from None
+
+
+def validate_service_numbers(service_id: str, config: Mapping[str, Any]) -> None:
+    """A port that is set must be a whole number from 1 to 65535 (text of digits counts), and a priority a whole number.
+
+    The port becomes part of an address the gateway dials and shows, so a value of another kind (a word, a secret
+    typed in the wrong slot) is refused here, with text that does not repeat it.
+    """
+    _priority(service_id, config.get("priority"))
+    port = config.get("port")
+    if port is None or port == "":
+        return
+    if isinstance(port, str) and port.strip().isascii() and port.strip().isdigit():
+        port = int(port.strip())
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError(f"service {service_id!r} has a port that is not a whole number from 1 to 65535")
+
+
 def service_from_backend_config(
     service_id: str,
     raw: Mapping[str, Any],
@@ -1116,6 +1142,7 @@ def service_from_backend_config(
     provenance: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     safe_config, secret_refs = split_secret_refs(raw)
+    validate_service_numbers(service_id, safe_config)
     validate_provider_secret_refs(service_id, safe_config, secret_refs)
     validate_provider_native_passthrough_disabled(service_id, safe_config)
     if is_remote_provider_config(safe_config):
@@ -1160,7 +1187,7 @@ def service_from_backend_config(
         "kind": str(raw.get("kind") or "provider"),
         "source": source,
         "enabled": bool_from_config(raw.get("enabled"), True),
-        "priority": int(raw.get("priority") or 100),
+        "priority": _priority(service_id, raw.get("priority")),
         "role": str(raw.get("role") or "required"),
         "capabilities": capabilities,
         "config": safe_config,
@@ -1265,6 +1292,7 @@ def normalize_service_record(
     secret_refs = raw.get("secret_refs")
     if not isinstance(secret_refs, Mapping):
         secret_refs = {}
+    validate_service_numbers(service_id, config)
     if check_secrets:
         validate_provider_secret_refs(service_id, config, secret_refs)
         validate_provider_native_passthrough_disabled(service_id, config)
@@ -1281,7 +1309,7 @@ def normalize_service_record(
         "kind": str(raw.get("kind") or "provider"),
         "source": source,
         "enabled": bool_from_config(raw.get("enabled"), True),
-        "priority": int(raw.get("priority") or 100),
+        "priority": _priority(service_id, raw.get("priority")),
         "role": str(raw.get("role") or config.get("role") or "required"),
         "capabilities": capabilities,
         "config": config,

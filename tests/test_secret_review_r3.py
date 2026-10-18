@@ -840,3 +840,80 @@ def test_a_whole_url_needs_a_label_that_does_not_repeat_the_url_and_a_label_need
     with pytest.raises(secret_commands.CommandError) as refused:
         _whole(store, **command)
     assert "R3WEBHOOKSECRET" not in refused.value.message
+
+
+# ---------------------------------------------------------------------------
+# L7: an error names what is wrong, never what the caller typed or a stored record holds in a plain slot
+# ---------------------------------------------------------------------------
+
+TYPED = "R3TYPEDVALUE-91827"
+
+
+@pytest.mark.parametrize("field,body", [
+    ("preset_id", {"preset_id": TYPED, "provider_id": "p1", "key_mode": "secret", "api_key": "sk-r3-0123456789abcdef"}),
+    ("provider_id", {"preset_id": "openrouter", "provider_id": TYPED + " !", "key_mode": "secret", "api_key": "sk-r3-0123456789abcdef"}),
+    ("base_url", {"preset_id": "openrouter", "provider_id": "p3", "key_mode": "secret", "api_key": "sk-r3-0123456789abcdef", "base_url": f"http://u:{TYPED}@h/?k={TYPED}"}),
+    ("models", {"preset_id": "openrouter", "provider_id": "p2", "key_mode": "secret", "api_key": "sk-r3-0123456789abcdef", "models": TYPED}),
+    ("key_mode", {"preset_id": "openrouter", "provider_id": "p5", "key_mode": TYPED, "api_key": "sk-r3-0123456789abcdef"}),
+    ("api_key_env", {"preset_id": "openrouter", "provider_id": "p6", "key_mode": "env", "api_key_env": TYPED}),
+])
+def test_an_error_from_adding_a_provider_does_not_repeat_what_the_caller_typed(gateway, host_isolated, field, body):
+    owner, _, _, _ = owner_and_admin(gateway)
+    empty_registry(gateway)
+    for path in ("/admin/api/providers", "/admin/api/providers/-/test"):
+        answer = owner.post(path, headers=csrf_for(owner), json=body)
+        assert TYPED not in answer.text, (path, field, answer.status_code, answer.text[:300])
+
+
+def test_adding_a_provider_that_exists_does_not_repeat_the_id_it_was_given(gateway, host_isolated):
+    owner, _, _, _ = owner_and_admin(gateway)
+    empty_registry(gateway)
+    assert canary.plant_provider(owner, "provider-a").status_code == 201
+    again = owner.post("/admin/api/providers", headers=csrf_for(owner), json={
+        "preset_id": "openai", "provider_id": "provider-a", "key_mode": "secret", "api_key": "sk-r3-0123456789abcdef", "models": ["gpt-4o-mini"]})
+    assert again.status_code == 409 and error_code(again) == "provider_exists"
+    assert "provider-a" not in again.text
+
+
+def _hand_edited_registry(gateway):
+    """Records written past the routes (a hand edit) with a typed value in a slot that should hold a number."""
+    document = admin_store.get_service_registry_with_generation(path=gateway.path)["value"]
+    base = {"kind": "engine", "enabled": True, "capabilities": ["chat"], "config": {"host": "10.0.0.9", "port": 8080, "models": [{"id": "m", "upstream_model": "m"}]}}
+    document["services"]["typed-port"] = {**copy.deepcopy(base), "id": "typed-port", "name": "typed-port"}
+    document["services"]["typed-port"]["config"]["port"] = TYPED
+    document["services"]["typed-priority"] = {**copy.deepcopy(base), "id": "typed-priority", "name": "typed-priority", "priority": TYPED}
+    document["services"]["typed-priority"]["config"]["priority"] = TYPED
+    write_raw(gateway, document)
+
+
+def test_reload_and_the_overview_do_not_quote_a_value_typed_in_a_plain_slot(gateway, host_isolated):
+    owner, _, _, admin = owner_and_admin(gateway)
+    empty_registry(gateway)
+    _hand_edited_registry(gateway)
+    reloaded = admin.post("/admin/api/config/reload", headers=csrf_for(admin), json={})
+    assert TYPED not in reloaded.text, reloaded.text[:400]
+    for client in (admin, owner):
+        for path in ("/admin/api/overview", REGISTRY, "/admin/api/status"):
+            assert TYPED not in client.get(path).text, (path, client.get(path).text[:300])
+    problem = json.dumps(gateway.proxy.REGISTRY_APPLY_PROBLEM)
+    assert TYPED not in problem
+    assert "typed-port" in problem and "typed-priority" in problem, "the records are named so the operator can find them"
+
+
+def test_a_service_with_a_port_that_is_not_a_number_is_left_out_with_fixed_text(gateway, host_isolated):
+    owner, _, _, _ = owner_and_admin(gateway)
+    empty_registry(gateway)
+    _hand_edited_registry(gateway)
+    gateway.proxy.reload_runtime_config()
+    served = set((gateway.proxy.config.get("backends") or {}))
+    assert "typed-port" not in served and "typed-priority" not in served
+    left_out = gateway.proxy.REGISTRY_APPLY_PROBLEM["left_out"]
+    assert "port" in left_out["typed-port"].lower() and "priority" in left_out["typed-priority"].lower()
+
+
+def test_an_error_about_a_left_out_record_does_not_quote_a_text_it_holds_in_a_plain_slot():
+    registry = {"schema_version": 2, "services": {"bad": {
+        "id": "bad", "name": "bad", "kind": "engine", "capabilities": ["chat"], "models": "not a list",
+        "config": {"host": "10.0.0.9", "port": 8080, "note": TYPED, "models": TYPED}}}}
+    cleaned = service_registry.registry_error_text(f"ValueError: could not convert string to float: '{TYPED}' in service 'bad'", registry)
+    assert TYPED not in cleaned and "'bad'" in cleaned
