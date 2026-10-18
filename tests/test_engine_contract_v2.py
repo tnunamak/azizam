@@ -10,6 +10,9 @@ from pathlib import Path
 import pytest
 
 from gateway import admin_store, service_registry
+from gateway.engine_admin import engine_view
+from gateway.engine_definitions import load_engine_catalog
+from gateway.litellm_substrate import reaches_engine_directly
 
 
 def _service(*, source: str = "ui", kind: str = "provider") -> dict:
@@ -59,6 +62,26 @@ def test_v2_view_preserves_record_permission_and_marks_substrate_as_system() -> 
     assert view["record_type"] == "system"
     assert view["editable"] is False
     assert view["derived"] is True
+
+
+@pytest.mark.parametrize("source", sorted(service_registry.SERVICE_SOURCES))
+def test_v2_view_accepts_all_legacy_sources(source: str) -> None:
+    view = service_registry.service_record_v2(_service(source=source))
+    assert view["provenance"]["source"] == source
+    assert view["offerings"][0]["tasks"][0]["evidence"] == "declared"
+
+
+def test_engine_admin_exposes_v2_beside_existing_fields_and_uses_record_permission(tmp_path: Path) -> None:
+    record = _service()
+    record["config"]["gateway_lifecycle"] = True
+    record["config"]["headers"] = [{"name": "Authorization", "value": "test-secret-value"}]
+    assert not reaches_engine_directly("engine-a", record)
+    view = engine_view(load_engine_catalog(), record, db_path=tmp_path / "admin.db")
+    assert view["editable"] is True
+    assert view["v2"]["editable"] is True
+    assert view["v2"]["connection"]["headers"] == [{"name": "Authorization", "value": "configured"}]
+    assert "legacy_lifecycle" not in (view["v2"]["process"] or {})
+    assert "values" in view and "models" in view and "key" in view
 
 
 def test_v2_migration_collapses_agreeing_lifecycle_copies_and_preserves_runtime() -> None:
