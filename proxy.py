@@ -105,7 +105,9 @@ from gateway import model_metadata
 from gateway import engine_check
 from gateway import speech_stream
 from gateway.engine_protocol import inline_tts as tts_adapter
-from gateway.engine_protocol.errors import TransportFailure
+from gateway.engine_protocol.errors import (TransportFailure, ProtocolError, MappingError as ProtocolMappingError,
+    UpstreamError as ProtocolUpstreamError)
+from gateway.engine_protocol.types import StreamReply as ProtocolStreamReply
 from gateway.engine_protocol.types import CanonicalRequest as AdapterRequest
 from gateway.engine_protocol.types import Connection as AdapterConnection
 from gateway.engine_protocol.types import Reply as AdapterReply
@@ -7745,6 +7747,9 @@ async def proxy_comfy_request(
     receipt: RouteReceipt | None = None,
 ) -> Response:
     """Handle OpenAI-compatible image generation request via ComfyUI."""
+    protocol_response = await _try_protocol_request(request, auth_context, "images", receipt=receipt)
+    if protocol_response is not None:
+        return protocol_response
     admission = _dispatch_admission_response(
         'image.generate', auth_context=auth_context, service_id="comfyui",
         service_available=COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
@@ -17791,7 +17796,9 @@ async def audio_speech(request: Request):
     from gateway import media_ingestion
     receipt = await media_ingestion.start_receipt(request, auth_context, intent="speech.synthesis")
     try:
-        response = await proxy_tts_request(request, auth_context, receipt=receipt)
+        response = await _try_protocol_request(request, auth_context, "speech", receipt=receipt)
+        if response is None:
+            response = await proxy_tts_request(request, auth_context, receipt=receipt)
     except BaseException:
         media_ingestion.finish_receipt(receipt, status_code=500)
         raise
@@ -24692,6 +24699,13 @@ async def list_models(request: Request):
                 "aliases and workflows may still be listed."
             )
 
+    try:
+        protocol_models = await _protocol_models_payload(auth_context)
+    except ProtocolError as error:
+        return _protocol_failure(error)
+    if protocol_models:
+        upstream_payload["data"] = [*(upstream_payload.get("data") or []), *protocol_models]
+
     data = upstream_payload.get("data")
     if not isinstance(data, list):
         data = []
@@ -28302,6 +28316,235 @@ def _provider_alias_model(engine_id: str, service_id: str | None, spec: Mapping[
     return model if model.startswith(provider.id + "/") else provider.id + "/" + model
 
 
+def _protocol_failure(error: ProtocolError) -> Response:
+    status, code = 502, error.code
+    message = str(error)
+    headers = {}
+    if isinstance(error, ProtocolUpstreamError):
+        status = error.status if error.status in {400, 404, 409, 422, 429, 503} else 502
+        code = error.advice_code or code
+        message = error.advice or message
+        headers = {k: v for k, v in error.headers.items() if k == "retry-after"}
+    elif isinstance(error, TransportFailure) and error.kind == "timeout":
+        status = 504
+    elif isinstance(error, ProtocolMappingError):
+        status = 400
+    elif error.code in {"unknown_operation", "ambiguous_model"}:
+        status = 400
+    elif error.code == "engine_disabled":
+        status = 503
+    response = openai_error_response(message, status_code=status, code=code)
+    response.headers.update(headers)
+    return response
+
+
+async def _protocol_image_result(runtime, body, request, auth_context, receipt, store):
+    """Keep retries, durable state and asset access in core, outside the adapter."""
+    from gateway.engine_protocol import jobs as protocol_jobs
+    from gateway.engine_protocol.types import AssetRef
+    owned = not receipt.job_id
+    job_id = receipt.job_id
+    if owned:
+        request_id, _, _ = _image_media_job_request_id(
+            body=body, auth_context=auth_context,
+            idempotency_key=request.headers.get("idempotency-key"), fallback_request_id=receipt.request_id,
+        )
+        old = media_jobs.get_by_request_id(request_id, audience="internal", path=media_jobs.DB_PATH)
+        if old is not None:
+            receipt.job_id = old["job_id"]
+            if old["status"] != media_jobs.STATUS_SUCCEEDED:
+                return _image_media_job_response(old, request)
+            refs = tuple(AssetRef(a["asset_id"], a["media_type"], a.get("size_bytes", 0)) for a in old["assets"])
+            return await _protocol_image_response(refs, body, request, store, receipt.job_id)
+        caller = auth_context.identity
+        job = media_jobs.MediaJob(intent="image.generate", backend=runtime.target.engine_id,
+            request_id=request_id, parent_request_id=receipt.request_id,
+            app_id=caller.app_id if caller else None, owner_key_hash=_asset_owner_key(auth_context),
+            api_key_name=caller.name if caller else None, app_profile=plan_ref(caller))
+        created = media_jobs.create(job, path=media_jobs.DB_PATH)
+        job_id = receipt.job_id = created["job_id"]
+        media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, path=media_jobs.DB_PATH)
+    try:
+        operation = runtime.target.description.operations["images"]
+        if operation.job is not None:
+            refs = await protocol_jobs.run(runtime, "images", body, job_id=job_id)
+        else:
+            reply = await runtime.invoke("images", body)
+            if isinstance(reply, ProtocolStreamReply):
+                await reply.aclose()
+                raise ProtocolError("Image generation must return JSON or a binary asset.", code="malformed_response")
+            if reply.asset:
+                refs = (reply.asset,)
+            else:
+                # JSON descriptions map images into OpenAI's b64_json shape.
+                # Arbitrary engine URLs are never fetched outside the protocol.
+                refs_list = []
+                for item in (reply.body or {}).get("data", []):
+                    encoded = item.get("b64_json")
+                    if not isinstance(encoded, str) or len(encoded) > runtime.target.description.budgets.max_response_bytes:
+                        raise ProtocolError("The image response needs bounded b64_json data.", code="malformed_response")
+                    try:
+                        data = base64.b64decode(encoded, validate=True)
+                    except ValueError:
+                        raise ProtocolError("The image response is not base64.", code="malformed_response") from None
+                    from gateway.engine_protocol.executor import media_type_for
+                    async def chunks():
+                        yield data
+                    refs_list.append(await store.save(chunks(), content_type=media_type_for(None, data[:512]),
+                                                     max_bytes=runtime.target.description.budgets.max_asset_bytes))
+                refs = tuple(refs_list)
+        if not refs:
+            raise ProtocolError("The engine returned no image assets.", code="malformed_response")
+        assets = [{"asset_id":ref.id, "kind":"image", "media_type":ref.content_type,
+                   "size_bytes":ref.size, "url":build_signed_asset_url(request, ref.id)} for ref in refs]
+        if owned:
+            media_jobs.update_status(job_id, media_jobs.STATUS_SUCCEEDED, add_assets=assets,
+                                     progress=100, path=media_jobs.DB_PATH)
+            media_jobs.append_event(job_id, "succeeded", {"status":"succeeded"}, path=media_jobs.DB_PATH)
+        return await _protocol_image_response(refs, body, request, store, job_id)
+    except BaseException as error:
+        if owned:
+            canceled = isinstance(error, (asyncio.CancelledError, media_jobs.CancellationPending))
+            media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED if canceled else media_jobs.STATUS_FAILED,
+                error=None if canceled else "Protocol image generation failed", path=media_jobs.DB_PATH)
+        raise
+
+
+async def _protocol_image_response(refs, body, request, store, job_id):
+    items = []
+    for ref in refs:
+        item = {"asset_id":ref.id, "media_type":ref.content_type}
+        if body.get("response_format") == "b64_json":
+            item["b64_json"] = base64.b64encode(await store.read(ref, max_bytes=256*1024*1024)).decode()
+        else:
+            item["url"] = build_signed_asset_url(request, ref.id)
+        items.append(item)
+    return Response(content=json.dumps({"created":int(time.time()), "job_id":job_id, "data":items}), media_type="application/json")
+
+
+async def _try_protocol_request(request, auth_context, op, *, body=None, receipt=None):
+    """Only a record's explicit connection.dispatch opts into this path."""
+    from gateway.engine_protocol import dispatch as protocol_dispatch
+    from gateway.engine_protocol.media import GatewayAssetStore
+    if body is None:
+        try:
+            body = await request.json()
+        except (ValueError, AttributeError):
+            return None
+    if not isinstance(body, Mapping):
+        return None
+    try:
+        target = protocol_dispatch.resolve(ADMIN_STORE.get_service_registry(), body.get("model"), op)
+    except ProtocolError as error:
+        return _protocol_failure(error)
+    if target is None:
+        return None
+    intents = {"chat":"chat.generate", "embeddings":"text.embeddings", "images":"image.generate", "speech":"speech.synthesis"}
+    intent = intents[op]
+    owns_receipt = receipt is None
+    if receipt is None:
+        receipt = _start_litellm_route_receipt(request_path=request.url.path, auth_context=auth_context,
+            requested_model=str(body.get("model")), protocol=_protocol_for_intent(intent), intent=intent)
+    receipt.backend = target.engine_id
+    receipt.resolved_model = target.upstream
+    receipt.metadata.update({"execution_backend":"http-v1", "engine_id":target.engine_id,
+                             "offering_id":target.offering["id"], "upstream_id":target.upstream})
+    decision = evaluate_and_apply(auth_context.identity, make_policy_request(
+        protocol=_protocol_for_intent(intent), intent=intent, model=str(body.get("model")),
+        backend=target.engine_id), receipt)
+    if decision.denied:
+        return _policy_denied_response(decision)
+    admission = _dispatch_admission_response(intent, auth_context=auth_context, service_id=target.engine_id,
+        service_available=True, resource_class={"images":"image", "speech":"audio"}.get(op, op), receipt=receipt,
+        queue_key=_MEDIA_JOB_QUEUE_KEY if op == "images" else None)
+    if admission is not None:
+        return admission
+    if owns_receipt:
+        receipt_store.begin(receipt, path=receipt_store.DB_PATH)
+    _begin_media_delivery(auth_context, receipt)
+    store = GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=_asset_owner_key(auth_context))
+    lease = None
+    try:
+        runtime = protocol_dispatch.Runtime(target, assets=store)
+        lease = await runtime.lease(drain=_swap_drain, lock_for=swap_lock_for,
+                                    may_switch=_target_activation(auth_context) != "existing_only")
+        if op == "images":
+            response = await _protocol_image_result(runtime, body, request, auth_context, receipt, store)
+        else:
+            reply = await runtime.invoke(op, body)
+            if isinstance(reply, ProtocolStreamReply):
+                async def stream():
+                    try:
+                        async for event in reply:
+                            data = event if isinstance(event, bytes) else json.dumps(event, separators=(",",":"), ensure_ascii=False).encode()
+                            yield b"data: " + data + b"\n\n"
+                        yield b"data: [DONE]\n\n"
+                    except ProtocolError as error:
+                        receipt.metadata["stream_error_code"] = error.code
+                        receipt.finish("failed")
+                        receipt_store.finalize(receipt, path=receipt_store.DB_PATH)
+                        yield b"data: " + _protocol_failure(error).body + b"\n\n"
+                    finally:
+                        await reply.aclose()
+                iterator = lease.hand_off(stream()) if lease else stream()
+                response = StreamingResponse(iterator, media_type="text/event-stream")
+            elif reply.asset:
+                content = await store.read(reply.asset, max_bytes=target.description.budgets.max_asset_bytes)
+                from gateway import media_ingestion
+                media_ingestion.index_receipt_assets(receipt, [{"asset_id":reply.asset.id, "kind":"audio",
+                    "media_type":reply.asset.content_type, "size_bytes":reply.asset.size}])
+                response = Response(content=content, media_type=reply.asset.content_type)
+            else:
+                response = Response(content=json.dumps(reply.body, separators=(",",":"), ensure_ascii=False),
+                                    status_code=reply.status, media_type="application/json")
+    except ProtocolError as error:
+        response = _protocol_failure(error)
+    except ValueError:
+        response = openai_error_response("The engine connection or selection is invalid.", status_code=502, code="invalid_engine_connection")
+    except asyncio.CancelledError:
+        if owns_receipt:
+            receipt.finish("cancelled")
+            receipt_store.finalize(receipt, path=receipt_store.DB_PATH)
+        raise
+    finally:
+        if lease is not None and not lease.handed_off:
+            lease.release()
+    response.headers.setdefault("x-request-id", receipt.request_id)
+    if owns_receipt:
+        from gateway import media_ingestion
+        return media_ingestion.finish_response(receipt, response)
+    return response
+
+
+async def _protocol_models_payload(auth_context):
+    from gateway.engine_protocol import dispatch as protocol_dispatch
+    from gateway.engine_protocol.adapter import AdapterRegistry
+    from gateway.engine_protocol.types import CanonicalRequest
+    data = []
+    for engine_id, service in (ADMIN_STORE.get_service_registry().get("services") or {}).items():
+        if not protocol_dispatch.opted_in(service) or not service.get("enabled", True):
+            continue
+        from gateway.engine_contract_view import connection_config, offerings_config
+        from gateway.engine_protocol import description
+        doc = description.load_registry().get(connection_config(service).get("protocol"))
+        if doc is None or doc.executor != "http-v1" or "models" not in doc.operations:
+            continue
+        offerings = offerings_config(service)
+        if not offerings:
+            continue
+        runtime = protocol_dispatch.Runtime(protocol_dispatch.Target(engine_id, service, offerings[0], doc))
+        reply = await runtime.adapter.invoke(runtime.connection, "models", CanonicalRequest("models"))
+        if isinstance(reply, ProtocolStreamReply):
+            await reply.aclose()
+            raise ProtocolError("The model list cannot be streamed.", code="malformed_response")
+        offered = {str(o["upstream"] or o["id"]):o for o in offerings}
+        for item in (reply.body or {}).get("data", []):
+            offering = offered.get(str(item.get("id"))) or next((o for o in offerings if o["id"] == item.get("id")), None)
+            if offering is not None:
+                data.append({**item, "id":offering["id"]})
+    return data
+
+
 async def _handle_openai_litellm_request_once(
     request: Request,
     request_path: str,
@@ -28378,6 +28621,12 @@ async def _handle_openai_litellm_request_once(
             body_json=parsed_body,
             request_id=trusted_parent_request_id,
         )
+
+    if request_path in {"/v1/chat/completions", "/v1/embeddings"}:
+        protocol_response = await _try_protocol_request(request, auth_context,
+            "embeddings" if request_path == "/v1/embeddings" else "chat", body=parsed_body)
+        if protocol_response is not None:
+            return protocol_response
 
     litellm_runtime = (await asyncio.to_thread(_litellm_runtime_config))
     litellm_body: Mapping[str, Any] = parsed_body
