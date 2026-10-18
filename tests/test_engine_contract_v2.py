@@ -132,6 +132,26 @@ def test_v2_migration_collapses_agreeing_lifecycle_copies_and_preserves_runtime(
     assert service_registry.migrate_engine_records_v2(registry) == []
 
 
+def test_v2_record_stays_collapsed_after_normalization_and_legacy_edit() -> None:
+    registry = {"schema_version": 1, "services": {"engine-a": _service()}}
+    service_registry.migrate_engine_records_v2(registry)
+    normalized = service_registry.normalize_service_registry(registry)
+    record = normalized["services"]["engine-a"]
+    assert "lifecycle" not in record
+    assert "lifecycle" not in record["config"]
+
+    raw = copy.deepcopy(record["config"])
+    raw.update(name="Renamed", lifecycle=copy.deepcopy(record["process"]["legacy_lifecycle"]))
+    edited, record = service_registry.upsert_service_in_registry(
+        normalized, service_id="engine-a", raw=raw, replace=True,
+    )
+    assert edited["schema_version"] == 2
+    assert record["name"] == "Renamed"
+    assert "lifecycle" not in record
+    assert "lifecycle" not in record["config"]
+    assert record["process"]["legacy_lifecycle"]["driver"] == "command"
+
+
 def test_v2_migration_refuses_conflicting_copies_without_partial_change() -> None:
     old = _service()
     old["config"]["lifecycle"]["driver_config"]["start"] = ["other"]
