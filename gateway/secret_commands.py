@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from gateway import record_carriers, secret_refs
+from gateway import record_carriers, secret_refs, url_binding
 from gateway.secret_refs import Put
 
 MAX_VALUE = 8192
@@ -273,7 +273,8 @@ def _env(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Outc
             ref = put(value, None)
             out.created.append(ref)
             out.retired.append(env[name]["secret_ref"])
-            env[name] = {**env[name], "secret_ref": ref}
+            # a new value is text: the mark of a value that was a mapping or a list goes with the old one (decision D39)
+            env[name] = {key: item for key, item in {**env[name], "secret_ref": ref}.items() if key != "structured"}
         else:
             env[name] = {**env[name], "value": value}
     out.changed = True
@@ -405,9 +406,13 @@ def _url(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Outc
         raise CommandError("invalid_command", "whole must be true or false")
     if not whole and "label" in command:
         raise CommandError("invalid_command", "a label belongs to a URL kept whole; send whole as true")
+    base = url_binding.base_of(record, command["carrier"])
     if whole:
         label = _whole_label(command.get("label"), url)
-        ref = put(validate_value(url), None)
+        origin = url_binding.field_origin(url, base)
+        if origin is None:
+            raise CommandError("url_unbound", str(record_carriers.UrlUnbound(command["carrier"])))
+        ref = put(validate_value(url), origin)
         out.created.append(ref)
         parent[key] = ""
         parent[secrets_key] = {"whole": secret_refs.entry(ref, label=label)}
@@ -422,9 +427,11 @@ def _url(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Outc
         return ref
 
     try:
-        record_carriers.externalize_url(parent, key, counting_put)
+        record_carriers.externalize_url(parent, key, counting_put, base=base, path=command["carrier"], strict=True)
     except record_carriers.AmbiguousUrl:
         raise CommandError("invalid_value", "that URL cannot be read") from None
+    except record_carriers.UrlUnbound as error:
+        raise CommandError("url_unbound", str(error)) from None
     if len(out.created) == before:
         raise CommandError("invalid_value", "that URL holds no credentials to store; use clear_credentials to remove them")
     out.changed = True

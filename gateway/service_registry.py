@@ -31,7 +31,7 @@ from typing import Any
 
 import yaml
 
-from gateway import admin_store, engine_check, native_lane, projection, record_carriers
+from gateway import admin_store, engine_check, native_lane, projection, record_carriers, url_binding
 from gateway import secret_refs as _refs
 from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
@@ -1785,8 +1785,9 @@ def credential_binding_changes(
     sets the base of the gateway's own internal key, when it already carries a
     credential and its origin moves, when its lifecycle driver is set, changed
     or removed (a driver runs commands or sends a stored key), when its
-    ``auth_inject`` rules change, or when it sets a field that makes the
-    gateway write a file or read process command lines.
+    ``auth_inject`` rules change, when the origin a URL field with stored
+    credentials is bound to changes (decision D39), or when it sets a field that
+    makes the gateway write a file or read process command lines.
     The value says which.
     """
     old = (normalize_service_registry(old_registry).get("services")) or {}
@@ -1804,6 +1805,10 @@ def credential_binding_changes(
             reasons.append(f"config.{LIFECYCLE_BASE_KEY}")
         if prior and _endpoint_fingerprint(config) != _endpoint_fingerprint(before_config):
             reasons.append("host")
+        # Credentials stored with a URL go where that URL goes: a change to the address of such a field (or to the base
+        # a path joins) moves them (decision D39).
+        marks_before, marks_after = dict(url_binding.binding_marks(before)), dict(url_binding.binding_marks(record))
+        reasons += [path for path, mark in marks_before.items() if path in marks_after and marks_after[path] != mark]
         if lifecycle_driver_changed(before, record):
             reasons.append("lifecycle")
         if (config.get("auth_inject") or None) != (before_config.get("auth_inject") or None):

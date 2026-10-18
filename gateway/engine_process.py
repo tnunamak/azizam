@@ -504,6 +504,8 @@ class ProcessDriver:
             raise ValueError("process.env must be a string map")
         try:
             env.update(runtime_secrets.env_mapping(extra, strict=True))
+        except runtime_secrets.StructuredEnvValue as error:
+            raise ValueError(str(error)) from None
         except (ValueError, runtime_secrets.SecretUnavailable):
             raise ValueError("process.env must be a string map") from None
         return env

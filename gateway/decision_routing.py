@@ -76,9 +76,11 @@ class DecisionRuntime:
         engine = None
         try:
             # The stored credentials of the health endpoint (a query token) are put back here, at the moment of the probe.
-            endpoint = runtime_secrets.url(service, "health_endpoint") or "/health"
+            base = f"http://{service['host']}:{service['port']}"
+            # ... and only where the address it makes has the origin they were stored for (decision D39).
+            target = runtime_secrets.url(service, "health_endpoint", base=base, join=lambda head, tail: f"{head}{tail}") or f"{base}/health"
             with httpx.Client(timeout=0.3, trust_env=False) as client:
-                response = client.get(f"http://{service['host']}:{service['port']}{endpoint}")
+                response = client.get(target)
             if response.status_code == 200:
                 candidate = response.json().get("engine")
                 if candidate in {"gpu", "cpu"}:

@@ -11,6 +11,32 @@ from gateway.capability_ids import CAPABILITY_LABELS, PROTOCOL_CAPABILITIES
 from gateway.service_registry import is_litellm_service_record, is_remote_provider_config
 
 
+def health_base(service: Mapping[str, Any]) -> str | None:
+    """The address a relative health path is joined against: the record's base URL, else its host and port."""
+    config = service.get("config")
+    connection = {**(config if isinstance(config, Mapping) else {}), **service}
+    base_url = str(connection.get("base_url") or "").rstrip("/")
+    if base_url:
+        return base_url
+    host = str(connection.get("host") or "").strip()
+    if not host:
+        return None
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port = connection.get("port")
+    authority = f"{host}:{port}" if port is not None else host
+    scheme = str(connection.get("scheme") or "http")
+    base_path = str(connection.get("base_path") or "").strip("/")
+    return f"{scheme}://{authority}/{base_path}".rstrip("/")
+
+
+def join_health(base: str, endpoint: str) -> str:
+    """The health address: an absolute URL as written, else the path joined to the base (a leading slash means origin-relative)."""
+    if endpoint.startswith(("http://", "https://")) or not base:
+        return endpoint
+    return urljoin(f"{base}/", endpoint)
+
+
 def service_health_endpoint(service: Mapping[str, Any]) -> str | None:
     """Resolve only a declared health path over either registry connection shape."""
     config = service.get("config")
@@ -21,20 +47,10 @@ def service_health_endpoint(service: Mapping[str, Any]) -> str | None:
     endpoint = str(endpoint)
     if endpoint.startswith(("http://", "https://")):
         return endpoint
-    base_url = str(connection.get("base_url") or "").rstrip("/")
+    base_url = health_base(service)
     if not base_url:
-        host = str(connection.get("host") or "").strip()
-        if not host:
-            return None
-        if ":" in host and not host.startswith("["):
-            host = f"[{host}]"
-        port = connection.get("port")
-        authority = f"{host}:{port}" if port is not None else host
-        scheme = str(connection.get("scheme") or "http")
-        base_path = str(connection.get("base_path") or "").strip("/")
-        base_url = f"{scheme}://{authority}/{base_path}".rstrip("/")
-    # Leading slash means origin-relative; relative paths use the declared base.
-    return urljoin(f"{base_url}/", endpoint)
+        return None
+    return join_health(base_url, endpoint)
 
 
 def starts_on_demand(service: Mapping[str, Any]) -> bool:

@@ -60,6 +60,7 @@ def _legacy_record() -> dict:
             "health_endpoint": f"/health?access_token={S['probe']}",
         },
         "observations": {"ready": {"http": {"path": f"/ready?sig={S['probe']}", "expect": 200}}},
+        "connection": {"address": "http://engine.invalid:8080"},
     }
 
 
@@ -90,8 +91,10 @@ def test_what_the_runtime_resolves_is_exactly_what_the_legacy_record_sent(db):
     assert runtime_secrets.env_mapping(moved["config"]["env"]) == legacy["config"]["env"]
     assert runtime_secrets.header_pairs(moved["config"]["headers"], origin="http://engine.invalid:8080") == {"X-Vendor": S["header"]}
     assert runtime_secrets.url(moved["config"], "address") == legacy["config"]["address"]
-    assert runtime_secrets.url(moved["process"], "health_endpoint") == legacy["process"]["health_endpoint"]
-    assert runtime_secrets.url(moved["observations"]["ready"]["http"], "path") == legacy["observations"]["ready"]["http"]["path"]
+    base, join = "http://engine.invalid:8080", lambda head, tail: f"{head}{tail}"  # a path is read for the address it is dialed at
+    assert runtime_secrets.url(moved["process"], "health_endpoint", base=base, join=join) == base + legacy["process"]["health_endpoint"]
+    ready = moved["observations"]["ready"]["http"]
+    assert runtime_secrets.url(ready, "path", base=base, join=join) == base + legacy["observations"]["ready"]["http"]["path"]
 
 
 def test_a_second_pass_changes_nothing_and_stores_nothing(db):
@@ -136,7 +139,10 @@ def test_a_url_that_cannot_be_read_is_stored_whole_and_never_echoed(db, value):
     holder = {"address": value}
     assert record_carriers.externalize_url(holder, "address", Recorder(db))
     assert holder["address"] == "" and "whole" in holder["address_entries"]
-    assert runtime_secrets.url(holder, "address") == value
+    # kept whole and private, and never put back: a URL with no readable origin cannot be bound to one (decision D39)
+    assert runtime_secrets.resolve(holder["address_entries"]["whole"]["secret_ref"]) == value
+    with pytest.raises(runtime_secrets.OriginRefused):
+        runtime_secrets.url(holder, "address")
 
 
 def test_a_secret_entry_may_be_short_and_keeps_no_suffix(db):

@@ -31,7 +31,7 @@ import shlex
 from typing import Any, Iterator, Mapping
 from urllib.parse import urlsplit
 
-from gateway import secret_refs
+from gateway import secret_refs, url_binding
 from gateway.secret_refs import Put
 
 COMMAND_KEYS = ("start", "stop", "status", "reload")
@@ -85,6 +85,26 @@ class UrlRefused(ValueError):
             f"{path} is not a URL the gateway can read with confidence (a backslash, a control character or an invalid "
             "port); write it as scheme://host:port/path, with any credentials sent as secret entries.")
         self.path = path
+
+
+class UrlUnbound(ValueError):
+    """A write put credentials in a URL field that has no address to bind them to (decision D39). The text names the field only."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"{path} holds credentials but is not an absolute http(s) URL and has no base address to join it to "
+            "(a protocol-relative //host/path counts as neither); write it as scheme://host:port/path, or as a path "
+            "on a service that has a base URL or a host and port.")
+        self.path = path
+
+
+class HostUserInfoRefused(ValueError):
+    """A write put user info in ``config.host``. The text names the field only (decision D39)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "config.host is a host name; it cannot hold user info (user:password@). Send the credential as a header or "
+            "a key, or as part of base_url.")
 
 
 class EntryRefused(ValueError):
@@ -305,9 +325,13 @@ def join_url(public: str, *, userinfo: str | None = None, query: list[tuple[str,
     return out
 
 
-def url_entries(public: str, parts: Mapping[str, Any], put: Put) -> dict[str, Any]:
-    """The entries that hold the credential ``parts`` of a URL whose public form is ``public`` (bound to its origin)."""
-    origin = secret_refs.origin_or_none(public)
+def url_entries(public: str, parts: Mapping[str, Any], put: Put, *, base: str | None = None, origin: str | None = None) -> dict[str, Any]:
+    """The entries that hold the credential ``parts`` of a URL whose public form is ``public``.
+
+    Each is bound to the effective origin of the field: ``origin`` when given, else the origin of ``public`` (joined to
+    ``base`` when it is a path).
+    """
+    origin = origin if origin is not None else url_binding.field_origin(public, base)
     held: dict[str, Any] = {}
     if "userinfo" in parts:
         # an empty user info holds nothing to store, but it is part of the bytes: it gets a marker like an empty fragment
@@ -372,13 +396,18 @@ def endpoint_origin(config: Any) -> str | None:
     return None
 
 
-def externalize_url(container: dict[str, Any], key: str, put: Put, *, reject_ambiguous: bool = False) -> bool:
+def externalize_url(container: dict[str, Any], key: str, put: Put, *, reject_ambiguous: bool = False,
+                    base: str | None = None, path: str = "", strict: bool | None = None) -> bool:
     """Move the credentials out of ``container[key]`` into the store. True when it changed anything. Idempotent.
 
-    A URL that cannot be read with confidence is stored whole as one private value and the field is left empty
-    (a record that exists already must not lose it); with ``reject_ambiguous`` (a new write) it raises
-    ``AmbiguousUrl`` instead, so the caller is told to fix it.
+    The credentials are bound to the effective origin of the field: its own when it is an absolute http(s) URL, else the
+    origin of ``base`` (decision D39). A URL that cannot be read with confidence is stored whole as one private value and
+    the field is left empty (a record that exists already must not lose it); with ``reject_ambiguous`` (a new write) it
+    raises ``AmbiguousUrl`` instead, so the caller is told to fix it. With ``reject_ambiguous`` a field with no origin to
+    bind to (a protocol-relative address, a path with no base) raises ``UrlUnbound`` (also with ``strict``, which defaults
+    to ``reject_ambiguous``); a stored one (a migration) is kept unbound, and the runtime never puts it back.
     """
+    strict = reject_ambiguous if strict is None else strict
     value = container.get(key)
     if not isinstance(value, str) or not value:
         return False
@@ -388,12 +417,18 @@ def externalize_url(container: dict[str, Any], key: str, put: Put, *, reject_amb
     except AmbiguousUrl:
         if reject_ambiguous:
             raise
+        origin = url_binding.field_origin(value, base)
+        if origin is None and strict:
+            raise UrlUnbound(path or key)
         container[key] = ""
-        container[key + SECRETS_SUFFIX] = {"whole": secret_refs.entry(put(value, None))}
+        container[key + SECRETS_SUFFIX] = {"whole": secret_refs.entry(put(value, origin))}
         return True
     if not parts:
         return False
-    held = url_entries(public, parts, put)
+    origin = url_binding.field_origin(public, base)
+    if origin is None and strict:
+        raise UrlUnbound(path or key)
+    held = url_entries(public, parts, put, origin=origin)
     container[key] = public
     container[key + SECRETS_SUFFIX] = {**(existing if isinstance(existing, Mapping) else {}), **held}
     return True
@@ -584,7 +619,10 @@ def externalize_service(record: Mapping[str, Any], put: Put, *, reject_ambiguous
                     raise ValueRefused(f"{path}.env.{str(name)[:64]}")
                 text = _env_text(value)
                 if text:
-                    env[name] = _entry_keeping_id(put(text, None), value)
+                    # A stored mapping or list is kept as the JSON text it would have been, and marked: the runtime never
+                    # passed such a value to a process, and does not start one with its text either (decision D39).
+                    marks = {"structured": True} if _env_is_structured(value) else {}
+                    env[name] = _entry_keeping_id(put(text, None), value, **marks)
                     moved.append(f"{path}.env.{name}")
 
     for path in COMMAND_CONTAINERS:
@@ -608,8 +646,11 @@ def externalize_service(record: Mapping[str, Any], put: Put, *, reject_ambiguous
             moved.append(path)
 
     for path, parent, key in list(url_containers(out)):
+        if reject_ambiguous and path == "config.host" and isinstance(parent.get(key), str) and "@" in parent[key] \
+                and _looks_like_authority(parent[key]):
+            raise HostUserInfoRefused()
         try:
-            if externalize_url(parent, key, put, reject_ambiguous=reject_ambiguous):
+            if externalize_url(parent, key, put, reject_ambiguous=reject_ambiguous, base=url_binding.base_of(out, path), path=path):
                 moved.append(path)
         except AmbiguousUrl:
             raise UrlRefused(path) from None

@@ -194,7 +194,7 @@ from gateway.admin_runtime import (
 from gateway.api import create_gateway_router
 from gateway.request_source import note_connection, note_trusted_address
 from gateway.availability import availability_evidence_snapshot, project_capabilities
-from gateway.model_presentation import service_health_endpoint
+from gateway.model_presentation import health_base, join_health, service_health_endpoint
 from gateway.models_catalog import (
     auth_contexts_from_user_snapshot,
     build_models_catalog,
@@ -3548,31 +3548,36 @@ def _service_resource_probe_config(service_id: str) -> Mapping[str, Any] | None:
     return None
 
 
+def _probe_join(base: str, path: str) -> str:
+    """How the resource probe puts a health path on its address: an absolute URL as it is, else the two joined by one slash."""
+    if path.startswith(("http://", "https://")):
+        return path
+    return f"{base.rstrip('/')}/{path.lstrip('/')}"
+
+
 def _service_resource_probe_url(service_config: Mapping[str, Any]) -> str:
     """Build a health URL from generic service transport fields.
 
     The stored credentials of the health endpoint and of the base URL (a query token, user info) are put back here, at
-    the moment of the probe; the record holds only references to them. An unreadable one gives no URL.
+    the moment of the probe, and the health endpoint's only when the URL it makes has the origin they were stored for
+    (decision D39). An unreadable one, or one stored for another origin, gives no URL.
     """
     try:
-        endpoint = runtime_secrets.url(service_config, "health_endpoint").strip() or "/health"
-        if endpoint.startswith(("http://", "https://")):
-            return endpoint
-
         env_name = str(service_config.get("base_url_env") or service_config.get("api_base_env") or "").strip()
         env_base_url = str(get_env(env_name) or "").strip() if env_name else ""
         base_url = (env_base_url or runtime_secrets.first_url(service_config)).strip()
+        if not base_url:
+            host = str(service_config.get("host") or "127.0.0.1").strip()
+            port = service_config.get("port")
+            if host and port not in (None, ""):
+                scheme = str(service_config.get("scheme") or "http").strip() or "http"
+                base_url = f"{scheme}://{host}:{port}"
+        dialed = runtime_secrets.url(service_config, "health_endpoint", base=base_url, join=_probe_join).strip()
+        if not dialed:
+            return _probe_join(base_url, "/health") if base_url else ""
+        return dialed if dialed.startswith(("http://", "https://")) else ""
     except runtime_secrets.SecretUnavailable:
         return ""
-    if base_url:
-        return f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
-
-    host = str(service_config.get("host") or "127.0.0.1").strip()
-    port = service_config.get("port")
-    if not host or port in (None, ""):
-        return ""
-    scheme = str(service_config.get("scheme") or "http").strip() or "http"
-    return f"{scheme}://{host}:{port}/{endpoint.lstrip('/')}"
 
 
 async def check_service_health(service_id: str) -> bool:
@@ -15688,18 +15693,18 @@ _HEALTH_EVIDENCE_CACHE: dict[str, tuple[float, str, dict[str, Any]]] = {}
 
 
 def _runtime_health_endpoint(service: Mapping[str, Any]) -> str | None:
-    """The health URL of a service record with its stored credentials put back, resolved now (None when unreadable)."""
+    """The health URL of a service record with its stored credentials put back, resolved now (None when unreadable).
+
+    The health endpoint's credentials are put back only when the URL it makes (``join_health`` on the base the catalog
+    dials) has the origin they were stored for (decision D39)."""
     config = service.get("config")
     merged = {**(config if isinstance(config, Mapping) else {}), **service}
     try:
-        resolved = {
-            **merged,
-            "health_endpoint": runtime_secrets.url(merged, "health_endpoint"),
-            "base_url": runtime_secrets.first_url(merged, ("base_url",)),
-        }
+        base = runtime_secrets.first_url(merged, ("base_url",)) or health_base(merged) or ""
+        dialed = runtime_secrets.url(merged, "health_endpoint", base=base, join=join_health)
     except runtime_secrets.SecretUnavailable:
         return None
-    return service_health_endpoint(resolved)
+    return dialed if dialed.startswith(("http://", "https://")) else None
 
 
 async def _models_catalog_health_evidence(
@@ -24226,14 +24231,20 @@ def _configured_context_window_for_backend(backend: str | None) -> int | None:
 
 
 def _context_window_probe_endpoint(backend: str | None) -> str | None:
-    """The service's ``context_window_probe.endpoint``, or None when it declares no probe."""
+    """The service's ``context_window_probe.endpoint`` (a path, with its stored credentials put back), or None when it declares no probe.
+
+    The credentials are put back only when the service's base address followed by the path has the origin they were
+    stored for (decision D39); the probe sends to exactly that address."""
     cfg = (config.get("backends") or {}).get(backend) if backend else None
     probe = cfg.get("context_window_probe") if isinstance(cfg, Mapping) else None
+    if not isinstance(probe, Mapping):
+        return None
+    base = _backend_base_url(str(backend))
     try:
-        endpoint = runtime_secrets.url(probe, "endpoint") if isinstance(probe, Mapping) else None
+        endpoint = runtime_secrets.url(probe, "endpoint", base=base, join=lambda head, tail: f"{head}{tail}")[len(base):]
     except runtime_secrets.SecretUnavailable:
         return None
-    return endpoint if isinstance(endpoint, str) and endpoint.startswith("/") else None
+    return endpoint if endpoint.startswith("/") else None
 
 
 async def _probed_context_window(backend: str) -> int | None:

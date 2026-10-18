@@ -254,7 +254,7 @@ def test_the_schema_12_migration_binds_the_driver_keys_of_an_existing_record_onc
     admin_store.init_db(path)
 
     with sqlite3.connect(path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 12
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == admin_store.SCHEMA_VERSION
         stored = json.loads(conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0])
         audit = conn.execute("SELECT metadata_json FROM audit_events WHERE action='operator.driver_key_origin.migrate'").fetchall()
     assert stored["services"]["lu"]["config"]["driver_credential_origin"] == GOOD
@@ -367,8 +367,10 @@ def test_the_swap_requests_carry_the_query_credentials_stored_for_load_unload_an
     assert _swap(backend) is True and len(fake.requests) == 2
     verify = _serve(fake_upstreams, "verify.invalid:9", {"id": "verify", "match": {"method": "GET", "path": VERIFY, "query": {"sig": "R3VERIFYSIG"}},
                                                          "response": {"json": {"id": "wanted"}}})
-    moved["config"].update(host="verify.invalid")
-    assert _swap(service_registry.runtime_backend_from_service(moved), loaded=None) is True and len(verify.requests) == 1
+    elsewhere = _driver_record_without_keys()
+    elsewhere["config"].update(host="verify.invalid", base_url="http://verify.invalid:9/v1")
+    elsewhere["lifecycle"]["driver_config"].update(load_url=LOAD, unload_url=UNLOAD, verify_endpoint=f"{VERIFY}?sig=R3VERIFYSIG")
+    assert _swap(service_registry.runtime_backend_from_service(_moved(elsewhere, store)), loaded=None) is True and len(verify.requests) == 1
 
 
 def test_an_unreadable_stored_part_sends_nothing_and_never_falls_back_to_the_default_path(store, fake_upstreams):
@@ -454,7 +456,9 @@ def test_the_observation_a_driver_health_endpoint_becomes_keeps_its_stored_query
     moved = _moved(record, store)
     v2 = service_registry.service_record_v2(moved, public=False)
     http = v2["observations"]["process_ready"]["http"]
-    assert http["path"] == "/ready" and runtime_secrets.url(http, "path") == "/ready?token=R3OBSERVED"
+    from gateway.engine_observations import _join_path
+
+    assert http["path"] == "/ready" and runtime_secrets.url(http, "path", base="http://good.invalid:9", join=_join_path) == "http://good.invalid:9/ready?token=R3OBSERVED"
     assert "path_entries" not in service_registry.service_record_v2(moved)["observations"]["process_ready"]["http"]
 
 
@@ -735,6 +739,11 @@ class _MemoryStore:
         return ref
 
 
+def _bytes_back(container, key):
+    """The bytes the stored parts of a field put back (whether the origin lets them be sent is decision D39's rule)."""
+    return runtime_secrets.restore(str(container.get(key) or ""), container[key + "_entries"], "http://t.invalid:80")
+
+
 @pytest.mark.parametrize("url", PARAM_URLS)
 def test_a_url_with_path_parameters_is_stored_without_them_and_read_back_byte_for_byte(monkeypatch, url):
     memory = _MemoryStore(monkeypatch)
@@ -742,7 +751,7 @@ def test_a_url_with_path_parameters_is_stored_without_them_and_read_back_byte_fo
     assert record_carriers.externalize_url(container, "base_url", memory.put) is True
     seeds = [text for text in ("R3PARAM", "R3ONE", "R3TWO", "R3GAP", "R3BARE", "R3A", "R3REL", "R3V", "R3NONAME", "R3B", "R3C", "R3SCHEMELESS", "R3FRAG", "R3V6") if text in url]
     assert not [seed for seed in seeds if seed in json.dumps(container)], container
-    assert runtime_secrets.url(container, "base_url") == url
+    assert _bytes_back(container, "base_url") == url
     again = copy.deepcopy(container)
     assert record_carriers.externalize_url(again, "base_url", memory.put) is False and again == container
     assert not [seed for seed in seeds if seed in projection.public_url(container["base_url"])]
@@ -910,10 +919,15 @@ def test_an_address_with_an_empty_user_info_is_read_back_byte_for_byte_and_store
     memory = _MemoryStore(monkeypatch)
     container = {"base_url": url}
     assert record_carriers.externalize_url(container, "base_url", lambda value, origin=None: memory.put(value, origin) if value else pytest.fail("an empty text was stored as a secret")) is True
-    assert runtime_secrets.url(container, "base_url") == url
+    assert _bytes_back(container, "base_url") == url
     again = copy.deepcopy(container)
     assert record_carriers.externalize_url(again, "base_url", memory.put) is False and again == container
-    assert record_carriers.ingest_service({"id": "e", "config": {"base_url": url}}, None, lambda value, origin=None: memory.put(value, origin) if value else pytest.fail("an empty text was stored as a secret"))
+    write = lambda: record_carriers.ingest_service({"id": "e", "config": {"base_url": url}}, None, lambda value, origin=None: memory.put(value, origin) if value else pytest.fail("an empty text was stored as a secret"))  # noqa: E731
+    if url.startswith("http"):
+        assert write()
+    else:
+        with pytest.raises(record_carriers.UrlUnbound):  # no scheme: no origin to bind to (decision D39)
+            write()
 
 
 def test_a_package_source_url_with_path_parameters_is_cloned_with_them_and_the_clone_text_names_them_as_secrets():

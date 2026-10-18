@@ -47,7 +47,7 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 # Schema 7 replaced profiles with access plans (gateway.access_plan_migration).
 _PRE_ACCESS_PLANS_VERSION = 6
 _ACCESS_PLANS_VERSION = 7
@@ -63,6 +63,8 @@ _ENGINE_RECORD_V2_VERSION = 10
 _SECRET_REFS_VERSION = 11
 # Schema 12 records the address each lifecycle driver key was configured for (gateway.driver_key_origin_migration).
 _DRIVER_KEY_ORIGIN_VERSION = 12
+# Schema 13 binds the credentials stored with each URL field to its effective origin (gateway.url_binding_migration).
+_URL_BINDING_VERSION = 13
 # The OIDC client secret lives in the encrypted secret store; the
 # oidc_provider_config setting holds only this reference to it.
 OIDC_CLIENT_SECRET_REF = "client_secret_ref"
@@ -474,6 +476,12 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         from gateway import driver_key_origin_migration
 
         driver_key_origin_migration.migrate_registry(conn)
+        if int(row[0]) >= _ACCESS_PLANS_VERSION:
+            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+    if row is not None and int(row[0]) < _URL_BINDING_VERSION:
+        from gateway import url_binding_migration
+
+        url_binding_migration.migrate_registry(conn)
         if int(row[0]) >= _ACCESS_PLANS_VERSION:
             conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()

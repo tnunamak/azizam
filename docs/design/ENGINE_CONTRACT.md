@@ -171,6 +171,26 @@ resources:
     and logs that, when that origin is not the bound one. Taking a credential
     reference away (`api_key_secret_id`, `secret_refs`, a driver key) is an owner
     change as well. Admin schema 12 binds the driver keys of records that exist.
+  - **Where the credentials of a URL go** (owner-only, decision D39). The credentials
+    stored with a URL field (`<field>_entries`) are bound to the field's effective origin:
+    its own origin when it is an absolute http(s) URL, the origin of the base it is joined to
+    when it is a path (one leading slash). Case and the default port do not matter
+    (`HTTP://H` is `http://h:80`). A field with no such origin (a protocol-relative `//host/path`, a
+    text with no leading slash, a scheme that is not http(s), a host with a percent sign or a
+    backslash) cannot hold credentials: a write is refused, and a stored one is never put back.
+    Each reader passes the base it dials and its own join; the credentials are put back only
+    when the address it dials has the stored origin, and otherwise nothing secret is sent, the
+    request is refused with a fixed text and the refusal is logged without a value. The
+    fingerprint holds, for every URL field that has credentials, the origin it is bound to (or its own
+    text when it has none), so an administrator's change of the field, or of the base it joins to, is
+    owner-only (403) on every route. The owner may move such a field; its credentials stay bound
+    to the old origin until the owner sets them again. Admin schema 13 binds the credentials of
+    records that exist. A host with user info (`user:pw@host` in `config.host`) is refused at a write;
+    a stored one has its user info kept apart and not sent. Every log line a lifecycle driver prints
+    passes through `runtime_secrets.scrub`, which removes the secret values this process has resolved (as
+    stored and URL-encoded) and cuts the line. An environment value that was a mapping or a list when a
+    migration stored it is marked `structured` and a process with it is not started, with a message
+    that names the variable; setting the value again as text clears the mark.
   - **What a read shows** (decision D28). Every management response is built from
     a registered projection type (`gateway/projection_types.py`): each field is
     classified once as public data, a reference to the store, a carrier of

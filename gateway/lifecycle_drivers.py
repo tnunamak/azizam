@@ -71,12 +71,34 @@ from typing import Any, Awaitable, Callable, Mapping, Optional, Protocol, TypeVa
 _T = TypeVar("_T")
 
 
-def _health_endpoint(driver_config: Mapping[str, Any], default: str) -> str:
-    """A driver's health path, with the query credentials its record stores for it put back (resolved now)."""
+def _concat(base: str, path: str) -> str:
+    """How a driver puts a path on its address: the two texts, one after the other (never ``urljoin``)."""
+    return f"{base}{path}"
+
+
+def _poll_base(svc: Mapping[str, Any]) -> str:
+    """The address ``_poll_health`` dials for a service: its host and port."""
+    return f"http://{svc.get('host', '127.0.0.1')}:{svc.get('port')}"
+
+
+def _say(*parts: Any, **kwargs: Any) -> None:
+    """Print one log line. Every secret value the gateway resolved is removed from it and it is cut to a short length: a
+    server can echo a credential it was sent in a body, a header or an error (decision D39)."""
+    print(runtime_secrets.scrub(" ".join(str(part) for part in parts), limit=600), **kwargs)
+
+
+def _health_endpoint(driver_config: Mapping[str, Any], default: str, svc: Mapping[str, Any]) -> str:
+    """A driver's health path, with the query credentials its record stores for it put back (resolved now).
+
+    The credentials are put back only when ``_poll_base(svc)`` followed by the path is an address with the origin they
+    were stored for; otherwise, or when a stored part cannot be read, the default path is used and nothing is sent.
+    """
+    base = _poll_base(svc)
     try:
-        return runtime_secrets.url(driver_config, "health_endpoint") or default
+        dialed = runtime_secrets.url(driver_config, "health_endpoint", base=base, join=_concat)
     except runtime_secrets.SecretUnavailable:
         return default
+    return dialed[len(base):] or default
 
 
 def _without_health_entries(svc: Mapping[str, Any], health_endpoint: str) -> dict:
@@ -128,7 +150,7 @@ def _replace_file_atomically(path: Path, text: str) -> None:
         finally:
             os.close(dir_fd)
     except OSError as exc:
-        print(
+        _say(
             f"[lifecycle] WARN: {path} was replaced, but the directory fsync failed ({exc}); "
             "the change may not survive a power loss",
             flush=True,
@@ -378,7 +400,7 @@ async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
     port = svc.get("port")
     if not port:
         return False
-    endpoint = _health_endpoint(svc, svc.get("health_endpoint", "/health"))
+    endpoint = _health_endpoint(svc, svc.get("health_endpoint", "/health"), svc)
     url = f"http://{host}:{port}{endpoint}"
 
     loop = asyncio.get_running_loop()
@@ -955,7 +977,7 @@ class SystemdDriver:
         ok = await self._run_systemctl(cmd)
         if not ok:
             return False
-        health_ep = _health_endpoint(dc, "/health")
+        health_ep = _health_endpoint(dc, "/health", svc)
         svc_for_poll = self._svc_with_health_endpoint(svc, health_ep)
         return await _poll_health(svc_for_poll, timeout_s)
 
@@ -1021,7 +1043,7 @@ class SystemdDriver:
 
     async def health(self, svc: Mapping[str, Any]) -> str:
         dc = self._driver_config(svc)
-        health_ep = _health_endpoint(dc, "/health")
+        health_ep = _health_endpoint(dc, "/health", svc)
         svc_for_poll = self._svc_with_health_endpoint(svc, health_ep)
         ok = await _poll_health(svc_for_poll, 3.0)
         return HealthState.HEALTHY if ok else HealthState.UNHEALTHY
@@ -1071,13 +1093,13 @@ class SystemdDriver:
         precheck = str(dc.get("precheck") or "").strip()
         if precheck == "gguf_path":
             if not (os.path.isabs(model) and model.endswith(".gguf") and os.path.exists(model)):
-                print(
+                _say(
                     f"[proxy] ensure_target(kobold): GGUF not found at {model}",
                     flush=True,
                 )
                 return None
             if aux and not (os.path.isabs(aux) and os.path.exists(aux)):
-                print(
+                _say(
                     f"[proxy] ensure_target(kobold): mmproj not found at {aux}",
                     flush=True,
                 )
@@ -1091,28 +1113,28 @@ class SystemdDriver:
         profiles = dc.get("activation_profiles")
         profile_env = profiles.get(profile_name) if isinstance(profiles, Mapping) else None
         if not profile_name or not isinstance(profile_env, Mapping):
-            print(
+            _say(
                 f"[lifecycle] SystemdDriver.build_activation: unknown activation profile "
                 f"{profile_name!r}",
                 flush=True,
             )
             return None
         if any(not isinstance(key, str) or not key for key in profile_env):
-            print(
+            _say(
                 f"[lifecycle] SystemdDriver.build_activation: activation profile "
                 f"{profile_name!r} contains an invalid environment key",
                 flush=True,
             )
             return None
         if model_key in profile_env or aux_key in profile_env:
-            print(
+            _say(
                 f"[lifecycle] SystemdDriver.build_activation: activation profile "
                 f"{profile_name!r} may not override model/aux identity",
                 flush=True,
             )
             return None
         if any(not isinstance(value, (str, int, float, bool)) for value in profile_env.values()):
-            print(
+            _say(
                 f"[lifecycle] SystemdDriver.build_activation: activation profile "
                 f"{profile_name!r} contains a non-scalar environment value",
                 flush=True,
@@ -1162,7 +1184,7 @@ class SystemdDriver:
         scope_flag = self._scope_flag(dc)
         unit = dc.get("unit", "")
         dropin_name = dc.get("dropin", "20-model.conf")
-        health_ep = _health_endpoint(dc, "/health")
+        health_ep = _health_endpoint(dc, "/health", svc)
         health_timeout = float(dc.get("health_timeout_s", self._DEFAULT_HEALTH_TIMEOUT_S))
 
         if not unit:
@@ -1186,7 +1208,7 @@ class SystemdDriver:
                     loaded = ctx.loaded_model
                     loaded_mmproj = ctx.loaded_aux
                     target_mmproj = ctx.target_aux or None
-                    print(
+                    _say(
                         f"[proxy] ensure_target pin_loaded_model=true: skipping switch "
                         f"(loaded={loaded}, requested={target}, "
                         f"loaded_mmproj={loaded_mmproj}, requested_mmproj={target_mmproj}); "
@@ -1204,7 +1226,7 @@ class SystemdDriver:
             previous_dropin = None
         except OSError as e:
             # Without the old text a failure could not be undone: do not swap.
-            print(f"[lifecycle] SystemdDriver.swap: cannot read current drop-in: {e}", flush=True)
+            _say(f"[lifecycle] SystemdDriver.swap: cannot read current drop-in: {e}", flush=True)
             return False
 
         # Once the drop-in changes, the swap must finish or roll back: a
@@ -1235,7 +1257,7 @@ class SystemdDriver:
             dropin_path.parent.mkdir(parents=True, exist_ok=True)
             _replace_file_atomically(dropin_path, dropin_text)
         except Exception as e:
-            print(f"[lifecycle] SystemdDriver.swap: failed to write drop-in (previous one kept): {e}", flush=True)
+            _say(f"[lifecycle] SystemdDriver.swap: failed to write drop-in (previous one kept): {e}", flush=True)
             return False
 
         # daemon-reload MUST precede restart.
@@ -1252,10 +1274,10 @@ class SystemdDriver:
 
         elapsed = await self._wait_until_healthy(svc, health_ep, health_timeout)
         if elapsed is not None:
-            print(f"[lifecycle] SystemdDriver.swap complete in {elapsed:.1f}s", flush=True)
+            _say(f"[lifecycle] SystemdDriver.swap complete in {elapsed:.1f}s", flush=True)
             return True
 
-        print(
+        _say(
             f"[lifecycle] SystemdDriver.swap: unit '{unit}' did not become ready within {health_timeout}s",
             flush=True,
         )
@@ -1342,7 +1364,7 @@ class SystemdDriver:
         """
 
         def recovery_failed(detail: str) -> SwapRecoveryFailed:
-            print(f"[lifecycle] SystemdDriver.swap: recovery failed for unit '{unit}': {detail}", flush=True)
+            _say(f"[lifecycle] SystemdDriver.swap: recovery failed for unit '{unit}': {detail}", flush=True)
             return SwapRecoveryFailed(unit, detail)
 
         try:
@@ -1360,7 +1382,7 @@ class SystemdDriver:
             raise recovery_failed("restart on the previous activation failed")
         if await self._wait_until_healthy(svc, health_ep, health_timeout) is None:
             raise recovery_failed(f"the previous activation did not become ready within {health_timeout}s")
-        print("[lifecycle] SystemdDriver.swap: rolled back to the previous activation", flush=True)
+        _say("[lifecycle] SystemdDriver.swap: rolled back to the previous activation", flush=True)
 
     @staticmethod
     def _driver_config(svc: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -1432,7 +1454,7 @@ class SystemdDriver:
         try:
             stderr = await asyncio.wait_for(run(), timeout=self._SYSTEMCTL_JOB_TIMEOUT_S)
         except asyncio.TimeoutError:
-            print(
+            _say(
                 f"[lifecycle] SystemdDriver: `{' '.join(cmd)}` did not finish within "
                 f"{self._SYSTEMCTL_JOB_TIMEOUT_S:.0f}s; treated as failed",
                 flush=True,
@@ -1442,10 +1464,10 @@ class SystemdDriver:
                     proc.kill()
             return False
         except Exception as e:
-            print(f"[lifecycle] SystemdDriver: subprocess error: {e}", flush=True)
+            _say(f"[lifecycle] SystemdDriver: subprocess error: {e}", flush=True)
             return False
         if proc.returncode != 0:
-            print(
+            _say(
                 f"[lifecycle] SystemdDriver: `{' '.join(cmd)}` failed: {stderr.decode()}",
                 flush=True,
             )
@@ -1493,7 +1515,7 @@ class HttpLoadUnloadDriver:
     async def ensure_ready(self, svc: Mapping[str, Any], timeout_s: float) -> bool:
         """Health-check only; load is handled by swap() for single-slot drivers."""
         dc = self._driver_config(svc)
-        verify_ep = self._path(dc, "verify_endpoint", "/health", fallback_on_unreadable=True)
+        verify_ep = self._path(dc, "verify_endpoint", "/health", base=_poll_base(svc), fallback_on_unreadable=True)
         return await _poll_health(_without_health_entries(svc, verify_ep), min(timeout_s, 5.0))
 
     def stop(self, svc: Mapping[str, Any]) -> None:
@@ -1506,9 +1528,9 @@ class HttpLoadUnloadDriver:
         if keys is None:
             return
         try:
-            unload_url = self._path(dc, "unload_url", "")
+            unload_url = self._path(dc, "unload_url", "", base=base_url)
         except runtime_secrets.SecretUnavailable:
-            print("[lifecycle] HttpLoadUnloadDriver.stop: the unload address could not be read; nothing was sent", flush=True)
+            _say("[lifecycle] HttpLoadUnloadDriver.stop: the unload address could not be read; nothing was sent", flush=True)
             return
         admin_key, _api_key = keys
         admin_header = dc.get("admin_header", "x-admin-key")
@@ -1597,12 +1619,12 @@ class HttpLoadUnloadDriver:
         admin_key, api_key = keys
         admin_header = dc.get("admin_header", "x-admin-key")
         try:
-            load_url = self._path(dc, "load_url", "/v1/model/load")
-            unload_url = self._path(dc, "unload_url", "/v1/model/unload")
-            verify_ep = self._path(dc, "verify_endpoint", "/v1/model")
+            load_url = self._path(dc, "load_url", "/v1/model/load", base=base_url)
+            unload_url = self._path(dc, "unload_url", "/v1/model/unload", base=base_url)
+            verify_ep = self._path(dc, "verify_endpoint", "/v1/model", base=base_url)
         except runtime_secrets.SecretUnavailable:
             # Never fall back to the default path: it would send the admin key to an endpoint the owner did not name.
-            print("[lifecycle] HttpLoadUnloadDriver.swap: an address could not be read; nothing was sent", flush=True)
+            _say("[lifecycle] HttpLoadUnloadDriver.swap: an address could not be read; nothing was sent", flush=True)
             return False
         load_timeout = float(dc.get("load_timeout_s", self._DEFAULT_LOAD_TIMEOUT_S))
         success_marker = dc.get("success_marker", '"status":"finished"')
@@ -1621,7 +1643,7 @@ class HttpLoadUnloadDriver:
                 return True
 
         start = time.time()
-        print(f"[lifecycle] HttpLoadUnloadDriver.swap: {current} -> {target_model}", flush=True)
+        _say(f"[lifecycle] HttpLoadUnloadDriver.swap: {current} -> {target_model}", flush=True)
 
         # Step 2: unload current model if one is loaded.
         if current:
@@ -1633,13 +1655,13 @@ class HttpLoadUnloadDriver:
                         timeout=self._DEFAULT_UNLOAD_TIMEOUT_S,
                     )
                     if resp.status_code not in (200, 204):
-                        print(
+                        _say(
                             f"[lifecycle] HttpLoadUnloadDriver.swap: unload returned "
                             f"{resp.status_code}: {resp.text[:200]}",
                             flush=True,
                         )
             except Exception as e:
-                print(f"[lifecycle] HttpLoadUnloadDriver.swap: unload error: {e}", flush=True)
+                _say(f"[lifecycle] HttpLoadUnloadDriver.swap: unload error: {e}", flush=True)
                 return False
 
         # Step 3: build load body.
@@ -1671,7 +1693,7 @@ class HttpLoadUnloadDriver:
                 # Step 5a: success via marker.
                 if resp.status_code == 200 and success_marker in response_text:
                     elapsed = time.time() - start
-                    print(
+                    _say(
                         f"[lifecycle] HttpLoadUnloadDriver.swap: success in {elapsed:.1f}s",
                         flush=True,
                     )
@@ -1679,7 +1701,7 @@ class HttpLoadUnloadDriver:
 
                 # Step 5b: error marker.
                 if '"status":"error"' in response_text or '"error":' in response_text:
-                    print(
+                    _say(
                         f"[lifecycle] HttpLoadUnloadDriver.swap: load reported error: "
                         f"{response_text[-300:]}",
                         flush=True,
@@ -1690,20 +1712,20 @@ class HttpLoadUnloadDriver:
                 loaded_now = await self._get_loaded_model(base_url, verify_ep, api_key)
                 if loaded_now == target_model:
                     elapsed = time.time() - start
-                    print(
+                    _say(
                         f"[lifecycle] HttpLoadUnloadDriver.swap: success (verified) in {elapsed:.1f}s",
                         flush=True,
                     )
                     return True
 
-                print(
+                _say(
                     f"[lifecycle] HttpLoadUnloadDriver.swap: outcome unclear, "
                     f"loaded={loaded_now}, response={response_text[-200:]}",
                     flush=True,
                 )
                 return False
         except Exception as e:
-            print(f"[lifecycle] HttpLoadUnloadDriver.swap: load error: {e}", flush=True)
+            _say(f"[lifecycle] HttpLoadUnloadDriver.swap: load error: {e}", flush=True)
             return False
 
     def swap_required(
@@ -1730,14 +1752,15 @@ class HttpLoadUnloadDriver:
         return {}
 
     @staticmethod
-    def _path(dc: Mapping[str, Any], key: str, default: str, *, fallback_on_unreadable: bool = False) -> str:
+    def _path(dc: Mapping[str, Any], key: str, default: str, *, base: str, fallback_on_unreadable: bool = False) -> str:
         """A path of the driver config with the query credentials its record stores for it put back (resolved now).
 
-        Raises ``SecretUnavailable`` when a stored part cannot be read, unless ``fallback_on_unreadable`` (a
-        health check, which carries no key) asks for the default instead.
+        The credentials are put back only when ``base`` followed by the path is an address with the origin they were
+        stored for. Raises ``SecretUnavailable`` when a stored part cannot be read or belongs to another address, unless
+        ``fallback_on_unreadable`` (a health check, which carries no key) asks for the default instead.
         """
         try:
-            return runtime_secrets.url(dc, key) or default
+            return runtime_secrets.url(dc, key, base=base, join=_concat)[len(base):] or default
         except runtime_secrets.SecretUnavailable:
             if fallback_on_unreadable:
                 return default
@@ -1764,12 +1787,12 @@ class HttpLoadUnloadDriver:
             return "", ""
         recorded = service_registry.origin_of(str(svc.get(service_registry.DRIVER_CREDENTIAL_ORIGIN_KEY) or ""))
         if not recorded or recorded != service_registry.origin_of(base_url):
-            print("[lifecycle] HttpLoadUnloadDriver: a key is held for another address; nothing was sent", flush=True)
+            _say("[lifecycle] HttpLoadUnloadDriver: a key is held for another address; nothing was sent", flush=True)
             return None
         try:
             return cls._admin_key(svc, dc), cls._api_key(svc, dc)
         except runtime_secrets.SecretUnavailable:
-            print("[lifecycle] HttpLoadUnloadDriver: a key could not be read; nothing was sent", flush=True)
+            _say("[lifecycle] HttpLoadUnloadDriver: a key could not be read; nothing was sent", flush=True)
             return None
 
     @staticmethod

@@ -30,7 +30,13 @@ class Store:
 
 
 def _resolved(store, container, key):
-    return runtime_secrets.url(container, key)
+    """The bytes the stored parts put back (decision D39 decides separately whether the origin lets them be sent)."""
+    held = container.get(key + "_entries")
+    if not held:
+        return container[key]
+    if held.get("whole"):
+        return runtime_secrets.resolve(held["whole"]["secret_ref"])
+    return runtime_secrets.restore(str(container.get(key) or ""), held, "http://test.invalid:80")
 
 
 URLS = [

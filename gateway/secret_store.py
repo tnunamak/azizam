@@ -156,6 +156,39 @@ def get_provider_secret(secret_id: str, *, db_path: Path, key_path: Path | None 
     return AESGCM(key).decrypt(nonce, ciphertext, _secret_aad(secret_id, stored_origin)).decode("utf-8")
 
 
+def provider_secret_origin(secret_id: str, *, db_path: Path) -> str | None:
+    """The origin a stored secret is bound to (metadata only; the value is not decrypted), or None when it has none or is missing."""
+    secret_id = _normalize_secret_id(secret_id)
+    ensure_provider_secret_schema(db_path)
+    with closing(sqlite_startup.connect(db_path)) as conn:
+        row = conn.execute("SELECT approved_origin FROM provider_secrets WHERE id = ?", (secret_id,)).fetchone()
+    return str(row[0]) if row is not None and row[0] is not None else None
+
+
+def read_provider_secret_on(conn: sqlite3.Connection, secret_id: str, *, db_path: Path) -> tuple[str, str | None]:
+    """``(value, bound origin)`` of a stored secret, read inside the caller's transaction (a migration). Raises ``KeyError``
+    when it is missing. The caller decides what the value may be used for."""
+    secret_id = _normalize_secret_id(secret_id)
+    key = load_secret_key(db_path.parent / DEFAULT_KEY_FILE)
+    row = conn.execute("SELECT nonce_b64, ciphertext_b64, approved_origin FROM provider_secrets WHERE id = ?", (secret_id,)).fetchone()
+    if row is None:
+        raise KeyError(secret_id)
+    stored_origin = str(row[2]) if row[2] is not None else None
+    value = AESGCM(key).decrypt(base64.b64decode(row[0]), base64.b64decode(row[1]), _secret_aad(secret_id, stored_origin)).decode("utf-8")
+    return value, stored_origin
+
+
+def rebind_provider_secret(conn: sqlite3.Connection, secret_id: str, origin: str, *, db_path: Path) -> bool:
+    """Bind a stored secret to ``origin`` (it is encrypted again under the new binding), inside the caller's transaction.
+
+    False when it is already bound to that origin. Raises ``KeyError`` when it is missing."""
+    value, stored_origin = read_provider_secret_on(conn, secret_id, db_path=db_path)
+    if stored_origin == _normalize_origin(origin):
+        return False
+    put_provider_secret(secret_id, value, db_path=db_path, approved_origin=origin, conn=conn, allow_short=True, keep_suffix=False)
+    return True
+
+
 def delete_provider_secret(secret_id: str, *, db_path: Path, conn: sqlite3.Connection | None = None) -> SecretStatus:
     """Delete one secret. With ``conn``, delete inside the caller's open transaction (see :func:`put_provider_secret`)."""
     secret_id = _normalize_secret_id(secret_id)
