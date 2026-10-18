@@ -827,7 +827,8 @@ class AdminSQLiteStore:
                     # The legacy PATCH form fills model_group from id. That
                     # representation change grants no new offering or route.
                     for config_values in (old_config, new_config):
-                        config_values["models"] = service_registry._form_models_to_config(config_values.get("models"))
+                        if isinstance(config_values.get("models"), (list, tuple)):
+                            config_values["models"] = service_registry._form_models_to_config(config_values["models"])
                     defaults = {"base_path": "/v1", "scheme": "http", "timeout": 600,
                                 "headers": [], "models": [], "transforms": []}
                     for section, keys in {
@@ -842,7 +843,7 @@ class AdminSQLiteStore:
                     # Migration writes empty blocks; an empty block grants nothing.
                     old_value = (previous.get(field) or None, (previous.get("config") or {}).get(field) or None)
                     new_value = (record.get(field) or None, (record.get("config") or {}).get(field) or None)
-                    if field == "process":
+                    if field == "process" and not previous:
                         # Migration turns an external lifecycle into a process that
                         # runs nothing; lifecycle_driver_changed below judges whether
                         # a top-level process controls the host.

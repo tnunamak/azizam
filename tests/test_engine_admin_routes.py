@@ -870,3 +870,22 @@ def test_administrator_cannot_change_existing_owner_engine_fields(gateway, fake_
     changed = _edit(admin, "owned", {"definition": "openai-compatible", "disabled": True, **body})
     assert changed.status_code == 403, changed.text
     assert _record(gateway, "owned") == before
+
+
+@pytest.mark.parametrize("field", ["process", "mapping-offerings"])
+def test_owner_fields_cannot_be_changed_through_registry_replacement(gateway, fake_upstreams, field):
+    owner, _, _, admin = owner_and_admin(gateway)
+    _silent(fake_upstreams, "legacy-owner-fields.fk.test")
+    assert _create(owner, {"definition": "openai-compatible", "name": "legacy-owner-fields", "disabled": True,
+                           "values": {"address": "http://legacy-owner-fields.fk.test/v1"}}).status_code == 201
+    registry = _registry(gateway)
+    if field == "mapping-offerings":
+        registry["services"]["legacy-owner-fields"]["config"]["models"] = {"old": {"upstream_model": "old"}}
+        _put_registry(gateway, registry)
+        registry["services"]["legacy-owner-fields"]["config"]["models"] = {"new": {"upstream_model": "new"}}
+    else:
+        registry["services"]["legacy-owner-fields"]["process"]["ready_timeout_s"] = 91
+    before = _record(gateway, "legacy-owner-fields")
+    response = admin.put("/admin/api/operator/service-registry", headers=_write_headers(admin), json=registry)
+    assert response.status_code == 403, response.text
+    assert _record(gateway, "legacy-owner-fields") == before
