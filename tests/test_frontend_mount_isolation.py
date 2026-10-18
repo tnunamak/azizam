@@ -118,7 +118,7 @@ def test_the_ignored_record_is_reported_as_broken_and_the_builtin_stays_mounted(
 
     status = mounts.prepare(route_registry.mount_frontend_records(registry=registry, proxy_config={})).status
 
-    by_source = {item["source"]: item for item in status if item["id"] == frontend_id}
+    by_source = {item["source"]: item for item in status if frontend_id in (item["id"], item.get("shadows"))}
     assert by_source["ui"]["status"] == "broken"
     assert "builtin" in by_source["ui"]["errors"][0]["message"]
     assert by_source["builtin"]["status"] == "mounted"
