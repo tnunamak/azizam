@@ -50,6 +50,8 @@ DELETED_PATHS = {
     "/logout", *(f"/admin/{name}{slash}" for name in ADMIN_SECTIONS for slash in ("", "/")),
 }
 NEW_PATHS = {"/setup/console"}
+# Per-engine native pass-through (contract section 5): new since the baseline, off unless an engine enables it.
+NATIVE_PREFIX = "/native"
 # The access plan API replaced these admin routes (docs/design/ACCESS_PLANS.md): profiles, runtime
 # mappings, the policy simulator and editor, the LAN placeholder keys and the user-access defaults.
 ACCESS_PLAN_API_PREFIXES = (
@@ -116,6 +118,8 @@ def _deliberate(key: str) -> str | None:
         return "ui"
     if path in DELETED_PATHS or ui_routes.first_segment(path) in DELETED_SEGMENTS:
         return "deleted"
+    if path == NATIVE_PREFIX or path.startswith(NATIVE_PREFIX + "/"):
+        return "native"
     if path in NEW_PATHS:
         return "new"
     if path == THUMBNAIL_PATH:
@@ -183,6 +187,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new owner routes; tests/test_trusted_addresses.py covers them
         if kind == "signin":
             continue  # new owner routes; tests/test_signin_settings_api.py and test_signin_test_flow.py cover them
+        if kind == "native" and key not in old:
+            continue  # a new lane; tests/test_native_passthrough.py covers it
         if kind == "engines" and (key not in old or route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
             continue  # new Add engine routes, or the deleted preset list falling through
         if kind == "host_commands" and key not in old:
@@ -221,7 +227,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines", "host_commands"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines", "host_commands", "native"}:
             continue
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue

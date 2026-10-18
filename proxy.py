@@ -21,6 +21,7 @@ import asyncio
 import shutil
 import base64
 import copy
+import functools
 import json
 import math
 import os
@@ -70,10 +71,12 @@ import responses_translator
 from gateway import (
     admin_store,
     audio_media_jobs,
+    frontend_mount,
     media_jobs,
     me_prompt_memory,
     me_make,
     me_media,
+    native_lane,
     prompt_memory,
     receipt_store,
     resource_admission_http,
@@ -86,6 +89,7 @@ from gateway import (
     video_media_jobs,
     voice_design,
 )
+from gateway import secret_store
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
 from gateway.http_tls import tls_context
 from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
@@ -971,6 +975,15 @@ def _derive_backend_constants(effective_cfg: dict) -> dict:
     }
 
 
+def _prepare_frontend_mounts(effective_cfg: Mapping[str, Any]):
+    """The frontend table the stored registry describes, built but not live; None before the app mounts one."""
+    mounts = globals().get("FRONTEND_MOUNTS")
+    if mounts is None:
+        return None
+    registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
+    return mounts.prepare(route_registry.mount_frontend_records(registry=registry, proxy_config=effective_cfg))
+
+
 def reload_runtime_config() -> dict:
     """Re-derive all backend constants from the current DB service registry.
 
@@ -992,12 +1005,25 @@ def reload_runtime_config() -> dict:
     # constants serving, never a new config paired with old constants.
     updates = _derive_backend_constants(new_cfg)
 
+    # Build the frontend table the new registry describes before publishing anything: a failure here
+    # leaves the old config, the old constants and the old routes serving.
+    frontends = _prepare_frontend_mounts(new_cfg)
+
     # Publish the completed registry-derived configuration by one reference
     # swap.  A request either captures the old mapping or the new mapping; it
     # can never rank ids from one while resolving records from the other.
     # Use globals() rather than sys.modules[__name__] so this works even when
     # a test has popped 'proxy' from sys.modules (e.g. test_gateway_api.py).
     _g = globals()
+    if frontends is not None:
+        frontends.commit()
+        web_ui = _g.get("WEB_UI_ROUTE")
+        if web_ui is not None:
+            # The web app and the catch-all are what the segments are for, not segments themselves.
+            web_ui.registered_segments = ui_routes.registered_first_segments(
+                app.router.routes,
+                exclude=tuple(route for route in app.router.routes if getattr(route, "path", None) in {"", "/{path:path}"}),
+            )
     _g["config"] = new_cfg
     for name, value in updates.items():
         _g[name] = value
@@ -13712,14 +13738,29 @@ async def _security_headers_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def _gateway_auth_middleware(request: Request, call_next):
-    """Gate gateway-native discovery/receipt APIs behind the proxy key layer."""
-    if request.url.path.startswith("/gateway/v1"):
-        auth_context = (await asyncio.to_thread(authenticate_request, request, request.url.path))
-        if isinstance(auth_context, Response):
-            return auth_context
-        request.scope["auth_context"] = auth_context
-        request.scope["gateway_audience"] = _gateway_audience_resolver(request)
+    """Gate gateway-native discovery/receipt APIs, and the per-engine native lane, behind the proxy key layer."""
+    if request.url.path.startswith(("/gateway/v1", "/native/")):
+        refusal = await _authenticate_mounted_route(request)
+        if refusal is not None:
+            return refusal
     return await call_next(request)
+
+
+async def _authenticate_mounted_route(request: Request) -> Response | None:
+    """Put the caller's identity in the request scope, or return the refusal (401 without a key).
+
+    The middleware above runs it for the gateway and native prefixes. The frontend mount runs it
+    before every operation that does not check the caller itself, so a row on any other prefix gets
+    the same check. A caller the middleware has already identified is not looked up twice.
+    """
+    if isinstance(request.scope.get("auth_context"), AuthContext):
+        return None
+    auth_context = await asyncio.to_thread(authenticate_request, request, request.url.path)
+    if isinstance(auth_context, Response):
+        return auth_context
+    request.scope["auth_context"] = auth_context
+    request.scope["gateway_audience"] = _gateway_audience_resolver(request)
+    return None
 
 
 async def _gateway_resource_lister(*, audience: str) -> list:
@@ -14034,7 +14075,10 @@ app.include_router(
     )
 )
 
-voices_api.register_voice_routes(
+# Inbound frontends: owned modules register their own routes through this registry;
+# the route rows mount last, at the end of this file (gateway/frontend_mount.py).
+FRONTEND_TRANSLATORS = frontend_mount.Translators()
+FRONTEND_TRANSLATORS.register_owned("voices", lambda app: voices_api.register_voice_routes(
     app,
     voices_api.VoiceApiDeps(
         store=lambda: _voice_store(),
@@ -14049,7 +14093,7 @@ voices_api.register_voice_routes(
         compatible_engines=lambda: _custom_voice_engines(),
         quality_warn_below=lambda: float(_voice_settings().get("quality_warn_below", 0.45)),
     ),
-)
+))
 
 
 
@@ -14190,28 +14234,33 @@ MCP_OAUTH = mcp_oauth.McpOAuth(mcp_oauth.McpOAuthDeps(
     audit=_mcp_oauth_audit,
     mcp_path=MCP_PATH,
 ))
-if MCP_OAUTH_ENABLED:
-    MCP_OAUTH.register(app)
 
-mcp_server.register_mcp_routes(
-    app,
-    mcp_server.McpDeps(
-        authenticate=lambda request, path: authenticate_request(request, path),
-        call=_mcp_dispatch_call,
-        catalog=_mcp_catalog,
-        aliases=lambda: _gateway_aliases_provider(),
-        visible=lambda _request, auth, entry: isinstance(auth, AuthContext) and _category_entry_visible(auth, entry),
-        store_asset=_mcp_store_asset,
-        read_asset=_mcp_read_asset,
-        public_base_url=lambda request: _public_base_url(request),
-        server_version=str((config.get("proxy") or {}).get("version") or "1"),
-        allowed_origins=_mcp_allowed_origins,
-        authorization_servers=lambda request: (
-            [MCP_OAUTH.issuer(request)] if MCP_OAUTH_ENABLED and MCP_OAUTH.available(request) else []),
-        scopes=(mcp_oauth.SCOPE,) if MCP_OAUTH_ENABLED else (),
-    ),
-    path=MCP_PATH,
-)
+
+def _mount_mcp(app: FastAPI) -> None:
+    if MCP_OAUTH_ENABLED:
+        MCP_OAUTH.register(app)
+    mcp_server.register_mcp_routes(
+        app,
+        mcp_server.McpDeps(
+            authenticate=lambda request, path: authenticate_request(request, path),
+            call=_mcp_dispatch_call,
+            catalog=_mcp_catalog,
+            aliases=lambda: _gateway_aliases_provider(),
+            visible=lambda _request, auth, entry: isinstance(auth, AuthContext) and _category_entry_visible(auth, entry),
+            store_asset=_mcp_store_asset,
+            read_asset=_mcp_read_asset,
+            public_base_url=lambda request: _public_base_url(request),
+            server_version=str((config.get("proxy") or {}).get("version") or "1"),
+            allowed_origins=_mcp_allowed_origins,
+            authorization_servers=lambda request: (
+                [MCP_OAUTH.issuer(request)] if MCP_OAUTH_ENABLED and MCP_OAUTH.available(request) else []),
+            scopes=(mcp_oauth.SCOPE,) if MCP_OAUTH_ENABLED else (),
+        ),
+        path=MCP_PATH,
+    )
+
+
+FRONTEND_TRANSLATORS.register_owned("mcp", _mount_mcp)
 
 # System One facades use the existing registry lifecycle and profile evaluator.
 def _decision_catalog_authorized(auth: AuthContext, model: str, service: str | None) -> bool:
@@ -14378,7 +14427,7 @@ def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionRe
     receipt_store.record(receipt)
 
 
-decisions_api.register_decision_routes(
+FRONTEND_TRANSLATORS.register_owned("typesafe", lambda app: decisions_api.register_decision_routes(
     app, decisions_api.DecisionsApiDeps(
         authenticate=lambda request, path: authenticate_request(request, path),
         profile_for=_access_for_auth_context,
@@ -14387,10 +14436,10 @@ decisions_api.register_decision_routes(
         record_receipt=_record_decision_receipt,
         openai_decisions=_openai_decisions,
     ),
-)
+))
 
 # --- A1111 /sdapi/v1 subset for SillyTavern (gateway/a1111_api.py) ------------
-a1111_api.register_a1111_routes(
+FRONTEND_TRANSLATORS.register_owned("a1111", lambda app: a1111_api.register_a1111_routes(
     app,
     a1111_api.A1111Deps(
         authenticate=lambda request, path: authenticate_request(request, path),
@@ -14399,7 +14448,7 @@ a1111_api.register_a1111_routes(
         aliases=lambda: _gateway_aliases_provider(),
         owner_of=lambda auth: _asset_owner_key(auth if isinstance(auth, AuthContext) else None),
     ),
-)
+))
 
 # --- identity scene + likeness check (gateway/identity_api.py) ----------------
 IDENTITY_CFG = config.get("identity", {}) or {}
@@ -15140,6 +15189,7 @@ app.include_router(
         ),
         # Add engine never calls the gateway itself: its default ports and the one it listens on.
         engine_fetch=engine_check.make_http_fetch(gateway_ports=_engine_check_self_ports),
+        frontend_status=lambda: FRONTEND_MOUNTS.status(),
     )
 )
 
@@ -17648,10 +17698,6 @@ def _speech_engine_voices() -> dict[str, Any]:
     return out
 
 
-@app.get("/openai/v1/voices", openapi_extra=VOICES_LIST_OPENAPI)
-@app.get("/openai/v1/audio/voices", openapi_extra=VOICES_LIST_OPENAPI)
-@app.get("/v1/voices", openapi_extra=VOICES_LIST_OPENAPI)
-@app.get("/v1/audio/voices", openapi_extra=VOICES_LIST_OPENAPI)
 async def list_voices(request: Request):
     """Return available TTS voices (OpenAI-compatible names)."""
     canonical_path = "/v1/audio/voices" if request.url.path.endswith("/audio/voices") else "/v1/voices"
@@ -17696,8 +17742,6 @@ async def list_voices(request: Request):
     return await asyncio.to_thread(build_listing)
 
 
-@app.post("/openai/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)
-@app.post("/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)
 async def audio_speech(request: Request):
     """OpenAI-compatible TTS endpoint - routes to TTS backend with voice mapping."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/speech"))
@@ -17716,8 +17760,6 @@ async def audio_speech(request: Request):
     return media_ingestion.finish_response(receipt, response)
 
 
-@app.post("/openai/v1/audio/transcriptions", openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI)
-@app.post("/v1/audio/transcriptions", openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI)
 async def audio_transcriptions(request: Request):
     """OpenAI-compatible STT endpoint - routes to STT backend."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/transcriptions"))
@@ -17726,8 +17768,6 @@ async def audio_transcriptions(request: Request):
     return await _dispatch_selected_stt_route(request, auth_context, operation="transcriptions")
 
 
-@app.post("/openai/v1/audio/translations", openapi_extra=AUDIO_TRANSLATIONS_OPENAPI)
-@app.post("/v1/audio/translations", openapi_extra=AUDIO_TRANSLATIONS_OPENAPI)
 async def audio_translations(request: Request):
     """OpenAI-compatible audio translation endpoint, if the STT backend supports it."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/translations"))
@@ -17854,20 +17894,16 @@ async def _handle_rerank(request: Request, path: str) -> Response:
     return JSONResponse(payload, headers={"x-azizam-engine": resolution.engine or ""})
 
 
-@app.post("/openai/v1/rerank")
-@app.post("/v1/rerank")
 async def rerank_v1(request: Request):
     """Cohere, Jina and Voyage rerank."""
     return await _handle_rerank(request, "/v1/rerank")
 
 
-@app.post("/v2/rerank")
 async def rerank_v2(request: Request):
     """Cohere v2 rerank (no document echo unless asked)."""
     return await _handle_rerank(request, "/v2/rerank")
 
 
-@app.post("/rerank")
 async def rerank_root(request: Request):
     """Jina and TEI style root path."""
     return await _handle_rerank(request, "/rerank")
@@ -17948,8 +17984,6 @@ async def _handle_realtime(websocket: WebSocket) -> None:
     await realtime_proxy.relay(websocket, upstream)
 
 
-@app.websocket("/openai/v1/realtime")
-@app.websocket("/v1/realtime")
 async def realtime_v1(websocket: WebSocket):
     """OpenAI Realtime over WebSocket, served by the sibling speech-to-speech service."""
     await _handle_realtime(websocket)
@@ -22492,7 +22526,6 @@ async def gateway_image_generations_media_job(request: Request):
     return response
 
 
-@app.get("/gateway/v1/media/jobs/{job_id}/content")
 async def gateway_media_job_content(job_id: str, request: Request):
     """Return signed output asset handles for a completed gateway media job."""
     auth_context = _gateway_auth_context(
@@ -22595,8 +22628,6 @@ async def gateway_media_job_content(job_id: str, request: Request):
     )
 
 
-@app.post("/openai/v1/images/generations", openapi_extra=IMAGES_GENERATIONS_OPENAPI)
-@app.post("/v1/images/generations", openapi_extra=IMAGES_GENERATIONS_OPENAPI)
 async def images_generations(request: Request):
     """OpenAI-compatible image generation endpoint - routes to ComfyUI backend."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/generations"))
@@ -22617,8 +22648,6 @@ async def images_generations(request: Request):
     return response
 
 
-@app.post("/openai/v1/images/variations", openapi_extra=IMAGES_VARIATIONS_OPENAPI)
-@app.post("/v1/images/variations", openapi_extra=IMAGES_VARIATIONS_OPENAPI)
 async def images_variations(request: Request):
     """OpenAI-compatible image variations endpoint.
 
@@ -22644,8 +22673,6 @@ async def images_variations(request: Request):
     return response
 
 
-@app.post("/openai/v1/images/edits", openapi_extra=IMAGES_EDITS_OPENAPI)
-@app.post("/v1/images/edits", openapi_extra=IMAGES_EDITS_OPENAPI)
 async def images_edits(request: Request):
     """OpenAI-compatible image edit endpoint - routes to ComfyUI backend."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/edits"))
@@ -22666,8 +22693,6 @@ async def images_edits(request: Request):
     return response
 
 
-@app.get("/openai/v1/images/{image_id}/content", openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI, response_class=Response)
-@app.get("/v1/images/{image_id}/content", openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI, response_class=Response)
 async def images_content(image_id: str, request: Request):
     """Serve a cached image referenced by a signed URL.
 
@@ -22686,8 +22711,6 @@ async def images_content(image_id: str, request: Request):
     )
 
 
-@app.get("/openai/v1/assets/{asset_id}/content", openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI, response_class=Response)
-@app.get("/v1/assets/{asset_id}/content", openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI, response_class=Response)
 async def assets_content(asset_id: str, request: Request):
     """Serve a cached generated asset referenced by a signed URL."""
     return await asyncio.to_thread(
@@ -23144,8 +23167,6 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
     return await _execute_video_manifest_workflow(request, workflow_id, auth_context)
 
 
-@app.post("/openai/v1/videos", openapi_extra=VIDEOS_CREATE_OPENAPI)
-@app.post("/v1/videos", openapi_extra=VIDEOS_CREATE_OPENAPI)
 async def videos_create(request: Request):
     """Sora-shaped video generation submit. Returns {id, status: queued}."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos"))
@@ -23157,8 +23178,6 @@ async def videos_create(request: Request):
     return await proxy_comfy_video_create(request, auth_context)
 
 
-@app.get("/openai/v1/videos/{video_id}", openapi_extra=VIDEOS_STATUS_OPENAPI)
-@app.get("/v1/videos/{video_id}", openapi_extra=VIDEOS_STATUS_OPENAPI)
 async def videos_status(video_id: str, request: Request):
     """Poll a previously-submitted video job."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}"))
@@ -23170,8 +23189,6 @@ async def videos_status(video_id: str, request: Request):
     return await proxy_comfy_video_status(video_id, auth_context)
 
 
-@app.get("/openai/v1/videos/{video_id}/content", openapi_extra=VIDEOS_CONTENT_OPENAPI, response_class=Response)
-@app.get("/v1/videos/{video_id}/content", openapi_extra=VIDEOS_CONTENT_OPENAPI, response_class=Response)
 async def videos_content(video_id: str, request: Request):
     """Download the rendered mp4 once status=succeeded."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}/content"))
@@ -23194,8 +23211,6 @@ async def videos_content(video_id: str, request: Request):
     )
 
 
-@app.get("/openai/v1/videos", openapi_extra=VIDEOS_LIST_OPENAPI)
-@app.get("/v1/videos", openapi_extra=VIDEOS_LIST_OPENAPI)
 async def videos_list(request: Request):
     """List video jobs submitted via this route (limit/after/order)."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos"))
@@ -23210,8 +23225,6 @@ async def videos_list(request: Request):
     return await proxy_comfy_video_list(request, auth_context)
 
 
-@app.delete("/openai/v1/videos/{video_id}", openapi_extra=VIDEOS_DELETE_OPENAPI)
-@app.delete("/v1/videos/{video_id}", openapi_extra=VIDEOS_DELETE_OPENAPI)
 async def videos_delete(video_id: str, request: Request):
     """Delete a previously-submitted video job."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}"))
@@ -23226,8 +23239,6 @@ async def videos_delete(video_id: str, request: Request):
     return await proxy_comfy_video_delete(video_id, auth_context)
 
 
-@app.post("/openai/v1/videos/{video_id}/remix", openapi_extra=VIDEOS_REMIX_OPENAPI)
-@app.post("/v1/videos/{video_id}/remix", openapi_extra=VIDEOS_REMIX_OPENAPI)
 async def videos_remix(video_id: str, request: Request):
     """Remix a completed video with a new prompt (Bernini-R); 501 unless videos.remix_workflow is set."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}/remix"))
@@ -23239,8 +23250,6 @@ async def videos_remix(video_id: str, request: Request):
     return await proxy_comfy_video_remix(video_id, auth_context, request)
 
 
-@app.post("/openai/v1/videos/edits", openapi_extra=VIDEOS_EDIT_OPENAPI)
-@app.post("/v1/videos/edits", openapi_extra=VIDEOS_EDIT_OPENAPI)
 async def videos_edit(request: Request):
     """OpenAI video edit: prompt + uploaded or existing video -> new video job."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/edits"))
@@ -23252,8 +23261,6 @@ async def videos_edit(request: Request):
     return await proxy_comfy_video_edit(request, auth_context)
 
 
-@app.post("/openai/v1/videos/extensions", openapi_extra=VIDEOS_EXTEND_OPENAPI)
-@app.post("/v1/videos/extensions", openapi_extra=VIDEOS_EXTEND_OPENAPI)
 async def videos_extend(request: Request):
     """Sora-shaped video extension: source video + prompt -> source plus new footage."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/extensions"))
@@ -23795,8 +23802,6 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
         )
 
 
-@app.post("/openai/v1/audio/generate", openapi_extra=AUDIO_GENERATE_OPENAPI)
-@app.post("/v1/audio/generate", openapi_extra=AUDIO_GENERATE_OPENAPI)
 async def audio_generate(request: Request):
     """OpenAI-compatible audio generation endpoint."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/generate"))
@@ -23834,8 +23839,6 @@ def _audio_models_visible_to(auth_context: AuthContext) -> list[dict[str, Any]]:
     return models
 
 
-@app.get("/openai/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
-@app.get("/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
 async def audio_models(request: Request):
     """List available audio generation models."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/models"))
@@ -24551,9 +24554,6 @@ def _is_anthropic_sdk_request(request: Request) -> bool:
     return "anthropic-version" in request.headers
 
 
-@app.get("/openai/v1/models/{model_id:path}")
-@app.get("/anthropic/v1/models/{model_id:path}")
-@app.get("/v1/models/{model_id:path}")
 async def anthropic_model_retrieve(model_id: str, request: Request):
     """Retrieve one model. Anthropic shape for Anthropic SDKs, else OpenAI."""
     anthropic = (
@@ -24587,7 +24587,6 @@ async def anthropic_model_retrieve(model_id: str, request: Request):
     )
 
 
-@app.get("/anthropic/v1/models")
 async def anthropic_models(request: Request):
     """Anthropic-compatible model list projected from the gateway catalog."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/anthropic/v1/models"))
@@ -24618,8 +24617,6 @@ async def anthropic_models(request: Request):
     return response
 
 
-@app.get("/openai/v1/models")
-@app.get("/v1/models")
 async def list_models(request: Request):
     """OpenAI-compatible model list. Returns:
       1. LiteLLM's OpenAI-shaped LLM model catalog when the substrate is enabled
@@ -25565,8 +25562,6 @@ async def _read_json_object(request: Request) -> dict[str, Any] | Response:
     return body
 
 
-@app.post("/anthropic/v1/messages/count_tokens")
-@app.post("/v1/messages/count_tokens")
 async def anthropic_count_tokens(request: Request):
     """Anthropic Messages count_tokens-compatible estimator."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/anthropic/v1/messages/count_tokens"))
@@ -25604,8 +25599,6 @@ async def anthropic_count_tokens(request: Request):
     return _json_error_response(payload, status_code=200)
 
 
-@app.post("/anthropic/v1/messages")
-@app.post("/v1/messages")
 async def anthropic_messages(request: Request):
     """Anthropic Messages-compatible frontend over chat completions."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/v1/messages"))
@@ -26047,8 +26040,6 @@ async def _ollama_load_response(
     return _ollama_error_response(_ollama_model_not_found(model), status_code=404)
 
 
-@app.post("/ollama/api/chat")
-@app.post("/api/chat")
 async def ollama_chat(request: Request):
     """Ollama `/api/chat` frontend over chat completions."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/chat"))
@@ -26103,8 +26094,6 @@ async def ollama_chat(request: Request):
     )
 
 
-@app.post("/ollama/api/generate")
-@app.post("/api/generate")
 async def ollama_generate(request: Request):
     """Ollama `/api/generate` frontend over chat completions."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/generate"))
@@ -26161,8 +26150,6 @@ async def ollama_generate(request: Request):
     )
 
 
-@app.post("/ollama/api/embed")
-@app.post("/api/embed")
 async def ollama_embed(request: Request):
     """Ollama current `/api/embed` frontend over OpenAI embeddings."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/embed"))
@@ -26196,8 +26183,6 @@ async def ollama_embed(request: Request):
     )
 
 
-@app.post("/ollama/api/embeddings")
-@app.post("/api/embeddings")
 async def ollama_embeddings(request: Request):
     """Ollama legacy `/api/embeddings` frontend over OpenAI embeddings."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/embeddings"))
@@ -26231,8 +26216,6 @@ async def ollama_embeddings(request: Request):
     )
 
 
-@app.get("/ollama/api/tags")
-@app.get("/api/tags")
 async def ollama_tags(request: Request):
     """Ollama model-list frontend over the proxy's configured model catalog."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/tags"))
@@ -26260,8 +26243,6 @@ async def ollama_tags(request: Request):
     )
 
 
-@app.post("/ollama/api/show")
-@app.post("/api/show")
 async def ollama_show(request: Request):
     """Ollama `/api/show` projected from the gateway's visible LLM catalog."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/api/show"))
@@ -26292,8 +26273,6 @@ async def ollama_show(request: Request):
     return _ollama_error_response(f"model not found: {model}", status_code=404)
 
 
-@app.get("/ollama/api/ps")
-@app.get("/api/ps")
 async def ollama_ps(request: Request):
     """Ollama `/api/ps` projected from the gateway's currently loaded LLM."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/api/ps"))
@@ -26317,8 +26296,6 @@ async def ollama_ps(request: Request):
     )
 
 
-@app.get("/ollama/api/version")
-@app.get("/api/version")
 async def ollama_version(request: Request):
     """Ollama `/api/version` compatibility response."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/api/version"))
@@ -26360,8 +26337,6 @@ async def _ollama_unsupported_model_mutation(
     )
 
 
-@app.post("/ollama/api/create")
-@app.post("/api/create")
 async def ollama_create(request: Request):
     return await _ollama_unsupported_model_mutation(
         request,
@@ -26370,8 +26345,6 @@ async def ollama_create(request: Request):
     )
 
 
-@app.post("/ollama/api/copy")
-@app.post("/api/copy")
 async def ollama_copy(request: Request):
     return await _ollama_unsupported_model_mutation(
         request,
@@ -26380,8 +26353,6 @@ async def ollama_copy(request: Request):
     )
 
 
-@app.post("/ollama/api/pull")
-@app.post("/api/pull")
 async def ollama_pull(request: Request):
     return await _ollama_unsupported_model_mutation(
         request,
@@ -26390,8 +26361,6 @@ async def ollama_pull(request: Request):
     )
 
 
-@app.post("/ollama/api/push")
-@app.post("/api/push")
 async def ollama_push(request: Request):
     return await _ollama_unsupported_model_mutation(
         request,
@@ -26400,10 +26369,6 @@ async def ollama_push(request: Request):
     )
 
 
-@app.head("/ollama/api/blobs/{digest}")
-@app.head("/api/blobs/{digest}")
-@app.post("/ollama/api/blobs/{digest}")
-@app.post("/api/blobs/{digest}")
 async def ollama_blobs(digest: str, request: Request):
     # `ollama create` uploads files as blobs first. The gateway owns no model
     # files, so say so instead of a generic not-found.
@@ -26414,8 +26379,6 @@ async def ollama_blobs(digest: str, request: Request):
     )
 
 
-@app.delete("/ollama/api/delete")
-@app.delete("/api/delete")
 async def ollama_delete(request: Request):
     return await _ollama_unsupported_model_mutation(
         request,
@@ -26424,8 +26387,6 @@ async def ollama_delete(request: Request):
     )
 
 
-@app.post("/openai/v1/responses")
-@app.post("/v1/responses")
 async def create_response(request: Request):
     """Create a Response. Translates to Chat Completions and forwards."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/v1/responses"))
@@ -26711,8 +26672,6 @@ async def create_response(request: Request):
         return _responses_error(f"Internal error: {error}", code="internal_error", status=500)
 
 
-@app.get("/openai/v1/responses/{response_id}")
-@app.get("/v1/responses/{response_id}")
 async def retrieve_response(response_id: str, request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
@@ -26744,8 +26703,6 @@ async def retrieve_response(response_id: str, request: Request):
     )
 
 
-@app.get("/openai/v1/responses/{response_id}/input_items")
-@app.get("/v1/responses/{response_id}/input_items")
 async def list_response_input_items(response_id: str, request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
@@ -26799,8 +26756,6 @@ async def list_response_input_items(response_id: str, request: Request):
     )
 
 
-@app.post("/openai/v1/responses/input_tokens")
-@app.post("/v1/responses/input_tokens")
 async def count_response_input_tokens(request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
@@ -26812,8 +26767,6 @@ async def count_response_input_tokens(request: Request):
     )
 
 
-@app.post("/openai/v1/responses/{response_id}/cancel")
-@app.post("/v1/responses/{response_id}/cancel")
 async def cancel_response(response_id: str, request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
@@ -26832,8 +26785,6 @@ async def cancel_response(response_id: str, request: Request):
     )
 
 
-@app.delete("/openai/v1/responses/{response_id}")
-@app.delete("/v1/responses/{response_id}")
 async def delete_response(response_id: str, request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
@@ -28754,22 +28705,16 @@ async def internal_litellm_local_chat_completions(backend: str, request: Request
     )
 
 
-@app.post("/openai/v1/chat/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
-@app.post("/v1/chat/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def chat_completions(request: Request):
     """OpenAI-compatible chat completions executed through LiteLLM."""
     return await _handle_openai_litellm_request(request, "/v1/chat/completions")
 
 
-@app.post("/openai/v1/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
-@app.post("/v1/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def completions(request: Request):
     """OpenAI-compatible text completions executed through LiteLLM."""
     return await _handle_openai_litellm_request(request, "/v1/completions")
 
 
-@app.post("/openai/v1/embeddings", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
-@app.post("/v1/embeddings", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def embeddings(request: Request):
     """OpenAI-compatible embeddings executed through LiteLLM."""
     return await _handle_openai_litellm_request(request, "/v1/embeddings")
@@ -28791,76 +28736,26 @@ async def _openai_unsupported_api(request: Request, canonical_path: str, api_nam
     return _openai_unsupported_api_response(api_name)
 
 
-@app.api_route(
-    "/openai/v1/assistants{rest:path}",
-    methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-    include_in_schema=False,
-)
-@app.api_route(
-    "/v1/assistants{rest:path}",
-    methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-    include_in_schema=False,
-)
 async def openai_assistants_unsupported(request: Request, rest: str = "") -> Response:
     """OpenAI Assistants compatibility surface - explicitly unsupported."""
     return await _openai_unsupported_api(request, "/v1/assistants", "Assistants API")
 
 
-@app.api_route(
-    "/openai/v1/files{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
-@app.api_route(
-    "/v1/files{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
 async def openai_files_unsupported(request: Request, rest: str = "") -> Response:
     """OpenAI Files compatibility surface - explicitly unsupported."""
     return await _openai_unsupported_api(request, "/v1/files", "Files API")
 
 
-@app.api_route(
-    "/openai/v1/batches{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
-@app.api_route(
-    "/v1/batches{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
 async def openai_batches_unsupported(request: Request, rest: str = "") -> Response:
     """OpenAI Batches compatibility surface - explicitly unsupported."""
     return await _openai_unsupported_api(request, "/v1/batches", "Batches API")
 
 
-@app.api_route(
-    "/openai/v1/fine_tuning{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
-@app.api_route(
-    "/v1/fine_tuning{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
 async def openai_fine_tuning_unsupported(request: Request, rest: str = "") -> Response:
     """OpenAI Fine-tuning compatibility surface - explicitly unsupported."""
     return await _openai_unsupported_api(request, "/v1/fine_tuning", "Fine-tuning API")
 
 
-@app.api_route(
-    "/openai/v1/realtime{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
-@app.api_route(
-    "/v1/realtime{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
 async def openai_realtime_unsupported(request: Request, rest: str = "") -> Response:
     """OpenAI Realtime compatibility surface - explicitly unsupported."""
     return await _openai_unsupported_api(request, "/v1/realtime", "Realtime API")
@@ -28950,6 +28845,8 @@ def _provider_native_host_from_config(provider: str, cfg: Mapping[str, Any]) -> 
     port = cfg.get("port")
     if not host or port is None:
         return ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"  # an IPv6 address needs its brackets to be a URL host
     scheme = str(cfg.get("scheme", "http")).strip() or "http"
     return f"{scheme}://{host}:{port}".rstrip("/")
 
@@ -28975,6 +28872,9 @@ def _build_provider_native_targets() -> dict[str, dict[str, Any]]:
             "timeout": float(raw_cfg.get("timeout") or UPSTREAM_READ_TIMEOUT),
             # The plain headers the owner listed for this engine (Add engine, Request headers).
             "headers": engine_headers(raw_cfg),
+            # The engine's own record: the native lane reads its policy, its credentials and its remote flag
+            # from here, never from a lookup by name (the record's key may be spelt in any case).
+            "record": raw_cfg,
         }
     return targets
 
@@ -29000,6 +28900,7 @@ def _native_passthrough_receipt(
     provider: str,
     gateway_path: str,
     native_path: str,
+    lane: str | None = None,
 ) -> RouteReceipt:
     receipt = RouteReceipt(
         protocol="provider-native",
@@ -29007,17 +28908,27 @@ def _native_passthrough_receipt(
         path=gateway_path,
         backend=provider,
     )
+    _attach_caller(receipt, auth_context)
+    receipt.metadata.update({
+        "provider": provider,
+        "native_path": f"/{native_path.lstrip('/')}",
+    })
+    if lane is not None:
+        receipt.metadata["lane"] = lane
+    if lane == "native":
+        # Usage of a pass-through call cannot be measured; say so rather than leave the cost blank.
+        receipt.metadata["cost"] = "unknown"
+        receipt.cost = {"usd": None, "source": "unknown", "cost_class": "unknown", "reconciliation_status": "unknown"}
+    return receipt
+
+
+def _attach_caller(receipt: RouteReceipt, auth_context: AuthContext) -> None:
     if auth_context.identity is not None:
         receipt.app_profile = plan_ref(auth_context.identity)
         receipt.app_id = auth_context.identity.app_id
         receipt.owner_key_hash = auth_context.identity.key_hash
         receipt.api_key_name = auth_context.identity.name
         receipt.visibility = auth_context.identity.access.receipt_detail
-    receipt.metadata.update({
-        "provider": provider,
-        "native_path": f"/{native_path.lstrip('/')}",
-    })
-    return receipt
 
 
 def _record_native_passthrough_receipt(receipt: RouteReceipt) -> None:
@@ -29168,7 +29079,6 @@ def _provider_native_visible(
     return decision.allowed
 
 
-@app.get("/gateway/v1/providers")
 async def provider_native_list(request: Request):
     """List provider-native lanes visible to this authenticated caller."""
     auth_context = _auth_context_from_scope(request)
@@ -29183,7 +29093,6 @@ async def provider_native_list(request: Request):
     }
 
 
-@app.get("/gateway/v1/providers/{provider}")
 async def provider_native_detail(request: Request, provider: str):
     """Describe one provider-native lane without forwarding to the provider."""
     provider_key = provider.strip().lower()
@@ -29206,11 +29115,6 @@ async def provider_native_detail(request: Request, provider: str):
     return _provider_native_summary(provider_key, target, _auth_context_from_scope(request))
 
 
-@app.api_route(
-    "/gateway/v1/providers/{provider}/{native_path:path}",
-    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    include_in_schema=False,
-)
 async def provider_native_request(
     request: Request,
     provider: str,
@@ -29220,7 +29124,6 @@ async def provider_native_request(
     provider_key = provider.strip().lower()
     gateway_path = f"/gateway/v1/providers/{provider}/{native_path}"
     target = _PROVIDER_NATIVE_TARGETS.get(provider_key)
-    auth_context = _auth_context_from_scope(request)
 
     if target is None:
         return openai_error_response(
@@ -29231,7 +29134,170 @@ async def provider_native_request(
     invalid_response = _provider_native_invalid_paid_remote_response(provider_key, target)
     if invalid_response is not None:
         return invalid_response
+    return await _forward_provider_native(
+        request,
+        provider_key=provider_key,
+        target=target,
+        native_path=native_path,
+        gateway_path=gateway_path,
+    )
 
+
+async def native_engine_request(request: Request):
+    """Per-engine native pass-through (contract section 5): the engine's own API, forwarded untouched.
+
+    Off unless the engine record sets ``native_passthrough``, and never for a remote provider. The
+    gateway adds authentication, the access plan and the receipt; it changes neither path nor body.
+    """
+    engine_id = str(request.path_params["engine_id"])
+    engine = engine_id.strip().lower()
+    native_path = str(request.path_params.get("native_path") or "")
+    target = _build_provider_native_targets().get(engine)
+    if target is None:
+        return openai_error_response(
+            f"Engine {engine_id!r} is not configured for native pass-through.",
+            status_code=404,
+            code="native_not_enabled",
+        )
+    record = target["record"]
+    if any(
+        service_registry.is_remote_provider_config(candidate)
+        for candidate in (record, *_provider_native_backend_configs(engine, target))
+    ):
+        return openai_error_response(
+            f"Engine {engine_id!r} is a remote provider and cannot use native pass-through.",
+            status_code=403,
+            code="native_remote_forbidden",
+        )
+    return await _forward_provider_native(
+        request,
+        provider_key=engine,
+        target=target,
+        native_path=native_path,
+        gateway_path=f"/native/{engine_id}/{native_path}",
+        lane="native",
+        native_policy=native_lane.policy_for(record),
+    )
+
+
+def _native_caller_is_owner(identity: Any) -> bool:
+    """Whether the person accountable for this caller holds the owner role now. Fails closed."""
+    person_id = getattr(identity, "accountable_person_id", None)
+    if not person_id:
+        return False
+    try:
+        return "owner" in admin_store.effective_admin_roles("user", str(person_id), path=ADMIN_STORE.path)
+    except Exception as error:  # noqa: BLE001
+        print(f"[proxy] Could not read admin roles for a native control call: {error}", flush=True)
+        return False
+
+
+def _refuse_native(receipt: RouteReceipt, *, status_code: int, code: str, message: str) -> Response:
+    receipt.metadata["refusal"] = code
+    receipt.finish("denied")
+    _record_native_passthrough_receipt(receipt)
+    return openai_error_response(message, status_code=status_code, code=code)
+
+
+async def _read_capped_body(request: Request, cap: int) -> bytes | None:
+    """The request body, or None once it passes ``cap`` bytes."""
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > cap:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+class _NativeResponseTooLarge(Exception):
+    """The engine's reply passed the lane's byte cap while it streamed."""
+
+
+async def _frontend_refusal(request: Request, row: frontend_mount.RouteRow, report: Any) -> Response:
+    """Answer a request an exact frontend refuses: authenticate first, record the refusal, name the fields."""
+    auth_context = await asyncio.to_thread(authenticate_request, request, request.url.path)
+    if isinstance(auth_context, Response):
+        return auth_context
+    receipt = RouteReceipt(protocol=row.frontend, intent=row.intent, path=request.url.path)
+    _attach_caller(receipt, auth_context)
+    for name in report.dropped:
+        receipt.reject_input(str(name)[:48], "this frontend cannot carry the field")
+    receipt.metadata["loss"] = report.as_dict()
+    receipt.metadata["refusal"] = frontend_mount.refusal_code(report)
+    receipt.finish("denied")
+    _record_native_passthrough_receipt(receipt)
+    return openai_error_response(
+        frontend_mount.refusal_message(row, report),
+        code=frontend_mount.refusal_code(report),
+        param=str(report.dropped[0])[:48] if report.dropped else None,
+    )
+
+
+def _fail_native(
+    owner: ReceiptLifecycleOwner, receipt: RouteReceipt, *, status_code: int, code: str, message: str,
+    reason: str | None = None,
+) -> Response:
+    """End a native call that failed before the engine was reached: a failed receipt and a 502."""
+    receipt.metadata["refusal"] = code
+    owner.report(status="failed", reason=reason or code)
+    return openai_error_response(message, status_code=status_code, error_type="api_error", code=code)
+
+
+async def _native_credential_headers(
+    headers: dict[str, str], target: Mapping[str, Any], klass: str, engine: str,
+) -> dict[str, str] | None:
+    """Add the engine's credential for this call class to ``headers``. None on success, else the error to answer with.
+
+    A credential is sent only to the origin it is bound to, and a class with no credential sends none.
+    """
+    credential = native_lane.credential_for(target["record"], klass)
+    if credential is None:
+        return None
+    if not credential.bound_to(str(target["host"])):
+        return {
+            "code": "native_credential_origin_mismatch", "reason": "credential_origin",
+            "message": f"The {klass} credential of engine {engine!r} is not bound to the address it is sent to.",
+        }
+    secret = ""
+    try:
+        if credential.secret_env:
+            secret = get_env(credential.secret_env, "")
+        elif credential.secret_ref:
+            secret = await asyncio.to_thread(
+                secret_store.get_provider_secret, credential.secret_ref,
+                db_path=ADMIN_DB_PATH, expected_origin=credential.origin,
+            )
+    except Exception:  # noqa: BLE001 - a secret that cannot be read is not sent
+        secret = ""
+    if not secret:
+        return {
+            "code": "native_credential_unavailable", "reason": "credential_unavailable",
+            "message": f"The {klass} credential of engine {engine!r} could not be read.",
+        }
+    for existing in [key for key in headers if key.lower() == credential.header.lower()]:
+        del headers[existing]
+    headers[credential.header] = f"{credential.scheme} {secret}" if credential.scheme else secret
+    return None
+
+
+async def _forward_provider_native(
+    request: Request,
+    *,
+    provider_key: str,
+    target: Mapping[str, Any],
+    native_path: str,
+    gateway_path: str,
+    lane: str | None = None,
+    native_policy: native_lane.NativePolicy | None = None,
+):
+    """Authorize one native call, forward it with downstream auth only, and stream the reply back.
+
+    With ``native_policy`` (the per-engine lane) the call must match an allow entry, a ``control``
+    entry needs the owner, request and reply bytes are capped, and a redirect is refused.
+    """
+    auth_context = _auth_context_from_scope(request)
     try:
         native_request_path = canonical_native_path(
             native_path, raw_path=request.scope.get("raw_path")
@@ -29246,8 +29312,35 @@ async def provider_native_request(
         provider=provider_key,
         gateway_path=gateway_path,
         native_path=native_path,
+        lane=lane,
     )
     native_operation = f"{request.method.upper()} {native_request_path}"
+    if native_policy is not None:
+        receipt.metadata["native_operation"] = native_operation
+        resolution = native_policy.resolve(request.method, native_request_path)
+        entry = resolution.entry
+        if entry is None:
+            return _refuse_native(
+                receipt, status_code=403, code="native_not_allowed",
+                message=f"{native_operation} is not on the allow list of engine {provider_key!r}.",
+            )
+        receipt.metadata["native_class"] = entry.klass
+        if resolution.ambiguous:
+            return _refuse_native(
+                receipt, status_code=403, code="native_ambiguous_path",
+                message=f"{native_operation} matches a control entry of engine {provider_key!r} only by letter case, "
+                        f"so it is refused.",
+            )
+        if entry.klass == native_lane.CONTROL and not _native_caller_is_owner(auth_context.identity):
+            return _refuse_native(
+                receipt, status_code=403, code="native_owner_only",
+                message=f"{native_operation} is a control call; only the gateway owner may make it.",
+            )
+        query_problem = native_lane.query_problem(entry, request.url.query)
+        if query_problem is not None:
+            return _refuse_native(
+                receipt, status_code=403, code=query_problem[0], message=query_problem[1],
+            )
     decision = evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
@@ -29272,32 +29365,70 @@ async def provider_native_request(
     if admission is not None:
         return admission
 
-    body = await request.body()
+    if native_policy is None:
+        body = await request.body()
+    else:
+        def too_large() -> Response:
+            return _refuse_native(
+                receipt, status_code=413, code="native_request_too_large",
+                message=f"The request is over the {native_policy.max_request_bytes}-byte limit of this lane.",
+            )
+
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > native_policy.max_request_bytes:
+            return too_large()
+        capped = await _read_capped_body(request, native_policy.max_request_bytes)
+        if capped is None:
+            return too_large()
+        body = capped
     receipt.stream = False
     receipt.effective_output_limit = None
     owner = ReceiptLifecycleOwner(receipt)
     async with owner:
-        headers = prepare_downstream_headers(
-            request.headers,
-            auth_context,
-            str(target["service"]),
-            native_request_path,
+        timeout = httpx.Timeout(
+            connect=10.0,
+            read=float(target.get("timeout") or UPSTREAM_READ_TIMEOUT),
+            write=60.0,
+            pool=None,
         )
+        if native_policy is None:
+            headers = prepare_downstream_headers(
+                request.headers,
+                auth_context,
+                str(target["service"]),
+                native_request_path,
+            )
+            query = backend_query_string(request.url.query)
+            client = httpx.AsyncClient(follow_redirects=False, timeout=timeout)
+        else:
+            # The lane sends the engine its own credential for this class and nothing of the caller's.
+            headers = backend_request_headers(request.headers)
+            query = native_lane.forwarded_query(request.url.query)
+            destination = await engine_check.check_destination(str(target["host"]), gateway_ports=_engine_check_self_ports)
+            if destination.transport != "ok":
+                return _fail_native(
+                    owner, receipt, status_code=502, code="native_destination_blocked",
+                    message=f"Engine {provider_key!r} cannot be reached by the native lane: {destination.reason}",
+                    reason="destination_blocked",
+                )
+            credential_error = await _native_credential_headers(
+                headers, target, entry.klass, provider_key,
+            )
+            if credential_error is not None:
+                return _fail_native(owner, receipt, status_code=502, **credential_error)
+            # Dial only the addresses just checked, so a second lookup cannot answer somewhere else.
+            client = httpx.AsyncClient(
+                transport=engine_check.checked_transport(destination), follow_redirects=False,
+                trust_env=False, timeout=timeout,
+            )
         for name, value in (target.get("headers") or {}).items():
             for existing in [key for key in headers if key.lower() == name.lower()]:
                 del headers[existing]
             headers[name] = value
         url = f"{target['host']}{native_request_path}"
-        query = backend_query_string(request.url.query)
         if query:
             url += f"?{query}"
 
-        client = httpx.AsyncClient(timeout=httpx.Timeout(
-            connect=10.0,
-            read=float(target.get("timeout") or UPSTREAM_READ_TIMEOUT),
-            write=60.0,
-            pool=None,
-        ))
         stream_context = client.stream(
             request.method,
             url,
@@ -29335,16 +29466,36 @@ async def provider_native_request(
                 code="provider_passthrough_error",
             )
 
-        response_headers = {
-            k: v
-            for k, v in upstream.headers.items()
-            if k.lower() not in _PROVIDER_NATIVE_HOP_BY_HOP_HEADERS
-        }
         receipt.metadata["status_code"] = upstream.status_code
+        if native_policy is not None:
+            refusal = native_lane.reply_refusal(
+                native_policy, upstream.status_code, upstream.headers.get("content-length"), provider_key,
+            )
+            if refusal is not None:
+                receipt.metadata["refusal"] = refusal[1]
+                await stream_context.__aexit__(None, None, None)
+                await client.aclose()
+                owner.report(status="failed", reason="failed")
+                return openai_error_response(refusal[2], status_code=refusal[0], error_type="api_error", code=refusal[1])
+
+        if native_policy is None:
+            response_headers = {
+                k: v
+                for k, v in upstream.headers.items()
+                if k.lower() not in _PROVIDER_NATIVE_HOP_BY_HOP_HEADERS
+            }
+        else:
+            response_headers = native_lane.relayed_headers(upstream.headers)
 
         async def _provider_native_body_stream():
+            sent = 0
             try:
                 async for chunk in upstream.aiter_bytes():
+                    sent += len(chunk)
+                    if native_policy is not None and sent > native_policy.max_response_bytes:
+                        receipt.metadata["refusal"] = "native_response_too_large"
+                        owner.report(status="failed", reason="failed")
+                        raise _NativeResponseTooLarge
                     yield chunk
                 owner.report(
                     status="failed" if upstream.status_code >= 400 else "succeeded",
@@ -29378,6 +29529,112 @@ async def _ui_admin_page_guard(request: Request, name: str) -> Response | None:
     return None
 
 
+# -----------------------------------------------------------------------------
+# Row-mounted translators. A row in registry/protocol_frontends.yml reaches only the
+# operations below: each one is a handler above, mounted with the route options it was
+# declared with. Owned modules mounted first, in the order they registered above.
+# -----------------------------------------------------------------------------
+Op = frontend_mount.Operation
+# These handlers check the caller themselves, in the error shape of their protocol. An Op the mount
+# authenticates (no ``self_authenticates``) is checked before its handler runs, on any path prefix.
+SelfAuthOp = functools.partial(frontend_mount.Operation, self_authenticates=True)
+FRONTEND_TRANSLATORS.register("identity", {
+    "models.list": SelfAuthOp(list_models, frozenset({"GET"})),
+    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"})),
+    "voices.list": SelfAuthOp(list_voices, frozenset({"GET"}), openapi_extra=VOICES_LIST_OPENAPI),
+    "audio.speech": SelfAuthOp(audio_speech, frozenset({"POST"}), openapi_extra=AUDIO_SPEECH_OPENAPI,
+                               response_class=Response),
+    "audio.transcriptions": SelfAuthOp(audio_transcriptions, frozenset({"POST"}),
+                                       openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI),
+    "audio.translations": SelfAuthOp(audio_translations, frozenset({"POST"}), openapi_extra=AUDIO_TRANSLATIONS_OPENAPI),
+    "audio.generate": SelfAuthOp(audio_generate, frozenset({"POST"}), openapi_extra=AUDIO_GENERATE_OPENAPI),
+    "audio.models": SelfAuthOp(audio_models, frozenset({"GET"}), openapi_extra=AUDIO_MODELS_OPENAPI),
+    "images.generate": SelfAuthOp(images_generations, frozenset({"POST"}), openapi_extra=IMAGES_GENERATIONS_OPENAPI),
+    "images.variations": SelfAuthOp(images_variations, frozenset({"POST"}), openapi_extra=IMAGES_VARIATIONS_OPENAPI),
+    "images.edit": SelfAuthOp(images_edits, frozenset({"POST"}), openapi_extra=IMAGES_EDITS_OPENAPI),
+    "images.content": SelfAuthOp(images_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
+                                 response_class=Response),
+    "assets.content": SelfAuthOp(assets_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
+                                 response_class=Response),
+    "videos.create": SelfAuthOp(videos_create, frozenset({"POST"}), openapi_extra=VIDEOS_CREATE_OPENAPI),
+    "videos.retrieve": SelfAuthOp(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI),
+    "videos.content": SelfAuthOp(videos_content, frozenset({"GET"}), openapi_extra=VIDEOS_CONTENT_OPENAPI,
+                                 response_class=Response),
+    "videos.list": SelfAuthOp(videos_list, frozenset({"GET"}), openapi_extra=VIDEOS_LIST_OPENAPI),
+    "videos.delete": SelfAuthOp(videos_delete, frozenset({"DELETE"}), openapi_extra=VIDEOS_DELETE_OPENAPI),
+    "videos.remix": SelfAuthOp(videos_remix, frozenset({"POST"}), openapi_extra=VIDEOS_REMIX_OPENAPI),
+    "videos.edit": SelfAuthOp(videos_edit, frozenset({"POST"}), openapi_extra=VIDEOS_EDIT_OPENAPI),
+    "videos.extend": SelfAuthOp(videos_extend, frozenset({"POST"}), openapi_extra=VIDEOS_EXTEND_OPENAPI),
+    "rerank": SelfAuthOp(rerank_v1, frozenset({"POST"})),
+    "rerank.v2": SelfAuthOp(rerank_v2, frozenset({"POST"})),
+    "rerank.root": SelfAuthOp(rerank_root, frozenset({"POST"})),
+    "responses.create": SelfAuthOp(create_response, frozenset({"POST"})),
+    "responses.retrieve": SelfAuthOp(retrieve_response, frozenset({"GET"})),
+    "responses.input_items": SelfAuthOp(list_response_input_items, frozenset({"GET"})),
+    "responses.input_tokens": SelfAuthOp(count_response_input_tokens, frozenset({"POST"})),
+    "responses.cancel": SelfAuthOp(cancel_response, frozenset({"POST"})),
+    "responses.delete": SelfAuthOp(delete_response, frozenset({"DELETE"})),
+    "chat.completions": SelfAuthOp(chat_completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
+    "text.completions": SelfAuthOp(completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
+    "text.embeddings": SelfAuthOp(embeddings, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
+    "unsupported.assistants": SelfAuthOp(openai_assistants_unsupported,
+                                         frozenset({"GET", "POST", "PUT", "DELETE", "PATCH"}), include_in_schema=False),
+    "unsupported.files": SelfAuthOp(openai_files_unsupported, frozenset({"GET", "POST", "DELETE"}),
+                            include_in_schema=False),
+    "unsupported.batches": SelfAuthOp(openai_batches_unsupported, frozenset({"GET", "POST", "DELETE"}),
+                              include_in_schema=False),
+    "unsupported.fine_tuning": SelfAuthOp(openai_fine_tuning_unsupported, frozenset({"GET", "POST", "DELETE"}),
+                                  include_in_schema=False),
+    "unsupported.realtime": SelfAuthOp(openai_realtime_unsupported, frozenset({"GET", "POST", "DELETE"}),
+                               include_in_schema=False),
+})
+FRONTEND_TRANSLATORS.register("anthropic", {
+    "chat.completions": SelfAuthOp(anthropic_messages, frozenset({"POST"})),
+    "tokens.count": SelfAuthOp(anthropic_count_tokens, frozenset({"POST"})),
+    "models.list": SelfAuthOp(anthropic_models, frozenset({"GET"})),
+    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"})),
+})
+FRONTEND_TRANSLATORS.register("ollama", {
+    "chat.completions": SelfAuthOp(ollama_chat, frozenset({"POST"})),
+    "text.completions": SelfAuthOp(ollama_generate, frozenset({"POST"})),
+    "text.embeddings": SelfAuthOp(ollama_embed, frozenset({"POST"})),
+    "text.embeddings.prompt": SelfAuthOp(ollama_embeddings, frozenset({"POST"})),
+    "models.tags": SelfAuthOp(ollama_tags, frozenset({"GET"})),
+    "models.show": SelfAuthOp(ollama_show, frozenset({"POST"})),
+    "models.ps": SelfAuthOp(ollama_ps, frozenset({"GET"})),
+    "version": SelfAuthOp(ollama_version, frozenset({"GET"})),
+    "models.create": SelfAuthOp(ollama_create, frozenset({"POST"})),
+    "models.copy": SelfAuthOp(ollama_copy, frozenset({"POST"})),
+    "models.pull": SelfAuthOp(ollama_pull, frozenset({"POST"})),
+    "models.push": SelfAuthOp(ollama_push, frozenset({"POST"})),
+    "blobs": SelfAuthOp(ollama_blobs, frozenset({"HEAD", "POST"})),
+    "models.delete": SelfAuthOp(ollama_delete, frozenset({"DELETE"})),
+})
+FRONTEND_TRANSLATORS.register("realtime", {
+    "realtime.session": SelfAuthOp(realtime_v1, frozenset({"WEBSOCKET"})),
+})
+FRONTEND_TRANSLATORS.register("gateway", {
+    "media.job.content": SelfAuthOp(gateway_media_job_content, frozenset({"GET"})),
+})
+FRONTEND_TRANSLATORS.register("provider-native", {
+    "provider.list": Op(provider_native_list, frozenset({"GET"})),
+    "provider.detail": Op(provider_native_detail, frozenset({"GET"})),
+    "provider.native": Op(provider_native_request, frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}),
+                          include_in_schema=False),
+})
+FRONTEND_TRANSLATORS.register("native", {
+    "engine.native": Op(native_engine_request, frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}),
+                        include_in_schema=False),
+})
+FRONTEND_TRANSLATORS.mount_owned(app)
+# The mounted table (gateway/frontend_mount.py): a row that cannot mount is skipped, logged and shown as a
+# broken frontend; a registry reload rebuilds it (reload_runtime_config) and rolls back when that fails.
+FRONTEND_MOUNTS = frontend_mount.FrontendMounts(
+    app, FRONTEND_TRANSLATORS, authenticate=_authenticate_mounted_route, refuse=_frontend_refusal,
+)
+FRONTEND_MOUNTS.apply(route_registry.mount_frontend_records(registry=_PROTOCOL_ROUTE_REGISTRY, proxy_config=config))
+
+
 # The web app: just before the catch-all, never a partial match (gateway/ui_routes.py).
 WEB_UI_ROUTE = ui_routes.UiRoute(
     WEB_UI_DIR,
@@ -29385,6 +29642,7 @@ WEB_UI_ROUTE = ui_routes.UiRoute(
     registered_segments=ui_routes.registered_first_segments(app.router.routes),
 )
 app.router.routes.append(WEB_UI_ROUTE)
+FRONTEND_MOUNTS.before = WEB_UI_ROUTE
 
 
 @app.api_route(

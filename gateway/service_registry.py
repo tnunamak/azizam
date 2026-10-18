@@ -29,7 +29,7 @@ from typing import Any
 
 import yaml
 
-from gateway import admin_store
+from gateway import admin_store, engine_check, native_lane
 from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
@@ -1047,6 +1047,27 @@ def validate_provider_native_passthrough_disabled(
         raise ValueError(
             f"remote provider {service_id!r} cannot enable native_passthrough"
         )
+    try:
+        native_lane.validate_native_block(config.get("native"))
+        native_lane.validate_connection(config.get("connection"))
+    except ValueError as error:
+        raise ValueError(f"service {service_id!r}: {error}") from error
+    if bool_from_config(config.get("native_passthrough"), False):
+        reason = engine_check.static_blocked_reason(native_host_url(config))
+        if reason:
+            raise ValueError(f"service {service_id!r}: native pass-through cannot reach its host. {reason}")
+
+
+def native_host_url(config: Mapping[str, Any]) -> str:
+    """Where the native lane sends a record's calls: its ``url``, else its base URL, else its host and port."""
+    explicit = str(config.get("url") or "").strip()
+    if explicit:
+        return explicit
+    host = str(config.get("host") or "").strip()
+    if ":" in host and not host.startswith("[") and not str(config.get("base_url") or config.get("api_base") or "").strip():
+        # An IPv6 address needs its brackets to be a URL host.
+        config = {**config, "host": f"[{host}]"}
+    return service_base_url(config)
 
 
 def is_remote_provider_config(config: Mapping[str, Any]) -> bool:
@@ -1250,11 +1271,19 @@ def bind_credential_origins(
         if record is None:
             continue
         config = record["config"]
-        if is_remote_provider_config(config) or not any(config.get(key) for key in CREDENTIAL_REFERENCE_KEYS):
+        if is_remote_provider_config(config):
             continue
-        origin = origin_of(str(config.get(LIFECYCLE_BASE_KEY) or "") or service_base_url(config))
-        if origin:
-            config["credential_origin"] = origin
+        if any(config.get(key) for key in CREDENTIAL_REFERENCE_KEYS):
+            origin = origin_of(str(config.get(LIFECYCLE_BASE_KEY) or "") or service_base_url(config))
+            if origin:
+                config["credential_origin"] = origin
+        # Each per-class native credential is bound to the host the native lane sends to.
+        connection = config.get("connection")
+        credentials = connection.get("credentials") if isinstance(connection, Mapping) else None
+        native_origin = origin_of(native_host_url(config))
+        for credential in credentials.values() if isinstance(credentials, Mapping) else ():
+            if native_origin and isinstance(credential, dict) and (credential.get("secret_env") or credential.get("secret_ref")):
+                credential["origin"] = native_origin
     return out
 
 

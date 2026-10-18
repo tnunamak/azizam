@@ -27,7 +27,7 @@ from typing import Any, Iterable, Mapping
 
 from fastapi import Request, status
 
-from gateway import admin_store, extension_packages, secret_store, service_registry, trusted_addresses
+from gateway import admin_store, engine_check, extension_packages, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
 from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
@@ -817,9 +817,9 @@ class AdminSQLiteStore:
         is recorded with it.
         """
         value = service_registry.normalize_service_registry(registry)
-        before_registry = self.get_service_registry()
+        before = self.get_service_registry()
         if "owner" not in actor.roles:
-            old_services = before_registry.get("services") or {}
+            old_services = before.get("services") or {}
             for service_id, record in (value.get("services") or {}).items():
                 previous = old_services.get(service_id) or {}
                 for field in ("connection", "process", "protocol_operations", "control_file_roots",
@@ -834,14 +834,38 @@ class AdminSQLiteStore:
                         old_value, new_value = old_value[1], new_value[1]
                     if old_value != new_value:
                         raise PermissionError(f"Only the owner can change service {field}.")
-        changed = service_registry.credential_binding_changes(before_registry, value)
-        if not changed:
-            return value
-        if "owner" not in actor.roles:
-            raise PermissionError(
-                "Only the owner can attach a key to a service, move a service that has one, "
-                "or set a lifecycle driver on a service.")
-        return service_registry.bind_credential_origins(value, changed)
+        changed = service_registry.credential_binding_changes(before, value)
+        if changed:
+            if "owner" not in actor.roles:
+                raise PermissionError(
+                    "Only the owner can attach a key to a service, move a service that has one, "
+                    "or set a lifecycle driver on a service.")
+            value = service_registry.bind_credential_origins(value, changed)
+        self._refuse_blocked_native_hosts(before, value)
+        return value
+
+    @staticmethod
+    def _refuse_blocked_native_hosts(before: Mapping[str, Any], after: Mapping[str, Any]) -> None:
+        """Look up the host of each engine that opens or moves its native lane, and refuse one that resolves somewhere forbidden.
+
+        The address as written was checked when the record was read (service_registry). A name is
+        looked up here, once at save; the lane checks it again on every call.
+        """
+        old_services = before.get("services") if isinstance(before.get("services"), Mapping) else {}
+        for service_id, record in (after.get("services") or {}).items():
+            config = record.get("config") if isinstance(record, Mapping) else None
+            if not isinstance(config, Mapping) or not service_registry.bool_from_config(config.get("native_passthrough"), False):
+                continue
+            url = service_registry.native_host_url(config)
+            old = (old_services.get(service_id) or {}).get("config") or {}
+            if (
+                service_registry.bool_from_config(old.get("native_passthrough"), False)
+                and service_registry.native_host_url(old) == url
+            ):
+                continue
+            reason = engine_check.blocked_reason_blocking(url) if url else None
+            if reason:
+                raise ValueError(f"service {service_id!r}: native pass-through cannot reach its host. {reason}")
 
     def update_service_registry(
         self, *, data: Mapping[str, Any], actor: AdminContext,
