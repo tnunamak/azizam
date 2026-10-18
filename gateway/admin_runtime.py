@@ -813,7 +813,7 @@ class AdminSQLiteStore:
         )
 
     def _settle_credential_bindings(
-        self, registry: Mapping[str, Any], actor: AdminContext
+        self, registry: Mapping[str, Any], actor: AdminContext, *, _trusted_engine_evidence: bool = False
     ) -> dict[str, Any]:
         """Normalize a registry about to be written; keep credential changes for the owner.
 
@@ -828,6 +828,13 @@ class AdminSQLiteStore:
             old_services = before.get("services") or {}
             for service_id, record in (value.get("services") or {}).items():
                 previous = old_services.get(service_id) or {}
+                if not _trusted_engine_evidence:
+                    # Verification facts come from EngineService, never raw caller data.
+                    for field in ("engine_check", "engine_tests"):
+                        old_evidence = (previous.get(field) or None, (previous.get("config") or {}).get(field) or None)
+                        new_evidence = (record.get(field) or None, (record.get("config") or {}).get(field) or None)
+                        if old_evidence != new_evidence:
+                            raise PermissionError("Only the engine verification routes can change saved check or test evidence.")
                 if previous:
                     old_config, new_config = dict(previous.get("config") or {}), dict(record.get("config") or {})
                     # The legacy PATCH form fills model_group from id. That
@@ -839,7 +846,7 @@ class AdminSQLiteStore:
                     defaults = {"base_path": "/v1", "scheme": "http", "timeout": 600,
                                 "headers": [], "models": [], "transforms": [], "role": "required", "managed": False}
                     # Compare settings that grant connection, routing or host control.
-                    # Metadata and check bookkeeping may be written by administrators.
+                    # Metadata may be written by administrators; evidence needs the trusted route.
                     keys = {
                         "host", "port", "scheme", "base_path", "base_url", "api_base", "default_base_url",
                         "base_url_env", "api_base_env", "address", "path_prefix", "protocol", "native_passthrough",
@@ -962,8 +969,9 @@ class AdminSQLiteStore:
         service_id: str,
         expected_generation: int,
         extra: Mapping[str, Any] | None = None,
+        _trusted_engine_evidence: bool = False,
     ) -> dict[str, Any]:
-        value = self._settle_credential_bindings(registry, actor)
+        value = self._settle_credential_bindings(registry, actor, _trusted_engine_evidence=_trusted_engine_evidence)
         record = admin_store.write_service_registry_with_audit(
             value,
             expected_generation=expected_generation,
@@ -1051,6 +1059,7 @@ class AdminSQLiteStore:
             service_id=service_id,
             expected_generation=expected_generation,
             extra={"definition": str(raw.get("definition") or "")},
+            _trusted_engine_evidence=True,
         )
 
     def update_service(

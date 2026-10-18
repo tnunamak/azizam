@@ -947,7 +947,7 @@ class EngineService:
         _header_credentials_are_the_owners(ctx, body.get("values"))
         if record is not None:
             shown = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)
-            values = _restore_hidden_scalars(dict(values), shown["values"], record.get("config") or {})
+            values = _restore_hidden_scalars({**shown["values"], **values}, shown["values"], record.get("config") or {})
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         if record is not None and not _is_owner(ctx):
@@ -976,7 +976,7 @@ class EngineService:
         _header_credentials_are_the_owners(ctx, body.get("values"))
         if record is not None:
             shown = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)
-            values = _restore_hidden_scalars(dict(values), shown["values"], record.get("config") or {})
+            values = _restore_hidden_scalars({**shown["values"], **values}, shown["values"], record.get("config") or {})
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         if record is not None and not _is_owner(ctx):

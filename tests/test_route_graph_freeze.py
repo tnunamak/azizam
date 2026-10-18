@@ -73,5 +73,12 @@ def test_the_protocol_policy_projections_are_unchanged() -> None:
     assert route_graph.policy(proxy) == _frozen()["policy"]
 
 
+# W1's owner-only config export changes exactly one OpenAPI value:
+# paths["/admin/api/config/export"]["get"]["description"]. It explains that
+# complete commands/environment values round-trip only for the owner, and adds
+# "owner role required" to the authorization description. The headless snapshot
+# diff contains no other changes; its canonical hashes match the prior frozen
+# b3ee1198d29a... digest and the updated 5d92e22455eb... digest respectively.
+# Route registrations, dispatch and policy fixtures remain untouched.
 def test_the_openapi_document_is_unchanged() -> None:
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
