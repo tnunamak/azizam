@@ -307,3 +307,73 @@ def test_a_stored_shadow_of_a_builtin_with_its_own_path_mounts_nothing():
     assert TestClient(mounts.app).get("/unique-shadow/path").status_code == 404
     [ignored] = [item for item in mounts.status() if item["status"] == "broken" and builtin_id in item["id"]]
     assert "builtin" in ignored["errors"][0]["message"]
+
+
+# --- what a boot can still read ------------------------------------------------------------------
+
+def _model(model_id: str, base: str | None = None) -> dict:
+    return {"id": model_id, **({"base_model_id": base} if base else {})}
+
+
+def test_the_servable_part_keeps_every_record_that_validates_and_names_each_one_it_drops():
+    stored = {
+        "services": {"good-engine": GOOD, "bad-engine": BAD},
+        "protocol_frontends": {"fine": _frontend("fine"), "broken": "not a mapping", "odd": {"id": "odd", "routes": 5}},
+        "workflows": {}, "capabilities": {},
+    }
+
+    part, left_out = service_registry.servable_part_of_registry(stored)
+
+    assert set(part["services"]) == {"good-engine"}
+    assert "fine" in part["protocol_frontends"]
+    assert set(left_out) >= {"bad-engine"}
+
+
+def test_two_services_that_claim_one_public_alias_are_both_left_out():
+    def claiming(service_id):
+        return _service(service_id, models=[_model("base"), _model("shared-alias", base="base")])
+
+    stored = {"services": {"one": claiming("one"), "two": claiming("two"), "good-engine": GOOD}}
+
+    part, left_out = service_registry.servable_part_of_registry(stored)
+
+    assert set(part["services"]) == {"good-engine"}
+    assert set(left_out) == {"one", "two"}
+
+
+def test_a_gateway_started_on_a_registry_with_one_bad_service_serves_the_rest(tmp_path):
+    """The whole boot, in a fresh process: the import that used to fail, or serve the YAML backends."""
+    import json
+    import os
+    import subprocess
+    import sys
+    import textwrap
+    from pathlib import Path
+
+    repo = Path(proxy.__file__).resolve().parent
+    script = textwrap.dedent(f"""
+        import json, os, sys
+        from pathlib import Path
+        from gateway import admin_store
+        db = Path(os.environ["AZIZAM_ADMIN_DB"])
+        admin_store.init_db(db)
+        good = {GOOD!r}
+        bad = {BAD!r}
+        admin_store.write_service_registry({{"schema_version": 1, "services": {{"good-engine": good, "bad-engine": bad}}}},
+                                           updated_by="test", expected_generation=0, path=db)
+        import proxy
+        print("RESULT" + json.dumps({{"problem": proxy.REGISTRY_APPLY_PROBLEM, "backends": sorted(proxy.config["backends"])}}))
+    """)
+    env = dict(os.environ)
+    for name, filename in [("AZIZAM_ADMIN_DB", "admin.db"), ("AZIZAM_METRICS_DB", "metrics.db"),
+                           ("AZIZAM_RECEIPTS_DB", "receipts.db"), ("AZIZAM_MEDIA_JOBS_DB", "media_jobs.db"),
+                           ("AZIZAM_RESPONSES_DB", "responses.db")]:
+        env[name] = str(tmp_path / filename)
+    env.update(PYTHONPATH=str(repo), HOME=str(tmp_path))
+    done = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=180)
+
+    assert done.returncode == 0, done.stderr[-2000:]
+    result = json.loads(next(line for line in done.stdout.splitlines() if line.startswith("RESULT"))[len("RESULT"):])
+    assert result["backends"] == ["good-engine"]
+    assert result["problem"]["mode"] == "partial" and set(result["problem"]["left_out"]) == {"bad-engine"}
+    assert "bad-engine" in done.stdout  # the loud log line

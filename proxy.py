@@ -12814,10 +12814,25 @@ WEB_UI_DIR = Path(__file__).resolve().parent / "web" / "out"
 
 from gateway import ui_routes
 
-_PROTOCOL_ROUTE_REGISTRY = (
-    service_registry.load_service_registry(path=ADMIN_DB_PATH)
-    or service_registry.build_service_registry_seed(config)
-)
+def _stored_registry_for_boot() -> dict[str, Any] | None:
+    """The stored registry for a reader that runs at import: whole when it normalizes, else the part that does.
+
+    Only a boot that already reported ``REGISTRY_APPLY_PROBLEM`` may read the part (or, when the store
+    cannot be read at all, none of it); any other failure raises, as it did.
+    """
+    try:
+        return service_registry.load_service_registry(path=ADMIN_DB_PATH)
+    except Exception:  # noqa: BLE001
+        if REGISTRY_APPLY_PROBLEM is None:
+            raise
+        try:
+            stored = admin_store.get_service_registry_with_generation(path=ADMIN_DB_PATH)
+            return service_registry.servable_part_of_registry(stored["value"])[0] if stored else None
+        except Exception:  # noqa: BLE001 - the store cannot be read: the bundled routes mount, nothing stored does
+            return None
+
+
+_PROTOCOL_ROUTE_REGISTRY = _stored_registry_for_boot() or service_registry.build_service_registry_seed(config)
 CANONICAL_PROTOCOL_ROUTE_ALIASES: tuple[dict[str, object], ...] = (
     route_registry.canonical_protocol_route_aliases(
         registry=_PROTOCOL_ROUTE_REGISTRY,
