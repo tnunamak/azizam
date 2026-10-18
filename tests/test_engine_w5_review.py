@@ -44,6 +44,8 @@ def test_current_alias_never_invents_a_reply_timeout(saved):
 class Store:
     def __init__(self, saved, path):
         self.saved, self.path = saved, path
+    def list_access_plans(self):
+        return []
     def get_service_registry(self):
         return {'services': {'review': copy.deepcopy(self.saved)}}
     def write_engine(self, **kwargs):
@@ -82,7 +84,7 @@ def test_missing_env_key_blocks_inference_and_is_an_attention_item(tmp_path, mon
 def test_missing_key_still_allows_health_and_resource_checks(monkeypatch, fake_upstreams):
     monkeypatch.delenv('W5_UNSET_TEST_KEY', raising=False)
     fake = fake_upstreams.asgi(scenario_from_data({
-        'protocol': 'engine-probe', 'name': 'missing-key',
+        'protocol': 'openai-compatible', 'name': 'missing-key',
         'provenance': {'source': 'hand-written', 'reference': 'D19: probes proceed without an unavailable key'},
         'exchanges': [{'id': 'health', 'times': 2, 'match': {'method': 'GET', 'path': '/health',
                         'headers': {'authorization': {'$absent': True}}}, 'response': {'status': 200, 'json': {'ok': True}}}],
