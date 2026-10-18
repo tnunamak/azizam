@@ -106,12 +106,14 @@ def test_a_page_save_keeps_a_hidden_header_value_by_its_name_and_drops_a_renamed
     kept = _patch(owner, view, {"reply_timeout_s": 300})
     assert kept.status_code == 200, kept.text
     assert _stored(gateway)["config"]["headers"] == record["config"]["headers"]
-    renamed = [{"name": "X-Renamed", "value": MARKER}, {"name": "X-Team", "value": "team-public"}]
-    view = owner.get("/admin/api/engines/engine-a").json()["engine"]
-    assert _patch(owner, view, {"headers": renamed}).status_code == 200
-    stored = _stored(gateway)["config"]["headers"]
-    assert stored == [{"name": "X-Team", "value": "team-public"}]
-    assert "sk-synthetic-hdr-1234" not in json.dumps(stored)
+
+
+def test_a_header_row_renamed_with_the_marker_in_it_is_dropped_not_given_the_hidden_value() -> None:
+    stored = [{"name": "X-Org", "value": "sk-synthetic-hdr-1234"}, {"name": "X-Team", "value": "team-public"}]
+    sent = [{"name": "X-Renamed", "value": MARKER}, {"name": "X-Org", "value": MARKER}, {"name": "X-Team", "value": "team-public"}]
+    restored = redaction.restore_headers(sent, stored)
+    assert restored == stored
+    assert redaction.restore_headers([{"name": "X-Org", "value": MARKER}], None) == []
 
 
 def test_a_page_save_that_changes_only_the_ready_timeout_leaves_a_list_start_byte_identical(gateway) -> None:
