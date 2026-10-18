@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { api } from "@/lib/api";
+import type { TransformRow } from "@/lib/transforms";
 import {
   enginesApi,
   type EngineRecordV2,
@@ -162,7 +163,8 @@ describe("the six sections mirror the record", () => {
     mount({
       can_edit_offerings: false,
       offering_edit_reason: "Structured offerings are shown as stored.",
-      values: { ...engineView().values, transforms: [{ kind: "message-inject", text: "Be brief." }] },
+      // Legacy records can omit role; the current serializer fills it.
+      values: { ...engineView().values, transforms: [{ kind: "message-inject", text: "Be brief." } as TransformRow] },
     });
     const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
     const user = userEvent.setup();
