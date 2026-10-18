@@ -285,6 +285,52 @@ def test_stop_kills_term_ignoring_descendant_after_leader_exits(tmp_path):
                 pass
 
 
+@pytest.mark.skipif(os.name != "posix", reason="Linux process groups")
+def test_stop_recovers_descendant_after_leader_crashes_first(tmp_path):
+    child_pid_file = tmp_path / "child.pid"
+    script = tmp_path / "crash.py"
+    script.write_text(
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)'])\n"
+        "open(sys.argv[1], 'w').write(str(child.pid))\n"
+        "time.sleep(0.05)\n"
+    )
+    svc = process_service(tmp_path)
+    svc["process"]["start"] = [sys.executable, str(script), str(child_pid_file)]
+
+    class Ready:
+        async def read(self, *_args):
+            return type("Fact", (), {"known": True, "value": True})()
+
+    driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True,
+                           observations=Ready())
+    group_pid = None
+    try:
+        assert run(driver.ensure_ready(svc, 1))
+        group_pid = json.loads((tmp_path / "state" / "fixture.json").read_text())["pid"]
+        for _ in range(100):
+            if child_pid_file.exists() and not Path(f"/proc/{group_pid}/stat").exists():
+                break
+            time.sleep(0.01)
+        child_pid = int(child_pid_file.read_text())
+        driver.stop(svc)
+        for _ in range(100):
+            status = Path(f"/proc/{child_pid}/stat")
+            if not status.exists() or status.read_text().split(") ", 1)[1].startswith("Z"):
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("descendant survived leader crash and gateway cleanup")
+    finally:
+        driver.stop(svc)
+        if group_pid:
+            try:
+                os.killpg(group_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 def test_residency_deadline_includes_control_and_observation_wait():
     async def slow_invoke(_op, _args):
         await asyncio.sleep(0.08)
