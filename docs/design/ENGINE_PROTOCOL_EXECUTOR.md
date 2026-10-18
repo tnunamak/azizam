@@ -370,7 +370,37 @@ below 1 is timing noise, not evidence of a speed advantage.
 
 The two implementations share safety helpers, which account for much of their
 cost. A separate comparison with a bare hand-written mapper plus JSON, without
-those checks, measured 4.92x, 11.94x and 13.84x. Thus the roughly 3x aim holds
-for the same safety guarantees, but does not hold against a bare mapper. The
-[Round 2 evidence](../verification/ENGINE_W6A_ROUND2.md) records both baselines
-and the limits of the measurement.
+those checks, measured 4.92x, 11.94x and 13.84x. The 0.91x to 1.20x figures
+measured `each` against a mapper that shares its size and check helpers, so
+they compared the code with itself and are withdrawn as evidence of the roughly
+3x aim. The [Round 2 evidence](../verification/ENGINE_W6A_ROUND2.md) records
+both baselines and the limits of the measurement.
+
+### W6a Round 3 absolute `each` measurement
+
+Round 3 measures absolute milliseconds against a bare comprehension that shares
+no helpers: `scripts/bench_engine_protocol.py --each-absolute`. Embeddings are
+lists of 768-float vectors; model lists are objects with a name, size and
+digest. The timed applies run with the budgets raised, so the time is the
+mapping's own. The last column is what the default budgets do with the same
+input. The run was on a shared host at load 25 to 36 (48 is the ceiling).
+
+| Case | Bare | `each` | Added | Ratio | Default budgets |
+|---|---|---|---|---|---|
+| 1,000 model items | 0.070 ms | 3.585 ms | 3.515 ms | 51x | ok |
+| 10,000 model items | 0.801 ms | 37.800 ms | 36.998 ms | 47x | ok |
+| 1,000 embeddings (768 floats) | 0.064 ms | 576.853 ms | 576.789 ms | about 9,000x | refused: `mapping_s` |
+| 10,000 embeddings (768 floats) | 0.807 ms | 6504.803 ms | 6503.996 ms | about 8,000x | refused: `mapping_s` |
+
+A bare comprehension that also copies each vector (`list(v)`) is 9.2 ms for
+1,000 embeddings and 81.2 ms for 10,000. Against that baseline `each` is 64x
+and 78x. The D23 bound, 5 ms added for 10,000 items, is not met in any case.
+
+Where the time goes, from a profile of the 10,000-model case: exact JSON sizing
+of each mapped item about 36%, the depth walk about 28%, and one deadline check
+per step about 18%. Exact byte accounting of float vectors costs about 0.35 µs
+per float, which no per-item change removes. Meeting the bound needs a change
+to how the byte budget is computed, such as a sound bound from the source size,
+which is a budget decision. Narrowing `each` to list items that are already
+OpenAI-shaped (the D23 fallback) is the other option. `each` should not ship on
+these numbers until the owner picks one.

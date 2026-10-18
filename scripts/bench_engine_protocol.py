@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from gateway.engine_protocol import description, framing, mapping, pointer  # noqa: E402
+from gateway.engine_protocol.errors import BudgetExceeded  # noqa: E402
 from gateway.engine_protocol.executor import HttpV1Executor  # noqa: E402
 from gateway.engine_protocol.transport import WireRequest  # noqa: E402
 from gateway.engine_protocol.types import CanonicalRequest, Connection  # noqa: E402
@@ -267,11 +268,88 @@ def measure_each(scale: float = 1.0) -> dict[str, dict[str, float]]:
     return rows
 
 
+def measure_each_absolute(scale: float = 1.0) -> dict[str, dict[str, object]]:
+    """Absolute milliseconds for `each` against a bare comprehension that shares no helpers.
+
+    Embeddings are lists of 768-float vectors; model lists are small objects. The timed
+    applies run with the budgets raised, so the time is the mapping's own. ``default_budgets``
+    records what the default budgets do with the same input. Best of five; the 10,000-item
+    embedding case is slow, so it runs fewer repetitions.
+    """
+    from gateway.engine_protocol.budgets import Budgets
+
+    roots = frozenset({"body", "status", "headers"})
+    embedding_rules = [{"each": {"from": "/body/embeddings", "to": "/data", "map": [
+        {"set": {"to": "/object", "value": "embedding"}},
+        {"copy": {"from": "/index", "to": "/index"}},
+        {"copy": {"from": "/item", "to": "/embedding"}}]}}]
+    model_rules = [{"each": {"from": "/body/models", "to": "/data", "map": [
+        {"copy": {"from": "/item/name", "to": "/id"}},
+        {"set": {"to": "/object", "value": "model"}},
+        {"set": {"to": "/created", "value": 0}},
+        {"set": {"to": "/owned_by", "value": "engine"}}]}}]
+    raised = Budgets(mapping_s=600.0, max_selected=10 ** 7, max_response_bytes=10 ** 10, max_request_bytes=10 ** 10)
+
+    def embeddings(count: int) -> dict:
+        return {"body": {"embeddings": [[((i * 768 + j) % 997) / 997 for j in range(768)] for i in range(count)]},
+                "status": 200, "headers": {}}
+
+    def models(count: int) -> dict:
+        return {"body": {"models": [{"name": f"model-{i}", "size": i * 1000, "digest": "d" * 64}
+                                    for i in range(count)]}, "status": 200, "headers": {}}
+
+    def bare_embeddings(source: dict) -> list:
+        return [{"object": "embedding", "index": i, "embedding": v} for i, v in enumerate(source["body"]["embeddings"])]
+
+    def bare_models(source: dict) -> list:
+        return [{"id": m["name"], "object": "model", "created": 0, "owned_by": "engine"} for m in source["body"]["models"]]
+
+    def default_outcome(program, source: dict) -> str:
+        try:
+            program.apply(source)
+            return "ok"
+        except BudgetExceeded as error:
+            return f"refused: {error.budget}"
+
+    out: dict[str, dict[str, object]] = {}
+    cases = [
+        ("embeddings 768 floats", embedding_rules, embeddings, bare_embeddings),
+        ("model list", model_rules, models, bare_models),
+    ]
+    for label, rules, make, bare in cases:
+        program = mapping.build(rules, base="empty", roots=roots, budgets=raised)
+        default = mapping.build(rules, base="empty", roots=roots)
+        for count in (1000, 10000):
+            source = make(count)
+            number = 5 if count <= 1000 else 1
+            each_us = best(lambda: program.apply(source), number, repeat=5, scale=scale)
+            bare_us = best(lambda: bare(source), 20 if count <= 1000 else 5, repeat=5, scale=scale)
+            out[f"{label}, {count} items"] = {
+                "bare_ms": round(bare_us / 1000, 3),
+                "each_ms": round(each_us / 1000, 3),
+                "added_ms": round((each_us - bare_us) / 1000, 3),
+                "ratio": round(each_us / bare_us, 2),
+                "default_budgets": default_outcome(default, source),
+            }
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--each", action="store_true", help="Run only bounded array mapping cases")
+    parser.add_argument("--each-absolute", action="store_true",
+                        help="Run `each` against a bare comprehension in absolute milliseconds")
     args = parser.parse_args()
+    if args.each_absolute:
+        out = measure_each_absolute()
+        if args.json:
+            print(json.dumps(out, indent=2))
+            return
+        print(f"{'case':30} {'bare ms':>10} {'each ms':>10} {'added ms':>10} {'ratio':>7}  default budgets")
+        for name, row in out.items():
+            print(f"{name:30} {row['bare_ms']:10.3f} {row['each_ms']:10.3f} {row['added_ms']:10.3f} {row['ratio']:7.2f}  {row['default_budgets']}")
+        return
     out = measure_each() if args.each else measure()
     if args.json:
         print(json.dumps(out, indent=2))

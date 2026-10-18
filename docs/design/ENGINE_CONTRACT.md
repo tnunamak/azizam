@@ -213,8 +213,17 @@ See [Add an HTTP engine as data](../guides/ADD_HTTP_ENGINE_AS_DATA.md).
   the five things measured outside the roughly 24 HTTP primitives: request
   signing (for example AWS SigV4), results held in object storage,
   binary-tail framing, WebSocket protocol translation, and engines whose HTTP
-  surface is user code. Mapping cost stays within about 3x a hand-written
-  mapping. JSONata and CEL-class languages (375x to 1,158x) are not used. The in-tree ComfyUI,
+  surface is user code. Mapping cost is measured against a bare hand-written
+  comprehension with no shared helpers (round 3, `--each-absolute`): `each`
+  over 1,000 model items takes 3.6 ms against 0.07 ms (51x), and over 10,000
+  takes 37.8 ms against 0.80 ms (47x). Over 1,000 embeddings of 768 floats it
+  takes 577 ms against 0.06 ms, and over 10,000 it takes 6.5 s. The D23 bound
+  (10,000 items add at most 5 ms) is not met, and the default mapping budget
+  refuses the 1,000-item embedding case. The earlier "about 3x" figure compared
+  `each` with a mapper that shares its safety helpers and is withdrawn. The
+  evidence and the open decision are in
+  [ENGINE_PROTOCOL_EXECUTOR.md](ENGINE_PROTOCOL_EXECUTOR.md#w6a-round-3-absolute-each-measurement).
+  JSONata and CEL-class languages (375x to 1,158x) are not used. The in-tree ComfyUI,
   STT and TTS clients become adapters behind one interface.
 - **The adapter interface is versioned:** `health`, `inventory`,
   `invoke(op, canonical_request)`, and for jobs `submit`, `poll` or `events`,
