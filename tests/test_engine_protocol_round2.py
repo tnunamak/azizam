@@ -325,7 +325,6 @@ def test_unrepresentable_embedding_number_is_a_typed_response_failure():
 @pytest.mark.parametrize('failure', ['origin', 'decrypt', 'store'])
 def test_stored_credential_failures_are_typed_and_preserve_healthy_inventory(engine, monkeypatch, failure):
     from gateway import admin_store, secret_store
-    from cryptography.exceptions import InvalidTag
     import sqlite3
     origin = 'http://prism.test:9100'
     secret_store.put_provider_secret('credential-r2', 'fixture-stored-key', db_path=admin_store.DB_PATH,
@@ -339,7 +338,7 @@ def test_stored_credential_failures_are_typed_and_preserve_healthy_inventory(eng
     healthy = copy.deepcopy(engine.record)
     healthy['id'] = 'healthy'
     engine.record['config']['connection']['credentials'] = {'inference':{
-        'secret_ref':'credential-r2','origin':origin,'header':'X-Inference','scheme':''}}
+        'secret_ref':'credential-r2','origin':origin,'header':'X-Inference','scheme':'Bearer'}}
     response = chat(engine)
     assert response.status_code == (502 if failure == 'origin' else 503), response.text
     assert '/srv/' not in response.text and 'fixture-stored-key' not in response.text
@@ -374,6 +373,7 @@ def test_requested_stream_cannot_silently_return_json(engine, monkeypatch):
     data['operations']['chat']['response'].pop('stream')
     doc = description.parse_description(data, source='prism.yml')
     monkeypatch.setattr(description, 'load_registry', lambda: {'prism':doc})
+    wire(monkeypatch, lambda r: httpx.Response(200, json={'result':{'id':'a','issued':0,'model':'m','output':{'text':'hi'},'why':'eos'},'meter':{'in':1,'out':1,'total':2}}))
     response = chat(engine, stream=True)
     assert response.status_code == 502, response.text
     assert response.json()['error']['code'] == 'malformed_response'
