@@ -183,6 +183,7 @@ load, unload and so on), `auth`, `errors` (advice rows) and an `executor`.
   arbitrary expressions, no side effects, and size, depth and time budgets.
   The claim "a new HTTP-shaped engine needs no code" applies exactly to this
   grammar. It is proven by a second-engine fixture for each pattern.
+
 Public execution is opt-in in W6a. A stored service uses
 `config.connection.dispatch: protocol`, a `protocol` id resolving to
 `executor: http-v1`, and `config.offerings`. The runtime also accepts top-level

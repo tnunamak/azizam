@@ -161,6 +161,15 @@ def measure(scale: float = 1.0) -> dict[str, dict[str, float]]:
     def hand_whole() -> None:
         asyncio.run(hand_whole_async())
 
+    from gateway.engine_protocol.dispatch import Runtime, Target
+    offering = {"id": "benchmark-chat", "upstream": BODY["model"]}
+    service = {"config": {"connection": {"address": conn.address, "protocol": desc.id}, "offerings": [offering]}}
+    target = Target("benchmark", service, offering, desc)
+
+    def whole_record_runtime() -> None:
+        runtime = Runtime(target, transport=NullTransport(json.dumps(UPSTREAM).encode()))
+        asyncio.run(runtime.invoke("chat", BODY))
+
     rows = {
         "passthrough, no rules": (best(lambda: bare.apply(small_source), 100000, scale=scale), best(lambda: SMALL_BODY, 100000, scale=scale)),
         "5 rules, hand-written shares containers": (best(lambda: small.apply(small_source), 50000, scale=scale), best(lambda: hand_small(SMALL_BODY), 50000, scale=scale)),
@@ -171,6 +180,7 @@ def measure(scale: float = 1.0) -> dict[str, dict[str, float]]:
         "SSE event, parsed and mapped": (best(mapped_events, 20000, scale=scale) / n_events, best(hand_events, 20000, scale=scale) / n_events),
         "SSE event, relayed unparsed": (best(relay_events, 50000, scale=scale) / n_events, best(relay_hand, 50000, scale=scale) / n_events),
         "whole invoke (loop + stub transport)": (best(whole_executor, 500, 7, scale=scale), best(hand_whole, 500, 7, scale=scale)),
+        "record connection + whole invoke": (best(whole_record_runtime, 500, 7, scale=scale), best(hand_whole, 500, 7, scale=scale)),
     }
     return {name: {"executor_us": round(a, 3), "hand_written_us": round(b, 3), "ratio": round(a / b, 2)} for name, (a, b) in rows.items()}
 
