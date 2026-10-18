@@ -966,6 +966,11 @@ def _names_credential(key: str) -> bool:
     )
 
 
+def _is_inject_secret(path: str, key: str) -> bool:
+    """An ``auth_inject`` rule's ``secret`` names a downstream secret, though no suffix says it is a reference."""
+    return key.strip().lower() == "secret" and "auth_inject[" in path
+
+
 def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
     """Every field of a service record that names a credential, keyed by its path.
 
@@ -979,7 +984,7 @@ def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
         if isinstance(value, Mapping):
             for key, item in value.items():
                 here = f"{path}.{key}" if path else str(key)
-                if _names_credential(str(key)) or path == "secret_refs":
+                if _names_credential(str(key)) or path == "secret_refs" or _is_inject_secret(path, str(key)):
                     found[here] = repr(item)
                 else:
                     walk(item, here)
@@ -1069,8 +1074,9 @@ def credential_binding_changes(
     A service is listed when it gains or changes a credential reference, when it
     sets the base of the gateway's own internal key, when it already carries a
     credential and its origin moves, when its lifecycle driver is set, changed
-    or removed (a driver runs commands or sends a stored key), or when it sets a
-    field that makes the gateway write a file or read process command lines.
+    or removed (a driver runs commands or sends a stored key), when its
+    ``auth_inject`` rules change, or when it sets a field that makes the
+    gateway write a file or read process command lines.
     The value says which.
     """
     old = (normalize_service_registry(old_registry).get("services")) or {}
@@ -1088,6 +1094,9 @@ def credential_binding_changes(
             reasons.append("host")
         if lifecycle_driver_changed(before, record):
             reasons.append("lifecycle")
+        if (config.get("auth_inject") or None) != (before_config.get("auth_inject") or None):
+            # The rules name the keys the gateway sends to the host, and are never edited through the admin surface.
+            reasons.append("config.auth_inject")
         for key in OWNER_ONLY_CONFIG_KEYS:
             if config.get(key) and config.get(key) != before_config.get(key):
                 reasons.append(f"config.{key}")
