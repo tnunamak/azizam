@@ -556,6 +556,19 @@ def _agreed_lifecycle(service_id: str, record: Mapping[str, Any]) -> dict[str, A
     return out
 
 
+def legacy_lifecycle_from_service(record: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Read the one compatibility lifecycle source, including unmigrated rows."""
+    process = record.get("process")
+    if isinstance(process, Mapping) and isinstance(process.get("legacy_lifecycle"), Mapping):
+        return process["legacy_lifecycle"]
+    lifecycle = record.get("lifecycle")
+    if isinstance(lifecycle, Mapping):
+        return lifecycle
+    config = record.get("config")
+    nested = config.get("lifecycle") if isinstance(config, Mapping) else None
+    return nested if isinstance(nested, Mapping) else {}
+
+
 def _v2_process(lifecycle: Mapping[str, Any]) -> dict[str, Any] | None:
     if not lifecycle:
         return None

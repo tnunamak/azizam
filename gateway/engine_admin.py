@@ -570,7 +570,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     values["headers"] = [{"name": h.get("name"), "value": h.get("value", "")}
                          for h in config.get("headers") or () if isinstance(h, Mapping) and "value" in h]
     values["transforms"] = copy.deepcopy(config.get("transforms") or [])
-    lifecycle = record.get("lifecycle") or {}
+    lifecycle = service_registry.legacy_lifecycle_from_service(record)
     driver_config = lifecycle.get("driver_config") or {}
     if lifecycle.get("driver") == "command":
         values.update(lifecycle_mode="managed", lifecycle_start=driver_config.get("start", ""), lifecycle_stop=driver_config.get("stop", ""),
@@ -1051,15 +1051,16 @@ class EngineService:
             if existing is not None and keep_lifecycle:
                 # Start and stop untouched: keep the stored block exactly (other drivers, status, cwd, env).
                 # The config keeps its own copy of the block; carry that copy, so neither changes.
-                stored = old_config.get("lifecycle") if isinstance(old_config.get("lifecycle"), Mapping) else existing.get("lifecycle")
+                stored = service_registry.legacy_lifecycle_from_service(existing)
                 if isinstance(stored, Mapping):
                     raw["lifecycle"] = copy.deepcopy(dict(stored))
                 else:
                     raw.pop("lifecycle", None)
             elif existing is not None and "lifecycle" in raw:
-                old_driver_config = ((existing.get("lifecycle") or {}).get("driver_config") or {})
+                old_lifecycle = service_registry.legacy_lifecycle_from_service(existing)
+                old_driver_config = old_lifecycle.get("driver_config") or {}
                 for extra in ("status", "cwd", "env", "timeout_s"):
-                    if extra in old_driver_config and (existing.get("lifecycle") or {}).get("driver") == "command":
+                    if extra in old_driver_config and old_lifecycle.get("driver") == "command":
                         raw["lifecycle"]["driver_config"].setdefault(extra, copy.deepcopy(old_driver_config[extra]))
             record = self.store.write_engine(service_id=service_id, raw=raw, actor=ctx, expected_generation=expected_generation,
                                              replace=existing is not None, existing=existing)
