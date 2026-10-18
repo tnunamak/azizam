@@ -143,3 +143,13 @@ def test_the_native_lane_is_off_unless_the_engine_record_enables_it(fake_upstrea
         assert response.json()["error"]["code"] == "native_not_enabled"
 
     assert engine.requests == []
+
+
+def test_a_call_without_a_key_is_refused_before_the_engine_is_called(fake_upstreams, monkeypatch):
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
+
+    with patch.dict(proxy.config["backends"], {"garage": _engine(engine.base_url, native_passthrough=True)}):
+        response = TestClient(proxy.app).post(NATIVE_PATH, json=BODY)
+
+    assert response.status_code == 401, response.text
+    assert engine.requests == []
