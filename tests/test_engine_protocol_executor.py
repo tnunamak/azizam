@@ -1026,9 +1026,11 @@ def test_answer_headers_and_a_job_failure_reason_never_hold_the_key() -> None:
     clean(run(go()).detail)
 
 
-def test_the_http_client_log_never_holds_the_key(caplog) -> None:
+def test_the_http_client_log_never_holds_the_key(caplog, monkeypatch) -> None:
+    httpx_log = logging.getLogger("httpx")  # other code (a client library) may have turned it down; the key must not depend on that
+    monkeypatch.setattr(httpx_log, "disabled", False)
     ex, _ = make(QOPS, lambda r: httpx.Response(200, json={}), auth=QUERY_AUTH)
-    with caplog.at_level(logging.DEBUG):
+    with caplog.at_level(logging.INFO, logger="httpx"):
         run(ex.invoke(qconn(), req("x")))
     assert any(record.name == "httpx" for record in caplog.records)  # the client does log each request
     for record in caplog.records:
