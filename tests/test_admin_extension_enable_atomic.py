@@ -71,9 +71,13 @@ def test_extension_enable_commits_registry_index_and_both_audits_together(
     registry, index, audits = snapshot(sqlite_store)
     assert registry["operator_settings_generation"] == 1
     # The install snapshot is present even when the package owns no records yet.
-    assert index["value"]["packages"] == {"fixture-package": {"id": "fixture-package", "installed_records": EMPTY_RECORDS}}
+    assert index["value"]["packages"] == {"fixture-package": {
+        "id": "fixture-package", "installed_records_version": 2, "installed_records": EMPTY_RECORDS,
+    }}
     assert result["operator_settings_generation"] == 1
-    assert result["extension_package"] == {"id": "fixture-package", "installed_records": EMPTY_RECORDS}
+    assert result["extension_package"] == {
+        "id": "fixture-package", "installed_records_version": 2, "installed_records": EMPTY_RECORDS,
+    }
     assert sorted(event["action"] for event in audits) == [
         ENABLE_ACTION, "operator.service_registry.update",
     ]
