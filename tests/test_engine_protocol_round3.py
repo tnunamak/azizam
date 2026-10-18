@@ -369,6 +369,7 @@ def test_L2_executor_stream_receipt_matches_the_legacy_receipt_for_the_same_requ
 
 
 def test_L2_the_only_metadata_keys_that_differ_between_the_two_routes_are_the_documented_ones(monkeypatch, tmp_path):
+    # Documented: the executor names the engine and offering it ran (ENGINE_PROTOCOL_EXECUTOR.md, receipts).
     keys = _stream_receipt_metadata_keys(monkeypatch, tmp_path)
-    assert keys['executor_only'] == []
+    assert keys['executor_only'] == ['engine_id', 'execution_backend', 'offering_id', 'upstream_id']
     assert keys['legacy_only'] == []
