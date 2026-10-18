@@ -99,7 +99,7 @@ from gateway import rerank as rerank_api
 from gateway import stable_aliases
 from gateway import model_metadata
 from gateway import engine_check
-from gateway.engine_connection import inference_connection
+from gateway.engine_connection import InferenceConnectionError, inference_connection
 from gateway import speech_stream
 from gateway import custom_voices
 from gateway import voice_audio
@@ -27646,10 +27646,14 @@ async def _forward_current_loaded_openai_request(
                 return policy_error
             query = backend_query_string(request.url.query)
             record = (ADMIN_STORE.get_service_registry().get("services") or {}).get(target.backend)
-            connection = inference_connection(
-                record, request_path.removeprefix("/v1"), fallback_address=f"{target.host}/v1",
-                fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
-            )
+            try:
+                connection = inference_connection(
+                    record, request_path.removeprefix("/v1"), fallback_address=f"{target.host}/v1",
+                    fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
+                )
+            except InferenceConnectionError as exc:
+                owner.report(status="failed", reason="configuration_error")
+                return openai_error_response(str(exc), status_code=503, code="engine_credential_unavailable")
             url = connection.url
             if query:
                 url = f"{url}?{query}"
@@ -27662,6 +27666,7 @@ async def _forward_current_loaded_openai_request(
             )
             headers.setdefault("content-type", "application/json")
             headers.setdefault("accept", "application/json")
+            headers = {name.lower(): value for name, value in headers.items()}
             headers.update(connection.headers)
 
             if execution_body is None:
@@ -28521,10 +28526,17 @@ async def _forward_internal_litellm_local_upstream(
     # Read the saved service, not the boot-time host table: an owner edit
     # changes the final hop even while the model router retains its hop URL.
     record = (ADMIN_STORE.get_service_registry().get("services") or {}).get(backend)
-    connection = inference_connection(
-        record, "/chat/completions", fallback_address=f"{upstream_base}/v1",
-        fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
-    )
+    try:
+        connection = inference_connection(
+            record, "/chat/completions", fallback_address=f"{upstream_base}/v1",
+            fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
+        )
+    except InferenceConnectionError as exc:
+        _record_internal_hop_receipt(
+            request_path="/v1/chat/completions", parent_request_id=_internal_request_id_from_headers(request.headers),
+            body=body, status_code=503, terminal_reason="configuration_error",
+        )
+        return openai_error_response(str(exc), status_code=503, code="engine_credential_unavailable")
     execution_request = LlmExecutionRequest(
         method="POST",
         url=connection.url,

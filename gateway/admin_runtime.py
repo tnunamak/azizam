@@ -809,12 +809,10 @@ class AdminSQLiteStore:
     ) -> dict[str, Any]:
         """Normalize a registry about to be written; keep credential changes for the owner.
 
-        A credential reference names a secret the gateway holds, and the host of
-        its record decides where that secret is sent. An administrator may manage
-        services, but may not attach a credential to one, nor move a service that
-        carries one, nor give one a lifecycle driver (a driver runs commands or sends a
-        stored key to the record's host). When the owner does, the host the key is for
-        is recorded with it.
+        Administrators may add keyless external services and edit metadata.
+        Existing connection, offering and lifecycle settings belong to the
+        owner, whether or not a key is attached. The owner also binds each key
+        to the origin that may receive it.
         """
         value = service_registry.normalize_service_registry(registry)
         before_registry = self.get_service_registry()
@@ -832,7 +830,8 @@ class AdminSQLiteStore:
                     defaults = {"base_path": "/v1", "scheme": "http", "timeout": 600,
                                 "headers": [], "models": [], "transforms": []}
                     for section, keys in {
-                        "connection": ("address", "host", "port", "scheme", "base_path", "path_prefix", "protocol", "timeout", "headers"),
+                        "connection": ("address", "host", "port", "scheme", "base_path", "path_prefix", "protocol", "timeout", "headers",
+                                       "base_url", "api_base", "default_base_url", "gateway_lifecycle", "gateway_backend"),
                         "offerings": ("models", "transforms"),
                     }.items():
                         if any((old_config.get(key) or defaults.get(key)) != (new_config.get(key) or defaults.get(key))

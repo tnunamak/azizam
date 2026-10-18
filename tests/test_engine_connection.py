@@ -55,3 +55,16 @@ def test_plain_headers_cannot_override_credentials_or_http_framing(tmp_path):
 def test_legacy_base_path_already_contains_the_saved_prefix(tmp_path):
     result = connection({"host": "server.invalid", "port": 80, "base_path": "/provider/v1", "path_prefix": "/v1"}, tmp_path)
     assert result.url == "http://server.invalid:80/provider/v1/chat/completions"
+
+
+@pytest.mark.parametrize("timeout", ["invalid", True, False, -1, 0])
+def test_invalid_raw_timeouts_keep_the_transport_default(tmp_path, timeout):
+    assert connection({"address": "http://server.invalid/v1", "timeout": timeout}, tmp_path).read_timeout == 99
+
+
+def test_missing_stored_key_is_a_connection_error_not_an_unauthenticated_request(tmp_path):
+    from gateway.engine_connection import InferenceConnectionError
+    admin_store.init_db(tmp_path / "admin.db")
+    with pytest.raises(InferenceConnectionError, match="credential is unavailable"):
+        connection({"address": "http://server.invalid/v1", "api_key_secret_id": "missing",
+                    "credential_origin": "http://server.invalid:80"}, tmp_path)

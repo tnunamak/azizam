@@ -564,6 +564,15 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     definition = catalog.definition(infer_definition(catalog, record))
     assert definition is not None
     address = str(config.get("address") or service_registry.service_base_url(config) or "")
+    effective_base = service_registry.service_base_url(config)
+    if address and effective_base:
+        projected = _split_address(address, definition, str(config.get("path_prefix") or ""))
+        if comparable_address(service_registry.service_base_url(projected)) != comparable_address(effective_base):
+            if definition["record"]["base_path"] != "from_address":
+                address = origin_of(effective_base)
+            else:
+                prefix = "/" + str(config.get("path_prefix") or "").strip("/")
+                address = effective_base[:-len(prefix)] if prefix != "/" and effective_base.endswith(prefix) else effective_base
     values: dict[str, Any] = {"address": address}
     values["api_key_env"] = config.get("api_key_env") or ""
     values["path_prefix"] = config.get("path_prefix") or ""
@@ -614,9 +623,9 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         route = (catalog.capability(cap_id) or {}).get("route") or {}
         if route.get("path"):
             base = request_base
-            if definition["probes"].get("route_base"):
-                base = join_url(origin_of(address), definition["probes"]["route_base"])
             operations.append({"capability": cap_id, "method": "POST", "url": join_url(base, route["path"])})
+    v2 = service_registry.service_record_v2(record)
+    v2["connection"]["address"] = address
     return {
         "service_id": record.get("id"),
         "definition": definition["definition"],
@@ -636,7 +645,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "calls": call_line(definition, values),
         "other_settings": copy.deepcopy(other),
         "record": redacted_record(record),
-        "v2": service_registry.service_record_v2(record),
+        "v2": v2,
         "request_path": {"mode": "gateway_lifecycle" if hop_routed else "direct", "source": "service record",
                          "url": operations[0]["url"] if operations else "", "operations": operations},
         "credential_destination": key.get("origin") or origin_of(address),
@@ -958,7 +967,28 @@ class EngineService:
             raise EngineRouteError(status.HTTP_403_FORBIDDEN, "service_not_editable", "Azizam runs this engine itself. Only its name and Enabled can change.")
         before = engine_view(catalog, record, db_path=self.db_path)
         definition = _definition(catalog, body.get("definition") or before["definition"])
+        submitted = body.get("values") if isinstance(body.get("values"), Mapping) else {}
+        if not _is_owner(ctx) and not submitted and not any(key in body for key in ("models", "capabilities", "tests")) and not body.get("recheck"):
+            metadata = {key: body[key] for key in ("name", "enabled") if key in body}
+            if body.get("disabled"):
+                metadata["enabled"] = False
+            return self.store.update_service(service_id=service_id, data=metadata, actor=ctx, expected_generation=expected_generation)
+        if before["unsupported_fields"]:
+            if submitted or "models" in body or "capabilities" in body:
+                field = next(iter(submitted), "models" if "models" in body else "capabilities")
+                raise DraftError("The stored protocol has no matching definition schema for this setting.", field=field)
+            metadata = {key: body[key] for key in ("name", "enabled") if key in body}
+            if body.get("disabled"):
+                metadata["enabled"] = False
+            return self.store.update_service(service_id=service_id, data=metadata, actor=ctx, expected_generation=expected_generation)
         values = {**before["values"], **(body.get("values") if isinstance(body.get("values"), Mapping) else {})}
+        lifecycle_changed = any(
+            _same_text(values.get(key, _field_default(definition, key, "")))
+            != _same_text(before["values"].get(key, _field_default(definition, key, "")))
+            for key in _LIFECYCLE_FIELDS
+        )
+        if lifecycle_changed and not before["lifecycle_editable"]:
+            raise DraftError("The stored process uses argument lists or a different driver. These text fields cannot edit it safely.", field="lifecycle_mode")
         if "api_key" not in values:
             values["api_key"] = SECRET_MASK if before["key"]["state"] == "configured" and before["key"].get("source") == "stored" else ""
         _header_credentials_are_the_owners(ctx, body.get("values"))
@@ -1012,8 +1042,7 @@ class EngineService:
                            expected_generation=expected_generation, action="update", keep=keep,
                            extra_capabilities=extra_capabilities,
                            record_capabilities=None if capabilities_sent else list(record.get("capabilities") or ()),
-                           keep_lifecycle=all(str(values.get(k, "")) == str(before["values"].get(k, ""))
-                                              for k in _LIFECYCLE_FIELDS),
+                           keep_lifecycle=not lifecycle_changed,
                            key_dropped=bool(
                                key.withheld
                                and values.get("api_key") in ("", SECRET_MASK, None)

@@ -456,6 +456,9 @@ def _model_list_entries(
                 backend=gateway_backend,
             )
             litellm_params["api_key"] = _lifecycle_api_key(config, litellm_params["api_base"])
+            timeout = _engine_request_settings(config).get("timeout")
+            if timeout is not None:
+                litellm_params["timeout"] = timeout
             model_info.update(
                 {
                     "gateway_lifecycle": True,
@@ -555,7 +558,7 @@ def router_reply_timeout(registry: Mapping[str, Any], model_name: str) -> float 
         except ValueError:
             continue
         for deployment in deployments:
-            if str(deployment["model_group"]) == model_name and not (deployment["gateway_lifecycle"] or config.get("gateway_lifecycle")):
+            if str(deployment["model_group"]) == model_name:
                 return _engine_request_settings(config).get("timeout")
     return None
 

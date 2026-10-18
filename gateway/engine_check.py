@@ -1187,7 +1187,8 @@ async def run_real_test(
     prefix = str(values.get("path_prefix") or "").strip()
     base = join_url(address, prefix) if prefix else address
     if definition["probes"].get("route_base"):
-        url = join_url(join_url(origin_of(address), definition["probes"]["route_base"]), cap["route"]["path"])
+        route_base = join_url(origin_of(address), definition["probes"]["route_base"])
+        url = join_url(join_url(route_base, prefix), cap["route"]["path"])
     else:
         url = join_url(base, cap["route"]["path"])
     slots = {"model": model or ""}

@@ -506,6 +506,10 @@ def test_engine_records_remain_editable_regardless_of_router_path(gateway, fake_
     assert "not_editable_reason" not in view
     assert view["can_edit_offerings"] is (config.get("protocol") in (None, "", "openai-compatible"))
     assert bool(view["unsupported_fields"]) is (config.get("protocol") not in (None, "", "openai-compatible"))
+    if view["unsupported_fields"]:
+        rejected = _edit(owner, service_id, {"definition": view["definition"], "values": {"reply_timeout_s": 13}})
+        assert rejected.status_code == 400, rejected.text
+        assert _record(gateway, service_id) == before
     # Renaming stays possible through the plain service edit.
     renamed = _edit(owner, service_id, {"name": "Renamed"})
     assert renamed.status_code == 200, renamed.text
@@ -795,19 +799,20 @@ def test_invalid_probe_limit_configuration_keeps_safe_defaults(monkeypatch, inva
         assert engine_admin._probe_limit(name, default) == default
 
 
-@pytest.mark.parametrize("service_id", ["workshop", "second-engine"])
-def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstreams, monkeypatch, service_id):
+@pytest.mark.parametrize("service_id,definition", [("workshop", "openai-compatible"), ("second-engine", "own-model-list")])
+def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstreams, monkeypatch, service_id, definition):
     """An owner edit drives the final HTTP hop, including its real client timeout."""
     from unittest.mock import AsyncMock
     import proxy
 
     owner, *_ = owner_and_admin(gateway)
     old = _silent(fake_upstreams, "old-hop.fk.test")
+    request_path = "/provider/v1/chat/completions" if definition == "openai-compatible" else "/v1/chat/completions"
     upstream = fake_upstreams.asgi(scenario_from_data({
         "protocol": "openai-compatible", "name": "edited-hop",
         "provenance": {"source": "hand-written", "reference": "ENGINE_CONTRACT section 9: edits drive the effective request"},
         "exchanges": [{"id": "chat", "match": {
-            "method": "POST", "path": "/provider/v1/chat/completions",
+            "method": "POST", "path": request_path,
             "headers": {"x-workspace": "new-value", "authorization": {"$absent": True}, "cookie": {"$absent": True}},
             "json": {"model": "new-upstream"},
         }, "response": {"status": 200, "json": {"choices": [{"message": {"content": "edited"}}]}}}],
@@ -816,6 +821,7 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
     registry["services"][service_id] = service_registry.service_from_backend_config(service_id, {
         "name": "Hop engine", "host": "old-hop.fk.test", "port": 80, "base_path": "/v1",
         "address": f"{old.base_url}/v1", "protocol": "openai-compatible", "gateway_lifecycle": True,
+        "definition": definition,
         "capabilities": ["chat", "openai"], "timeout": 600,
         "models": [{"id": "offering", "model_group": "hop-chat", "upstream_model": "old-upstream"}],
         "lifecycle": {"driver": "process", "driver_config": {"start": ["server"], "port": {"fixed": 1234}}},
@@ -826,8 +832,9 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
     _put_registry(gateway, registry)
     before = _record(gateway, service_id)
     saved = _edit(owner, service_id, {
-        "definition": "openai-compatible", "disabled": True,
-        "values": {"address": f"{upstream.base_url}/provider", "path_prefix": "/v1", "reply_timeout_s": 37,
+        "definition": definition, "disabled": True,
+        "values": {"address": f"{upstream.base_url}/provider" if definition == "openai-compatible" else upstream.base_url,
+                   "path_prefix": "/v1" if definition == "openai-compatible" else "", "reply_timeout_s": 37,
                    "headers": [{"name": "X-Workspace", "value": "new-value"}]},
         "models": [{"id": "new-upstream", "public_name": "hop-chat"}],
     })
@@ -835,10 +842,14 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
     after = _record(gateway, service_id)
     assert after["process"] == before["process"]
     assert after["config"]["models"][0]["id"] == "offering"
+    rejected = _edit(owner, service_id, {"definition": definition, "disabled": True,
+                                       "values": {"lifecycle_mode": "managed", "lifecycle_start": "another command"}})
+    assert rejected.status_code == 400, rejected.text
+    assert _record(gateway, service_id)["process"] == before["process"]
     assert _edit(owner, service_id, {"enabled": True}).status_code == 200
     view = owner.get(f"/admin/api/engines/{service_id}").json()["engine"]
     assert view["request_path"]["mode"] == "gateway_lifecycle"
-    assert view["request_path"]["url"] == f"{upstream.base_url}/provider/v1/chat/completions"
+    assert view["request_path"]["url"] == f"{upstream.base_url}{request_path}"
     assert view["v2"]["offerings"][0]["id"] == "offering"
     assert view["lifecycle_editable"] is False
     monkeypatch.setenv("AZIZAM_INTERNAL_LITELLM_KEY", "internal-test-key")
@@ -889,3 +900,16 @@ def test_owner_fields_cannot_be_changed_through_registry_replacement(gateway, fa
     response = admin.put("/admin/api/operator/service-registry", headers=_write_headers(admin), json=registry)
     assert response.status_code == 403, response.text
     assert _record(gateway, "legacy-owner-fields") == before
+
+
+def test_legacy_host_edit_updates_the_effective_page_address(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    _silent(fake_upstreams, "before-legacy-edit.fk.test")
+    assert _create(owner, {"definition": "openai-compatible", "name": "legacy-address", "disabled": True,
+                           "values": {"address": "http://before-legacy-edit.fk.test/v1"}}).status_code == 201
+    changed = _edit(owner, "legacy-address", {"host": "after-legacy-edit.fk.test"})
+    assert changed.status_code == 200, changed.text
+    view = owner.get("/admin/api/engines/legacy-address").json()["engine"]
+    assert view["values"]["address"] == "http://after-legacy-edit.fk.test:80/v1"
+    assert view["v2"]["connection"]["address"] == view["values"]["address"]
+    assert view["request_path"]["url"] == "http://after-legacy-edit.fk.test:80/v1/chat/completions"

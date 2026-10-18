@@ -122,7 +122,10 @@ def test_the_hop_keeps_its_own_limit_when_the_engine_sets_none_or_a_shorter_one(
         "name": "Hopped", "host": "h.fk.test", "port": 80, "base_path": "/v1", "protocol": "openai-compatible",
         "capabilities": ["chat"], "gateway_lifecycle": True, "timeout": 900,
         "models": [{"model_group": "hopped-chat", "upstream_model": "hopped"}]}, source="ui")}}
-    assert router_reply_timeout(hopped, "hopped-chat") is None, "the lifecycle hop applies its own time"
+    assert router_reply_timeout(hopped, "hopped-chat") == 900.0, "the outer hop must wait for the configured engine timeout"
+    compiled = compile_litellm_config_from_registry(hopped)
+    entry = next(row for row in compiled["model_list"] if row["model_name"] == "hopped-chat")
+    assert entry["litellm_params"]["timeout"] == 900.0
 
 
 def test_a_header_stored_by_a_raw_edit_is_sent_only_when_it_is_safe():
