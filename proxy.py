@@ -435,6 +435,33 @@ def _overlay_service_registry(raw_config: Mapping[str, Any]) -> dict[str, Any]:
 REGISTRY_APPLY_PROBLEM: dict[str, Any] | None = None
 
 
+def _partial_runtime_config(
+    raw_config: Mapping[str, Any], failure: str, *, require_exclusions: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The config for the stored services that validate, and the ``partial`` problem that says what was left out.
+
+    Raises when the store cannot be read, or (``require_exclusions``) when no stored record is left out, which
+    means the failure was not the records': the caller then keeps what it had. The LiteLLM config file is not
+    written: a partial registry must not overwrite what the running LiteLLM reloads.
+    """
+    stored = admin_store.get_service_registry_with_generation(path=ADMIN_DB_PATH)
+    if stored is None:
+        raise LookupError("no stored service registry")
+    registry, left_out = service_registry.servable_part_of_registry(stored["value"])
+    if require_exclusions and not left_out:
+        raise LookupError("no stored record is left out")
+    effective = service_registry.apply_service_registry_to_config(raw_config, registry)
+    stable_aliases.fold_workflow_aliases(effective)
+    return effective, {"mode": "partial", "error": failure, "left_out": left_out, "served": len(registry["services"])}
+
+
+def _log_left_out(left_out: Mapping[str, str]) -> None:
+    for name, reason in left_out.items():
+        kind, _, record_id = name.partition(":")
+        label = f"{kind} {record_id!r}" if kind in ("frontend", "workflow", "capability") and record_id else f"service {name!r}"
+        print(f"[proxy] ERROR: {label} left out of the running config: {reason}", flush=True)
+
+
 def _boot_effective_runtime_config(raw_config: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """The config to boot with, and the problem to report (None when the registry applied whole).
 
@@ -448,15 +475,8 @@ def _boot_effective_runtime_config(raw_config: Mapping[str, Any]) -> tuple[dict[
         return _load_effective_runtime_config(raw_config), None
     except Exception as error:  # noqa: BLE001 - boot continues, degraded and loud
         failure = f"{type(error).__name__}: {error}"[:300]
-    left_out: dict[str, str] = {}
     try:
-        stored = admin_store.get_service_registry_with_generation(path=ADMIN_DB_PATH)
-        if stored is None:
-            raise LookupError("no stored service registry")
-        registry, left_out = service_registry.servable_part_of_registry(stored["value"])
-        effective = service_registry.apply_service_registry_to_config(raw_config, registry)
-        stable_aliases.fold_workflow_aliases(effective)
-        problem = {"mode": "partial", "error": failure, "left_out": left_out, "served": len(registry["services"])}
+        effective, problem = _partial_runtime_config(raw_config, failure, require_exclusions=False)
     except Exception as partial_error:  # noqa: BLE001
         effective = service_registry.apply_service_registry_to_config(raw_config, {"services": {}})
         problem = {
@@ -469,8 +489,7 @@ def _boot_effective_runtime_config(raw_config: Mapping[str, Any]) -> tuple[dict[
         + f". Cause: {problem['error']}",
         flush=True,
     )
-    for service_id, reason in left_out.items():
-        print(f"[proxy] ERROR: service {service_id!r} left out of the running config: {reason}", flush=True)
+    _log_left_out(problem["left_out"])
     return effective, problem
 
 
@@ -1045,6 +1064,10 @@ def _prepare_frontend_mounts(effective_cfg: Mapping[str, Any]):
 # One reload at a time. Two saves close together would otherwise each read the registry, then publish in
 # either order, and the config that stays live could be the older read. Under the lock each reload reads
 # the registry after the one before it has published, so the last one to run is the one that matches the store.
+# Reloads start in two places: the async admin routes, on the event loop, and the sync ones (DELETE of a
+# service, for one), in a worker thread. A loop-side reload waits for a worker's, which is one reload long
+# and never waits on the loop, so it cannot deadlock. An RLock lets a reload that calls itself through the
+# admin store pass.
 _RELOAD_LOCK = threading.RLock()
 
 
@@ -1058,11 +1081,12 @@ def reload_runtime_config() -> dict:
 
     Returns the dict of updated names → new values (for logging / tests).
 
-    A reload that fails for any reason (the registry cannot be applied, a route
-    cannot be built) raises and leaves the old config, constants and routes
-    serving. It is reported on the Overview as ``stale`` until a reload
-    succeeds. Boot decides what to serve when the registry cannot be applied;
-    a reload never falls back to the bootstrap file.
+    A stored registry with records that do not validate applies the ones that do,
+    as a restart would, and the Overview lists the rest (``partial``). Any other
+    failure (the store cannot be read, a route cannot be built) raises and leaves
+    the old config, constants and routes serving; the Overview reports it as
+    ``stale`` until a reload succeeds. A reload never falls back to the bootstrap
+    file.
 
     Note: the LiteLLM subprocess config file is NOT reloaded here — that
     requires a separate litellm restart.  Native-routed and capability-routed
@@ -1071,7 +1095,8 @@ def reload_runtime_config() -> dict:
     global REGISTRY_APPLY_PROBLEM
     with _RELOAD_LOCK:
         try:
-            updates = _apply_stored_registry()
+            new_cfg, problem = _runtime_config_for_reload()
+            updates = _publish_runtime_config(new_cfg)
         except Exception as error:  # noqa: BLE001 - reported, then re-raised for the caller
             if REGISTRY_APPLY_PROBLEM is None or REGISTRY_APPLY_PROBLEM.get("mode") == "stale":
                 # A boot that served only part of the registry keeps saying so: that is still the running state.
@@ -1081,14 +1106,34 @@ def reload_runtime_config() -> dict:
                 }
             print(f"[proxy] ERROR: runtime config reload failed; the previous config is still serving: {error}", flush=True)
             raise
-        REGISTRY_APPLY_PROBLEM = None
+        REGISTRY_APPLY_PROBLEM = problem
         return updates
 
 
-def _apply_stored_registry() -> dict:
-    # Re-overlay the service registry onto the bootstrap YAML config.
-    new_cfg = _load_effective_runtime_config(_bootstrap_config)
+def _runtime_config_for_reload() -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The registry's config for a reload, and the problem to report (None when the registry applied whole).
 
+    A stored registry with records that do not validate applies the ones that do, as a restart would, so an
+    edit to a good service is live while the bad record waits for the operator. A failure that is not the
+    records' (the store cannot be read, a route cannot be built) raises and the old config stays.
+    """
+    try:
+        return _load_effective_runtime_config(_bootstrap_config), None
+    except Exception as strict_error:  # noqa: BLE001
+        failure = f"{type(strict_error).__name__}: {strict_error}"[:300]
+        try:
+            partial = _partial_runtime_config(_bootstrap_config, failure, require_exclusions=True)
+        except Exception:  # noqa: BLE001 - not a matter of the records: keep what is running
+            partial = None
+        if partial is None:
+            raise strict_error from None
+    print(f"[proxy] ERROR: the stored service registry is only partly valid, so the reload applies the stored "
+          f"services that validate. Cause: {partial[1]['error']}", flush=True)
+    _log_left_out(partial[1]["left_out"])
+    return partial
+
+
+def _publish_runtime_config(new_cfg: dict[str, Any]) -> dict:
     # Derive every backend constant from the candidate BEFORE publishing
     # anything: a bad config must raise here and leave the old config and
     # constants serving, never a new config paired with old constants.
@@ -2726,12 +2771,18 @@ def resolve_stable_alias(
     """Resolve through ``model_aliases``; raises AliasUnavailableError."""
     if isinstance(requested_model, str):
         provider_id, separator, _ = requested_model.partition("/")
-        if (
-            separator
-            and providers.canonical_provider_id(provider_id)
-            in providers.provider_refs(ADMIN_STORE.get_service_registry())
-        ):
-            return None
+        if separator:
+            if providers.canonical_provider_id(provider_id) in providers.provider_refs(ADMIN_STORE.get_service_registry()):
+                return None
+            # Only a prefix that is no known provider is looked up among the services the registry leaves out.
+            left_out = next((item for item in ADMIN_STORE.get_service_registry_exclusions()
+                             if item.section == "services" and item.id == service_registry.normalize_id(provider_id)), None)
+            if left_out is not None:
+                raise stable_aliases.AliasUnavailableError(
+                    f"Service {left_out.id!r} is left out of the gateway's registry because it does not validate "
+                    f"({left_out.error}). The operator can fix or remove it under Services.",
+                    code="model_not_deployed", details={"service": left_out.id},
+                )
     return stable_aliases.resolve_alias(
         config.get("model_aliases"),
         operation,
@@ -12936,21 +12987,17 @@ WEB_UI_DIR = Path(__file__).resolve().parent / "web" / "out"
 from gateway import ui_routes
 
 def _stored_registry_for_boot() -> dict[str, Any] | None:
-    """The stored registry for a reader that runs at import: whole when it normalizes, else the part that does.
+    """The stored registry for a reader that runs at import: the records that validate (the read leaves out the rest).
 
-    Only a boot that already reported ``REGISTRY_APPLY_PROBLEM`` may read the part (or, when the store
-    cannot be read at all, none of it); any other failure raises, as it did.
+    A store that cannot be read at all raises, unless the boot already reported it (the ``empty`` mode):
+    then the bundled routes mount and nothing stored does.
     """
     try:
         return service_registry.load_service_registry(path=ADMIN_DB_PATH)
     except Exception:  # noqa: BLE001
         if REGISTRY_APPLY_PROBLEM is None:
             raise
-        try:
-            stored = admin_store.get_service_registry_with_generation(path=ADMIN_DB_PATH)
-            return service_registry.servable_part_of_registry(stored["value"])[0] if stored else None
-        except Exception:  # noqa: BLE001 - the store cannot be read: the bundled routes mount, nothing stored does
-            return None
+        return None
 
 
 _PROTOCOL_ROUTE_REGISTRY = _stored_registry_for_boot() or service_registry.build_service_registry_seed(config)
@@ -12967,12 +13014,16 @@ _MANIFEST_WORKFLOWS_DIR = Path(__file__).resolve().parent / "manifests" / "workf
 def _load_gateway_workflow_registry() -> WorkflowRegistry:
     try:
         registry = WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR)
-        admin_registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
-        if admin_registry is not None:
-            for record in service_registry.workflow_records_from_registry(admin_registry):
-                if registry.get(record.id) is not None:
-                    continue
-                registry.add_manifest(record.manifest, source_path=record.source_path)
+        try:
+            # Stored workflows are read record by record; a registry that cannot be read at all costs only them.
+            admin_registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
+            if admin_registry is not None:
+                for record in service_registry.workflow_records_from_registry(admin_registry):
+                    if registry.get(record.id) is not None:
+                        continue
+                    registry.add_manifest(record.manifest, source_path=record.source_path)
+        except Exception as e:  # noqa: BLE001
+            print(f"[proxy] Stored workflows unavailable; the bundled ones are kept: {e}", flush=True)
         if registry.errors:
             print(
                 f"[proxy] Gateway workflow registry loaded with {len(registry.errors)} error(s)",

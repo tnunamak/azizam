@@ -23,6 +23,7 @@ import json
 import re
 import time
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from typing import Any
 import yaml
 
 from gateway import admin_store, engine_check, engine_redaction, native_lane
+from gateway.provenance import looks_like_credential
 from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
@@ -112,7 +114,7 @@ def load_service_registry(*, path: Path = admin_store.DB_PATH) -> dict[str, Any]
     record = admin_store.get_service_registry_json_with_generation(path=path)
     if record is None:
         return None
-    snapshot, default_timestamp = _normalized_registry_snapshot(
+    snapshot, _excluded, default_timestamp = _normalized_registry_snapshot(
         record["operator_settings_generation"], record["value_json"],
     )
     # Existing callers may edit these dictionaries before submitting a CAS
@@ -123,8 +125,19 @@ def load_service_registry(*, path: Path = admin_store.DB_PATH) -> dict[str, Any]
     return registry
 
 
+def load_service_registry_exclusions(*, path: Path = admin_store.DB_PATH) -> list[ExcludedRecord]:
+    """The stored records ``load_service_registry`` leaves out, each with its reason; none for a healthy registry."""
+    record = admin_store.get_service_registry_json_with_generation(path=path)
+    if record is None:
+        return []
+    _registry, excluded, _default = _normalized_registry_snapshot(
+        record["operator_settings_generation"], record["value_json"],
+    )
+    return [replace(item, record=copy.deepcopy(item.record)) for item in excluded]
+
+
 @lru_cache(maxsize=16)
-def _normalized_registry_snapshot(generation: int, document: str) -> tuple[dict[str, Any], bool]:
+def _normalized_registry_snapshot(generation: int, document: str) -> tuple[dict[str, Any], tuple["ExcludedRecord", ...], bool]:
     # The CAS generation and JSON are read by one SELECT. Including the JSON
     # also separates databases and protects against a restored/recreated DB
     # reusing a generation. No TTL or process-local writer notification.
@@ -135,7 +148,11 @@ def _normalized_registry_snapshot(generation: int, document: str) -> tuple[dict[
         value = {}
     if not isinstance(value, dict):
         value = {}
-    return normalize_service_registry(value), not bool(value.get("updated_at"))
+    registry, excluded = read_registry(value)
+    for record in excluded:
+        # Once per stored document, not once per request: this body runs only when the cache misses.
+        print(f"[service_registry] ERROR: {record.section} record {record.id!r} is left out of the registry: {record.error}", flush=True)
+    return registry, tuple(excluded), not bool(value.get("updated_at"))
 
 
 def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, Any]:
@@ -180,14 +197,115 @@ def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, An
 
 
 def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
+    """The whole registry, normalized. Raises on the first record that does not validate (see ``read_registry``)."""
+    return _read_registry(value, strict=True)[0]
+
+
+# The sections of a registry document, with the word the Overview puts before a record's id.
+_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("services", "service"),
+    ("protocol_frontends", "frontend"),
+    ("workflows", "workflow"),
+    ("capabilities", "capability"),
+)
+
+
+@dataclass(frozen=True)
+class ExcludedRecord:
+    """One stored record the gateway does not use because it does not validate, with the reason and the stored value."""
+
+    section: str
+    key: str
+    id: str
+    error: str
+    record: Any
+
+    @property
+    def name(self) -> str:
+        """The key the Overview lists it under: a service by its id, any other record as ``kind:id``."""
+        kind = dict(_SECTIONS)[self.section]
+        return self.id if self.section == "services" else f"{kind}:{self.id}"
+
+
+def read_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any], list[ExcludedRecord]]:
+    """The records of a stored registry that validate, and each one that does not, with why.
+
+    A record that is not an object, has no usable id, fails its own checks, or shares a public model
+    alias with another service is left out; the rest are normalized exactly as ``normalize_service_registry``
+    does. This is the read every request and operator path uses, so one bad record never stops the others.
+    Nothing is written back: a writer carries the excluded records through (``gateway/admin_runtime.py``).
+    """
+    return _read_registry(value, strict=False)
+
+
+def servable_part_of_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """``read_registry`` with the exclusions as ``{name: error}`` (a service by id, any other as ``kind:id``)."""
+    registry, excluded = read_registry(value)
+    return registry, {record.name: record.error for record in excluded}
+
+
+def public_excluded_record(item: ExcludedRecord) -> dict[str, Any]:
+    """An excluded record as a caller may read it: the reason and the stored value, with every secret hidden.
+
+    The record failed its checks, so nothing says what it holds. A key or token written into it as text is
+    hidden by name and by shape, and commands and environments by the rules for engine records.
+    """
+    def hide(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {
+                key: engine_redaction.REDACTED
+                if is_secret_key(str(key)) and not is_secret_reference_key(str(key)) and isinstance(item_value, (str, int, float)) and item_value != ""
+                else hide(item_value)
+                for key, item_value in value.items()
+            }
+        if isinstance(value, list):
+            return [hide(entry) for entry in value]
+        if isinstance(value, str) and looks_like_credential(value):
+            return engine_redaction.REDACTED
+        return value
+
+    record = item.record
+    if isinstance(record, Mapping):
+        try:
+            record = engine_redaction.redact_service(record)
+        except Exception:  # noqa: BLE001 - a record of the wrong shape has no command block to hide
+            pass
+    return {"section": item.section, "id": item.id, "error": item.error, "record": hide(record)}
+
+
+def _read_registry(value: Mapping[str, Any], *, strict: bool) -> tuple[dict[str, Any], list[ExcludedRecord]]:
+    """Both reads in one place. ``strict`` raises where the lenient read leaves a record out."""
     schema_version = int(value.get("schema_version") or SERVICE_REGISTRY_SCHEMA_VERSION)
-    services = {}
-    for raw_id, raw in (value.get("services") or {}).items():
-        if not isinstance(raw, Mapping):
-            continue
-        service_id = normalize_id(raw.get("id") or raw_id)
-        if not service_id:
-            continue
+    excluded: list[ExcludedRecord] = []
+    stored_services: dict[str, tuple[str, Any]] = {}
+
+    def read(section: str, build: Any) -> dict[str, Any]:
+        kept: dict[str, Any] = {}
+        collection = value.get(section) or {}
+        if not isinstance(collection, Mapping):
+            raise ValueError(f"registry {section} must be an object")
+        kind = dict(_SECTIONS)[section]
+        for raw_key, raw in collection.items():
+            record_id = normalize_id(raw.get("id") or raw_key) if isinstance(raw, Mapping) else normalize_id(raw_key)
+            try:
+                if not isinstance(raw, Mapping):
+                    raise ValueError(f"{kind} {raw_key!r} is not an object")
+                if not record_id:
+                    raise ValueError(f"{kind} {raw_key!r} has no usable id")
+                key, record = build(record_id, raw)
+            except Exception as error:  # noqa: BLE001 - one record's refusal never decides the others
+                if strict:
+                    raise
+                message = str(error) if isinstance(error, ValueError) else f"{type(error).__name__}: {error}"
+                excluded.append(ExcludedRecord(section, str(raw_key), record_id or str(raw_key), message[:300], copy.deepcopy(raw)))
+                continue
+            kept[key] = record
+            if section == "services":
+                stored_services[key] = (str(raw_key), raw)
+        return kept
+
+    def build_service(service_id: str, raw: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+        check_service_shape(service_id, raw)  # before the migration below, which would rewrite a block of the wrong shape
         prepared = raw
         if schema_version >= ENGINE_RECORD_VIEW_VERSION:
             prepared = copy.deepcopy(dict(raw))
@@ -199,40 +317,39 @@ def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
                 temporary = {"schema_version": 1, "services": {service_id: prepared}}
                 migrate_engine_records_v2(temporary)
                 prepared = temporary["services"][service_id]
-        services[service_id] = normalize_service_record(service_id, prepared, schema_version=schema_version)
+        record = normalize_service_record(service_id, prepared, schema_version=schema_version)
+        if not strict:
+            _validate_model_policy_schema_markers({service_id: record})
+            _validate_model_policy_graphs({service_id: record})
+        return service_id, record
 
-    frontends = {}
-    for raw_id, raw in (value.get("protocol_frontends") or {}).items():
-        if not isinstance(raw, Mapping):
-            continue
-        frontend_id = normalize_id(raw.get("id") or raw_id)
-        if not frontend_id:
-            continue
-        frontends[frontend_id] = normalize_protocol_frontend(frontend_id, raw)
+    def build_with_id(normalize: Any) -> Any:
+        def build(record_id: str, raw: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+            record = normalize(record_id, raw)
+            return record["id"], record
+        return build
 
-    workflows = {}
-    for raw_id, raw in (value.get("workflows") or {}).items():
-        if not isinstance(raw, Mapping):
-            continue
-        workflow_id = normalize_id(raw.get("id") or raw_id)
-        if not workflow_id:
-            continue
-        record = normalize_workflow_record(workflow_id, raw)
-        workflows[record["id"]] = record
+    def build_frontend(frontend_id: str, raw: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+        return frontend_id, normalize_protocol_frontend(frontend_id, raw)
 
-    capabilities = {}
-    for raw_id, raw in (value.get("capabilities") or {}).items():
-        if not isinstance(raw, Mapping):
-            continue
-        capability_id = normalize_id(raw.get("id") or raw_id)
-        if not capability_id:
-            continue
-        record = normalize_capability_record(capability_id, raw)
-        capabilities[record["id"]] = record
+    services = read("services", build_service)
+    frontends = read("protocol_frontends", build_frontend)
+    workflows = read("workflows", build_with_id(normalize_workflow_record))
+    capabilities = read("capabilities", build_with_id(normalize_capability_record))
 
-    _validate_model_policy_schema_markers(services)
-    _validate_model_policy_graphs(services)
-    _validate_public_alias_uniqueness(services)
+    if strict:
+        _validate_model_policy_schema_markers(services)
+        _validate_model_policy_graphs(services)
+        _validate_public_alias_uniqueness(services)
+    else:
+        for _alias, owner, other in _public_alias_conflicts(services):
+            for service_id in (owner, other):
+                if service_id in services:
+                    del services[service_id]
+                    stored_key, stored = stored_services[service_id]
+                    excluded.append(ExcludedRecord(
+                        "services", stored_key, service_id,
+                        "its public model alias is also claimed by another service", copy.deepcopy(stored)))
 
     return {
         "schema_version": schema_version,
@@ -243,7 +360,7 @@ def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
         "seeded_from": str(value.get("seeded_from") or ""),
         "seed_hash": str(value.get("seed_hash") or ""),
         "updated_at": int(value.get("updated_at") or time.time()),
-    }
+    }, excluded
 
 
 def _validate_model_policy_schema_markers(services: Mapping[str, Mapping[str, Any]]) -> None:
@@ -365,56 +482,6 @@ def _validate_public_alias_uniqueness(services: Mapping[str, Mapping[str, Any]])
             f"public alias {alias!r} is ambiguous across services "
             f"{owner!r} and {service_id!r}"
         )
-
-
-def servable_part_of_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
-    """The stored records that validate, and why each of the others was left out (keyed by ``id`` or ``kind:id``).
-
-    Boot uses this when the whole registry will not normalize (``normalize_service_registry`` refuses it
-    all for one bad record). A service that fails its own checks is left out, and so is every service in
-    an ambiguous public alias, because neither can be trusted to route. The frontends, workflows and
-    capabilities are read record by record the same way. Nothing is written back.
-    """
-    left_out: dict[str, str] = {}
-
-    def keep(kind: str, collection: Any, normalize: Any) -> dict[str, Any]:
-        kept: dict[str, Any] = {}
-        for raw_id, raw in (collection or {}).items():
-            if not isinstance(raw, Mapping):
-                continue
-            record_id = normalize_id(raw.get("id") or raw_id)
-            if not record_id:
-                continue
-            try:
-                record = normalize(record_id, raw)
-            except Exception as error:  # noqa: BLE001 - any refusal of this record leaves it out; the rest still serve
-                left_out[record_id if kind == "service" else f"{kind}:{record_id}"] = f"{type(error).__name__}: {error}"[:300]
-                continue
-            kept[record["id"] if kind in ("workflow", "capability") else record_id] = record
-        return kept
-
-    def service(service_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
-        record = normalize_service_record(service_id, raw)
-        _validate_model_policy_schema_markers({service_id: record})
-        _validate_model_policy_graphs({service_id: record})
-        return record
-
-    services = keep("service", value.get("services"), service)
-    for _alias, owner, other in _public_alias_conflicts(services):
-        for service_id in (owner, other):
-            if service_id in services:
-                del services[service_id]
-                left_out[service_id] = "its public model alias is also claimed by another service"
-    return {
-        "schema_version": int(value.get("schema_version") or SERVICE_REGISTRY_SCHEMA_VERSION),
-        "services": services,
-        "protocol_frontends": keep("frontend", value.get("protocol_frontends"), normalize_protocol_frontend),
-        "workflows": keep("workflow", value.get("workflows"), normalize_workflow_record),
-        "capabilities": keep("capability", value.get("capabilities"), normalize_capability_record),
-        "seeded_from": str(value.get("seeded_from") or ""),
-        "seed_hash": str(value.get("seed_hash") or ""),
-        "updated_at": int(value.get("updated_at") or time.time()),
-    }, left_out
 
 
 def backfill_seed_catalog_metadata(
@@ -1010,7 +1077,33 @@ def service_from_backend_config(
     return record
 
 
+_PROTOCOL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:+-]{0,63}")
+# Where a record of kind ``engine`` can say which address it is at.
+_ADDRESS_KEYS = ("host", "url", "address", "base_url", "api_base", "default_base_url", "base_url_env")
+
+
+def check_service_shape(service_id: str, raw: Mapping[str, Any]) -> None:
+    """Refuse a stored service whose blocks have the wrong shape, rather than read them as empty and rewrite them on the next save.
+
+    The protocol name is checked for its form only: which names an engine can speak is data (protocol
+    descriptions, packages), and the gateway keeps no list of them in code.
+    """
+    where = f"service {service_id!r}"
+    for field in ("config", "lifecycle", "secret_refs", "provenance"):
+        if raw.get(field) is not None and not isinstance(raw[field], Mapping):
+            raise ValueError(f"{where}: {field} must be an object")
+    config = raw.get("config") if isinstance(raw.get("config"), Mapping) else {}
+    if config.get("models") is not None and not isinstance(config["models"], (list, Mapping)):
+        raise ValueError(f"{where}: models must be a list")
+    protocol = config.get("protocol")
+    if protocol is not None and not (isinstance(protocol, str) and _PROTOCOL_NAME.fullmatch(protocol)):
+        raise ValueError(f"{where}: protocol must be a plain name such as 'openai-compatible'")
+    if str(raw.get("kind") or "") == "engine" and not any(str(config.get(key) or "").strip() for key in _ADDRESS_KEYS):
+        raise ValueError(f"{where}: an engine needs a host or an address")
+
+
 def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_version: int | None = None) -> dict[str, Any]:
+    check_service_shape(service_id, raw)
     if schema_version is None:
         schema_version = 2 if any(key in raw for key in ("process", "observations", "residency")) else 1
     source = str(raw.get("source") or "ui")

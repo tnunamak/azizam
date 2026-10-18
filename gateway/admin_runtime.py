@@ -22,7 +22,7 @@ import json
 import time
 import sqlite3
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import Any, Iterable, Mapping
 
 from fastapi import Request, status
@@ -790,6 +790,41 @@ class AdminSQLiteStore:
             }
         return registry
 
+    def get_service_registry_exclusions(self) -> list[service_registry.ExcludedRecord]:
+        """The stored records ``get_service_registry`` leaves out because they do not validate, each with why."""
+        return service_registry.load_service_registry_exclusions(path=self.path)
+
+    def _excluded_service(self, service_id: str) -> service_registry.ExcludedRecord | None:
+        wanted = service_registry.normalize_id(service_id)
+        return next((item for item in self.get_service_registry_exclusions()
+                     if item.section == "services" and item.id == wanted), None)
+
+    def _with_excluded_records(
+        self, value: Mapping[str, Any], *, removing: Collection[tuple[str, str]] = (),
+    ) -> tuple[dict[str, Any], list[service_registry.ExcludedRecord]]:
+        """The document to store for ``value``, and the excluded records it carries along.
+
+        ``value`` holds the records that validate. A stored record that does not is neither fixed nor
+        removed by a save that does not name it, so it goes back into the document exactly as it was
+        stored. It is dropped only when the caller removes it (``removing``: section and id) or replaces
+        it with a record of the same id.
+        """
+        document = dict(value)
+        kept: list[service_registry.ExcludedRecord] = []
+        for item in self.get_service_registry_exclusions():
+            if (item.section, item.id) in removing:
+                continue
+            section = dict(document.get(item.section) or {})
+            if any(service_registry.normalize_id((row.get("id") if isinstance(row, Mapping) else None) or key) == item.id
+                   for key, row in section.items()):
+                continue  # the caller replaced it with a record that validates
+            if item.key in section:
+                raise ValueError(f"cannot keep the stored {item.section} record {item.key!r}, which is left out: its key is in use")
+            section[item.key] = item.record
+            document[item.section] = section
+            kept.append(item)
+        return document, kept
+
     def get_provider_admin_state(self) -> dict[str, Any]:
         return provider_admin_setting_from_store(path=self.path)
 
@@ -881,8 +916,9 @@ class AdminSQLiteStore:
         expected_generation: int,
     ) -> dict[str, Any]:
         value = self._settle_credential_bindings(data, actor)
+        document, excluded = self._with_excluded_records(value)
         record = admin_store.write_service_registry_with_audit(
-            value,
+            document,
             expected_generation=expected_generation,
             updated_by=actor.subject,
             audit_action="operator.service_registry.update",
@@ -899,7 +935,8 @@ class AdminSQLiteStore:
             },
             path=self.path,
         )
-        self.write_litellm_config(record["value"])
+        record = {**record, "value": value, "excluded": excluded}
+        self.write_litellm_config(value)
         self._fire_registry_changed(record)
         return record
 
@@ -938,10 +975,12 @@ class AdminSQLiteStore:
         service_id: str,
         expected_generation: int,
         extra: Mapping[str, Any] | None = None,
+        removing: Collection[tuple[str, str]] = (),
     ) -> dict[str, Any]:
         value = self._settle_credential_bindings(registry, actor)
+        document, excluded = self._with_excluded_records(value, removing=removing)
         record = admin_store.write_service_registry_with_audit(
-            value,
+            document,
             expected_generation=expected_generation,
             updated_by=actor.subject,
             audit_action=action,
@@ -955,7 +994,9 @@ class AdminSQLiteStore:
             },
             path=self.path,
         )
-        self.write_litellm_config(record["value"])
+        # The returned record is what the gateway uses: the records that validate. The excluded ones are listed beside it.
+        record = {**record, "value": value, "excluded": excluded}
+        self.write_litellm_config(value)
         self._fire_registry_changed(record)
         return record
 
@@ -967,6 +1008,7 @@ class AdminSQLiteStore:
             data.get("id") or data.get("name")
         )
         raw = service_registry.service_form_to_raw(data)
+        self._refuse_excluded_id(service_id)
         current_registry = self.get_service_registry()
         if service_id not in current_registry.get("services", {}) and raw.get("models"):
             # Newly authored model mappings use the current schema. Existing
@@ -986,6 +1028,14 @@ class AdminSQLiteStore:
             expected_generation=expected_generation,
         )
 
+    def _refuse_excluded_id(self, service_id: str) -> None:
+        """Adding a service under the id of one that is left out would replace it without the operator saying so."""
+        held = self._excluded_service(service_id)
+        if held is not None:
+            raise ValueError(
+                f"service {held.id!r} already exists but is left out of the registry ({held.error}); "
+                "fix it or remove it first")
+
     def write_engine(
         self, *, service_id: str, raw: Mapping[str, Any], actor: AdminContext,
         expected_generation: int, replace: bool, existing: Mapping[str, Any] | None = None,
@@ -995,6 +1045,8 @@ class AdminSQLiteStore:
         ``raw`` is the whole record, already built and checked; the credential and
         lifecycle rules for administrators are applied here as for every write.
         """
+        if not replace:
+            self._refuse_excluded_id(service_id)
         registry, record = service_registry.upsert_service_in_registry(
             self.get_service_registry(), service_id=service_id, raw=raw, source="ui", replace=replace,
         )
@@ -1022,10 +1074,14 @@ class AdminSQLiteStore:
         sid = service_registry.normalize_id(service_id)
         current_registry = self.get_service_registry()
         existing = (current_registry.get("services") or {}).get(sid)
+        left_out = self._excluded_service(sid) if existing is None else None
+        if left_out is not None and isinstance(left_out.record, Mapping):
+            # The way to fix a record that is left out: edit it, starting from what is stored.
+            existing = left_out.record
         if existing is not None and not service_registry.is_litellm_service_record(
             sid, existing
         ):
-            existing_config = existing.get("config") or {}
+            existing_config = existing.get("config") if isinstance(existing.get("config"), Mapping) else {}
             # H1 (honesty law): start from ALL top-level record fields and EVERY
             # config key so that unmodeled/unknown fields are never silently
             # dropped by a partial PATCH.  The explicit caller-supplied data
@@ -1069,7 +1125,7 @@ class AdminSQLiteStore:
             service_id=service_id,
             raw=raw,
             source="ui",
-            replace=True,
+            replace=left_out is None,  # a record that is left out is not in the registry yet: this edit adds it back
         )
         if existing is not None and not service_registry.is_litellm_service_record(sid, existing):
             service_registry.carry_unnamed_record_fields(existing, record, named=data)
@@ -1085,21 +1141,30 @@ class AdminSQLiteStore:
         self, *, service_id: str, actor: AdminContext,
         expected_generation: int,
     ) -> dict[str, Any]:
-        registry = service_registry.remove_service_from_registry(
-            self.get_service_registry(), service_id
-        )
+        sid = service_registry.normalize_id(service_id)
+        current = self.get_service_registry()
+        if sid not in (current.get("services") or {}) and self._excluded_service(sid) is not None:
+            # A service that is left out has nothing in the registry to remove; the save drops the stored record.
+            registry, removing = current, {("services", sid)}
+        else:
+            registry, removing = service_registry.remove_service_from_registry(current, service_id), set()
         return self._persist_service_registry(
             registry,
             action="operator.service.removed",
             actor=actor,
-            service_id=service_registry.normalize_id(service_id),
+            service_id=sid,
             expected_generation=expected_generation,
+            removing=removing,
         )
 
     def set_service_enabled(
         self, *, service_id: str, enabled: bool, actor: AdminContext,
         expected_generation: int,
     ) -> dict[str, Any]:
+        if service_registry.normalize_id(service_id) not in (self.get_service_registry().get("services") or {}):
+            held = self._excluded_service(service_id)
+            if held is not None:
+                raise ValueError(f"service {held.id!r} is left out of the registry ({held.error}); fix it or remove it first")
         registry = service_registry.set_service_enabled(
             self.get_service_registry(), service_id, enabled
         )
@@ -1169,8 +1234,9 @@ class AdminSQLiteStore:
         package_id = str((review.get("package") or {}).get("id") or "")
         # Registry, package index and both audit facts commit together: a
         # failure at any step leaves the generation and every row unchanged.
+        document, excluded = self._with_excluded_records(registry)
         registry_record, index_record = admin_store.write_service_registry_and_setting_with_audits(
-            registry,
+            document,
             expected_generation=expected_generation,
             updated_by=actor.subject,
             setting_key=EXTENSION_PACKAGE_INDEX_SETTING_KEY,
@@ -1208,13 +1274,14 @@ class AdminSQLiteStore:
             ],
             path=self.path,
         )
-        # The artifact and reload observe the committed registry.
-        self.write_litellm_config(registry_record["value"])
+        # The artifact and reload observe the committed registry: the records that validate.
+        registry_record = {**registry_record, "value": registry, "excluded": excluded}
+        self.write_litellm_config(registry)
         self._fire_registry_changed(registry_record)
         return {
             "extension_package": (index_record["value"].get("packages") or {}).get(package_id),
             "review": review,
-            "service_registry": registry_record["value"],
+            "service_registry": registry,
             "operator_settings_generation": registry_record[
                 "operator_settings_generation"
             ],

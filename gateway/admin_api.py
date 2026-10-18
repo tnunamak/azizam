@@ -821,6 +821,23 @@ def _registry_problem_item(problem: Mapping[str, Any]) -> dict[str, Any]:
     return _attention_item(kind="registry", severity="problem", title=title, detail=detail.strip())
 
 
+def _excluded_name(row: Mapping[str, Any]) -> str:
+    """The name the boot report lists a left-out record under: a service by id, any other as ``kind:id``."""
+    kinds = {"protocol_frontends": "frontend", "workflows": "workflow", "capabilities": "capability"}
+    kind = kinds.get(str(row.get("section") or ""))
+    return f"{kind}:{row.get('id')}" if kind else str(row.get("id") or "")
+
+
+def _registry_excluded_item(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """The Overview item for stored records that do not validate and that no boot or reload report names."""
+    names = "; ".join(f"{_excluded_name(row)} ({' '.join(str(row.get('error') or '').split())[:160]})" for row in rows)
+    return _attention_item(
+        kind="registry", severity="problem",
+        title="Some stored services or records are left out",
+        detail=f"They do not validate, so the gateway does not use them: {names}. Fix or remove them under Services.",
+    )
+
+
 def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Return "things that want a look" — the operator's actual landing screen.
 
@@ -880,6 +897,11 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
     problem = snapshot.get("registry_problem")
     if isinstance(problem, Mapping):
         items.append(_registry_problem_item(problem))
+    excluded = snapshot.get("registry_excluded") or []
+    reported = problem.get("left_out") if isinstance(problem, Mapping) and isinstance(problem.get("left_out"), Mapping) else {}
+    unreported = [row for row in excluded if isinstance(row, Mapping) and _excluded_name(row) not in reported]
+    if unreported:
+        items.append(_registry_excluded_item(unreported))
 
     for frontend in snapshot.get("frontends") or []:
         if not isinstance(frontend, Mapping) or frontend.get("status") != "broken":
@@ -1619,6 +1641,16 @@ def _decision_payload(decision: PolicyDecision) -> dict[str, Any]:
     }
 
 
+def _stored_exclusions(store: Any) -> list[service_registry.ExcludedRecord]:
+    """The stored registry records that are left out; none for a store that cannot say (a test double)."""
+    reader = getattr(store, "get_service_registry_exclusions", None)
+    return list(reader()) if callable(reader) else []
+
+
+def _excluded_summary(items: Iterable[service_registry.ExcludedRecord]) -> list[dict[str, str]]:
+    return [{"section": item.section, "id": item.id, "error": item.error} for item in items]
+
+
 def create_admin_router(
     store: AdminStore,
     *,
@@ -1700,9 +1732,10 @@ def create_admin_router(
             return ctx
         def read_overview_stores():
             return (store.list_users(), store.list_apps(), store.list_access_plans(),
-                    _scrub_credentials(store.list_credentials()), store.get_service_registry())
+                    _scrub_credentials(store.list_credentials()), store.get_service_registry(),
+                    _excluded_summary(_stored_exclusions(store)))
 
-        users, apps, plans, credentials, registry = await asyncio.to_thread(read_overview_stores)
+        users, apps, plans, credentials, registry, registry_excluded = await asyncio.to_thread(read_overview_stores)
         active_credentials = [
             c for c in credentials if not c.get("revoked_at")
         ]
@@ -1729,6 +1762,7 @@ def create_admin_router(
         registry_apply = registry_problem() if registry_problem is not None else None
         attention = derive_admin_attention({
             "registry_problem": registry_apply,
+            "registry_excluded": registry_excluded,
             "apps": apps,
             "credentials": credentials,
             "frontends": frontends,
@@ -1764,6 +1798,8 @@ def create_admin_router(
             "frontends": frontends,
             # Why the running service config is not the stored registry, or None when it is.
             "registry_apply": registry_apply,
+            # The stored records that do not validate and so are left out, each with its error.
+            "registry_excluded": registry_excluded,
         }
         return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
 
@@ -2310,7 +2346,11 @@ def create_admin_router(
             return ctx
         response = JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"service_registry": engine_redaction.redact_registry(store.get_service_registry())},
+            content={
+                "service_registry": engine_redaction.redact_registry(store.get_service_registry()),
+                # Stored records that do not validate: left out of the registry above, kept in the store.
+                "excluded": [service_registry.public_excluded_record(item) for item in _stored_exclusions(store)],
+            },
         )
         if hasattr(store, "path"):
             record = admin_store.get_service_registry_with_generation(path=store.path)
@@ -2342,7 +2382,10 @@ def create_admin_router(
     ) -> JSONResponse:
         response = JSONResponse(
             status_code=response_status,
-            content={"service_registry": engine_redaction.redact_registry(record["value"])},
+            content={
+                "service_registry": engine_redaction.redact_registry(record["value"]),
+                "excluded": [service_registry.public_excluded_record(item) for item in record.get("excluded") or ()],
+            },
         )
         response.headers.update(
             {

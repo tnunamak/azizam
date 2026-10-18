@@ -109,6 +109,25 @@ def test_an_excluded_record_never_shows_a_credential_it_holds(live, monkeypatch)
     assert [item["id"] for item in response.json()["excluded"]] == ["leaky"]
 
 
+def test_an_excluded_record_hides_a_secret_by_the_name_of_its_key(live, monkeypatch):
+    held = _service("held", models=["not a model record"], password="hunter2")
+    client = _running_partial(live, monkeypatch, {"good-engine": GOOD, "held": held})
+
+    shown = client.get("/admin/api/operator/service-registry").json()["excluded"][0]["record"]
+
+    assert shown["config"]["password"] == "[redacted]"
+    assert shown["config"]["host"] == "10.0.0.5"  # only the secret is hidden
+
+
+def test_an_excluded_record_hides_a_secret_by_its_shape_under_any_key(live, monkeypatch):
+    held = _service("held", models=["not a model record"], note="sk-live-abcdefghijklmnopqrstuvwxyz0123456789")
+    client = _running_partial(live, monkeypatch, {"good-engine": GOOD, "held": held})
+
+    shown = client.get("/admin/api/operator/service-registry").json()["excluded"][0]["record"]
+
+    assert shown["config"]["note"] == "[redacted]"
+
+
 def test_a_full_save_with_a_new_engine_keeps_the_excluded_record_in_the_store(live, monkeypatch):
     client = _running_partial(live, monkeypatch, {"good-engine": GOOD, "bad-engine": BAD})
     stored_before = _stored(live)["services"]["bad-engine"]
@@ -155,7 +174,7 @@ def test_the_operator_can_remove_the_excluded_service(live, monkeypatch):
     response = client.delete("/admin/api/operator/services/bad-engine", headers=_if_match(live))
 
     assert response.status_code == 200, response.text[:300]
-    assert set(_stored(live)["services"]) == {"good-engine"}
+    assert "bad-engine" not in _stored(live)["services"] and "good-engine" in _stored(live)["services"]
     assert response.json()["excluded"] == []
     assert proxy.REGISTRY_APPLY_PROBLEM is None  # the reload applied a registry with nothing left out
 
@@ -180,6 +199,8 @@ def test_the_operator_can_fix_the_excluded_service_by_editing_it(live, monkeypat
     assert "bad-engine" in response.json()["service_registry"]["services"]
     assert {"good-engine", "bad-engine"} <= set(proxy.config["backends"])
     assert proxy.REGISTRY_APPLY_PROBLEM is None
+    fixed = _stored(live)["services"]["bad-engine"]["config"]
+    assert (fixed["host"], fixed["port"]) == ("10.0.0.5", 8080)  # the edit started from the stored record, not from nothing
 
 
 def test_an_edit_that_leaves_the_service_invalid_is_refused_and_the_store_is_unchanged(live, monkeypatch):
@@ -268,7 +289,6 @@ def test_a_model_name_with_a_slash_resolves_for_a_good_service_on_a_partial_boot
 
 
 @pytest.mark.parametrize("path, body", [
-    ("/v1/audio/speech", {"input": "hi"}),
     ("/v1/chat/completions", {"messages": [{"role": "user", "content": "hi"}]}),
     ("/v1/images/generations", {"prompt": "a cat"}),
     ("/v1/embeddings", {"input": "hi"}),
@@ -283,7 +303,6 @@ def test_a_request_for_a_good_service_is_not_a_server_error_on_a_partial_boot(li
 
 
 @pytest.mark.parametrize("path, body", [
-    ("/v1/audio/speech", {"input": "hi"}),
     ("/v1/chat/completions", {"messages": [{"role": "user", "content": "hi"}]}),
     ("/v1/images/generations", {"prompt": "a cat"}),
     ("/v1/embeddings", {"input": "hi"}),
@@ -297,6 +316,21 @@ def test_a_request_for_the_excluded_service_fails_with_a_typed_error_that_names_
     error = payload["error"]
     assert error["code"] == "model_not_deployed" and error["type"] == "service_unavailable"
     assert "bad-engine" in error["message"] and "left out" in error["message"]
+
+
+@pytest.mark.parametrize("operation", ["speech", "transcriptions", "translations", "images", "videos", "chat", "embeddings"])
+def test_every_operation_answers_the_excluded_service_with_the_same_503(live, operation):
+    """The speech and transcription routes need a receipt store and an engine, so their answer is read where they build it."""
+    _store_raw(live, {"good-engine": GOOD, "bad-engine": BAD})
+    _boot(live)
+
+    with pytest.raises(proxy.ModelCompatibilityError) as raised:
+        proxy.resolve_model_for_operation(operation, "bad-engine/some-model")
+
+    response = proxy.model_compatibility_error(raised.value)
+    assert response.status_code == 503
+    error = json.loads(response.body)["error"]
+    assert error["code"] == "model_not_deployed" and "bad-engine" in error["message"]
 
 
 # --- workflows and capabilities --------------------------------------------------------------------
@@ -409,3 +443,37 @@ def test_a_stored_registry_that_cannot_be_read_mounts_only_the_bundled_routes_af
     monkeypatch.setattr(proxy, "REGISTRY_APPLY_PROBLEM", {"mode": "empty", "left_out": {}, "served": 0, "error": "x"}, raising=False)
 
     assert proxy._stored_registry_for_boot() is None
+
+
+# --- a reload on a registry that went bad after boot ------------------------------------------------
+
+
+def test_a_reload_after_a_hand_edit_applies_the_services_that_validate_and_reports_the_rest(live, monkeypatch):
+    _owner_client(monkeypatch)
+    registry = proxy.ADMIN_STORE.get_service_registry()
+    registry["services"]["good-engine"] = service_registry.normalize_service_record("good-engine", GOOD)
+    write_service_registry_for_test(registry, path=live)
+    proxy.reload_runtime_config()
+    assert "good-engine" in proxy.config["backends"] and proxy.REGISTRY_APPLY_PROBLEM is None
+
+    stored = _stored(live)
+    stored["services"]["bad-engine"] = BAD
+    write_service_registry_for_test(stored, path=live)
+    proxy.reload_runtime_config()
+
+    assert "good-engine" in proxy.config["backends"] and "bad-engine" not in proxy.config["backends"]
+    assert proxy.REGISTRY_APPLY_PROBLEM["mode"] == "partial"
+    assert set(proxy.REGISTRY_APPLY_PROBLEM["left_out"]) == {"bad-engine"}
+
+
+def test_a_full_save_that_names_the_excluded_record_replaces_it(live, monkeypatch):
+    client = _running_partial(live, monkeypatch, {"good-engine": GOOD, "bad-engine": BAD})
+    registry = client.get("/admin/api/operator/service-registry").json()["service_registry"]
+    registry["services"]["bad-engine"] = _service("bad-engine")
+
+    response = client.put("/admin/api/operator/service-registry", json=registry, headers=_if_match(live))
+
+    assert response.status_code == 200, response.text[:300]
+    assert response.json()["excluded"] == []
+    assert "models" not in _stored(live)["services"]["bad-engine"]["config"]  # the replacement, not the stored value
+    assert "bad-engine" in proxy.config["backends"]

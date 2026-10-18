@@ -225,21 +225,42 @@ when a reload fails.
   converter, a repeated parameter name) is skipped like a colliding row, and
   never stops boot or a reload. An admin save whose hot reload fails is stored
   and answers `500 registry_saved_not_applied`.
-- **A registry that cannot be applied.** A hot reload that fails for any
-  reason (the stored registry does not normalize, the store cannot be read, a
-  route cannot be built) keeps the old config, constants and routes, and
-  raises; it never falls back to the bootstrap file's backends. Reloads run one
-  at a time under one lock, so the config that stays live is the one read
-  last. The Overview lists the state (`kind: registry`, `registry_apply` in the
-  JSON) until a reload succeeds. Boot cannot keep an old config, so it serves
-  the stored services that validate on their own (the `partial` mode), reads
-  the frontends, workflows and capabilities record by record the same way, and
-  leaves out and logs each service that does not validate or that shares a
-  public model alias with another. When the store cannot be read at all it
-  starts with no registry backends (the `empty` mode). Boot never serves the
-  bootstrap file's backends in place of the registry, and it leaves the
-  LiteLLM config file as it is. Both modes log the cause and are listed on the
-  Overview as a problem.
+- **A registry that cannot be applied.** A hot reload that fails because the
+  store cannot be read or a route cannot be built keeps the old config,
+  constants and routes, and raises; it never falls back to the bootstrap
+  file's backends. A stored registry whose records do not all validate applies
+  the ones that do, as boot does (the `partial` mode). Reloads run one at a
+  time under one lock, so the config that stays live is the one read last. The
+  Overview lists the state (`kind: registry`, `registry_apply` in the JSON)
+  until a reload succeeds, and `POST /admin/api/config/reload` applies the
+  stored registry again. Boot cannot keep an old config, so it serves the
+  stored services that validate on their own, and starts with no registry
+  backends (the `empty` mode) when the store cannot be read at all. Boot never
+  serves the bootstrap file's backends in place of the registry, and it leaves
+  the LiteLLM config file as it is. Each mode logs the cause and each record
+  left out, and is listed on the Overview as a problem.
+- **Records that do not validate.** Every reader of the stored registry (the
+  request paths, the Overview, the service registry page, workflows,
+  capabilities, frontends) reads it record by record
+  (`service_registry.read_registry`), so one bad record never stops the rest.
+  A record is left out when it is not an object, has no usable id, has a
+  block of the wrong shape (`config`, `lifecycle`, `secret_refs` or
+  `provenance` not an object; `models` neither a list nor an object;
+  `protocol` not a plain name; an engine with no host or address), fails its
+  model checks, or shares a public model alias with another service (both
+  services of the clash are left out). The gateway keeps no list of protocol
+  names in code, so `protocol` is checked for its form only.
+  - The service registry page and every registry write answer with the left-out
+    records beside the registry (`excluded`: section, id, error, and the stored
+    record with its secrets hidden). The Overview lists them
+    (`registry_excluded`).
+  - A write keeps each left-out record exactly as stored. It drops one only
+    when the operator removes it (`DELETE` of that service) or replaces it by
+    id (an edit of that service, or a full save that names it). Adding a
+    service under the id of a left-out one is refused (409), and an edit that
+    leaves it invalid is refused (400) with the store unchanged.
+  - A request for a model of a left-out service answers 503
+    `model_not_deployed`, and the message names the service and the error.
 - **Authentication.** The mount runs an authenticator before every operation
   that does not check the caller itself, on any path prefix, so a row at
   `/x/{provider}` gets a 401 without a key. The operations that check the
