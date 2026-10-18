@@ -692,6 +692,7 @@ _METADATA_CONTRACT = {
     ("GET", "/me/api/jobs/{job_id}"): _OWN_RECORDS,
     ("GET", "/me/api/media"): _OWN_RECORDS,
     ("GET", "/me/api/usage/summary"): _OWN_RECORDS,
+    ("POST", "/me/api/media/remove-missing"): "removes only the caller's own entries whose files are gone; runs no model",
 }
 
 

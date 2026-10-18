@@ -64,6 +64,15 @@ The API records an audit entry that hides the item from that person's Library.
 The everyone view does not apply those per-person hiding entries.
 This endpoint does not itself delete job or receipt rows.
 
+Until 2026-10-11 the gateway deleted every generated file 24 hours after its
+last write (the cache eviction loop in `proxy.py`). Library items made before
+then often have a record and no file. The Library says so, with "deleted on or
+before Oct 11 and can't be recovered". Remove missing items
+(`POST /me/api/media/remove-missing`, after a confirmation in the Library)
+removes the signed-in person's own items whose file is gone: it hides each from
+their Library, deletes its saved prompt, and deletes a finished job entry when
+every file that job made is gone. It never deletes a stored file or a receipt.
+
 A quarantine uses a new private `<database>.broken-<time>-<unique-id>/`
 directory on the same filesystem. If any rename fails, startup raises and the
 `<database>.quarantine-pending` marker remains. The original files may be split
