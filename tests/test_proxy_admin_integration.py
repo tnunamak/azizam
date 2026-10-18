@@ -1193,6 +1193,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                     role="none",
                     cookie=cfg.cookie,
                 )
+                self.client.cookies.clear()  # the first request upgraded the old cookie: replace, do not add
                 self.client.cookies.set(
                     cfg.cookie.name,
                     encode_session_cookie(session, signing_key=cfg.signing_key),
@@ -1334,6 +1335,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
                     role="none",
                     cookie=cfg.cookie,
                 )
+                self.client.cookies.clear()  # the first request upgraded the old cookie: replace, do not add
                 self.client.cookies.set(
                     cfg.cookie.name,
                     encode_session_cookie(session, signing_key=cfg.signing_key),

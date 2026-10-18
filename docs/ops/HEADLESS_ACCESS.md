@@ -30,6 +30,9 @@ AZIZAM_URL=https://gateway.example
 export AZIZAM_URL
 ```
 
+Keys are not browser sessions: the confirmation prompt for risky actions
+(`reauth_required`) applies only to browser sessions, never to a key.
+
 An `admin` role key cannot use owner-only operations. Neither role is a
 read-only scope. The key's role is enforced on each request. The helper does
 not configure a browser session or start a server.
@@ -48,8 +51,9 @@ keys work at administrator reach. If the minter cannot be found, the key has no
 authority.
 
 A role that the identity provider gave (an admin group or role claim) counts
-only while a sign-in has confirmed it within the session length (8 hours by
-default). An administrator who is removed from the group and never signs in
+only while a sign-in has confirmed it within the last 8 hours
+(`admin.oidc.cookie.max_age_seconds`; a longer browser session does not extend
+it, see [Sign-in sessions](SIGN_IN_SESSIONS.md)). An administrator who is removed from the group and never signs in
 again loses the role, and with it every key they minted, when that time ends.
 Roles the owner gave by hand do not expire. A sign-in that is refused ends the
 provider's roles and all sessions of that person at once; it also ends their
@@ -304,6 +308,8 @@ Selected successful workflows are exercised separately.
 | `GET /admin/api/settings/receipts` | owner-bearer | denied | `gateway.settings_api.get_receipts`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `PUT /admin/api/settings/receipts` | owner-bearer | denied | `gateway.settings_api.put_receipts`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/settings/receipts/preview` | owner-bearer | denied | `gateway.settings_api.preview_receipts`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/settings/sessions` | owner-bearer | denied | `gateway.settings_api.get_sessions`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PUT /admin/api/settings/sessions` | owner-bearer | denied | `gateway.settings_api.put_sessions`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required; browser sessions also need a recent sign-in (`reauth_required`) | owner |
 | `POST /admin/api/setup-dismiss` | session-only | denied | `gateway.home_api.dismiss_setup`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /admin/api/setup-evidence` | session-only | denied | `gateway.home_api.setup_evidence`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /admin/api/setup-progress` | owner-bearer | denied | `gateway.home_api.setup_progress`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
@@ -333,7 +339,9 @@ Selected successful workflows are exercised separately.
 | `POST /auth/api/invite/accept` | browser/public | no owner authority | `gateway.accounts_api.accept`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
 | `POST /auth/api/login` | browser/public | no owner authority | `gateway.accounts_api.login`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
 | `GET /auth/api/options` | browser/public | no owner authority | `gateway.accounts_api.get_options`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
+| `POST /auth/api/reauth` | browser/public | no owner authority | `gateway.accounts_api.reauth`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
 | `POST /auth/api/password-reset` | browser/public | no owner authority | `gateway.accounts_api.reset`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
+| `POST /auth/api/sign-out-everywhere` | browser/public | no owner authority | `gateway.accounts_api.sign_out_everywhere`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
 | `GET /auth/logout-confirm` | session-only | denied | `proxy.logout_confirmation`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /login` | browser/public | no owner authority | `proxy.browser_login`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
 | `POST /logout` | session-only | denied | `proxy.admin_logout`; Browser session; mutations require CSRF/action header | hidden |

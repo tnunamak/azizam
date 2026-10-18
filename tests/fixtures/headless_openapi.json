@@ -2603,6 +2603,20 @@
         "title": "WAN 2.2 TI2V 5B Q8",
         "type": "object",
         "x-azizam-workflow-id": "video.generate.wan-2.2-ti2v-5b-q8"
+      },
+      "Reauth": {
+        "properties": {
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "title": "Reauth"
       }
     },
     "securitySchemes": {
@@ -28280,6 +28294,219 @@
           }
         },
         "summary": "Rerank V2"
+      }
+    },
+    "/admin/api/settings/sessions": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get Sessions",
+        "operationId": "owner_get_admin_api_settings_sessions",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or role denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authentication or role denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          }
+        ],
+        "parameters": [],
+        "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not."
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Put Sessions",
+        "description": "How long a sign-in lasts: idle timeout, absolute lifetime and the step-up window.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_put_admin_api_settings_sessions",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or role denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authentication or role denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          }
+        ],
+        "parameters": [],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/api/reauth": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Reauth",
+        "description": "Confirm the signed-in person's password, so risky owner actions are allowed for a while.",
+        "operationId": "reauth_auth_api_reauth_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Reauth"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/api/sign-out-everywhere": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Sign Out Everywhere",
+        "description": "End every sign-in this person has, on every device, this one included.",
+        "operationId": "sign_out_everywhere_auth_api_sign_out_everywhere_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
       }
     }
   },

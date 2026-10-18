@@ -90,7 +90,8 @@ Removal retains a tombstone so an old OIDC identity cannot return and recover
 access. It deletes the password verifier and revokes Apps, keys, reset links
 and sessions while preserving historical attribution. It is not physical
 personal-data erasure. Password reset invalidates earlier browser sessions,
-but does not rotate runtime API keys.
+but does not rotate runtime API keys. A person can end all their own sessions
+with "Sign out everywhere"; see [Sign-in sessions](ops/SIGN_IN_SESSIONS.md).
 
 Receipt/job ownership is independent of profile visibility. New media jobs
 carry the authenticated App ID and key hash through job updates. Legacy

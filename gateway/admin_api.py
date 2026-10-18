@@ -76,6 +76,11 @@ class AdminContext:
     roles: frozenset[str] = field(default_factory=frozenset)
     auth_method: str | None = None
     csrf_token: str | None = None
+    # Set for a browser session only. ``authenticated_at`` is when the person
+    # last proved who they are (step-up asks whether that was recent).
+    session_id: str | None = None
+    session_expires_at: int | None = None
+    authenticated_at: int | None = None
 
     @property
     def is_admin(self) -> bool:

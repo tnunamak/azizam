@@ -164,29 +164,70 @@ def revoke_session(session_id: str, expires_at: int, *, path: Path) -> None:
                      (int(time.time()), session_id))
 
 
-def revoke_person_sessions(user_id: str, *, path: Path) -> None:
+def revoke_person_sessions(user_id: str, *, path: Path, keep: tuple[str, int] | None = None) -> None:
     """End every signed-in session of a person, including ones never registered.
 
     From now on only registered sessions count for this person, and none is
     left, so each cookie they hold stops working. Signing in again registers a
     new session. Keys bound to their sign-ins end with them.
+
+    ``keep`` is a ``(session_id, expires_at)`` pair to leave signed in: the
+    session that is making a change, such as setting a password.
     """
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        revoke_person_sessions_in(conn, user_id)
+        revoke_person_sessions_in(conn, user_id, keep=keep)
 
 
-def revoke_person_sessions_in(conn: sqlite3.Connection, user_id: str) -> None:
+def revoke_person_sessions_in(conn: sqlite3.Connection, user_id: str, *,
+                              keep: tuple[str, int] | None = None) -> None:
     """``revoke_person_sessions`` inside a transaction the caller owns and commits."""
     ensure_access_row(conn, user_id)
     conn.execute("UPDATE account_access SET require_registered_session=1 WHERE user_id=?", (user_id,))
+    kept_id = keep[0] if keep else None
     session_ids = [row[0] for row in conn.execute(
-        "SELECT session_id FROM account_sessions WHERE user_id=?", (user_id,))]
-    conn.execute("DELETE FROM account_sessions WHERE user_id=?", (user_id,))
+        "SELECT session_id FROM account_sessions WHERE user_id=? AND session_id IS NOT ?", (user_id, kept_id))]
+    conn.execute("DELETE FROM account_sessions WHERE user_id=? AND session_id IS NOT ?", (user_id, kept_id))
+    if keep:
+        # Only registered sessions count now, so the one that stays must be registered.
+        conn.execute("INSERT INTO account_sessions VALUES(?,?,?) ON CONFLICT(session_id) "
+                     "DO UPDATE SET expires_at=MAX(expires_at, excluded.expires_at)", (keep[0], user_id, keep[1]))
     now = int(time.time())
     for session_id in session_ids:
         conn.execute("UPDATE credentials SET revoked_at=? WHERE session_id=? AND revoked_at IS NULL",
                      (now, session_id))
+
+
+def has_password(user_id: str, *, path: Path) -> bool:
+    with connection(path) as conn:
+        return conn.execute("SELECT 1 FROM local_password_credentials WHERE user_id=?", (user_id,)).fetchone() is not None
+
+
+def extend_session(session_id: str, expires_at: int, *, path: Path) -> None:
+    """A renewed session lives to its new expiry. Unregistered sessions have no record to extend."""
+    with connection(path) as conn:
+        conn.execute("UPDATE account_sessions SET expires_at=MAX(expires_at, ?) WHERE session_id=?",
+                     (expires_at, session_id))
+
+
+def confirm_password(user_id: str, password: str, ip: str, *, path: Path) -> None:
+    """Prove a signed-in person still knows their password (step-up).
+
+    Shares the sign-in throttle, so confirming is no cheaper to guess than signing in.
+    """
+    with connection(path) as conn:
+        row = conn.execute("SELECT u.email,p.verifier FROM users u JOIN local_password_credentials p "
+                           "ON p.user_id=u.id WHERE u.id=?", (user_id,)).fetchone()
+    if row is None:
+        # Cheap and equal to a wrong password in time; the person has no password to confirm with.
+        verify_password(password, _DUMMY_VERIFIER)
+        raise AccountError("password_not_set", "This account has no password. Sign in again with your identity provider.", 409)
+    throttle(ip, row["email"] or user_id, path=path)
+    if not verify_password(password, row["verifier"]):
+        raise AccountError("invalid_password", "That password is not right.", 401)
+    state = access(user_id, path=path)
+    if state and (state["disabled_at"] is not None or state["removed_at"] is not None):
+        raise AccountError("account_disabled", "This account is disabled.", 403)
 
 
 def record_signin_refusal(user_id: str, *, path: Path) -> None:

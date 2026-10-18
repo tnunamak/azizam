@@ -27,7 +27,7 @@ from typing import Any, Iterable, Mapping
 
 from fastapi import Request, status
 
-from gateway import admin_store, engine_check, extension_packages, route_registry, secret_store, service_registry, trusted_addresses
+from gateway import admin_store, browser_sessions, engine_check, extension_packages, route_registry, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
 from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
@@ -35,7 +35,6 @@ from gateway.admin_oidc import (
     OIDCConfigError,
     SessionError,
     csrf_token_for_session,
-    decode_session_cookie,
     load_oidc_config,
     validate_oidc_display_name,
 )
@@ -1663,16 +1662,11 @@ class AdminAuthenticator:
             token = request.cookies.get(self.cookie.name)
             if token:
                 try:
-                    session = decode_session_cookie(
-                        token,
-                        signing_key=self.signing_key,
+                    # A revoked or ended session is no session: a bearer key
+                    # sent beside a stale cookie still authenticates.
+                    session = browser_sessions.read(
+                        token, signing_key=self.signing_key, path=self.store.path,
                     )
-                    from gateway.accounts import session_allowed
-
-                    if not session_allowed(session.subject, session.session_id, path=self.store.path):
-                        # A revoked session is no session: a bearer key sent
-                        # beside a stale cookie still authenticates.
-                        raise SessionError("session revoked or account disabled")
                     subject_kind, subject_id = session_admin_role_subject(
                         session.subject
                     )
@@ -1693,6 +1687,9 @@ class AdminAuthenticator:
                                 session,
                                 signing_key=self.signing_key,
                             ),
+                            session_id=session.session_id,
+                            session_expires_at=int(session.expires_at),
+                            authenticated_at=int(session.last_authenticated),
                         )
                     raise AdminAuthError(
                         "admin role required",

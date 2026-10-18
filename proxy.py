@@ -71,6 +71,7 @@ import responses_translator
 from gateway import (
     admin_store,
     audio_media_jobs,
+    browser_sessions,
     frontend_mount,
     media_jobs,
     me_prompt_memory,
@@ -83,7 +84,9 @@ from gateway import (
     resource_decisions,
     route_registry,
     service_registry,
+    session_policy,
     speech_voices,
+    step_up,
     video_inputs,
     video_media_job_http,
     video_media_jobs,
@@ -155,11 +158,9 @@ from gateway.admin_oidc import (
     bootstrap_admin_role,
     csrf_token_for_session,
     decode_session_cookie,
-    encode_session_cookie,
     load_oidc_config,
     oidc_config_for_public_base,
     safe_browser_return_to,
-    session_from_claims,
     validate_oidc_stored_override,
     validate_id_token_claims,
 )
@@ -15055,13 +15056,7 @@ def _oidc_session_from_request(request: Request):
     if not raw:
         return None
     try:
-        session = decode_session_cookie(
-            raw,
-            signing_key=signing_key,
-        )
-        if not accounts.session_allowed(session.subject, session.session_id, path=ADMIN_STORE.path):
-            return None
-        return session
+        return browser_sessions.read(raw, signing_key=signing_key, path=ADMIN_STORE.path)
     except SessionError:
         return None
 
@@ -15425,13 +15420,17 @@ app.include_router(SIGNIN_API.router)
 
 @app.middleware("http")
 async def _account_session_revocation(request: Request, call_next):
-    """Clear a revoked session cookie; never deny the request.
+    """Keep a live session signed in, and clear one that has ended; never deny the request.
 
     Every reader of the session cookie (ADMIN_AUTH, _oidc_session_from_request)
     already treats a revoked session as no session, so session-authorized
     actions fail closed there. Denying here instead broke requests that an app
     key, admin key or signed media URL authorizes, whenever the browser also
     sent a stale cookie.
+
+    A live session renews here (browser_sessions.advance): the response
+    carries a fresh cookie once a quarter of the idle window has passed. API
+    keys send no session cookie and never reach this.
     """
     response = await call_next(request)
     key = _browser_admin_session_signing_key()
@@ -15444,13 +15443,47 @@ async def _account_session_revocation(request: Request, call_next):
     except SessionError:
         # Another gateway on the same host may own it; cookies are not port-scoped.
         return response
-    if await asyncio.to_thread(accounts.session_allowed, session.subject, session.session_id, path=ADMIN_STORE.path):
-        return response
-    # A sign-in response sets the new session; deleting after it would undo it.
+    # A sign-in response sets the new session; touching it would undo that.
     if any(value.startswith(f"{cookie.name}=") for value in response.headers.getlist("set-cookie")):
         return response
-    response.delete_cookie(cookie.name, path=cookie.path, domain=cookie.domain)
+    try:
+        renewed = await asyncio.to_thread(browser_sessions.advance, session, path=ADMIN_STORE.path)
+    except SessionError:
+        response.delete_cookie(cookie.name, path=cookie.path, domain=cookie.domain)
+        return response
+    if renewed is not None:
+        browser_sessions.set_cookie(response, renewed, cookie=cookie, signing_key=key)
     return response
+
+
+@app.middleware("http")
+async def _step_up_gate(request: Request, call_next):
+    """Ask a browser session to prove itself again before a risky owner action (gateway.step_up)."""
+    # The path the router will match (scope), not request.url: a Host header can reshape the URL.
+    if step_up.is_sensitive(request.method, request.scope["path"]):
+        denial = await asyncio.to_thread(_step_up_denial, request)
+        if denial is not None:
+            return denial
+    return await call_next(request)
+
+
+def _step_up_denial(request: Request) -> Response | None:
+    try:
+        ctx = ADMIN_AUTH(request)
+    except AdminAuthError:
+        return None  # not signed in as an administrator: the route answers that itself
+    if ctx.auth_method != "session" or ctx.authenticated_at is None:
+        return None  # a key is its own proof
+    policy = browser_sessions.policy(ADMIN_STORE.path)
+    if time.time() - ctx.authenticated_at <= policy.step_up_seconds:
+        return None
+    methods = []
+    if accounts.has_password(ctx.subject, path=ADMIN_STORE.path):
+        methods.append("password")
+    person = admin_store.get_user(ctx.subject, path=ADMIN_STORE.path)
+    if person is not None and person["issuer"] != "local" and _effective_admin_oidc_config().enabled:
+        methods.append("oidc")
+    return step_up.reauth_required_response(methods=methods or ["sign_in"], window_seconds=policy.step_up_seconds)
 
 
 from gateway.home_api import create_home_router
@@ -16219,10 +16252,14 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
         # ASGI sees HTTP behind TLS ingress; only compare the host and port.
         if not callback_host_matches(request, cfg.redirect_uri):
             return RedirectResponse(
-                f"{callback.scheme}://{callback.netloc}/login?return_to={quote(return_to, safe='')}",
+                f"{callback.scheme}://{callback.netloc}/login?return_to={quote(return_to, safe='')}"
+                + ("&reauth=1" if request.query_params.get("reauth") == "1" else ""),
                 status_code=302, headers={"cache-control": "no-store"},
             )
-        return begin_browser_login(cfg, ADMIN_OIDC_STATES, return_to=return_to)
+        return begin_browser_login(
+            cfg, ADMIN_OIDC_STATES, return_to=return_to,
+            reauth=request.query_params.get("reauth") == "1",
+        )
     except accounts.AccountError as exc:
         return JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status,
                             headers={"retry-after": "60"} if exc.status == 429 else {})
@@ -16561,23 +16598,15 @@ async def setup_claim_admin_key(request: Request):
         metadata={"role": role, "credential_prefix": credential.get("prefix")},
         path=ADMIN_STORE.path,
     )
-    session = session_from_claims(
+    cookie = _browser_admin_cookie_config()
+    # A session claimed with a key is not a person's sign-in: it is not recorded, never
+    # renews, and ends after the fixed cookie life, whatever happens to the key.
+    session = browser_sessions.issue(
         {"sub": session_subject, "email": session_email},
-        role=role,
-        cookie=_browser_admin_cookie_config(),
+        role=role, cookie=cookie, path=ADMIN_STORE.path, register=False, renewable=False,
     )
     response = RedirectResponse("/", status_code=303)
-    cookie = _browser_admin_cookie_config()
-    response.set_cookie(
-        cookie.name,
-        encode_session_cookie(session, signing_key=signing_key),
-        max_age=cookie.max_age_seconds,
-        secure=cookie.secure,
-        httponly=cookie.http_only,
-        samesite=cookie.same_site,
-        path=cookie.path,
-        domain=cookie.domain,
-    )
+    browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=signing_key)
     return response
 
 
@@ -16602,24 +16631,11 @@ def _issue_browser_admin_session(
     redirect_to: str = "/setup/",
 ) -> Response:
     cookie = _browser_admin_cookie_config()
-    session = session_from_claims(
-        {"sub": user_id, "email": email},
-        role=role,
-        cookie=cookie,
+    session = browser_sessions.issue(
+        {"sub": user_id, "email": email}, role=role, cookie=cookie, path=ADMIN_STORE.path,
     )
-    accounts.initialize(ADMIN_STORE.path)
-    accounts.register_session(user_id, session.session_id, int(session.expires_at), path=ADMIN_STORE.path)
     response = RedirectResponse(redirect_to, status_code=303)
-    response.set_cookie(
-        cookie.name,
-        encode_session_cookie(session, signing_key=signing_key),
-        max_age=cookie.max_age_seconds,
-        secure=cookie.secure,
-        httponly=cookie.http_only,
-        samesite=cookie.same_site,
-        path=cookie.path,
-        domain=cookie.domain,
-    )
+    browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=signing_key)
     return response
 
 
@@ -17053,6 +17069,8 @@ async def admin_oidc_callback(request: Request):
         claims = await _oidc_verify_id_token(id_token, config=cfg)
         try:
             validate_id_token_claims(claims, config=cfg, expected_nonce=state.nonce)
+            if state.reauth and not _provider_signed_in_again(claims, since=state.created_at):
+                raise ValueError("identity provider reused its own sign-in")
             decision, bootstrap_owner = await _decide_oidc_signin(cfg, claims)
             if not decision.outcome.admitted:
                 raise SignInRefused("sign-in rules do not let this person in")
@@ -17124,23 +17142,19 @@ async def admin_oidc_callback(request: Request):
             "sub": user["id"],
             "email": claims.get("email") or "",
         }
-        session = session_from_claims(
-            session_claims,
-            role=role,
-            cookie=cfg.cookie,
+        previous = await asyncio.to_thread(_oidc_session_from_request, request) if state.reauth else None
+        if previous is not None and previous.subject != str(user["id"]):
+            # Confirming is for the person who asked. Someone else's login is not a confirmation.
+            raise ValueError("re-authentication was completed by a different person")
+        session = browser_sessions.issue(
+            session_claims, role=role, cookie=cfg.cookie, path=ADMIN_STORE.path,
+            authenticated_at=_provider_auth_time(claims),
         )
-        accounts.register_session(str(user["id"]), session.session_id, int(session.expires_at), path=ADMIN_STORE.path)
         response = RedirectResponse(_safe_admin_return_to(state.return_to), status_code=302)
-        response.set_cookie(
-            cfg.cookie.name,
-            encode_session_cookie(session, signing_key=cfg.signing_key),
-            max_age=cfg.cookie.max_age_seconds,
-            secure=cfg.cookie.secure,
-            httponly=cfg.cookie.http_only,
-            samesite=cfg.cookie.same_site,
-            path=cfg.cookie.path,
-            domain=cfg.cookie.domain,
-        )
+        browser_sessions.set_cookie(response, session, cookie=cfg.cookie, signing_key=cfg.signing_key)
+        if previous is not None:
+            # Confirming a sign-in replaces it: the one it confirms must not linger.
+            await asyncio.to_thread(browser_sessions.end, previous, path=ADMIN_STORE.path)
         return clear_browser_binding(response, state)
     except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError):
         response = _browser_signin_failure(
@@ -17151,6 +17165,24 @@ async def admin_oidc_callback(request: Request):
             media_type="text/plain; charset=utf-8",
         )
         return clear_browser_binding(response, state) if state else response
+
+
+def _provider_auth_time(claims: Mapping[str, Any]) -> float | None:
+    """When the provider says the person last really signed in (``auth_time``), if it says."""
+    try:
+        return None if claims.get("auth_time") is None else float(claims["auth_time"])
+    except (TypeError, ValueError):
+        return None
+
+
+def _provider_signed_in_again(claims: Mapping[str, Any], *, since: float) -> bool:
+    """A step-up sign-in asked for a fresh login (prompt=login, max_age=0). When the provider
+    reports ``auth_time``, it must be from after the flow began; a provider that does not
+    report it is taken at its word."""
+    if claims.get("auth_time") is None:
+        return True
+    auth_time = _provider_auth_time(claims)
+    return auth_time is not None and auth_time >= since - 60
 
 
 async def _decide_oidc_signin(cfg, claims: Mapping[str, Any], *, bootstrap_owner: bool | None = None):
@@ -17201,7 +17233,7 @@ async def admin_logout(request: Request):
     expected = _csrf_token_for_oidc_session(session)
     if not expected or not hmac.compare_digest(expected, supplied):
         return JSONResponse({"error": {"code": "csrf_required", "message": "Refresh the page before signing out."}}, status_code=403)
-    accounts.revoke_session(session.session_id, int(session.expires_at), path=ADMIN_STORE.path)
+    browser_sessions.end(session, path=ADMIN_STORE.path)
     response = (JSONResponse({"next": "/sign-in/"}) if "application/json" in request.headers.get("accept", "")
                 else RedirectResponse("/sign-in/", status_code=303))
     cookie = _browser_admin_cookie_config()

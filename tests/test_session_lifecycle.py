@@ -1,0 +1,742 @@
+"""Browser sign-ins over HTTP: renewal, ending, sign-out everywhere, and step-up.
+
+Real routes and a real database, with the identity provider replaced (see
+tests/test_signin_who_can_enter.py). Sessions of any age are forged with the
+gateway's own signing key, then sent like a browser would.
+"""
+import re
+import time
+from dataclasses import replace
+
+import pytest
+
+from gateway import accounts, admin_store, session_policy, step_up
+from gateway.admin_oidc import (
+    AdminSession, CookieConfig, csrf_token_for_session, decode_session_cookie, encode_session_cookie,
+)
+from gateway.session_policy import DAY, MINUTE
+from tests.support.access import store_plan
+from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
+    OWNER, SIGNING_KEY, gateway, signed_in,
+)
+
+COOKIE = "opx_admin_session"
+HELPER = "helper@example.test"
+PASSWORD = "a sufficiently long password"
+
+
+@pytest.fixture
+def sg(gateway, monkeypatch):
+    monkeypatch.setattr(accounts, "_SCRYPT_N", 2 ** 10)       # a real password hash, at a test's cost
+    return gateway
+
+
+def csrf(client):
+    return {"x-azizam-csrf": client.get("/admin/api/session").json()["actor"]["csrf_token"]}
+
+
+def owner_client(g):
+    client, response = signed_in(g, sub="owner", email=OWNER)
+    assert response.status_code == 302, response.text
+    return client
+
+
+def helper_client(g):
+    client, response = signed_in(g, sub="helper", email=HELPER, groups=["/Trusted"])
+    assert response.status_code == 302, response.text
+    return client
+
+
+def put_cookie(client, value):
+    """Replace the client's session cookie (the jar keys cookies by domain, so say which one)."""
+    if COOKIE in client.cookies:
+        client.cookies.delete(COOKIE, domain="ai.example", path="/")
+    client.cookies.set(COOKIE, value, domain="ai.example", path="/")
+
+
+def person_id(g, email):
+    return g.user(email)["id"]
+
+
+def forge(g, client, email, *, issued_ago=0.0, renewed_ago=None, authenticated_ago=None,
+          expires_in=None, absolute_in=None, legacy=False, sid="forged_session_0001", register=True):
+    """Put a session of any age in the client's cookie jar (and the server's record of it)."""
+    now = time.time()
+    if expires_in is None:
+        expires_in = 30 * DAY - (issued_ago if renewed_ago is None else renewed_ago)    # idle window from the last renewal
+    session = AdminSession(
+        subject=person_id(g, email), email=email, role="owner", issued_at=now - issued_ago,
+        expires_at=now + expires_in, session_id=sid,
+        absolute_expires_at=None if legacy else now + (absolute_in if absolute_in is not None else 90 * DAY - issued_ago),
+        renewed_at=None if legacy else now - (issued_ago if renewed_ago is None else renewed_ago),
+        authenticated_at=None if legacy else now - (issued_ago if authenticated_ago is None else authenticated_ago),
+    )
+    if register:
+        accounts.register_session(session.subject, sid, int(session.expires_at), path=g.path)
+    put_cookie(client, encode_session_cookie(session, signing_key=SIGNING_KEY))
+    return session
+
+
+def signed_in_state(client) -> bool:
+    return client.get("/me/api/session").json()["authenticated"] is True
+
+
+def session_cookies(response) -> list[str]:
+    return [value for value in response.headers.get_list("set-cookie") if value.startswith(f"{COOKIE}=")]
+
+
+def cookie_session(client) -> AdminSession:
+    return decode_session_cookie(client.cookies.get(COOKIE), signing_key=SIGNING_KEY)
+
+
+def registry(g, sid):
+    return g.rows("SELECT * FROM account_sessions WHERE session_id=?", (sid,))
+
+
+def set_policy(g, **change):
+    admin_store.put_operator_setting(
+        session_policy.SESSION_POLICY_SETTING_KEY, {**session_policy.DEFAULT_SETTING, **change}, path=g.path)
+
+
+def set_password(g, email):
+    admin_store.set_local_password_verifier(person_id(g, email), accounts.hash_password(PASSWORD), path=g.path)
+
+
+# ---------------------------------------------------------------------------
+# Cookie attributes
+# ---------------------------------------------------------------------------
+
+def test_a_sign_in_cookie_is_http_only_lax_site_wide_and_lives_for_the_idle_window(sg):
+    _, response = signed_in(sg, sub="owner", email=OWNER)
+
+    header = session_cookies(response)[0]
+    assert "HttpOnly" in header and "SameSite=lax" in header and "Path=/" in header
+    assert abs(int(re.search(r"Max-Age=(\d+)", header).group(1)) - 30 * DAY) <= 5
+    assert "Secure" not in header                                  # this fixture runs the documented plain-HTTP setting
+
+
+def test_the_cookie_is_secure_unless_the_documented_plain_http_setting_is_on(sg):
+    sg.set_config(replace(sg.config, cookie=CookieConfig(secure=True)))
+
+    _, response = signed_in(sg, sub="owner", email=OWNER)
+
+    header = session_cookies(response)[0]
+    assert "Secure" in header and "HttpOnly" in header and "SameSite=lax" in header and "Path=/" in header
+
+
+def test_a_renewed_cookie_keeps_the_same_safe_attributes(sg):
+    sg.set_config(replace(sg.config, cookie=CookieConfig(secure=True)))
+    client = owner_client(sg)
+    forge(sg, client, OWNER, issued_ago=10 * DAY, renewed_ago=8 * DAY)
+
+    response = client.get("/me/api/session")
+
+    header = session_cookies(response)[0]
+    assert all(attribute in header for attribute in ("Secure", "HttpOnly", "SameSite=lax", "Path=/"))
+
+
+# ---------------------------------------------------------------------------
+# Sliding renewal over HTTP
+# ---------------------------------------------------------------------------
+
+def test_a_session_unused_for_over_a_quarter_of_the_idle_window_is_renewed_by_the_next_request(sg):
+    client = owner_client(sg)
+    old = forge(sg, client, OWNER, issued_ago=10 * DAY, renewed_ago=8 * DAY, authenticated_ago=10 * DAY)
+
+    response = client.get("/me/api/session")
+
+    assert response.json()["authenticated"] is True
+    assert len(session_cookies(response)) == 1
+    new = cookie_session(client)
+    assert new.session_id == old.session_id
+    assert new.expires_at > old.expires_at + 7 * DAY
+    assert abs(new.expires_at - (time.time() + 30 * DAY)) < 10
+    assert abs(new.last_renewed - time.time()) < 10
+    assert int(new.last_authenticated) == int(old.authenticated_at)          # renewing is not a sign-in
+    assert registry(sg, old.session_id)[0]["expires_at"] == int(new.expires_at)
+
+
+def test_a_recently_renewed_session_gets_no_new_cookie(sg):
+    client = owner_client(sg)
+    forge(sg, client, OWNER, issued_ago=10 * DAY, renewed_ago=2 * DAY)
+
+    response = client.get("/me/api/session")
+
+    assert response.json()["authenticated"] is True
+    assert session_cookies(response) == []
+
+
+def test_an_api_response_renews_too_and_the_csrf_token_is_stable_across_it(sg):
+    client = owner_client(sg)
+    old = forge(sg, client, OWNER, issued_ago=10 * DAY, renewed_ago=8 * DAY)
+
+    response = client.get("/admin/api/apps")
+
+    assert response.status_code == 200 and len(session_cookies(response)) == 1
+    assert csrf(client) == {"x-azizam-csrf": csrf_token_for_session(old, signing_key=SIGNING_KEY)}
+
+
+def test_static_assets_do_not_renew(sg):
+    client = owner_client(sg)
+    forge(sg, client, OWNER, issued_ago=10 * DAY, renewed_ago=8 * DAY)
+
+    response = client.get("/favicon.ico")
+
+    assert session_cookies(response) == []
+
+
+def test_a_session_idle_longer_than_the_window_is_signed_out_whatever_its_cookie_says(sg):
+    client = owner_client(sg)
+    forge(sg, client, OWNER, issued_ago=40 * DAY, renewed_ago=31 * DAY, expires_in=10 * DAY, absolute_in=50 * DAY)
+
+    response = client.get("/me/api/session")
+
+    assert response.json()["authenticated"] is False
+    assert any("Max-Age=0" in header for header in session_cookies(response))      # the cookie is cleared
+
+
+def test_a_session_past_its_absolute_lifetime_is_signed_out_even_if_busy(sg):
+    client = owner_client(sg)
+    forge(sg, client, OWNER, issued_ago=91 * DAY, renewed_ago=1 * DAY, expires_in=29 * DAY, absolute_in=-1 * DAY)
+
+    assert client.get("/me/api/session").json()["authenticated"] is False
+
+
+def test_a_busy_session_just_inside_its_absolute_lifetime_is_still_in_and_not_extended_past_it(sg):
+    client = owner_client(sg)
+    old = forge(sg, client, OWNER, issued_ago=89 * DAY, renewed_ago=8 * DAY, expires_in=2 * DAY, absolute_in=1 * DAY)
+
+    response = client.get("/me/api/session")
+
+    assert response.json()["authenticated"] is True
+    assert session_cookies(response) == []                           # already as long as it may be
+    assert int(cookie_session(client).expires_at) == int(old.expires_at)
+
+
+def test_shortening_the_idle_timeout_signs_out_sessions_already_idle_for_longer(sg):
+    client = owner_client(sg)
+    forge(sg, client, OWNER, issued_ago=10 * DAY, renewed_ago=2 * DAY)
+    assert signed_in_state(client)
+
+    set_policy(sg, idle_timeout_days=1)
+
+    assert not signed_in_state(client)
+
+
+# -- the eight-hour cookies already in people's phones ----------------------
+
+def test_an_old_eight_hour_cookie_still_works_and_is_upgraded_in_place_by_its_first_request(sg):
+    client = owner_client(sg)
+    old = forge(sg, client, OWNER, issued_ago=3600, expires_in=7 * 3600, legacy=True, sid="legacy_sid_0000001")
+
+    response = client.get("/me/api/session")
+
+    assert response.json()["authenticated"] is True
+    upgraded = cookie_session(client)
+    assert upgraded.session_id == old.session_id
+    assert upgraded.absolute_expires_at is not None and upgraded.renewed_at is not None
+    assert abs(upgraded.expires_at - (time.time() + 30 * DAY)) < 10
+    assert abs(upgraded.absolute_expires_at - (old.issued_at + 90 * DAY)) < 10      # from the original sign-in
+    assert int(upgraded.last_authenticated) == int(old.issued_at)
+    assert registry(sg, old.session_id)[0]["expires_at"] == int(upgraded.expires_at)
+
+
+def test_an_old_eight_hour_cookie_that_has_run_out_is_refused(sg):
+    client = owner_client(sg)
+    forge(sg, client, OWNER, issued_ago=9 * 3600, expires_in=-3600, legacy=True, sid="legacy_sid_0000002")
+
+    assert not signed_in_state(client)
+
+
+def test_an_old_cookie_without_a_session_id_is_still_valid_until_it_expires_and_keeps_its_identity(sg):
+    client = owner_client(sg)
+    old = forge(sg, client, OWNER, issued_ago=3600, expires_in=7 * 3600, legacy=True)
+    payload = old.to_dict()
+    payload.pop("sid")
+    put_cookie(client, encode_session_cookie(AdminSession.from_dict(payload), signing_key=SIGNING_KEY))
+
+    assert signed_in_state(client)
+    assert cookie_session(client).session_id.startswith("legacy_")
+
+
+# ---------------------------------------------------------------------------
+# Ending sessions
+# ---------------------------------------------------------------------------
+
+def test_signing_out_ends_that_session_and_a_copy_of_its_cookie_stops_working(sg):
+    client = owner_client(sg)
+    copy = client.cookies.get(COOKIE)
+
+    out = client.post("/logout", headers={**csrf(client), "accept": "application/json"})
+
+    assert out.status_code == 200
+    replay = sg.client()
+    put_cookie(replay, copy)
+    assert not signed_in_state(replay)
+
+
+def test_signing_out_after_a_renewal_still_kills_the_older_copy_of_the_cookie(sg):
+    client = owner_client(sg)
+    forge(sg, client, OWNER, issued_ago=10 * DAY, renewed_ago=8 * DAY)
+    older_copy = client.cookies.get(COOKIE)
+    client.get("/me/api/session")                                    # renews
+    assert client.cookies.get(COOKIE) != older_copy
+
+    client.post("/logout", headers={**csrf(client), "accept": "application/json"})
+
+    replay = sg.client()
+    put_cookie(replay, older_copy)
+    assert not signed_in_state(replay)
+
+
+def test_sign_out_everywhere_ends_every_session_of_the_person_and_no_one_elses(sg):
+    phone, laptop, other = owner_client(sg), owner_client(sg), helper_client(sg)
+    phone_cookie = phone.cookies.get(COOKIE)
+    assert signed_in_state(phone) and signed_in_state(laptop) and signed_in_state(other)
+
+    response = phone.post("/auth/api/sign-out-everywhere", headers=csrf(phone))
+
+    assert response.status_code == 200 and response.json() == {"next": "/sign-in/"}
+    assert any("Max-Age=0" in header for header in session_cookies(response))
+    assert not signed_in_state(phone) and not signed_in_state(laptop)
+    stale = sg.client()
+    put_cookie(stale, phone_cookie)
+    assert not signed_in_state(stale)
+    assert signed_in_state(other)
+    assert sg.rows("SELECT * FROM account_sessions WHERE user_id=?", (person_id(sg, OWNER),)) == []
+    assert len(sg.rows("SELECT 1 FROM audit_events WHERE action='account.sessions.revoke_all'")) == 1
+
+
+def test_sign_out_everywhere_needs_the_csrf_token_and_a_session(sg):
+    phone, laptop = owner_client(sg), owner_client(sg)
+
+    refused = phone.post("/auth/api/sign-out-everywhere")
+    anonymous = sg.client().post("/auth/api/sign-out-everywhere")
+
+    assert refused.status_code == 403 and refused.json()["error"]["code"] == "csrf_required"
+    assert anonymous.status_code == 401
+    assert signed_in_state(phone) and signed_in_state(laptop)
+
+
+def test_signing_in_again_after_signing_out_everywhere_works(sg):
+    client = owner_client(sg)
+    client.post("/auth/api/sign-out-everywhere", headers=csrf(client))
+
+    again = owner_client(sg)
+
+    assert signed_in_state(again)
+
+
+def test_setting_a_password_ends_the_persons_other_sessions_and_keeps_the_one_making_the_change(sg):
+    phone, laptop = owner_client(sg), owner_client(sg)
+
+    response = phone.post("/admin/api/signin/owner-password", json={"password": PASSWORD}, headers=csrf(phone))
+
+    assert response.status_code == 200, response.text
+    assert signed_in_state(phone)
+    assert not signed_in_state(laptop)
+
+
+def test_a_password_reset_ends_the_persons_sessions(sg):
+    owner = owner_client(sg)
+    plan = store_plan("Member plan", path=sg.path, models=["test-model"])
+    invite = owner.post("/admin/api/invites", json={"access_plan": plan["id"]}, headers=csrf(owner))
+    member = sg.client()
+    accepted = member.post("/auth/api/invite/accept", json={
+        "token": invite.json()["url"].split("#token=")[1], "email": "member@example.test",
+        "name": "Member", "password": PASSWORD})
+    assert accepted.status_code == 200, accepted.text
+    assert signed_in_state(member)
+    link = owner.post(f"/admin/api/people/{person_id(sg, 'member@example.test')}/reset",
+                      json={"expires_in": 3600}, headers=csrf(owner))
+
+    reset = sg.client().post("/auth/api/password-reset", json={
+        "token": link.json()["url"].split("#reset=")[1], "password": "a different long password"})
+
+    assert reset.status_code == 200, reset.text
+    assert not signed_in_state(member)
+
+
+def test_removing_a_person_ends_their_sessions(sg):
+    owner = owner_client(sg)
+    plan = store_plan("Member plan", path=sg.path, models=["test-model"])
+    invite = owner.post("/admin/api/invites", json={"access_plan": plan["id"]}, headers=csrf(owner))
+    member = sg.client()
+    member.post("/auth/api/invite/accept", json={
+        "token": invite.json()["url"].split("#token=")[1], "email": "member@example.test",
+        "name": "Member", "password": PASSWORD})
+    assert signed_in_state(member)
+
+    removed = owner.delete(f"/admin/api/people/{person_id(sg, 'member@example.test')}", headers=csrf(owner))
+
+    assert removed.status_code == 200, removed.text
+    assert not signed_in_state(member)
+
+
+# ---------------------------------------------------------------------------
+# API keys are not browser sessions
+# ---------------------------------------------------------------------------
+
+def test_keys_neither_renew_nor_step_up_and_never_get_a_session_cookie(sg):
+    owner = owner_client(sg)
+    admin_key = owner.post("/admin/api/admin-keys", json={"name": "automation", "role": "owner"}, headers=csrf(owner))
+    assert admin_key.status_code == 201, admin_key.text
+    oak = admin_key.json()["credential"]["api_key"]
+    plan = store_plan("Member plan", path=sg.path, models=["test-model"])
+    app = owner.post("/admin/api/apps", json={"name": "Phone app", "kind": "personal", "access_plan": plan["id"],
+                                              "owner_user_id": person_id(sg, OWNER)}, headers=csrf(owner)).json()["app"]
+    opk = owner.post(f"/admin/api/apps/{app['id']}/keys", json={"label": "k"}, headers=csrf(owner)).json()["credential"]["api_key"]
+
+    bare = sg.client()
+    gated = bare.get("/admin/api/settings/effective/export", headers={"authorization": f"Bearer {oak}"})
+    gated_write = bare.put("/admin/api/operator/host-commands", json={"enabled": False},
+                           headers={"authorization": f"Bearer {oak}", "if-match": '"0"'})
+    models = bare.get("/openai/v1/models", headers={"authorization": f"Bearer {opk}"})
+
+    assert gated.status_code == 200, gated.text
+    assert gated_write.json().get("error", {}).get("code") != "reauth_required"
+    assert models.status_code == 200, models.text
+    for response in (gated, gated_write, models):
+        assert session_cookies(response) == []
+        assert "set-cookie" not in response.headers
+
+
+def test_a_stale_session_cookie_beside_a_key_does_not_stop_the_key(sg):
+    owner = owner_client(sg)
+    admin_key = owner.post("/admin/api/admin-keys", json={"name": "automation", "role": "owner"}, headers=csrf(owner))
+    oak = admin_key.json()["credential"]["api_key"]
+    stale = sg.client()
+    forge(sg, stale, OWNER, issued_ago=3 * DAY, authenticated_ago=3 * DAY, sid="stale_beside_key_01")
+    accounts.revoke_session("stale_beside_key_01", int(time.time() + 30 * DAY), path=sg.path)      # revoked: no session
+
+    response = stale.get("/admin/api/settings/effective/export", headers={"authorization": f"Bearer {oak}"})
+
+    assert response.status_code == 200, response.text
+
+
+# ---------------------------------------------------------------------------
+# Step-up
+# ---------------------------------------------------------------------------
+
+def concrete(path):
+    return path.replace("*", "someid")
+
+
+def stale_owner(g, *, authenticated_ago=20 * MINUTE, sid="stale_owner_session_1"):
+    client = owner_client(g)
+    forge(g, client, OWNER, issued_ago=authenticated_ago, renewed_ago=0, authenticated_ago=authenticated_ago, sid=sid)
+    return client
+
+
+def asks_again(response) -> bool:
+    if response.status_code != 401:
+        return False
+    try:
+        return response.json()["error"]["code"] == "reauth_required"
+    except (ValueError, KeyError, TypeError):
+        return False
+
+
+@pytest.mark.parametrize("method, route", step_up.SENSITIVE_ROUTES)
+def test_every_risky_route_asks_a_stale_session_to_confirm_and_leaves_a_fresh_one_alone(sg, method, route):
+    path = concrete(route)
+    stale, fresh = stale_owner(sg), owner_client(sg)
+
+    denied = stale.request(method, path, headers=csrf(stale))
+    allowed = fresh.request(method, path, headers=csrf(fresh))
+
+    assert asks_again(denied), (denied.status_code, denied.text[:200])
+    assert not asks_again(allowed)
+    assert denied.headers["cache-control"] == "no-store"
+
+
+def test_the_risky_route_list_names_routes_that_exist(sg):
+    routes = {(method, route.path) for route in sg.proxy.app.routes for method in getattr(route, "methods", ()) or ()}
+    templates = {(method, re.sub(r"\{[^}]+\}", "*", path).rstrip("/")) for method, path in routes}
+
+    missing = [(method, path) for method, path in step_up.SENSITIVE_ROUTES if (method, path) not in templates]
+
+    assert missing == []
+
+
+def test_other_owner_routes_are_not_asked_to_confirm(sg):
+    stale = stale_owner(sg)
+
+    for path in ("/admin/api/apps", "/admin/api/people", "/admin/api/settings/instance", "/admin/api/session"):
+        assert not asks_again(stale.get(path)), path
+
+
+def test_the_401_says_how_this_person_can_confirm_and_for_how_long(sg):
+    stale = stale_owner(sg)
+    set_password(sg, OWNER)
+
+    body = stale.get("/admin/api/settings/effective/export").json()["error"]
+
+    assert body["code"] == "reauth_required"
+    assert body["reauth"] == {"methods": ["password", "oidc"], "window_seconds": 15 * MINUTE, "oidc_url": "/login?reauth=1"}
+
+
+def test_a_person_with_only_the_provider_is_offered_the_provider(sg):
+    stale = stale_owner(sg)
+
+    assert stale.get("/admin/api/settings/effective/export").json()["error"]["reauth"]["methods"] == ["oidc"]
+
+
+def test_confirming_with_the_right_password_makes_the_session_fresh_and_the_retry_goes_through(sg):
+    stale = stale_owner(sg)
+    set_password(sg, OWNER)
+    assert asks_again(stale.get("/admin/api/settings/effective/export"))
+    before = cookie_session(stale)
+
+    response = stale.post("/auth/api/reauth", json={"password": PASSWORD}, headers=csrf(stale))
+
+    assert response.status_code == 200 and response.json()["ok"] is True
+    after = cookie_session(stale)
+    assert after.session_id == before.session_id
+    assert abs(after.last_authenticated - time.time()) < 10
+    retry = stale.get("/admin/api/settings/effective/export")
+    assert retry.status_code == 200, retry.text
+    assert registry(sg, before.session_id)[0]["expires_at"] == int(after.expires_at)
+
+
+def test_a_wrong_password_does_not_make_the_session_fresh(sg):
+    stale = stale_owner(sg)
+    set_password(sg, OWNER)
+
+    response = stale.post("/auth/api/reauth", json={"password": "not the password at all"}, headers=csrf(stale))
+
+    assert response.status_code == 401 and response.json()["error"]["code"] == "invalid_password"
+    assert session_cookies(response) == []
+    assert asks_again(stale.get("/admin/api/settings/effective/export"))
+
+
+def test_confirming_needs_the_csrf_token_and_a_session(sg):
+    stale = stale_owner(sg)
+    set_password(sg, OWNER)
+
+    no_token = stale.post("/auth/api/reauth", json={"password": PASSWORD})
+    anonymous = sg.client().post("/auth/api/reauth", json={"password": PASSWORD})
+
+    assert no_token.status_code == 403 and no_token.json()["error"]["code"] == "csrf_required"
+    assert anonymous.status_code == 401
+
+
+def test_a_person_with_no_password_cannot_confirm_with_one(sg):
+    stale = stale_owner(sg)
+
+    response = stale.post("/auth/api/reauth", json={"password": PASSWORD}, headers=csrf(stale))
+
+    assert response.status_code == 409 and response.json()["error"]["code"] == "password_not_set"
+
+
+def test_confirming_shares_the_sign_in_throttle(sg):
+    stale = stale_owner(sg)
+    set_password(sg, OWNER)
+
+    codes = {stale.post("/auth/api/reauth", json={"password": "wrong password here"}, headers=csrf(stale)).status_code
+             for _ in range(14)}
+
+    assert codes == {401, 429}
+
+
+def test_the_step_up_window_is_the_owners_setting(sg):
+    set_policy(sg, step_up_minutes=60)
+    client = stale_owner(sg, authenticated_ago=40 * MINUTE)
+    assert not asks_again(client.get("/admin/api/settings/effective/export"))
+
+    set_policy(sg, step_up_minutes=30)
+
+    assert asks_again(client.get("/admin/api/settings/effective/export"))
+
+
+def test_a_fresh_sign_in_is_good_for_exactly_the_window(sg):
+    inside = stale_owner(sg, authenticated_ago=14 * MINUTE, sid="inside_window_0001")
+    outside = stale_owner(sg, authenticated_ago=16 * MINUTE, sid="outside_window_001")
+
+    assert not asks_again(inside.get("/admin/api/settings/effective/export"))
+    assert asks_again(outside.get("/admin/api/settings/effective/export"))
+
+
+def test_renewal_does_not_count_as_confirming(sg):
+    client = owner_client(sg)
+    forge(sg, client, OWNER, issued_ago=10 * DAY, renewed_ago=8 * DAY, authenticated_ago=10 * DAY)
+
+    client.get("/me/api/session")                                       # renews the cookie
+
+    assert asks_again(client.get("/admin/api/settings/effective/export"))
+
+
+def test_a_non_admin_is_refused_by_the_route_not_asked_to_confirm(sg):
+    member = sg.client()
+    plan = store_plan("Member plan", path=sg.path, models=["test-model"])
+    owner = owner_client(sg)
+    invite = owner.post("/admin/api/invites", json={"access_plan": plan["id"]}, headers=csrf(owner))
+    member.post("/auth/api/invite/accept", json={
+        "token": invite.json()["url"].split("#token=")[1], "email": "member@example.test", "name": "M", "password": PASSWORD})
+    old = time.time() - DAY
+    session = AdminSession(subject=person_id(sg, "member@example.test"), email="member@example.test", role="none",
+                           issued_at=old, expires_at=old + 30 * DAY, session_id="member_stale_000001",
+                           absolute_expires_at=old + 90 * DAY, renewed_at=time.time(), authenticated_at=old)
+    accounts.register_session(session.subject, session.session_id, int(session.expires_at), path=sg.path)
+    put_cookie(member, encode_session_cookie(session, signing_key=SIGNING_KEY))
+
+    response = member.get("/admin/api/settings/effective/export")
+
+    assert response.status_code == 403 and not asks_again(response)
+
+
+# -- confirming with the identity provider -----------------------------------
+
+def through_provider(g, client, *, reauth=True, sub="owner", email=OWNER, auth_time=None):
+    """Run the provider sign-in the browser would: /login (with reauth=1 for step-up), then the callback."""
+    params = {"return_to": "/settings/", **({"reauth": "1"} if reauth else {})}
+    login = client.get("/login", params=params, follow_redirects=False)
+    if "redirect_uri=" not in login.headers["location"]:
+        login = client.get(login.headers["location"], follow_redirects=False)
+    state, record = list(g.proxy.ADMIN_OIDC_STATES.items())[-1]
+
+    async def exchange(code, *, config, pkce):
+        return {"id_token": "fake.id.token"}
+
+    async def verify(token, *, config):
+        claims = {"iss": config.issuer, "aud": config.client_id, "sub": sub, "email": email, "email_verified": True,
+                  "nonce": record.nonce, "exp": 4_000_000_000, "iat": 1_700_000_000}
+        if auth_time is not None:
+            claims["auth_time"] = auth_time
+        return claims
+
+    g.monkeypatch.setattr(g.proxy, "_oidc_exchange_code", exchange)
+    g.monkeypatch.setattr(g.proxy, "_oidc_verify_id_token", verify)
+    callback = client.get("/admin/oidc/callback", params={"state": state, "code": "c"},
+                          headers={"accept": "text/html"}, follow_redirects=False)
+    return login, callback
+
+
+reauth_through_provider = through_provider
+
+
+def test_signing_in_through_the_provider_asks_it_to_log_the_person_in_again(sg):
+    stale = stale_owner(sg)
+
+    login = stale.get("/login", params={"reauth": "1", "return_to": "/"}, follow_redirects=False)
+    plain = owner_client(sg).get("/login", params={"return_to": "/"}, follow_redirects=False)
+
+    assert "prompt=login" in login.headers["location"] and "max_age=0" in login.headers["location"]
+    assert "prompt=login" not in plain.headers["location"]
+
+
+def test_confirming_through_the_provider_gives_a_fresh_session_and_ends_the_one_it_replaced(sg):
+    stale = stale_owner(sg)
+    old_cookie = stale.cookies.get(COOKIE)
+
+    _, callback = reauth_through_provider(sg, stale, auth_time=int(time.time()))
+
+    assert callback.status_code == 302 and callback.headers["location"] == "/settings/"
+    assert not asks_again(stale.get("/admin/api/settings/effective/export"))
+    replay = sg.client()
+    put_cookie(replay, old_cookie)
+    assert not signed_in_state(replay)
+
+
+def test_a_provider_that_reuses_its_own_old_login_does_not_confirm_anyone(sg):
+    stale = stale_owner(sg)
+
+    _, callback = reauth_through_provider(sg, stale, auth_time=int(time.time()) - 3600)
+
+    assert callback.status_code == 303 and callback.headers["location"].startswith("/sign-in/?error=provider")
+    assert asks_again(stale.get("/admin/api/settings/effective/export"))
+
+
+def test_an_ordinary_provider_sign_in_that_reuses_an_old_login_is_not_a_recent_sign_in(sg):
+    client = sg.client()
+
+    through_provider(sg, client, reauth=False, auth_time=int(time.time()) - 3 * 3600)
+
+    assert signed_in_state(client)
+    assert asks_again(client.get("/admin/api/settings/effective/export"))
+
+
+def test_an_ordinary_provider_sign_in_with_a_recent_login_is_a_recent_sign_in(sg):
+    client = sg.client()
+
+    through_provider(sg, client, reauth=False, auth_time=int(time.time()) - 30)
+
+    assert not asks_again(client.get("/admin/api/settings/effective/export"))
+
+
+def test_a_provider_that_reports_no_auth_time_is_taken_at_its_word(sg):
+    client = sg.client()
+
+    through_provider(sg, client, reauth=False)
+
+    assert not asks_again(client.get("/admin/api/settings/effective/export"))
+
+
+def test_confirming_through_the_provider_as_someone_else_is_refused(sg):
+    stale = stale_owner(sg)
+    helper = helper_client(sg)                                      # a second person exists
+    assert signed_in_state(helper)
+
+    _, callback = through_provider(sg, stale, sub="helper", email=HELPER, auth_time=int(time.time()))
+
+    assert callback.status_code == 303 and callback.headers["location"].startswith("/sign-in/?error=provider")
+    assert asks_again(stale.get("/admin/api/settings/effective/export"))
+
+
+def test_the_reauth_request_survives_the_hop_to_the_callback_host(sg):
+    elsewhere = sg.client()
+    elsewhere.base_url = "https://other.example"
+
+    response = elsewhere.get("/login", params={"reauth": "1", "return_to": "/settings/"}, follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"].startswith("https://ai.example/login?")
+    assert "reauth=1" in response.headers["location"]
+
+
+# -- review findings ---------------------------------------------------------
+
+def test_a_host_header_that_reshapes_the_url_does_not_skip_the_confirmation(sg):
+    stale = stale_owner(sg)
+
+    for host in ("ai.example#", "ai.example?x=1", "ai.example/x"):
+        response = stale.get("/admin/api/settings/effective/export", headers={"host": host})
+        assert asks_again(response), (host, response.status_code)
+
+
+def test_signing_out_an_old_cookie_also_stops_a_copy_that_was_renewed_before(sg):
+    client = owner_client(sg)
+    old = forge(sg, client, OWNER, issued_ago=3600, expires_in=7 * 3600, legacy=True, sid="legacy_signout_0001")
+    thief = sg.client()
+    put_cookie(thief, client.cookies.get(COOKIE))
+    thief.get("/me/api/session")                                  # the copy renews: it now lasts for weeks
+    renewed_copy = thief.cookies.get(COOKIE)
+    assert cookie_session(thief).absolute_expires_at is not None
+
+    still_old = {"x-azizam-csrf": csrf_token_for_session(old, signing_key=SIGNING_KEY)}   # no call that would renew it
+    out = client.post("/logout", headers={**still_old, "accept": "application/json"})
+    assert out.status_code == 200, out.text
+
+    replay = sg.client()
+    put_cookie(replay, renewed_copy)
+    assert not signed_in_state(replay)
+    revoked_until = sg.rows("SELECT expires_at FROM account_session_revocations WHERE session_id=?", (old.session_id,))[0]["expires_at"]
+    assert revoked_until >= old.issued_at + 365 * DAY - 5               # past the longest absolute lifetime an owner may set
+
+
+def test_a_session_claimed_with_an_admin_key_never_renews_and_ends_at_its_fixed_life(sg):
+    from gateway import browser_sessions
+    client = owner_client(sg)
+    claimed = browser_sessions.issue({"sub": person_id(sg, OWNER), "email": OWNER}, role="owner",
+                                     cookie=sg.config.cookie, path=sg.path, register=False, renewable=False,
+                                     now=time.time() - 7 * 3600)
+    put_cookie(client, encode_session_cookie(claimed, signing_key=SIGNING_KEY))
+
+    response = client.get("/me/api/session")
+
+    assert response.json()["authenticated"] is True
+    assert session_cookies(response) == []                           # not renewed, however old
+    assert claimed.expires_at - claimed.issued_at == 8 * 3600
+    assert claimed.renewable is False
+    assert decode_session_cookie(encode_session_cookie(claimed, signing_key=SIGNING_KEY), signing_key=SIGNING_KEY,
+                                 now=time.time()).renewable is False

@@ -10,10 +10,10 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 from starlette.responses import JSONResponse
 
-from gateway import accounts, admin_store
+from gateway import accounts, admin_store, browser_sessions
 from gateway.settings_api import instance_settings
 from gateway.admin_api import _require_admin
-from gateway.admin_oidc import encode_session_cookie, session_from_claims, csrf_token_for_session, safe_browser_return_to
+from gateway.admin_oidc import csrf_token_for_session, safe_browser_return_to
 
 
 class _AccountRoute(APIRoute):
@@ -48,6 +48,10 @@ class Accept(_Body):
     email: str
     name: str
     password: str | None = None
+
+
+class Reauth(_Body):
+    password: str
 
 
 class InspectInvite(_Body):
@@ -147,13 +151,9 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         cookie, key = cookie_provider(), signing_key_provider()
         if not key:
             raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
-        session = session_from_claims({"sub": user["id"], "email": user["email"]}, role=role, cookie=cookie)
-        accounts.register_session(user["id"], session.session_id, int(session.expires_at), path=path)
+        session = browser_sessions.issue({"sub": user["id"], "email": user["email"]}, role=role, cookie=cookie, path=path)
         response = JSONResponse(payload)
-        response.set_cookie(cookie.name, encode_session_cookie(session, signing_key=key),
-                            max_age=cookie.max_age_seconds, secure=cookie.secure,
-                            httponly=cookie.http_only, samesite=cookie.same_site,
-                            path=cookie.path, domain=cookie.domain)
+        browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=key)
         return response
 
     @router.get("/auth/api/options")
@@ -224,6 +224,42 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         link = hmac.new(b"reset-link", body.token.encode(), "sha256").hexdigest()
         accounts.throttle(client_ip(request), f"reset:{link}", path=path_provider())
         accounts.reset_password(body.token, body.password, path=path_provider())
+        response = JSONResponse({"next": "/sign-in/"})
+        cookie = cookie_provider()
+        response.delete_cookie(cookie.name, path=cookie.path, domain=cookie.domain)
+        return response
+
+    def signed_in_with_csrf(request: Request):
+        """The caller's own session, for an action on that session; a missing or wrong CSRF token is refused."""
+        session = session_reader(request)
+        if not session:
+            raise accounts.AccountError("login_required", "Sign in first.", 401)
+        key = signing_key_provider()
+        expected = csrf_token_for_session(session, signing_key=key) if key else ""
+        if not expected or not hmac.compare_digest(expected, request.headers.get("x-azizam-csrf", "")):
+            raise accounts.AccountError("csrf_required", "Refresh this page and try again.", 403)
+        return session, key
+
+    @router.post("/auth/api/reauth")
+    def reauth(request: Request, body: Reauth):
+        """Confirm the signed-in person's password, so risky owner actions are allowed for a while."""
+        same_origin(request)
+        session, key = signed_in_with_csrf(request)
+        path = path_provider()
+        accounts.confirm_password(session.subject, body.password, client_ip(request), path=path)
+        refreshed = browser_sessions.confirm(session, path=path)
+        admin_store.record_audit("account.reauth", actor_kind="user", actor_id=session.subject,
+                                 actor_label=session.email, target_kind="user", target_id=session.subject, path=path)
+        response = JSONResponse({"ok": True, "authenticated_at": int(refreshed.last_authenticated)})
+        browser_sessions.set_cookie(response, refreshed, cookie=cookie_provider(), signing_key=key)
+        return response
+
+    @router.post("/auth/api/sign-out-everywhere")
+    def sign_out_everywhere(request: Request):
+        """End every sign-in this person has, on every device, this one included."""
+        same_origin(request)
+        session, _ = signed_in_with_csrf(request)
+        browser_sessions.end_everywhere(session, path=path_provider())
         response = JSONResponse({"next": "/sign-in/"})
         cookie = cookie_provider()
         response.delete_cookie(cookie.name, path=cookie.path, domain=cookie.domain)

@@ -168,7 +168,11 @@ class CookieConfig:
     """Settings for the signed admin-session cookie."""
 
     name: str = "opx_admin_session"
-    max_age_seconds: int = 60 * 60 * 8  # 8h default — admins re-auth daily-ish
+    # Not the session lifetime: that is the owner's session policy
+    # (gateway.session_policy). This is how long a role the identity provider
+    # granted stays confirmed after a sign-in, and the lifetime of a session
+    # built without a policy.
+    max_age_seconds: int = 60 * 60 * 8
     secure: bool = True
     http_only: bool = True
     same_site: str = "lax"  # "lax" | "strict" | "none"
@@ -511,6 +515,8 @@ class StateRecord:
     # Set for a test sign-in from Settings: the callback records what came
     # back for that test and signs no one in.
     test_id: str = ""
+    # Set when the person is confirming a sign-in they already have (step-up).
+    reauth: bool = False
 
 
 def record_state(
@@ -523,6 +529,7 @@ def record_state(
     browser_cookie_name: str = "",
     browser_binding_hash: str = "",
     test_id: str = "",
+    reauth: bool = False,
     state: str | None = None,
     now: float | None = None,
     max_age_seconds: int = 600,
@@ -545,6 +552,7 @@ def record_state(
         browser_cookie_name=browser_cookie_name,
         browser_binding_hash=browser_binding_hash,
         test_id=test_id,
+        reauth=reauth,
     )
     store[record.state] = record
     return record
@@ -778,13 +786,34 @@ class AdminSession:
     issued_at: float
     expires_at: float
     session_id: str = ""
+    # Sliding-session fields. None marks a cookie issued before sliding
+    # sessions: it was last renewed and last authenticated when it was issued,
+    # and has no absolute deadline of its own.
+    absolute_expires_at: float | None = None
+    renewed_at: float | None = None
+    authenticated_at: float | None = None
+    # False for a session that must end at its expiry (a browser session claimed with an admin key).
+    renewable: bool = True
+
+    @property
+    def last_renewed(self) -> float:
+        return self.issued_at if self.renewed_at is None else self.renewed_at
+
+    @property
+    def last_authenticated(self) -> float:
+        return self.issued_at if self.authenticated_at is None else self.authenticated_at
+
+    @property
+    def latest_expiry(self) -> float:
+        """The latest moment any copy of this session could still be valid."""
+        return max(self.expires_at, self.absolute_expires_at or 0.0)
 
     def is_expired(self, now: float | None = None) -> bool:
         current = now if now is not None else time.time()
         return current >= self.expires_at
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "sub": self.subject,
             "email": self.email,
             "role": self.role,
@@ -792,6 +821,13 @@ class AdminSession:
             "exp": int(self.expires_at),
             "sid": self.session_id,
         }
+        for key, value in (("aexp", self.absolute_expires_at), ("rat", self.renewed_at),
+                           ("aat", self.authenticated_at)):
+            if value is not None:
+                data[key] = int(value)
+        if not self.renewable:
+            data["rn"] = 0
+        return data
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "AdminSession":
@@ -809,9 +845,17 @@ class AdminSession:
                 issued_at=float(data["iat"]),
                 expires_at=float(data["exp"]),
                 session_id=session_id,
+                absolute_expires_at=_optional_float(data.get("aexp")),
+                renewed_at=_optional_float(data.get("rat")),
+                authenticated_at=_optional_float(data.get("aat")),
+                renewable=data.get("rn", 1) != 0,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise SessionError(f"malformed session payload: {exc}") from exc
+
+
+def _optional_float(value: Any) -> float | None:
+    return None if value is None else float(value)
 
 
 # A short version tag so we can rotate the cookie format without silently
@@ -825,22 +869,41 @@ def session_from_claims(
     role: str,
     cookie: CookieConfig,
     now: float | None = None,
+    idle_seconds: int | None = None,
+    absolute_seconds: int | None = None,
 ) -> AdminSession:
     """Build an :class:`AdminSession` from validated ID-token claims.
 
     Only the subject + email are pulled from the claims. The role is
     decided by the caller (typically via :func:`bootstrap_admin_role`).
+
+    With ``idle_seconds`` and ``absolute_seconds`` (the session policy) the
+    session can be renewed until its absolute deadline. Without them it lives
+    ``cookie.max_age_seconds`` and is never renewed.
     """
     if role not in AdminRole.ALL:
         raise SessionError(f"invalid role {role!r}")
     issued = now if now is not None else time.time()
+    session_id = _b64url(secrets.token_bytes(16))
+    if idle_seconds is None or absolute_seconds is None:
+        return AdminSession(
+            subject=str(claims["sub"]),
+            email=str(claims["email"]).strip().lower(),
+            role=role,
+            issued_at=issued,
+            expires_at=issued + cookie.max_age_seconds,
+            session_id=session_id,
+        )
     return AdminSession(
         subject=str(claims["sub"]),
         email=str(claims["email"]).strip().lower(),
         role=role,
         issued_at=issued,
-        expires_at=issued + cookie.max_age_seconds,
-        session_id=_b64url(secrets.token_bytes(16)),
+        expires_at=issued + min(idle_seconds, absolute_seconds),
+        session_id=session_id,
+        absolute_expires_at=issued + absolute_seconds,
+        renewed_at=issued,
+        authenticated_at=issued,
     )
 
 
