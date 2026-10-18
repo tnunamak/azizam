@@ -98,6 +98,19 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
         self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(unknown)))
         self.assertEqual(unknown.posts, [])
 
+        class DroppedClient(FakeClient):
+            async def get(self, _url: str, **_kwargs: Any) -> FakeResponse:
+                raise proxy.httpx.ReadTimeout("slow")
+
+        import contextlib
+        import io
+
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(DroppedClient(False))))
+        # The log line names the httpx error, as it did before the call moved behind the adapter.
+        self.assertIn("model unload failed: ReadTimeout", printed.getvalue())
+
     def test_seeded_requests_get_stable_hashed_request_id(self) -> None:
         body = {
             "model": "flux2-klein-4b",
