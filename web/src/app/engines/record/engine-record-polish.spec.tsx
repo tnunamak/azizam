@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ApiError } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { enginesApi, type CheckResult, type EngineView } from "@/lib/engines-api";
 import { accessAnswer, check, definitions, engineView, renderWithClient } from "../__fixtures__/test-utils";
 import { EngineRecordPage } from "./engine-record-page";
@@ -69,6 +69,7 @@ describe("a failed Save is shown at its field", () => {
     await screen.findByRole("heading", { level: 1, name: "garage-gpu" });
     await edit(user);
     vi.spyOn(enginesApi, "update").mockRejectedValue(error);
+    vi.spyOn(api.services, "edit").mockRejectedValue(error);
     await user.click(screen.getByRole("button", { name: button }));
     await screen.findByText("The changes could not be saved");
     return user;

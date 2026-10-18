@@ -298,7 +298,7 @@ describe("headers", () => {
     expect(screen.queryByRole("button", { name: /^Replace X-/ })).toBeNull();
   });
 
-  it("saving an untouched page sends the headers and adjustments back unchanged; a new header has no secret flag", async () => {
+  it("a timeout edit preserves headers and adjustments; a new header has no secret flag", async () => {
     const user = userEvent.setup();
     const transforms = [
       "reasoning-effort-final-chat",
@@ -310,6 +310,9 @@ describe("headers", () => {
     mount({ values: { ...engineView().values, headers, transforms } });
     const name = await screen.findByLabelText("Name");
     await user.type(name, "!");
+    await user.click(screen.getByText("More options", { selector: "summary span" }));
+    await user.clear(screen.getByLabelText("Time to wait for a reply"));
+    await user.type(screen.getByLabelText("Time to wait for a reply"), "300");
     const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(update).toHaveBeenCalled());
