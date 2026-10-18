@@ -17,6 +17,7 @@ def main() -> None:
     if os.environ.get("HERMETIC_TEST_NAMESPACE") != "1":
         raise SystemExit("Use scripts/run-hermetic-pytest.sh --python-script; live stores must not be imported.")
     root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root))
     sys.path.insert(0, str(root / "tests"))
     # Install the same test-owned store paths collection uses, before importing the gateway.
     import conftest  # noqa: F401

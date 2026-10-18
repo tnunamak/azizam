@@ -721,6 +721,8 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         if route.get("path"):
             operations.append({"capability": cap_id, "method": "POST", "url": join_url(request_base, route["path"])})
     fingerprint = _stored_evidence_binding(stored, db_path=db_path, env=env)
+    v2 = service_registry.service_record_v2(stored)
+    v2["connection"]["address"] = address
     return {
         "service_id": record.get("id"),
         "definition": definition["definition"],
@@ -753,7 +755,7 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         "other_settings": copy.deepcopy(other),
         "hidden_settings": hidden,
         "record": redacted_record(stored),
-        "v2": service_registry.service_record_v2(stored),
+        "v2": v2,
         "request_path": {"mode": "gateway_lifecycle" if hop_routed else "direct", "source": "service record",
                          "url": operations[0]["url"] if operations else "", "operations": operations},
         "credential_destination": (key.get("origin") or "") if key["state"] == "configured" else origin_of(address),
@@ -997,7 +999,10 @@ class EngineService:
         result = projection.scrub_value(result)
         request = result.get("request")
         if isinstance(request, dict) and isinstance(request.get("headers"), Mapping):
-            request["headers"] = {name: "configured" for name in request["headers"]}
+            request["headers"] = {
+                name: value if name.lower() == "content-type" and value == "application/json" else "configured"
+                for name, value in request["headers"].items()
+            }
         result["key_sent"] = bool(key.value)
         result["key_withheld"] = key.withheld
         result["capability"] = capability
