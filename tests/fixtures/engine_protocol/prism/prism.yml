@@ -117,6 +117,12 @@ operations:
       - copy:
           from: /body/meter/out
           to: /usage/completion_tokens
+      - copy:
+          from: /body/result/issued
+          to: /created
+      - copy:
+          from: /body/meter/total
+          to: /usage/total_tokens
       stream:
         when:
           path: /body/stream
@@ -158,6 +164,15 @@ operations:
             - copy:
                 from: /body/meter/out
                 to: /usage/completion_tokens
+        - set:
+            to: /id
+            value: stream-1
+        - set:
+            to: /created
+            value: 1700000000
+        - copy:
+            from: /params/model
+            to: /model
   transcribe:
     class: generate
     request:
@@ -219,6 +234,11 @@ operations:
       - copy:
           from: /body/encoder
           to: /model
+      - set:
+          to: /usage
+          value:
+            prompt_tokens: 1
+            total_tokens: 1
   images:
     class: generate
     job:

@@ -29,7 +29,7 @@ class ProtocolUpstream:
         if path == '/api/v3/converse':
             if b'"delivery":"live"' in request.content:
                 return httpx.Response(200, stream=Chunks([b'event: word\ndata: {"delta":"Hi","done":false}\n\n', b'data: {"delta":"","done":true,"why":"eos","meter":{"in":3,"out":1}}\n\n']), headers={'content-type':'text/event-stream'})
-            return httpx.Response(200, json={'result':{'id':'answer-1','model':'text-v2','output':{'text':'Hi'},'why':'eos'},'meter':{'in':3,'out':1}})
+            return httpx.Response(200, json={'result':{'id':'answer-1','issued':1700000000,'model':'text-v2','output':{'text':'Hi'},'why':'eos'},'meter':{'in':3,'out':1,'total':4}})
         if path == '/catalog':
             return httpx.Response(200, json={'available':[{'id':'prism-chat','object':'model','created':0,'owned_by':'test'}]})
         if path == '/vectors':

@@ -52,7 +52,7 @@ def chat(engine, **kw):
 def test_public_chat_maps_request_response_and_receipt(engine):
     response = chat(engine)
     assert response.status_code == 200, response.text
-    assert response.json() == {'object':'chat.completion','id':'answer-1','model':'text-v2','choices':[{'index':0,'message':{'role':'assistant','content':'Hi'},'finish_reason':'stop'}],'usage':{'prompt_tokens':3,'completion_tokens':1}}
+    assert response.json() == {'object':'chat.completion','id':'answer-1','model':'text-v2','choices':[{'index':0,'message':{'role':'assistant','content':'Hi'},'finish_reason':'stop'}],'usage':{'prompt_tokens':3,'completion_tokens':1,'total_tokens':4},'created':1700000000}
     [wire] = engine.fake.requests
     assert str(wire.url) == 'http://prism.test:9100/prefix/api/v3/converse'
     assert wire.content == b'{"engine":{"model":"text-v2"},"input":{"turns":[{"role":"user","content":"Hello"}]},"delivery":"once","sampling":{"t":2}}'
@@ -63,13 +63,19 @@ def test_public_chat_maps_request_response_and_receipt(engine):
 def test_public_sse_is_openai_framed_with_final_done(engine):
     response = chat(engine, stream=True)
     assert response.status_code == 200, response.text
-    assert response.content == b'data: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}\n\ndata: {"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}}\n\ndata: [DONE]\n\n'
+    expected = [
+        {'object':'chat.completion.chunk','choices':[{'index':0,'delta':{'content':'Hi'},'finish_reason':None}],
+         'id':'stream-1','created':1700000000,'model':'text-v2'},
+        {'object':'chat.completion.chunk','choices':[{'index':0,'delta':{'content':''},'finish_reason':'stop'}],
+         'usage':{'prompt_tokens':3,'completion_tokens':1},'id':'stream-1','created':1700000000,'model':'text-v2'},
+    ]
+    assert response.content == b''.join(b'data: '+json.dumps(event,separators=(',',':')).encode()+b'\n\n' for event in expected)+b'data: [DONE]\n\n' 
 
 
 def test_public_embeddings(engine):
     response = engine.client.post('/v1/embeddings', json={'model':'prism-embed','input':['hello']})
     assert response.status_code == 200, response.text
-    assert response.json() == {'object':'list','data':[{'object':'embedding','index':0,'embedding':[0.25,0.75]}],'model':'embed-v3'}
+    assert response.json() == {'object':'list','data':[{'object':'embedding','index':0,'embedding':[0.25,0.75]}],'model':'embed-v3','usage':{'prompt_tokens':1,'total_tokens':1}}
     assert engine.fake.requests[0].content == b'{"encoder":"embed-v3","texts":["hello"]}'
 
 
@@ -98,6 +104,7 @@ def test_public_images_use_core_assets_and_jobs(engine, sync):
     jobs = media_jobs.recent(path=media_jobs.DB_PATH, audience='internal')
     assert len(jobs) == 1 and jobs[0]['status'] == 'succeeded'
     assert jobs[0]['assets'][0]['asset_id'] == item['asset_id']
+    assert response.json()=={'created':jobs[0]['updated_at'],'job_id':jobs[0]['job_id'],'data':[{'asset_id':item['asset_id'],'media_type':'image/png','b64_json':base64.b64encode(engine.fake.image).decode()}]}
     if not sync:
         assert [(r.method,r.url.path,r.content) for r in engine.fake.requests] == [('POST','/prefix/api/v3/renders',b'{"spec":{"text":"blue","dims":"512x512"}}'),('GET','/prefix/api/v3/renders/job-1',b''),('GET','/prefix/api/v3/renders/job-1/outputs/output-1',b'')]
 

@@ -28568,6 +28568,8 @@ async def _protocol_models_payload(auth_context):
         doc = description.load_registry().get(connection_config(service).get("protocol"))
         if doc is None or doc.executor != "http-v1" or "models" not in doc.operations:
             continue
+        if doc.operations["models"].op_class != "inventory":
+            raise ProtocolError("Model listing requires an inventory operation.", code="invalid_description")
         offerings = offerings_config(service)
         if not offerings:
             continue
