@@ -65,7 +65,7 @@ def test_a_native_process_and_a_conflicting_legacy_lifecycle_are_refused_before_
     plain["id"] = "engine-b"
     registry = {"schema_version": 1, "services": {"engine-a": mixed, "engine-b": plain}}
     before = copy.deepcopy(registry)
-    with pytest.raises(ValueError, match=r"engine-a.*process.*lifecycle.*both"):
+    with pytest.raises(ValueError, match=r"engine-a.*both.*process.*lifecycle"):
         service_registry.migrate_engine_records_v2(registry)
     assert registry == before
 

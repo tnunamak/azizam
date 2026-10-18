@@ -670,6 +670,40 @@ def service_record_v2(record: Mapping[str, Any]) -> dict[str, Any]:
             "residency": residency, "resources": resources}
 
 
+def _declares_process(block: Any) -> bool:
+    """True when a process block says more than "Azizam does not run this"."""
+    if not isinstance(block, Mapping):
+        return False
+    return str(block.get("driver") or "none").strip().lower() != "none" or any(
+        key not in {"driver", "legacy_lifecycle"} for key in block
+    )
+
+
+def _declares_lifecycle(lifecycle: Mapping[str, Any]) -> bool:
+    """True when a normalized legacy lifecycle runs, or names, something on the host."""
+    driver = str(lifecycle.get("driver") or "external").strip().lower()
+    return driver not in {"external", "none"} or bool(
+        lifecycle.get("driver_config") or lifecycle.get("managed") or lifecycle.get("service_name")
+    )
+
+
+def _native_process(service_id: str, record: dict[str, Any], lifecycle: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The record's own process block when it holds one, or ``None`` when the legacy lifecycle is the source.
+
+    Two sources that both run something are refused: Azizam does not guess which one the owner meant.
+    """
+    config = record.get("config") if isinstance(record.get("config"), dict) else {}
+    block = record.get("process") if isinstance(record.get("process"), Mapping) else config.get("process")
+    if not _declares_process(block):
+        return None
+    if "legacy_lifecycle" not in block and _declares_lifecycle(lifecycle):
+        raise ValueError(
+            f"service {service_id!r} has both a process block and a lifecycle that run commands; "
+            "remove one of them before retrying"
+        )
+    return copy.deepcopy(dict(block))
+
+
 def migrate_engine_records_v2(registry: dict[str, Any]) -> list[str]:
     """Collapse duplicate lifecycle sources atomically in a registry document."""
     if int(registry.get("schema_version") or 1) >= ENGINE_RECORD_VIEW_VERSION:
@@ -683,9 +717,19 @@ def migrate_engine_records_v2(registry: dict[str, Any]) -> list[str]:
         lifecycle = _agreed_lifecycle(service_id, record)
         observations = service_record_v2(record)["observations"]
         residency = service_record_v2(record)["residency"]
-        process = _v2_process(lifecycle)
-        if process is not None:
-            record["process"] = process
+        native = _native_process(service_id, record, lifecycle)
+        if native is not None:
+            # The block is the owner's: keep every field. A legacy lifecycle wrapper the runtime
+            # projection carried today stays beside it, so the backend the gateway builds is unchanged.
+            if isinstance(record.get("lifecycle"), Mapping):
+                native.setdefault("legacy_lifecycle", copy.deepcopy(dict(lifecycle)))
+            record["process"] = native
+            if isinstance(record.get("config"), dict):
+                record["config"].pop("process", None)
+        else:
+            process = _v2_process(lifecycle)
+            if process is not None:
+                record["process"] = process
         record["observations"] = observations
         record["residency"] = residency
         if isinstance(record.get("config"), dict):
