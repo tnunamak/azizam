@@ -32,7 +32,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, category_enforcement, secret_store, service_registry, transforms
+from gateway import admin_store, category_enforcement, engine_redaction, secret_store, service_registry, transforms
 from gateway.access_plans import PlanError, plan_from_document
 from gateway.engine_access import who_can_use
 from gateway.engine_check import (
@@ -574,7 +574,8 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     lifecycle = service_registry.legacy_lifecycle_from_service(record)
     driver_config = lifecycle.get("driver_config") or {}
     if lifecycle.get("driver") == "command":
-        values.update(lifecycle_mode="managed", lifecycle_start=driver_config.get("start", ""), lifecycle_stop=driver_config.get("stop", ""),
+        values.update(lifecycle_mode="managed", lifecycle_start=engine_redaction.redact_command(driver_config.get("start", "")),
+                      lifecycle_stop=engine_redaction.redact_command(driver_config.get("stop", "")),
                       lifecycle_ready_s=driver_config.get("health_timeout_s", 120))
     else:
         values["lifecycle_mode"] = "external"
@@ -597,6 +598,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     field_keys = {f["key"] for f in definition["fields"]}
     values = {k: v for k, v in values.items() if k in field_keys}
     other = {k: v for k, v in config.items() if k not in _KNOWN_CONFIG_KEYS and k != "engine_capabilities"}
+    other = engine_redaction.redact_service({"config": other})["config"]
     return {
         "service_id": record.get("id"),
         "definition": definition["definition"],
@@ -621,6 +623,25 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "record": redacted_record(record),
         "v2": service_registry.service_record_v2(record),
     }
+
+
+def _restore_lifecycle_markers(values: dict[str, Any], shown: Mapping[str, Any], record: Mapping[str, Any]) -> dict[str, Any]:
+    """Put the stored start and stop commands back behind the markers the page was shown.
+
+    The page shows a command with its credential arguments hidden. A save that leaves every
+    lifecycle field as shown needs nothing (the stored block is kept whole); a save that edits one
+    keeps each marker's stored value, and refuses a marker the stored command does not hold.
+    """
+    if all(str(values.get(key, "")) == str(shown.get(key, "")) for key in _LIFECYCLE_FIELDS):
+        return values
+    stored = service_registry.legacy_lifecycle_from_service(record).get("driver_config") or {}
+    restored = dict(values)
+    for field, source in (("lifecycle_start", "start"), ("lifecycle_stop", "stop")):
+        try:
+            restored[field] = engine_redaction.restore_command(values.get(field), stored.get(source))
+        except ValueError as exc:
+            raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=field) from None
+    return restored
 
 
 def _caps_from_record(catalog: EngineCatalog, definition: Mapping[str, Any], record: Mapping[str, Any]) -> list[str]:
@@ -658,7 +679,7 @@ def redacted_record(record: Mapping[str, Any]) -> dict[str, Any]:
     out = mask(out)
     if isinstance(out.get("secret_refs"), Mapping):
         out["secret_refs"] = {k: "configured" for k in out["secret_refs"]}
-    return out
+    return engine_redaction.redact_service(out)
 
 
 # ---------------------------------------------------------------------------
@@ -939,6 +960,7 @@ class EngineService:
         before = engine_view(catalog, record, db_path=self.db_path)
         definition = _definition(catalog, body.get("definition") or before["definition"])
         values = {**before["values"], **(body.get("values") if isinstance(body.get("values"), Mapping) else {})}
+        values = _restore_lifecycle_markers(values, before["values"], record)
         if "api_key" not in values:
             values["api_key"] = SECRET_MASK if before["key"]["state"] == "configured" and before["key"].get("source") == "stored" else ""
         _header_credentials_are_the_owners(ctx, body.get("values"))

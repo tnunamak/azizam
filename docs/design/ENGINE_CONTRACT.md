@@ -140,6 +140,11 @@ resources:
   - Every change is owner-only, recorded and shown as a dry run first.
   - Server-side file paths in control calls must sit under owner-allowlisted
     roots.
+  - No view of a record shows a command secret. A caller sees `start`, `stop`
+    and `status` with each credential argument replaced by `[redacted]`, and
+    `env` as names with `[redacted]` values. A save that sends the marker back
+    keeps the stored value; a marker with no stored value is refused. The v2
+    `process` block is an allow-list of fields, never a copy of the stored one.
   - Credentials are per operation class and bound to the address origin.
     Cross-origin redirects are refused.
 
