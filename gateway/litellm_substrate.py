@@ -574,9 +574,6 @@ def router_reply_timeout(registry: Mapping[str, Any], model_name: str) -> float 
     return None
 
 
-# LiteLLM's own request timeout when an entry sets none; also the gateway's
-# default read limit for the final hop (UPSTREAM_READ_TIMEOUT).
-ROUTER_DEFAULT_TIMEOUT_S = 600.0
 _READINESS_KEYS = ("ready_timeout_s", "health_timeout_s", "load_timeout_s")
 
 
@@ -588,8 +585,11 @@ def _current_router_timeout(records: list[Mapping[str, Any]]) -> float | None:
         if not service.get("enabled", True) or not _is_openai_compatible(service) or is_remote_provider_config(config):
             continue
         budget = _lifecycle_router_timeout(service, config)
-        if budget is not None:
-            budgets.append(budget)
+        if budget is None:
+            # An eligible engine uses the router default. A finite alias limit
+            # would silently shorten that engine's allowed reply time.
+            return None
+        budgets.append(budget)
     return max(budgets) if budgets else None
 
 
@@ -619,14 +619,13 @@ def _lifecycle_router_timeout(service: Mapping[str, Any], config: Mapping[str, A
 
     The hop first makes the engine ready (a cold start or a model switch) and
     only then waits the saved reply time for the engine. A short saved reply
-    time must not end a cold start, so the router waits at least its default
-    and at least the saved time plus the declared readiness budget. The final
+    time must not end a cold start, so the router waits the saved time plus the declared readiness budget. The final
     hop itself still uses exactly the saved reply time.
     """
     timeout = _engine_request_settings(config).get("timeout")
     if timeout is None:
         return None
-    return max(ROUTER_DEFAULT_TIMEOUT_S, timeout + _declared_readiness_s(service))
+    return timeout + _declared_readiness_s(service)
 
 
 def _engine_request_settings(config: Mapping[str, Any]) -> dict[str, Any]:
