@@ -42,6 +42,8 @@ def test_one_unreachable_engine_does_not_remove_healthy_models(engine, monkeypat
 
 
 def test_inventory_calls_are_concurrent_bounded_and_cached(engine, monkeypatch):
+    from gateway.engine_protocol import inventory
+    inventory._cache.clear()
     active = peak = calls = 0
     original = dispatch.Runtime.invoke
     async def invoke(self, op, body):

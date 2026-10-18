@@ -28548,9 +28548,9 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
             reply = await runtime.invoke(op, body)
             if isinstance(reply, ProtocolStreamReply):
                 from gateway.engine_protocol.public_shape import validate
-                iterator = reply.__aiter__()
+                source_iterator = reply.__aiter__()
                 try:
-                    first_event = await anext(iterator)
+                    first_event = await anext(source_iterator)
                     validate(first_event, op, stream=True)
                 except StopAsyncIteration:
                     await reply.aclose()
@@ -28560,7 +28560,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
                     raise
                 async def validated_events():
                     yield first_event
-                    async for event in iterator:
+                    async for event in source_iterator:
                         yield event
                 async def stream():
                     try:
