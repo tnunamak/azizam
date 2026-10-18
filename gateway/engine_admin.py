@@ -1146,7 +1146,8 @@ class EngineService:
                     if extra in old_driver_config and old_lifecycle.get("driver") == "command":
                         raw["lifecycle"]["driver_config"].setdefault(extra, copy.deepcopy(old_driver_config[extra]))
             record = self.store.write_engine(service_id=service_id, raw=raw, actor=ctx, expected_generation=expected_generation,
-                                             replace=existing is not None, existing=existing)
+                                             replace=existing is not None, existing=existing,
+                                             drop_inference_secret_ref=key_dropped or key.source == "pasted" or bool(values.get("api_key_env")))
         except BaseException:
             for secret_id_written in written:
                 try:

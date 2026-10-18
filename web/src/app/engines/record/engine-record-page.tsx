@@ -326,6 +326,7 @@ function RecordForm({
     if (view.key.source === "env" && view.key.env_name && keys.has("api_key_env")) values.api_key_env = view.key.env_name;
     for (const field of optionFields(definition)) {
       if (field.key in unsupported) continue;
+      if (!offeringsEditable && fieldPart(field) === "offerings") continue;
       // Start and stop is the owner's; anyone else leaves the stored block as it is.
       if (field.owner_only && (!owner || !view.lifecycle_editable || locked)) continue;
       if (field.show_if && options[field.show_if.field] !== String(field.show_if.equals)) continue;

@@ -271,6 +271,7 @@ def test_saving_a_new_address_without_a_new_key_removes_the_old_key(gateway, fak
     view = owner.get("/admin/api/engines/keyed").json()["engine"]
     assert view["key"]["state"] == "none"
     assert view["check"]["key_sent"] is False
+    assert "api_key" not in _record(gateway, "keyed").get("secret_refs", {})
 
 
 def test_the_mask_keeps_the_stored_key_on_save(gateway, fake_upstreams):

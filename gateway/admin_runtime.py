@@ -967,6 +967,7 @@ class AdminSQLiteStore:
     def write_engine(
         self, *, service_id: str, raw: Mapping[str, Any], actor: AdminContext,
         expected_generation: int, replace: bool, existing: Mapping[str, Any] | None = None,
+        drop_inference_secret_ref: bool = False,
     ) -> dict[str, Any]:
         """Create or replace one service from an engine definition's record (gateway/engine_admin.py).
 
@@ -982,6 +983,10 @@ class AdminSQLiteStore:
             for field in ("kind", "provenance", "secret_refs", "resources", "offerings"):
                 if field in existing:
                     record[field] = copy.deepcopy(existing[field])
+            if drop_inference_secret_ref:
+                # A replaced or withheld inference key cannot survive as a
+                # legacy placeholder and get rebound to the edited origin.
+                record.get("secret_refs", {}).pop("api_key", None)
             # Rebuilding a connection must not discard the process identity,
             # its observation contracts, or residency policy. A lifecycle edit
             # deliberately rebuilds these blocks through migration instead.
