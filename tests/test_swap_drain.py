@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.virtual_loop import VirtualEventLoop
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -128,17 +130,19 @@ def test_clear_for_swap_waits_for_the_last_release() -> None:
 
 
 def test_clear_for_swap_times_out_with_swap_deferred() -> None:
-    drain = SwapDrain()
+    loop = VirtualEventLoop()
+    drain = SwapDrain(clock=loop.time)
     lease = drain.lease("llm")
 
     async def scenario() -> SwapDeferred:
-        start = time.monotonic()
+        start = loop.time()
         with pytest.raises(SwapDeferred) as caught:
             await drain.clear_for_swap("llm", _settings(timeout_s=0.1))
-        assert 0.09 <= time.monotonic() - start < 2.0
+        assert loop.time() - start == 0.1
         return caught.value
 
-    deferred = asyncio.run(scenario())
+    with asyncio.Runner(loop_factory=lambda: loop) as runner:
+        deferred = runner.run(scenario())
     assert deferred.backend == "llm"
     assert deferred.in_flight == 1
     assert deferred.retry_after_s > 0
