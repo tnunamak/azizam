@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import struct
+import time
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -15,7 +16,7 @@ from starlette.requests import Request
 
 import proxy
 from tests.support.access import access_context, plan_for
-from gateway import speech_stream
+from gateway import speech_stream, stt_chunking
 
 from tests.speech_tier_helpers import HAVE_FFMPEG, SttCase, _Chunks, _multipart, _wav_bytes
 
@@ -273,6 +274,25 @@ class SttStreamingTests(SttCase):
         self.assertEqual(self._post([("model", "stt-fast"), ("stream", "true")]).status_code, 200)
         self.assertEqual(list(Path(self.tmp.name).glob("*")), [])
 
+    def test_connection_lost_before_the_first_event_falls_back_to_the_next_engine(self) -> None:
+        failure: list[Exception] = []
+
+        def handler(request):
+            if request.url.port == 8012:
+                raise failure[0]
+            return httpx.Response(200, json={"text": "cpu"})
+
+        seen = self.use_upstream(handler)
+        for error in (httpx.RemoteProtocolError("server disconnected"), httpx.ReadError("reset")):
+            with self.subTest(error=type(error).__name__):
+                seen.clear()
+                failure[:] = [error]
+                resp = self._post([("model", "stt-fast"), ("stream", "true")])
+                self.assertEqual(resp.status_code, 200, resp.text)
+                self.assertEqual([r.url.port for r in seen], [8012, 5092])
+                self.assertEqual(resp.headers["x-azizam-fallback"], "nemotron-streaming->parakeet (connection_lost)")
+                self.assertIn('"delta":"cpu"', resp.text)
+
     def test_engine_error_before_streaming_is_a_normal_response(self) -> None:
         self.use_upstream(lambda r: httpx.Response(500, json={"error": {"message": "boom"}}))
         resp = self._post([("model", "stt-fast"), ("stream", "true")])
@@ -399,6 +419,93 @@ class SttRuntimeFallbackTests(SttCase):
         self.assertEqual(resp.status_code, 200, resp.text)
         self.assertEqual([r.url.port for r in seen], [8017, 5092])
         self.assertIn(audio, seen[1].content)
+
+    def test_the_replay_copy_is_reserved_for_the_whole_dispatch_and_bounded(self) -> None:
+        gate = stt_chunking.GLOBAL_STT_RESOURCE_GATE
+        service = proxy._stt_execution_snapshot("transcriptions", "stt-parakeet-gpu")
+        body, ctype = _multipart([("model", "whisper-1")], _wav_bytes(16000, 1))
+        attempts: list[tuple[int, int]] = []
+
+        def busy(request):
+            attempts.append((gate._reserved_bytes, gate._active))
+            return httpx.Response(503, json={"error": {"message": "busy"}})
+
+        with self.subTest("held beside each attempt's lease, one concurrency slot"):
+            self._engines(busy)
+            resp = self._post([("model", "whisper-1")])
+            self.assertEqual(resp.status_code, 200, resp.text)
+            self.assertEqual(len(attempts), 1)
+            reserved, active = attempts[0]
+            self.assertGreaterEqual(reserved, service.max_input_bytes + service.max_decoded_bytes + len(body))
+            self.assertEqual(active, 1)
+            self.assertEqual((gate._reserved_bytes, gate._active), (0, 0))
+
+        with self.subTest("a disk that only fits the attempt refuses the replay copy"):
+            seen = self._engines(busy)
+            fits_attempt_only = service.max_input_bytes + service.max_decoded_bytes + service.min_free_bytes + 1024 * 1024
+            with patch.object(stt_chunking, "_disk_free_bytes", return_value=fits_attempt_only):
+                resp = self._post([("model", "whisper-1")])
+            self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (413, "stt_resource_limit"))
+            self.assertEqual(seen, [])
+            self.assertEqual((gate._reserved_bytes, gate._active), (0, 0))
+
+        with self.subTest("a body past the reserved bound is refused"):
+            self.cfg["backends"]["stt-parakeet-gpu"]["chunking"].update(
+                max_input_bytes=200_000, max_files=1, max_fields=2, max_field_bytes=1024)
+            seen = self._engines(busy)
+            resp = self.client.post("/v1/audio/transcriptions", content=b"x" * 300_000 + body, headers={"content-type": ctype})
+            self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (413, "stt_upload_limit"))
+            self.assertEqual((gate._reserved_bytes, gate._active), (0, 0))
+
+    def test_fallback_attempts_share_one_request_deadline(self) -> None:
+        class Clock:
+            offset = 0.0
+
+            def monotonic(self) -> float:
+                return time.monotonic() + self.offset
+
+            def __getattr__(self, name):
+                return getattr(time, name)
+
+        clock = Clock()
+        deadlines: list[float] = []
+        real_await = stt_chunking.await_with_cancellation
+
+        def recording_await(awaitable, **kwargs):
+            if kwargs.get("deadline_at") is not None:
+                deadlines.append(kwargs["deadline_at"])
+            return real_await(awaitable, **kwargs)
+
+        spent: list[float] = []
+
+        real_reason = proxy._speech_fallback_reason
+
+        def reason_after_the_time_passes(response):
+            clock.offset += spent[0]  # the first engine's attempt took this long
+            return real_reason(response)
+
+        seen = self._engines(lambda request: httpx.Response(503, json={"error": {"message": "busy"}}))
+        budget = {sid: proxy._stt_execution_snapshot("transcriptions", sid).deadline_seconds for sid in ("stt-parakeet-gpu", "stt")}
+        for elapsed, served in ((250.0, True), (361.0, False)):
+            with self.subTest(first_engine_spends=elapsed):
+                clock.offset = 0.0
+                deadlines.clear()
+                seen.clear()
+                spent[:] = [elapsed]
+                with patch.object(proxy, "time", clock), patch.object(stt_chunking, "time", clock), \
+                        patch.object(proxy, "_speech_fallback_reason", reason_after_the_time_passes), \
+                        patch.object(stt_chunking, "await_with_cancellation", recording_await):
+                    resp = self._post([("model", "whisper-1")])
+                # Each service's deadline is the request's one start plus that service's own budget.
+                start = deadlines[0] - budget["stt-parakeet-gpu"]
+                self.assertLessEqual(set(deadlines), {start + budget["stt-parakeet-gpu"], start + budget["stt"]})
+                if served:
+                    self.assertEqual((resp.status_code, resp.json()["text"]), (200, "cpu"), resp.text)
+                    self.assertEqual([r.url.port for r in seen], [8017, 5092])
+                else:
+                    self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (504, "stt_request_deadline"))
+                    self.assertEqual([r.url.port for r in seen], [8017])
+                    self.assertEqual(resp.headers["x-azizam-fallback"], "parakeet-gpu->parakeet (busy)")
 
     def test_the_serving_receipt_records_the_fallback(self) -> None:
         self._engines(lambda r: httpx.Response(503, json={"error": {"message": "busy"}}))

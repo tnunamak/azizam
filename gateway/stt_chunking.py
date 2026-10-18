@@ -19,7 +19,7 @@ import shutil
 import tempfile
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, TypeVar
@@ -50,6 +50,7 @@ from gateway.resource_claims import (
     ResourceClaim,
     evaluate_admission,
 )
+from gateway.resource_decisions import CapacityFact
 from gateway.transforms import run_response_pipeline
 
 
@@ -59,6 +60,8 @@ _SILENCE_END_RE = re.compile(
     r"silence_end:\s*([\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)"
 )
 _NOISE_DB_RE = re.compile(r"^-?\d+(?:\.\d+)?dB$")
+# Boundary line, part headers and CRLFs around one multipart part, with room for long filenames.
+_PART_FRAMING_BYTES = 8192
 _HOP_BY_HOP_RESPONSE_HEADERS = frozenset(
     {
         "connection",
@@ -301,6 +304,20 @@ class SttExecutionConfig:
             reasons=("bounded STT upload and decoded media workspace",),
         )
 
+    @property
+    def replay_limit_bytes(self) -> int:
+        """Largest raw multipart body a fallback replay may keep: audio plus per-part framing."""
+        parts = self.max_files + self.max_fields
+        return self.max_input_bytes + self.max_fields * self.max_field_bytes + parts * _PART_FRAMING_BYTES
+
+    def replay_claim(self) -> ResourceClaim:
+        """Disk only: the replay copy is held beside, not instead of, an attempt's own claim."""
+        return ResourceClaim(
+            disk_mb=math.ceil(self.replay_limit_bytes / (1024 * 1024)),
+            queue_class=QueueClass.INTERACTIVE,
+            reasons=("bounded STT replay copy of the request body",),
+        )
+
 
 @dataclass(frozen=True)
 class ProbedAudio:
@@ -541,6 +558,35 @@ class SttResourceLease:
         self._gate._reserved_bytes -= self._reserved_bytes
 
 
+class SttReplayReservation:
+    """Disk held for a request's replay copy from the first attempt until the dispatcher is done.
+
+    It counts toward reserved disk only. The attempt lease carries the request's one concurrency slot.
+    """
+
+    def __init__(self, gate: "SttResourceGate", reserved_bytes: int, decision: AdmissionDecision) -> None:
+        self.decision = decision
+        self.reserved_bytes = reserved_bytes
+        self._gate = gate
+        self._released = False
+
+    def release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        self._gate._reserved_bytes -= self.reserved_bytes
+
+
+def resource_evidence(lease: "SttResourceLease", replay: "SttReplayReservation | None") -> dict[str, object]:
+    """Receipt evidence for one attempt: its lease decision plus the replay disk held beside it."""
+    evidence = lease.decision.details.as_dict(lease.decision.status.value)
+    if replay is not None:
+        evidence["facts"].append(asdict(CapacityFact(
+            "replay_reserved_disk_mb", "disk", math.ceil(replay.reserved_bytes / (1024 * 1024)), time.time(), "declared",
+        )))
+    return evidence
+
+
 class SttResourceGate:
     """Immediate, bounded admission backed by the shared claim model.
 
@@ -563,6 +609,27 @@ class SttResourceGate:
         config: SttExecutionConfig,
     ) -> SttResourceLease:
         reservation = config.max_input_bytes + config.max_decoded_bytes
+        decision = self._admit(request_id, config, config.request_claim(), reservation, limit_concurrency=True)
+        self._active += 1
+        self._reserved_bytes += reservation
+        return SttResourceLease(self, reservation, decision)
+
+    def reserve_replay(self, *, request_id: str, config: SttExecutionConfig) -> SttReplayReservation:
+        """Reserve disk for the replay copy without taking a concurrency slot."""
+        reservation = config.replay_limit_bytes
+        decision = self._admit(request_id, config, config.replay_claim(), reservation, limit_concurrency=False)
+        self._reserved_bytes += reservation
+        return SttReplayReservation(self, reservation, decision)
+
+    def _admit(
+        self,
+        request_id: str,
+        config: SttExecutionConfig,
+        claim: ResourceClaim,
+        reservation: int,
+        *,
+        limit_concurrency: bool,
+    ) -> AdmissionDecision:
         try:
             config.spool_dir.mkdir(parents=True, exist_ok=True)
         except OSError as error:
@@ -575,14 +642,14 @@ class SttResourceGate:
                 "Configured STT spool storage has insufficient free capacity"
             )
         decision = evaluate_admission(
-            AdmissionRequest(request_id=request_id, claim=config.request_claim()),
+            AdmissionRequest(request_id=request_id, claim=claim),
             CapacitySnapshot(
                 observed_at=time.time(),
                 fact_qualities={"total_disk_mb": "measured", "queue_active": "measured"},
                 total_disk_mb=max(0, free_bytes // (1024 * 1024)),
                 used_disk_mb=math.ceil(self._reserved_bytes / (1024 * 1024)),
-                active_by_queue={QueueClass.INTERACTIVE: self._active},
-                queue_limits={QueueClass.INTERACTIVE: config.global_concurrency},
+                active_by_queue={QueueClass.INTERACTIVE: self._active} if limit_concurrency else {},
+                queue_limits={QueueClass.INTERACTIVE: config.global_concurrency} if limit_concurrency else {},
             ),
         )
         if not decision.accepted:
@@ -591,9 +658,7 @@ class SttResourceGate:
             raise SttResourceLimitExceeded(
                 "Configured STT spool storage has insufficient reserved capacity"
             )
-        self._active += 1
-        self._reserved_bytes += reservation
-        return SttResourceLease(self, reservation, decision)
+        return decision
 
 
 GLOBAL_STT_RESOURCE_GATE = SttResourceGate()

@@ -4584,12 +4584,14 @@ class _ReplayableBody:
     """Replays a request body to a second attempt without holding it in memory.
 
     Every body message the first attempt reads is also written to a temp file (spilled to disk
-    above 8 MiB). ``request()`` then returns a request that yields the recorded messages first and
+    above 8 MiB), up to ``limit`` bytes: the caller reserves that much disk for as long as the
+    body lives. ``request()`` then returns a request that yields the recorded messages first and
     the rest of the live stream after.
     """
 
-    def __init__(self, request: Request, spool_dir: Path) -> None:
+    def __init__(self, request: Request, spool_dir: Path, limit: int) -> None:
         spool_dir.mkdir(parents=True, exist_ok=True)
+        self._limit = limit
         self._scope = request.scope
         self._receive = request.receive
         self._file = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, dir=spool_dir)
@@ -4609,6 +4611,8 @@ class _ReplayableBody:
             message = await self._receive()
             if message["type"] == "http.request":
                 data = message.get("body", b"")
+                if self._end + len(data) > self._limit:
+                    raise stt_chunking.MultiPartException("Request body exceeds the configured STT limit.")
                 self._file.seek(self._end)
                 self._file.write(data)
                 self._log.append((self._end, len(data), bool(message.get("more_body", False))))
@@ -4664,6 +4668,8 @@ async def _dispatch_selected_stt_route(
         if denied is not None:
             return denied
         return await proxy_stt_request(request, auth_context, operation=operation)
+    # One clock for the request: every attempt, readiness wait and fallback spends the same budget.
+    started_at = time.monotonic()
     receipt = _stt_receipt(request=request, auth_context=auth_context, operation=operation, service_id=execution.service_id)
     requested_name = peeked_model.strip() if peeked_model else None
     decision = None if model_unpeeked else _apply_selected_stt_policy(
@@ -4673,15 +4679,29 @@ async def _dispatch_selected_stt_route(
     remaining = [(engine, service) for engine, service in fallbacks if service]
     # A model field hidden behind the upload (file first, past the peek budget) is only known after
     # parsing, so such a request is recorded too and learns its fallbacks from the first attempt.
-    body = _ReplayableBody(request, execution.spool_dir) if remaining or model_unpeeked else None
+    body: _ReplayableBody | None = None
+    replay: stt_chunking.SttReplayReservation | None = None
+    if remaining or model_unpeeked:
+        # The replay copy outlives each attempt's lease, so its disk is reserved for the whole dispatch.
+        try:
+            replay = stt_chunking.GLOBAL_STT_RESOURCE_GATE.reserve_replay(request_id=receipt.request_id, config=execution)
+        except stt_chunking.SttResourceLimitExceeded as error:
+            return _stt_resource_limit_response(error, receipt)
     resolved: dict[str, Any] = {}
     engine_id = peeked_engine
     model_override: str | None = None
     notes: list[str] = list(skipped_notes)
     for note in notes:
         receipt.add_fallback_reason(note)
+    deadline_at = started_at + execution.deadline_seconds
     try:
+        if replay is not None:
+            body = _ReplayableBody(request, execution.spool_dir, execution.replay_limit_bytes)
         while True:
+            deadline_at = min(deadline_at, started_at + execution.deadline_seconds)
+            if time.monotonic() >= deadline_at:
+                return _with_fallback_header(
+                    _stt_error("STT request deadline exceeded.", status_code=504, code="stt_request_deadline"), notes)
             admission = _dispatch_admission_response(
                 "speech.transcription" if operation == "transcriptions" else "speech.translation",
                 auth_context=auth_context, service_id=execution.service_id,
@@ -4689,7 +4709,12 @@ async def _dispatch_selected_stt_route(
             )
             if admission is not None:
                 return admission
-            not_ready = None if model_unpeeked else await _ensure_speech_service_ready(execution.service_id, label="STT engine")
+            try:
+                not_ready = None if model_unpeeked else await stt_chunking.await_with_cancellation(
+                    _ensure_speech_service_ready(execution.service_id, label="STT engine"), deadline_at=deadline_at)
+            except stt_chunking.SttDeadlineExceeded:
+                return _with_fallback_header(
+                    _stt_error("STT request deadline exceeded.", status_code=504, code="stt_request_deadline"), notes)
             if not_ready is None:
                 response = await proxy_stt_request(
                     body.request() if body is not None else request,
@@ -4697,6 +4722,9 @@ async def _dispatch_selected_stt_route(
                     operation=operation,
                     execution_snapshot=execution,
                     route_receipt=receipt,
+                    started_at=started_at,
+                    request_deadline_at=deadline_at,
+                    replay=replay,
                     model_unpeeked=model_unpeeked,
                     model_override=model_override,
                     resolved_model=resolved,
@@ -4747,6 +4775,8 @@ async def _dispatch_selected_stt_route(
     finally:
         if body is not None:
             body.close()
+        if replay is not None:
+            replay.release()
     return _with_fallback_header(response, notes)
 
 
@@ -4805,6 +4835,36 @@ def _stt_response_from_upstream(response: stt_chunking.UpstreamResponse) -> Resp
     )
 
 
+@contextlib.contextmanager
+def _stt_backend_errors() -> Iterator[None]:
+    """Map an httpx failure talking to an STT engine onto the gateway's typed backend errors."""
+    try:
+        yield
+    except httpx.TimeoutException as error:
+        raise stt_chunking.SttBackendTimeout("STT backend timed out") from error
+    except httpx.ConnectError as error:
+        raise stt_chunking.SttBackendUnavailable("STT backend is unavailable") from error
+    except httpx.TransportError as error:
+        # Reset/closed/protocol error after the connection was made: the engine died
+        # mid-request (typically a GPU out-of-memory kill). Another engine may serve it.
+        raise stt_chunking.SttBackendConnectionLost("STT backend dropped the connection") from error
+
+
+def _stt_resource_limit_response(error: stt_chunking.SttResourceLimitExceeded, receipt: RouteReceipt) -> Response:
+    response = _stt_error(str(error), status_code=413, code="stt_resource_limit")
+    if error.decision is None:
+        return response
+    evidence = error.decision.details.as_dict(error.decision.status.value)
+    evidence["wait_deadline"] = time.time() + 60
+    receipt.resource_decision = evidence
+    body = json.loads(response.body)
+    projected = resource_decisions.project_decision(evidence)
+    body["error"]["decision"] = projected
+    if projected["reasons"]:
+        body["error"]["message"] = projected["reasons"][0]["message"]
+    return Response(content=json.dumps(body), status_code=413, media_type="application/json")
+
+
 def _stt_error(message: str, *, status_code: int, code: str) -> Response:
     return openai_error_response(
         message,
@@ -4821,11 +4881,18 @@ async def proxy_stt_request(
     operation: str = "transcriptions",
     execution_snapshot: stt_chunking.SttExecutionConfig | None = None,
     route_receipt: RouteReceipt | None = None,
+    started_at: float | None = None,
+    request_deadline_at: float | None = None,
+    replay: stt_chunking.SttReplayReservation | None = None,
     model_unpeeked: bool = False,
     model_override: str | None = None,
     resolved_model: dict[str, Any] | None = None,
 ) -> Response:
     """Forward one bounded STT request using one selected service snapshot.
+
+    ``started_at`` is the request's monotonic start when a dispatcher spans several attempts:
+    each attempt's deadline is that start plus its service's budget, never a fresh one. ``replay``
+    is the dispatcher's disk reservation for the body copy, reported beside this attempt's lease.
 
     ``model_unpeeked`` is set when the dispatcher could not read the ``model``
     field before choosing the service. After parsing, execution can switch to
@@ -4865,14 +4932,17 @@ async def proxy_stt_request(
             cancellation_registry().signal(receipt.request_id)
 
     async def execute() -> Response:
-        nonlocal execution
+        nonlocal execution, started_at
         try:
             if "multipart/form-data" not in request.headers.get("content-type", ""):
                 return openai_error_response("No file part in the request.", status_code=400, param="file", code="missing_file")
-            started_at = time.monotonic()
+            if started_at is None:
+                started_at = time.monotonic()
             deadline_at = started_at + execution.deadline_seconds
+            if request_deadline_at is not None:
+                deadline_at = min(deadline_at, request_deadline_at)
             lease = stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire(request_id=receipt.request_id, config=execution)
-            receipt.resource_decision = lease.decision.details.as_dict(lease.decision.status.value)
+            receipt.resource_decision = stt_chunking.resource_evidence(lease, replay)
             # Follow a replacement lease without changing cleanup order: the
             # reservation must outlive the form, files, and workspace.
             cleanup.add("capacity_lease", lambda: lease.release())
@@ -4952,7 +5022,7 @@ async def proxy_stt_request(
                     lease = stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire(
                         request_id=receipt.request_id, config=replace(execution, spool_dir=workspace.parent),
                     )
-                    receipt.resource_decision = lease.decision.details.as_dict(lease.decision.status.value)
+                    receipt.resource_decision = stt_chunking.resource_evidence(lease, replay)
             effective_model = model_resolution.effective_model or execution.default_model or STT_BACKEND_MODEL
             if model_resolution.is_openai_alias and execution.default_model:
                 effective_model = execution.default_model
@@ -4994,7 +5064,7 @@ async def proxy_stt_request(
             cleanup.add("http_client", client.aclose)
 
             async def send_files(files: list[tuple[str, tuple[str, Any, str]]]) -> stt_chunking.UpstreamResponse:
-                try:
+                with _stt_backend_errors():
                     outgoing = client.build_request("POST", url, headers=headers, data=multipart_fields, files=files)
                     upstream = await stt_chunking.await_with_cancellation(client.send(outgoing, stream=True), cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation)
                     cleanup.add("upstream_response", upstream.aclose)
@@ -5003,14 +5073,6 @@ async def proxy_stt_request(
                     finally:
                         await cleanup.release("upstream_response", upstream.aclose)
                     return stt_chunking.UpstreamResponse(upstream.status_code, body, dict(upstream.headers))
-                except httpx.TimeoutException as error:
-                    raise stt_chunking.SttBackendTimeout("STT backend timed out") from error
-                except httpx.ConnectError as error:
-                    raise stt_chunking.SttBackendUnavailable("STT backend is unavailable") from error
-                except httpx.TransportError as error:
-                    # Reset/closed/protocol error after the connection was made: the engine died
-                    # mid-request (typically a GPU out-of-memory kill). Another engine may serve it.
-                    raise stt_chunking.SttBackendConnectionLost("STT backend dropped the connection") from error
 
             async def post_file(path: Path, filename: str, media_type: str) -> stt_chunking.UpstreamResponse:
                 handle = path.open("rb")
@@ -5057,21 +5119,20 @@ async def proxy_stt_request(
                     "POST", url, headers=headers, data=multipart_fields,
                     files=[("file", (filename, handle, "audio/wav" if wav16k_input else "application/octet-stream"))],
                 )
-                try:
+                # Before the first SSE byte nothing has reached the caller, so a lost connection
+                # still lets the tier hand the whole upload to its next engine.
+                with _stt_backend_errors():
                     upstream = await stt_chunking.await_with_cancellation(
                         client.send(outgoing, stream=True),
                         cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation,
                     )
-                except httpx.TimeoutException as error:
-                    raise stt_chunking.SttBackendTimeout("STT backend timed out") from error
-                except httpx.ConnectError as error:
-                    raise stt_chunking.SttBackendUnavailable("STT backend is unavailable") from error
                 cleanup.add("upstream_response", upstream.aclose)
                 if upstream.status_code != 200:
-                    body = await stt_chunking.read_bounded_response(
-                        upstream, max_bytes=execution.max_response_bytes,
-                        cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation,
-                    )
+                    with _stt_backend_errors():
+                        body = await stt_chunking.read_bounded_response(
+                            upstream, max_bytes=execution.max_response_bytes,
+                            cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation,
+                        )
                     return _stt_response_from_upstream(
                         stt_chunking.UpstreamResponse(upstream.status_code, body, dict(upstream.headers))
                     )
@@ -5219,18 +5280,7 @@ async def proxy_stt_request(
             return _stt_error("STT request deadline exceeded.", status_code=504, code="stt_request_deadline")
         except stt_chunking.SttResourceLimitExceeded as error:
             owner.report(status="failed", reason="failed")
-            response = _stt_error(str(error), status_code=413, code="stt_resource_limit")
-            if error.decision is not None:
-                evidence = error.decision.details.as_dict(error.decision.status.value)
-                evidence["wait_deadline"] = time.time() + 60
-                receipt.resource_decision = evidence
-                body = json.loads(response.body)
-                projected = resource_decisions.project_decision(evidence)
-                body["error"]["decision"] = projected
-                if projected["reasons"]:
-                    body["error"]["message"] = projected["reasons"][0]["message"]
-                response = Response(content=json.dumps(body), status_code=413, media_type="application/json")
-            return response
+            return _stt_resource_limit_response(error, receipt)
         except stt_chunking.MultiPartException as error:
             owner.report(status="failed", reason="failed")
             return _stt_error(str(error), status_code=413, code="stt_upload_limit")
