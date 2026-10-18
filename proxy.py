@@ -13630,6 +13630,12 @@ async def _status_payload_with_protocol_issues(payload: Mapping[str, Any]) -> Ma
     from gateway.engine_protocol import description as protocol_descriptions, inventory as protocol_inventory
     await asyncio.to_thread(protocol_descriptions.load_registry)
     issues = protocol_descriptions.registry_problems() + protocol_inventory.problems()
+    try:
+        registry = await asyncio.to_thread(ADMIN_STORE.get_service_registry)
+        issues += protocol_inventory.configuration_problems(registry)
+    except Exception:
+        logging.getLogger("gateway.engine_protocol").exception("Cannot read protocol configuration for Status")
+    issues = list({(item.get("file"), item.get("engine_id")): item for item in issues}.values())
     sources = dict(payload.get("health_sources") or {})
     sources.pop("engine_protocol", None)
     if issues:
@@ -14053,7 +14059,7 @@ class _SessionMakeRuntime:
             route, call = "/v1/images/edits", proxy_comfy_edit_request
         else:
             request = _JsonBodyRequestShim(body=body, headers={}, scheme="http", netloc="127.0.0.1")
-            route, call = "/v1/images/generations", proxy_comfy_request
+            route, call = "/v1/images/generations", proxy_image_request
         receipt = start_image_route_receipt(route, auth_context)
         receipt.job_id = str(payload.get("job_id") or "") or None
         decision = _apply_image_route_policy(receipt, auth_context)

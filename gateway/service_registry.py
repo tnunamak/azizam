@@ -803,6 +803,7 @@ def merge_imported_records(
         service_id = normalize_id(raw.get("id") or raw_id)
         if not service_id:
             continue
+        validate_protocol_dispatch_local_only(raw)
         record = normalize_service_record(service_id, raw)
         _merge_imported_record(out["services"], service_id, record, "service")
 
@@ -893,7 +894,6 @@ def service_from_backend_config(
     source: str,
     provenance: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    validate_protocol_dispatch_local_only(raw)
     safe_config, secret_refs = split_secret_refs(raw)
     validate_provider_secret_refs(service_id, safe_config, secret_refs)
     validate_provider_native_passthrough_disabled(service_id, safe_config)
@@ -954,7 +954,6 @@ def service_from_backend_config(
 
 
 def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_version: int | None = None) -> dict[str, Any]:
-    validate_protocol_dispatch_local_only(raw)
     if schema_version is None:
         schema_version = 2 if any(key in raw for key in ("process", "observations", "residency")) else 1
     source = str(raw.get("source") or "ui")
@@ -1034,6 +1033,13 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_
     # rows (LiteLLM). Stored editable:false from old seeds is normalized away.
     record["editable"] = not is_litellm_service_record(service_id, record)
     return record
+
+
+def validate_protocol_dispatch_registry(registry: Mapping[str, Any]) -> None:
+    """Strict mutation check. Reads retain older refused records for repair and diagnostics."""
+    for service in (registry.get("services") or {}).values():
+        if isinstance(service, Mapping):
+            validate_protocol_dispatch_local_only(service)
 
 
 def validate_protocol_dispatch_local_only(service: Mapping[str, Any]) -> None:
@@ -1457,6 +1463,7 @@ def upsert_service_in_registry(
     that process, so endpoint/protocol fields are derived and locked; only
     name, enabled, and note may be changed.
     """
+    validate_protocol_dispatch_local_only(raw)
     out = normalize_service_registry(registry)
     sid = normalize_id(service_id)
     if not sid:

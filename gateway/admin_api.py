@@ -1417,6 +1417,7 @@ def _validate_media_job_admission_overrides(
 
 def _validate_service_registry(payload: Mapping[str, Any]) -> dict[str, Any]:
     try:
+        service_registry.validate_protocol_dispatch_registry(payload)
         return service_registry.normalize_service_registry(payload)
     except Exception as exc:  # noqa: BLE001
         raise _RouteError(

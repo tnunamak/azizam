@@ -22,7 +22,7 @@ _PROTOCOL_REFUSAL = r"protocol dispatch does not enforce paid-provider access or
     {"connection": {"dispatch": "protocol", "address": "https://provider.invalid/v1"}},
     {"connection": {"dispatch": "protocol", "address": "https://8.8.8.8/v1"}},
 ])
-@pytest.mark.parametrize("boundary", ["normalize", "save", "import"])
+@pytest.mark.parametrize("boundary", ["validate", "save", "import"])
 def test_protocol_dispatch_refuses_paid_or_remote_config(extra: dict, boundary: str) -> None:
     config = {
         "api_key_env": "TEST_PROVIDER_KEY",
@@ -32,8 +32,8 @@ def test_protocol_dispatch_refuses_paid_or_remote_config(extra: dict, boundary: 
     registry = {"schema_version": 2, "services": {}}
     before = copy.deepcopy(registry)
     with pytest.raises(ValueError, match=_PROTOCOL_REFUSAL):
-        if boundary == "normalize":
-            service_registry.normalize_service_record("protocol-engine", {"config": config})
+        if boundary == "validate":
+            service_registry.validate_protocol_dispatch_local_only({"config": config})
         elif boundary == "save":
             service_registry.upsert_service_in_registry(registry, service_id="protocol-engine", raw=config)
         else:
@@ -76,7 +76,7 @@ def test_remote_protocol_validation_does_not_resolve_dns(monkeypatch: pytest.Mon
         raise AssertionError("save validation must not resolve DNS")
     monkeypatch.setattr("socket.getaddrinfo", no_dns)
     with pytest.raises(ValueError, match=_PROTOCOL_REFUSAL):
-        service_registry.normalize_service_record("remote", {
+        service_registry.validate_protocol_dispatch_local_only({
             "config": {"connection": {"dispatch": "protocol", "address": "https://provider.invalid"}},
         })
 
@@ -93,7 +93,7 @@ def test_protocol_dispatch_requires_proven_connection_locality(address, placemen
         "connection": {"dispatch": "protocol", "address": address},
     }}
     with pytest.raises(ValueError, match=_PROTOCOL_REFUSAL):
-        service_registry.normalize_service_record("executor", raw)
+        service_registry.validate_protocol_dispatch_local_only(raw)
 
 
 @pytest.mark.parametrize("marker", [
@@ -110,7 +110,7 @@ def test_protocol_dispatch_remote_marker_cannot_be_shadowed(marker, remote_at_to
     }}
     # No provider key: the dispatch refusal must precede unrelated key errors.
     with pytest.raises(ValueError, match=_PROTOCOL_REFUSAL):
-        service_registry.normalize_service_record("executor", raw)
+        service_registry.validate_protocol_dispatch_local_only(raw)
 
 
 @pytest.mark.parametrize("address", ["http://LOCALHOST.:8000", "http://127.12.34.56:8000"])

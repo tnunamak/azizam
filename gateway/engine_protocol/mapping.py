@@ -497,7 +497,12 @@ def compile_predicate(spec: Any, ctx_roots: frozenset[str], place: str, problems
     if kind == "equals":
         same = _equality(spec["equals"])
         return lambda source: same(read(source))
-    options = list(spec["in"])
+    options = spec["in"]
+    if (not isinstance(options, list) or not 1 <= len(options) <= 32 or
+            any(value is not None and type(value) not in (str, int, float, bool) for value in options)):
+        ctx.bad(place, "'in' must be a list of 1 to 32 JSON scalar values")
+        return None
+    options = list(options)
 
     def member(source: Mapping[str, Any]) -> bool:
         value = read(source)

@@ -824,6 +824,7 @@ class AdminSQLiteStore:
         stored key to the record's host). When the owner does, the host the key is for
         is recorded with it.
         """
+        service_registry.validate_protocol_dispatch_registry(registry)
         value = service_registry.normalize_service_registry(registry)
         before = self.get_service_registry()
         if "owner" not in actor.roles:

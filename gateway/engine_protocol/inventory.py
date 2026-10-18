@@ -27,6 +27,21 @@ def problems() -> list[dict[str, str]]:
     return [{'engine_id': engine_id, 'reason': reason} for engine_id, reason in _issues.items()]
 
 
+def configuration_problems(registry: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Report refused stored records without probing or preventing other records from loading."""
+    from gateway.service_registry import validate_protocol_dispatch_local_only
+    issues = []
+    for engine_id, service in (registry.get('services') or {}).items():
+        if not dispatch.opted_in(service) or not service.get('enabled', True):
+            continue
+        try:
+            validate_protocol_dispatch_local_only(service)
+        except ValueError:
+            issues.append({'engine_id': engine_id,
+                'reason': 'Protocol dispatch is refused for paid, remote or unproven addresses. Use the provider route or a loopback engine.'})
+    return issues
+
+
 def collection(payload: Any) -> list[Mapping]:
     items = payload.get('data') if isinstance(payload, Mapping) else None
     if (not isinstance(items, list) or any(not isinstance(item, Mapping) or

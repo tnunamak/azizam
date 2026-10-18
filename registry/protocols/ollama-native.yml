@@ -22,7 +22,10 @@ operations:
           - copy: {from: /body/model, to: /model}
           - copy: {from: /body/messages, to: /messages}
           - set: {to: /stream, value: false}
-          - copy: {from: /body/stream, to: /stream}
+          - when:
+              if: {path: /body/stream, equals: true}
+              then:
+                - set: {to: /stream, value: true}
           - copy: {from: /body/temperature, to: /options/temperature}
           - copy: {from: /body/max_tokens, to: /options/num_predict}
           - copy: {from: /body/max_completion_tokens, to: /options/num_predict}
