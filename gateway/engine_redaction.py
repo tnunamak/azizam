@@ -21,7 +21,7 @@ from __future__ import annotations
 import copy
 import re
 import shlex
-from typing import Any, Iterable, Iterator, Mapping
+from typing import Any, Iterable, Mapping
 
 from gateway.provenance import looks_like_credential
 
@@ -29,11 +29,14 @@ REDACTED = "[redacted]"
 
 # A flag or assignment name that names a credential, either case.
 _CREDENTIAL_NAME = re.compile(
-    r"token|secret|passw|bearer|credential|apikey|auth(?![a-z])|(?<![a-z])key|key(?![a-z])",
+    r"token|secret|passw|(?<![a-z])pass(?:phrase)?(?![a-z])|(?<![a-z])pwd|cookie|bearer|credential|apikey"
+    r"|auth(?![a-z])|(?<![a-z])key|key(?![a-z])",
     re.IGNORECASE,
 )
 # Short flags that conventionally carry a key.
 _CREDENTIAL_SHORT_FLAGS = frozenset({"-k", "-K"})
+# Flags whose value is a credential when it is a ``user:password`` pair.
+_USER_FLAGS = frozenset({"-u", "--user"})
 
 _COMMAND_KEYS = ("start", "stop", "status")
 # The process fields the public view may show; any other field stays stored only.
@@ -58,20 +61,29 @@ def _secret_slots(argv: list[Any]) -> dict[int, str]:
             continue
         if "=" in arg:
             name, _, value = arg.partition("=")
-            if value and _CREDENTIAL_NAME.search(name):
+            if value and (_CREDENTIAL_NAME.search(name) or (name in _USER_FLAGS and ":" in value)):
                 slots[index] = "value"
                 continue
-        elif arg.startswith("-") and (arg in _CREDENTIAL_SHORT_FLAGS or _CREDENTIAL_NAME.search(arg)):
-            if index + 1 < len(argv) and isinstance(argv[index + 1], str) and not argv[index + 1].startswith("-"):
-                slots[index + 1] = "whole"
+        elif arg.startswith("-"):
+            following = argv[index + 1] if index + 1 < len(argv) else None
+            if isinstance(following, str) and not following.startswith("-"):
+                if arg in _CREDENTIAL_SHORT_FLAGS or _CREDENTIAL_NAME.search(arg) or (arg in _USER_FLAGS and ":" in following):
+                    slots[index + 1] = "whole"
         if index not in slots and looks_like_credential(arg):
             slots[index] = "whole"
     return slots
 
 
-def _secret_values(argv: list[Any]) -> list[str]:
-    slots = _secret_slots(argv)
-    return [argv[i] if mode == "whole" else argv[i].partition("=")[2] for i, mode in sorted(slots.items())]
+def _is_marker(arg: Any) -> bool:
+    return isinstance(arg, str) and (arg == REDACTED or arg.endswith("=" + REDACTED))
+
+
+def _slot_key(argv: list[Any], index: int, mode: str) -> str:
+    """The credential a slot belongs to: the name before ``=``, else the flag just before it, else ``""``."""
+    if mode == "value":
+        return argv[index].partition("=")[0]
+    previous = argv[index - 1] if index else None
+    return previous if isinstance(previous, str) and previous.startswith("-") and "=" not in previous else ""
 
 
 def redact_argv(argv: Iterable[Any]) -> list[Any]:
@@ -82,23 +94,34 @@ def redact_argv(argv: Iterable[Any]) -> list[Any]:
 
 
 def restore_argv(new: Iterable[Any], stored: Any) -> list[Any]:
-    values = iter(_secret_values(list(stored)) if isinstance(stored, list) else [])
-    out: list[Any] = []
-    for item in new:
-        if item == REDACTED:
-            out.append(_next_secret(values))
-        elif isinstance(item, str) and item.endswith("=" + REDACTED):
-            out.append(item[: -len(REDACTED)] + _next_secret(values))
-        else:
-            out.append(item)
+    """Put each marker's stored value back; a marker takes the value of the same flag.
+
+    A flag's occurrences pair in order with the stored occurrences of that flag, so removing or
+    reordering other arguments cannot give a marker another flag's secret.
+    """
+    new_argv = list(new)
+    stored_argv = list(stored) if isinstance(stored, list) else []
+    pool: dict[str, list[str]] = {}
+    for index, mode in sorted(_secret_slots(stored_argv).items()):
+        value = stored_argv[index] if mode == "whole" else stored_argv[index].partition("=")[2]
+        pool.setdefault(_slot_key(stored_argv, index, mode), []).append(value)
+    slots = _secret_slots(new_argv)
+    for index, arg in enumerate(new_argv):
+        if _is_marker(arg):
+            slots.setdefault(index, "value" if arg != REDACTED else "whole")
+    seen: dict[str, int] = {}
+    out = list(new_argv)
+    for index, mode in sorted(slots.items()):
+        key = _slot_key(new_argv, index, mode)
+        position = seen[key] = seen.get(key, -1) + 1
+        if not _is_marker(new_argv[index]):
+            continue
+        values = pool.get(key, [])
+        if position >= len(values):
+            raise ValueError(
+                f"a redacted value after {key or 'this position'!r} has no stored value to keep; type the value again")
+        out[index] = values[position] if mode == "whole" else new_argv[index][: -len(REDACTED)] + values[position]
     return out
-
-
-def _next_secret(values: Iterator[str]) -> str:
-    try:
-        return next(values)
-    except StopIteration:
-        raise ValueError("a redacted value has no stored value to keep; type the value again") from None
 
 
 def _tokens(text: str) -> list[str] | None:

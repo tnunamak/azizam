@@ -625,7 +625,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     }
 
 
-def _restore_lifecycle_markers(values: dict[str, Any], shown: Mapping[str, Any], record: Mapping[str, Any]) -> dict[str, Any]:
+def _restore_lifecycle_markers(ctx: Any, values: dict[str, Any], shown: Mapping[str, Any], record: Mapping[str, Any]) -> dict[str, Any]:
     """Put the stored start and stop commands back behind the markers the page was shown.
 
     The page shows a command with its credential arguments hidden. A save that leaves every
@@ -640,6 +640,9 @@ def _restore_lifecycle_markers(values: dict[str, Any], shown: Mapping[str, Any],
         try:
             restored[field] = engine_redaction.restore_command(values.get(field), stored.get(source))
         except ValueError as exc:
+            if not _is_owner(ctx):
+                # The owner gate comes first: the answer must not say whether a secret sits at the marker.
+                raise _owner_only("Only the owner can change how Azizam starts and stops a server.") from None
             raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=field) from None
     return restored
 
@@ -960,7 +963,7 @@ class EngineService:
         before = engine_view(catalog, record, db_path=self.db_path)
         definition = _definition(catalog, body.get("definition") or before["definition"])
         values = {**before["values"], **(body.get("values") if isinstance(body.get("values"), Mapping) else {})}
-        values = _restore_lifecycle_markers(values, before["values"], record)
+        values = _restore_lifecycle_markers(ctx, values, before["values"], record)
         if "api_key" not in values:
             values["api_key"] = SECRET_MASK if before["key"]["state"] == "configured" and before["key"].get("source") == "stored" else ""
         _header_credentials_are_the_owners(ctx, body.get("values"))

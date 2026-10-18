@@ -2310,7 +2310,14 @@ def create_admin_router(
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
             # The registry a caller read hides command secrets behind markers; a marker keeps its stored value.
-            body = engine_redaction.restore_registry(body, store.get_service_registry())
+            try:
+                body = engine_redaction.restore_registry(body, store.get_service_registry())
+            except ValueError:
+                # A marker with no stored value is a change to a command or environment. Only the owner
+                # may make one, and the answer must not say whether a secret sits at that marker.
+                if "owner" in ctx.roles:
+                    raise
+                raise PermissionError("Only the owner can change service process.") from None
             registry = _validate_service_registry(body)
             record = store.update_service_registry(
                 data=registry,
