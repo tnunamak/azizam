@@ -436,12 +436,51 @@ def test_non_owner_cannot_hide_control_recipe_behind_empty_top_level(tmp_path):
             store._settle_credential_bindings(changed, actor)
 
 
+@pytest.mark.parametrize("location", ["top_level", "config"])
+def test_non_owner_cannot_move_connection_with_existing_secret(tmp_path, location):
+    from gateway.admin_api import AdminContext
+    from gateway.admin_runtime import AdminSQLiteStore
+
+    def record(address):
+        connection = {"address": address, "credentials": {"control": {
+            "secret_ref": "os.environ/ENGINE_CONTROL_TOKEN", "origin": address}}}
+        return {"id": "fixture", "config": {"connection": connection}} if location == "config" else {
+            "id": "fixture", "connection": connection, "config": {}}
+
+    old = {"services": {"fixture": record("https://operator.example")}}
+    changed = {"services": {"fixture": record("https://attacker.example")}}
+    store = AdminSQLiteStore(path=tmp_path / "admin.db")
+    actor = AdminContext(subject="admin", roles=frozenset({"admin"}))
+    with patch("gateway.admin_runtime.service_registry.normalize_service_registry", return_value=changed), \
+         patch.object(store, "get_service_registry", return_value=old):
+        with pytest.raises(PermissionError, match="owner"):
+            store._settle_credential_bindings(changed, actor)
+
+
 def test_control_operation_refuses_nested_absolute_path():
     service = {"connection": {"address": "http://fixture.test:18091"},
                "protocol_operations": {"load": {"method": "POST", "path": "/load"}}}
     runtime = EngineControlRuntime(service, drain=SwapDrain(), lock_for=lambda _scope: asyncio.Lock())
     with pytest.raises(ValueError, match="allowlisted"):
         run(runtime.invoke("load", {"options": {"model_path": "/etc/passwd"}}))
+
+
+@pytest.mark.parametrize("file_path", ["../../etc/passwd", "~/private/model.gguf"])
+def test_control_operation_refuses_relative_or_home_path_outside_roots(tmp_path, file_path):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(204)
+
+    service = {"connection": {"address": "http://fixture.test:18091"},
+               "control_file_roots": [str(tmp_path / "allowed")],
+               "protocol_operations": {"load": {"method": "POST", "path": "/load"}}}
+    runtime = EngineControlRuntime(service, drain=SwapDrain(), lock_for=lambda _scope: asyncio.Lock(),
+                                   client_factory=observation_client(handler))
+    with pytest.raises(ValueError, match="allowlisted"):
+        run(runtime.invoke("load", {"options": {"model_path": file_path}}))
+    assert calls == []
 
 
 def test_switch_preparation_waits_for_previous_response_lease():
@@ -626,6 +665,34 @@ def test_switch_restores_after_a_control_call_that_raises():
     with pytest.raises(SwitchUnavailable):
         run(controller.select(svc, "new", selection))
     assert calls == ["new", "old"]
+
+
+@pytest.mark.parametrize("prepare_result", [False, True])
+def test_switch_restores_original_selection_when_preparation_changes_it(prepare_result):
+    selected = ["old"]
+    calls = []
+
+    async def invoke(_op, args):
+        calls.append(args["model"])
+        selected[0] = args["model"]
+        if args["model"] == "new":
+            raise RuntimeError("switch failed")
+
+    async def observe(_name):
+        return selected[0]
+
+    async def prepare():
+        selected[0] = "new"
+        return prepare_result
+
+    controller = SwitchController(drain=SwapDrain(), invoke=invoke, observe=observe)
+    svc = {"id": "scope", "offerings": [{"id": "old"}, {"id": "new"}]}
+    selection = {"mode": "switch", "switch": {"call": "select", "args": {"model": "new"},
+                 "observe_selected": "selected", "on_failure": "restore"}}
+    with pytest.raises(SwitchUnavailable):
+        run(controller.select(svc, "new", selection, prepare=prepare))
+    assert calls == (["new", "old"] if prepare_result else ["old"])
+    assert selected == ["old"]
 
 
 def test_residency_unload_requires_resident_false_and_load_has_max_deadline():
