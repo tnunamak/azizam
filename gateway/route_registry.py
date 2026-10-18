@@ -64,6 +64,8 @@ def mount_frontend_records(
         seed = seed_frontends.get(frontend_id)
         if record.get("source") == "builtin" and isinstance(seed, Mapping) and "registered_routes" in seed:
             record = {**record, "registered_routes": copy.deepcopy(seed["registered_routes"])}
+            if "strictness" in seed:
+                record["strictness"] = seed["strictness"]
         records.append(record)
     for frontend_id, seed in seed_frontends.items():
         if frontend_id not in stored_ids and isinstance(seed, Mapping) and seed.get("source") == "builtin":

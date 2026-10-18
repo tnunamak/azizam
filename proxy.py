@@ -75,6 +75,7 @@ from gateway import (
     me_prompt_memory,
     me_make,
     me_media,
+    native_lane,
     prompt_memory,
     receipt_store,
     resource_admission_http,
@@ -28753,19 +28754,27 @@ def _native_passthrough_receipt(
         path=gateway_path,
         backend=provider,
     )
-    if auth_context.identity is not None:
-        receipt.app_profile = plan_ref(auth_context.identity)
-        receipt.app_id = auth_context.identity.app_id
-        receipt.owner_key_hash = auth_context.identity.key_hash
-        receipt.api_key_name = auth_context.identity.name
-        receipt.visibility = auth_context.identity.access.receipt_detail
+    _attach_caller(receipt, auth_context)
     receipt.metadata.update({
         "provider": provider,
         "native_path": f"/{native_path.lstrip('/')}",
     })
     if lane is not None:
         receipt.metadata["lane"] = lane
+    if lane == "native":
+        # Usage of a pass-through call cannot be measured; say so rather than leave the cost blank.
+        receipt.metadata["cost"] = "unknown"
+        receipt.cost = {"usd": None, "source": "unknown", "cost_class": "unknown", "reconciliation_status": "unknown"}
     return receipt
+
+
+def _attach_caller(receipt: RouteReceipt, auth_context: AuthContext) -> None:
+    if auth_context.identity is not None:
+        receipt.app_profile = plan_ref(auth_context.identity)
+        receipt.app_id = auth_context.identity.app_id
+        receipt.owner_key_hash = auth_context.identity.key_hash
+        receipt.api_key_name = auth_context.identity.name
+        receipt.visibility = auth_context.identity.access.receipt_detail
 
 
 def _record_native_passthrough_receipt(receipt: RouteReceipt) -> None:
@@ -29005,6 +29014,7 @@ async def native_engine_request(request: Request):
             status_code=403,
             code="native_remote_forbidden",
         )
+    record = next(iter(_provider_native_backend_configs(engine, target)), {})
     return await _forward_provider_native(
         request,
         provider_key=engine,
@@ -29012,6 +29022,62 @@ async def native_engine_request(request: Request):
         native_path=native_path,
         gateway_path=f"/native/{engine_id}/{native_path}",
         lane="native",
+        native_policy=native_lane.policy_for(record),
+    )
+
+
+def _native_caller_is_owner(identity: Any) -> bool:
+    """Whether the person accountable for this caller holds the owner role now. Fails closed."""
+    person_id = getattr(identity, "accountable_person_id", None)
+    if not person_id:
+        return False
+    try:
+        return "owner" in admin_store.effective_admin_roles("user", str(person_id), path=ADMIN_STORE.path)
+    except Exception as error:  # noqa: BLE001
+        print(f"[proxy] Could not read admin roles for a native control call: {error}", flush=True)
+        return False
+
+
+def _refuse_native(receipt: RouteReceipt, *, status_code: int, code: str, message: str) -> Response:
+    receipt.metadata["refusal"] = code
+    receipt.finish("denied")
+    _record_native_passthrough_receipt(receipt)
+    return openai_error_response(message, status_code=status_code, code=code)
+
+
+async def _read_capped_body(request: Request, cap: int) -> bytes | None:
+    """The request body, or None once it passes ``cap`` bytes."""
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > cap:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+class _NativeResponseTooLarge(Exception):
+    """The engine's reply passed the lane's byte cap while it streamed."""
+
+
+async def _frontend_refusal(request: Request, row: frontend_mount.RouteRow, report: Any) -> Response:
+    """Answer a request an exact frontend refuses: authenticate first, record the refusal, name the fields."""
+    auth_context = await asyncio.to_thread(authenticate_request, request, request.url.path)
+    if isinstance(auth_context, Response):
+        return auth_context
+    receipt = RouteReceipt(protocol=row.frontend, intent=row.intent, path=request.url.path)
+    _attach_caller(receipt, auth_context)
+    for name in report.dropped:
+        receipt.reject_input(str(name)[:48], "this frontend cannot carry the field")
+    receipt.metadata["loss"] = report.as_dict()
+    receipt.metadata["refusal"] = "frontend_field_unsupported"
+    receipt.finish("denied")
+    _record_native_passthrough_receipt(receipt)
+    return openai_error_response(
+        frontend_mount.refusal_message(row, report),
+        code="frontend_field_unsupported",
+        param=str(report.dropped[0])[:48] if report.dropped else None,
     )
 
 
@@ -29023,8 +29089,13 @@ async def _forward_provider_native(
     native_path: str,
     gateway_path: str,
     lane: str | None = None,
+    native_policy: native_lane.NativePolicy | None = None,
 ):
-    """Authorize one native call, forward it with downstream auth only, and stream the reply back."""
+    """Authorize one native call, forward it with downstream auth only, and stream the reply back.
+
+    With ``native_policy`` (the per-engine lane) the call must match an allow entry, a ``control``
+    entry needs the owner, request and reply bytes are capped, and a redirect is refused.
+    """
     auth_context = _auth_context_from_scope(request)
     try:
         native_request_path = canonical_native_path(
@@ -29043,6 +29114,20 @@ async def _forward_provider_native(
         lane=lane,
     )
     native_operation = f"{request.method.upper()} {native_request_path}"
+    if native_policy is not None:
+        receipt.metadata["native_operation"] = native_operation
+        entry = native_policy.entry_for(request.method, native_request_path)
+        if entry is None:
+            return _refuse_native(
+                receipt, status_code=403, code="native_not_allowed",
+                message=f"{native_operation} is not on the allow list of engine {provider_key!r}.",
+            )
+        receipt.metadata["native_class"] = entry.klass
+        if entry.klass == native_lane.CONTROL and not _native_caller_is_owner(auth_context.identity):
+            return _refuse_native(
+                receipt, status_code=403, code="native_owner_only",
+                message=f"{native_operation} is a control call; only the gateway owner may make it.",
+            )
     decision = evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
@@ -29067,7 +29152,22 @@ async def _forward_provider_native(
     if admission is not None:
         return admission
 
-    body = await request.body()
+    if native_policy is None:
+        body = await request.body()
+    else:
+        def too_large() -> Response:
+            return _refuse_native(
+                receipt, status_code=413, code="native_request_too_large",
+                message=f"The request is over the {native_policy.max_request_bytes}-byte limit of this lane.",
+            )
+
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > native_policy.max_request_bytes:
+            return too_large()
+        capped = await _read_capped_body(request, native_policy.max_request_bytes)
+        if capped is None:
+            return too_large()
+        body = capped
     receipt.stream = False
     receipt.effective_output_limit = None
     owner = ReceiptLifecycleOwner(receipt)
@@ -29087,7 +29187,7 @@ async def _forward_provider_native(
         if query:
             url += f"?{query}"
 
-        client = httpx.AsyncClient(timeout=httpx.Timeout(
+        client = httpx.AsyncClient(follow_redirects=False, timeout=httpx.Timeout(
             connect=10.0,
             read=float(target.get("timeout") or UPSTREAM_READ_TIMEOUT),
             write=60.0,
@@ -29130,16 +29230,33 @@ async def _forward_provider_native(
                 code="provider_passthrough_error",
             )
 
+        receipt.metadata["status_code"] = upstream.status_code
+        if native_policy is not None:
+            refusal = native_lane.reply_refusal(
+                native_policy, upstream.status_code, upstream.headers.get("content-length"), provider_key,
+            )
+            if refusal is not None:
+                receipt.metadata["refusal"] = refusal[1]
+                await stream_context.__aexit__(None, None, None)
+                await client.aclose()
+                owner.report(status="failed", reason="failed")
+                return openai_error_response(refusal[2], status_code=refusal[0], error_type="api_error", code=refusal[1])
+
         response_headers = {
             k: v
             for k, v in upstream.headers.items()
             if k.lower() not in _PROVIDER_NATIVE_HOP_BY_HOP_HEADERS
         }
-        receipt.metadata["status_code"] = upstream.status_code
 
         async def _provider_native_body_stream():
+            sent = 0
             try:
                 async for chunk in upstream.aiter_bytes():
+                    sent += len(chunk)
+                    if native_policy is not None and sent > native_policy.max_response_bytes:
+                        receipt.metadata["refusal"] = "native_response_too_large"
+                        owner.report(status="failed", reason="failed")
+                        raise _NativeResponseTooLarge
                     yield chunk
                 owner.report(
                     status="failed" if upstream.status_code >= 400 else "succeeded",
@@ -29274,6 +29391,7 @@ frontend_mount.mount(
         route_registry.mount_frontend_records(registry=_PROTOCOL_ROUTE_REGISTRY, proxy_config=config),
     ),
     FRONTEND_TRANSLATORS,
+    refuse=_frontend_refusal,
 )
 
 
