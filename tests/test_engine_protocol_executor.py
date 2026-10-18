@@ -721,13 +721,13 @@ def test_a_failed_job_carries_the_engines_reason_and_an_unknown_status_is_loud()
 
 
 def test_cancel_and_a_missing_job_id() -> None:
-    ex, fake = make(JOB, job_handler([]))
+    ex, fake = make(JOB, job_handler([{"state": "busy"}]))  # cancel asks the job's state first
 
     async def go():
         ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
         await ex.cancel(conn(), ref)
     run(go())
-    assert fake.requests[-1].url.path == "/jobs/42/cancel"
+    assert [(r.method, r.url.path) for r in fake.requests[-2:]] == [("GET", "/jobs/42"), ("POST", "/jobs/42/cancel")]
     ex2, _ = make(JOB, lambda r: httpx.Response(202, json={"nope": 1}))
     with pytest.raises(MalformedResponse):
         run(ex2.submit(conn(), req("render", {"prompt": "x"})))
@@ -805,6 +805,100 @@ def test_an_asset_store_that_ignores_the_byte_cap_is_still_capped() -> None:
     with pytest.raises(BudgetExceeded) as raised:
         fetch_all(ex)
     assert raised.value.budget == "max_asset_bytes"
+
+
+def fast_job(interval_s: float, max_wait_s: float) -> dict:
+    spec = json.loads(json.dumps(JOB))
+    spec["render"]["job"]["poll"].update(interval_s=interval_s, max_wait_s=max_wait_s)
+    return spec
+
+
+def timed_job_handler(states, stamps):
+    inner = job_handler(states)
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        if r.method == "GET" and r.url.path == "/jobs/42":
+            stamps.append(time.perf_counter())
+        return inner(r)
+    return handler
+
+
+def test_wait_polls_at_the_declared_interval_until_the_job_ends() -> None:
+    stamps: list[float] = []
+    ex, _ = make(fast_job(0.1, 5), timed_job_handler([{"state": "queued"}, {"state": "busy"}, {"state": "ok", "files": []}], stamps))
+
+    async def go():
+        ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
+        return await ex.wait(conn(), ref)
+    status = run(go())
+    assert status.state is JobState.succeeded and len(stamps) == 3
+    assert min(b - a for a, b in zip(stamps, stamps[1:])) >= 0.09  # not faster than interval_s
+
+
+def test_wait_gives_up_at_max_wait_and_stops_polling() -> None:
+    stamps: list[float] = []
+    ex, _ = make(fast_job(0.05, 0.3), timed_job_handler([{"state": "busy"}] * 1000, stamps))
+
+    async def go():
+        ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
+        started = time.perf_counter()
+        with pytest.raises(BudgetExceeded) as raised:
+            await ex.wait(conn(), ref)
+        return raised.value, time.perf_counter() - started
+    error, elapsed = run(go())
+    assert error.budget == "max_wait_s"
+    assert 0.25 <= elapsed < 1.0 and 3 <= len(stamps) <= 8
+
+
+def test_max_wait_also_bounds_a_poll_that_hangs() -> None:
+    async def handler(r: httpx.Request) -> httpx.Response:
+        if r.url.path == "/jobs":
+            return httpx.Response(202, json={"job": {"id": 42}})
+        await asyncio.sleep(5)
+        return httpx.Response(200, json={"state": "busy"})
+    ex = executor.HttpV1Executor(desc(fast_job(0.05, 0.3)), transport=transport.HttpxTransport.for_tests(HandlerTransport(handler)), assets=MemoryAssetStore())
+
+    async def go():
+        ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
+        started = time.perf_counter()
+        with pytest.raises(BudgetExceeded) as raised:
+            await ex.wait(conn(), ref)
+        return raised.value, time.perf_counter() - started
+    error, elapsed = run(go())
+    assert error.budget == "max_wait_s" and elapsed < 1.5
+
+
+@pytest.mark.parametrize("state", ["ok", "bad", "gone"])
+def test_cancel_of_a_job_that_already_ended_sends_no_cancel(state: str) -> None:
+    ex, fake = make(JOB, job_handler([{"state": state, "files": []}]))
+
+    async def go():
+        ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
+        await ex.cancel(conn(), ref)
+    run(go())
+    assert not any(r.url.path.endswith("/cancel") for r in fake.requests)
+
+
+@pytest.mark.parametrize("state", ["queued", "busy"])
+def test_cancel_of_a_live_job_is_sent(state: str) -> None:
+    ex, fake = make(JOB, job_handler([{"state": state}]))
+
+    async def go():
+        ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
+        await ex.cancel(conn(), ref)
+    run(go())
+    assert fake.requests[-1].url.path == "/jobs/42/cancel"
+
+
+def test_cancel_of_an_unknown_job_is_the_engines_not_found_and_sends_no_cancel() -> None:
+    ex, fake = make(JOB, lambda r: httpx.Response(404, text="no such job") if r.method == "GET" else httpx.Response(202, json={"job": {"id": 42}}))
+
+    async def go():
+        ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
+        await ex.cancel(conn(), ref)
+    with pytest.raises(UpstreamError):
+        run(go())
+    assert not any(r.url.path.endswith("/cancel") for r in fake.requests)
 
 
 def test_a_job_operation_is_not_invokable_and_a_plain_one_is_not_submittable() -> None:

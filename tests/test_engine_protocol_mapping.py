@@ -7,6 +7,7 @@ import json
 import pytest
 
 from gateway.engine_protocol import mapping, pointer
+from gateway.engine_protocol.budgets import Budgets
 from gateway.engine_protocol.errors import BudgetExceeded, DescriptionError, MappingError
 
 
@@ -260,3 +261,53 @@ def test_a_deep_source_is_a_budget_error_inside_the_map_not_a_recursion_error() 
     assert raised.value.budget == "max_json_depth"
     with pytest.raises(BudgetExceeded):
         run([{"copy": {"from": "/body/n", "to": "/n"}}, {"set": {"to": "/n/flag", "value": True}}], node)  # a copy that must own its copy
+
+
+class _Clock:
+    """A clock that moves 0.1 s at every reading, and a count of how many clones the map made."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.clones = 0
+
+    def perf_counter(self) -> float:
+        self.now += 0.1
+        return self.now
+
+
+@pytest.fixture()
+def clock(monkeypatch):
+    clock = _Clock()
+    monkeypatch.setattr(mapping, "time", clock)
+    real = mapping._clone
+
+    def counting(value):
+        clock.clones += 1
+        return real(value)
+    monkeypatch.setattr(mapping, "_clone", counting)
+    return clock
+
+
+def _rules(count: int):
+    return [{"set": {"to": f"/k{i}", "value": {"a": [1]}}} for i in range(count)]  # each clones its constant
+
+
+def test_mapping_s_stops_the_map_while_it_runs_not_after_it(clock) -> None:
+    program = mapping.build(_rules(40), base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(mapping_s=0.55))
+    with pytest.raises(BudgetExceeded) as raised:
+        program.apply({"body": {}, "params": {}, "files": {}})
+    assert raised.value.budget == "mapping_s"
+    assert clock.clones <= 8  # it did not run the remaining rules
+
+
+def test_mapping_s_stops_rules_inside_a_condition_too(clock) -> None:
+    rules = [{"when": {"if": {"path": "/body/x", "present": True}, "then": _rules(40)}}]
+    program = mapping.build(rules, base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(mapping_s=0.55))
+    with pytest.raises(BudgetExceeded) as raised:
+        program.apply({"body": {"x": 1}, "params": {}, "files": {}})
+    assert raised.value.budget == "mapping_s" and clock.clones <= 8
+
+
+def test_a_map_within_mapping_s_still_runs_every_rule(clock) -> None:
+    program = mapping.build(_rules(3), base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(mapping_s=5))
+    assert sorted(program.apply({"body": {}, "params": {}, "files": {}})) == ["k0", "k1", "k2"]
