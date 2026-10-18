@@ -27,7 +27,7 @@ from typing import Any, Callable, Mapping, Protocol
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, receipt_store, service_registry
+from gateway import admin_store, engine_redaction, receipt_store, service_registry
 from gateway import provider_catalog, provider_configuration, provider_listing, secret_store
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway import providers as provider_core
@@ -253,7 +253,7 @@ def create_provider_admin_router(
             return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_provider", str(exc)).as_response()
         return JSONResponse(
             status_code=status.HTTP_201_CREATED,
-            content={"provider": provider, "service_registry": record.get("value")},
+            content={"provider": provider, "service_registry": engine_redaction.redact_registry(record.get("value") or {})},
         )
 
     @router.get("/{provider_id}")
@@ -498,7 +498,7 @@ def create_provider_admin_router(
             return _RouteError(exc.status_code, exc.code, exc.message).as_response()
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"provider": provider, "service_registry": record.get("value")})
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"provider": provider, "service_registry": engine_redaction.redact_registry(record.get("value") or {})})
 
     @router.delete("/{provider_id}")
     async def remove_provider(request: Request, provider_id: str) -> JSONResponse:
@@ -530,7 +530,7 @@ def create_provider_admin_router(
             return exc.as_response()
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"service_registry": record.get("value")})
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"service_registry": engine_redaction.redact_registry(record.get("value") or {})})
 
 
     @router.put("/{provider_id}/caps")

@@ -1,0 +1,14 @@
+protocol_version: 1
+id: invalid-loop
+executor: http-v1
+operations:
+  chat:
+    class: generate
+    request:
+      method: POST
+      path: /c
+      body:
+        encoding: json
+        base: empty
+        map:
+          - loop: {over: /body/messages, do: [{copy: {from: /item/content, to: /x}}]}

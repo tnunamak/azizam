@@ -47,6 +47,8 @@ import uuid
 from math import ceil
 from typing import Any, Iterable
 
+from gateway import frontend_loss
+
 ANTHROPIC_DEFAULT_STOP_REASON = "end_turn"
 _TOOL_USE_STOP_REASON = "tool_use"
 _MAX_TOKENS_STOP_REASON = "max_tokens"
@@ -763,6 +765,7 @@ def _translate_message(msg: Any, *, index: int) -> list[dict[str, Any]]:
             )
         btype = block.get("type")
         if btype in _DROPPED_BLOCK_TYPES:
+            frontend_loss.approximated("messages[].content", f"{btype} blocks are not sent to the model")
             continue
         if btype in _UNSUPPORTED_BLOCK_TYPES:
             raise AnthropicTranslationError(

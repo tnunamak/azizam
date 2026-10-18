@@ -337,6 +337,7 @@ class RouteReceipt:
             _remember_caller(self)
         self.client_address = self.client_address or trusted_address_for(self.app_id)
         self.connection_id = self.connection_id or connection_for(self.app_id)
+        self._note_frontend_loss()
         if self.source_kind is not None:
             return
         if self.parent_request_id:
@@ -356,6 +357,17 @@ class RouteReceipt:
             self.source_label = "Local network · no key"
         if self.client_hint:
             self.source_label += f" · {self.client_hint}"
+
+    def _note_frontend_loss(self) -> None:
+        """Record what the inbound frontend dropped before this receipt opened (gateway/frontend_loss.py)."""
+        from gateway import frontend_loss
+
+        report = frontend_loss.current()
+        if report is None or report.empty:
+            return
+        self.metadata["loss"] = report.as_dict()
+        for name in report.dropped:
+            self.ignored_inputs.setdefault(str(name)[:48], "dropped by a lenient frontend")
 
     def accept_input(self, name: str) -> None:
         if name not in self.accepted_inputs:

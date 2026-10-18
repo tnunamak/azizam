@@ -20,6 +20,8 @@ baseline's paths and its own. Only these differences are allowed:
   /admin/api/engines/... are new admin routes (tests/test_engine_admin_routes.py
   covers them), and /admin/api/operator/service-presets is deleted and falls to
   the catch-all or a 405;
+* /admin/api/operator/host-commands is the new owner-only command permission
+  (tests/test_admin_owner_holes_round4.py covers its write boundary);
 * POST /me/api/media/remove-missing is new (Library "Remove missing items"): that
   method is its own route, and every other method answers as /me/api/media/{asset_id}
   did before (the sample path /me/api/media/sample);
@@ -51,6 +53,8 @@ DELETED_PATHS = {
     "/logout", *(f"/admin/{name}{slash}" for name in ADMIN_SECTIONS for slash in ("", "/")),
 }
 NEW_PATHS = {"/setup/console"}
+# Per-engine native pass-through (contract section 5): new since the baseline, off unless an engine enables it.
+NATIVE_PREFIX = "/native"
 # The access plan API replaced these admin routes (docs/design/ACCESS_PLANS.md): profiles, runtime
 # mappings, the policy simulator and editor, the LAN placeholder keys and the user-access defaults.
 ACCESS_PLAN_API_PREFIXES = (
@@ -60,6 +64,7 @@ ACCESS_PLAN_API_PREFIXES = (
 MCP_OAUTH_PREFIXES = ("/.well-known/oauth-authorization-server", "/oauth", "/me/api/mcp/")
 ENGINE_PATHS = ("/admin/api/engine-definitions", "/admin/api/engines/")
 DELETED_PRESETS = "/admin/api/operator/service-presets"
+HOST_COMMANDS = "/admin/api/operator/host-commands"
 THUMBNAIL_PATH, THUMBNAIL_SIBLING = "/v1/assets/sample/thumbnail", "/v1/assets/sample/content"
 REMOVE_MISSING_PATH, REMOVE_MISSING_SIBLING = "/me/api/media/remove-missing", "/me/api/media/sample"
 REMOVE_MISSING_ROUTE = "/me/api/media/remove-missing remove_missing_media"
@@ -116,10 +121,14 @@ def _deliberate(key: str) -> str | None:
         return "signin"  # owner routes added after the baseline (gateway/signin_api.py)
     if path.startswith(ENGINE_PATHS) or path == DELETED_PRESETS:
         return "engines"  # Add engine (gateway/engine_admin.py) replaced the preset list
+    if path == HOST_COMMANDS:
+        return "host_commands"
     if ui_routes.classify(path) is not None:
         return "ui"
     if path in DELETED_PATHS or ui_routes.first_segment(path) in DELETED_SEGMENTS:
         return "deleted"
+    if path == NATIVE_PREFIX or path.startswith(NATIVE_PREFIX + "/"):
+        return "native"
     if path in NEW_PATHS:
         return "new"
     if path == THUMBNAIL_PATH:
@@ -193,8 +202,12 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new owner routes; tests/test_trusted_addresses.py covers them
         if kind == "signin":
             continue  # new owner routes; tests/test_signin_settings_api.py and test_signin_test_flow.py cover them
+        if kind == "native" and key not in old:
+            continue  # a new lane; tests/test_native_passthrough.py covers it
         if kind == "engines" and (key not in old or route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
             continue  # new Add engine routes, or the deleted preset list falling through
+        if kind == "host_commands" and key not in old:
+            continue  # new owner command permission route
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
@@ -234,7 +247,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines", "host_commands", "native"}:
             continue
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue

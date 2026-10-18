@@ -433,6 +433,22 @@
   },
   {
     "method": "PUT",
+    "path": "/admin/api/operator/host-commands",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.admin_api.update_host_commands",
+    "schema": true
+  },
+  {
+    "method": "GET",
+    "path": "/admin/api/operator/host-commands",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.get_host_commands",
+    "schema": true
+  },
+  {
+    "method": "PUT",
     "path": "/admin/api/operator/media-job-admission",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",

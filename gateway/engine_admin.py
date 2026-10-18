@@ -32,7 +32,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, category_enforcement, secret_store, service_registry, transforms
+from gateway import admin_store, category_enforcement, engine_redaction, secret_store, service_registry, transforms
 from gateway.access_plans import PlanError, plan_from_document
 from gateway.engine_access import who_can_use
 from gateway.engine_check import (
@@ -62,7 +62,8 @@ _KNOWN_CONFIG_KEYS = frozenset({
     "name", "enabled", "capabilities", "role", "priority", "managed", "lifecycle",
 })
 _RECORD_KEYS = frozenset({"id", "name", "kind", "source", "enabled", "priority", "role", "capabilities", "config",
-                          "secret_refs", "lifecycle", "provenance", "editable"})
+                          "secret_refs", "lifecycle", "process", "observations", "residency", "resources",
+                          "provenance", "editable"})
 NOT_EDITABLE_HERE = ("This page can’t change how Azizam reaches this engine yet: its settings come from the gateway’s "
                      "own setup. You can still rename it and turn it on or off.")
 # An engine lists at most this many models in one access question.
@@ -570,10 +571,11 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     values["headers"] = [{"name": h.get("name"), "value": h.get("value", "")}
                          for h in config.get("headers") or () if isinstance(h, Mapping) and "value" in h]
     values["transforms"] = copy.deepcopy(config.get("transforms") or [])
-    lifecycle = record.get("lifecycle") or {}
+    lifecycle = service_registry.legacy_lifecycle_from_service(record)
     driver_config = lifecycle.get("driver_config") or {}
     if lifecycle.get("driver") == "command":
-        values.update(lifecycle_mode="managed", lifecycle_start=driver_config.get("start", ""), lifecycle_stop=driver_config.get("stop", ""),
+        values.update(lifecycle_mode="managed", lifecycle_start=engine_redaction.redact_command(driver_config.get("start", "")),
+                      lifecycle_stop=engine_redaction.redact_command(driver_config.get("stop", "")),
                       lifecycle_ready_s=driver_config.get("health_timeout_s", 120))
     else:
         values["lifecycle_mode"] = "external"
@@ -596,6 +598,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     field_keys = {f["key"] for f in definition["fields"]}
     values = {k: v for k, v in values.items() if k in field_keys}
     other = {k: v for k, v in config.items() if k not in _KNOWN_CONFIG_KEYS and k != "engine_capabilities"}
+    other = engine_redaction.redact_service({"config": other})["config"]
     return {
         "service_id": record.get("id"),
         "definition": definition["definition"],
@@ -618,7 +621,27 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "calls": call_line(definition, values),
         "other_settings": copy.deepcopy(other),
         "record": redacted_record(record),
+        "v2": service_registry.service_record_v2(record),
     }
+
+
+def _restore_lifecycle_markers(values: dict[str, Any], shown: Mapping[str, Any], record: Mapping[str, Any]) -> dict[str, Any]:
+    """Put the stored start and stop commands back behind the markers the page was shown.
+
+    The page shows a command with its credential arguments hidden. A save that leaves every
+    lifecycle field as shown needs nothing (the stored block is kept whole); a save that edits one
+    keeps each marker's stored value, and refuses a marker the stored command does not hold.
+    """
+    if all(str(values.get(key, "")) == str(shown.get(key, "")) for key in _LIFECYCLE_FIELDS):
+        return values
+    stored = service_registry.legacy_lifecycle_from_service(record).get("driver_config") or {}
+    restored = dict(values)
+    for field, source in (("lifecycle_start", "start"), ("lifecycle_stop", "stop")):
+        try:
+            restored[field] = engine_redaction.restore_command(values.get(field), stored.get(source))
+        except ValueError as exc:
+            raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=field) from None
+    return restored
 
 
 def _caps_from_record(catalog: EngineCatalog, definition: Mapping[str, Any], record: Mapping[str, Any]) -> list[str]:
@@ -636,6 +659,8 @@ def _caps_from_record(catalog: EngineCatalog, definition: Mapping[str, Any], rec
 def redacted_record(record: Mapping[str, Any]) -> dict[str, Any]:
     """The stored record as the page shows it: secret ids and references masked, never a value."""
     out = copy.deepcopy({k: v for k, v in record.items() if k in _RECORD_KEYS})
+    if "lifecycle" not in out:
+        out["lifecycle"] = copy.deepcopy(dict(service_registry.legacy_lifecycle_from_service(record)))
 
     def mask(value: Any) -> Any:
         if isinstance(value, Mapping):
@@ -654,7 +679,7 @@ def redacted_record(record: Mapping[str, Any]) -> dict[str, Any]:
     out = mask(out)
     if isinstance(out.get("secret_refs"), Mapping):
         out["secret_refs"] = {k: "configured" for k in out["secret_refs"]}
-    return out
+    return engine_redaction.redact_service(out)
 
 
 # ---------------------------------------------------------------------------
@@ -935,6 +960,7 @@ class EngineService:
         before = engine_view(catalog, record, db_path=self.db_path)
         definition = _definition(catalog, body.get("definition") or before["definition"])
         values = {**before["values"], **(body.get("values") if isinstance(body.get("values"), Mapping) else {})}
+        values = _restore_lifecycle_markers(values, before["values"], record)
         if "api_key" not in values:
             values["api_key"] = SECRET_MASK if before["key"]["state"] == "configured" and before["key"].get("source") == "stored" else ""
         _header_credentials_are_the_owners(ctx, body.get("values"))
@@ -1050,15 +1076,16 @@ class EngineService:
             if existing is not None and keep_lifecycle:
                 # Start and stop untouched: keep the stored block exactly (other drivers, status, cwd, env).
                 # The config keeps its own copy of the block; carry that copy, so neither changes.
-                stored = old_config.get("lifecycle") if isinstance(old_config.get("lifecycle"), Mapping) else existing.get("lifecycle")
+                stored = service_registry.legacy_lifecycle_from_service(existing)
                 if isinstance(stored, Mapping):
                     raw["lifecycle"] = copy.deepcopy(dict(stored))
                 else:
                     raw.pop("lifecycle", None)
             elif existing is not None and "lifecycle" in raw:
-                old_driver_config = ((existing.get("lifecycle") or {}).get("driver_config") or {})
+                old_lifecycle = service_registry.legacy_lifecycle_from_service(existing)
+                old_driver_config = old_lifecycle.get("driver_config") or {}
                 for extra in ("status", "cwd", "env", "timeout_s"):
-                    if extra in old_driver_config and (existing.get("lifecycle") or {}).get("driver") == "command":
+                    if extra in old_driver_config and old_lifecycle.get("driver") == "command":
                         raw["lifecycle"]["driver_config"].setdefault(extra, copy.deepcopy(old_driver_config[extra]))
             record = self.store.write_engine(service_id=service_id, raw=raw, actor=ctx, expected_generation=expected_generation,
                                              replace=existing is not None, existing=existing)

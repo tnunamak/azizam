@@ -99,18 +99,22 @@ class SwapDeferred(Exception):
 class ServingLease:
     """One request in flight on one backend. ``release`` is idempotent."""
 
-    def __init__(self, drain: "SwapDrain", backend: str, started_at: float) -> None:
+    def __init__(self, drain: "SwapDrain", backend: str, started_at: float,
+                 on_release: Callable[[], None] | None = None) -> None:
         self._drain = drain
         self.backend = backend
         self.started_at = started_at
         self.handed_off = False
         self._released = False
+        self._on_release = on_release
 
     def release(self) -> None:
         if self._released:
             return
         self._released = True
         self._drain._release(self)
+        if self._on_release is not None:
+            self._on_release()
 
     def hand_off(self, stream: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
         """Give the lease to a response stream.
@@ -145,13 +149,13 @@ class SwapDrain:
 
     # -- forwarding side ----------------------------------------------------
 
-    def lease(self, backend: str) -> ServingLease:
+    def lease(self, backend: str, *, on_release: Callable[[], None] | None = None) -> ServingLease:
         """Count one request in flight on whatever ``backend`` has loaded.
 
         Call under the swap lock, in the same hold in which the caller made
         its target ready or read the loaded model.
         """
-        lease = ServingLease(self, backend, self._clock())
+        lease = ServingLease(self, backend, self._clock(), on_release)
         self._leases.setdefault(backend, set()).add(lease)
         return lease
 
