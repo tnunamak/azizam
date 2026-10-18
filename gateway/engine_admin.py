@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -71,6 +72,8 @@ _RECORD_KEYS = frozenset({"id", "name", "kind", "source", "enabled", "priority",
                           "provenance", "editable"})
 # An engine lists at most this many models in one access question.
 MAX_ACCESS_MODELS = 500
+# Receipts expire with this process; their fingerprints must not allow offline guesses of a key.
+_EVIDENCE_BINDING_KEY = secrets.token_bytes(32)
 _LIFECYCLE_FIELDS = ("lifecycle_mode", "lifecycle_start", "lifecycle_stop", "lifecycle_ready_s")
 _TRANSFORM_KINDS = frozenset({"value-map", "drop-params", "default-params", "param-map", "message-inject", "clamp"})
 
@@ -577,14 +580,14 @@ def _test_binding(definition: Mapping[str, Any], values: Mapping[str, Any], key:
     snapshot = {"service_id": service_id, "definition": definition["definition"],
                 "connection": connection, "credential": key.value, "withheld": key.withheld,
                 "models": model_rows(models)}
-    return hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return hmac.new(_EVIDENCE_BINDING_KEY, json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256).hexdigest()
 
 
 def _stored_evidence_binding(record: Mapping[str, Any], *, db_path: Path,
                              env: Callable[[str], str | None]) -> str:
     config = record.get("config") or {}
     names = ("host", "port", "scheme", "base_path", "address", "path_prefix", "headers", "transforms", "timeout",
-             "api_key_secret_id", "api_key_env", "api_key_ref", "credential_origin", "models", "protocol")
+             "api_key_secret_id", "api_key_env", "api_key_ref", "credential_origin", "models", "protocol", "connection")
     snapshot = {name: config[name] for name in names if name in config}
     revisions = {}
     for reference in (str(config.get("api_key_secret_id") or ""),):
@@ -595,7 +598,7 @@ def _stored_evidence_binding(record: Mapping[str, Any], *, db_path: Path,
         env_name = "AZIZAM_DOWNSTREAM_API_KEY"
     snapshot["credential_revision"] = revisions
     snapshot["environment_revision"] = env(str(env_name)) if env_name else None
-    return hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return hmac.new(_EVIDENCE_BINDING_KEY, json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256).hexdigest()
 
 
 # ---------------------------------------------------------------------------

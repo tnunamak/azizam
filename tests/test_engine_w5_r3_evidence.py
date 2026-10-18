@@ -150,8 +150,8 @@ def test_every_engine_view_url_uses_shared_redaction(service):
         assert 'test-password' not in value and 'test-query' not in value
 
 
-def test_hidden_headers_restore_once_and_keep_the_name_binding(service):
-    hidden = [{'name': 'X-Token', 'value': 'test-hidden-credential', 'secret': True}]
+def test_unchanged_header_entries_keep_their_stored_carrier(service):
+    hidden = [{'id': 'ent_0000000000000001', 'name': 'X-Token', 'secret_ref': 'sref_000000000000000000000001'}]
     service.store.saved['config']['headers'] = hidden
     values = body(service)['values']
     asyncio.run(service.update(OWNER, 'review', {'disabled': True, 'values': values}, expected_generation=0))
@@ -194,7 +194,7 @@ def test_view_explains_why_saved_key_will_be_withheld(service, origin):
 
 def test_real_test_trace_does_not_return_hidden_header_values(service, monkeypatch):
     hidden = 'test-hidden-trace-credential'
-    service.store.saved['config']['headers'] = [{'name': 'X-Token', 'value': hidden, 'secret': True}]
+    service.store.saved['config']['headers'] = [{'id': 'ent_0000000000000001', 'name': 'X-Token', 'secret_ref': 'sref_000000000000000000000001'}]
     async def real_test(*args, **kwargs):
         return {'ok': True, 'at': 123, 'seconds': .1,
                 'request': {'url': 'http://127.0.0.1:5051/v1/chat/completions',
@@ -202,7 +202,7 @@ def test_real_test_trace_does_not_return_hidden_header_values(service, monkeypat
     monkeypatch.setattr(engine_admin, 'run_real_test', real_test)
     result = asyncio.run(service.test(OWNER, body(service)))
     assert hidden not in str(result)
-    assert result['request']['headers']['X-Tenant'] == 'public'
+    assert result['request']['headers']['X-Tenant'] == 'configured'
 
 
 def test_saved_receipt_cannot_be_used_for_another_capability(service):

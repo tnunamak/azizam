@@ -21,6 +21,7 @@ RUNTIME_IMPORTERS = {
     "gateway/litellm_runtime.py": "renders the executable router config into a private file",
     "gateway/lifecycle_drivers.py": "resolves a command, an environment and an admin key when it starts or stops an engine",
     "gateway/engine_process.py": "resolves the argument list and environment of an owned process when it starts it",
+    "gateway/engine_connection.py": "resolves headers at the final lifecycle inference hop",
     "gateway/engine_observations.py": "resolves the query credentials of a readiness probe when it sends the probe",
     "proxy.py": "resolves a native call's headers and URL credentials when it forwards the call",
 }

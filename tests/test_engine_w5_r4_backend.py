@@ -89,3 +89,16 @@ def test_a_stale_retain_command_is_refused_before_any_secret_write(tmp_path):
     actor = AdminContext(subject='editor-owner', actor_kind='user', actor_id='editor-owner', actor_label='Owner', roles=('owner',))
     with pytest.raises(admin_store.OperatorSettingsGenerationConflict):
         store.apply_secret_commands(service_id='editor', commands=[{'carrier': 'config.api_key', 'operation': 'retain', 'entry_id': secret_commands.provider_key_entry_id(saved)}], actor=actor, expected_generation=0)
+
+
+def test_lifecycle_inference_sends_the_secret_header_value_instead_of_its_preview(tmp_path):
+    from gateway import record_carriers, runtime_secrets, secret_refs
+    from gateway.engine_connection import inference_connection
+    path = tmp_path / 'admin.db'
+    saved, _ = record_carriers.externalize_service(record(headers=[{'name': 'X-Tenant', 'value': 'private-runtime-tenant'}]), secret_refs.putter(path))
+    runtime_secrets.configure(path)
+    try:
+        connection = inference_connection(saved, '/chat/completions', fallback_address='', fallback_timeout=600, db_path=path, env=lambda _: None)
+        assert connection.headers['x-tenant'] == 'private-runtime-tenant'
+    finally:
+        runtime_secrets.configure(None)

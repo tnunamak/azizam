@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gateway import secret_store, service_registry
+from gateway import runtime_secrets, secret_store, service_registry
 from gateway.engine_check import join_url
 from gateway.litellm_substrate import SECRET_PLACEHOLDER, _engine_request_settings
 
@@ -46,9 +46,13 @@ def inference_connection(
     """
     config = (record or {}).get("config") or {}
     base = inference_base_url(config, fallback_address)
+    # This is the final network hop, so the runtime resolves the carriers here.
+    # The compiler's default is a management preview and must never reach an engine.
     settings = _engine_request_settings(config)
     headers = {"content-type": "application/json"}
-    headers.update({name.lower(): value for name, value in settings.get("extra_headers", {}).items()})
+    headers.update({name.lower(): value for name, value in runtime_secrets.header_pairs(
+        config.get("headers"), origin=service_registry.origin_of(base),
+    ).items()})
     origin = service_registry.origin_of(base)
     if origin and config.get("credential_origin") == origin:
         key = None

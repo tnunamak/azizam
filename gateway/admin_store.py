@@ -476,7 +476,7 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
             from gateway import hop_timeout_migration
 
             hop_timeout_migration.migrate_registry(conn)
-        conn.execute("INSERT INTO schema_migration_steps(name) VALUES (?)", (name,))
+        conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (name,))
     if row is not None and _ACCESS_PLANS_VERSION <= int(row[0]) < SCHEMA_VERSION:
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()

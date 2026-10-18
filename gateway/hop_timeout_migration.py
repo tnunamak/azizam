@@ -15,11 +15,17 @@ def migrate_registry(conn: sqlite3.Connection) -> list[str]:
         return []
     registry = json.loads(row[0])
     changed = []
-    for service_id, record in (registry.get('services') or {}).items():
-        config = record.get('config') or {}
+    services = registry.get('services') if isinstance(registry, dict) else None
+    for service_id, record in services.items() if isinstance(services, dict) else ():
+        if not isinstance(record, dict) or not isinstance(record.get('config'), dict):
+            continue
+        config = record['config']
         if type(config.get('timeout')) not in (int, float) or config['timeout'] != 600:
             continue
-        service = service_registry.normalize_service_record(service_id, record)
+        try:
+            service = service_registry.normalize_service_record(service_id, record)
+        except (ValueError, TypeError, KeyError):
+            continue  # a refused record stays byte-for-byte as stored for repair
         if not litellm_substrate._is_openai_compatible(service):
             continue
         if not config.get('gateway_lifecycle'):
