@@ -1166,7 +1166,7 @@ def _is_driven(block: Any) -> bool:
         return False
     for field in ("driver", "type"):
         name = str(block.get(field) or "").strip().lower()
-        if name and name != _EXTERNAL_DRIVER:
+        if name and name not in {_EXTERNAL_DRIVER, "none"}:
             return True
     return False
 
