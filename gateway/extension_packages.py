@@ -23,7 +23,7 @@ import yaml
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
 from gateway.manifests import ManifestError, manifest_identity, validate_manifest
-from gateway import engine_redaction, frontend_mount, service_registry
+from gateway import frontend_mount, service_registry
 
 
 MANIFEST_NAME = "extension.yml"
@@ -50,43 +50,6 @@ CODE_BEARING_ADAPTER_KEYS = frozenset(
         "python",
     }
 )
-
-
-def public_package_source(source: Any) -> Any:
-    """A package source as a response shows it: a git URL without its user name, password and query."""
-    return engine_redaction.redact_config(source)
-
-
-def public_package_index(index: Mapping[str, Any]) -> dict[str, Any]:
-    """The package index as a response shows it. The stored index keeps what the owner entered."""
-    out = normalize_extension_package_index(index)
-    out["sources"] = [public_package_source(source) for source in out["sources"]]
-    for package in out["packages"].values():
-        if "source" in package:
-            package["source"] = public_package_source(package["source"])
-    return out
-
-
-def public_package_result(result: Mapping[str, Any]) -> dict[str, Any]:
-    """An enable, remove or list result with its package sources and reviewed source made public."""
-    out = dict(result)
-    if isinstance(out.get("extension_packages"), Mapping):
-        out["extension_packages"] = public_package_index(out["extension_packages"])
-    if isinstance(out.get("extension_package"), Mapping):
-        package = dict(out["extension_package"])
-        if "source" in package:
-            package["source"] = public_package_source(package["source"])
-        out["extension_package"] = package
-    if isinstance(out.get("review"), Mapping):
-        out["review"] = public_package_review(out["review"])
-    return out
-
-
-def public_package_review(review: Mapping[str, Any]) -> dict[str, Any]:
-    out = dict(review)
-    if "resolved_source" in out:
-        out["resolved_source"] = public_package_source(out["resolved_source"])
-    return out
 
 
 def empty_extension_package_index() -> dict[str, Any]:

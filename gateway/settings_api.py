@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from gateway import admin_store, prompt_memory, receipt_store
 from gateway.admin_api import AdminAuth, AdminContext, _require_admin
-from gateway.engine_redaction import redact_config  # noqa: F401  (the engine view uses the same rule)
+from gateway.engine_redaction import public_value
 
 INSTANCE_SETTING_KEY = "instance_presentation"
 PROMPT_MEMORY_SETTING_KEY = "prompt_memory"
@@ -306,7 +306,7 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
     def defaults_response() -> JSONResponse:
         return JSONResponse({"defaults": {"invite_access_plan": admin_store.invite_access_plan(path=admin_path)},
                              "source": "admin.db", "apply_mode": "live",
-                             "aliases": redact_config(config_provider().get("model_aliases", {})), "aliases_writable": False},
+                             "aliases": public_value(config_provider().get("model_aliases", {})), "aliases_writable": False},
                             headers={"Cache-Control": "no-store"})
 
     @router.get("/defaults")
@@ -343,7 +343,7 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         snapshot["instance"] = instance()
         snapshot["receipt_retention"] = {"retention_days": receipt_store.retention_days(admin_path)}
         snapshot["operator_overrides"] = dict(overrides_provider() if overrides_provider else {})
-        return {"config": redact_config(snapshot), "read_only": True, "redacted": True,
+        return {"config": public_value(snapshot), "read_only": True, "redacted": True,
                 "export_url": "/admin/api/settings/effective/export"}
 
     @router.get("/effective")

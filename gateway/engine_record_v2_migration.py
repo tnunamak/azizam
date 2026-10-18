@@ -14,8 +14,9 @@ def migrate_registry(conn: sqlite3.Connection) -> list[str]:
     if row is None:
         return []
     registry = json.loads(row[0])
-    changed = service_registry.migrate_engine_records_v2(registry)
-    if not changed:
+    refused: dict[str, str] = {}
+    changed = service_registry.migrate_engine_records_v2(registry, refused=refused)
+    if not changed and not refused:
         return []
     conn.execute("UPDATE operator_settings SET value_json=? WHERE key='service_registry'", (json.dumps(registry),))
     conn.execute(
@@ -27,6 +28,7 @@ def migrate_registry(conn: sqlite3.Connection) -> list[str]:
     admin_store._record_audit_in_transaction(
         conn, "operator.engine_record_v2.migrate", actor_kind="system", actor_id="migration",
         actor_label="Schema 10 migration", target_kind="operator_setting",
-        target_id="service_registry", metadata={"service_count": len(changed)}, now=int(time.time()),
+        target_id="service_registry",
+        metadata={"service_count": len(changed), "left_out": sorted(refused)}, now=int(time.time()),
     )
     return changed

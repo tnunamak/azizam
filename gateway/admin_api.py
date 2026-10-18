@@ -2259,7 +2259,7 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return JSONResponse(
+        return engine_redaction.public_json_response(
             status_code=status.HTTP_200_OK,
             content={"overrides": store.operator_overrides()},
         )
@@ -2308,9 +2308,9 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        response = JSONResponse(
+        response = engine_redaction.public_json_response(
             status_code=status.HTTP_200_OK,
-            content={"service_registry": engine_redaction.redact_registry(store.get_service_registry())},
+            content={"service_registry": store.get_service_registry()},
         )
         if hasattr(store, "path"):
             record = admin_store.get_service_registry_with_generation(path=store.path)
@@ -2340,9 +2340,9 @@ def create_admin_router(
     def _registry_response(
         record: Mapping[str, Any], *, response_status: int = status.HTTP_200_OK
     ) -> JSONResponse:
-        response = JSONResponse(
+        response = engine_redaction.public_json_response(
             status_code=response_status,
-            content={"service_registry": engine_redaction.redact_registry(record["value"])},
+            content={"service_registry": record["value"]},
         )
         response.headers.update(
             {
@@ -2463,6 +2463,8 @@ def create_admin_router(
                 # Endpoint is only required for full edits; metadata-only edits (name,
                 # enabled, note — the only fields allowed for managed-substrate rows)
                 # may omit host/url.
+                stored_config = ((store.get_service_registry().get("services") or {}).get(service_registry.normalize_id(service_id)) or {}).get("config") or {}
+                body = engine_redaction.restore_shown_scalars(body, stored_config)
                 has_host = bool(str(body.get("host") or "").strip())
                 has_url = bool(str(body.get("base_url") or "").strip())
                 require_endpoint = has_host or has_url
@@ -2640,7 +2642,7 @@ def create_admin_router(
         compiled = compile_litellm_substrate_config(
             (registry.get("services") or {}),
         )
-        return JSONResponse(
+        return engine_redaction.public_json_response(
             status_code=status.HTTP_200_OK,
             content={"litellm_config": compiled},
         )
@@ -2740,9 +2742,9 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return JSONResponse(
+        return engine_redaction.public_json_response(
             status_code=status.HTTP_200_OK,
-            content={"extension_packages": extension_packages.public_package_index(store.get_extension_package_index())},
+            content={"extension_packages": store.get_extension_package_index()},
         )
 
     @router.post("/extensions/validate")
@@ -2761,9 +2763,9 @@ def create_admin_router(
             return exc.as_response()
         except PermissionError as exc:
             return _owner_required(exc)
-        return JSONResponse(
+        return engine_redaction.public_json_response(
             status_code=status.HTTP_200_OK,
-            content={"review": extension_packages.public_package_review(review)},
+            content={"review": review},
         )
 
     @router.post("/extensions/enable")
@@ -2817,10 +2819,7 @@ def create_admin_router(
                 "invalid_extension_package",
                 str(exc),
             ).as_response()
-        if isinstance(result.get("service_registry"), Mapping):
-            result = {**result, "service_registry": engine_redaction.redact_registry(result["service_registry"])}
-        result = extension_packages.public_package_result(result)
-        response = JSONResponse(
+        response = engine_redaction.public_json_response(
             status_code=status.HTTP_200_OK,
             content=result,
         )
@@ -2847,7 +2846,7 @@ def create_admin_router(
                 "extension_package_not_found",
                 str(exc),
             ).as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content=extension_packages.public_package_result(result))
+        return engine_redaction.public_json_response(status_code=status.HTTP_200_OK, content=result)
 
     def settings_revision(request: Request) -> str:
         revision = request.headers.get("if-match")

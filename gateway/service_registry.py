@@ -671,6 +671,8 @@ def service_record_v2(record: Mapping[str, Any], *, public: bool = True) -> dict
     ``public`` hides the credential a scalar may hold (an address with a user name or a query token, a
     probe path with a query token); migration reads the stored values with ``public=False``.
     """
+    if public:
+        record = engine_redaction.public_service_record(record)
     service_id = str(record.get("id") or "")
     config = record.get("config") if isinstance(record.get("config"), Mapping) else {}
     system = is_litellm_service_record(service_id, record)
@@ -703,18 +705,14 @@ def service_record_v2(record: Mapping[str, Any], *, public: bool = True) -> dict
                           "adjustments": copy.deepcopy(config.get("transforms") or [])})
     lifecycle = _agreed_lifecycle(service_id, record) if "process" not in record else {}
     process = record.get("process") if isinstance(record.get("process"), Mapping) else _v2_process(lifecycle)
-    if process is not None:
-        # A public projection of the stored block: an allow-list of fields, commands and
-        # environment values hidden. It is never a copy of what the gateway runs.
+    if process is not None and public:
+        # The projected block narrowed to an allow-list of fields. It is never a copy of what the gateway runs.
         process = engine_redaction.public_process(process)
     observations = copy.deepcopy(record.get("observations")) if isinstance(record.get("observations"), Mapping) else {}
     if not observations and isinstance(lifecycle.get("driver_config"), Mapping):
         endpoint = lifecycle["driver_config"].get("health_endpoint")
         if endpoint:
             observations["process_ready"] = {"http": {"path": endpoint, "expect": 200}}
-    if public:
-        observations = engine_redaction.redact_config(observations)
-        address = engine_redaction.redact_text(address)
     residency = copy.deepcopy(record.get("residency")) if isinstance(record.get("residency"), Mapping) else {}
     if lifecycle.get("driver") == "http-load-unload":
         residency.setdefault("legacy_driver", "http-load-unload")
@@ -779,8 +777,18 @@ def _native_process(service_id: str, record: dict[str, Any], lifecycle: Mapping[
     return copy.deepcopy(dict(block))
 
 
-def migrate_engine_records_v2(registry: dict[str, Any]) -> list[str]:
-    """Collapse duplicate lifecycle sources atomically in a registry document."""
+MIGRATION_REFUSED_KEY = "migration_refused"
+
+
+def migrate_engine_records_v2(registry: dict[str, Any], *, refused: dict[str, str] | None = None) -> list[str]:
+    """Collapse duplicate lifecycle sources atomically in a registry document.
+
+    A record that holds two sources that both run something is refused. With no ``refused`` dict the
+    refusal raises ``ValueError`` and the registry is untouched. With one, the migration records the
+    message under the service id and leaves that one record as stored, marked with
+    ``migration_refused``: the record does not validate until the owner keeps one block, so boot serves
+    the other services and reports this one as left out.
+    """
     if int(registry.get("schema_version") or 1) >= ENGINE_RECORD_VIEW_VERSION:
         return []
     services = registry.get("services") or {}
@@ -789,11 +797,18 @@ def migrate_engine_records_v2(registry: dict[str, Any]) -> list[str]:
     for service_id, record in sorted(migrated.items()):
         if not isinstance(record, dict):
             continue
-        lifecycle = _agreed_lifecycle(service_id, record)
-        stored_view = service_record_v2(record, public=False)
-        observations = stored_view["observations"]
-        residency = stored_view["residency"]
-        native = _native_process(service_id, record, lifecycle)
+        try:
+            lifecycle = _agreed_lifecycle(service_id, record)
+            stored_view = service_record_v2(record, public=False)
+            observations = stored_view["observations"]
+            residency = stored_view["residency"]
+            native = _native_process(service_id, record, lifecycle)
+        except ValueError as error:
+            if refused is None:
+                raise
+            refused[service_id] = str(error)
+            record[MIGRATION_REFUSED_KEY] = str(error)
+            continue
         if native is not None:
             # The block is the owner's: keep every field. A legacy lifecycle wrapper the runtime
             # projection carried today stays beside it, so the backend the gateway builds is unchanged.
@@ -1029,6 +1044,11 @@ def service_from_backend_config(
 
 
 def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_version: int | None = None) -> dict[str, Any]:
+    if raw.get(MIGRATION_REFUSED_KEY):
+        raise ValueError(
+            f"service {service_id!r} was left out by the schema 2 migration. {raw[MIGRATION_REFUSED_KEY]} "
+            f"After you keep one block, delete the `{MIGRATION_REFUSED_KEY}` field from the service."
+        )
     if schema_version is None:
         schema_version = 2 if any(key in raw for key in ("process", "observations", "residency")) else 1
     source = str(raw.get("source") or "ui")
@@ -1282,6 +1302,11 @@ def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
     The whole record is scanned (``config``, ``secret_refs``, the ``lifecycle``
     block and anything else), so a new block cannot become a place to hide a
     key reference.
+
+    A reference is also any secret value the record itself holds: a credential argument in a command,
+    an environment value, a credential header value, an address with a user name or a query token.
+    ``engine_redaction.secret_slots`` finds them by the same rules that hide them from every view, so a
+    save that keeps such a value while the record's host moves counts as sending it to a new host.
     """
     found: dict[str, str] = {}
 
@@ -1300,6 +1325,8 @@ def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
             found[path] = repr(value)
 
     walk(record, "")
+    for path, value in engine_redaction.secret_slots(record).items():
+        found[f"secret:{path}"] = value
     return found
 
 
