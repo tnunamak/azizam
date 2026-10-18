@@ -56,11 +56,11 @@ class Store:
 def test_echoed_connection_timeout_does_not_create_a_stored_limit(tmp_path):
     saved = record()
     store = Store(saved, tmp_path / 'admin.db')
-    service = engine_admin.EngineService(store)
+    service = engine_admin.EngineService(store, hop_timeout=lambda: 1800.0)
     before = service.view('review', SimpleNamespace(roles=('owner',)))
     asyncio.run(service.update(SimpleNamespace(roles=('owner',)), 'review', {
         'definition': before['definition'], 'disabled': True,
-        'values': {**before['values'], 'headers': [{'name': 'X-Tenant', 'value': 'household'}]},
+        'values': {**before['values'], 'reply_timeout_s': 1800, 'headers': [{'name': 'X-Tenant', 'value': 'household'}]},
     }, expected_generation=0))
     assert 'timeout' not in store.written
     assert store.written['headers'] == [{'name': 'X-Tenant', 'value': 'household'}]
