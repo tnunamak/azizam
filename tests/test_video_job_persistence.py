@@ -158,12 +158,12 @@ class OwnershipAfterRestartTests(VideoRegistryTestCase):
     async def _status(self, auth):
         client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
-            return await proxy.proxy_comfy_video_status(self.vid, auth)
+            return await proxy.proxy_graph_video_status(self.vid, auth)
 
     async def _content(self, auth):
         client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
-            return await proxy.proxy_comfy_video_content(self.vid, auth)
+            return await proxy.proxy_graph_video_content(self.vid, auth)
 
     def test_record_survives_restart_with_owner(self) -> None:
         proxy._video_job_records["p1"] = self._record(remixed_from_video_id="video_src")
@@ -232,7 +232,7 @@ class OwnershipAfterRestartTests(VideoRegistryTestCase):
         proxy._persist_video_record("p1")
         client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
-            resp = await proxy.proxy_comfy_video_delete(self.vid, ALICE)
+            resp = await proxy.proxy_graph_video_delete(self.vid, ALICE)
         self.assertEqual(resp.status_code, 200)
         self._restart()
         self.assertIsNotNone(proxy._video_job_records["p1"]["deleted_at"])

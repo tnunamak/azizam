@@ -46,7 +46,7 @@ def worker(tmp_path, monkeypatch, video_state):
     for name in ("_delete_video_media_job_payload", "_delete_image_media_job_payload"):
         monkeypatch.setattr(proxy, name, dropped)
     submit = AsyncMock(side_effect=AssertionError("duplicate upstream submit"))
-    monkeypatch.setattr(proxy, "proxy_comfy_video_create", submit)
+    monkeypatch.setattr(proxy, "proxy_graph_video_create", submit)
     monkeypatch.setattr(proxy, "_media_job_admission_response",
                         Mock(side_effect=AssertionError("re-admitted existing work")))
     stored = Mock(return_value="vid_" + "a" * 64)
@@ -79,8 +79,8 @@ def test_poll_aliases_are_monotonic_capped_and_complete_once(worker, monkeypatch
     content = AsyncMock(return_value=Response(
         b"fixture video", media_type="video/webm",
         headers={"Content-Disposition": 'inline; filename="render.webm"'}))
-    monkeypatch.setattr(proxy, "proxy_comfy_video_status", poll)
-    monkeypatch.setattr(proxy, "proxy_comfy_video_content", content)
+    monkeypatch.setattr(proxy, "proxy_graph_video_status", poll)
+    monkeypatch.setattr(proxy, "proxy_graph_video_content", content)
     asyncio.run(proxy._run_video_media_job(worker.job.job_id))
     assert observed == [0, 70, 70, 95]
     final = row(worker)
@@ -114,7 +114,7 @@ def test_reconcile_distinguishes_unavailable_active_terminal_and_orphan(
         history = {"p": {"status": {"completed": True}}}
     elif mode == "failed":
         history = {"p": {"status": {"completed": True, "status_str": "error"}}}
-    monkeypatch.setattr(proxy, "_fetch_comfy_state", AsyncMock(return_value=(active, history)))
+    monkeypatch.setattr(proxy, "_fetch_graph_state", AsyncMock(return_value=(active, history)))
     monkeypatch.setattr(proxy, "time", SimpleNamespace(time=lambda: 100))
     monkeypatch.setattr(proxy, "_VIDEO_RECONCILE_RETAIN", 1000)
     proxy._video_progress["p"] = {"status": "running", "percent": 37, "updated_at": 99}
@@ -140,7 +140,7 @@ def test_status_fallback_never_regresses_and_terminal_error_wins(video_state, mo
         "completed_at": None, "model": "sora-2", "size": "960x512", "seconds": "5"}
     proxy._video_progress["p"] = {"status": "running", "percent": 80, "updated_at": 2}
     async def poll():
-        result = await proxy.proxy_comfy_video_status("video_p", proxy.NO_AUTH_CONTEXT)
+        result = await proxy.proxy_graph_video_status("video_p", proxy.NO_AUTH_CONTEXT)
         assert result.status_code == 200
         return json.loads(result.body)
     async def scenario():
@@ -161,14 +161,14 @@ def test_status_fallback_never_regresses_and_terminal_error_wins(video_state, mo
 
 
 def test_cancel_during_content_fetch_does_not_store_unwanted_asset(worker, monkeypatch):
-    monkeypatch.setattr(proxy, "proxy_comfy_video_status",
+    monkeypatch.setattr(proxy, "proxy_graph_video_status",
                         AsyncMock(return_value=response({"status": "completed", "progress": 100})))
     async def content(*args, **kwargs):
         pending = media_jobs.request_cancel(worker.job.job_id, path=worker.db)
         assert pending["status"] == "running"
         assert proxy._video_media_job_semaphore.locked()
         return Response(b"fixture video", media_type="video/webm")
-    monkeypatch.setattr(proxy, "proxy_comfy_video_content", content)
+    monkeypatch.setattr(proxy, "proxy_graph_video_content", content)
     asyncio.run(proxy._run_video_media_job(worker.job.job_id))
     assert row(worker)["status"] == "canceled"
     assert row(worker)["assets"] == []
@@ -205,7 +205,7 @@ def test_malformed_provider_json_cannot_orphan_live_video(video_state, monkeypat
     monkeypatch.setattr(proxy, "time", SimpleNamespace(time=lambda: 100))
     proxy._video_progress["p"] = {"status": "running", "percent": 37, "updated_at": 99}
     async def scenario():
-        assert await proxy._fetch_comfy_state() == (None, None)
+        assert await proxy._fetch_graph_state() == (None, None)
         await proxy._reconcile_video_progress()
     asyncio.run(scenario())
     assert proxy._video_progress["p"] == {"status": "running", "percent": 37, "updated_at": 99}
@@ -232,7 +232,7 @@ def test_direct_create_rejects_non_string_prompt_before_provider(video_state, mo
     monkeypatch.setattr(proxy, "_service_availability_response", lambda *a, **kw: None)
     monkeypatch.setattr(proxy, "_begin_media_delivery", lambda *a: None)
     monkeypatch.setattr(proxy, "_note_media_metadata_body", lambda *a: None)
-    result = asyncio.run(proxy.proxy_comfy_video_create(
+    result = asyncio.run(proxy.proxy_graph_video_create(
         SimpleNamespace(headers={}), proxy.NO_AUTH_CONTEXT,
         body_override={"prompt": prompt, "model": "sora-2"}))
     assert result.status_code == 400
@@ -245,4 +245,4 @@ def test_direct_create_rejects_non_string_prompt_before_provider(video_state, mo
 @pytest.mark.parametrize("shape", [[], None, "text"])
 def test_wrong_shape_provider_json_is_unavailable(video_state, monkeypatch, fake_upstreams, bad_endpoint, shape):
     _comfy_state_fake(fake_upstreams, monkeypatch, **{bad_endpoint: {"json": shape}})
-    assert asyncio.run(proxy._fetch_comfy_state()) == (None, None)
+    assert asyncio.run(proxy._fetch_graph_state()) == (None, None)

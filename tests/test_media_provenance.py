@@ -634,7 +634,7 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
             proxy, "_prompt_id_from_video_id", lambda _v: prompt_id
         ), patch.dict(proxy._video_job_records, {prompt_id: record}, clear=False), patch.object(
-            proxy, "_comfy_history", AsyncMock(return_value={"outputs": {}})
+            proxy, "_graph_history", AsyncMock(return_value={"outputs": {}})
         ), patch.object(proxy, "_job_status_from_history", lambda _j: ("succeeded", None)), patch.object(
             proxy, "_first_video_output", lambda _j: {"filename": "v.mp4", "type": "output", "subfolder": ""}
         ), patch.object(proxy.httpx, "AsyncClient", lambda *a, **k: Client()), patch.object(

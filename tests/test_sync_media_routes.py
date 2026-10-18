@@ -449,7 +449,7 @@ class SyncMediaRouteTests(unittest.TestCase):
              patch.object(proxy.httpx, "AsyncClient", _FakeVideoAsyncClient), \
              patch.object(media_ingestion.media_delivery, "attach_provenance", lambda content, suffix, record: content):
             async def fetch_without_prompt_metadata():
-                return await proxy.proxy_comfy_video_content(video_id, auth_context, metadata_mode="none")
+                return await proxy.proxy_graph_video_content(video_id, auth_context, metadata_mode="none")
             response = anyio.run(fetch_without_prompt_metadata)
 
         self.assertEqual(response.status_code, 200)
@@ -503,7 +503,7 @@ class SyncMediaRouteTests(unittest.TestCase):
              patch.object(proxy.httpx, "AsyncClient", _FakeVideoAsyncClient), \
              patch.object(media_ingestion.media_delivery, "attach_provenance", lambda content, suffix, record: content):
             async def fetch_without_index():
-                return await proxy.proxy_comfy_video_content(video_id, auth_context, metadata_mode="none", index_library=False)
+                return await proxy.proxy_graph_video_content(video_id, auth_context, metadata_mode="none", index_library=False)
 
             response = anyio.run(fetch_without_index)
 
