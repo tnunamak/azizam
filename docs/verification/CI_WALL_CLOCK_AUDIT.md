@@ -36,6 +36,7 @@ wrong poll intervals, missing cancellation, premature work, or missing progress.
 | Same file: forty hung engines | Aggregate listing must finish within a host-clock bound | Start all forty invokes, fire one captured listing deadline, and assert cancellation and issues for all forty. |
 | `test_engine_protocol_executor.py`: body, fetch and job polling | Real 300 ms–1 s deadlines, 490 ms spacing, and 1.5–2 s elapsed ceilings | Run fake transports on a virtual asyncio loop. Assert exact poll timestamps, exact elapsed virtual deadline, cancelled/closed partial bodies, and shared asset-fetch budget. A poll-count cap fails a missing-yield regression. |
 | `test_swap_drain.py`: timeout | 100 ms drain must return in 90 ms–2 s | Inject the virtual loop clock and assert deferral at exactly 100 ms with the original lease still counted. |
+| Same file: old lease diagnostic | Formatting `10800s` silently requires less than one extra host second | Advance the virtual lease clock by three hours and run the original 50 ms drain deadline on that clock before checking the exact diagnostic. |
 | `test_extension_packages.py`: transaction | A competing save must remain incomplete for 500 ms | Attempt a second SQLite write transaction with `timeout=0` while removal holds its transaction; require a locked result, then a successful plan save after commit. |
 | `test_engine_process_review.py`: cold start and adopted stdout | Cancel after 150 ms; require four child ticks within 400 ms | Cancel only after the readiness probe enters. Await observed child-marker progress under the existing coarse process hang guard. |
 | Pi `provider.test.ts` | Five operations must return within 900 ms | Capture the configured overall/phase AbortSignal budgets, observe restore/credential/fetch entry and phase-budget creation, then abort that phase and assert the catalog, authorization, and safe error behavior. |
@@ -83,3 +84,11 @@ flushes the menu callbacks with fake timers, then closes the dialog and checks
 focus. Before the fix it deterministically focused the Invites tab; with the
 fix it returns to the invitation's Actions button. The browser test retains its
 original pointer interaction and focus assertions.
+
+The next full gate also exposed fixture startup costs: smoke checks exceeded a
+ten-second process guard, and the provider watcher missed its initial marker.
+The smoke fixture now uses a shell `curl` stub instead of starting Python for
+each fixed response. The watcher fixture uses a shell sidecar stand-in and
+returns its explicitly configured DB path directly; secret fingerprinting and
+the sidecar's real environment injection still run through production code.
+The existing guards, digest checks and test cases are retained.

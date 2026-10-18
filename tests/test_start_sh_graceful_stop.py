@@ -48,30 +48,17 @@ FAKE_LITELLM = textwrap.dedent(
 
 FAKE_LITELLM_RECORD_ENV = textwrap.dedent(
     """\
-    #!/usr/bin/env python3
-    import hashlib
-    import os
-    import signal
-    import sys
-    import time
-
-    log = os.environ["FAKE_LOG"]
-    env_name = os.environ["EXPECTED_PROVIDER_ENV"]
-    value = os.environ.get(env_name)
-    digest = hashlib.sha256(value.encode()).hexdigest() if value else "missing"
-
-    def on_term(*_):
-        with open(log, "a", encoding="utf-8") as handle:
-            handle.write("litellm terminated\\n")
-        raise SystemExit(0)
-
-    # The handler must exist before the marker the harness waits for.
-    signal.signal(signal.SIGTERM, on_term)
-    with open(log, "a", encoding="utf-8") as handle:
-        handle.write(f"litellm started {digest} argv={' '.join(sys.argv)}\\n")
-        handle.flush()
-    while True:
-        time.sleep(0.1)
+    #!/bin/bash
+    env_name="$EXPECTED_PROVIDER_ENV"
+    value="${!env_name}"
+    if [[ -n "$value" ]]; then
+      digest="$(printf '%s' "$value" | sha256sum | cut -d' ' -f1)"
+    else
+      digest=missing
+    fi
+    trap 'echo "litellm terminated" >> "$FAKE_LOG"; exit 0' TERM
+    printf 'litellm started %s argv=%s\\n' "$digest" "$0 $*" >> "$FAKE_LOG"
+    while true; do sleep 0.1; done
     """
 )
 
@@ -299,6 +286,9 @@ def _prepare_start_fixture(work: Path) -> None:
 
 
 def _write_python_wrapper(path: Path) -> None:
+    # When the harness configures the DB path, avoid a cold Python process for
+    # this simple lookup. The real provider-sidecar fingerprint and run
+    # commands still execute below.
     path.write_text(
         "#!/bin/bash\n"
         'if [[ $1 == -c && $2 == *find_spec* ]]; then echo "$PWD/schema.prisma"; exit 0; fi\n'
@@ -308,6 +298,7 @@ def _write_python_wrapper(path: Path) -> None:
         '  if [[ ${FAKE_PRISMA_GENERATE_EXIT:-0} != 0 ]]; then exit "$FAKE_PRISMA_GENERATE_EXIT"; fi\n'
         '  touch venv/.fake-prisma-client; exit 0\n'
         'fi\n'
+        'if [[ $1 == -m && $2 == gateway.provider_sidecar && $3 == db-path && ${AZIZAM_ADMIN_DB:-} == /* ]]; then echo "$AZIZAM_ADMIN_DB"; exit 0; fi\n'
         f"exec {os.environ.get('PYTHON', os.sys.executable)!r} \"$@\"\n"
     )
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
