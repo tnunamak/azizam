@@ -22454,6 +22454,15 @@ async def gateway_image_generations_media_job(request: Request):
         finish_image_route_receipt(receipt, response)
         return response
 
+    from gateway.engine_protocol import dispatch as protocol_dispatch
+    try:
+        protocol_target = protocol_dispatch.resolve(ADMIN_STORE.get_service_registry(), body.get("model"), "images")
+    except ProtocolError as error:
+        response = _protocol_failure(error)
+        finish_image_route_receipt(receipt, response)
+        return response
+    if protocol_target is not None:
+        receipt.backend = protocol_target.engine_id
     model = str(body.get("model", COMFY_DEFAULT_MODEL))
     manifest = _find_image_manifest("image.generate", model)
     if receipt is not None:
@@ -22502,7 +22511,7 @@ async def gateway_image_generations_media_job(request: Request):
     job = media_jobs.MediaJob(
         intent="image.generate",
         workflow=f"image.generate.{model}",
-        backend="comfyui",
+        backend=receipt.backend,
         request_id=request_id,
         app_profile=plan_ref(auth_context.identity),
         api_key_name=auth_context.identity.name if auth_context.identity else None,
@@ -28349,21 +28358,21 @@ async def _protocol_image_result(runtime, body, request, auth_context, receipt, 
             body=body, auth_context=auth_context,
             idempotency_key=request.headers.get("idempotency-key"), fallback_request_id=receipt.request_id,
         )
-        old = media_jobs.get_by_request_id(request_id, audience="internal", path=media_jobs.DB_PATH)
-        if old is not None:
-            receipt.job_id = old["job_id"]
-            if old["status"] != media_jobs.STATUS_SUCCEEDED:
-                return _image_media_job_response(old, request)
-            refs = tuple(AssetRef(a["asset_id"], a["media_type"], a.get("size_bytes", 0)) for a in old["assets"])
-            return await _protocol_image_response(refs, body, request, store, receipt.job_id)
         caller = auth_context.identity
         job = media_jobs.MediaJob(intent="image.generate", backend=runtime.target.engine_id,
             request_id=request_id, parent_request_id=receipt.request_id,
             app_id=caller.app_id if caller else None, owner_key_hash=_asset_owner_key(auth_context),
             api_key_name=caller.name if caller else None, app_profile=plan_ref(caller))
-        created = media_jobs.create(job, path=media_jobs.DB_PATH)
+        created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH)
         job_id = receipt.job_id = created.job_id
-        media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, path=media_jobs.DB_PATH)
+        if created.job_id != job.job_id:
+            old = created.to_dict("internal")
+            if old["status"] != media_jobs.STATUS_SUCCEEDED:
+                return _image_media_job_response(old, request)
+            refs = tuple(AssetRef(a["asset_id"], a["media_type"], a.get("size_bytes", 0)) for a in old["assets"])
+            return await _protocol_image_response(refs, body, request, store, receipt.job_id)
+        media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_QUEUED,
+                                 path=media_jobs.DB_PATH)
     try:
         operation = runtime.target.description.operations["images"]
         if operation.job is not None:
@@ -28502,6 +28511,8 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
                                     status_code=reply.status, media_type="application/json")
     except ProtocolError as error:
         response = _protocol_failure(error)
+    except media_jobs.IdempotencyConflict:
+        response = openai_error_response("The idempotency key names different generation inputs.", status_code=409, code="idempotency_conflict")
     except ValueError:
         response = openai_error_response("The engine connection or selection is invalid.", status_code=502, code="invalid_engine_connection")
     except asyncio.CancelledError:
