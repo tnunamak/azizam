@@ -61,11 +61,21 @@ def test_the_seed_openai_compatible_description_is_data_for_the_operations_aziza
     assert seed.auth["inference"].kind == "bearer"
 
 
+def _keys(node):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield key
+            if key not in ("table", "headers", "select", "states", "value"):
+                yield from _keys(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _keys(item)
+
+
 def test_the_shipped_files_are_data_only_and_name_no_code() -> None:
     for path in sorted(REGISTRY.glob("*.yml")):
-        text = path.read_text(encoding="utf-8")
-        for word in ("class_name", "python", "lambda", "eval", "exec", "import "):
-            assert word not in text, (path.name, word)
+        keys = set(_keys(yaml.safe_load(path.read_text(encoding="utf-8"))))
+        assert not keys & {"class_name", "script", "expression", "python", "template", "eval", "exec", "function", "lambda", "import"}, path.name
 
 
 # --- the validator is loud ---------------------------------------------------------------------
@@ -281,7 +291,7 @@ def test_a_job_operation_declares_typed_id_status_and_asset_selectors() -> None:
         },
     }
     parsed = description.parse_description(doc, source="tiny.yml")
-    assert parsed.operations["render"].job.poll.states["busy"] == "running"
+    assert parsed.operations["render"].job.poll.status.states["busy"] == "running"
     doc["operations"]["render"]["job"]["poll"]["status"]["states"]["busy"] = "sleeping"
     assert "states" in _problems(doc)
 
@@ -305,7 +315,11 @@ def test_a_job_poll_path_must_use_the_job_id() -> None:
 
 def test_a_request_and_a_job_cannot_both_be_declared() -> None:
     doc = _minimal()
-    doc["operations"]["models"]["job"] = {"submit": {"request": {"method": "POST", "path": "/j"}, "id": "/id"}}
+    doc["operations"]["models"]["job"] = {
+        "submit": {"request": {"method": "POST", "path": "/j"}, "id": "/id"},
+        "poll": {"request": {"method": "GET", "path": "/j/{id}"}, "status": {"path": "/s", "states": {"ok": "succeeded"}},
+                 "interval_s": 1, "max_wait_s": 5},
+    }
     assert "request" in _problems(doc) and "job" in _problems(doc)
 
 
