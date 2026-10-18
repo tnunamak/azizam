@@ -165,8 +165,8 @@ def _echo(request: Request) -> None:
 def _translators() -> frontend_mount.Translators:
     return frontend_mount.Translators({
         "identity": {
-            "chat.completions": frontend_mount.Operation(_echo, methods=frozenset({"POST"})),
-            "models.list": frontend_mount.Operation(_echo, methods=frozenset({"GET"})),
+            "chat.completions": frontend_mount.Operation(_echo, methods=frozenset({"POST"}), self_authenticates=True),
+            "models.list": frontend_mount.Operation(_echo, methods=frozenset({"GET"}), self_authenticates=True),
         },
     })
 

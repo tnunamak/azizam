@@ -14,6 +14,7 @@ import json
 from typing import Any
 
 import route_matrix
+from fastapi.routing import APIRoute
 
 
 def _endpoint(route: Any) -> str | None:
@@ -31,7 +32,9 @@ def _route_row(route: Any) -> dict[str, Any]:
     response_class = getattr(route, "response_class", None)
     extra = getattr(route, "openapi_extra", None)
     return {
-        "type": type(route).__name__,
+        # The mount's wrapper classes (authentication, loss check) are APIRoute subclasses; the graph
+        # records what a request meets, and it meets an APIRoute.
+        "type": "APIRoute" if isinstance(route, APIRoute) else type(route).__name__,
         "path": getattr(route, "path", None),
         "methods": sorted(getattr(route, "methods", None) or []) or None,
         "name": getattr(route, "name", None),

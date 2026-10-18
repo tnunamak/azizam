@@ -40,13 +40,14 @@ class Seen:
 def _mount(seen: Seen, *, strictness: str, translator: str = "vendor-v1", carries=CARRIED, refuse=None) -> FastAPI:
     app = FastAPI()
     translators = frontend_mount.Translators({
-        translator: {"chat.completions": frontend_mount.Operation(seen.handler, frozenset({"POST"}))},
+        translator: {"chat.completions": frontend_mount.Operation(seen.handler, frozenset({"POST"}), self_authenticates=True)},
     })
     route = {"methods": ["POST"], "canonical": "/vendor/v1/chat", "intent": "chat.completions", "translator": translator}
     if carries is not None:
         route["carries"] = carries
     rows = frontend_mount.rows_from_frontends([
-        {"id": "vendor", "enabled": True, "strictness": strictness, "registered_routes": [route]},
+        {"id": "vendor", "enabled": True, "source": "builtin", "strictness": strictness,
+         "registered_routes": [route]},
     ])
     frontend_mount.mount(app, rows, translators, refuse=refuse)
     return app
@@ -142,10 +143,10 @@ def test_an_exact_refusal_on_the_live_gateway_authenticates_first_and_writes_a_d
     body = {**BODY, "logit_bias": {"1": 2}}
     # Mount the row on the live app, which holds the gateway's authentication and receipt store.
     translators = frontend_mount.Translators({
-        "vendor-v1": {"chat.completions": frontend_mount.Operation(seen.handler, frozenset({"POST"}))},
+        "vendor-v1": {"chat.completions": frontend_mount.Operation(seen.handler, frozenset({"POST"}), self_authenticates=True)},
     })
     rows = frontend_mount.rows_from_frontends([{
-        "id": "vendor", "enabled": True, "strictness": "exact",
+        "id": "vendor", "enabled": True, "source": "builtin", "strictness": "exact",
         "registered_routes": [{"methods": ["POST"], "canonical": "/vendor/v1/chat", "intent": "chat.completions",
                                "translator": "vendor-v1", "carries": CARRIED}],
     }])
