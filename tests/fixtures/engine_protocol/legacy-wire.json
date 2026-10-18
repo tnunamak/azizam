@@ -1,0 +1,1696 @@
+{
+  "compiled": {
+    "general_settings": {
+      "forward_client_headers_to_llm_api": true,
+      "litellm_key_header_name": "X-Litellm-Key"
+    },
+    "litellm_settings": {
+      "drop_params": true
+    },
+    "model_list": [
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5061/v1",
+          "api_key": "sk-local",
+          "model": "openai/fixture-embedding",
+          "timeout": 120.0
+        },
+        "model_name": "fixture-embedding"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/default"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "default"
+        },
+        "model_name": "default"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/coder"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "coder"
+        },
+        "model_name": "coder"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/coder-q5"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "coder-q5"
+        },
+        "model_name": "coder-q5"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/coder-q8"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "coder-q8"
+        },
+        "model_name": "coder-q8"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/default-fast"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "default-fast"
+        },
+        "model_name": "default-fast"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/current"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "current"
+        },
+        "model_name": "current"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/current-fast"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "current-fast"
+        },
+        "model_name": "current-fast"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/rp"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "rp"
+        },
+        "model_name": "rp"
+      },
+      {
+        "litellm_params": {
+          "api_base": "https://provider.example.test/api",
+          "api_key": "os.environ/AZIZAM_PROVIDER_SECRET_24CA63336E8754CE",
+          "max_retries": 0,
+          "model": "openrouter/vendor/model",
+          "num_retries": 0
+        },
+        "model_info": {
+          "gateway_api_key_env": "",
+          "gateway_api_key_secret_id": "fixture-stored-reference",
+          "gateway_provider_id": "openrouter",
+          "gateway_provider_type": "paid-remote",
+          "gateway_remote_provider": true
+        },
+        "model_name": "openrouter/router-model"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/current/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/current"
+        },
+        "model_info": {
+          "gateway_current_loaded": true,
+          "gateway_current_loaded_fast": false,
+          "gateway_lifecycle": true
+        },
+        "model_name": "current"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/current/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/current-fast"
+        },
+        "model_info": {
+          "gateway_current_loaded": true,
+          "gateway_current_loaded_fast": true,
+          "gateway_lifecycle": true
+        },
+        "model_name": "current-fast"
+      }
+    ]
+  },
+  "projection": {
+    "embeddings": {
+      "base_path": "/v1",
+      "enabled": true,
+      "host": "127.0.0.1",
+      "models": [
+        {
+          "id": "fixture-embedding"
+        }
+      ],
+      "port": 5061,
+      "protocol": "openai-compatible",
+      "timeout": 120
+    },
+    "kobold": {
+      "base_path": "/v1",
+      "capabilities": [
+        "chat",
+        "openai"
+      ],
+      "enabled": true,
+      "gateway_lifecycle": true,
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "scope": "user",
+          "unit": "local-inference.service"
+        }
+      },
+      "models": [
+        {
+          "id": "default"
+        },
+        {
+          "id": "coder"
+        },
+        {
+          "id": "coder-q5"
+        },
+        {
+          "id": "coder-q8"
+        },
+        {
+          "id": "default-fast"
+        },
+        {
+          "id": "current"
+        },
+        {
+          "id": "current-fast"
+        },
+        {
+          "id": "rp"
+        }
+      ],
+      "port": 5051,
+      "protocol": "openai-compatible"
+    },
+    "litellm": {
+      "api_key_env": "FIXTURE_SUBSTRATE_KEY",
+      "base_url": "http://substrate.test:4100",
+      "capabilities": [
+        "llm.execution"
+      ],
+      "enabled": true,
+      "protocol": "openai-compatible"
+    },
+    "openrouter": {
+      "api_key_secret_id": "fixture-stored-reference",
+      "base_path": "/v1",
+      "base_url": "https://provider.example.test/api",
+      "credential_origin": "https://provider.example.test",
+      "enabled": true,
+      "models": [
+        {
+          "id": "router-model",
+          "upstream_model": "vendor/model"
+        }
+      ],
+      "protocol": "openai-compatible",
+      "provider_id": "openrouter",
+      "provider_type": "paid-remote"
+    },
+    "stt": {
+      "base_path": "/v1",
+      "capabilities": [
+        "audio",
+        "transcriptions"
+      ],
+      "enabled": true,
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "scope": "user",
+          "unit": "fixture-asr.service"
+        }
+      },
+      "port": 5052,
+      "protocol": "openai-compatible",
+      "timeout": 120
+    },
+    "tts": {
+      "base_path": "/v1",
+      "capabilities": [
+        "audio",
+        "speech"
+      ],
+      "enabled": true,
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "scope": "user",
+          "unit": "fixture-voice.service"
+        }
+      },
+      "port": 5053,
+      "protocol": "openai-compatible",
+      "timeout": 90
+    }
+  },
+  "seeded_compiled": {
+    "general_settings": {
+      "forward_client_headers_to_llm_api": true,
+      "litellm_key_header_name": "X-Litellm-Key"
+    },
+    "litellm_settings": {
+      "drop_params": true
+    },
+    "model_list": [
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5061/v1",
+          "api_key": "sk-local",
+          "model": "openai/nomic-embed-text-v1.5.f16.gguf",
+          "timeout": 120.0
+        },
+        "model_name": "nomic-embed-text-v1.5"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        "model_name": "default"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        "model_name": "coder"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/coder-q5"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "coder-q5"
+        },
+        "model_name": "coder-q5"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/coder-q8"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "coder-q8"
+        },
+        "model_name": "coder-q8"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/coder-unchained"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "coder-unchained"
+        },
+        "model_name": "coder-unchained"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        "model_name": "default-fast"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        "model_name": "current"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        "model_name": "current-fast"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/rp"
+        },
+        "model_info": {
+          "gateway_backend": "kobold",
+          "gateway_lifecycle": true,
+          "gateway_upstream_model": "rp"
+        },
+        "model_name": "rp"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/current/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/current"
+        },
+        "model_info": {
+          "gateway_current_loaded": true,
+          "gateway_current_loaded_fast": false,
+          "gateway_lifecycle": true
+        },
+        "model_name": "current"
+      },
+      {
+        "litellm_params": {
+          "api_base": "http://127.0.0.1:5000/internal/litellm/current/v1",
+          "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
+          "model": "openai/current-fast"
+        },
+        "model_info": {
+          "gateway_current_loaded": true,
+          "gateway_current_loaded_fast": true,
+          "gateway_lifecycle": true
+        },
+        "model_name": "current-fast"
+      }
+    ]
+  },
+  "seeded_projection": {
+    "azizam": {
+      "capabilities": [],
+      "description": "Access the available AI tools.",
+      "display_name": "Azizam",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "Azizam (self)",
+      "native_passthrough": false,
+      "port": 5000,
+      "priority": 100,
+      "role": "required"
+    },
+    "comfyui": {
+      "capabilities": [
+        "images",
+        "generations",
+        "videos"
+      ],
+      "default_model": "krea2-turbo",
+      "description": "Create images and videos from your ideas.",
+      "display_name": "Image and video creation",
+      "enabled": true,
+      "health_endpoint": "/system_stats",
+      "health_success_path": "system",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "ComfyUI (Image + Video Generation)",
+      "native_passthrough": true,
+      "port": 7890,
+      "priority": 100,
+      "role": "required",
+      "timeout": 300,
+      "video_timeout": 1800,
+      "video_workflows_dir": "./workflows",
+      "vram_budget_key": "GPU0_COMFYUI",
+      "workflows_dir": "./workflows/images"
+    },
+    "decisions": {
+      "capabilities": [
+        "decisions"
+      ],
+      "default_model": "decider-2b-v11",
+      "description": "Choose among a set of options.",
+      "display_name": "Fast decisions",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "health_endpoint": "/health",
+          "health_timeout_s": 90,
+          "scope": "user",
+          "unit": "decider.service"
+        },
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "Local decisions",
+      "note": "On-demand CPU decision service (observed about 2.9 GiB RSS for narrow readouts, up to 5.84 GiB for 255-option full-vocab readout); configurable CUDA placement with CPU startup fallback.",
+      "placement": "cpu",
+      "port": 8023,
+      "priority": 200,
+      "residency": "on_demand",
+      "role": "standby",
+      "timeout": 120
+    },
+    "decisions-quality": {
+      "capabilities": [
+        "decisions"
+      ],
+      "default_model": "decider-4b-v2.1",
+      "description": "Evaluate a set of options for a careful choice.",
+      "display_name": "Quality decisions",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "health_endpoint": "/health",
+          "health_timeout_s": 90,
+          "scope": "user",
+          "unit": "decider-quality.service"
+        },
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "Local quality decisions",
+      "note": "Opt-in CPU decision service (4B memory budget is unmeasured; unit starts at 10G); exits after 10 minutes idle.",
+      "placement": "cpu",
+      "port": 8025,
+      "priority": 200,
+      "residency": "on_demand",
+      "role": "standby",
+      "timeout": 120
+    },
+    "embeddings": {
+      "base_path": "/v1",
+      "capabilities": [
+        "openai",
+        "embeddings"
+      ],
+      "description": "Represent text for semantic search and comparison.",
+      "display_name": "Nomic text embeddings",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "model_id": "nomic-embed-text-v1.5",
+      "models": [
+        {
+          "description": "Represent text for semantic search and comparison.",
+          "display_name": "Nomic Embed",
+          "id": "nomic-embed-text-v1.5",
+          "model_group": "nomic-embed-text-v1.5",
+          "upstream_model": "nomic-embed-text-v1.5.f16.gguf"
+        }
+      ],
+      "name": "nomic-embed-text-v1.5 CPU",
+      "native_passthrough": true,
+      "note": "CPU-only llama-server embedding backend; no GPU budget claim.",
+      "port": 5061,
+      "priority": 100,
+      "protocol": "openai-compatible",
+      "resources": {
+        "duration_class": "interactive",
+        "gpu_required": false,
+        "max_parallel": 4,
+        "vram_gb_estimate": 0
+      },
+      "role": "required",
+      "timeout": 120
+    },
+    "kobold": {
+      "aux": {
+        "flag": "--mmproj",
+        "grants_input_modalities": [
+          "image"
+        ],
+        "probe": "process-cmdline",
+        "process": "llama-server"
+      },
+      "base_path": "/v1",
+      "capabilities": [
+        "openai",
+        "chat",
+        "completions"
+      ],
+      "context_window_probe": {
+        "endpoint": "/v1/models"
+      },
+      "description": "Chat, write, reason, and work with code.",
+      "display_name": "Local chat",
+      "enabled": true,
+      "gateway_lifecycle": true,
+      "health_endpoint": "/v1/models",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "activation_env_keys": {
+            "aux": "LLAMA_BEE_MMPROJ",
+            "model": "LLAMA_BEE_MODEL"
+          },
+          "activation_profiles": {
+            "kv-q5-q4": {
+              "LLAMA_BEE_CTK": "q5_0",
+              "LLAMA_BEE_CTV": "q4_1",
+              "LLAMA_BEE_CTX": 202752,
+              "LLAMA_BEE_DRAFT_CTK": "q5_0",
+              "LLAMA_BEE_DRAFT_CTV": "q4_1"
+            },
+            "kv-q5-q4-rp": {
+              "LLAMA_BEE_CTK": "q5_0",
+              "LLAMA_BEE_CTV": "q4_1",
+              "LLAMA_BEE_CTX": 217088,
+              "LLAMA_BEE_DRAFT_CTK": "q5_0",
+              "LLAMA_BEE_DRAFT_CTV": "q4_1"
+            },
+            "kv-q8": {
+              "LLAMA_BEE_CTK": "q8_0",
+              "LLAMA_BEE_CTV": "q8_0",
+              "LLAMA_BEE_CTX": 145408
+            }
+          },
+          "activation_requires_absolute_path": true,
+          "dropin": "95-activation.conf",
+          "health_endpoint": "/v1/models",
+          "health_timeout_s": 180,
+          "precheck": "gguf_path",
+          "scope": "user",
+          "swap_strategy": "dropin-env-restart",
+          "unit": "llama-bee.service"
+        },
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "loaded_model_identity": "path",
+      "managed": false,
+      "model_policy_schema_version": 1,
+      "models": [
+        {
+          "activation_mmproj": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf",
+          "activation_model": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+          "activation_profile": "kv-q5-q4",
+          "context_window": 202752,
+          "description": "Chat, reason, and ask questions about images.",
+          "display_name": "General chat",
+          "id": "default",
+          "model_group": "default",
+          "model_metadata": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "tags": [
+              "reasoning",
+              "tool-use",
+              "vision"
+            ]
+          },
+          "transforms": [
+            {
+              "from": "max_completion_tokens",
+              "kind": "param-map",
+              "only_if_destination_absent": true,
+              "to": "max_tokens"
+            },
+            {
+              "kind": "default-params",
+              "set": {
+                "max_tokens": 16384
+              }
+            }
+          ],
+          "upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        {
+          "activation_mmproj": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf",
+          "activation_model": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+          "activation_profile": "kv-q5-q4",
+          "context_window": 202752,
+          "description": "Write, explain, and improve code.",
+          "display_name": "Coding assistant",
+          "id": "coder",
+          "model_group": "coder",
+          "model_metadata": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "tags": [
+              "reasoning",
+              "tool-use",
+              "vision"
+            ]
+          },
+          "upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        {
+          "activation_mmproj": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf",
+          "activation_model": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+          "activation_profile": "kv-q5-q4",
+          "backend_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+          "base_model_id": "coder",
+          "context_window": 202752,
+          "description": "Write, explain, and improve code.",
+          "display_name": "Balanced coding",
+          "id": "coder-q5",
+          "model_group": "coder-q5",
+          "model_metadata": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "tags": [
+              "reasoning",
+              "tool-use",
+              "vision"
+            ]
+          },
+          "upstream_model": "coder-q5"
+        },
+        {
+          "activation_mmproj": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf",
+          "activation_model": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+          "activation_profile": "kv-q8",
+          "backend_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+          "base_model_id": "coder",
+          "context_window": 145408,
+          "description": "Write, explain, and improve code.",
+          "display_name": "Conservative coding",
+          "id": "coder-q8",
+          "model_group": "coder-q8",
+          "model_metadata": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "tags": [
+              "reasoning",
+              "tool-use",
+              "vision"
+            ]
+          },
+          "upstream_model": "coder-q8"
+        },
+        {
+          "activation_mmproj": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf",
+          "activation_model": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+          "activation_profile": "kv-q5-q4",
+          "backend_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+          "context_window": 202752,
+          "description": "Write, explain, and improve code.",
+          "display_name": "Unchained coding",
+          "id": "coder-unchained",
+          "model_group": "coder-unchained",
+          "model_metadata": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "tags": [
+              "reasoning",
+              "tool-use",
+              "vision"
+            ]
+          },
+          "upstream_model": "coder-unchained"
+        },
+        {
+          "activation_mmproj": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf",
+          "activation_model": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+          "activation_profile": "kv-q5-q4",
+          "base_model_id": "default",
+          "context_window": 202752,
+          "description": "Get quick answers and help with everyday tasks.",
+          "display_name": "Fast chat",
+          "id": "default-fast",
+          "model_group": "default-fast",
+          "model_metadata": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "tags": [
+              "tool-use",
+              "vision"
+            ]
+          },
+          "policy_overlay": [
+            {
+              "kind": "default-params",
+              "set": {
+                "reasoning_effort": "none"
+              }
+            }
+          ],
+          "upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        {
+          "base_model_id": "default",
+          "description": "Chat with the currently selected model.",
+          "display_name": "Current chat model",
+          "id": "current",
+          "model_group": "current",
+          "model_metadata": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "tags": [
+              "reasoning",
+              "tool-use",
+              "vision"
+            ]
+          },
+          "upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        {
+          "base_model_id": "default",
+          "description": "Get quick answers from the currently selected model.",
+          "display_name": "Current model fast chat",
+          "id": "current-fast",
+          "model_group": "current-fast",
+          "model_metadata": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "tags": [
+              "tool-use",
+              "vision"
+            ]
+          },
+          "policy_overlay": [
+            {
+              "kind": "default-params",
+              "set": {
+                "reasoning_effort": "none"
+              }
+            }
+          ],
+          "upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        },
+        {
+          "activation_mmproj": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf",
+          "activation_model": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+          "activation_profile": "kv-q5-q4",
+          "backend_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+          "context_window": 202752,
+          "description": "Create characters and explore fictional conversations.",
+          "display_name": "Roleplay",
+          "id": "rp",
+          "model_group": "rp",
+          "model_metadata": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "tags": [
+              "reasoning",
+              "tool-use",
+              "vision"
+            ]
+          },
+          "upstream_model": "rp"
+        }
+      ],
+      "name": "Local llama.cpp server (official; Bee rollback available)",
+      "native_passthrough": true,
+      "port": 5051,
+      "priority": 100,
+      "protocol": "openai-compatible",
+      "role": "required",
+      "state_type": "llama_cpp",
+      "transforms": [
+        "reasoning-effort-final-chat"
+      ],
+      "vram_budget_key": "GPU1_LLM"
+    },
+    "litellm": {
+      "api_key_env": "AZIZAM_LITELLM_API_KEY",
+      "base_url_env": "AZIZAM_LITELLM_BASE_URL",
+      "capabilities": [
+        "llm.execution"
+      ],
+      "config_path": "litellm.config.yaml",
+      "credential_origin": "http://127.0.0.1:4011",
+      "default_base_url": "http://127.0.0.1:4011",
+      "enabled": true,
+      "execution_substrate": "litellm",
+      "health_endpoint": "/health/liveliness",
+      "lifecycle": {
+        "managed": false,
+        "service_name": "litellm",
+        "type": "external"
+      },
+      "name": "LiteLLM",
+      "priority": 10,
+      "protocol": "litellm",
+      "role": "required",
+      "service_name": "litellm"
+    },
+    "openrouter": {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "base_url": "https://openrouter.ai/api/v1",
+      "capabilities": [
+        "openai-compatible"
+      ],
+      "credential_origin": "https://openrouter.ai:443",
+      "enabled": false,
+      "generation_stats": {
+        "cost_path": [
+          "data",
+          "total_cost"
+        ],
+        "id_param": "id",
+        "path": "/generation"
+      },
+      "lifecycle": {
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "name": "OpenRouter",
+      "priority": 100,
+      "protocol": "openai-compatible",
+      "protocols": [
+        "openai-compatible"
+      ],
+      "provider_id": "openrouter",
+      "provider_type": "paid-remote",
+      "role": "optional"
+    },
+    "realtime": {
+      "capabilities": [
+        "realtime"
+      ],
+      "description": "Have a spoken conversation.",
+      "display_name": "Realtime voice",
+      "enabled": true,
+      "health_endpoint": "/v1/pool",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "health_endpoint": "/v1/pool",
+          "health_timeout_s": 120,
+          "scope": "user",
+          "unit": "speech-to-speech.service"
+        },
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "speech-to-speech",
+      "note": "OpenAI Realtime (WebSocket) served by Hugging Face speech-to-speech on CPU (Silero VAD, Smart Turn). Its STT, LLM and TTS slots call this gateway's own routes. Started by the gateway lifecycle driver; the gateway relays /v1/realtime to it.",
+      "port": 8022,
+      "priority": 200,
+      "role": "standby",
+      "timeout": 120
+    },
+    "rerank": {
+      "capabilities": [
+        "rerank"
+      ],
+      "default_model": "qwen3-reranker-0.6b",
+      "description": "Rank search results by relevance to your question.",
+      "display_name": "Search ranking",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "health_endpoint": "/health",
+          "health_timeout_s": 90,
+          "scope": "user",
+          "unit": "rerank-cpu.service"
+        },
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "rerank-cpu",
+      "note": "On-demand CPU reranker (llama-server --rerank, Qwen3-Reranker-0.6B); about 1 GB RAM while running, exits after 10 min idle, started by the gateway lifecycle driver. Never a GPU.",
+      "port": 8018,
+      "priority": 200,
+      "role": "standby",
+      "timeout": 120
+    },
+    "stt": {
+      "capabilities": [
+        "audio",
+        "transcriptions"
+      ],
+      "chunking": {
+        "backend_timeout_seconds": 180,
+        "deadline_seconds": 360,
+        "enabled": true,
+        "global_concurrency": 2,
+        "max_channels": 2,
+        "max_decoded_bytes": 1073741824,
+        "max_duration_seconds": 14400,
+        "max_field_bytes": 65536,
+        "max_fields": 100,
+        "max_files": 8,
+        "max_input_bytes": 536870912,
+        "max_media_output_bytes": 8388608,
+        "max_response_bytes": 16777216,
+        "max_sample_rate": 48000,
+        "max_segments": 16,
+        "min_free_bytes": 67108864,
+        "setup_failure_policy": "passthrough",
+        "silence_min_seconds": 0.5,
+        "silence_noise_db": "-30dB",
+        "silence_search_seconds": 120,
+        "spool_dir": "data/stt-spool",
+        "target_seconds": 150,
+        "threshold_seconds": 180
+      },
+      "default_model": "parakeet-tdt-0.6b-v3",
+      "description": "Turn recorded speech into text.",
+      "display_name": "Parakeet transcription",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "parakeet-stt",
+      "native_passthrough": true,
+      "port": 5092,
+      "priority": 100,
+      "role": "required",
+      "timeout": 120,
+      "transforms": [
+        {
+          "drop": [
+            "timing"
+          ],
+          "kind": "drop-params",
+          "phase": "response"
+        }
+      ]
+    },
+    "stt-canary": {
+      "capabilities": [
+        "audio",
+        "transcriptions"
+      ],
+      "chunking": {
+        "backend_timeout_seconds": 180,
+        "deadline_seconds": 360,
+        "enabled": true,
+        "max_duration_seconds": 3600,
+        "max_segments": 64,
+        "silence_search_seconds": 40,
+        "spool_dir": "data/stt-spool",
+        "target_seconds": 120,
+        "threshold_seconds": 200
+      },
+      "default_model": "canary-180m-flash",
+      "description": "Turn recorded speech into text.",
+      "display_name": "Canary transcription",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "health_endpoint": "/health",
+          "health_timeout_s": 90,
+          "scope": "user",
+          "unit": "canary-stt.service"
+        },
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "canary-stt",
+      "native_passthrough": true,
+      "note": "On-demand audio.cpp Canary 180M Flash ASR on GPU0; started by the gateway lifecycle driver.",
+      "port": 8013,
+      "priority": 200,
+      "role": "standby",
+      "timeout": 120,
+      "transforms": [
+        {
+          "drop": [
+            "timing"
+          ],
+          "kind": "drop-params",
+          "phase": "response"
+        }
+      ]
+    },
+    "stt-diarize": {
+      "capabilities": [
+        "audio",
+        "transcriptions"
+      ],
+      "chunking": {
+        "backend_timeout_seconds": 1800,
+        "deadline_seconds": 2400,
+        "enabled": false,
+        "max_duration_seconds": 14400,
+        "max_field_bytes": 8388608,
+        "spool_dir": "data/stt-spool"
+      },
+      "default_model": "nemotron-3-diarization",
+      "description": "Transcribe audio and identify different speakers.",
+      "display_name": "Speaker transcription",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "health_endpoint": "/health",
+          "health_timeout_s": 120,
+          "scope": "user",
+          "unit": "diarize-stt.service"
+        },
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "diarize-stt",
+      "native_passthrough": true,
+      "note": "On-demand CPU diarization (Nemotron 3 Diarization) plus Parakeet words, gpt-4o-transcribe-diarize shape; started by the gateway lifecycle driver.",
+      "port": 8014,
+      "priority": 200,
+      "role": "standby",
+      "timeout": 1800,
+      "transforms": [
+        {
+          "drop": [
+            "timing"
+          ],
+          "kind": "drop-params",
+          "phase": "response"
+        }
+      ]
+    },
+    "stt-nemotron": {
+      "capabilities": [
+        "audio",
+        "transcriptions"
+      ],
+      "chunking": {
+        "backend_timeout_seconds": 180,
+        "deadline_seconds": 360,
+        "enabled": true,
+        "max_duration_seconds": 3600,
+        "max_segments": 64,
+        "silence_search_seconds": 30,
+        "spool_dir": "data/stt-spool",
+        "target_seconds": 60,
+        "threshold_seconds": 110
+      },
+      "default_model": "nemotron-3.5-asr-streaming-0.6b",
+      "description": "Transcribe speech as it arrives.",
+      "display_name": "Nemotron transcription",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "health_endpoint": "/health",
+          "health_timeout_s": 90,
+          "scope": "user",
+          "unit": "nemotron-stt.service"
+        },
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "nemotron-stt",
+      "native_passthrough": true,
+      "note": "audio.cpp Nemotron 3.5 streaming ASR on GPU0, the realtime speech-to-text engine; always warm: starts at boot, keeps its model loaded and never unloads it when idle. The gateway lifecycle driver starts it only if it was stopped.",
+      "port": 8012,
+      "priority": 200,
+      "role": "standby",
+      "timeout": 120,
+      "transforms": [
+        {
+          "drop": [
+            "timing"
+          ],
+          "kind": "drop-params",
+          "phase": "response"
+        }
+      ]
+    },
+    "stt-parakeet-gpu": {
+      "capabilities": [
+        "audio",
+        "transcriptions"
+      ],
+      "chunking": {
+        "backend_timeout_seconds": 180,
+        "deadline_seconds": 360,
+        "enabled": true,
+        "max_duration_seconds": 3600,
+        "max_segments": 128,
+        "silence_search_seconds": 10,
+        "spool_dir": "data/stt-spool",
+        "target_seconds": 30,
+        "threshold_seconds": 40
+      },
+      "default_model": "parakeet-tdt-0.6b-v3",
+      "description": "Quickly turn recorded speech into text.",
+      "display_name": "Parakeet fast transcription",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "health_endpoint": "/health",
+          "health_timeout_s": 90,
+          "scope": "user",
+          "unit": "parakeet-gpu-stt.service"
+        },
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "parakeet-gpu-stt",
+      "native_passthrough": true,
+      "note": "On-demand audio.cpp Parakeet TDT 0.6B v3 (q8) on GPU0: CPU-Parakeet accuracy at 5-9x the speed; weights unload after 5 min idle; started by the gateway lifecycle driver.",
+      "port": 8017,
+      "priority": 200,
+      "role": "standby",
+      "timeout": 120,
+      "transforms": [
+        {
+          "drop": [
+            "timing"
+          ],
+          "kind": "drop-params",
+          "phase": "response"
+        }
+      ]
+    },
+    "tts": {
+      "capabilities": [
+        "audio",
+        "speech"
+      ],
+      "description": "Turn text into speech with a consistent voice.",
+      "display_name": "OmniVoice speech",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "health_endpoint": "/health",
+          "health_timeout_s": 150,
+          "scope": "user",
+          "unit": "omnivoice-tts.service"
+        },
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "omnivoice-tts",
+      "native_passthrough": true,
+      "note": "OmniVoice, the fallback speech engine; on demand: exits after 5 min idle (frees 2-4 GB of GPU0, more after long texts), started by the gateway lifecycle driver.",
+      "port": 8002,
+      "priority": 100,
+      "role": "standby",
+      "timeout": 86400
+    },
+    "tts-chatterbox": {
+      "capabilities": [
+        "audio",
+        "speech"
+      ],
+      "description": "Create speech using a reference voice.",
+      "display_name": "Chatterbox speech",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "health_endpoint": "/health",
+          "health_timeout_s": 90,
+          "scope": "user",
+          "unit": "chatterbox-tts.service"
+        },
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "chatterbox-tts",
+      "native_passthrough": true,
+      "note": "Chatterbox Turbo (Python) voice-cloning TTS on GPU0. Temporarily disabled since 2026-10-08 to free GPU0 memory for the desktop; the unit is stopped. When enabled again it is on demand, keeps its weights loaded while running (no idle unload or exit), and is started by the gateway lifecycle driver.",
+      "port": 8015,
+      "priority": 200,
+      "role": "standby",
+      "timeout": 120
+    },
+    "tts-kokoro": {
+      "capabilities": [
+        "audio",
+        "speech"
+      ],
+      "description": "Read text aloud with a choice of voices.",
+      "display_name": "Kokoro speech",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "health_endpoint": "/health",
+          "health_timeout_s": 90,
+          "scope": "user",
+          "unit": "kokoro-tts.service"
+        },
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "kokoro-tts",
+      "native_passthrough": true,
+      "note": "On-demand Kokoro-82M Python TTS on GPU0; exits after 10 min idle; started by the gateway lifecycle driver.",
+      "port": 8011,
+      "priority": 200,
+      "role": "standby",
+      "timeout": 120
+    },
+    "tts-supertonic": {
+      "capabilities": [
+        "audio",
+        "speech"
+      ],
+      "description": "Turn text into speech with preset voices.",
+      "display_name": "Supertonic speech",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "driver": "systemd",
+        "driver_config": {
+          "health_endpoint": "/health",
+          "health_timeout_s": 90,
+          "scope": "user",
+          "unit": "supertonic-tts.service"
+        },
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "supertonic-tts",
+      "native_passthrough": true,
+      "note": "audio.cpp Supertonic realtime TTS on GPU0, the default speech engine; always warm: starts at boot, keeps its model loaded and never unloads it when idle. The gateway lifecycle driver starts it only if it was stopped.",
+      "port": 8010,
+      "priority": 200,
+      "role": "standby",
+      "timeout": 120
+    }
+  },
+  "wires": [
+    {
+      "content_type": "application/json",
+      "request": {
+        "body": "{\"model\": \"default\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}], \"stream\": false}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      },
+      "response": "{\"id\": \"legacy\", \"object\": \"chat.completion\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"ok\"}, \"finish_reason\": \"stop\"}]}"
+    },
+    {
+      "content_type": "text/event-stream; charset=utf-8",
+      "request": {
+        "body": "{\"model\": \"default\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}], \"stream\": true}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      },
+      "response": "data: {\"id\":\"legacy\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+    },
+    {
+      "content_type": "application/json",
+      "request": {
+        "body": "{\"model\": \"coder\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}], \"stream\": false}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      },
+      "response": "{\"id\": \"legacy\", \"object\": \"chat.completion\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"ok\"}, \"finish_reason\": \"stop\"}]}"
+    },
+    {
+      "content_type": "text/event-stream; charset=utf-8",
+      "request": {
+        "body": "{\"model\": \"coder\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}], \"stream\": true}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      },
+      "response": "data: {\"id\":\"legacy\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+    },
+    {
+      "content_type": "application/json",
+      "request": {
+        "body": "{\"model\": \"coder-q5\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}], \"stream\": false}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      },
+      "response": "{\"id\": \"legacy\", \"object\": \"chat.completion\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"ok\"}, \"finish_reason\": \"stop\"}]}"
+    },
+    {
+      "content_type": "text/event-stream; charset=utf-8",
+      "request": {
+        "body": "{\"model\": \"coder-q5\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}], \"stream\": true}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      },
+      "response": "data: {\"id\":\"legacy\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+    },
+    {
+      "content_type": "application/json",
+      "request": {
+        "body": "{\"model\": \"coder-q8\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}], \"stream\": false}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      },
+      "response": "{\"id\": \"legacy\", \"object\": \"chat.completion\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"ok\"}, \"finish_reason\": \"stop\"}]}"
+    },
+    {
+      "content_type": "text/event-stream; charset=utf-8",
+      "request": {
+        "body": "{\"model\": \"coder-q8\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}], \"stream\": true}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      },
+      "response": "data: {\"id\":\"legacy\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+    },
+    {
+      "content_type": "application/json",
+      "request": {
+        "body": "{\"model\": \"default-fast\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}], \"stream\": false}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      },
+      "response": "{\"id\": \"legacy\", \"object\": \"chat.completion\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"ok\"}, \"finish_reason\": \"stop\"}]}"
+    },
+    {
+      "content_type": "text/event-stream; charset=utf-8",
+      "request": {
+        "body": "{\"model\": \"default-fast\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}], \"stream\": true}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      },
+      "response": "data: {\"id\":\"legacy\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+    },
+    {
+      "content_type": "application/json",
+      "request": {
+        "body": "{\"model\": \"rp\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}], \"stream\": false}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      },
+      "response": "{\"id\": \"legacy\", \"object\": \"chat.completion\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"ok\"}, \"finish_reason\": \"stop\"}]}"
+    },
+    {
+      "content_type": "text/event-stream; charset=utf-8",
+      "request": {
+        "body": "{\"model\": \"rp\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}], \"stream\": true}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      },
+      "response": "data: {\"id\":\"legacy\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+    },
+    {
+      "content_type": "application/json",
+      "request": {
+        "body": "{\"model\": \"fixture-embedding\", \"input\": \"hi\"}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/embeddings",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 125.0,
+        "url": "http://substrate.test:4100/v1/embeddings"
+      },
+      "response": "{\"object\": \"list\", \"data\": []}"
+    }
+  ]
+}

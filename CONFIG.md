@@ -135,15 +135,44 @@ These env vars connect the status endpoint to a [Daisy](https://github.com/daisy
 | `AZIZAM_DAISY_AUDIT_PATH` | Path to Daisy's `audit.jsonl`. Set it separately to surface recent Daisy decisions in `/v1/status`; `AZIZAM_DAISY_DIR` supplies no audit-path default. | unset (disabled) |
 | `AZIZAM_DAISY_MODELS_JSON` | Path to Daisy's `models.json` (context-window budget file). | `$AZIZAM_DAISY_DIR/.pi/agent/models.json` if `AZIZAM_DAISY_DIR` is set, else disabled |
 
-## LiteLLM sidecar (Docker Compose)
+## LiteLLM sidecar
 
-When using `docker compose up`, these are the relevant env vars (set in `.env`
-or passed as environment variables):
+The chat sidecar runs in one of two launch modes, and the defaults differ:
+
+- **Docker Compose:** LiteLLM runs in its own container. The gateway reaches it
+  at `http://litellm:4000`.
+- **`start.sh` (bare metal):** the launcher starts LiteLLM on `127.0.0.1:4011`
+  and generates any key that you do not set.
 
 | Env var | What it controls | Default |
 |---|---|---|
-| `AZIZAM_LITELLM_BASE_URL` | URL of the LiteLLM sidecar as seen by the gateway container | `http://litellm:4000` |
-| `AZIZAM_LITELLM_API_KEY` | Shared secret between the gateway and the LiteLLM sidecar | `sk-local-litellm` |
+| `AZIZAM_LITELLM_BASE_URL` | URL of the LiteLLM sidecar as seen by the gateway | Compose: `http://litellm:4000`. `start.sh`: `http://127.0.0.1:4011` |
+| `AZIZAM_LITELLM_API_KEY` | Shared secret between the gateway and the LiteLLM sidecar. Treat it as a secret. | Compose: `sk-local-litellm`. `start.sh`: generated when unset |
+| `LITELLM_MASTER_KEY` | Master key for the sidecar | `start.sh`: the value of `AZIZAM_LITELLM_API_KEY`. Compose: the same shared key |
+| `AZIZAM_INTERNAL_LITELLM_KEY` | Internal key used by the gateway for the sidecar. Treat it as a secret. | `start.sh`: generated when unset |
+| `AZIZAM_MANAGE_LITELLM` | Set to `false` to stop `start.sh` from starting and watching its own LiteLLM process | `true` |
+| `AZIZAM_LITELLM_CONFIG_PATH` | Generated sidecar config file (`start.sh`) | `data/litellm.config.yaml` |
+| `AZIZAM_LITELLM_PID_FILE` | PID file for the sidecar that `start.sh` manages | `data/litellm.pid` |
+| `AZIZAM_LITELLM_RELOAD_INTERVAL` | Seconds between checks of the sidecar config (`start.sh`) | `2` |
+| `AZIZAM_PRISMA_PREFLIGHT_TIMEOUT` | Seconds allowed for Prisma checks and client generation (`start.sh`) | `90` |
+| `DATABASE_URL` | When set, `start.sh` checks Prisma first. It may remove an incomplete Node cache at `PRISMA_NODEENV_DIR`. | unset |
+| `PRISMA_NODEENV_DIR` | Node cache that the Prisma check may repair (`start.sh`) | `$HOME/.cache/prisma-python/nodeenv` |
+
+## Launcher and restart script
+
+`start.sh` and `scripts/safe-restart` read these variables. Set them in the
+shell, or in `.env.local` for `start.sh`. `start.sh` sources `.env.local` when
+the file exists. The file is gitignored.
+
+| Env var | What it controls | Default |
+|---|---|---|
+| `AZIZAM_CONFIG_PATH` | Bootstrap config file that the gateway loads. The first-run setup uses `first-run.yml`, which listens on loopback only. | `proxy_config.yml` |
+| `AZIZAM_REQUIREMENTS_FILE` | Requirements file that `start.sh` installs | `requirements.txt` |
+| `AZIZAM_REQUIREMENTS_HASHES` | Set to `true` to install with `--require-hashes`. Any other value installs without hash checks. | `false` |
+| `AZIZAM_ADMIN_KEY` | Admin key for `safe-restart`. A non-blank value wins over the key file. | unset |
+| `AZIZAM_ADMIN_KEY_FILE` | Admin key file for `safe-restart`. Keep it private. | `~/.config/azizam/admin-key` |
+| `AZIZAM_URL` | Loopback gateway URL that `safe-restart` controls | `http://127.0.0.1:5000` |
+| `AZIZAM_PUBLIC_URL` | Public URL that `safe-restart` checks after a restart. Empty skips the check. | empty (check skipped) |
 
 ## Notes
 

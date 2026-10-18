@@ -1,0 +1,160 @@
+[
+  {
+    "ct": "application/json",
+    "path": "/v1/chat/completions",
+    "resp": "{\"id\": \"z\", \"object\": \"chat.completion\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"ok\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 1, \"completion_tokens\": 1, \"total_tokens\": 2}}",
+    "status": 200,
+    "wire": [
+      {
+        "body": "{\"model\": \"coder\", \"messages\": [{\"role\": \"system\", \"content\": \"s\"}, {\"role\": \"user\", \"content\": \"h\\u00e9llo \\u2603\"}], \"temperature\": 0.2, \"max_tokens\": 64, \"stop\": [\"\\n\"], \"seed\": 7}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      }
+    ]
+  },
+  {
+    "ct": "text/event-stream; charset=utf-8",
+    "path": "/v1/chat/completions",
+    "resp": "data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\"}}]}\r\n\r\ndata: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"b\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2}}\n\ndata: [DONE]\n\n",
+    "status": 200,
+    "wire": [
+      {
+        "body": "{\"model\": \"rp\", \"messages\": [{\"role\": \"user\", \"content\": \"x\"}], \"stream\": true, \"stream_options\": {\"include_usage\": true}, \"top_p\": 0.9}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      }
+    ]
+  },
+  {
+    "ct": "application/json",
+    "path": "/v1/chat/completions",
+    "resp": "{\"id\": \"z\", \"object\": \"chat.completion\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"ok\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 1, \"completion_tokens\": 1, \"total_tokens\": 2}}",
+    "status": 200,
+    "wire": [
+      {
+        "body": "{\"model\": \"default-fast\", \"messages\": [{\"role\": \"user\", \"content\": \"tools\"}], \"tools\": [{\"type\": \"function\", \"function\": {\"name\": \"f\", \"parameters\": {\"type\": \"object\"}}}], \"tool_choice\": \"auto\"}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      }
+    ]
+  },
+  {
+    "ct": "application/json",
+    "path": "/v1/embeddings",
+    "resp": "{\"object\": \"list\", \"data\": [{\"object\": \"embedding\", \"index\": 0, \"embedding\": [0.1]}], \"usage\": {\"prompt_tokens\": 1, \"total_tokens\": 1}}",
+    "status": 200,
+    "wire": [
+      {
+        "body": "{\"model\": \"fixture-embedding\", \"input\": [\"a\", \"b\"], \"encoding_format\": \"float\"}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/embeddings",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 125.0,
+        "url": "http://substrate.test:4100/v1/embeddings"
+      }
+    ]
+  },
+  {
+    "ct": "application/json",
+    "path": "/v1/chat/completions",
+    "resp": "{\"id\": \"z\", \"object\": \"chat.completion\", \"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\", \"content\": \"ok\"}, \"finish_reason\": \"stop\"}], \"usage\": {\"prompt_tokens\": 1, \"completion_tokens\": 1, \"total_tokens\": 2}}",
+    "status": 200,
+    "wire": [
+      {
+        "body": "{\"model\": \"no-such-model\", \"messages\": [{\"role\": \"user\", \"content\": \"x\"}]}",
+        "headers": {
+          "X-Litellm-Key": "Bearer fixture-key",
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-azizam-access-plan": "plan_everything",
+          "x-azizam-app": "test-app",
+          "x-azizam-execution": "litellm",
+          "x-azizam-key-prefix": "sha256:test",
+          "x-azizam-request-path": "/v1/chat/completions",
+          "x-azizam-service-id": "litellm"
+        },
+        "method": "POST",
+        "read_timeout": 1800.0,
+        "url": "http://substrate.test:4100/v1/chat/completions"
+      }
+    ]
+  },
+  {
+    "ids": [
+      "ace-step-1.5-2b-base",
+      "ace-step-1.5-xl-turbo",
+      "anima-turbo",
+      "current",
+      "current-fast",
+      "face-likeness",
+      "flux2-klein-4b",
+      "flux2-klein-4b-edit",
+      "flux2-klein-4b-inpaint",
+      "flux2-klein-4b-seamless-tile",
+      "image-identity",
+      "krea2-turbo",
+      "krea2-turbo-snofs",
+      "qwen-image-2.1-edit",
+      "qwen-image-2.1-edit-multiref",
+      "qwen-image-2.1-inpaint",
+      "sa3-small-sfx",
+      "sdxl-seamless-tile",
+      "seedvr2-upscale",
+      "tangoflux",
+      "video-ltx-2.5-i2v",
+      "video-ltx-2.5-long",
+      "video-ltx-2.5-t2v",
+      "video-minimax-h3-i2v",
+      "video-minimax-h3-long",
+      "video-minimax-h3-t2v",
+      "video-wan-2.2-ti2v-5b-q8",
+      "yue2-song"
+    ],
+    "models": 200
+  }
+]

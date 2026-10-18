@@ -47,6 +47,7 @@ connection:
   transport: http                   # http | websocket | tcp | unix (non-http needs an adapter)
   address: http://127.0.0.1:8080    # root; the protocol joins operation paths
   protocol: openai-compatible       # protocol description id (section 4)
+  dispatch: protocol                # explicit public http-v1 execution opt-in; absent keeps the current path
   credentials:                      # per operation class, each bound to the address origin (F5)
     inference: {secret_ref: null, header: Authorization, scheme: Bearer}
     control: null                   # load, unload, switch, admin; owner-only
@@ -277,20 +278,53 @@ load, unload and so on), `auth`, `errors` (advice rows) and an `executor`.
   - one async pattern: submit, then poll a status path, then fetch an
     artifact, with typed id, status and asset selectors
 
-  The **mapping language** is fixed at nine rules: copy, rename, set
-  (constant), default, drop, enum (table), clamp, stringify, and `when`, with
-  `present`, `equals` and `in` conditions (D14). No loops, no
-  arbitrary expressions, no side effects, and size, depth and time budgets.
+  The **mapping language** has ten rules: copy, rename, set
+  (constant), default, drop, enum (table), clamp, stringify, `when`, and
+  bounded `each` (D23 amends D14). Conditions use `present`, `equals` and `in`.
+  `each` maps one selected list with nested rules; it shares size, depth, rule,
+  iteration and time budgets. There is no other iteration, arbitrary
+  expression or side effect.
   The claim "a new HTTP-shaped engine needs no code" applies exactly to this
   grammar. It is proven by a second-engine fixture for each pattern.
+
+Public execution is opt-in in W6a. Until this path enforces paid-provider
+access and spend, paid or remote records cannot enable it (D24). Save validation
+requires a loopback address without DNS resolution; other placements use the
+existing provider route. A stored service uses
+`config.connection.dispatch: protocol`, a `protocol` id resolving to
+`executor: http-v1`, and `config.offerings`. The runtime also accepts top-level
+contract blocks. With no opt-in, even an `http-v1` description leaves the
+existing path in charge. No seeded engine opts in during this slice.
+
+The public handlers serve `chat` (JSON and streaming SSE/NDJSON mapped to
+OpenAI SSE), `models`, `embeddings`, `images` (synchronous binary or mapped
+base64, and submit/poll/fetch), and declared buffered `speech`. The operation
+names are fixed canonical intents, not engine names. Offerings declare the
+tasks they serve; generation uses their upstream id in body and parameters.
+Core applies access plans and admission, finalizes receipts, and owns durable
+media jobs, idempotency, cancellation settlement and asset access. Queued image
+jobs use this same dispatch. Startup keeps the existing fail-closed policy for
+uncertain running work rather than resubmitting it. Text completions,
+transcription, graph workflows and other existing paths are not migrated here.
+See [Add an HTTP engine as data](../guides/ADD_HTTP_ENGINE_AS_DATA.md).
+
 - **`executor: adapter:<id>`** is a reviewed adapter, for anything outside
   http-v1: graph patching (ComfyUI), framed or socket protocols (Wyoming),
   chunked speech-to-text merge, novel stateful streams. Divan 5d1bed8 names
   the five things measured outside the roughly 24 HTTP primitives: request
   signing (for example AWS SigV4), results held in object storage,
   binary-tail framing, WebSocket protocol translation, and engines whose HTTP
-  surface is user code. Mapping cost stays within about 3x a hand-written
-  mapping. JSONata and CEL-class languages (375x to 1,158x) are not used. The in-tree ComfyUI,
+  surface is user code. Mapping cost is measured against a bare hand-written
+  comprehension with no shared helpers (round 3, `--each-absolute`): `each`
+  over 1,000 model items takes 3.6 ms against 0.07 ms (51x), and over 10,000
+  takes 37.8 ms against 0.80 ms (47x). Over 1,000 embeddings of 768 floats it
+  takes 577 ms against 0.06 ms, and over 10,000 it takes 6.5 s. The D23 bound
+  (10,000 items add at most 5 ms) is not met, and the default mapping budget
+  refuses the 1,000-item embedding case. The earlier "about 3x" figure compared
+  `each` with a mapper that shares its safety helpers and is withdrawn. The
+  evidence and the open decision are in
+  [ENGINE_PROTOCOL_EXECUTOR.md](ENGINE_PROTOCOL_EXECUTOR.md#w6a-round-3-absolute-each-measurement).
+  JSONata and CEL-class languages (375x to 1,158x) are not used. The in-tree ComfyUI,
   STT and TTS clients become adapters behind one interface.
 - **The adapter interface is versioned:** `health`, `inventory`,
   `invoke(op, canonical_request)`, and for jobs `submit`, `poll` or `events`,

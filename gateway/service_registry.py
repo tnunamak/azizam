@@ -49,6 +49,9 @@ PROTOCOL_FRONTEND_SOURCES = frozenset({"builtin", "ui", "provisioned", "imported
 DATA_OBJECT_SOURCES = frozenset({"builtin", "ui", "provisioned", "discovered", "imported"})
 DEFAULT_CATALOG_DIR = Path(__file__).resolve().parent.parent / "registry"
 REMOTE_PROVIDER_TYPES = frozenset({"remote", "paid-remote", "cloud"})
+# Protocol dispatch accepts only these classes. Any other provider type or cost class is refused,
+# so a new paid or remote name fails closed rather than needing its own entry here.
+LOCAL_PROVIDER_CLASSES = frozenset({"local", "free-local"})
 ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # Where a plaintext credential is kept (the secret store, not the record) is decided by the name parts and
@@ -1018,6 +1021,7 @@ def merge_imported_records(
         service_id = normalize_id(raw.get("id") or raw_id)
         if not service_id:
             continue
+        validate_protocol_dispatch_local_only(raw)
         record = normalize_service_record(service_id, raw)
         _merge_imported_record(out["services"], service_id, record, "service")
 
@@ -1227,7 +1231,10 @@ SERVICE_RECORD_FIELDS = (
 )
 
 
-def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_version: int | None = None) -> dict[str, Any]:
+def normalize_service_record(
+    service_id: str, raw: Mapping[str, Any], *, schema_version: int | None = None, check_secrets: bool = True,
+) -> dict[str, Any]:
+    """Return the stored form of ``raw``. ``check_secrets=False`` compares rows without refusing legacy ones."""
     if raw.get(MIGRATION_REFUSED_KEY):
         raise ValueError(_migration_refusal_text(service_id, raw))
     check_service_shape(service_id, raw)
@@ -1266,8 +1273,9 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_
     secret_refs = raw.get("secret_refs")
     if not isinstance(secret_refs, Mapping):
         secret_refs = {}
-    validate_provider_secret_refs(service_id, config, secret_refs)
-    validate_provider_native_passthrough_disabled(service_id, config)
+    if check_secrets:
+        validate_provider_secret_refs(service_id, config, secret_refs)
+        validate_provider_native_passthrough_disabled(service_id, config)
     if is_remote_provider_config(config):
         config["provider_id"] = canonical_provider_id(
             config.get("provider_id") or service_id
@@ -1310,6 +1318,109 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_
     # rows (LiteLLM). Stored editable:false from old seeds is normalized away.
     record["editable"] = not is_litellm_service_record(service_id, record)
     return record
+
+
+def validate_protocol_dispatch_registry(
+    registry: Mapping[str, Any], *, before: Mapping[str, Any] | None = None,
+) -> None:
+    """Check mutations without blocking repair of an older refused record.
+
+    An unchanged stored record can remain, or be disabled with no other change.
+    Every new record, other edit, and re-enable must satisfy the current policy.
+    Compare raw records so normalization cannot hide a newly supplied paid flag.
+    """
+    previous = (before or {}).get("services") or {}
+    for service_id, service in (registry.get("services") or {}).items():
+        if not isinstance(service, Mapping):
+            continue
+        old = previous.get(service_id)
+        if isinstance(old, Mapping):
+            # Compare what would be stored. A client may echo a stored row with defaults the
+            # normalizer adds (enabled, editable, provenance); that echo is not a change.
+            if _same_stored_row(service_id, service, old):
+                continue
+            if bool_from_config(old.get("enabled"), True) and _same_stored_row(
+                    service_id, service, dict(old, enabled=False)):
+                continue
+        try:
+            validate_protocol_dispatch_local_only(service)
+        except ValueError as exc:
+            raise ValueError(f"service {service_id!r}: {exc}") from exc
+
+
+# Top-level keys the normalizer stores (or defaults). Any other top-level key is policy-relevant
+# raw data that normalization drops, so a change to it is a change, never a normalized no-op.
+_NORMALIZED_ROW_KEYS = frozenset({
+    "id", "name", "kind", "source", "enabled", "priority", "role", "capabilities", "config", "secret_refs",
+    "lifecycle", "provenance", "process", "observations", "residency", "resources", "editable",
+})
+
+
+def _same_stored_row(service_id: str, left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    """Whether two rows store the same thing. Secret checks are skipped: a refused legacy row must still compare."""
+    if any(left.get(key) != right.get(key) for key in (set(left) | set(right)) - _NORMALIZED_ROW_KEYS):
+        return False
+    try:
+        return (normalize_service_record(service_id, left, check_secrets=False)
+                == normalize_service_record(service_id, right, check_secrets=False))
+    except (TypeError, ValueError):
+        return dict(left) == dict(right)
+
+
+def _paid_remote_or_substrate(source: Mapping[str, Any]) -> bool:
+    """True when one level of a record (record, config, connection or offering) names a paid, remote or substrate target."""
+    for key in ("provider_type", "cost_class"):
+        value = str(source.get(key) or "").strip().lower()
+        if value and value not in LOCAL_PROVIDER_CLASSES:
+            return True
+    if any(bool_from_config(source.get(key), False) for key in ("paid_remote", "remote_provider")):
+        return True
+    if any(str(source.get(key) or "").strip().lower() == "remote" for key in ("locality", "placement")):
+        return True
+    if str(source.get("execution_substrate") or "").strip().lower() == "litellm":
+        return True
+    return str(source.get("kind") or "").strip().lower() in {"litellm", "llm-substrate"}
+
+
+def _unsafe_address(address: str) -> bool:
+    """Userinfo, backslashes and control or space characters make parsers disagree about the host."""
+    return any(char in address for char in "@\\") or any(char.isspace() or ord(char) < 32 for char in address)
+
+
+def validate_protocol_dispatch_local_only(service: Mapping[str, Any]) -> None:
+    """Protocol dispatch lacks paid-provider controls; accept only proven local addresses.
+
+    Every level of the record is checked: the record, its config, each connection and each
+    offering. Any paid, remote or substrate marker refuses it, and so does any provider type
+    or cost class outside LOCAL_PROVIDER_CLASSES. The connection's address must classify as
+    loopback, with no userinfo. This intentionally narrow rule does not resolve DNS: LAN and
+    container names remain unknown. Placement labels cannot override the connection's address.
+    Dispatch calls the same check at request time.
+    """
+    config = service.get("config")
+    config = config if isinstance(config, Mapping) else {}
+    connections = [source for source in (service.get("connection"), config.get("connection")) if isinstance(source, Mapping)]
+    opted = [connection for connection in connections if connection.get("dispatch") == "protocol"]
+    if not opted:
+        return
+    reason = ("protocol dispatch does not enforce paid-provider access or spend limits; "
+              "use the existing provider route")
+    offerings = service.get("offerings") if isinstance(service.get("offerings"), list) else config.get("offerings")
+    levels = [service, config, *connections, *(item for item in offerings or [] if isinstance(item, Mapping))]
+    if any(_paid_remote_or_substrate(level) for level in levels):
+        raise ValueError(reason)
+    if is_litellm_service_record(service.get("id"), service):
+        raise ValueError(reason)
+    # Import lazily: presentation also imports registry classifiers. Reuse its
+    # address classifier with only the actual target, never placement metadata
+    # or a second legacy endpoint that could mask a public connection address.
+    from gateway.model_presentation import model_locality
+
+    for connection in opted:
+        address = connection.get("address")
+        if (not isinstance(address, str) or _unsafe_address(address)
+                or model_locality({"base_url": address}, None) != "local"):
+            raise ValueError(reason)
 
 
 def validate_provider_secret_refs(
@@ -1716,6 +1827,7 @@ def upsert_service_in_registry(
     that process, so endpoint/protocol fields are derived and locked; only
     name, enabled, and note may be changed.
     """
+    validate_protocol_dispatch_local_only(raw)
     out = normalize_service_registry(registry)
     sid = normalize_id(service_id)
     if not sid:

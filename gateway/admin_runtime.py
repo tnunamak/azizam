@@ -947,8 +947,9 @@ class AdminSQLiteStore:
         owner, whether or not a key is attached. The owner also binds each key
         to the origin that may receive it.
         """
-        value = service_registry.normalize_service_registry(registry)
         before = self.get_service_registry()
+        service_registry.validate_protocol_dispatch_registry(registry, before=before)
+        value = service_registry.normalize_service_registry(registry)
         if "owner" not in actor.roles:
             old_services = before.get("services") or {}
             for service_id, record in (value.get("services") or {}).items():

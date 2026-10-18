@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
+from cryptography.exceptions import InvalidTag
 from typing import Any, Mapping
 
 from gateway import admin_store, secret_store
+
+
+class CredentialUnavailable(ValueError):
+    """The operation's configured key cannot be read; distinct from an origin or format error."""
 
 
 def credential_headers(service: Mapping[str, Any], operation_class: str) -> dict[str, str]:
@@ -37,11 +43,17 @@ def credential_headers(service: Mapping[str, Any], operation_class: str) -> dict
     if reference.startswith("os.environ/"):
         value = os.environ.get(reference.removeprefix("os.environ/"))
         if not value:
-            raise ValueError("engine credential reference is unavailable")
+            raise CredentialUnavailable("engine credential reference is unavailable")
     else:
-        value = secret_store.get_provider_secret(
-            reference, db_path=admin_store.DB_PATH, expected_origin=actual
-        )
+        try:
+            value = secret_store.get_provider_secret(
+                reference, db_path=admin_store.DB_PATH, expected_origin=actual
+            )
+        except PermissionError:
+            # An origin refusal must never turn into an anonymous probe.
+            raise ValueError("engine credential is not approved for this connection") from None
+        except (KeyError, OSError, InvalidTag, sqlite3.Error):
+            raise CredentialUnavailable("engine credential reference is unavailable") from None
     if "\r" in value or "\n" in value:
         raise ValueError("engine credential value is invalid")
     return {header: f"{scheme} {value}" if scheme else value}

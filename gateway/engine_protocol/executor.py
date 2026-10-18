@@ -37,6 +37,7 @@ import json
 import re
 import secrets
 import time
+import unicodedata
 from typing import Any, AsyncIterator, Callable, Mapping
 from urllib.parse import quote, quote_plus, urljoin, urlsplit
 
@@ -48,7 +49,7 @@ from gateway.engine_protocol.description import (
 )
 from gateway.engine_protocol.errors import (
     BudgetExceeded, MalformedResponse, MappingError, ProtocolError, RedirectRefused, TransportFailure, UnknownOperation,
-    UnsupportedByAdapter, UpstreamError,
+    UnsupportedByAdapter, UpstreamError, retryable_poll_failure,
 )
 from gateway.engine_protocol.mapping import json_key, same_json
 from gateway.engine_protocol.transport import HttpxTransport, Transport, WireRequest, WireResponse
@@ -60,7 +61,6 @@ MISSING = pointer.MISSING
 MASK = "<configured>"
 _ERROR_BODY_CAP = 64 * 1024
 _PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]*)\}")
-_ENCODED_SEPARATOR = re.compile(r"%(?:2f|5c)", re.IGNORECASE)  # a pre-encoded slash or backslash: some servers decode twice
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 _REDIRECTS = (301, 302, 303, 307, 308)
 _SNIFF_BYTES = 32
@@ -167,7 +167,7 @@ class HttpV1Executor:
         op = self._operation(ref.op, job=True)
         assert op.job is not None
         poll = op.job.poll
-        parsed, _ = await self._json_step(conn, poll.request, op, {"body": {}, "params": {"id": ref.id}, "files": {}})
+        parsed, _ = await self._json_step(conn, poll.request, op, {"body": {}, "params": {"id": ref.id}, "files": {}, "_engine_path_values": frozenset({"id"})})
         raw = pointer.get(parsed, poll.status.segments)
         if raw is MISSING or isinstance(raw, (dict, list)):
             raise MalformedResponse("The job status is missing from the engine's answer.")
@@ -201,18 +201,29 @@ class HttpV1Executor:
         interval, limit = op.job.poll.interval_s, op.job.poll.max_wait_s
         loop = asyncio.get_running_loop()
         deadline = loop.time() + limit
-        too_long = BudgetExceeded("max_wait_s", f"The job did not end within {limit:g} s.")
+        last_error = None
+
+        def too_long():
+            detail = f" Last poll failure: {last_error}" if last_error else ""
+            return BudgetExceeded("max_wait_s", f"The job did not end within {limit:g} s.{detail}")
         while True:
+            if loop.time() >= deadline:
+                raise too_long()
             try:
                 async with asyncio.timeout_at(deadline):
                     status = await self.poll(conn, ref)
             except TimeoutError:
-                raise too_long from None
-            if status.state in _ENDED:
-                return status
+                raise too_long() from None
+            except (TransportFailure, UpstreamError) as exc:
+                if not retryable_poll_failure(exc):
+                    raise
+                last_error = _scrub(str(exc), _secrets(conn))
+            else:
+                if status.state in _ENDED:
+                    return status
             remaining = deadline - loop.time()
             if remaining <= 0:
-                raise too_long
+                raise too_long()
             await asyncio.sleep(min(interval, remaining))
 
     @_redacting
@@ -222,12 +233,23 @@ class HttpV1Executor:
         assert op.job is not None
         if op.job.cancel is None:
             raise UnsupportedByAdapter(f"The protocol does not describe cancelling '{ref.op}'.")
-        source = {"body": {}, "params": {"id": ref.id}, "files": {}}
-        async with _total(conn, "The engine did not finish cancelling"):
-            if (await self.poll(conn, ref)).state in _ENDED:
+        source = {"body": {}, "params": {"id": ref.id}, "files": {}, "_engine_path_values": frozenset({"id"})}
+        # Poll has its own total timeout. A failed poll must not consume the
+        # cancellation request's deadline or suppress that request.
+        try:
+            status = await self.poll(conn, ref)
+        except ProtocolError:
+            pass  # only positive terminal evidence suppresses cancellation
+        else:
+            if status.state in _ENDED:
                 return
-            wire = await self._exchange(conn, op.job.cancel, op, source, _secrets(conn))
-            await wire.aclose()
+        try:
+            async with _total(conn, "The engine did not finish cancelling"):
+                wire = await self._exchange(conn, op.job.cancel, op, source, _secrets(conn))
+                await wire.aclose()
+        except UpstreamError as exc:
+            if exc.status not in {404, 409, 410}:
+                raise
 
     @_redacting
     async def fetch_assets(self, conn: Connection, ref: JobRef, status: JobStatus) -> tuple[AssetRef, ...]:
@@ -249,7 +271,7 @@ class HttpV1Executor:
                 params: dict[str, Any] = {"id": ref.id}
                 if handle is not None:
                     params["asset"] = handle
-                wire = await self._exchange(conn, fetch, op, {"body": {}, "params": params, "files": {}}, secrets_)
+                wire = await self._exchange(conn, fetch, op, {"body": {}, "params": params, "files": {}, "_engine_path_values": frozenset({"id", "asset"})}, secrets_)
                 try:
                     asset = await self._save_binary(wire, name=handle, fetch_left=self.budgets.max_fetch_bytes - total)
                 finally:
@@ -299,15 +321,19 @@ class HttpV1Executor:
         except TimeoutError:
             raise TransportFailure("timeout", f"The engine did not answer within {conn.timeouts.total_s:g} s.") from None
 
-    def _expand_path(self, spec: RequestSpec, params: Mapping[str, Any]) -> str:
+    def _expand_path(self, spec: RequestSpec, params: Mapping[str, Any], *, engine_values: frozenset[str] = frozenset()) -> str:
         def fill(match: re.Match[str]) -> str:
             value = params.get(match.group(1), MISSING)
             if type(value) is int:
                 value = str(value)
             if type(value) is not str or not value:
                 raise MappingError(f"The request needs the value '{match.group(1)}' for the path {spec.path}.")
-            if _ENCODED_SEPARATOR.search(value):
-                raise MappingError(f"The value '{match.group(1)}' holds an encoded slash; Azizam does not send it in a path.")
+            normalized = unicodedata.normalize("NFKC", value)
+            refused = "/\\" if match.group(1) in engine_values else "/\\%;"
+            if (normalized in (".", "..")
+                    or any(c in refused or unicodedata.category(c) in {"Cc", "Cs"} for c in normalized)
+                    or any(c != "." and "." in unicodedata.normalize("NFKC", c) for c in value)):
+                raise MappingError(f"The value '{match.group(1)}' is not a safe single path segment.")
             return quote(value, safe="")
         if not spec.placeholders:
             return spec.path
@@ -338,7 +364,7 @@ class HttpV1Executor:
         for place in ("body", "params"):  # first, and without recursion: mapping and JSON writing walk these values
             if pointer.depth_exceeds(source[place], budgets.max_json_depth):
                 raise BudgetExceeded("max_json_depth", f"The request {place} nests deeper than {budgets.max_json_depth}.")
-        path = self._expand_path(spec, source["params"])
+        path = self._expand_path(spec, source["params"], engine_values=source.get("_engine_path_values", frozenset()))
         auth = self.description.auth.get("control" if op.op_class == "control" else "inference")
         credential = conn.credentials.get("control" if op.op_class == "control" else "inference")
         headers: dict[str, str] = {"accept-encoding": "identity"}
@@ -452,18 +478,20 @@ class HttpV1Executor:
             raise TransportFailure("aborted", _scrub(f"The request to the engine failed ({type(exc).__name__}).", secrets_)) from None
 
     async def _raise_status(self, response: WireResponse, secrets_: list[str]) -> None:
-        raw = b""
+        raw = bytearray()
+        # Bounded lookahead catches a credential crossing the diagnostic cap.
+        capture_limit = _ERROR_BODY_CAP + max((len(s.encode()) for s in secrets_), default=1) - 1
         try:
             async for chunk in response.chunks():
-                raw += chunk
-                if len(raw) >= _ERROR_BODY_CAP:
+                raw.extend(chunk[:capture_limit - len(raw)])
+                if len(raw) >= capture_limit:
                     break
         except TransportFailure:
             pass
         finally:
             await response.aclose()
-        body = _scrub_bytes(raw[:_ERROR_BODY_CAP], secrets_)
-        excerpt = _scrub(" ".join(body.decode("utf-8", "replace").split())[:160], secrets_)
+        body = _scrub_cut(bytes(raw), secrets_, _ERROR_BODY_CAP)
+        excerpt = _scrub_text_cut(" ".join(body.decode("utf-8", "replace").split()), secrets_, 160)
         row = self.description.advice_for(response.status)
         keep = {k: _scrub(v, secrets_) for k, v in response.headers.items() if k in ("retry-after", "content-type")}
         message = f"The engine answered {response.status}" + (f": {excerpt}" if excerpt else ".")
@@ -694,7 +722,7 @@ def _variants(secrets_: tuple[str, ...]) -> list[str]:
     """
     forms: set[str] = set()
     for secret in secrets_:
-        if len(secret) >= 4:  # shorter ones would mask ordinary text
+        if secret:  # even a one-character credential must never be echoed
             forms.update((secret, quote(secret), quote(secret, safe=""), quote_plus(secret), json.dumps(secret)[1:-1]))
     return sorted(forms, key=len, reverse=True)
 
@@ -704,8 +732,9 @@ def _secrets(conn: Connection) -> list[str]:
 
 
 def _scrub(text: str, secrets_: list[str]) -> str:
+    mask = "" if any(secret in MASK for secret in secrets_) else MASK
     for secret in secrets_:
-        text = text.replace(secret, MASK)
+        text = text.replace(secret, mask)
     return text
 
 
@@ -714,6 +743,33 @@ def _clean_headers(headers: Mapping[str, str], secrets_: list[str]) -> dict[str,
 
 
 def _scrub_bytes(data: bytes, secrets_: list[str]) -> bytes:
+    mask = b"" if any(secret in MASK for secret in secrets_) else MASK.encode()
     for secret in secrets_:
-        data = data.replace(secret.encode(), MASK.encode())
+        data = data.replace(secret.encode(), mask)
     return data
+
+
+def _scrub_cut(data: bytes, secrets_: list[str], cap: int) -> bytes:
+    """Scrub before truncation; remove any partial credential prefix at the cut."""
+    data = _scrub_bytes(data, secrets_)[:cap]
+    # Remove rather than append a mask here: even a full cap must remain bounded.
+    cut = len(data)
+    for secret in secrets_:
+        encoded = secret.encode()
+        for size in range(min(len(encoded) - 1, len(data)), 0, -1):
+            if data.endswith(encoded[:size]):
+                cut = min(cut, len(data) - size)
+                break
+    return data[:cut]
+
+
+def _scrub_text_cut(value: str, secrets_: list[str], cap: int) -> str:
+    """Cap diagnostic characters after scrubbing, without a partial secret prefix."""
+    value = _scrub(value, secrets_)[:cap]
+    cut = len(value)
+    for secret in secrets_:
+        for size in range(min(len(secret) - 1, len(value)), 0, -1):
+            if value.endswith(secret[:size]):
+                cut = min(cut, len(value) - size)
+                break
+    return value[:cut]

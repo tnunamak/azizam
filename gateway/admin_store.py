@@ -738,7 +738,10 @@ def _migrate_extension_package_digests(conn: sqlite3.Connection) -> None:
     key = extension_packages.EXTENSION_PACKAGE_INDEX_SETTING_KEY
     if conn.in_transaction:
         conn.commit()
+    # Overwrite the copy's freed bytes, then fold the WAL into the file, so the raw record is not left behind.
+    conn.execute("PRAGMA secure_delete=ON")
     conn.execute("BEGIN IMMEDIATE")
+    rewritten = False
     try:
         row = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (key,)).fetchone()
         if row is not None:
@@ -750,10 +753,13 @@ def _migrate_extension_package_digests(conn: sqlite3.Connection) -> None:
                 migrated = extension_packages.normalize_extension_package_index(value)
                 payload = json.dumps(migrated, ensure_ascii=False, sort_keys=True)
                 _upsert_setting_in_transaction(conn, key, payload, _now(), None)
+                rewritten = True
         conn.commit()
     except Exception:
         conn.rollback()
         raise
+    if rewritten:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
 def _move_oidc_client_secret_to_store(conn: sqlite3.Connection, path: Path) -> None:

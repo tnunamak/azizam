@@ -354,7 +354,9 @@ Current admin API:
 - `GET /admin/api/extensions`
 - `POST /admin/api/extensions/validate`
 - `POST /admin/api/extensions/enable`
-- `DELETE /admin/api/extensions/{package_id}?mode=remove|disable`
+- `DELETE /admin/api/extensions/{package_id}?mode=remove|disable` removes or
+  disables the package with its installed records. See
+  [KNOWN_WORK item 6](KNOWN_WORK.md#6-finish-extension-package-disableremoval-semantics).
 
 Validation returns package metadata, object counts, normalized candidate
 records, warnings, and errors without mutating state. Enable writes the service
@@ -391,4 +393,8 @@ of removing it, so the edit is kept. Reinstalling over a kept record fails with
 The DELETE takes an optional `If-Match: "os-N"`; a stale value gets `412
 generation_mismatch`, as the service registry routes do. Its response is the
 registry through the same redacted projection as enable, with `ETag` and
-`Cache-Control: no-store`.
+`Cache-Control: no-store`. The reference check runs before the revision check,
+so a removal that an access plan blocks returns `409 extension_package_referenced`
+even when `If-Match` is stale; the client gets the plan's name, not a 412. A
+package id the index does not hold returns `404 extension_package_not_found`
+for either mode.
