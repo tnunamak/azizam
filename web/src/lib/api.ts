@@ -31,6 +31,12 @@ function isServiceRegistryMutation(path: string, method: string): boolean {
   ) {
     return true;
   }
+  if (
+    (method === "PUT" || method === "DELETE") &&
+    /^\/admin\/api\/operator\/service-registry\/excluded\/[^/]+\/[^/]+$/.test(path)
+  ) {
+    return true;
+  }
   return method === "POST" && path === "/admin/api/extensions/enable";
 }
 
@@ -275,16 +281,39 @@ export interface Service {
   secret_refs?: Record<string, string>;
 }
 
+/**
+ * A stored record the gateway leaves out because it does not validate. `record` is the record as the gateway
+ * can read it: a secret is an entry with an id and a `configured` flag, never a value. It is absent when the record
+ * cannot be read into its type (`parsed: false`); then `failed_fields` names the fields that could not be read and
+ * `secret_slots` the secret entries the record holds.
+ */
+export interface LeftOutRecord {
+  section: string;
+  id: string;
+  error: string;
+  parsed: boolean;
+  secret_slots: string[];
+  failed_fields?: string[];
+  record?: unknown;
+}
+
 export interface ServiceRegistry {
   schema_version: number;
   services: Record<string, Service>;
   protocol_frontends?: Record<string, unknown>;
   workflows?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
+  /** The records left out of the registry above; carried here so one query serves the page. */
+  excluded?: LeftOutRecord[];
 }
 
 export interface ServiceRegistryResponse {
   service_registry: ServiceRegistry;
+  excluded?: LeftOutRecord[];
+}
+
+function withLeftOut(response: ServiceRegistryResponse): ServiceRegistry {
+  return { ...response.service_registry, excluded: response.excluded ?? [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -791,17 +820,29 @@ export const api = {
     registry: () =>
       adminFetch<ServiceRegistryResponse>(
         "/admin/api/operator/service-registry",
-      ).then((r) => r.service_registry),
+      ).then(withLeftOut),
     edit: (serviceId: string, input: Record<string, unknown>) =>
       adminRegistryMutation<ServiceRegistryResponse>(
         `/admin/api/operator/services/${serviceId}`,
         { method: "PATCH", body: input },
-      ).then((r) => r.service_registry),
+      ).then(withLeftOut),
     remove: (serviceId: string) =>
       adminRegistryMutation<ServiceRegistryResponse>(
         `/admin/api/operator/services/${serviceId}`,
         { method: "DELETE" },
-      ).then((r) => r.service_registry),
+      ).then(withLeftOut),
+    /** Save an edited copy of a left-out record; a marker in it keeps the value stored at its place. */
+    fixLeftOut: (section: string, id: string, record: unknown) =>
+      adminRegistryMutation<ServiceRegistryResponse>(
+        `/admin/api/operator/service-registry/excluded/${encodeURIComponent(section)}/${encodeURIComponent(id)}`,
+        { method: "PUT", body: { record } },
+      ).then(withLeftOut),
+    /** Drop a left-out record from the store. */
+    removeLeftOut: (section: string, id: string) =>
+      adminRegistryMutation<ServiceRegistryResponse>(
+        `/admin/api/operator/service-registry/excluded/${encodeURIComponent(section)}/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      ).then(withLeftOut),
   },
 
   status: () =>
