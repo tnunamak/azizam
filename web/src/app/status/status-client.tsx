@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { ChevronRight, MoreHorizontal, RefreshCcw, Server } from "lucide-react";
 
 import {
@@ -11,10 +11,12 @@ import {
   ApiError,
   queryKeys,
   type CurrentHealthService,
+  type OverviewPayload,
   type Service,
   type ServiceRegistry,
   type StatusPayload,
 } from "@/lib/api";
+import { errorCopy } from "@/lib/error-copy";
 import { PRODUCT_NAME } from "@/lib/product";
 import { Button } from "@/components/ui/button";
 import { RelativeTime } from "@/components/ui/relative-time";
@@ -423,6 +425,8 @@ type Problem = {
   action?: string;
   disk?: boolean;
   retry?: () => void;
+  /** Re-apply the stored registry; `error` is the plain words of a failed try. */
+  apply?: { run: () => void; pending: boolean; error: string | null };
   /** Short verdict when this is the only problem. */
   headline: string;
 };
@@ -756,6 +760,35 @@ function capProblems(records: ActivityRecord[], now: number): Problem[] {
   ];
 }
 
+/** The stored registry is not what the gateway runs: the overview's registry
+ * item and the stored records it left out, with the action that re-applies it. */
+function registryProblems(
+  overview: OverviewPayload | undefined,
+  apply: NonNullable<Problem["apply"]>,
+): Problem[] {
+  const item = overview?.attention?.find((entry) => entry.kind === "registry");
+  const excluded = overview?.registry_excluded ?? [];
+  if (!item && !excluded.length) return [];
+  const critical = !item || item.severity === "problem";
+  const title = item?.title ?? "Some saved records are not in use";
+  return [
+    {
+      key: "registry-apply",
+      severity: critical ? "critical" : "attention",
+      tone: critical ? "bad" : "warn",
+      title,
+      headline: title,
+      facts: [],
+      body: [
+        ...(item?.detail ? [item.detail] : []),
+        ...excluded.map((record) => `${record.id}: ${record.error}`),
+      ],
+      href: null,
+      apply,
+    },
+  ];
+}
+
 function ProblemCard({
   problem,
   primary,
@@ -775,8 +808,18 @@ function ProblemCard({
       evidence={problem.evidence}
       history={problem.history}
       actions={
-        problem.href || problem.disk || problem.retry ? (
+        problem.href || problem.disk || problem.retry || problem.apply ? (
           <>
+            {problem.apply ? (
+              <Button
+                size={primary ? "md" : "sm"}
+                variant={primary ? "default" : "outline"}
+                disabled={problem.apply.pending}
+                onClick={problem.apply.run}
+              >
+                {problem.apply.pending ? "Applying…" : "Apply again"}
+              </Button>
+            ) : null}
             {problem.retry ? <Button variant="outline" size="sm" onClick={problem.retry}>Retry</Button> : null}
             {problem.href ? (
               <Button
@@ -814,6 +857,7 @@ function ProblemCard({
       {problem.body?.map((line) => (
         <p key={line}>{line}</p>
       ))}
+      {problem.apply?.error ? <p role="alert">{problem.apply.error}</p> : null}
     </Callout>
   );
 }
@@ -1030,6 +1074,20 @@ export function StatusClient() {
   } = useQuery({
     queryKey: queryKeys.serviceRegistry,
     queryFn: api.services.registry,
+  });
+  // The registry callout is extra: a failed overview read shows nothing.
+  const { data: overviewData, refetch: refetchOverview } = useQuery({
+    queryKey: queryKeys.overview,
+    queryFn: api.overview,
+    refetchInterval: 30_000,
+  });
+  const reload = useMutation({
+    mutationFn: api.config.reload,
+    onSuccess: () => {
+      void refetchOverview();
+      void refetchStatus();
+      void refetchRegistry();
+    },
   });
   const providers = useOptionalProviderStatus();
   const activity = useActivitySample(true);
@@ -1278,6 +1336,13 @@ export function StatusClient() {
       });
   const problems = [
     ...loadProblems,
+    ...registryProblems(overviewData, {
+      run: () => reload.mutate(),
+      pending: reload.isPending,
+      error: reload.isError
+        ? errorCopy(reload.error, { role: "owner" }).message
+        : null,
+    }),
     ...engineProblems(
       engines.filter(
         (engine) =>
