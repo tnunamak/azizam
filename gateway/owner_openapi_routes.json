@@ -93,7 +93,7 @@
   },
   "GET /admin/api/config/export": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
   },
   "POST /admin/api/config/reload": {
     "tag": "engines and providers",
@@ -468,6 +468,18 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   },
   "GET /admin/api/engines/{service_id}": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "POST /admin/api/operator/services/{service_id}/secret-entries": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to change a secret"
+  },
+  "PUT /admin/api/operator/service-registry/excluded/{section}/{record_id}": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "DELETE /admin/api/operator/service-registry/excluded/{section}/{record_id}": {
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   }

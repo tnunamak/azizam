@@ -332,14 +332,15 @@ def test_other_settings_are_kept_and_listed(gateway, fake_upstreams):
     assert _create(owner, {"definition": "openai-compatible", "name": "attic", "disabled": True,
                            "values": {"address": "http://attic.fk.test/v1"}}).status_code == 201
     registry = _registry(gateway)
-    registry["services"]["attic"]["config"].update(probe_interval_s=30, legacy_note="bought 2025")
+    registry["services"]["attic"]["config"].update(probe_interval_s=30, legacy_note="bought 2025", note="a classified key")
     _put_registry(gateway, registry)
     view = owner.get("/admin/api/engines/attic").json()["engine"]
-    assert view["other_settings"] == {"probe_interval_s": 30, "legacy_note": "bought 2025"}
+    # a key no type classifies is kept and never shown, only counted (decision D34); a classified one the form lacks is listed
+    assert view["other_settings"] == {"note": "a classified key"} and view["hidden_settings"] == 2
     assert _edit(owner, "attic", {"definition": "openai-compatible", "name": "Attic server", "disabled": True,
                                   "values": {}}).status_code == 200
     config = _record(gateway, "attic")["config"]
-    assert config["probe_interval_s"] == 30 and config["legacy_note"] == "bought 2025"
+    assert config["probe_interval_s"] == 30 and config["legacy_note"] == "bought 2025" and config["note"] == "a classified key"
 
 
 def test_the_check_route_persists_nothing(gateway, fake_upstreams):
@@ -512,17 +513,20 @@ def test_an_engine_the_router_does_not_call_at_its_own_address_is_shown_not_edit
             == [row["model_group"] for row in before["config"].get("models") or ()])
 
 
-def test_plain_request_headers_are_sent_by_the_check_and_saved_as_plain_rows(gateway, fake_upstreams):
+def test_request_headers_are_sent_by_the_check_and_saved_as_secret_entries(gateway, fake_upstreams):
     owner, *_ = owner_and_admin(gateway)
     home = _chat_server(fake_upstreams)
     assert _create(owner, {"definition": "openai-compatible", "name": "headed", "acknowledge_warnings": True,
                            "values": {"address": f"{home.base_url}/v1",
                                       "headers": [{"name": "X-Client", "value": "azizam-home"}]}}).status_code == 201
-    assert _record(gateway, "headed")["config"]["headers"] == [{"name": "X-Client", "value": "azizam-home"}]
+    # A header value is a secret entry: the record holds a reference, the router and the check send the value.
+    [row] = _record(gateway, "headed")["config"]["headers"]
+    assert set(row) == {"id", "name", "secret_ref"} and row["name"] == "X-Client" and "azizam-home" not in json.dumps(row)
     sent = [r for r in home.requests if r.path == "/v1/models"]
     assert sent[0].headers.get("x-client") == "azizam-home"
     view = owner.get("/admin/api/engines/headed").json()["engine"]
-    assert view["values"]["headers"] == [{"name": "X-Client", "value": "azizam-home"}]
+    assert view["values"]["headers"] == [{"id": row["id"], "name": "X-Client", "configured": True}]
+    assert "azizam-home" not in json.dumps(view)
 
 
 def test_a_header_marked_secret_is_refused_with_a_sentence(gateway, fake_upstreams):

@@ -261,6 +261,8 @@ export interface EngineView {
   access: EngineAccess;
   calls: string;
   other_settings: Record<string, unknown>;
+  /** How many stored settings no type classifies: kept unchanged, never shown. */
+  hidden_settings?: number;
   /** The stored record, secrets shown as "configured". */
   record: Record<string, unknown>;
 }

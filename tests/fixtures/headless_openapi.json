@@ -417,18 +417,8 @@
               "null"
             ]
           },
-          "error_code": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "A short token naming the failure."
-          },
           "error_category": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "description": "Who refused: the gateway (authorization, invalid_input, capacity), the work (upstream, timeout, safety), or a gateway bug (internal).",
             "enum": [
               "authorization",
               "invalid_input",
@@ -439,21 +429,17 @@
               "internal",
               null
             ],
-            "description": "Who refused: the gateway (authorization, invalid_input, capacity), the work (upstream, timeout, safety), or a gateway bug (internal)."
-          },
-          "retryable": {
             "type": [
-              "boolean",
+              "string",
               "null"
-            ],
-            "description": "Whether the same job may succeed later."
+            ]
           },
-          "upstream_http_status": {
+          "error_code": {
+            "description": "A short token naming the failure.",
             "type": [
-              "integer",
+              "string",
               "null"
-            ],
-            "description": "The HTTP status of an upstream failure; null when the gateway refused."
+            ]
           },
           "id": {
             "type": "string"
@@ -478,6 +464,13 @@
             "minimum": 0,
             "type": "integer"
           },
+          "retryable": {
+            "description": "Whether the same job may succeed later.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "status": {
             "enum": [
               "queued",
@@ -487,6 +480,13 @@
               "canceled"
             ],
             "type": "string"
+          },
+          "upstream_http_status": {
+            "description": "The HTTP status of an upstream failure; null when the gateway refused.",
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "required": [
@@ -634,6 +634,20 @@
           "rules"
         ],
         "title": "ProposalBody",
+        "type": "object"
+      },
+      "Reauth": {
+        "additionalProperties": false,
+        "properties": {
+          "password": {
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "password"
+        ],
+        "title": "Reauth",
         "type": "object"
       },
       "Reset": {
@@ -2603,20 +2617,6 @@
         "title": "WAN 2.2 TI2V 5B Q8",
         "type": "object",
         "x-azizam-workflow-id": "video.generate.wan-2.2-ti2v-5b-q8"
-      },
-      "Reauth": {
-        "properties": {
-          "password": {
-            "type": "string",
-            "title": "Password"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "password"
-        ],
-        "title": "Reauth"
       }
     },
     "securitySchemes": {
@@ -5268,7 +5268,7 @@
     },
     "/admin/api/config/export": {
       "get": {
-        "description": "Export the canonical YAML reproducing the running gateway's service registry.\n\nReturns clean YAML containing every service's connection, capabilities,\nmodels, priority, role, and lifecycle \u2014 everything an operator would commit\nto reproduce this gateway.  Ephemeral runtime state (health history,\nlast_used_at, probed windows, live VRAM) is excluded.\n\nThe output is round-trippable: it matches the shape the existing\nseed-import path already understands.\n\nAdmin-auth required (same guard as all /admin/api/* routes).\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Export the canonical YAML reproducing the running gateway's service registry.\n\nReturns clean YAML containing every service's connection, capabilities,\nmodels, priority, role, and lifecycle \u2014 everything an operator would commit\nto reproduce this gateway.  Ephemeral runtime state (health history,\nlast_used_at, probed windows, live VRAM) is excluded.\n\nThe output is round-trippable: it matches the shape the existing\nseed-import path already understands.\n\nOwner only. It holds the public configuration and, for each secret, a configured entry; it never holds a\nsecret value (decision D26), so it cannot restore a secret.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_config_export",
         "parameters": [],
         "responses": {
@@ -7798,6 +7798,217 @@
         ]
       }
     },
+    "/admin/api/operator/service-registry/excluded/{section}/{record_id}": {
+      "delete": {
+        "description": "Drop a record the registry leaves out.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_delete_admin_api_operator_service_registry_excluded_section_record_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section",
+            "required": true,
+            "schema": {
+              "title": "Section",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "title": "Record Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          }
+        ],
+        "summary": "Remove Excluded Record",
+        "tags": [
+          "engines and providers"
+        ]
+      },
+      "put": {
+        "description": "Save an edited copy of a record the registry leaves out. Its secret entries come back as read or are left out.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_put_admin_api_operator_service_registry_excluded_section_record_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "section",
+            "required": true,
+            "schema": {
+              "title": "Section",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "title": "Record Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          }
+        ],
+        "summary": "Fix Excluded Record",
+        "tags": [
+          "engines and providers"
+        ]
+      }
+    },
     "/admin/api/operator/services": {
       "post": {
         "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
@@ -8338,6 +8549,109 @@
           }
         ],
         "summary": "Set Service Enabled",
+        "tags": [
+          "engines and providers"
+        ]
+      }
+    },
+    "/admin/api/operator/services/{service_id}/secret-entries": {
+      "post": {
+        "description": "Change the secret entries of a service by explicit commands (retain, replace, clear, add, rename, set).\n\nThe response is the registry as ``GET /operator/service-registry`` answers it: a secret shows as a\nconfigured entry with its id, never as a value. See ``gateway/secret_commands.py`` for the commands.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to change a secret. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_post_admin_api_operator_services_service_id_secret_entries",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "service_id",
+            "required": true,
+            "schema": {
+              "title": "Service Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          }
+        ],
+        "summary": "Change Secret Entries",
         "tags": [
           "engines and providers"
         ]
@@ -11120,6 +11434,159 @@
         ]
       }
     },
+    "/admin/api/settings/sessions": {
+      "get": {
+        "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_get_admin_api_settings_sessions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          }
+        ],
+        "summary": "Get Sessions",
+        "tags": [
+          "settings"
+        ]
+      },
+      "put": {
+        "description": "How long a sign-in lasts: idle timeout, absolute lifetime and the step-up window.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_put_admin_api_settings_sessions",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          }
+        ],
+        "summary": "Put Sessions",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
     "/admin/api/setup-progress": {
       "get": {
         "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
@@ -12862,6 +13329,66 @@
           }
         },
         "summary": "Reset",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
+    "/auth/api/reauth": {
+      "post": {
+        "description": "Confirm the signed-in person's password, so risky owner actions are allowed for a while.",
+        "operationId": "reauth_auth_api_reauth_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Reauth"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reauth",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
+    "/auth/api/sign-out-everywhere": {
+      "post": {
+        "description": "End every sign-in this person has, on every device, this one included.",
+        "operationId": "sign_out_everywhere_auth_api_sign_out_everywhere_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Sign Out Everywhere",
         "tags": [
           "accounts"
         ]
@@ -28294,219 +28821,6 @@
           }
         },
         "summary": "Rerank V2"
-      }
-    },
-    "/admin/api/settings/sessions": {
-      "get": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Get Sessions",
-        "operationId": "owner_get_admin_api_settings_sessions",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "401": {
-            "description": "Authentication or role denied",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "object",
-                      "properties": {
-                        "code": {
-                          "type": "string"
-                        },
-                        "message": {
-                          "type": "string"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authentication or role denied",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "object",
-                      "properties": {
-                        "code": {
-                          "type": "string"
-                        },
-                        "message": {
-                          "type": "string"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OwnerBearer": []
-          }
-        ],
-        "parameters": [],
-        "description": "Authorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not."
-      },
-      "put": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Put Sessions",
-        "description": "How long a sign-in lasts: idle timeout, absolute lifetime and the step-up window.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
-        "operationId": "owner_put_admin_api_settings_sessions",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "401": {
-            "description": "Authentication or role denied",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "object",
-                      "properties": {
-                        "code": {
-                          "type": "string"
-                        },
-                        "message": {
-                          "type": "string"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Authentication or role denied",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "object",
-                      "properties": {
-                        "code": {
-                          "type": "string"
-                        },
-                        "message": {
-                          "type": "string"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OwnerBearer": []
-          }
-        ],
-        "parameters": [],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
-      }
-    },
-    "/auth/api/reauth": {
-      "post": {
-        "tags": [
-          "accounts"
-        ],
-        "summary": "Reauth",
-        "description": "Confirm the signed-in person's password, so risky owner actions are allowed for a while.",
-        "operationId": "reauth_auth_api_reauth_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Reauth"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/auth/api/sign-out-everywhere": {
-      "post": {
-        "tags": [
-          "accounts"
-        ],
-        "summary": "Sign Out Everywhere",
-        "description": "End every sign-in this person has, on every device, this one included.",
-        "operationId": "sign_out_everywhere_auth_api_sign_out_everywhere_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
       }
     }
   },

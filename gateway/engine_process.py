@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 
+from gateway import runtime_secrets
 from gateway.engine_observations import ObservationReader
 
 
@@ -336,7 +337,13 @@ class ProcessDriver:
         argv = cfg.get("start")
         port_spec = cfg.get("port")
         port = port_spec.get("fixed") if isinstance(port_spec, Mapping) else None
-        if not isinstance(argv, list) or not argv or any(not isinstance(x, str) or not x or "\x00" in x for x in argv):
+        if not isinstance(argv, list) or not argv:
+            raise ValueError("process.start must be a nonempty argv array")
+        try:
+            argv = runtime_secrets.argv(argv, strict=True)
+        except (ValueError, runtime_secrets.SecretUnavailable):
+            raise ValueError("process.start must be a nonempty argv array") from None
+        if any(not x or "\x00" in x for x in argv):
             raise ValueError("process.start must be a nonempty argv array")
         if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
             raise ValueError("process.port.fixed must be a declared TCP port")
@@ -493,9 +500,12 @@ class ProcessDriver:
     def _environment(cfg: Mapping[str, Any]) -> dict[str, str]:
         env = inherited_command_environment()
         extra = cfg.get("env") or {}
-        if not isinstance(extra, Mapping) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in extra.items()):
+        if not isinstance(extra, Mapping):
             raise ValueError("process.env must be a string map")
-        env.update(extra)
+        try:
+            env.update(runtime_secrets.env_mapping(extra, strict=True))
+        except (ValueError, runtime_secrets.SecretUnavailable):
+            raise ValueError("process.env must be a string map") from None
         return env
 
     def _open_log(self, ident: str) -> int:

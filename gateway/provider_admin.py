@@ -27,7 +27,7 @@ from typing import Any, Callable, Mapping, Protocol
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, engine_redaction, receipt_store, service_registry
+from gateway import admin_store, egress, receipt_store, service_registry
 from gateway import provider_catalog, provider_configuration, provider_listing, secret_store
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway import providers as provider_core
@@ -89,10 +89,7 @@ class _RouteError(Exception):
         self.message = message
 
     def as_response(self) -> JSONResponse:
-        return JSONResponse(
-            status_code=self.status_code,
-            content={"error": {"code": self.code, "message": self.message}},
-        )
+        return egress.safe_error_response(self.status_code, self.code, self.message)
 
 
 def normalize_provider_admin_state(value: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -163,7 +160,7 @@ def create_provider_admin_router(
     When omitted, the router reads the provider ledger table if present.
     """
 
-    router = APIRouter(prefix=prefix, tags=["admin-providers"])
+    router = APIRouter(prefix=prefix, tags=["admin-providers"], route_class=egress.ManagementRoute)
     effective_spending_provider = spending_provider or (lambda: provider_ledger_spending_snapshot(path=ledger_path))
 
     def _guard(request: Request) -> AdminContext | JSONResponse:
@@ -183,7 +180,7 @@ def create_provider_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return JSONResponse(
+        return egress.projected_response(
             status_code=status.HTTP_200_OK,
             content=_providers_payload(store, effective_spending_provider),
         )
@@ -197,7 +194,7 @@ def create_provider_admin_router(
             catalog = provider_catalog.load_provider_catalog()
         except ValueError as exc:
             return _RouteError(500, "provider_catalog_invalid", str(exc)).as_response()
-        return JSONResponse(
+        return egress.plain_json_response(response_class="provider_catalog",
             status_code=status.HTTP_200_OK,
             content={"providers": [preset.to_dict() for preset in catalog.values()]},
         )
@@ -251,9 +248,9 @@ def create_provider_admin_router(
             return _RouteError(exc.status_code, exc.code, exc.message).as_response()
         except (ValueError, KeyError) as exc:
             return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_provider", str(exc)).as_response()
-        return JSONResponse(
+        return egress.projected_response(
             status_code=status.HTTP_201_CREATED,
-            content={"provider": provider, "service_registry": engine_redaction.redact_registry(record.get("value") or {})},
+            content={"provider": provider, "service_registry": record.get("value") or {}},
         )
 
     @router.get("/{provider_id}")
@@ -268,7 +265,7 @@ def create_provider_admin_router(
                 "provider_not_found",
                 f"provider {provider_id!r} was not found",
             ).as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"provider": provider})
+        return egress.projected_response(status_code=status.HTTP_200_OK, content={"provider": provider})
 
     @router.get("/{provider_id}/reconciliation")
     def list_provider_reconciliation(request: Request, provider_id: str) -> JSONResponse:
@@ -298,7 +295,7 @@ def create_provider_admin_router(
                 "provider_ledger_unavailable",
                 "provider spend ledger is unavailable",
             ).as_response()
-        return JSONResponse(
+        return egress.plain_json_response(response_class="provider_reconciliation",
             status_code=status.HTTP_200_OK,
             content={"reconciliations": rows},
         )
@@ -342,7 +339,7 @@ def create_provider_admin_router(
                 "provider_ledger_unavailable",
                 "provider spend ledger is unavailable",
             ).as_response()
-        return JSONResponse(
+        return egress.plain_json_response(response_class="provider_reconciliation",
             status_code=status.HTTP_200_OK,
             content={"reconciliation": row},
         )
@@ -374,7 +371,7 @@ def create_provider_admin_router(
             return exc.as_response()
         except ValueError:
             return _RouteError(400, "invalid_provider_key", "Enter a provider key longer than four characters.").as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"key_status": _secret_key_status(status_row)})
+        return egress.projected_response(status_code=status.HTTP_200_OK, content={"key_status": _secret_key_status(status_row)})
 
     @router.delete("/{provider_id}/key")
     def delete_provider_key(request: Request, provider_id: str) -> JSONResponse:
@@ -391,7 +388,7 @@ def create_provider_admin_router(
                 _clear_provider_connection_state(store, provider_id, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"key_status": _secret_key_status(status_row)})
+        return egress.projected_response(status_code=status.HTTP_200_OK, content={"key_status": _secret_key_status(status_row)})
 
     @router.post("/-/test")
     async def test_unsaved_provider(request: Request) -> JSONResponse:
@@ -410,7 +407,7 @@ def create_provider_admin_router(
             return exc.as_response()
         except provider_listing.ProviderListingError as exc:
             return _RouteError(exc.status_code, exc.code, str(exc)).as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+        return egress.plain_json_response(response_class="provider_probe", status_code=status.HTTP_200_OK, content=result)
 
     @router.post("/{provider_id}/test")
     async def test_provider(request: Request, provider_id: str) -> JSONResponse:
@@ -453,7 +450,7 @@ def create_provider_admin_router(
                 state = store.get_provider_admin_state()
                 _provider_state_for_update(state, provider_id)["connection"] = {"reachable": True, "checked_at": result["checked_at"]}
                 store.update_provider_admin_state(data=state, actor=ctx)
-        return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+        return egress.plain_json_response(response_class="provider_probe", status_code=status.HTTP_200_OK, content=result)
 
     @router.put("/{provider_id}/models")
     async def update_provider_models(request: Request, provider_id: str) -> JSONResponse:
@@ -498,7 +495,9 @@ def create_provider_admin_router(
             return _RouteError(exc.status_code, exc.code, exc.message).as_response()
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"provider": provider, "service_registry": engine_redaction.redact_registry(record.get("value") or {})})
+        except ValueError as exc:
+            return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_provider", str(exc)).as_response()
+        return egress.projected_response(status_code=status.HTTP_200_OK, content={"provider": provider, "service_registry": record.get("value") or {}})
 
     @router.delete("/{provider_id}")
     async def remove_provider(request: Request, provider_id: str) -> JSONResponse:
@@ -530,7 +529,7 @@ def create_provider_admin_router(
             return exc.as_response()
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"service_registry": engine_redaction.redact_registry(record.get("value") or {})})
+        return egress.projected_response(status_code=status.HTTP_200_OK, content={"service_registry": record.get("value") or {}})
 
 
     @router.put("/{provider_id}/caps")
@@ -549,7 +548,7 @@ def create_provider_admin_router(
                 provider = _one_provider_payload(store, effective_spending_provider, provider_id)
         except _RouteError as exc:
             return exc.as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"provider": provider})
+        return egress.projected_response(status_code=status.HTTP_200_OK, content={"provider": provider})
 
     @router.delete("/{provider_id}/caps")
     def clear_provider_caps(request: Request, provider_id: str) -> JSONResponse:
@@ -566,7 +565,7 @@ def create_provider_admin_router(
                 provider = _one_provider_payload(store, effective_spending_provider, provider_id)
         except _RouteError as exc:
             return exc.as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"provider": provider})
+        return egress.projected_response(status_code=status.HTTP_200_OK, content={"provider": provider})
 
     @router.put("/-/global-caps")
     async def set_global_caps(request: Request) -> JSONResponse:
@@ -581,7 +580,7 @@ def create_provider_admin_router(
                 store.update_provider_admin_state(data=state, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()
-        return JSONResponse(
+        return egress.projected_response(
             status_code=status.HTTP_200_OK,
             content=_providers_payload(store, effective_spending_provider),
         )
@@ -595,7 +594,7 @@ def create_provider_admin_router(
             state = store.get_provider_admin_state()
             state["global_caps"] = {}
             store.update_provider_admin_state(data=state, actor=ctx)
-        return JSONResponse(
+        return egress.projected_response(
             status_code=status.HTTP_200_OK,
             content=_providers_payload(store, effective_spending_provider),
         )
@@ -918,8 +917,8 @@ def _secret_key_status(status_row: Mapping[str, Any]) -> dict[str, Any]:
     state = str(status_row.get("state") or "missing")
     out: dict[str, Any] = {"state": state, "source": "secret_store"}
     if state == "set":
-        out["display"] = f"Set · ends in …{status_row.get('suffix')} · updated"
-        out["suffix"] = status_row.get("suffix")
+        # Nothing of the key is shown, not even its last characters (decision D26).
+        out["display"] = "Set"
         out["updated_at"] = status_row.get("updated_at")
     return out
 
@@ -975,15 +974,8 @@ def _expected_registry_generation(
 
 
 def _registry_conflict_response() -> JSONResponse:
-    return JSONResponse(
-        status_code=status.HTTP_409_CONFLICT,
-        content={
-            "error": {
-                "code": "service_registry_conflict",
-                "message": "The service registry changed. Refresh and try again.",
-            }
-        },
-    )
+    return egress.safe_error_response(
+        status.HTTP_409_CONFLICT, "service_registry_conflict", "The service registry changed. Refresh and try again.")
 
 
 def _merge_provider_price_config(
@@ -1360,10 +1352,8 @@ def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResp
     except AdminAuthError as exc:
         return _auth_error_response(exc)
     if not isinstance(ctx, AdminContext):
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"error": {"code": "admin_auth_invalid", "message": "admin auth callable must return AdminContext"}},
-        )
+        return egress.safe_error_response(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "admin_auth_invalid", "admin auth callable must return AdminContext")
     if not ctx.is_admin:
         return _auth_error_response(
             AdminAuthError(
@@ -1395,10 +1385,7 @@ def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResp
 
 
 def _auth_error_response(exc: AdminAuthError) -> JSONResponse:
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"error": {"code": exc.code, "message": exc.message}},
-    )
+    return egress.safe_error_response(exc.status_code, exc.code, exc.message)
 
 
 async def _read_json_body(request: Request) -> dict[str, Any]:

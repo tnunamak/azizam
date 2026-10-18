@@ -50,6 +50,27 @@ with the permission off, stale recipes are terminated. A one-time migration turn
 the permission on for installs that already declare command, process or systemd
 lifecycles and writes an audit entry that names them. New installs stay off.
 
+**Recovery when the schema 2 migration refuses a record.** The migration keeps a
+record's own `process` block whole. It refuses a service that holds two sources
+that both run a command: a `process` block and a `lifecycle` block, or a
+top-level `process` block and a different `config.process` block. The refusal
+leaves that one service out and does not stop the gateway. The migration migrates
+every other service, leaves the refused record as stored, and adds a
+`migration_refused` field that holds the message. The message names the service
+and the two blocks, and holds no command or environment value. The audit entry
+`operator.engine_record_v2.migrate` lists the left-out service ids.
+
+A record with a `migration_refused` field does not validate. It is a left-out
+record like any other: at boot the gateway serves the stored services that
+validate, the Overview shows "The stored service registry is only partly
+applied" with the left-out service named, and the Services page lists it under
+"Left out" with an error that says which two blocks conflict (the error is
+rebuilt from the record's blocks, never read from the stored field). To
+recover, press Edit on that record, decide which block should run the engine and
+delete the other, delete the `migration_refused` field, and save (values shown
+as `<redacted>` or `[redacted]` keep their stored value). The save applies
+the record at once. Two equal blocks need no action.
+
 **systemd `KillMode`.** When the gateway itself runs as a systemd unit with the
 default `KillMode=control-group`, stopping or restarting that unit kills every
 process in its cgroup, including the engines this driver started in their own

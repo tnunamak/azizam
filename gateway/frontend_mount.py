@@ -48,6 +48,8 @@ WEBSOCKET = "WEBSOCKET"
 # A record the registry reader set aside (a stored record that claims a builtin's id) carries the reason
 # under this key. It mounts nothing, and its frontend is reported as broken with that reason.
 MOUNT_PROBLEM = "mount_problem"
+# The status key of a stored record that is set aside for taking a builtin's id (the builtin keeps the bare id).
+STORED_COPY_PREFIX = "stored:"
 
 # The translators a package, UI or imported row may name. Every other translator reaches code that
 # only builtin rows may mount: provider-native and native forward to engines, gateway and realtime
@@ -518,13 +520,17 @@ def _status_of(records: list[Mapping[str, Any]], problems: list[RowProblem]) -> 
             else "disabled" if record.get("enabled") is False
             else "broken" if frontend_errors else "mounted"
         )
-        status.append({
+        item = {
             "id": frontend_id,
             "name": str(record.get("name") or frontend_id),
             "source": str(record.get("source") or ""),
             "status": state,
             "errors": frontend_errors,
-        })
+        }
+        if record.get(MOUNT_PROBLEM):
+            # The seed that mounts under this id has its own entry, so this one takes its own key.
+            item.update({"id": f"{STORED_COPY_PREFIX}{frontend_id}", "shadows": frontend_id})
+        status.append(item)
     return status
 
 

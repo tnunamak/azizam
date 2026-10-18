@@ -1,0 +1,112 @@
+"""Decision D32 (e): two configurations that differ only in secret bytes give identical management outputs.
+
+A secret changes only through a command (decision D27), and the entry that holds it keeps its id. So the test plants
+canaries, reads every GET route as the owner, replaces every secret with different bytes through the replace commands (and
+the provider key route), reads every route again, and requires the two readings to be byte-identical once the approved
+differences (the revision of the registry and the times a change was made) are set aside. It is stronger than searching
+for a literal: it fails for a secret that influences a public field, an ordering, a length or an error text.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+
+import pytest
+
+from gateway import admin_store
+from tests.support import canary
+from tests.test_admin_secret_sweep import host_isolated, sweep_get_routes  # noqa: F401
+from tests.test_secret_canary_matrix import REGISTRY, _etag, _plant
+from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin  # noqa: F401
+
+M = canary.MARKERS
+EPOCH = re.compile(r"\b1[5-9]\d{8}(?:\.\d+)?\b")
+VOLATILE_KEYS = {"updated_at", "created_at", "checked_at", "operator_settings_generation", "etag", "request_id", "latency_ms"}
+
+
+def _normalize(text: str) -> str:
+    """The reading with the approved differences set aside: a revision number and the time of a change."""
+    def clean(value):
+        if isinstance(value, dict):
+            return {key: clean(item) for key, item in value.items() if key not in VOLATILE_KEYS}
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        return value
+
+    try:
+        return json.dumps(clean(json.loads(text)), sort_keys=True)
+    except ValueError:
+        return EPOCH.sub("<time>", text)
+
+
+# Routes whose answer is not a function of the stored configuration: a history (it grows with every change made, including
+# the replacement this test makes) or live counters (uptime, drain state). Each with its reason.
+NOT_A_FUNCTION_OF_STATE = {
+    "/admin/api/audit": "the audit log grows with every change, the replacement included",
+    "/admin/api/audit-events": "the audit log grows with every change, the replacement included",
+    "/admin/api/drain": "live drain state", "/admin/api/status": "live counters", "/status/raw": "live counters",
+    "/status/raw/": "live counters", "/v1/status": "live counters",
+}
+
+
+def _reading(gateway, owner) -> dict[str, str]:
+    from tests.test_admin_secret_sweep import _fill, _get_routes, EXCLUDED_ROUTES
+
+    out: dict[str, str] = {}
+    for path in _get_routes(gateway.proxy.app):
+        if path in EXCLUDED_ROUTES or path in NOT_A_FUNCTION_OF_STATE:
+            continue
+        response = owner.get(_fill(path))
+        out[path] = f"{response.status_code} {_normalize(response.text)}"
+    return out
+
+
+def _replace_every_secret(owner) -> int:
+    """Replace the bytes of every secret entry of every service by a command that names its id, and the provider key."""
+    changed = 0
+    registry = owner.get(REGISTRY).json()["service_registry"]["services"]
+    for service_id, record in registry.items():
+        commands = []
+
+        def entries(carrier, items):
+            for item in items:
+                if isinstance(item, dict) and item.get("configured") is not None and "id" in item and "value" not in item:
+                    commands.append({"carrier": carrier, "operation": "replace", "entry_id": item["id"], "value": f"REPLACED-{len(commands)}-{item['id'][-6:]}"})
+
+        entries("config.headers", record.get("config", {}).get("headers") or [])
+        for name, item in (record.get("config", {}).get("env") or {}).items():
+            entries("config.env", [item])
+        if commands:
+            response = owner.post(f"/admin/api/operator/services/{service_id}/secret-entries", headers=_etag(owner), json={"commands": commands})
+            assert response.status_code == 200, response.text
+            changed += len(commands)
+    key = owner.put("/admin/api/providers/provider-a/key", headers=csrf_for(owner), json={"api_key": "sk-or-v1-REPLACEDprovider0009abcdef"})
+    assert key.status_code == 200, key.text
+    return changed + 1
+
+
+def test_replacing_every_secret_with_different_bytes_changes_no_management_output(gateway, host_isolated, tmp_path, monkeypatch) -> None:
+    owner, *_ = owner_and_admin(gateway)
+    _plant(gateway, owner, tmp_path, monkeypatch)
+    before = _reading(gateway, owner)
+
+    changed = _replace_every_secret(owner)
+    after = _reading(gateway, owner)
+
+    assert changed >= 4, "the control must replace a secret of each kind it can"
+    assert set(before) == set(after)
+    differing = sorted(path for path in before if before[path] != after[path])
+    assert not differing, f"outputs that depend on a secret's bytes: {differing}"
+    assert len(before) > 100 and sum(1 for text in before.values() if text.startswith("200 ")) > 40
+
+
+def test_the_reading_does_change_when_a_public_field_changes(gateway, host_isolated, tmp_path, monkeypatch) -> None:
+    """A control for the comparison itself: it must be able to see a difference."""
+    owner, *_ = owner_and_admin(gateway)
+    _plant(gateway, owner, tmp_path, monkeypatch)
+    before = _reading(gateway, owner)
+    renamed = owner.patch("/admin/api/operator/services/matrix-engine", headers=_etag(owner), json={"name": "A different public name"})
+    assert renamed.status_code == 200, renamed.text
+    after = _reading(gateway, owner)
+    assert before[REGISTRY] != after[REGISTRY]

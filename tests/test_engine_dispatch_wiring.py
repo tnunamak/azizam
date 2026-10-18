@@ -23,6 +23,7 @@ import pytest
 from litellm import Router
 
 import proxy
+from gateway import admin_store, litellm_runtime, record_carriers, runtime_secrets, secret_refs
 from gateway.engine_admin import build_raw, clean_values
 from gateway.engine_definitions import load_engine_catalog
 from gateway.litellm_substrate import compile_litellm_config_from_registry, engine_headers, router_reply_timeout
@@ -46,8 +47,23 @@ def _registry(address: str, **values) -> dict:
     return {"schema_version": 1, "services": {"garage-gpu": service_from_backend_config("garage-gpu", raw, source="ui")}}
 
 
+@pytest.fixture(autouse=True)
+def secret_database(tmp_path):
+    """The records below are written the way a write stores them: header values go to the store, the router config
+    resolves them (decision D26), so the request that reaches the engine carries the value the owner typed."""
+    path = tmp_path / "secrets" / "admin.db"
+    path.parent.mkdir()
+    admin_store.init_db(path)
+    runtime_secrets.configure(path)
+    yield path
+    runtime_secrets.configure(None)
+
+
 def _entry(registry: dict) -> dict:
-    compiled = compile_litellm_config_from_registry(registry)
+    put = secret_refs.putter(secret_refs.database())
+    registry = {**registry, "services": {sid: record_carriers.externalize_service(record, put)[0]
+                                         for sid, record in registry["services"].items()}}
+    compiled = litellm_runtime.compile_executable_config(registry)
     return next(row for row in compiled["model_list"] if row["model_name"] == "garage-chat")
 
 
@@ -126,9 +142,10 @@ def test_the_hop_keeps_its_own_limit_when_the_engine_sets_none_or_a_shorter_one(
 
 
 def test_a_header_stored_by_a_raw_edit_is_sent_only_when_it_is_safe():
-    rows = [{"name": "X-Tenant", "value": "family"}, {"name": "X-Api-Key", "value": "sk-raw"},
-            {"name": "Host", "value": "elsewhere"}, {"name": "X-Bad", "value": "a\r\nX-Injected: 1"},
-            {"name": "bad name", "value": "x"}, {"name": "X-Empty", "value": ""}]
+    rows = [{"name": "X-Tenant", "value": "family", "public": True}, {"name": "X-Api-Key", "value": "sk-raw", "public": True},
+            {"name": "Host", "value": "elsewhere", "public": True}, {"name": "X-Bad", "value": "a\r\nX-Injected: 1", "public": True},
+            {"name": "bad name", "value": "x", "public": True}, {"name": "X-Empty", "value": "", "public": True},
+            {"name": "X-Inline", "value": "written-by-hand"}]  # a value no migration has moved is never sent
     assert engine_headers({"headers": rows}) == {"X-Tenant": "family"}
 
 

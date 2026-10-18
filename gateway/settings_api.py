@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -13,6 +12,8 @@ from fastapi.responses import JSONResponse
 
 from gateway import admin_store, prompt_memory, receipt_store, session_policy
 from gateway.admin_api import AdminAuth, AdminContext, _require_admin
+from gateway import egress
+from gateway.projection import public_json
 
 INSTANCE_SETTING_KEY = "instance_presentation"
 PROMPT_MEMORY_SETTING_KEY = "prompt_memory"
@@ -64,36 +65,6 @@ def _has_pending_purge(value: Any) -> bool:
     elif isinstance(value, (list, tuple)):
         return any(_has_pending_purge(item) for item in value)
     return False
-
-
-def redact_config(value: Any) -> Any:
-    """Redact nested credentials and credential-bearing URLs in runtime data."""
-    if isinstance(value, Mapping):
-        return {
-            str(key): "<redacted>" if re.search(
-                r"secret|password|credential|key|token|authorization|cookie|headers", str(key), re.I
-            ) else redact_config(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [redact_config(item) for item in value]
-    if isinstance(value, str):
-        if re.search(r"\b(?:opk_|oak_|sk-)[A-Za-z0-9_-]+|^Bearer\s|^data:", value, re.I):
-            return "<redacted>"
-        if "://" in value:
-            try:
-                url = urlsplit(value)
-                if url.username or url.password or url.query or url.fragment:
-                    host = url.hostname or ""
-                    if ":" in host:
-                        host = f"[{host}]"
-                    return f"{url.scheme}://{host}" + (f":{url.port}" if url.port else "") + url.path
-            except ValueError:
-                return "<redacted>"
-        return value
-    if value is None or isinstance(value, (bool, int, float)):
-        return value
-    return "<not serializable>"
 
 
 def create_settings_router(*, auth: AdminAuth, admin_path: Path,
@@ -378,7 +349,7 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
     def defaults_response() -> JSONResponse:
         return JSONResponse({"defaults": {"invite_access_plan": admin_store.invite_access_plan(path=admin_path)},
                              "source": "admin.db", "apply_mode": "live",
-                             "aliases": redact_config(config_provider().get("model_aliases", {})), "aliases_writable": False},
+                             "aliases": public_json(config_provider().get("model_aliases", {})), "aliases_writable": False},
                             headers={"Cache-Control": "no-store"})
 
     @router.get("/defaults")
@@ -415,18 +386,18 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         snapshot["instance"] = instance()
         snapshot["receipt_retention"] = {"retention_days": receipt_store.retention_days(admin_path)}
         snapshot["operator_overrides"] = dict(overrides_provider() if overrides_provider else {})
-        return {"config": redact_config(snapshot), "read_only": True, "redacted": True,
+        return {"config": snapshot, "read_only": True, "redacted": True,
                 "export_url": "/admin/api/settings/effective/export"}
 
     @router.get("/effective")
     def get_effective(request: Request):
         ctx = guard(request)
-        return ctx if isinstance(ctx, JSONResponse) else JSONResponse(effective(), headers={"Cache-Control": "no-store"})
+        return ctx if isinstance(ctx, JSONResponse) else egress.projected_response(effective(), headers={"Cache-Control": "no-store"})
 
     @router.get("/effective/export")
     def export_effective(request: Request):
         ctx = guard(request)
-        return ctx if isinstance(ctx, JSONResponse) else JSONResponse(effective(), headers={
+        return ctx if isinstance(ctx, JSONResponse) else egress.projected_response(effective(), headers={
             "Cache-Control": "no-store", "Content-Disposition": 'attachment; filename="gateway-effective-config.json"'})
 
     return router

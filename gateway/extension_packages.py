@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import hmac
 import json
 import shutil
 import subprocess
@@ -24,7 +25,7 @@ import yaml
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
 from gateway.manifests import ManifestError, manifest_identity, validate_manifest
-from gateway import frontend_mount, service_registry
+from gateway import frontend_mount, projection, record_carriers, record_integrity, service_registry
 
 
 MANIFEST_NAME = "extension.yml"
@@ -53,6 +54,15 @@ CODE_BEARING_ADAPTER_KEYS = frozenset(
 )
 
 
+# Every field an index and a package record can hold (``gateway/projection_types.verify`` checks them).
+PACKAGE_INDEX_FIELDS = ("schema_version", "sources", "packages", "updated_at")
+PACKAGE_RECORD_FIELDS = (
+    "id", "name", "version", "enabled", "source", "package_hash", "object_counts", "services", "protocol_frontends",
+    "capabilities", "workflows", "adapters", "translators", "code_objects", "requires_code_trust", "warnings", "updated_at",
+    "installed_records", "installed_records_version", "disabled_states",
+)
+
+
 def empty_extension_package_index() -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -62,22 +72,54 @@ def empty_extension_package_index() -> dict[str, Any]:
     }
 
 
-# A package's install snapshot holds a digest per record, not the record: a record can carry a
-# command or environment secret, and the index is returned to callers. Version 2 is this shape;
-# an entry without the version is a legacy copy and is digested the first time it is read.
-INSTALLED_RECORDS_VERSION = 2
+# A package's install snapshot holds a proof per record, not the record: a record can carry a command or environment
+# value, and the index is returned to callers. Version 3 is a keyed digest (``mac``, an HMAC under a key of the gateway's
+# own, ``gateway/record_integrity.py``) of the record in the form the registry stores it, that is, with secret
+# references and not secrets (decision D26). Version 2 was a bare SHA-256 of the record before D26; it is read only to
+# decide whether a record still matches (the schema 11 migration replaces it), and an entry without a version is a
+# legacy copy that is digested the first time it is read.
+INSTALLED_RECORDS_VERSION = 3
+LEGACY_DIGEST_VERSION = 2
 
 
-def installed_record_digest(record: Mapping[str, Any]) -> str:
-    """Proof that an installed record is unchanged: a digest of its normalized JSON form."""
-    encoded = json.dumps(record, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+def _canonical(record: Mapping[str, Any]) -> bytes:
+    return json.dumps(record, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
 
 
-def installed_records_proof(records_by_kind: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
-    """The install snapshot a package keeps: kind -> id -> {kind, id, sha256}, never the records."""
+def installed_record_digest(record: Mapping[str, Any], key: bytes | None = None) -> str:
+    """Proof that an installed record is unchanged: a keyed digest of its JSON form (a bare SHA-256 with no key, the
+    version 2 form that a legacy entry holds)."""
+    if key is None:
+        return hashlib.sha256(_canonical(record)).hexdigest()
+    return record_integrity.mac(key, _canonical(record))
+
+
+def comparable_record(record: Mapping[str, Any], disabled_state: bool | None) -> dict[str, Any]:
+    """The record as the install wrote it: a disable the package made is undone, an operator's own change is not."""
+    comparable = copy.deepcopy(dict(record))
+    if disabled_state is not None and comparable.get("enabled") is False:
+        comparable["enabled"] = disabled_state
+    return comparable
+
+
+def installed_records_proof(records_by_kind: Mapping[str, Mapping[str, Any]], *, key: bytes) -> dict[str, Any]:
+    """The install snapshot a package keeps: kind -> id -> {kind, id, mac}, never the records."""
     return {
         "installed_records_version": INSTALLED_RECORDS_VERSION,
+        "installed_records": {
+            kind: {
+                record_id: {"kind": kind, "id": record_id, "mac": installed_record_digest(record, key)}
+                for record_id, record in (records_by_kind.get(kind) or {}).items()
+                if isinstance(record, Mapping)
+            }
+            for kind in sorted(DATA_OBJECT_KINDS)
+        },
+    }
+
+
+def _legacy_digest_proof(records_by_kind: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    return {
+        "installed_records_version": LEGACY_DIGEST_VERSION,
         "installed_records": {
             kind: {
                 record_id: {"kind": kind, "id": record_id, "sha256": installed_record_digest(record)}
@@ -92,16 +134,27 @@ def installed_records_proof(records_by_kind: Mapping[str, Mapping[str, Any]]) ->
 def _digest_legacy_installed_records(package: Mapping[str, Any]) -> dict[str, Any]:
     """A package whose snapshot still holds record copies, with each copy replaced by its digest."""
     out = dict(package)
-    if "installed_records" not in out or out.get("installed_records_version") == INSTALLED_RECORDS_VERSION:
+    if "installed_records" not in out or out.get("installed_records_version") in (LEGACY_DIGEST_VERSION, INSTALLED_RECORDS_VERSION):
         return out
     legacy = out.get("installed_records")
     legacy = legacy if isinstance(legacy, Mapping) else {}
-    out.update(installed_records_proof({kind: legacy.get(kind) or {} for kind in DATA_OBJECT_KINDS}))
+    out.update(_legacy_digest_proof({kind: legacy.get(kind) or {} for kind in DATA_OBJECT_KINDS}))
     return out
 
 
 def needs_installed_records_migration(value: Any) -> bool:
     """True when a stored index still holds a record copy, so the one-time migration has work to do."""
+    if not isinstance(value, Mapping) or not isinstance(value.get("packages"), Mapping):
+        return False
+    return any(
+        isinstance(package, Mapping) and "installed_records" in package
+        and package.get("installed_records_version") not in (LEGACY_DIGEST_VERSION, INSTALLED_RECORDS_VERSION)
+        for package in value["packages"].values()
+    )
+
+
+def needs_keyed_digests(value: Any) -> bool:
+    """True when a stored index holds a proof that is not the keyed form: the schema 11 migration re-digests it."""
     if not isinstance(value, Mapping) or not isinstance(value.get("packages"), Mapping):
         return False
     return any(
@@ -139,11 +192,12 @@ def validate_extension_package_source(
     source: Mapping[str, Any],
     *,
     install_root: str | Path | None = None,
+    credentials: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     source_type = str(source.get("type") or source.get("kind") or "local_directory")
     if source_type != "local_directory":
         if source_type in {"git", "github", "git_url"}:
-            return review_git_package_source(source, install_root=install_root)
+            return review_git_package_source(source, install_root=install_root, credentials=credentials)
         return _source_error(source, f"unsupported extension package source type: {source_type}")
 
     path = source.get("path") or source.get("directory")
@@ -156,14 +210,29 @@ def validate_extension_package_source(
         return _source_error(source, str(exc))
 
 
+def _clone_url(source: Mapping[str, Any], url: str, credentials: Mapping[str, Mapping[str, Any]] | None) -> tuple[str, tuple[str, ...]]:
+    """The URL to clone and the credential texts in it: the public ``url`` with the credentials of its source key put back."""
+    if not credentials:
+        return url, ()
+    for key in record_carriers.PACKAGE_SOURCE_URL_KEYS:
+        parts = credentials.get(key)
+        if parts and str(source.get(key) or "").strip() == url:
+            joined = record_carriers.join_url(url, userinfo=parts.get("userinfo"), query=parts.get("query"), fragment=parts.get("fragment"))
+            texts = tuple(text for text in (parts.get("userinfo"), parts.get("fragment"), *(value if value is not None else name for name, value in parts.get("query", ()))) if text)
+            return joined, texts + tuple(item for text in texts for item in text.split(":") if len(item) >= 4)
+    return url, ()
+
+
 def review_git_package_source(
     source: Mapping[str, Any],
     *,
     install_root: str | Path | None = None,
+    credentials: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     url = _git_source_url(source)
     if not url:
         return _source_error(source, "git extension package source requires url or repo")
+    clone_url, secrets = _clone_url(source, url, credentials)
 
     ref = str(
         source.get("resolved_ref")
@@ -178,7 +247,7 @@ def review_git_package_source(
         if install_root is None:
             with tempfile.TemporaryDirectory(prefix="azizam-extension-") as tmp:
                 clone_dir = Path(tmp) / "repo"
-                resolved_ref = _clone_git_source(url, ref, clone_dir)
+                resolved_ref = _clone_git_source(clone_url, ref, clone_dir, public_url=url, secrets=secrets)
                 review = review_local_directory_package(_package_dir_from_clone(clone_dir, subdir))
                 review["resolved_source"] = _resolved_git_source(
                     source,
@@ -195,7 +264,7 @@ def review_git_package_source(
         clone_dir = install_base / _source_cache_key(source, url=url, ref=ref, subdir=subdir)
         if clone_dir.exists():
             shutil.rmtree(clone_dir)
-        resolved_ref = _clone_git_source(url, ref, clone_dir)
+        resolved_ref = _clone_git_source(clone_url, ref, clone_dir, public_url=url, secrets=secrets)
         package_dir = _package_dir_from_clone(clone_dir, subdir)
         review = review_local_directory_package(package_dir)
         review["resolved_source"] = _resolved_git_source(
@@ -208,7 +277,7 @@ def review_git_package_source(
         )
         return review
     except ValueError as exc:
-        return _source_error(source, str(exc))
+        return _source_error(source, projection.scrub_text(str(exc), secrets))
 
 
 def source_reads_gateway_host(source: Mapping[str, Any]) -> bool:
@@ -251,14 +320,24 @@ def _check_git_arguments(url: str, ref: str) -> None:
         raise ValueError("git extension package url cannot name a remote helper")
 
 
-def _clone_git_source(url: str, ref: str, target: Path) -> str:
+def _clone_git_source(url: str, ref: str, target: Path, *, public_url: str | None = None, secrets: tuple[str, ...] = ()) -> str:
+    """Clone ``url`` (which may hold credentials, resolved just now) and leave the clone pointing at ``public_url``.
+
+    A failure's text is cleaned of ``secrets`` and of URL user info before it is raised.
+    """
     _check_git_arguments(url, ref)
     target.parent.mkdir(parents=True, exist_ok=True)
-    _run_git(["git", "clone", "--depth", "1", "--", url, str(target)])
-    if ref:
-        _run_git(["git", "-C", str(target), "fetch", "--depth", "1", "origin", "--", ref])
-        _run_git(["git", "-C", str(target), "checkout", "--detach", "FETCH_HEAD"])
-    return _run_git(["git", "-C", str(target), "rev-parse", "HEAD"]).strip()
+    try:
+        _run_git(["git", "clone", "--depth", "1", "--", url, str(target)])
+        if ref:
+            _run_git(["git", "-C", str(target), "fetch", "--depth", "1", "origin", "--", ref])
+            _run_git(["git", "-C", str(target), "checkout", "--detach", "FETCH_HEAD"])
+        if public_url is not None and public_url != url:
+            # The credentials stay out of the clone's own configuration on disk.
+            _run_git(["git", "-C", str(target), "remote", "set-url", "origin", public_url])
+        return _run_git(["git", "-C", str(target), "rev-parse", "HEAD"]).strip()
+    except ValueError as exc:
+        raise ValueError(projection.scrub_text(str(exc), secrets)) from None
 
 
 def _run_git(cmd: list[str]) -> str:
@@ -466,7 +545,7 @@ def package_registry_snapshot(
         kind: {
             record_id: copy.deepcopy(record)
             for record_id, record in (registry.get(kind) or {}).items()
-            if (record.get("provenance") or {}).get("package_id") == package_id
+            if isinstance(record, Mapping) and (record.get("provenance") or {}).get("package_id") == package_id
         }
         for kind in sorted(DATA_OBJECT_KINDS)
     }
@@ -474,20 +553,26 @@ def package_registry_snapshot(
 
 def _matches_install(
     record: Mapping[str, Any], expected: Mapping[str, Any] | None, package: Mapping[str, Any],
-    disabled_state: bool | None,
+    disabled_state: bool | None, key: bytes | None = None,
 ) -> bool:
     """True when the row is still exactly what the package installed (its disable aside).
 
-    The expected entry is the digest the install stored. The provenance hash and version must
-    also still name this package, so a row that was rewritten under another package does not match.
+    The expected entry is the proof the install stored: a keyed ``mac`` (version 3), or a bare ``sha256`` (version 2, from
+    before secrets became references). The provenance hash and version must also still name this package, so a row that
+    was rewritten under another package does not match.
     """
-    comparable = copy.deepcopy(dict(record))
-    if disabled_state is not None and comparable.get("enabled") is False:
-        comparable["enabled"] = disabled_state
+    comparable = comparable_record(record, disabled_state)
     provenance = record.get("provenance") or {}
+    if expected is None:
+        return False
+    if "mac" in expected:
+        proven = key is not None and isinstance(expected.get("mac"), str) and hmac.compare_digest(
+            expected["mac"], installed_record_digest(comparable, key))
+    else:
+        proven = isinstance(expected.get("sha256"), str) and hmac.compare_digest(
+            expected["sha256"], installed_record_digest(comparable))
     return (
-        expected is not None
-        and expected.get("sha256") == installed_record_digest(comparable)
+        proven
         and provenance.get("package_hash") == package.get("package_hash")
         and provenance.get("package_version") == package.get("version")
     )
@@ -495,7 +580,7 @@ def _matches_install(
 
 def change_package_lifecycle(
     index: Mapping[str, Any], registry: Mapping[str, Any], package_id: str,
-    *, mode: str = "remove", references: Mapping[str, Any] | None = None,
+    *, mode: str = "remove", references: Mapping[str, Any] | None = None, key: bytes | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, str]]]:
     """Compute a lifecycle edit without mutating inputs or trusting provenance alone."""
     if mode not in {"remove", "disable", "enable"}:
@@ -514,7 +599,7 @@ def change_package_lifecycle(
             record_id for record_id, record in records.items()
             if _matches_install(
                 record, (snapshot.get(kind) or {}).get(record_id), package,
-                disabled_states.get(kind, {}).get(record_id),
+                disabled_states.get(kind, {}).get(record_id), key,
             )
         }
         for kind, records in owned.items()
@@ -545,6 +630,8 @@ def change_package_lifecycle(
         # Every row that stays, including an edited row of this package, must not name a target.
         for kind in sorted(DATA_OBJECT_KINDS):
             for record_id, record in (out.get(kind) or {}).items():
+                if not isinstance(record, Mapping):
+                    continue  # a record the registry leaves out (not an object) names nothing
                 # A row's own id names the row; only what it carries can name a removed record.
                 carried = {key: value for key, value in record.items() if key != "id"}
                 if (kind, record_id) not in gone and referenced(carried):
@@ -660,6 +747,9 @@ def review_local_directory_package(package_dir: str | Path) -> dict[str, Any]:
         if isinstance(record, Mapping):
             _check_code_bearing_adapter(record, "protocol_frontends", errors)
             errors.extend(f"{raw_ref}: {problem}" for problem in frontend_mount.package_row_problems(record))
+            errors.extend(f"{raw_ref}: {problem}" for problem in frontend_mount.unroutable_paths(record))
+            if service_registry.normalize_id(record.get("id")) in service_registry.builtin_frontend_ids():
+                errors.append(f"{raw_ref}: protocol frontend {record.get('id')!r} is a builtin frontend; a package cannot replace it")
             protocol_frontends.append(_normalize_protocol_frontend(record))
 
     for raw_ref in _object_refs(objects.get("capabilities"), "objects.capabilities", errors):

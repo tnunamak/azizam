@@ -118,7 +118,7 @@ def test_the_ignored_record_is_reported_as_broken_and_the_builtin_stays_mounted(
 
     status = mounts.prepare(route_registry.mount_frontend_records(registry=registry, proxy_config={})).status
 
-    by_source = {item["source"]: item for item in status if item["id"] == frontend_id}
+    by_source = {item["source"]: item for item in status if frontend_id in (item["id"], item.get("shadows"))}
     assert by_source["ui"]["status"] == "broken"
     assert "builtin" in by_source["ui"]["errors"][0]["message"]
     assert by_source["builtin"]["status"] == "mounted"
@@ -222,4 +222,103 @@ def test_the_admin_api_answers_a_failed_reload_with_a_clear_error():
 
     assert isinstance(response, JSONResponse)
     assert response.status_code == 500
-    assert b"registry_saved_not_applied" in response.body and b"boom" in response.body
+    # The failure is named by its class, never by its text, which may quote what the reload read (decision D31).
+    assert b"registry_saved_not_applied" in response.body and b"RegistryNotApplied" in response.body and b"boom" not in response.body
+
+
+# --- round 4: one status key for each entry --------------------------------------------------------
+
+def test_a_set_aside_stored_record_and_the_builtin_it_shadows_have_different_status_keys():
+    frontend_id = _builtin_id()
+    registry = {"protocol_frontends": {frontend_id: _shadow(frontend_id)}}
+    mounts = frontend_mount.FrontendMounts(FastAPI(), proxy.FRONTEND_TRANSLATORS,
+                                           authenticate=proxy._authenticate_mounted_route)
+
+    status = mounts.prepare(route_registry.mount_frontend_records(registry=registry, proxy_config={})).status
+
+    keys = [item["id"] for item in status]
+    assert len(keys) == len(set(keys)), keys
+    by_key = {item["id"]: item for item in status}
+    assert by_key[frontend_id]["status"] == "mounted" and by_key[frontend_id]["source"] == "builtin"
+    [stored] = [item for item in status if item.get("shadows") == frontend_id]
+    assert stored["status"] == "broken" and stored["id"] != frontend_id
+
+
+def test_every_status_key_is_unique_in_the_live_table():
+    keys = [item["id"] for item in proxy.FRONTEND_MOUNTS.status()]
+    assert len(keys) == len(set(keys))
+
+
+# --- round 4: an imported package is checked for frontends that cannot mount ---------------------
+
+def _package_frontend(frontend_id: str, path: str) -> dict:
+    return {"id": frontend_id, "name": frontend_id, "source": "imported", "enabled": True,
+            "registered_routes": [{"methods": ["GET"], "canonical": path, "translator": "identity",
+                                   "intent": "models.list"}]}
+
+
+def _enable_with(monkeypatch, store: AdminSQLiteStore, *frontends: dict):
+    from gateway import admin_runtime
+
+    ep = admin_runtime.extension_packages
+    review = {"ok": True, "package": {"id": "p", "version": "1"}, "package_hash": "sha256:" + "a" * 64}
+    imported = {"services": {}, "protocol_frontends": {item["id"]: item for item in frontends},
+                "workflows": {}, "capabilities": {}}
+    monkeypatch.setattr(ep, "validate_extension_package_source", lambda *a, **k: dict(review))
+    monkeypatch.setattr(ep, "imported_registry_records", lambda *a, **k: imported)
+    monkeypatch.setattr(store, "write_litellm_config", lambda registry: store.path.parent / "unused.yaml")
+    return store.enable_extension_package(
+        source={"type": "local_directory", "path": "/not-accessed"}, actor=OWNER,
+        expected_generation=_generation(store),
+    )
+
+
+def test_enabling_a_package_whose_frontend_path_the_router_rejects_is_refused(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    with pytest.raises(ValueError, match="nosuch"):
+        _enable_with(monkeypatch, store, _package_frontend("acme", "/x/{p:nosuch}"))
+    assert "acme" not in store.get_service_registry()["protocol_frontends"]
+
+
+def test_enabling_a_package_whose_frontend_takes_a_builtins_id_is_refused(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    with pytest.raises(ValueError, match="builtin"):
+        _enable_with(monkeypatch, store, _package_frontend(_builtin_id(), "/x/mine"))
+
+
+def test_enabling_a_good_package_still_stores_its_frontend(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _enable_with(monkeypatch, store, _package_frontend("acme", "/acme/items"))
+    assert "acme" in store.get_service_registry()["protocol_frontends"]
+
+
+def _write_package(tmp_path, frontend_yaml: str):
+    package_dir = tmp_path / "package"
+    (package_dir / "objects").mkdir(parents=True)
+    (package_dir / "extension.yml").write_text(
+        "schema_version: 1\nkind: extension_package\nid: demo-package\nversion: 0.1.0\n"
+        "objects:\n  protocol_frontends:\n    - path: objects/frontend.yml\n", encoding="utf-8")
+    (package_dir / "objects" / "frontend.yml").write_text(frontend_yaml, encoding="utf-8")
+    return package_dir
+
+
+def test_the_package_review_reports_a_frontend_path_the_router_rejects(tmp_path):
+    from gateway.extension_packages import review_local_directory_package
+
+    review = review_local_directory_package(_write_package(tmp_path, (
+        "id: demo-api\nname: Demo\nprotocol: demo\nsource: imported\n"
+        "registered_routes:\n  - methods: [GET]\n    canonical: /x/{p:nosuch}\n    translator: identity\n"
+        "    intent: models.list\n")))
+    assert review["ok"] is False
+    assert any("nosuch" in error for error in review["errors"]), review["errors"]
+
+
+def test_the_package_review_reports_a_frontend_that_takes_a_builtins_id(tmp_path):
+    from gateway.extension_packages import review_local_directory_package
+
+    review = review_local_directory_package(_write_package(tmp_path, (
+        f"id: {_builtin_id()}\nname: Mine\nprotocol: demo\nsource: imported\n"
+        "registered_routes:\n  - methods: [GET]\n    canonical: /x/mine\n    translator: identity\n"
+        "    intent: models.list\n")))
+    assert review["ok"] is False
+    assert any("builtin" in error for error in review["errors"]), review["errors"]

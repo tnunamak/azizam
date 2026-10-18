@@ -26,6 +26,8 @@ ADDED_PATHS: dict[str, str] = {
                                     "step-up window); tests/test_session_settings_api.py covers it",
     "/auth/api/reauth": "password confirmation for risky owner actions (step-up); tests/test_session_lifecycle.py covers it",
     "/auth/api/sign-out-everywhere": "ends all of a person's sessions; tests/test_session_lifecycle.py covers it",
+    "/admin/api/operator/service-registry/excluded": "fix or remove a record the registry leaves out (decision D22); "
+                                                     "tests/test_excluded_records.py covers it",
     "/me/api/media/remove-missing": "Library 'Remove missing items' (r64), outside the OpenAPI schema; "
                                     "tests/test_library_remove_missing.py covers it",
     "/me/api/media/confirm-folder": "Library 'This is the right media folder' (owner confirm of the media marker, D17), "
@@ -34,6 +36,9 @@ ADDED_PATHS: dict[str, str] = {
 
 
 def _reviewed(path: str | None) -> bool:
+    # The owner's secret commands (decision D27) sit under each service: /admin/api/operator/services/{id}/secret-entries.
+    if path is not None and path.startswith("/admin/api/operator/services/") and path.endswith("/secret-entries"):
+        return True
     return path is not None and any(path == prefix or path.startswith(prefix + "/") for prefix in ADDED_PATHS)
 
 
