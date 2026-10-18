@@ -246,6 +246,12 @@ def test_operation_class_picks_the_credential_class() -> None:
     assert fake.requests[1].headers["authorization"] == "Bearer ctl-secret"
 
 
+@pytest.mark.parametrize("name", ["X-Test\n", "X-Test\r\n", "\nX-Test", "X Test", "X-Test:", ""])
+def test_a_connection_header_name_is_a_plain_token_with_no_line_break(name: str) -> None:
+    with pytest.raises(ValueError):
+        conn(headers={name: "1"})
+
+
 def test_extra_connection_headers_are_sent_but_credential_like_ones_are_refused() -> None:
     ex, fake = authed({"kind": "none"})
     run(ex.invoke(conn(headers={"X-Client": "home"}), req("x")))

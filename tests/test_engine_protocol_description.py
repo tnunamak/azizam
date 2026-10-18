@@ -116,7 +116,7 @@ def test_a_field_that_names_code_is_refused_by_name(key: str) -> None:
 
 @pytest.mark.parametrize(
     "path",
-    ["models", "http://elsewhere.example/x", "//elsewhere.example/x", "/a/../b", "/a/./b", "/x?y=1", "/x#f", "/a b", "/a\\b"],
+    ["models", "http://elsewhere.example/x", "//elsewhere.example/x", "/a/../b", "/a/./b", "/x?y=1", "/x#f", "/a b", "/a\\b", "/models\n", "/a\n/b"],
 )
 def test_a_request_path_is_a_relative_absolute_path_template(path: str) -> None:
     doc = _minimal()
@@ -130,6 +130,14 @@ def test_a_path_template_placeholder_is_a_plain_name() -> None:
     description.parse_description(doc, source="tiny.yml")
     doc["operations"]["models"]["request"]["path"] = "/jobs/{id.__class__}"
     assert "placeholder" in _problems(doc)
+    doc["operations"]["models"]["request"]["path"] = "/jobs/{id\n}"
+    assert "placeholder" in _problems(doc)
+
+
+def test_a_header_name_in_a_description_has_no_trailing_line_break() -> None:
+    doc = _minimal()
+    doc["operations"]["models"]["request"]["headers"] = {"X-Test\n": "1"}
+    assert "header" in _problems(doc)
 
 
 @pytest.mark.parametrize("name", ["Authorization", "authorization", "X-Api-Key", "Cookie", "Proxy-Authorization", "x-auth-token"])
