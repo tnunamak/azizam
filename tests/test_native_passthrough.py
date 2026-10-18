@@ -9,13 +9,24 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 import proxy
 from gateway import receipt_store
 from tests.support.access import plan_for
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
-from tests.test_runtime_route_policy import AUTH_HEADERS, authenticated_profile
+from tests.test_runtime_route_policy import AUTH_HEADERS, _migrated_model_policy_config, authenticated_profile
+
+# The runtime policy tests run under a config whose services carry the model-policy schema.
+pytestmark = pytest.mark.usefixtures("native_gateway")
+
+
+@pytest.fixture
+def native_gateway():
+    receipt_store.init_db()
+    with patch.object(proxy, "config", _migrated_model_policy_config()):
+        yield
 
 MESSAGES = [{"role": "user", "content": "hi"}]
 BODY = {"model": "demo-chat", "messages": MESSAGES}
@@ -102,7 +113,7 @@ def test_a_plan_without_native_access_is_refused_before_the_engine_is_called(fak
 
     assert response.status_code == 403, response.text
     assert response.json()["error"]["code"] == "not_in_access_plan"
-    assert engine.calls("chat") == []
+    assert engine.requests == []
     assert _new_receipt(before, NATIVE_PATH)["status"] == "denied"
 
 
@@ -118,7 +129,7 @@ def test_a_remote_provider_is_never_served_by_the_native_lane(fake_upstreams, mo
 
     assert response.status_code == 403, response.text
     assert response.json()["error"]["code"] == "native_remote_forbidden"
-    assert engine.calls("chat") == []
+    assert engine.requests == []
 
 
 def test_the_native_lane_is_off_unless_the_engine_record_enables_it(fake_upstreams, monkeypatch):
@@ -131,4 +142,4 @@ def test_the_native_lane_is_off_unless_the_engine_record_enables_it(fake_upstrea
         assert response.status_code == 404, response.text
         assert response.json()["error"]["code"] == "native_not_enabled"
 
-    assert engine.calls("chat") == []
+    assert engine.requests == []
