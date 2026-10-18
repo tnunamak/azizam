@@ -849,4 +849,69 @@ describe("Home audit component behavior", () => {
     await userEvent.click(await screen.findByRole("option", { name: /Browser test app/ }));
     expect(screen.getByLabelText("Paste your API Key (Optional)")).toBeVisible();
   });
+  describe("the owner's next step on a gateway with no engine", () => {
+    const service = (id: string, source: string) => ({
+      id,
+      name: id,
+      kind: "provider",
+      source,
+      enabled: true,
+      editable: true,
+      capabilities: [],
+      config: {},
+    });
+    // The capabilities exist but nothing serves them: every one reads Unknown.
+    function mockHome(services: Record<string, unknown>) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          const path = String(input);
+          if (path === "/me/api/home")
+            return Response.json({
+              ...home,
+              receipts: [],
+              capabilities: [
+                {
+                  capability: "image",
+                  icon_key: "image",
+                  model: "flux",
+                  use_name: "flux",
+                  available: false,
+                  status: "unknown",
+                  reason_code: "unknown",
+                  availability: { available: false, status: "unknown", evidence: { kind: "unknown" } },
+                },
+              ],
+            });
+          if (path === "/me/api/media?limit=12")
+            return Response.json({ assets: [] });
+          if (path === "/admin/api/operator/service-registry")
+            return Response.json({
+              service_registry: { schema_version: 1, services },
+            });
+          throw new Error(`Unexpected request: ${path}`);
+        }),
+      );
+    }
+
+    it("leads the owner to Add an engine when only the built-in services exist", async () => {
+      mockHome({
+        litellm: service("litellm", "builtin"),
+        openrouter: service("openrouter", "builtin"),
+      });
+      renderHome();
+      const link = await screen.findByRole("link", { name: "Add an engine" });
+      expect(link).toHaveAttribute("href", expect.stringMatching(/^\/engines\/?$/));
+    });
+
+    it("keeps Open Status once the owner has added an engine", async () => {
+      mockHome({
+        litellm: service("litellm", "builtin"),
+        "my-engine": service("my-engine", "ui"),
+      });
+      renderHome();
+      expect(await screen.findByRole("link", { name: "Open Status" })).toBeVisible();
+      expect(screen.queryByRole("link", { name: "Add an engine" })).toBeNull();
+    });
+  });
 });

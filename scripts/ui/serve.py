@@ -22,6 +22,9 @@ ENGINE_PORT = int(EXTERNAL_UPSTREAM_PORT) if EXTERNAL_UPSTREAM_PORT else PORT + 
 SEED_PROFILE = os.environ.get('UI_SEED_PROFILE', '')
 if SEED_PROFILE not in ('', 'household'):
     raise SystemExit('UI_SEED_PROFILE must be household or unset')
+# The shipped first-run config (no backends) instead of the fixture's: the
+# instance a new operator starts with, for web/e2e/first-run.spec.ts.
+FIRST_RUN = os.environ.get('UI_E2E_FIRST_RUN') == '1'
 SEED_SCENARIO = os.environ.get('UI_HOUSEHOLD_SCENARIO', 'default')
 if not 18000 <= PORT < 18999:
     raise SystemExit('UI_E2E_PORT must be between 18000 and 18998')
@@ -48,14 +51,19 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
     home.mkdir()
     (state / 'images').mkdir()
     config = state / 'config.yml'
-    # Backend definitions are seed data, not engine-specific implementation.
-    disabled = '\n'.join(f'  {name}: {{enabled: false, host: 127.0.0.1, port: {ENGINE_PORT}}}'
-                         for name in ('kobold', 'comfyui', 'embeddings'))
-    config.write_text(f'proxy:\n  host: 127.0.0.1\n  port: {PORT}\nbackends:\n{disabled}\n  litellm: {{enabled: true, base_url: "http://127.0.0.1:{ENGINE_PORT}", host: 127.0.0.1, port: {ENGINE_PORT}}}\n'
-                      'admin:\n  oidc:\n    cookie:\n      secure: false\n'
-                      'model_aliases:\n  chat:\n    stable:\n      fast: demo-chat\n'
-                      f'images:\n  cache_dir: {state / "images"}\n  vram_estimates_file: {state / "vram.json"}\n'
-)
+    if FIRST_RUN:
+        import yaml
+        document = yaml.safe_load((REPO / 'first-run.yml').read_text())
+        document['proxy']['port'] = PORT
+        config.write_text(yaml.safe_dump(document))
+    else:
+        # Backend definitions are seed data, not engine-specific implementation.
+        disabled = '\n'.join(f'  {name}: {{enabled: false, host: 127.0.0.1, port: {ENGINE_PORT}}}'
+                             for name in ('kobold', 'comfyui', 'embeddings'))
+        config.write_text(f'proxy:\n  host: 127.0.0.1\n  port: {PORT}\nbackends:\n{disabled}\n  litellm: {{enabled: true, base_url: "http://127.0.0.1:{ENGINE_PORT}", host: 127.0.0.1, port: {ENGINE_PORT}}}\n'
+                          'admin:\n  oidc:\n    cookie:\n      secure: false\n'
+                          'model_aliases:\n  chat:\n    stable:\n      fast: demo-chat\n'
+                          f'images:\n  cache_dir: {state / "images"}\n  vram_estimates_file: {state / "vram.json"}\n')
     env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': str(home),
            'PYTHONPATH': str(REPO), 'PYTHONDONTWRITEBYTECODE': '1',
            'AZIZAM_CONFIG_PATH': str(config), 'AZIZAM_GRACEFUL_SHUTDOWN_S': '1',

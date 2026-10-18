@@ -21,7 +21,7 @@ import { formatAppName } from "@/lib/format";
 import { useViewer } from "@/components/shell/session";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { keyPromptNote } from "@/lib/prompt-memory";
-import { ApiError } from "@/lib/api";
+import { api, ApiError, queryKeys } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1410,6 +1410,18 @@ export default function HomePage() {
     viewer.admin,
   );
   const model = useCapabilityViews(isOwner);
+  // The same registry the capability views read (one cached request). Only the
+  // gateway's built-in services: the owner has not added an engine, and Status
+  // cannot say what to do, so Home points at Engines.
+  const { data: registry } = useQuery({
+    queryKey: queryKeys.serviceRegistry,
+    queryFn: api.services.registry,
+    enabled: isOwner,
+  });
+  const noEngineAdded =
+    isOwner &&
+    registry != null &&
+    Object.values(registry.services).every((service) => service.source === "builtin");
   const views = model.views;
   const verdict = model.verdict;
   const refusal = activeCapRefusal(model.requests);
@@ -1492,7 +1504,15 @@ export default function HomePage() {
               checkedAt={verdict.checkedAt}
               unconfirmed={verdict.unconfirmed}
             >
-              {verdict.problems.length ? (
+              {noEngineAdded ? (
+                <Link prefetch={false}
+                  href="/engines/"
+                  className="text-link inline-flex items-center gap-0.5 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
+                >
+                  Add an engine
+                  <ChevronRight aria-hidden="true" className="size-4" />
+                </Link>
+              ) : verdict.problems.length ? (
                 // Members too: on a phone Status is under More, so the
                 // warning itself leads to its explanation (red team round 2).
                 <Link prefetch={false}

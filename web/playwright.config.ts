@@ -9,12 +9,17 @@ import path from "node:path";
 //   seed or write under their own namespace (e2e/fixtures/isolation.ts).
 // - `chromium-global-state` on UI_E2E_PORT + 10 runs the @global-state tests
 //   one at a time, beside the parallel project, on a server of their own.
+// - `chromium-first-run` on UI_E2E_PORT + 70 runs first-run.spec.ts against a
+//   gateway that no global setup touched: no owner, no engine (the first-run
+//   release bar). It is not seeded and has no storage state.
 // Each gateway pair owns ten ports: gateway +0, fake engine +1, probes +2..+9.
 const port = Number(process.env.UI_E2E_PORT ?? "18180");
 const globalPort = port + 10;
 // A second serial server sits past the pool's extra servers (+40, +50).
 const secondGlobalPort = port + 60;
-if (!Number.isInteger(port) || port < 18000 || secondGlobalPort + 9 > 18998) {
+// The fresh gateway for first-run.spec.ts sits after the second global-state one.
+const firstRunPort = port + 70;
+if (!Number.isInteger(port) || port < 18000 || firstRunPort + 9 > 18998) {
   throw new Error("UI_E2E_PORT must be an integer from 18000 to 18979");
 }
 // The parallel pool may span 1-3 gateways: one gateway is one Python process,
@@ -61,7 +66,7 @@ const python =
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 // Other configs own these files. A project's own testIgnore replaces this
 // list, so every project that sets one repeats it.
-const CONFIG_IGNORE = ["**/live-data-*.spec.ts", "**/sweep/**"];
+const CONFIG_IGNORE = ["**/live-data-*.spec.ts", "**/sweep/**", "**/first-run.spec.ts"];
 const GLOBAL_STATE = /@global-state/;
 // Files whose cases sign in to Try. The gateway mints one Try key per sign-in
 // and revokes that session's older Try keys, and every worker on a server
@@ -75,11 +80,12 @@ const TRY_FILES = [
   "**/bugfix-actions.spec.ts",
 ];
 
-function server(gatewayPort: number, name: string) {
+function server(gatewayPort: number, name: string, extraEnv: Record<string, string> = {}) {
   const strictEnginePorts = Array.from({ length: 8 }, (_, index) => String(gatewayPort + 2 + index));
   return {
     command: `${quote(python)} ../scripts/ui/serve.py`,
     env: {
+      ...extraEnv,
       UI_E2E_PORT: String(gatewayPort),
       UI_E2E_ALLOWED_PORTS: [process.env.UI_E2E_ALLOWED_PORTS, ...strictEnginePorts]
         .filter((value) => value !== undefined && value !== "")
@@ -121,6 +127,7 @@ export default defineConfig({
     ...poolPorts.map((poolPort, index) => server(poolPort, `parallel-${index}`)),
     server(globalPort, "global-state"),
     ...(globalServers === 2 ? [server(secondGlobalPort, "global-state-2")] : []),
+    server(firstRunPort, "first-run", { UI_E2E_FIRST_RUN: "1" }),
   ],
   projects: [
     // Listed first: Playwright hands out test groups in project order, so the
@@ -173,6 +180,16 @@ export default defineConfig({
         baseURL: `http://127.0.0.1:${port}`,
         storageState: `${results}/auth-${port}.json`,
       },
+    },
+    // The fresh gateway: global setup skips it (metadata.fresh), so the test
+    // starts where a new operator does, at /setup with no owner.
+    {
+      name: "chromium-first-run",
+      testMatch: "**/first-run.spec.ts",
+      testIgnore: [],
+      metadata: { fresh: true },
+      workers: 1,
+      use: { baseURL: `http://127.0.0.1:${firstRunPort}` },
     },
     // Seed-only projects for the pool's extra servers: they run no test of their
     // own, but global setup seeds one owner on every project's server.

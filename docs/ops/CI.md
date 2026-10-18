@@ -203,7 +203,9 @@ interrupted run, lock waiting, and a killed controller.
   categories or providers. `SECOND_GLOBAL_FILES` in `web/playwright.config.ts`
   names the files that run on the second server (23 cases); any other file,
   including a new one, runs on the first. The two projects are listed before
-  `chromium`, so they start with the pool and run beside it. The live-data
+  `chromium`, so they start with the pool and run beside it. `chromium-first-run`
+  (`BASE+80`, one case) runs `first-run.spec.ts` on a gateway that global setup
+  does not seed: no owner, no engine. The live-data
   (`BASE+30`) and household (`BASE+40`) runs start at the same time. One
   gateway is one Python process: with 6 or 10 workers on a single gateway the
   run took 930-1000 s and failed on timeouts. Each server is one gateway and one

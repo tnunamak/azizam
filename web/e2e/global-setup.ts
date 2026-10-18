@@ -3,7 +3,8 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { buildOracle } from "./fixtures/oracle";
 
-// Each fixture gateway in the config (one per distinct project baseURL) gets
+// Each fixture gateway in the config (one per distinct project baseURL, except a
+// fresh one: project metadata `fresh`) gets
 // the same seed once, before any worker starts: one owner, one engine, one
 // plan, one app with a key, and one real completion.
 export default async function setup(config: FullConfig) {
@@ -12,6 +13,8 @@ export default async function setup(config: FullConfig) {
   process.env.UI_E2E_RUN_ID ??= Date.now().toString(36);
   const servers = new Map<string, string>();
   for (const project of config.projects) {
+    // A fresh gateway is the test's own to set up (first-run.spec.ts).
+    if (project.metadata?.fresh) continue;
     const { baseURL, storageState } = project.use;
     if (typeof baseURL !== "string" || typeof storageState !== "string")
       throw new Error(`Project ${project.name} needs a baseURL and a storage-state file path`);

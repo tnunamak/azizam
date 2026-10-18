@@ -307,7 +307,7 @@ def check_hygiene(root: Path, files: list[str], budgets: dict) -> tuple[list[str
 
 BARE_TEST_IMPORT = re.compile(r"import\s*\{[^}]*\btest\b[^}]*\}\s*from\s*[\"']@playwright/test[\"']")
 # These run against other fixture servers and keep Playwright's own `test`.
-OWN_FIXTURE_SPECS = ("web/e2e/live-data-", "web/e2e/sweep/")
+OWN_FIXTURE_SPECS = ("web/e2e/live-data-", "web/e2e/sweep/", "web/e2e/first-run.spec.ts")
 
 
 def check_fixture_import(root: Path, files: list[str]) -> list[str]:
