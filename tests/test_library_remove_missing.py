@@ -356,9 +356,10 @@ class RemoveMissingTests(unittest.TestCase):
     def test_later_pages_do_not_recount_the_folder(self) -> None:
         self.seed()
         self.unconfirm_folder()
-        self.current_user = self.owner
+        # Alice owns the seeded entries, so her own Library has a second page.
         first = self.client.get("/me/api/media", params={"limit": 1}).json()
         self.assertEqual(first["media_folder"]["state"], "unconfirmed")
+        self.assertIsNotNone(first["next_cursor"])
         second = self.client.get("/me/api/media", params={"limit": 1, "cursor": first["next_cursor"]})
         self.assertEqual(second.status_code, 200, second.text)
         self.assertIsNone(second.json()["media_folder"])
