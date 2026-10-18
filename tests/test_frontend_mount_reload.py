@@ -267,9 +267,10 @@ def test_a_reload_that_cannot_mount_leaves_the_old_config_and_routes_serving(liv
     def failing(*args, **kwargs):
         raise RuntimeError("mount failed")
 
-    monkeypatch.setattr(proxy.FRONTEND_MOUNTS, "prepare", failing)
-    with pytest.raises(RuntimeError, match="mount failed"):
-        proxy.reload_runtime_config()
+    with monkeypatch.context() as patched:
+        patched.setattr(proxy.FRONTEND_MOUNTS, "prepare", failing)
+        with pytest.raises(RuntimeError, match="mount failed"):
+            proxy.reload_runtime_config()
 
     assert proxy.config is config_before
     assert proxy.app.router.routes == routes_before
