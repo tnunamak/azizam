@@ -32,7 +32,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, category_enforcement, engine_redaction, secret_store, service_registry, transforms
+from gateway import admin_store, category_enforcement, egress, projection, secret_commands, secret_store, service_registry, transforms
 from gateway.access_plans import PlanError, plan_from_document
 from gateway.engine_access import who_can_use
 from gateway.engine_check import (
@@ -84,13 +84,13 @@ class EngineRouteError(Exception):
         self.headers = dict(headers or {})
 
     def as_response(self) -> JSONResponse:
-        error: dict[str, Any] = {"code": self.code, "message": self.message}
+        error: dict[str, Any] = {"code": self.code, "message": projection.scrub_text(self.message)}
         if self.field:
             error["field"] = self.field
         content: dict[str, Any] = {"error": error}
         if self.check is not None:
             content["check"] = dict(self.check)
-        return JSONResponse(status_code=self.status_code, content=content, headers=self.headers)
+        return egress.plain_json_response(status_code=self.status_code, content=content, headers=self.headers)
 
 
 def _probe_limit(name: str, default: int) -> int:
@@ -209,7 +209,7 @@ def _clean_headers(value: Any) -> list[dict[str, Any]]:
             raise DraftError(f"Header {index + 1} needs a name and a value.", field="headers")
         name = str(row.get("name") or "").strip()
         if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name):
-            raise DraftError(f"Header {index + 1}: “{name}” is not a header name.", field="headers")
+            raise DraftError(f"Header {index + 1}: that is not a header name.", field="headers")
         value_text = str(row.get("value") or "")
         problem = "credential" if row.get("secret") else header_problem(name, value_text or "x")
         if problem == "transport":
@@ -290,7 +290,7 @@ def clean_values(definition: Mapping[str, Any], values: Mapping[str, Any]) -> di
     fields = {f["key"]: f for f in definition["fields"]}
     unknown = sorted(set(values) - set(fields))
     if unknown:
-        raise DraftError(f"This kind of server has no field called {unknown[0]!r}.", field=unknown[0])
+        raise DraftError("This kind of server has no field with one of the names sent.", field="values")
     out = {key: copy.deepcopy(value) for key, value in values.items()}
     out["address"] = normalize_address(values.get("address"), placeholder=fields["address"].get("placeholder", ""))
     prefix = str(values.get("path_prefix") or "").strip()
@@ -360,7 +360,7 @@ def resolve_key(values: Mapping[str, Any], ctx: Any, *, record: Mapping[str, Any
             raise _owner_only("Only the owner can read a key from a server environment variable.")
         value = env(env_name)
         if not value:
-            raise DraftError(f"The variable {env_name} is not set on the gateway’s computer.", field="api_key_env")
+            raise DraftError("The variable named for the API key is not set on the gateway’s computer.", field="api_key_env")
         return KeyInput(value, "env")
     value, source, origin = _stored_key(record, db_path=db_path, env=env)
     if source == "none":
@@ -464,9 +464,9 @@ def build_raw(
 ) -> dict[str, Any]:
     """The raw service record for ``service_from_backend_config``. ``keep`` holds config keys to carry over."""
     caps = list(dict.fromkeys(capabilities))
-    for cap_id in caps:
+    for position, cap_id in enumerate(caps, start=1):
         if cap_id not in definition["capabilities"]:
-            raise DraftError(f"This kind of server does not offer {cap_id!r}.", field="capabilities")
+            raise DraftError(f"This kind of server does not offer the work at position {position}.", field="capabilities")
     record_caps: list[str] = []
     for cap_id in caps:
         for value in catalog.capability(cap_id)["record_capabilities"]:
@@ -567,10 +567,11 @@ def infer_definition(catalog: EngineCatalog, record: Mapping[str, Any]) -> str:
 
 
 def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: Path) -> dict[str, Any]:
-    """What the record page reads. Everything a caller sees is read from the public projection of the
-    stored record, so no field of the view can carry a secret the projection hides."""
-    record = engine_redaction.public_service_record(stored)
+    """What the record page reads. Everything a caller sees is read from the projection of the stored record
+    (``gateway/projection_types.py``): a secret shows as an entry with an id and a configured flag, never a value."""
+    record = projection.project("ServiceRecord", stored).tree or {}
     config = record.get("config") or {}
+    stored_config = stored.get("config") if isinstance(stored.get("config"), Mapping) else {}
     definition = catalog.definition(infer_definition(catalog, record))
     assert definition is not None
     address = str(config.get("address") or service_registry.service_base_url(config) or "")
@@ -578,14 +579,15 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
     values["api_key_env"] = config.get("api_key_env") or ""
     values["path_prefix"] = config.get("path_prefix") or ""
     values["reply_timeout_s"] = config.get("timeout") or _field_default(definition, "reply_timeout_s", 600)
-    values["headers"] = [{"name": h.get("name"), "value": h.get("value", "")}
-                         for h in config.get("headers") or () if isinstance(h, Mapping) and "value" in h]
+    # A header is an entry: ``{"id", "name", "configured"}``, or ``{"id", "name", "value", "public": true}`` when a
+    # write said it is public. A value is never here for a secret header (decisions D26, D27).
+    values["headers"] = [dict(h) for h in config.get("headers") or () if isinstance(h, Mapping)]
     values["transforms"] = copy.deepcopy(config.get("transforms") or [])
     lifecycle = service_registry.legacy_lifecycle_from_service(record)
     driver_config = lifecycle.get("driver_config") or {}
     if lifecycle.get("driver") == "command":
-        values.update(lifecycle_mode="managed", lifecycle_start=driver_config.get("start", ""),
-                      lifecycle_stop=driver_config.get("stop", ""),
+        values.update(lifecycle_mode="managed", lifecycle_start=_command_view(driver_config.get("start", "")),
+                      lifecycle_stop=_command_view(driver_config.get("stop", "")),
                       lifecycle_ready_s=driver_config.get("health_timeout_s", 120))
     else:
         values["lifecycle_mode"] = "external"
@@ -596,7 +598,7 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
                "context_window": m.get("context_window"), "enabled": m.get("enabled", True),
                "use": model_use.get(m.get("upstream_model"), "")}
               for m in model_rows(config.get("models"))]
-    secret_id = str(config.get("api_key_secret_id") or "")
+    secret_id = str(stored_config.get("api_key_secret_id") or "")
     key: dict[str, Any] = {"state": "none"}
     if secret_id:
         key = {"state": "configured", "source": "stored", "origin": config.get("credential_origin") or ""}
@@ -634,67 +636,18 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
     }
 
 
-def _restore_lifecycle_markers(ctx: Any, values: dict[str, Any], shown: Mapping[str, Any], record: Mapping[str, Any]) -> dict[str, Any]:
-    """Put the stored start and stop commands back behind the markers the page was shown.
-
-    The page shows a command with its credential arguments hidden. A save that leaves every
-    lifecycle field as shown needs nothing (the stored block is kept whole); a save that edits one
-    keeps each marker's stored value, and refuses a marker the stored command does not hold.
-    """
-    if all(str(values.get(key, "")) == str(shown.get(key, "")) for key in _LIFECYCLE_FIELDS):
-        return values
-    stored = service_registry.legacy_lifecycle_from_service(record).get("driver_config") or {}
-    restored = dict(values)
-    for field, source in (("lifecycle_start", "start"), ("lifecycle_stop", "stop")):
-        try:
-            restored[field] = engine_redaction.restore_command(values.get(field), stored.get(source))
-        except ValueError as exc:
-            if not _is_owner(ctx):
-                # The owner gate comes first: the answer must not say whether a secret sits at the marker.
-                raise _owner_only("Only the owner can change how Azizam starts and stops a server.") from None
-            raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=field) from None
-    return restored
+def _command_view(command: Any) -> Any:
+    """A command as the page shows it: a line or a list of arguments, or ``None`` when part of it is a secret entry
+    (the page then cannot edit it as text; the secret-entries commands change it)."""
+    if isinstance(command, list) and any(not isinstance(part, str) for part in command):
+        return None
+    return command
 
 
-def _restore_headers(values: dict[str, Any], stored_config: Mapping[str, Any]) -> dict[str, Any]:
-    """Put back the header values the page was shown as markers.
-
-    A marker keeps the stored value of the header row of the same name, in order. A marker with no
-    stored value to keep (a row renamed with its marker, a literal marker typed by a caller) is refused
-    with a 400.
-    """
-    if not isinstance(values.get("headers"), list):
-        return values
+def _refuse_reserved_texts(values: Mapping[str, Any]) -> None:
+    """A text typed into a field that is one of the reserved marker texts stands for nothing and is refused."""
     try:
-        return {**values, "headers": engine_redaction.restore_headers(values["headers"], stored_config.get("headers"))}
-    except ValueError as exc:
-        raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field="headers") from None
-
-
-def _stored_address_if_unchanged(clean: Mapping[str, Any], values: Mapping[str, Any], shown: Mapping[str, Any],
-                                 stored_config: Mapping[str, Any]) -> dict[str, Any]:
-    """The address to store: the stored one when the page sent back the address it was shown.
-
-    The page shows an address without its user name, password, query and fragment. That form is what
-    the address rules judge; it is the stored address, not its public form, that the engine needs.
-    This runs after the rules, so an engine whose address has a query token can be saved.
-    """
-    stored_address = str(stored_config.get("address") or service_registry.service_base_url(stored_config) or "")
-    if stored_address and values.get("address") == shown.get("address"):
-        return {**clean, "address": stored_address}
-    return dict(clean)
-
-
-def _refuse_literal_markers(values: Mapping[str, Any], shown: Mapping[str, Any] | None = None) -> None:
-    """A marker left in what a caller changed is text the caller typed: there is no stored value behind it.
-
-    A create has nothing shown, so every field counts. An edit counts the fields that differ from what the
-    page was shown (those were restored, so a marker left in them has no stored value).
-    """
-    if shown is not None:
-        values = {key: value for key, value in values.items() if key != "api_key" and value != shown.get(key)}
-    try:
-        engine_redaction.refuse_markers(values, where="the engine")
+        secret_commands.refuse_reserved_texts({k: v for k, v in values.items() if k != "api_key"}, where="the engine")
     except ValueError as exc:
         raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc)) from None
 
@@ -712,29 +665,17 @@ def _caps_from_record(catalog: EngineCatalog, definition: Mapping[str, Any], rec
 
 
 def redacted_record(stored: Mapping[str, Any]) -> dict[str, Any]:
-    """The stored record as the page shows it: the public projection, with secret ids and references shown as set."""
-    record = engine_redaction.public_service_record(stored)
+    """The stored record as the page shows it: the projection, which shows each secret as a configured entry."""
+    record = projection.project("ServiceRecord", stored).tree or {}
     out = copy.deepcopy({k: v for k, v in record.items() if k in _RECORD_KEYS})
     if "lifecycle" not in out:
         out["lifecycle"] = copy.deepcopy(dict(service_registry.legacy_lifecycle_from_service(record)))
-
-    def mask(value: Any) -> Any:
-        if isinstance(value, Mapping):
-            masked = {}
-            for key, item in value.items():
-                lowered = str(key).lower()
-                if lowered.endswith("_secret_id") or lowered == "api_key":
-                    masked[key] = "configured"
-                else:
-                    masked[key] = mask(item)
-            return masked
-        if isinstance(value, list):
-            return [mask(item) for item in value]
-        return value
-
-    out = mask(out)
-    if isinstance(out.get("secret_refs"), Mapping):
-        out["secret_refs"] = {k: "configured" for k in out["secret_refs"]}
+    # The page reads a stored key as the word it has always shown: configured, or nothing.
+    config = out.get("config")
+    if isinstance(config, dict) and isinstance(config.get("api_key_secret_id"), dict):
+        config["api_key_secret_id"] = "configured" if config["api_key_secret_id"].get("configured") else ""
+    if isinstance(out.get("secret_refs"), dict):
+        out["secret_refs"] = {name: "configured" for name in out["secret_refs"]}
     return out
 
 
@@ -848,7 +789,7 @@ class EngineService:
         service_id = body.get("service_id")
         record = (registry.get("services") or {}).get(service_id) if service_id else None
         if service_id and record is None:
-            raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
+            raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", "No engine has that id.")
         _header_credentials_are_the_owners(ctx, body.get("values"))
         clean = clean_values(definition, values)
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
@@ -891,9 +832,9 @@ class EngineService:
         capabilities = body.get("capabilities")
         if not isinstance(capabilities, list) or not all(isinstance(c, str) for c in capabilities):
             raise DraftError("capabilities is a list of what the engine does.", field="capabilities")
-        unknown = [c for c in capabilities if c not in catalog.data["capabilities"]]
+        unknown = [position for position, c in enumerate(capabilities, start=1) if c not in catalog.data["capabilities"]]
         if unknown:
-            raise DraftError(f"No kind of work called {unknown[0]!r}.", field="capabilities")
+            raise DraftError(f"The work at position {unknown[0]} is not a kind of work Azizam knows.", field="capabilities")
         rows = body.get("models")
         if not isinstance(rows, list) or len(rows) > MAX_ACCESS_MODELS:
             raise DraftError("models is a list of the names apps will use.", field="models")
@@ -937,7 +878,7 @@ class EngineService:
         registry = self.store.get_service_registry()
         record = (registry.get("services") or {}).get(service_id)
         if record is None:
-            raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
+            raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", "No engine has that id.")
         catalog = self.catalog()
         view = engine_view(catalog, record, db_path=self.db_path)
         definition = _definition(catalog, view["definition"])
@@ -964,7 +905,7 @@ class EngineService:
         if not name:
             raise DraftError("Give the engine a name.", field="name")
         _header_credentials_are_the_owners(ctx, body.get("values"))
-        _refuse_literal_markers(values)
+        _refuse_reserved_texts(values)
         clean = clean_values(definition, values)
         _admin_limits(ctx, {**values, **clean}, definition, before=None)
         registry = self.store.get_service_registry()
@@ -1009,18 +950,21 @@ class EngineService:
         registry = self.store.get_service_registry()
         record = (registry.get("services") or {}).get(service_id)
         if record is None:
-            raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
+            raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", "No engine has that id.")
         if service_registry.is_litellm_service_record(service_id, record):
             raise EngineRouteError(status.HTTP_403_FORBIDDEN, "service_not_editable", "Azizam runs this engine itself. Only its name and Enabled can change.")
         if not reaches_engine_directly(service_id, record):
             raise EngineRouteError(status.HTTP_409_CONFLICT, "engine_not_editable_here", NOT_EDITABLE_HERE)
         before = engine_view(catalog, record, db_path=self.db_path)
         definition = _definition(catalog, body.get("definition") or before["definition"])
-        values = {**before["values"], **(body.get("values") if isinstance(body.get("values"), Mapping) else {})}
-        values = _restore_lifecycle_markers(ctx, values, before["values"], record)
+        sent = body.get("values") if isinstance(body.get("values"), Mapping) else {}
+        values = {**before["values"], **sent}
+        # What the page was shown for a header or a start and stop command is a read of entries, not text to save:
+        # headers are changed only when the body names them, and the commands only when their text differs.
+        if "headers" not in sent:
+            values["headers"] = []
         stored_config = record.get("config") or {}
-        values = _restore_headers(values, stored_config)
-        _refuse_literal_markers(values, before["values"])
+        _refuse_reserved_texts({key: value for key, value in values.items() if value != before["values"].get(key)})
         if "api_key" not in values:
             values["api_key"] = SECRET_MASK if before["key"]["state"] == "configured" and before["key"].get("source") == "stored" else ""
         _header_credentials_are_the_owners(ctx, body.get("values"))
@@ -1030,7 +974,6 @@ class EngineService:
         disabled = bool(body.get("disabled"))
         enabled = False if disabled else bool(body.get("enabled", before["enabled"]))
         moved = comparable_address(clean["address"]) != comparable_address(before["values"]["address"] or clean["address"])
-        clean = _stored_address_if_unchanged(clean, values, before["values"], stored_config)
         connection_changed = (
             moved
             or (values.get("api_key") not in ("", SECRET_MASK, None))
@@ -1053,7 +996,7 @@ class EngineService:
             check = await run_check(catalog, definition, clean, key=key, fetch=self.fetch, existing=_existing_engines(registry, exclude=service_id),
                                     viewer_role="owner" if _is_owner(ctx) else "admin")
             # The check ran against the stored address; its report must not repeat what the page is not shown.
-            check = engine_redaction.scrub_secrets(check, engine_redaction.address_secrets(clean["address"]))
+            check = projection.scrub_value(check, projection.url_secret_parts(clean["address"]))
             _gate(check, acknowledge_warnings=bool(body.get("acknowledge_warnings")))
             check_summary = _check_summary(check, address=clean["address"], disabled=False)
         elif disabled and connection_changed:
@@ -1201,7 +1144,7 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
             payload = await asyncio.to_thread(lambda: service.catalog().public())
         except EngineRouteError as exc:
             return exc.as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
+        return egress.plain_json_response(status_code=status.HTTP_200_OK, content=payload)
 
     @router.post("/engines/check")
     async def check_engine(request: Request) -> JSONResponse:
@@ -1218,7 +1161,7 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
             if hasattr(exc, "as_response"):
                 return exc.as_response()  # type: ignore[no-any-return]
             raise
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"check": result})
+        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"check": result})
 
     @router.post("/engines/test")
     async def test_engine(request: Request) -> JSONResponse:
@@ -1235,7 +1178,7 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
             if hasattr(exc, "as_response"):
                 return exc.as_response()  # type: ignore[no-any-return]
             raise
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"test": result})
+        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"test": result})
 
     @router.post("/engines/access")
     async def engine_access(request: Request) -> JSONResponse:
@@ -1251,7 +1194,7 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
             if hasattr(exc, "as_response"):
                 return exc.as_response()  # type: ignore[no-any-return]
             raise
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"access": result})
+        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"access": result})
 
     @router.get("/engines/{service_id}")
     async def get_engine(service_id: str, request: Request) -> JSONResponse:
@@ -1262,6 +1205,6 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
             view = await asyncio.to_thread(service.view, service_id, ctx)
         except EngineRouteError as exc:
             return exc.as_response()
-        response = engine_redaction.public_json_response(status_code=status.HTTP_200_OK, content={"engine": view})
+        response = egress.projected_response(status_code=status.HTTP_200_OK, content={"engine": view})
         response.headers["Cache-Control"] = "no-store"
         return response

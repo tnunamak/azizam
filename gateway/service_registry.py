@@ -22,6 +22,7 @@ import hashlib
 import json
 import re
 import time
+from datetime import datetime
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from functools import lru_cache
@@ -30,8 +31,8 @@ from typing import Any
 
 import yaml
 
-from gateway import admin_store, engine_check, engine_redaction, native_lane
-from gateway.provenance import looks_like_credential
+from gateway import admin_store, engine_check, native_lane, projection, record_carriers
+from gateway import secret_refs as _refs
 from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
@@ -50,15 +51,15 @@ DEFAULT_CATALOG_DIR = Path(__file__).resolve().parent.parent / "registry"
 REMOTE_PROVIDER_TYPES = frozenset({"remote", "paid-remote", "cloud"})
 ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-_SECRET_HINTS = (
-    "api_key",
-    "authorization",
-    "client_secret",
-    "credential",
-    "password",
-    "secret",
-    "token",
-)
+# Where a plaintext credential is kept (the secret store, not the record) is decided by the name parts and
+# fields below; what a view shows is decided by the projection types, by structure, not by these.
+_SECRET_HINTS = ("api_key", "authorization", "client_secret", "credential", "password", "secret", "token")
+# Config fields that hold a credential inline. The stored form moves these into ``secret_refs``; a record from an
+# older install or a hand edit may still hold one, and a remote provider may not.
+_INLINE_SECRET_FIELDS = frozenset({
+    "api_key", "authorization", "x_api_key", "client_secret", "password", "secret", "token", "access_token",
+    "bearer_token", "credential",
+})
 
 
 def ensure_service_registry(
@@ -244,33 +245,10 @@ def servable_part_of_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any],
     return registry, {record.name: record.error for record in excluded}
 
 
-def public_excluded_record(item: ExcludedRecord) -> dict[str, Any]:
-    """An excluded record as a caller may read it: the reason and the stored value, with every secret hidden.
-
-    The record failed its checks, so nothing says what it holds. A key or token written into it as text is
-    hidden by name and by shape, and commands and environments by the rules for engine records.
-    """
-    def hide(value: Any) -> Any:
-        if isinstance(value, Mapping):
-            return {
-                key: engine_redaction.REDACTED
-                if is_secret_key(str(key)) and not is_secret_reference_key(str(key)) and isinstance(item_value, (str, int, float)) and item_value != ""
-                else hide(item_value)
-                for key, item_value in value.items()
-            }
-        if isinstance(value, list):
-            return [hide(entry) for entry in value]
-        if isinstance(value, str) and looks_like_credential(value):
-            return engine_redaction.REDACTED
-        return value
-
-    record = item.record
-    if isinstance(record, Mapping):
-        try:
-            record = engine_redaction.public_service_record(record)
-        except Exception:  # noqa: BLE001 - a record of the wrong shape has no command block to hide
-            pass
-    return {"section": item.section, "id": item.id, "error": item.error, "record": hide(record)}
+def registry_error_text(text: str, value: Mapping[str, Any]) -> str:
+    """``text``, an error about a stored registry, without any value a left-out record of it holds."""
+    secrets = [secret for item in read_registry(value)[1] for secret in record_carriers.legacy_secret_texts(item.record)]
+    return projection.scrub_text(text, secrets)
 
 
 def _read_registry(value: Mapping[str, Any], *, strict: bool) -> tuple[dict[str, Any], list[ExcludedRecord]]:
@@ -292,12 +270,19 @@ def _read_registry(value: Mapping[str, Any], *, strict: bool) -> tuple[dict[str,
                     raise ValueError(f"{kind} {raw_key!r} is not an object")
                 if not record_id:
                     raise ValueError(f"{kind} {raw_key!r} has no usable id")
+                if normalize_id(raw_key) != record_id:
+                    # A record under one key that names another id would, once normalized, replace or be replaced by the
+                    # record that has that id, and take its secrets with it: the key and the id must say the same.
+                    raise ValueError(f"{kind} {raw_key!r} names a different id; a record's id must match the key it is stored under")
                 key, record = build(record_id, raw)
+                if key in kept:
+                    raise ValueError(f"{kind} {key!r} is defined twice")
             except Exception as error:  # noqa: BLE001 - one record's refusal never decides the others
                 if strict:
                     raise
                 message = str(error) if isinstance(error, ValueError) else f"{type(error).__name__}: {error}"
-                excluded.append(ExcludedRecord(section, str(raw_key), record_id or str(raw_key), message[:300], copy.deepcopy(raw)))
+                message = projection.scrub_text(message[:300], record_carriers.legacy_secret_texts(raw))
+                excluded.append(ExcludedRecord(section, str(raw_key), record_id or str(raw_key), message, copy.deepcopy(raw)))
                 continue
             kept[key] = record
             if section == "services":
@@ -342,14 +327,10 @@ def _read_registry(value: Mapping[str, Any], *, strict: bool) -> tuple[dict[str,
         _validate_model_policy_graphs(services)
         _validate_public_alias_uniqueness(services)
     else:
-        for _alias, owner, other in _public_alias_conflicts(services):
-            for service_id in (owner, other):
-                if service_id in services:
-                    del services[service_id]
-                    stored_key, stored = stored_services[service_id]
-                    excluded.append(ExcludedRecord(
-                        "services", stored_key, service_id,
-                        "its public model alias is also claimed by another service", copy.deepcopy(stored)))
+        for service_id, why in _later_alias_claimants(services).items():
+            del services[service_id]
+            stored_key, stored = stored_services[service_id]
+            excluded.append(ExcludedRecord("services", stored_key, service_id, why, copy.deepcopy(stored)))
 
     return {
         "schema_version": schema_version,
@@ -452,27 +433,68 @@ def _validate_model_policy_graphs(services: Mapping[str, Mapping[str, Any]]) -> 
             visit(model_id)
 
 
+def _public_aliases(service: Any) -> list[str]:
+    """The public model names (lowercased) a service claims: each alias record's id and model group."""
+    config = service.get("config") if isinstance(service, Mapping) else None
+    records = config.get("models") if isinstance(config, Mapping) else None
+    if not isinstance(records, list):
+        return []
+    names: list[str] = []
+    for record in records:
+        if not isinstance(record, Mapping) or record.get("base_model_id") in (None, ""):
+            continue
+        names.extend(str(public_name or "").strip().lower() for public_name in (record.get("id"), record.get("model_group")))
+    return [name for name in names if name]
+
+
 def _public_alias_conflicts(services: Mapping[str, Mapping[str, Any]]) -> list[tuple[str, str, str]]:
     """(alias, first service, other service) for each public alias two services both claim."""
     owners: dict[str, str] = {}
     conflicts: list[tuple[str, str, str]] = []
     for service_id, service in services.items():
-        config = service.get("config") if isinstance(service, Mapping) else None
-        records = config.get("models") if isinstance(config, Mapping) else None
-        if not isinstance(records, list):
-            continue
-        for record in records:
-            if not isinstance(record, Mapping) or record.get("base_model_id") in (None, ""):
-                continue
-            for public_name in (record.get("id"), record.get("model_group")):
-                alias = str(public_name or "").strip().lower()
-                if not alias:
-                    continue
-                owner = owners.get(alias)
-                if owner is not None and owner != service_id:
-                    conflicts.append((alias, owner, service_id))
-                owners[alias] = service_id
+        for alias in _public_aliases(service):
+            owner = owners.get(alias)
+            if owner is not None and owner != service_id:
+                conflicts.append((alias, owner, service_id))
+            owners[alias] = service_id
     return conflicts
+
+
+def _claim_order(item: tuple[str, Any]) -> tuple[int, float, str]:
+    """Which of two services stored here claimed a public alias first (decision D22).
+
+    The creation time in the service's provenance (``created_at``: seconds, or an ISO 8601 text) comes
+    first; a service with none comes after every service that has one; the id breaks every tie.
+    """
+    service_id, service = item
+    provenance = service.get("provenance") if isinstance(service, Mapping) else None
+    created = provenance.get("created_at") if isinstance(provenance, Mapping) else None
+    if isinstance(created, str):
+        try:
+            created = datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            created = None
+    if isinstance(created, bool) or not isinstance(created, (int, float)):
+        return (1, 0.0, service_id)
+    return (0, float(created), service_id)
+
+
+def _later_alias_claimants(services: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
+    """``{service id: why}`` for each service that claims a public alias an earlier-stored service already holds.
+
+    Services are taken in claim order, and a service that is left out holds no alias, so a clash between it
+    and a third service does not leave the third out.
+    """
+    held: dict[str, str] = {}
+    later: dict[str, str] = {}
+    for service_id, service in sorted(services.items(), key=_claim_order):
+        clash = next(((alias, held[alias]) for alias in _public_aliases(service) if alias in held), None)
+        if clash is not None:
+            later[service_id] = (f"its public model alias {clash[0]!r} is also claimed by service {clash[1]!r}, "
+                                 "which was stored first")
+            continue
+        held.update({alias: service_id for alias in _public_aliases(service)})
+    return later
 
 
 def _validate_public_alias_uniqueness(services: Mapping[str, Mapping[str, Any]]) -> None:
@@ -490,8 +512,25 @@ def backfill_seed_catalog_metadata(
     proxy_config: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Merge new bundled metadata into older DB-owned registry records."""
+    return backfill_normalized_registry(normalize_service_registry(registry), proxy_config=proxy_config)
 
-    out = normalize_service_registry(registry)
+
+def servable_registry_with_backfill(
+    registry: Mapping[str, Any],
+    *,
+    proxy_config: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """``servable_part_of_registry`` with the bundled metadata backfilled into the records that validate.
+
+    A partial boot serves the managed LiteLLM row and every bundled field an older store lacks, as a
+    healthy boot does. Nothing is written: the stored document keeps its left-out records exactly.
+    """
+    servable, left_out = servable_part_of_registry(registry)
+    return backfill_normalized_registry(servable, proxy_config=proxy_config), left_out
+
+
+def backfill_normalized_registry(out: dict[str, Any], *, proxy_config: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """``out`` (an already normalized registry, changed in place) with the bundled metadata merged in."""
     proxy_config = proxy_config or {}
     catalogs = load_seed_catalogs(proxy_config)
     _backfill_missing_records(
@@ -739,7 +778,7 @@ def service_record_v2(record: Mapping[str, Any], *, public: bool = True) -> dict
     probe path with a query token); migration reads the stored values with ``public=False``.
     """
     if public:
-        record = engine_redaction.public_service_record(record)
+        record = projection.project("ServiceRecord", record).tree or {}
     service_id = str(record.get("id") or "")
     config = record.get("config") if isinstance(record.get("config"), Mapping) else {}
     system = is_litellm_service_record(service_id, record)
@@ -774,7 +813,7 @@ def service_record_v2(record: Mapping[str, Any], *, public: bool = True) -> dict
     process = record.get("process") if isinstance(record.get("process"), Mapping) else _v2_process(lifecycle)
     if process is not None and public:
         # The projected block narrowed to an allow-list of fields. It is never a copy of what the gateway runs.
-        process = engine_redaction.public_process(process)
+        process = projection.public_process(process)
     observations = copy.deepcopy(record.get("observations")) if isinstance(record.get("observations"), Mapping) else {}
     if not observations and isinstance(lifecycle.get("driver_config"), Mapping):
         endpoint = lifecycle["driver_config"].get("health_endpoint")
@@ -1135,12 +1174,33 @@ def check_service_shape(service_id: str, raw: Mapping[str, Any]) -> None:
         raise ValueError(f"{where}: an engine needs a host or an address")
 
 
+def _migration_refusal_text(service_id: str, raw: Mapping[str, Any]) -> str:
+    """Why a record carrying ``migration_refused`` does not validate, said again from its blocks.
+
+    The stored field is text a hand edit may have changed, so the error is never taken from it: the check
+    the migration ran is run again, and its message names the service and the two blocks and nothing else.
+    """
+    record = {key: copy.deepcopy(value) for key, value in raw.items() if key != MIGRATION_REFUSED_KEY}
+    try:
+        _native_process(service_id, record, _agreed_lifecycle(service_id, record))
+        why = "Its two blocks no longer conflict."
+    except ValueError as error:
+        why = str(error)
+    return (f"service {service_id!r} was left out by the schema 2 migration. {why} "
+            f"After you keep one block, delete the `{MIGRATION_REFUSED_KEY}` field from the service.")
+
+
+# Every field a normalized service record can hold. ``gateway/projection_types.verify`` fails when one is here
+# and not classified there, so a new field cannot be added without deciding what it is.
+SERVICE_RECORD_FIELDS = (
+    "id", "name", "kind", "source", "enabled", "priority", "role", "capabilities", "config", "secret_refs",
+    "lifecycle", "provenance", "process", "observations", "residency", "resources", "editable",
+)
+
+
 def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_version: int | None = None) -> dict[str, Any]:
     if raw.get(MIGRATION_REFUSED_KEY):
-        raise ValueError(
-            f"service {service_id!r} was left out by the schema 2 migration. {raw[MIGRATION_REFUSED_KEY]} "
-            f"After you keep one block, delete the `{MIGRATION_REFUSED_KEY}` field from the service."
-        )
+        raise ValueError(_migration_refusal_text(service_id, raw))
     check_service_shape(service_id, raw)
     if schema_version is None:
         schema_version = 2 if any(key in raw for key in ("process", "observations", "residency")) else 1
@@ -1236,11 +1296,13 @@ def validate_provider_secret_refs(
 
     def inspect_secrets(value: Any, prefix: str = "") -> None:
         if isinstance(value, Mapping):
+            if _refs.is_secret_entry(value):
+                return  # a secret entry points at the encrypted store; it holds no inline secret
             for raw_key, item in value.items():
                 key = str(raw_key)
                 normalized = key.lower().replace("-", "_")
                 path = f"{prefix}.{key}" if prefix else key
-                secret_field = normalized in {"api_key", "authorization", "x_api_key", "client_secret", "password", "secret", "token", "access_token", "bearer_token", "credential"}
+                secret_field = normalized in _INLINE_SECRET_FIELDS
                 if secret_field:
                     inline_keys.append(path)
                 elif is_secret_key(key) and is_secret_reference_key(key):
@@ -1396,10 +1458,8 @@ def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
     block and anything else), so a new block cannot become a place to hide a
     key reference.
 
-    A reference is also any secret value the record itself holds: a credential argument in a command,
-    an environment value, a credential header value, an address with a user name or a query token.
-    ``engine_redaction.secret_slots`` finds them by the same rules that hide them from every view, so a
-    save that keeps such a value while the record's host moves counts as sending it to a new host.
+    A secret entry (``secret_ref``) is a reference like any other here, so moving the host of a record that holds
+    one is the owner's. A record holds no secret value itself (decision D26).
     """
     found: dict[str, str] = {}
 
@@ -1418,8 +1478,6 @@ def credential_references(record: Mapping[str, Any]) -> dict[str, str]:
             found[path] = repr(value)
 
     walk(record, "")
-    for path, value in engine_redaction.secret_slots(record).items():
-        found[f"secret:{path}"] = value
     return found
 
 

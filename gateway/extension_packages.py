@@ -23,7 +23,7 @@ import yaml
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
 from gateway.manifests import ManifestError, manifest_identity, validate_manifest
-from gateway import frontend_mount, service_registry
+from gateway import frontend_mount, projection, record_carriers, service_registry
 
 
 MANIFEST_NAME = "extension.yml"
@@ -49,6 +49,14 @@ CODE_BEARING_ADAPTER_KEYS = frozenset(
         "module",
         "python",
     }
+)
+
+
+# Every field an index and a package record can hold (``gateway/projection_types.verify`` checks them).
+PACKAGE_INDEX_FIELDS = ("schema_version", "sources", "packages", "updated_at")
+PACKAGE_RECORD_FIELDS = (
+    "id", "name", "version", "enabled", "source", "package_hash", "object_counts", "services", "protocol_frontends",
+    "capabilities", "workflows", "adapters", "translators", "code_objects", "requires_code_trust", "warnings", "updated_at",
 )
 
 
@@ -89,11 +97,12 @@ def validate_extension_package_source(
     source: Mapping[str, Any],
     *,
     install_root: str | Path | None = None,
+    credentials: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     source_type = str(source.get("type") or source.get("kind") or "local_directory")
     if source_type != "local_directory":
         if source_type in {"git", "github", "git_url"}:
-            return review_git_package_source(source, install_root=install_root)
+            return review_git_package_source(source, install_root=install_root, credentials=credentials)
         return _source_error(source, f"unsupported extension package source type: {source_type}")
 
     path = source.get("path") or source.get("directory")
@@ -106,14 +115,29 @@ def validate_extension_package_source(
         return _source_error(source, str(exc))
 
 
+def _clone_url(source: Mapping[str, Any], url: str, credentials: Mapping[str, Mapping[str, Any]] | None) -> tuple[str, tuple[str, ...]]:
+    """The URL to clone and the credential texts in it: the public ``url`` with the credentials of its source key put back."""
+    if not credentials:
+        return url, ()
+    for key in record_carriers.PACKAGE_SOURCE_URL_KEYS:
+        parts = credentials.get(key)
+        if parts and str(source.get(key) or "").strip() == url:
+            joined = record_carriers.join_url(url, userinfo=parts.get("userinfo"), query=parts.get("query"), fragment=parts.get("fragment"))
+            texts = tuple(text for text in (parts.get("userinfo"), parts.get("fragment"), *(value for _n, value in parts.get("query", ()))) if text)
+            return joined, texts + tuple(item for text in texts for item in text.split(":") if len(item) >= 4)
+    return url, ()
+
+
 def review_git_package_source(
     source: Mapping[str, Any],
     *,
     install_root: str | Path | None = None,
+    credentials: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     url = _git_source_url(source)
     if not url:
         return _source_error(source, "git extension package source requires url or repo")
+    clone_url, secrets = _clone_url(source, url, credentials)
 
     ref = str(
         source.get("resolved_ref")
@@ -128,7 +152,7 @@ def review_git_package_source(
         if install_root is None:
             with tempfile.TemporaryDirectory(prefix="azizam-extension-") as tmp:
                 clone_dir = Path(tmp) / "repo"
-                resolved_ref = _clone_git_source(url, ref, clone_dir)
+                resolved_ref = _clone_git_source(clone_url, ref, clone_dir, public_url=url, secrets=secrets)
                 review = review_local_directory_package(_package_dir_from_clone(clone_dir, subdir))
                 review["resolved_source"] = _resolved_git_source(
                     source,
@@ -145,7 +169,7 @@ def review_git_package_source(
         clone_dir = install_base / _source_cache_key(source, url=url, ref=ref, subdir=subdir)
         if clone_dir.exists():
             shutil.rmtree(clone_dir)
-        resolved_ref = _clone_git_source(url, ref, clone_dir)
+        resolved_ref = _clone_git_source(clone_url, ref, clone_dir, public_url=url, secrets=secrets)
         package_dir = _package_dir_from_clone(clone_dir, subdir)
         review = review_local_directory_package(package_dir)
         review["resolved_source"] = _resolved_git_source(
@@ -158,7 +182,7 @@ def review_git_package_source(
         )
         return review
     except ValueError as exc:
-        return _source_error(source, str(exc))
+        return _source_error(source, projection.scrub_text(str(exc), secrets))
 
 
 def source_reads_gateway_host(source: Mapping[str, Any]) -> bool:
@@ -201,14 +225,24 @@ def _check_git_arguments(url: str, ref: str) -> None:
         raise ValueError("git extension package url cannot name a remote helper")
 
 
-def _clone_git_source(url: str, ref: str, target: Path) -> str:
+def _clone_git_source(url: str, ref: str, target: Path, *, public_url: str | None = None, secrets: tuple[str, ...] = ()) -> str:
+    """Clone ``url`` (which may hold credentials, resolved just now) and leave the clone pointing at ``public_url``.
+
+    A failure's text is cleaned of ``secrets`` and of URL user info before it is raised.
+    """
     _check_git_arguments(url, ref)
     target.parent.mkdir(parents=True, exist_ok=True)
-    _run_git(["git", "clone", "--depth", "1", "--", url, str(target)])
-    if ref:
-        _run_git(["git", "-C", str(target), "fetch", "--depth", "1", "origin", "--", ref])
-        _run_git(["git", "-C", str(target), "checkout", "--detach", "FETCH_HEAD"])
-    return _run_git(["git", "-C", str(target), "rev-parse", "HEAD"]).strip()
+    try:
+        _run_git(["git", "clone", "--depth", "1", "--", url, str(target)])
+        if ref:
+            _run_git(["git", "-C", str(target), "fetch", "--depth", "1", "origin", "--", ref])
+            _run_git(["git", "-C", str(target), "checkout", "--detach", "FETCH_HEAD"])
+        if public_url is not None and public_url != url:
+            # The credentials stay out of the clone's own configuration on disk.
+            _run_git(["git", "-C", str(target), "remote", "set-url", "origin", public_url])
+        return _run_git(["git", "-C", str(target), "rev-parse", "HEAD"]).strip()
+    except ValueError as exc:
+        raise ValueError(projection.scrub_text(str(exc), secrets)) from None
 
 
 def _run_git(cmd: list[str]) -> str:
