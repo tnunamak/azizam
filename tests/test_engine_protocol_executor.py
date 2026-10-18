@@ -393,11 +393,14 @@ def test_a_stream_event_deeper_than_the_json_depth_budget_is_refused(name: str) 
     with pytest.raises(BudgetExceeded) as raised:
         collect(run(ex.invoke(conn(), req("chat", {}))))
     assert raised.value.budget == "max_json_depth"
-    ok, _ = make(ops, lambda r: httpx.Response(200, content=wire(nested_json(20)) + (b"" if "ndjson" in name else b"")), budgets=Budgets(max_json_depth=32))
-    try:
-        collect(run(ok.invoke(conn(), req("chat", {}))))
-    except TransportFailure:
-        pass  # a terminal that never came is a different failure; the depth is within budget
+
+
+def test_a_stream_event_within_the_json_depth_budget_is_mapped() -> None:
+    response, wire = DEEP_STREAMS["sse mapped"]
+    ops = {"chat": {"class": "generate", "request": {"method": "POST", "path": "/c", "body": {"encoding": "json"}}, "response": response}}
+    ex, _ = make(ops, lambda r: httpx.Response(200, content=wire(nested_json(20))), budgets=Budgets(max_json_depth=32))
+    events = collect(run(ex.invoke(conn(), req("chat", {}))))
+    assert len(events) == 1 and events[0]["deep"]["a"]["a"]
 
 
 def test_a_stream_map_turns_each_event_into_a_dict() -> None:
