@@ -20,18 +20,18 @@ export function ProtocolChoice({
   onChange: (value: ProtocolDraft) => void;
   disabled?: boolean;
 }) {
-  const catalog = useQuery({
+  const { data: catalog, isLoading, isError, refetch } = useQuery({
     queryKey: ["engineProtocolDescriptions"],
     queryFn: protocolDescriptionsApi.list,
     staleTime: 0,
     enabled: value.dispatch === "protocol",
   });
-  const selected = catalog.data?.protocols.find(
+  const selected = catalog?.protocols.find(
     (row) => row.id === value.protocol,
   );
   const unavailable = Boolean(
     value.protocol &&
-    catalog.data &&
+    catalog &&
     (!selected || !selected.dispatch_supported),
   );
   return (
@@ -61,25 +61,25 @@ export function ProtocolChoice({
       </FormField>
       {value.dispatch === "protocol" && (
         <>
-          {catalog.isLoading && (
+          {isLoading && (
             <p role="status" className="text-meta text-muted-foreground">
               Loading protocol descriptions…
             </p>
           )}
-          {catalog.isError && (
+          {isError && (
             <div role="alert" className="flex flex-col gap-2">
               <p>Protocol descriptions could not be loaded.</p>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => void catalog.refetch()}
+                onClick={() => void refetch()}
               >
                 Retry protocol descriptions
               </Button>
             </div>
           )}
-          {catalog.data && (
+          {catalog && (
             <>
               <FormField
                 label="Protocol description"
@@ -124,7 +124,7 @@ export function ProtocolChoice({
                         {value.protocol} (unavailable)
                       </option>
                     )}
-                    {catalog.data.protocols.map((row) => (
+                    {catalog.protocols.map((row) => (
                       <option
                         key={row.id}
                         value={row.id}
@@ -139,12 +139,12 @@ export function ProtocolChoice({
                   </NativeSelect>
                 )}
               </FormField>
-              {catalog.data.protocols.length === 0 && (
+              {catalog.protocols.length === 0 && (
                 <p role="status">
                   No valid protocol descriptions are installed.
                 </p>
               )}
-              {catalog.data.problems.map((problem) => (
+              {catalog.problems.map((problem) => (
                 <p key={problem.file} className="text-meta text-warning">
                   {problem.file}: {problem.reason}
                 </p>

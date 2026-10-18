@@ -272,14 +272,14 @@ function RecordForm({
   const addressUnsupported = "address" in unsupported;
   const [protocol, setProtocol] = useState<ProtocolDraft>(() => ({ dispatch: view.values.dispatch ?? "", protocol: view.values.protocol_description ?? "" }));
   const nativeMode = protocol.dispatch === "protocol";
-  const protocolCatalog = useQuery({
+  const { data: protocolCatalog, isSuccess: protocolCatalogReady, isFetching: protocolCatalogFetching, isError: protocolCatalogError } = useQuery({
     queryKey: ["engineProtocolDescriptions"],
     queryFn: protocolDescriptionsApi.list,
     staleTime: 0,
     enabled: nativeMode,
   });
-  const selectedProtocol = protocolCatalog.data?.protocols.find((row) => row.id === protocol.protocol);
-  const protocolValid = !nativeMode || Boolean(protocolCatalog.isSuccess && !protocolCatalog.isFetching && !protocolCatalog.isError && selectedProtocol?.dispatch_supported && selectedProtocol.validation.valid);
+  const selectedProtocol = protocolCatalog?.protocols.find((row) => row.id === protocol.protocol);
+  const protocolValid = !nativeMode || Boolean(protocolCatalogReady && !protocolCatalogFetching && !protocolCatalogError && selectedProtocol?.dispatch_supported && selectedProtocol.validation.valid);
   const protocolDormantFields = nativeMode ? new Set(["headers", "path_prefix", "reply_timeout_s", "transforms"]) : null;
   const mismatched = addressUnsupported;
   // Name and Enabled go through the plain service edit, which sends no definition and no values:

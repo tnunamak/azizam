@@ -144,8 +144,8 @@ function Wizard({
   const [conn, setConn] = useState<ConnectionDraft>({ address: "", key: "", envOpen: false, envName: "" });
   const [protocol, setProtocol] = useState<ProtocolDraft>({ dispatch: "", protocol: "" });
   const [protocolError, setProtocolError] = useState<string | null>(null);
-  const protocolCatalog = useQuery({ queryKey: ["engineProtocolDescriptions"], queryFn: protocolDescriptionsApi.list, enabled: protocol.dispatch === "protocol" });
-  const validProtocol = !protocolCatalog.isFetching && !protocolCatalog.isError && protocolCatalog.data?.protocols.some((row) => row.id === protocol.protocol && row.dispatch_supported) === true;
+  const { data: protocolCatalog, isFetching: protocolCatalogFetching, isError: protocolCatalogError } = useQuery({ queryKey: ["engineProtocolDescriptions"], queryFn: protocolDescriptionsApi.list, enabled: protocol.dispatch === "protocol" });
+  const validProtocol = !protocolCatalogFetching && !protocolCatalogError && protocolCatalog?.protocols.some((row) => row.id === protocol.protocol && row.dispatch_supported) === true;
   const [errors, setErrors] = useState<FieldErrors>({});
   const [check, setCheck] = useState<CheckResult | null>(null);
   const [finding, setFinding] = useState<Finding | null>(null);

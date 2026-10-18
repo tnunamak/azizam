@@ -71,7 +71,7 @@ for (const width of [1280, 390]) {
       // The engine page opens with the new engine and its key stored.
       await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
       await expect(page).toHaveURL(new RegExp(`engine=${serviceId}`));
-      await expect(page.getByText("Configured", { exact: true })).toBeVisible();
+      await expect(page.getByRole("group", { name: "Saved key" }).getByText("Configured", { exact: true })).toBeVisible();
       // The Models section answers the same question for the saved models.
       await expect(page.getByRole("heading", { name: "Who can use these models" })).toBeVisible();
       await expect(page.getByText(/^Usable by:/)).toBeVisible();
@@ -94,7 +94,7 @@ for (const width of [1280, 390]) {
       await realTest.getByText("Request sent, with secrets hidden", { exact: true }).click();
       const trace = realTest.getByLabel("Request sent, with secrets hidden");
       await expect(trace).toContainText(`POST ${address}/chat/completions`);
-      await expect(trace).toContainText("Authorization: [redacted]");
+      await expect(trace).toContainText("Authorization: configured");
       await expect(trace).not.toContainText("sk-journey-local-key");
       await expect(trace).toContainText('"messages"');
       // The successful real test records its result in a separate registry write.
@@ -113,12 +113,13 @@ for (const width of [1280, 390]) {
       // N2: an edited address never gets the saved key, and the page says so before Save.
       await page.getByLabel(/^Address/).fill(`http://127.0.0.1:${enginePort + 5}/v1`);
       await expect(page.getByText("Your saved key won’t be sent to a new address. Re-enter it, or keep the old address.")).toBeVisible();
-      await expect(page.getByText("Key not sent to this address yet. Re-enter it to check.")).toBeVisible();
+      await expect(page.getByRole("group", { name: "Saved key" })).toContainText("belongs to the previous address");
+      await expect(page.getByRole("textbox", { name: "API key" })).toBeDisabled();
       await expect(page.getByText(/Saving removes the old key from this engine\./)).toBeVisible();
       await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
       await page.getByRole("button", { name: "Keep the old address" }).click();
       await expect(page.getByText("Your saved key won’t be sent to a new address.", { exact: false })).toHaveCount(0);
-      await expect(page.getByText("Configured", { exact: true })).toBeVisible();
+      await expect(page.getByRole("group", { name: "Saved key" }).getByText("Configured", { exact: true })).toBeVisible();
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     } finally {
       if (serviceId) {
@@ -158,23 +159,27 @@ test("a header-only save keeps an absent reply timeout and hidden header rows", 
     await page.goto(`/engines/?engine=${serviceId}`);
     await expect(page.getByRole("heading", { level: 1, name: "Header preservation journey" })).toBeVisible();
     await expect(page.getByTestId("connection-facts")).toContainText("default for engines Azizam starts");
-    const connection = page.getByRole("region", { name: "More options", exact: true });
-    await expect(connection.getByText("Not sent", { exact: true })).toHaveCount(2);
-    await connection.getByRole("button", { name: "Add a header" }).click();
-    await connection.getByLabel("Header name", { exact: true }).last().fill("X-Tenant");
-    await connection.getByLabel("Value", { exact: true }).last().fill("household");
-    const saved = page.waitForResponse(res => res.request().method() === "PATCH" && res.url().endsWith(`/services/${serviceId}`));
+    const storedHeaders = page.getByRole("group", { name: "Request headers" });
+    await expect(storedHeaders.getByText("Configured", { exact: true })).toHaveCount(2);
+    for (const name of ["X-Api-Key", "X-Private"]) {
+      await expect(storedHeaders.getByLabel(`Value for ${name}`)).toHaveValue("");
+      await expect(storedHeaders.getByLabel(`Value for ${name}`)).toHaveAttribute("type", "password");
+    }
+    await storedHeaders.getByRole("button", { name: "Add a header" }).click();
+    await storedHeaders.getByLabel("Header name", { exact: true }).last().fill("X-Tenant");
+    await storedHeaders.getByRole("textbox", { name: "Value for X-Tenant" }).fill("household");
+    const saved = page.waitForResponse(res => res.request().method() === "POST" && res.url().endsWith(`/services/${serviceId}/secret-entries`));
     await page.getByRole("button", { name: "Save changes", exact: true }).click();
     expect((await saved).status()).toBe(200);
     const after = (await registry()).value.services[serviceId].config;
     expect(after).not.toHaveProperty("timeout");
     expect(after.headers).toHaveLength(3);
-    expect(after.headers).toContainEqual({ name: "X-Tenant", value: "household" });
+    expect(after.headers.map((row: { name: string }) => row.name)).toEqual(["X-Api-Key", "X-Private", "X-Tenant"]);
     await page.reload();
     await expect(page.getByTestId("connection-facts")).toContainText("default for engines Azizam starts");
-    await expect(connection.getByText("Not sent", { exact: true })).toHaveCount(2);
-    await connection.getByRole("button", { name: "Remove header X-Api-Key" }).click();
-    const removed = page.waitForResponse(res => res.request().method() === "PATCH" && res.url().endsWith(`/services/${serviceId}`));
+    await expect(storedHeaders.getByText("Configured", { exact: true })).toHaveCount(3);
+    await storedHeaders.getByRole("button", { name: "Remove header X-Api-Key" }).click();
+    const removed = page.waitForResponse(res => res.request().method() === "POST" && res.url().endsWith(`/services/${serviceId}/secret-entries`));
     await page.getByRole("button", { name: "Save changes", exact: true }).click();
     expect((await removed).status()).toBe(200);
     const final = (await registry()).value.services[serviceId].config;

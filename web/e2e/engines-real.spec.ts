@@ -175,12 +175,19 @@ for (const width of [1280, 390]) {
     record.config.transforms = [{ kind: "param-map", from: "old_field", to: "new_field" }];
     const put = await page.request.put("/admin/api/operator/service-registry", { headers: headers(seed.revision), data: seed.value });
     expect(put.ok()).toBe(true);
+    const initialStart = (await read()).value.services[id].process.start;
+    expect(initialStart.slice(0, 4)).toEqual(start.slice(0, 4));
+    expect(initialStart[4]).toEqual(expect.objectContaining({ id: expect.any(String), configured: true }));
+    const tokenEntryId = initialStart[4].id;
     await page.goto(`/engines/?engine=${id}`);
     await expect(page.getByRole("heading", { level: 1, name: `Contract ${width}` })).toBeVisible();
     await expect(page.getByTestId("engine-health")).toContainText("Unknown");
-    const arg = page.getByRole("textbox", { name: "Start command argument 3" });
+    const arg = page.getByRole("textbox", { name: "Start command argument 2" });
     await expect(arg).toHaveValue(start[2]);
-    await expect(page.getByRole("textbox", { name: "Start command argument 5" })).toHaveValue("[redacted]");
+    const token = page.getByRole("textbox", { name: "process start command Argument 4", exact: true });
+    await expect(token).toHaveValue("");
+    await expect(token).toHaveAttribute("type", "password");
+    await expect(page.getByRole("checkbox", { name: "Secret process start command Argument 4" })).toBeChecked();
     await arg.fill("/models/new family, chat.bin");
     const from = page.getByLabel("Field name (row 1)");
     const to = page.getByLabel("Rename to (row 1)");
@@ -196,14 +203,15 @@ for (const width of [1280, 390]) {
       const saveBar = page.getByRole("status").filter({ hasText: "You have unsaved changes." });
       await expect(saveBar).toHaveCSS("position", "static");
     }
-    const saved = page.waitForResponse(r => r.request().method() === "PATCH" && r.url().endsWith(`/services/${id}`));
+    const saved = page.waitForResponse(r => r.request().method() === "POST" && r.url().endsWith(`/services/${id}/secret-entries`));
     await page.getByRole("button", { name: "Save changes", exact: true }).click();
     expect((await saved).status()).toBe(200);
     const after = (await read()).value.services[id];
-    expect(after.process.start).toEqual([start[0], start[1], "/models/new family, chat.bin", "--token", "[redacted]"]);
+    expect(after.process.start).toEqual([start[0], start[1], "/models/new family, chat.bin", "--token", expect.objectContaining({ id: tokenEntryId, configured: true })]);
     expect(after.process.stop).toEqual(stop);
     await page.reload();
-    await expect(page.getByRole("textbox", { name: "Start command argument 3" })).toHaveValue("/models/new family, chat.bin");
+    await expect(page.getByRole("textbox", { name: "Start command argument 2" })).toHaveValue("/models/new family, chat.bin");
+    await expect(page.getByRole("textbox", { name: "process start command Argument 4", exact: true })).toHaveAttribute("type", "password");
     // Long workflow IDs and required inputs stay inspectable even without an editor.
     const workflow = await read();
     workflow.value.services[id].offerings = [{ id: longId, kind: "workflow", tasks: [{ task: "images", evidence: "declared" }], inputs: { prompt: { type: "string", required: true } }, options: { steps: { type: "integer" } }, selection: { mode: "whole_graph" } }];
