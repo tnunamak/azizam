@@ -29,7 +29,7 @@ MODELS = {"data": [{"id": "served-id", "context_length": 32768}]}
 def _saved(origin: str = ORIGIN) -> dict:
     scheme, _, rest = origin.partition("://")
     host, _, port = rest.partition(":")
-    return {"definition": "openai-compatible", "scheme": scheme, "host": host, "port": int(port), "base_path": "/provider/v1",
+    return {"definition": "openai-compatible", "probe_with_inference_connection": True, "scheme": scheme, "host": host, "port": int(port), "base_path": "/provider/v1",
             "headers": [{"name": "X-Tenant", "value": "family"}],
             "api_key_env": "PROBE_TEST_KEY", "credential_origin": origin}
 
@@ -67,8 +67,8 @@ def test_a_saved_connection_gives_the_scheme_prefix_headers_and_key(endpoint, ur
 
 
 def test_an_address_without_a_port_field_is_still_probed():
-    assert engine_read_request({"definition": "openai-compatible", "base_url": f"{ORIGIN}/provider/v1"}, "/v1/models")[0] == f"{ORIGIN}/provider/v1/models"
-    assert engine_read_request({"definition": "openai-compatible", "base_url": ORIGIN}, "/v1/models")[0] == f"{ORIGIN}/v1/models"
+    assert engine_read_request({"definition": "openai-compatible", "probe_with_inference_connection": True, "base_url": f"{ORIGIN}/provider/v1"}, "/v1/models")[0] == f"{ORIGIN}/provider/v1/models"
+    assert engine_read_request({"definition": "openai-compatible", "probe_with_inference_connection": True, "base_url": ORIGIN}, "/v1/models")[0] == f"{ORIGIN}/v1/models"
 
 
 def test_a_control_credential_never_goes_with_a_read(monkeypatch):

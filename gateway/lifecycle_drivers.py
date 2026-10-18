@@ -363,7 +363,7 @@ def engine_read_request(
     # Existing transport probes keep their root-relative paths and carry no
     # inference credential. A saved engine-page connection opts into the
     # protocol prefix, safe headers and origin-bound inference credential.
-    if not config.get("definition"):
+    if not config.get("probe_with_inference_connection"):
         root = fallback_root
         if not root and config.get("port"):
             root = f"http://{config.get('host', '127.0.0.1')}:{config['port']}"

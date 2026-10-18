@@ -3387,7 +3387,7 @@ async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
 async def _probe_service_resource_fact(bcfg: Mapping[str, Any]) -> dict[str, Any]:
     from gateway.lifecycle_drivers import engine_read_request
 
-    if not bcfg.get("definition"):
+    if not bcfg.get("probe_with_inference_connection"):
         # A page read must not change existing health traffic. These probes
         # historically ignored base_path and carried no inference credential.
         url, headers = _service_resource_probe_url(bcfg), {}

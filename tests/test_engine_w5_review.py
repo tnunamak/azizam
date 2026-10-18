@@ -59,11 +59,16 @@ def test_echoed_connection_timeout_does_not_create_a_stored_limit(tmp_path):
     service = engine_admin.EngineService(store, hop_timeout=lambda: 1800.0)
     before = service.view('review', SimpleNamespace(roles=('owner',)))
     asyncio.run(service.update(SimpleNamespace(roles=('owner',)), 'review', {
+        'definition': before['definition'], 'disabled': True, 'values': before['values'],
+    }, expected_generation=0))
+    assert 'probe_with_inference_connection' not in store.written
+    asyncio.run(service.update(SimpleNamespace(roles=('owner',)), 'review', {
         'definition': before['definition'], 'disabled': True,
         'values': {**before['values'], 'reply_timeout_s': 1800, 'headers': [{'name': 'X-Tenant', 'value': 'household'}]},
     }, expected_generation=0))
     assert 'timeout' not in store.written
     assert store.written['headers'] == [{'name': 'X-Tenant', 'value': 'household'}]
+    assert store.written['probe_with_inference_connection'] is True
 
 
 def test_effective_timeout_names_the_runtime_default(tmp_path):

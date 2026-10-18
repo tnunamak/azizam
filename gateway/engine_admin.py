@@ -1122,6 +1122,7 @@ class EngineService:
                            extra_capabilities=extra_capabilities,
                            record_capabilities=None if capabilities_sent else list(record.get("capabilities") or ()),
                            keep_lifecycle=not lifecycle_changed,
+                           probe_connection_changed=connection_changed,
                            keep_timeout=_same_text(values.get("reply_timeout_s")) == _same_text(before["values"].get("reply_timeout_s")),
                            key_dropped=bool(
                                key.withheld
@@ -1133,7 +1134,8 @@ class EngineService:
                service_id: str, name: str, capabilities: list[Any], models: Any, enabled: bool, check: Mapping[str, Any],
                tests: Mapping[str, Any], key: KeyInput, existing: Mapping[str, Any] | None, expected_generation: int,
                action: str, keep: Mapping[str, Any] | None = None, key_dropped: bool = False,
-               keep_lifecycle: bool = False, keep_timeout: bool = False, extra_capabilities: Iterable[str] = (),
+               keep_lifecycle: bool = False, keep_timeout: bool = False, probe_connection_changed: bool = False,
+               extra_capabilities: Iterable[str] = (),
                record_capabilities: list[str] | None = None) -> dict[str, Any]:
         """Write new secrets first, then the record; on failure remove what was written. Old secrets go after success."""
         written: list[str] = []
@@ -1162,6 +1164,11 @@ class EngineService:
                             enabled=enabled, check=check, tests=tests, secret_id=secret_id, keep=keep,
                             stored_models=old_config.get("models") or (), extra_capabilities=extra_capabilities,
                             record_capabilities=record_capabilities)
+            if existing is None or probe_connection_changed:
+                # Existing records retain their original probes until the owner
+                # edits or rechecks Connection. A name or unchanged echo grants
+                # no new destination permission for an inference credential.
+                raw["probe_with_inference_connection"] = True
             if existing is not None:
                 if keep_timeout:
                     if "timeout" in old_config:

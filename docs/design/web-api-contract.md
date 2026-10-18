@@ -328,6 +328,13 @@ The engine preset list is gone. Engine kinds are data in
   that names a definition then answers 403 `service_not_editable`, and the page
   shows the settings read-only with the gateway's reason. An engine reached
   through the gateway's start-and-stop hop is editable like any other.
+  Older records retain their original probe URLs and keyless headers until
+  creation or a Connection edit/recheck sets `config.probe_with_inference_connection`
+  to true. Then readiness and resource probes use the saved inference connection,
+  with its origin-bound key when available. A name, Enabled or unchanged-echo
+  save preserves the old probe mode. An operator can also set this flag through
+  the registry API. Inference still refuses an unavailable configured key;
+  health and resource probes proceed without it.
   Connection facts the page shows as the gateway states them:
   - `request_path.url` and `credential_destination` (or `key.origin`). The page
     compares their origins, with default ports dropped (`:80` for http, `:443`
