@@ -674,7 +674,8 @@ def migrate_engine_records_v2(registry: dict[str, Any]) -> list[str]:
             record["process"] = process
         record["observations"] = observations
         record["residency"] = residency
-        record["config"].pop("lifecycle", None)
+        if isinstance(record.get("config"), dict):
+            record["config"].pop("lifecycle", None)
         record.pop("lifecycle", None)
         changed.append(service_id)
     registry["services"] = migrated
