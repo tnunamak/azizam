@@ -28,7 +28,6 @@ class ResidencyController:
         operation = config.get("load")
         if not isinstance(operation, Mapping) or not operation.get("op"):
             return False
-        await self._invoke(str(operation["op"]), operation.get("args") or {})
         deadline = config.get("load_deadline") or {}
         stall_s = max(0.01, float(deadline.get("stall_s", 120)))
         max_s = max(stall_s, float(deadline.get("max_s", 900)))
@@ -36,15 +35,25 @@ class ResidencyController:
         started = time.monotonic()
         stalled_at = started
         previous_progress = None
-        while time.monotonic() - started < max_s and time.monotonic() - stalled_at < stall_s:
-            if _value(await self._observe("resident")) is True:
-                return True
-            if progress_name and progress_name != "none":
-                progress = _value(await self._observe(str(progress_name)))
-                if progress is not None and progress != previous_progress:
-                    previous_progress = progress
-                    stalled_at = time.monotonic()
-            await asyncio.sleep(min(0.05, stall_s / 4))
+        async def within_deadline(awaitable):
+            remaining = min(started + max_s, stalled_at + stall_s) - time.monotonic()
+            if remaining <= 0:
+                raise asyncio.TimeoutError
+            return await asyncio.wait_for(awaitable, timeout=remaining)
+
+        try:
+            await within_deadline(self._invoke(str(operation["op"]), operation.get("args") or {}))
+            while time.monotonic() - started < max_s and time.monotonic() - stalled_at < stall_s:
+                if _value(await within_deadline(self._observe("resident"))) is True:
+                    return True
+                if progress_name and progress_name != "none":
+                    progress = _value(await within_deadline(self._observe(str(progress_name))))
+                    if progress is not None and progress != previous_progress:
+                        previous_progress = progress
+                        stalled_at = time.monotonic()
+                await asyncio.sleep(min(0.05, stall_s / 4))
+        except asyncio.TimeoutError:
+            pass
         return False
 
     async def unload(self, service: Mapping[str, Any]) -> bool:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 from urllib.parse import urljoin, urlsplit
@@ -67,15 +69,22 @@ class ObservationReader:
         if urlsplit(url).netloc != origin.netloc:
             return UNKNOWN
         try:
-            async with self._client_factory(follow_redirects=False, trust_env=False) as client:
-                response = await client.get(url, timeout=float(http.get("timeout_s", 2)))
-            if response.status_code != expected:
-                return UNKNOWN
-            pointer = http.get("select", spec.get("select"))
-            if pointer is None:
-                return Observation(True, True) if name == "process_ready" else UNKNOWN
-            return Observation(True, _select(response.json(), str(pointer)))
-        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            timeout_s = max(0.01, min(float(http.get("timeout_s", 2)), 30))
+            async with asyncio.timeout(timeout_s):
+                async with self._client_factory(follow_redirects=False, trust_env=False) as client:
+                    async with client.stream("GET", url, timeout=timeout_s) as response:
+                        if response.status_code != expected:
+                            return UNKNOWN
+                        pointer = http.get("select", spec.get("select"))
+                        if pointer is None:
+                            return Observation(True, True) if name == "process_ready" else UNKNOWN
+                        chunks = bytearray()
+                        async for chunk in response.aiter_bytes():
+                            chunks.extend(chunk)
+                            if len(chunks) > 1048576:
+                                return UNKNOWN
+            return Observation(True, _select(json.loads(chunks), str(pointer)))
+        except (asyncio.TimeoutError, httpx.HTTPError, ValueError, KeyError, TypeError):
             return UNKNOWN
 
     @staticmethod

@@ -87,7 +87,7 @@ class ProcessDriver:
         async with lock:
             if self._live_identity(ident, port, argv):
                 self._services[ident] = svc
-                ready = await self._ready(svc, min(timeout_s, float(cfg.get("ready_timeout_s", timeout_s))))
+                ready = await self._ready(svc, float(cfg.get("ready_timeout_s", timeout_s)))
                 if ready:
                     self._schedule_idle(ident, svc)
                 else:
@@ -95,7 +95,8 @@ class ProcessDriver:
                 return ready
             if self._identity_matches(self._read_state(ident)):
                 self._stop(svc, reset_budget=False)
-            if self._port_in_use(port):
+            address = (svc.get("connection") or {}).get("address") or f"http://{svc.get('host', '127.0.0.1')}:{port}"
+            if self._port_in_use(urlsplit(address).hostname or "127.0.0.1", port):
                 return False
             if not self._restart_available(ident, cfg):
                 return False
@@ -118,7 +119,7 @@ class ProcessDriver:
             self._write_state(ident, child.pid, start, port, argv)
             threading.Thread(target=self._copy_logs, args=(ident, child, cfg), daemon=True).start()
             try:
-                ready = await self._ready(svc, min(timeout_s, float(cfg.get("ready_timeout_s", timeout_s))), ident)
+                ready = await self._ready(svc, float(cfg.get("ready_timeout_s", timeout_s)), ident)
             except asyncio.CancelledError:
                 self._stop(svc, reset_budget=False)
                 raise
@@ -155,12 +156,12 @@ class ProcessDriver:
         except (OSError, ProcessLookupError):
             pass
         deadline = time.monotonic() + max(0.01, min(float(cfg.get("stop_timeout_s", 5)), 30))
-        while self._identity_matches(state) and time.monotonic() < deadline:
+        while self._group_alive(pid) and time.monotonic() < deadline:
             child = self._children.get(ident)
             if child:
                 child.poll()
             time.sleep(0.01)
-        if self._identity_matches(state):
+        if self._group_alive(pid):
             try:
                 os.killpg(pid, signal.SIGKILL)
             except (OSError, ProcessLookupError):
@@ -271,22 +272,38 @@ class ProcessDriver:
         deadline = time.monotonic() + max(0, timeout_s)
         observed_svc = self._observation_service(svc)
         while True:
-            result = await self._observations.read(observed_svc, "process_ready")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            try:
+                result = await asyncio.wait_for(
+                    self._observations.read(observed_svc, "process_ready"), timeout=remaining
+                )
+            except asyncio.TimeoutError:
+                return False
             if result.known and result.value is True:
                 return ident is None or self._identity_matches(self._read_state(ident))
             if ident is not None and not self._identity_matches(self._read_state(ident)):
                 return False
-            if time.monotonic() >= deadline:
-                return False
-            await asyncio.sleep(min(0.05, deadline - time.monotonic()))
+            await asyncio.sleep(min(0.05, max(0, deadline - time.monotonic())))
 
     @staticmethod
-    def _port_in_use(port: int) -> bool:
+    def _port_in_use(host: str, port: int) -> bool:
         try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.05):
+            with socket.create_connection((host, port), timeout=0.05):
                 return True
         except OSError:
             return False
+
+    @staticmethod
+    def _group_alive(pid: int) -> bool:
+        try:
+            os.killpg(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
 
     @staticmethod
     def _observation_service(svc: Mapping[str, Any]) -> Mapping[str, Any]:
