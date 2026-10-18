@@ -829,6 +829,11 @@ class AdminSQLiteStore:
         if section == "services" and isinstance(record, Mapping):
             # A record that could not be parsed holds no entries a write must keep: it is replaced whole.
             stored = held.record if projection_types.record_parses(section, held.record) else None
+            try:
+                record = copy.deepcopy(dict(record))
+                record_carriers.restore_echoed_record(record, stored)
+            except record_carriers.EchoRefused as error:
+                raise ValueError(str(error)) from None
             probe = lambda value, origin=None: secret_refs.new_ref()  # noqa: E731 - a dry run: nothing is stored
             try:
                 _, moved = record_carriers.ingest_service(record, stored, probe)
@@ -1493,9 +1498,15 @@ class AdminSQLiteStore:
     def _split_package_source(source: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
         """A package source with the credentials of its URLs taken out: the public source, and the credential parts by key.
 
-        The parts live in memory for the one clone that needs them; ``enable`` stores them as entries.
+        The parts live in memory for the one clone that needs them; ``enable`` stores them as entries. Any field that is
+        not one of the source's own (a token, a password, a header) is dropped from the public source here; ``enable``
+        keeps each as an entry of its own (``record_carriers.source_extras``), and nothing reads it back.
         """
-        public = dict(source)
+        try:
+            record_carriers.source_extras(source)
+        except ValueError as error:
+            raise ValueError(str(error)) from None
+        public = {key: value for key, value in source.items() if key in record_carriers.PACKAGE_SOURCE_PUBLIC_KEYS}
         credentials: dict[str, dict[str, Any]] = {}
         for key in record_carriers.PACKAGE_SOURCE_URL_KEYS:
             value = public.get(key)
@@ -1526,6 +1537,7 @@ class AdminSQLiteStore:
         self, *, source: Mapping[str, Any], actor: AdminContext,
         expected_generation: int,
     ) -> dict[str, Any]:
+        extras = record_carriers.source_extras(source)
         source, credentials = self._split_package_source(source)
         self._require_owner_for_host_source(source, actor)
         review = extension_packages.validate_extension_package_source(
@@ -1586,6 +1598,11 @@ class AdminSQLiteStore:
                 for held in record_carriers.package_sources(package_index):
                     if held.get(key) == source[key] and not held.get(key + record_carriers.SECRETS_SUFFIX):
                         held[key + record_carriers.SECRETS_SUFFIX] = copy.deepcopy(entries)
+            if extras:
+                held_extras = {key: secret_refs.entry(put(text, None)) for key, text in extras.items()}
+                for held in record_carriers.package_sources(package_index):
+                    if all(held.get(key) == source[key] for key in ("url", "repo_url", "path", "directory", "repo", "repository") if key in source):
+                        held[record_carriers.SOURCE_EXTRA_ENTRIES] = copy.deepcopy(held_extras)
         except BaseException:
             self._discard_secrets([*created, *ingested])
             raise

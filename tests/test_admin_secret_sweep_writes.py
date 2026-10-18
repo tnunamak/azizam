@@ -23,7 +23,7 @@ from typing import Any, Callable
 import pytest
 
 import proxy
-from gateway import admin_store, projection_types
+from gateway import admin_store, egress, projection_types
 from tests.support import canary
 from tests.support.route_discovery import discover
 from tests.test_admin_owner_holes_round4 import _git_package
@@ -178,6 +178,9 @@ BUILT: dict[tuple[str, str], list[Built]] = {
     ("PUT", "/admin/api/providers/{provider_id}/caps"): [("set the caps", True, lambda c: {"json": {"daily_usd": 6}})],
     ("DELETE", "/admin/api/providers/{provider_id}/caps"): [("clear the caps", True, lambda c: {})],
     ("DELETE", "/admin/api/providers/{provider_id}"): [("remove a provider", True, lambda c: {})],
+    ("DELETE", "/admin/api/providers/{provider_id}/key"): [("remove the stored key", True, lambda c: {})],
+    ("PUT", "/admin/api/providers/-/global-caps"): [("set the global caps", True, lambda c: {"json": {"daily_usd": 9}})],
+    ("DELETE", "/admin/api/providers/-/global-caps"): [("clear the global caps", True, lambda c: {})],
     ("DELETE", "/admin/api/operator/services/{service_id}"): [("remove an engine", True, lambda c: {})],
     ("DELETE", "/admin/api/extensions/{package_id}"): [("remove an enabled package", True, lambda c: c.enable_package_a())],
 }
@@ -283,15 +286,23 @@ def test_no_management_module_builds_a_response_without_the_egress_constructors(
 
 
 def test_no_route_answers_with_record_content_through_the_plain_constructor() -> None:
+    """Every plain response names a registered class, and a body written out in the call holds only keys of that class."""
     found: list[str] = []
     for path in sorted((ROOT / "gateway").glob("*.py")) + [ROOT / "proxy.py"]:
         if path.name == "egress.py":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in _calls_named(tree, "plain_json_response"):
+            where = f"{path.relative_to(ROOT)}:{node.lineno}"
+            declared = next((kw.value for kw in node.keywords if kw.arg == "response_class"), None)
+            if not (isinstance(declared, ast.Constant) and declared.value in egress.PLAIN_RESPONSE_CLASSES):
+                found.append(f"{where} names no registered response class")
+                continue
+            allowed = egress.PLAIN_RESPONSE_CLASSES[declared.value]
             content = next((kw.value for kw in node.keywords if kw.arg == "content"), node.args[0] if node.args else None)
             if isinstance(content, ast.Dict):
                 keys = {key.value for key in content.keys if isinstance(key, ast.Constant) and isinstance(key.value, str)}
-                if keys & RECORD_CONTENT_KEYS:
-                    found.append(f"{path.relative_to(ROOT)}:{node.lineno} {sorted(keys & RECORD_CONTENT_KEYS)}")
-    assert not found, "answer with egress.projected_response instead:\n" + "\n".join(found)
+                outside = keys - allowed if allowed is not None else keys & RECORD_CONTENT_KEYS
+                if outside:
+                    found.append(f"{where} {sorted(outside)} are not keys of the class {declared.value!r}")
+    assert not found, "answer with egress.projected_response, or register the class:\n" + "\n".join(found)

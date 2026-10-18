@@ -69,6 +69,7 @@ describe("i: the engine record page", () => {
     expect(screen.getByText("These saved settings have no editor on this page.")).toBeVisible();
     expect(screen.getByText("probe_interval_s")).toBeVisible();
     expect(screen.getByText("bought 2025")).toBeVisible();
+    expect(screen.getByText(/2 settings are kept but not shown/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Copy the stored record" })).toBeVisible();
     for (const box of document.querySelectorAll("textarea")) expect(box).not.toHaveValue(expect.stringContaining("{"));
   });

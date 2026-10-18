@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from gateway import egress, projection
+from gateway.projection import ProjectionViolation
 from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin  # noqa: F401
 
 SEED = "SEED-egress-canary-9931"
@@ -34,7 +35,7 @@ def _app(*, gate: bool = True) -> FastAPI:
 
     @router.get("/fine")
     def fine():
-        return egress.plain_json_response({"ok": True, "count": 3})
+        return egress.plain_json_response({"ok": True, "count": 3}, response_class="acknowledgement")
 
     @router.get("/record")
     def record():
@@ -54,7 +55,7 @@ def _app(*, gate: bool = True) -> FastAPI:
 
     @router.get("/plain-with-record-key")
     def plain_with_record_key():
-        return egress.plain_json_response({"service_registry": {"x": SEED}})
+        return egress.plain_json_response({"service_registry": {"x": SEED}}, response_class="acknowledgement")
 
     @router.get("/unregistered-key")
     def unregistered_key():
@@ -70,7 +71,7 @@ def _app(*, gate: bool = True) -> FastAPI:
 
     @router.post("/typed")
     def typed(body: Body):
-        return egress.plain_json_response({"count": body.count})
+        return egress.plain_json_response({"count": body.count}, response_class="acknowledgement")
 
     @router.get("/forged")
     def forged():
@@ -172,7 +173,7 @@ def test_a_response_larger_than_the_bound_is_refused(monkeypatch):
 
     @router.get("/big")
     def big():
-        return egress.plain_json_response({"text": "x" * 5000})
+        return egress.plain_json_response({"note": "x" * 5000}, response_class="acknowledgement")
 
     app.include_router(router)
     app.add_middleware(egress.EgressGate, max_body=1000)
@@ -203,7 +204,7 @@ def test_a_management_route_added_after_startup_froze_the_table_answers_404():
 
     @router.get("/early")
     def early():
-        return egress.plain_json_response({"ok": True})
+        return egress.plain_json_response({"ok": True}, response_class="acknowledgement")
 
     app.include_router(router)
     egress.verify_and_freeze(app)
@@ -211,7 +212,7 @@ def test_a_management_route_added_after_startup_froze_the_table_answers_404():
 
     @late.get("/late")
     def late_route():
-        return egress.plain_json_response({"ok": True})
+        return egress.plain_json_response({"ok": True}, response_class="acknowledgement")
 
     app.include_router(late)
     client = TestClient(app, raise_server_exceptions=False)
@@ -309,3 +310,76 @@ def test_the_fixed_405_keeps_the_allow_header_of_the_route():
 
     assert response.status_code == 405 and response.headers["allow"] == "POST"
     assert response.json()["error"]["code"] == "method_not_allowed"
+
+
+# --- round 2 of Phase 1 (M7): per-route inventories and response classes -----------------------------------------------
+
+def _function_from(filename: str, name: str):
+    """A function whose code says it was defined in ``filename`` (the file decides which module a route is from)."""
+    namespace: dict = {}
+    exec(compile(f"def {name}():\n    return {{}}\n", filename, "exec"), namespace)  # noqa: S102 - a fixed, test-owned source
+    return namespace[name]
+
+
+def test_a_new_admin_route_in_the_gateway_module_fails_startup_but_an_inventoried_one_passes():
+    for method, path in egress.UNMANAGED_ADMIN_ROUTES:
+        app = FastAPI()
+        app.add_api_route(path, _function_from("/srv/azizam/proxy.py", "listed"), methods=[method])
+        egress.verify_and_freeze(app)  # an inventoried route of the module is not refused
+    app = FastAPI()
+    app.add_api_route("/admin/api/brand-new", _function_from("/srv/azizam/proxy.py", "brand_new"), methods=["GET"])
+    with pytest.raises(RuntimeError, match="brand-new"):
+        egress.verify_and_freeze(app)
+    other_method = FastAPI()
+    other_method.add_api_route("/admin/api/drain", _function_from("/srv/azizam/proxy.py", "drain_delete"), methods=["DELETE"])
+    with pytest.raises(RuntimeError, match="drain"):
+        egress.verify_and_freeze(other_method)
+
+
+def test_the_module_is_no_longer_exempt_as_a_whole():
+    assert "proxy" not in egress.UNMANAGED_ADMIN_MODULES
+
+
+def test_a_me_api_route_without_an_inventory_entry_fails_startup_and_each_listed_one_has_a_reason():
+    assert egress.UNMANAGED_ME_ROUTES and all(reason.strip() for reason in egress.UNMANAGED_ME_ROUTES.values())
+    app = FastAPI()
+    app.add_api_route("/me/api/brand-new", _function_from("/srv/azizam/gateway/anything.py", "mine"), methods=["GET"])
+    with pytest.raises(RuntimeError, match="/me/api/brand-new"):
+        egress.verify_and_freeze(app)
+    listed = FastAPI()
+    for method, path in egress.UNMANAGED_ME_ROUTES:
+        listed.add_api_route(path, _function_from("/srv/azizam/gateway/anything.py", "mine"), methods=[method])
+    egress.verify_and_freeze(listed)
+
+
+def test_the_running_app_has_every_route_of_the_gateway_module_and_of_me_api_inventoried():
+    import proxy
+
+    egress.verify_and_freeze(proxy.app)  # raises, naming the route, when one is missing
+
+
+@pytest.mark.parametrize("content,response_class", [
+    ({"providers": [{"id": "p", "key_status": {"state": "set"}}]}, "apps"),              # a key the class does not hold
+    ({"service_registry": {"x": 1}}, "access_plan_choices"),                              # a record key in an open class
+    ({"ok": True}, "no-such-class"),                                                      # a class nobody registered
+    ({"actor": 1}, "acknowledgement"),
+    (["a list"], "apps"),
+])
+def test_a_plain_response_is_refused_by_its_class(content, response_class):
+    with pytest.raises(ProjectionViolation):
+        egress.plain_json_response(content, response_class=response_class)
+
+
+def test_a_plain_response_needs_a_class_and_a_listed_class_accepts_its_own_keys():
+    with pytest.raises(TypeError):
+        egress.plain_json_response({"ok": True})  # type: ignore[call-arg]
+    assert egress.plain_json_response({"providers": []}, response_class="provider_catalog").status_code == 200
+    assert egress.plain_json_response({"ok": True, "count": 1}, response_class="acknowledgement").status_code == 200
+
+
+def test_provider_records_have_a_projection_type_and_no_plain_class_holds_them():
+    from gateway import projection_types
+
+    assert {"providers", "key_status", "global"} <= set(projection_types.BODY_KEYS)
+    for name, keys in egress.PLAIN_RESPONSE_CLASSES.items():
+        assert keys is None or not keys & {"service_registry", "provider", "engine", "extension_packages", "litellm_config"}, name

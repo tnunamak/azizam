@@ -123,7 +123,7 @@ def test_engine_view_hides_unregistered_configuration_in_the_stored_record(tmp_p
     assert 'PRIVATE-UNKNOWN-CONFIG' not in str(shown)
     assert 'PRIVATE-NESTED-CONFIG' not in str(shown)
     assert shown['record']['config']['host'] == '127.0.0.1'
-    assert shown['hidden_settings_count'] == 2
+    assert shown['hidden_settings'] == 2
 
 
 def test_stored_record_never_synthesizes_a_lifecycle_secret_carrier(tmp_path):
@@ -178,3 +178,33 @@ def test_retain_response_does_not_pair_old_entries_with_a_new_revision(tmp_path,
     result = store.apply_secret_commands(service_id='editor', commands=[{'carrier': 'config.api_key', 'operation': 'retain', 'entry_id': secret_commands.provider_key_entry_id(saved)}], actor=actor, expected_generation=1)
     assert result['operator_settings_generation'] == snapshot['operator_settings_generation']
     assert result['value']['services']['editor']['name'] == snapshot['value']['services']['editor']['name']
+
+
+def test_protocol_key_command_supplies_runtime_inference_credentials_and_clear_keeps_control(tmp_path, monkeypatch):
+    from gateway import secret_refs
+    from gateway.engine_credentials import credential_headers
+    path = tmp_path / 'admin.db'
+    monkeypatch.setattr(admin_store, 'DB_PATH', path)
+    origin = 'http://127.0.0.1:8080'
+    secret_store.put_provider_secret('control-only', 'control-credential', db_path=path, approved_origin=origin)
+    saved = record(connection={'dispatch': 'protocol', 'protocol': 'openai-compatible', 'address': origin,
+                               'credentials': {'control': {'secret_ref': 'control-only', 'origin': origin, 'header': 'X-Control'}}})
+    configured, _ = secret_commands.apply_commands(saved, [{'carrier': 'config.api_key', 'operation': 'add', 'value': 'inference-credential'}], secret_refs.putter(path))
+    assert credential_headers(configured, 'inference') == {'Authorization': 'Bearer inference-credential'}
+    assert credential_headers(configured, 'control') == {'X-Control': 'control-credential'}
+    cleared, _, _ = apply(configured, {'carrier': 'config.api_key', 'operation': 'clear', 'entry_id': secret_commands.provider_key_entry_id(configured)})
+    assert credential_headers(cleared, 'inference') == {}
+    assert credential_headers(cleared, 'control') == {'X-Control': 'control-credential'}
+
+
+def test_opting_into_protocol_routes_existing_model_rows():
+    from gateway.engine_protocol.dispatch import resolve
+    saved = record(connection={'dispatch': 'protocol', 'protocol': 'openai-compatible', 'address': 'http://127.0.0.1:8080'})
+    target = resolve({'services': {'editor': saved}}, 'editor-chat', 'chat')
+    assert target is not None and target.upstream == 'test'
+
+
+def test_connection_secret_commands_invalidate_saved_check_and_tests():
+    saved = record(engine_check={'status': 'ok', 'checked_at': 123}, engine_tests={'chat': {'ok': True, 'at': 123}})
+    changed, _, _ = apply(saved, {'carrier': 'config.headers', 'operation': 'add', 'name': 'X-Tenant', 'value': 'new-private-tenant'})
+    assert not changed['config'].get('engine_check') and not changed['config'].get('engine_tests')

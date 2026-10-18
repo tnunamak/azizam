@@ -36,4 +36,4 @@ def register_engine_protocol_routes(router: APIRouter, *, guard: Callable[[Reque
         ctx = await asyncio.to_thread(guard, request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return egress.plain_json_response(await asyncio.to_thread(installed_protocols))
+        return egress.plain_json_response(await asyncio.to_thread(installed_protocols), response_class="engine_protocols")

@@ -180,7 +180,7 @@ def create_provider_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return egress.plain_json_response(
+        return egress.projected_response(
             status_code=status.HTTP_200_OK,
             content=_providers_payload(store, effective_spending_provider),
         )
@@ -194,7 +194,7 @@ def create_provider_admin_router(
             catalog = provider_catalog.load_provider_catalog()
         except ValueError as exc:
             return _RouteError(500, "provider_catalog_invalid", str(exc)).as_response()
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="provider_catalog",
             status_code=status.HTTP_200_OK,
             content={"providers": [preset.to_dict() for preset in catalog.values()]},
         )
@@ -295,7 +295,7 @@ def create_provider_admin_router(
                 "provider_ledger_unavailable",
                 "provider spend ledger is unavailable",
             ).as_response()
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="provider_reconciliation",
             status_code=status.HTTP_200_OK,
             content={"reconciliations": rows},
         )
@@ -339,7 +339,7 @@ def create_provider_admin_router(
                 "provider_ledger_unavailable",
                 "provider spend ledger is unavailable",
             ).as_response()
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="provider_reconciliation",
             status_code=status.HTTP_200_OK,
             content={"reconciliation": row},
         )
@@ -371,7 +371,7 @@ def create_provider_admin_router(
             return exc.as_response()
         except ValueError:
             return _RouteError(400, "invalid_provider_key", "Enter a provider key longer than four characters.").as_response()
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"key_status": _secret_key_status(status_row)})
+        return egress.projected_response(status_code=status.HTTP_200_OK, content={"key_status": _secret_key_status(status_row)})
 
     @router.delete("/{provider_id}/key")
     def delete_provider_key(request: Request, provider_id: str) -> JSONResponse:
@@ -388,7 +388,7 @@ def create_provider_admin_router(
                 _clear_provider_connection_state(store, provider_id, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"key_status": _secret_key_status(status_row)})
+        return egress.projected_response(status_code=status.HTTP_200_OK, content={"key_status": _secret_key_status(status_row)})
 
     @router.post("/-/test")
     async def test_unsaved_provider(request: Request) -> JSONResponse:
@@ -407,7 +407,7 @@ def create_provider_admin_router(
             return exc.as_response()
         except provider_listing.ProviderListingError as exc:
             return _RouteError(exc.status_code, exc.code, str(exc)).as_response()
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content=result)
+        return egress.plain_json_response(response_class="provider_probe", status_code=status.HTTP_200_OK, content=result)
 
     @router.post("/{provider_id}/test")
     async def test_provider(request: Request, provider_id: str) -> JSONResponse:
@@ -450,7 +450,7 @@ def create_provider_admin_router(
                 state = store.get_provider_admin_state()
                 _provider_state_for_update(state, provider_id)["connection"] = {"reachable": True, "checked_at": result["checked_at"]}
                 store.update_provider_admin_state(data=state, actor=ctx)
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content=result)
+        return egress.plain_json_response(response_class="provider_probe", status_code=status.HTTP_200_OK, content=result)
 
     @router.put("/{provider_id}/models")
     async def update_provider_models(request: Request, provider_id: str) -> JSONResponse:
@@ -580,7 +580,7 @@ def create_provider_admin_router(
                 store.update_provider_admin_state(data=state, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()
-        return egress.plain_json_response(
+        return egress.projected_response(
             status_code=status.HTTP_200_OK,
             content=_providers_payload(store, effective_spending_provider),
         )
@@ -594,7 +594,7 @@ def create_provider_admin_router(
             state = store.get_provider_admin_state()
             state["global_caps"] = {}
             store.update_provider_admin_state(data=state, actor=ctx)
-        return egress.plain_json_response(
+        return egress.projected_response(
             status_code=status.HTTP_200_OK,
             content=_providers_payload(store, effective_spending_provider),
         )

@@ -155,10 +155,18 @@ def test_an_entry_the_new_list_leaves_out_must_be_named_in_clear(db):
     assert refused.value.code == "unmentioned_entry"
 
 
-def test_a_literal_that_follows_a_credential_flag_is_refused(db):
-    with pytest.raises(secret_commands.CommandError) as refused:
-        _apply(db, _record(), {"carrier": "process.start", "operation": "set", "items": [{"literal": "r"}, {"literal": "--api-key"}, {"literal": SEEDS["a"]}]})
-    assert refused.value.code == "credential_in_literal" and SEEDS["a"] not in refused.value.message
+def test_a_structured_command_is_not_guessed_at_a_literal_is_public_as_declared(db):
+    """Decision D29: where the input says what each item is, no flag name is read to decide otherwise.
+
+    The writer who means a secret sends it as a ``secret`` item; one who sends a ``literal`` after ``--api-key`` has said it
+    is public, and it is stored and shown as text. (A plain line or list written before D26 is read by the rule instead.)
+    """
+    record, outcome = _apply(db, _record(), {"carrier": "process.start", "operation": "set",
+                                             "items": [{"literal": "r"}, {"literal": "--api-key"}, {"literal": SEEDS["a"]}]})
+    assert record["process"]["start"] == ["r", "--api-key", SEEDS["a"]] and outcome.created == []
+    stored, outcome = _apply(db, _record(), {"carrier": "process.start", "operation": "set",
+                                             "items": [{"literal": "r"}, {"literal": "--api-key"}, {"secret": SEEDS["a"]}]})
+    assert SEEDS["a"] not in json.dumps(stored) and len(outcome.created) == 1
 
 
 def test_url_credentials_are_set_and_cleared_as_entries(db):

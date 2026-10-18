@@ -12,6 +12,7 @@ import type { EngineView } from "@/lib/engines-api";
  */
 export function StoredRecordSection({ view }: { view: EngineView }) {
   const otherSettings = Object.entries(view.other_settings ?? {});
+  const hiddenSettings = view.hidden_settings ?? 0;
   return (
     <details className="bg-card rounded-panel border">
       <summary className="flex min-h-12 cursor-pointer items-center px-4 py-3">
@@ -24,7 +25,6 @@ export function StoredRecordSection({ view }: { view: EngineView }) {
             Copy
           </CopyButton>
         </div>
-        {!!view.hidden_settings_count && <p className="text-meta text-muted-foreground">{view.hidden_settings_count} {view.hidden_settings_count === 1 ? "setting" : "settings"} hidden: not classified</p>}
         <p className="text-meta text-muted-foreground">Saved configuration for troubleshooting. Secrets are hidden.</p>
         <p className="text-meta text-muted-foreground">Public settings and configured secret entries. Unclassified settings are omitted. You cannot edit this view here.</p>
         <pre
@@ -62,6 +62,11 @@ export function StoredRecordSection({ view }: { view: EngineView }) {
               ))}
             </dl>
           </div>
+        )}
+        {hiddenSettings > 0 && (
+          <p className="text-meta text-muted-foreground">
+            {hiddenSettings} {hiddenSettings === 1 ? "setting" : "settings"} hidden: not classified
+          </p>
         )}
       </section>
     </details>

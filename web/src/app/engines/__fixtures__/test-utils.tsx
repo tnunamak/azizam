@@ -78,6 +78,7 @@ export function engineView(over: Partial<EngineView> = {}): EngineView {
     access: structuredClone(data.access.you_and_family),
     calls: "GET http://192.168.1.50:8080/v1/models",
     other_settings: { probe_interval_s: 30, legacy_note: "bought 2025" },
+    hidden_settings: 2,
     record: {
       id: "garage-gpu",
       name: "garage-gpu",

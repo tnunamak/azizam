@@ -29,7 +29,7 @@ import json
 import re
 import shlex
 from typing import Any, Iterator, Mapping
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import urlsplit
 
 from gateway import secret_refs
 from gateway.secret_refs import Put
@@ -49,14 +49,20 @@ COMMAND_CONTAINERS = (
     "config.process.profile_apply",
 )
 ENV_CONTAINERS = (*COMMAND_CONTAINERS, "config")
+# Every URL a record holds and the runtime reads as one (decision D29). A field the runtime reads as an address
+# is listed here whatever its name, so the credentials it carries move to the store like those of ``base_url``.
+_DRIVER_URL_KEYS = ("health_endpoint", "load_url", "unload_url", "verify_endpoint")
 URL_FIELD_PATHS = (
     "config.host", "config.url", "config.address", "config.base_url", "config.api_base", "config.default_base_url",
     "config.health_endpoint", "config.key_url", "config.docs_url", "config.gateway_lifecycle_base_url",
+    "config.endpoint", "config.upstream",
     "config.context_window_probe.endpoint",
-    "process.health_endpoint", "process.legacy_lifecycle.driver_config.health_endpoint",
-    "lifecycle.driver_config.health_endpoint", "config.lifecycle.driver_config.health_endpoint",
-    "config.process.health_endpoint",
+    "process.health_endpoint", "config.process.health_endpoint",
+    *(f"{base}.{key}" for base in ("process.legacy_lifecycle.driver_config", "lifecycle.driver_config",
+                                   "config.lifecycle.driver_config") for key in _DRIVER_URL_KEYS),
 )
+# A list of mappings whose ``url`` is a URL field too (the models a record lists).
+URL_LIST_PATHS = ("config.models",)
 # A single secret value in a mapping (the admin key of an http load/unload driver).
 SCALAR_SECRET_PATHS = (
     "lifecycle.admin_key", "process.legacy_lifecycle.admin_key", "config.lifecycle.admin_key",
@@ -70,14 +76,35 @@ class AmbiguousUrl(ValueError):
     """A URL whose parts cannot be told apart with confidence."""
 
 
+class UrlRefused(ValueError):
+    """A write named a URL that cannot be read with confidence. The text names the field and never the value."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"{path} is not a URL the gateway can read with confidence (a backslash, a control character or an invalid "
+            "port); write it as scheme://host:port/path, with any credentials sent as secret entries.")
+        self.path = path
+
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
 
+_INDEXED = re.compile(r"^([^\[\]]+)\[(\d{1,4})\]$")
+
+
 def _get(record: Mapping[str, Any], path: str) -> Any:
+    """The value at a dotted path; a part ``name[3]`` is the fourth item of the list ``name``."""
     node: Any = record
     for part in path.split("."):
+        indexed = _INDEXED.match(part)
+        if indexed:
+            node = node.get(indexed.group(1)) if isinstance(node, Mapping) else None
+            if not isinstance(node, list) or int(indexed.group(2)) >= len(node):
+                return None
+            node = node[int(indexed.group(2))]
+            continue
         if not isinstance(node, Mapping) or part not in node:
             return None
         node = node[part]
@@ -109,6 +136,11 @@ def url_containers(record: Mapping[str, Any]) -> Iterator[tuple[str, dict[str, A
         for key in ("path", "url"):
             if key in http:
                 yield f"{base}.{key}", http, key
+    for list_path in URL_LIST_PATHS:
+        rows = _get(record, list_path)
+        for index, row in enumerate(rows if isinstance(rows, list) else ()):
+            if isinstance(row, dict) and "url" in row:
+                yield f"{list_path}[{index}].url", row, "url"
 
 
 # ---------------------------------------------------------------------------
@@ -120,12 +152,16 @@ def split_url(value: str) -> tuple[str, dict[str, Any]]:
     """``(public form, credential parts)`` of a URL, an address with user info, or a path with a query.
 
     The public form has no user info, no query and no fragment. The credential parts are
-    ``{"userinfo": "user:password", "query": [(name, value), ...], "fragment": text}``, each present only when
-    the URL had it. Raises ``AmbiguousUrl`` for text that cannot be read with confidence (an invalid port, a
+    ``{"userinfo": "user:password", "query": [(name, value or None), ...], "fragment": text}``, each present only when
+    the URL had it; the query is the raw chunks of the string, in order. Raises ``AmbiguousUrl`` for text that cannot be read with confidence (an invalid port, a
     bracket that does not close, a control character).
     """
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
         raise AmbiguousUrl("a URL holds a control character")
+    if "\\" in value:
+        # Browsers and some clients read a backslash as a slash, urlsplit does not: ``http://evil.com\@good.com/`` is
+        # one host to one reader and another to the other. No part of it can be told apart with confidence.
+        raise AmbiguousUrl("a URL holds a backslash")
     parts: dict[str, Any] = {}
     if "://" in value:
         scheme, _, rest = value.partition("://")
@@ -134,7 +170,7 @@ def split_url(value: str) -> tuple[str, dict[str, Any]]:
         prefix = f"{scheme}://"
     else:
         rest, prefix = value, ""
-    rest, _, fragment = rest.partition("#")
+    rest, hash_mark, fragment = rest.partition("#")
     rest, question, query = rest.partition("?")
     authority, slash, path = rest.partition("/")
     if prefix or _looks_like_authority(authority):
@@ -151,17 +187,14 @@ def split_url(value: str) -> tuple[str, dict[str, Any]]:
         public = f"{prefix}{host}{slash}{path}"
     else:
         public = f"{authority}{slash}{path}" if slash else authority
-    if question and query:
-        pairs: list[tuple[str, str]] = []
-        for chunk in query.split("&"):
-            if not chunk:
-                continue
-            name, equals, item = chunk.partition("=")
-            pairs.append((unquote(name), unquote(item) if equals else ""))
-        if pairs:
-            parts["query"] = pairs
-    if fragment:
-        parts["fragment"] = fragment
+    if question:
+        # The query string is kept as written, chunk by chunk: a chunk is ``name=value`` (``value`` may be empty) or a bare
+        # word with no ``=`` (``value`` is None), and an empty chunk (``&&``, a trailing ``?``) is a chunk too, so
+        # ``join_url`` gives back exactly the bytes that came in (no decoding, no re-encoding, no dropped separator).
+        parts["query"] = [(chunk.partition("=")[0], chunk.partition("=")[2]) if "=" in chunk else (chunk, None)
+                          for chunk in query.split("&")]
+    if hash_mark:
+        parts["fragment"] = fragment  # an empty fragment is kept too: ``http://h/x#`` is not ``http://h/x``
     return public, parts
 
 
@@ -170,9 +203,9 @@ def _looks_like_authority(text: str) -> bool:
     return "@" in text and " " not in text
 
 
-def join_url(public: str, *, userinfo: str | None = None, query: list[tuple[str, str]] | None = None,
+def join_url(public: str, *, userinfo: str | None = None, query: list[tuple[str, str | None]] | None = None,
              fragment: str | None = None) -> str:
-    """The URL that ``split_url`` took apart: the public form with its credential parts put back."""
+    """The URL that ``split_url`` took apart: the public form with its credential parts put back, byte for byte."""
     out = public
     if userinfo:
         if "://" in out:
@@ -181,9 +214,8 @@ def join_url(public: str, *, userinfo: str | None = None, query: list[tuple[str,
         elif not out.startswith("/"):
             out = f"{userinfo}@{out}"
     if query:
-        out += ("&" if "?" in out else "?") + "&".join(
-            f"{quote(name, safe='')}={quote(item, safe='')}" if item != "" else quote(name, safe="") for name, item in query)
-    if fragment:
+        out += ("&" if "?" in out else "?") + "&".join(name if item is None else f"{name}={item}" for name, item in query)
+    if fragment is not None:
         out += f"#{fragment}"
     return out
 
@@ -195,10 +227,43 @@ def url_entries(public: str, parts: Mapping[str, Any], put: Put) -> dict[str, An
     if "userinfo" in parts:
         held["userinfo"] = secret_refs.entry(put(parts["userinfo"], origin))
     if "query" in parts:
-        held["query"] = [secret_refs.entry(put(item, origin), name=name) for name, item in parts["query"]]
+        held["query"] = [_query_entry(name, item, put, origin) for name, item in parts["query"]]
     if "fragment" in parts:
-        held["fragment"] = secret_refs.entry(put(parts["fragment"], origin))
+        held["fragment"] = (secret_refs.entry(put(parts["fragment"], origin)) if parts["fragment"]
+                            else {"id": secret_refs.new_entry_id(), "empty": True})
     return held
+
+
+def _query_entry(name: str, item: str | None, put: Put, origin: str | None) -> dict[str, Any]:
+    """One chunk of a query string as an entry. A value is private, a name is public.
+
+    ``name=value`` keeps its name beside the stored value. An empty value (``name=``) and an empty chunk hold nothing to
+    store, so they are entries without a reference; a bare word (``?token123``) is stored whole, since a word with no
+    ``=`` may be the credential itself.
+    """
+    if item is None:
+        if name == "":
+            return {"id": secret_refs.new_entry_id(), "gap": True}
+        return secret_refs.entry(put(name, origin), bare=True)
+    if item == "":
+        return {"id": secret_refs.new_entry_id(), "name": name, "empty": True}
+    return secret_refs.entry(put(item, origin), name=name)
+
+
+def query_chunks(entries: Any, resolve: Any) -> list[tuple[str, str | None]]:
+    """The raw chunks a stored query holds, in order; ``resolve(ref)`` gives a stored value."""
+    chunks: list[tuple[str, str | None]] = []
+    for item in entries if isinstance(entries, list) else ():
+        if not isinstance(item, Mapping):
+            continue
+        if secret_refs.is_secret_entry(item):
+            value = resolve(item["secret_ref"])
+            chunks.append((value, None) if item.get("bare") else (str(item.get("name") or ""), value))
+        elif item.get("empty"):
+            chunks.append((str(item.get("name") or ""), ""))
+        elif item.get("gap"):
+            chunks.append(("", None))
+    return chunks
 
 
 def endpoint_origin(config: Any) -> str | None:
@@ -216,14 +281,21 @@ def endpoint_origin(config: Any) -> str | None:
     return None
 
 
-def externalize_url(container: dict[str, Any], key: str, put: Put) -> bool:
-    """Move the credentials out of ``container[key]`` into the store. True when it changed anything. Idempotent."""
+def externalize_url(container: dict[str, Any], key: str, put: Put, *, reject_ambiguous: bool = False) -> bool:
+    """Move the credentials out of ``container[key]`` into the store. True when it changed anything. Idempotent.
+
+    A URL that cannot be read with confidence is stored whole as one private value and the field is left empty
+    (a record that exists already must not lose it); with ``reject_ambiguous`` (a new write) it raises
+    ``AmbiguousUrl`` instead, so the caller is told to fix it.
+    """
     value = container.get(key)
     if not isinstance(value, str) or not value:
         return False
     try:
         public, parts = split_url(value)
     except AmbiguousUrl:
+        if reject_ambiguous:
+            raise
         container[key] = ""
         container[key + SECRETS_SUFFIX] = {"whole": secret_refs.entry(put(value, None))}
         return True
@@ -241,29 +313,39 @@ def externalize_url(container: dict[str, Any], key: str, put: Put) -> bool:
 # ---------------------------------------------------------------------------
 
 
+WHOLE_COMMAND_LABEL = "a command line that could not be split into arguments"
+
+
 def _legacy_command_items(command: Any, put: Put) -> list[Any] | None:
-    """A legacy command (an argument list or one line) as items, or None when it holds no secret to move."""
+    """A legacy command (an argument list or one line) as items, or None when it holds no secret to move.
+
+    A line that ``shlex`` cannot split (an unbalanced quote) is not shown and not guessed at: it is stored whole as
+    one secret with a public label, and ``runtime_secrets.argv`` splits it when the command runs, which fails the
+    way the line always did. An argument list whose items are all text (or numbers) is read by the credential rule.
+    """
     from gateway.legacy_credential_rules import argv_secret_slots
 
     if isinstance(command, str):
         try:
             tokens = shlex.split(command)
         except ValueError:
-            return None
+            return [secret_refs.entry(put(command, None), whole=True, label=WHOLE_COMMAND_LABEL)] if command.strip() else None
     elif isinstance(command, list):
         tokens = list(command)
     else:
         return None
-    if not all(isinstance(token, str) for token in tokens):
+    # a number written where an argument goes is an argument (``--pin 4242``)
+    texts = [str(token) if isinstance(token, (int, float)) and not isinstance(token, bool) else token for token in tokens]
+    if not all(isinstance(token, str) for token in texts):
         return None
-    slots = argv_secret_slots(tokens)
+    slots = argv_secret_slots(texts)
     if not slots:
         return None
     items: list[Any] = []
-    for index, token in enumerate(tokens):
+    for index, token in enumerate(texts):
         visible = slots.get(index)
         if visible is None:
-            items.append(token)
+            items.append(tokens[index])
         else:
             entry = secret_refs.entry(put(token[visible:], None), **({"prefix": token[:visible]} if visible else {}))
             items.append(entry)
@@ -286,36 +368,95 @@ def _value_text(value: Any) -> str:
     return ""
 
 
-def externalize_service(record: Mapping[str, Any], put: Put) -> tuple[dict[str, Any], list[str]]:
+def _coerce_header_row(row: Any) -> Any:
+    """A header row written in a shape other than ``{"name", "value"}``, as that shape (None for a row that holds nothing).
+
+    ``"Name: value"``, ``["Name", "value"]`` and ``{"Name": "value"}`` are all ways a header gets written by hand; each
+    has a value in it, so each becomes a row. Anything else is kept whole as the value of a row with no name.
+    """
+    if row is None or row == "" or row == {} or row == []:
+        return None
+    if isinstance(row, str):
+        name, colon, value = row.partition(":")
+        return {"name": name.strip(), "value": value.strip()} if colon and name.strip() else {"name": "", "value": row}
+    if isinstance(row, (list, tuple)):
+        if len(row) == 2 and all(isinstance(item, (str, int, float)) and not isinstance(item, bool) for item in row):
+            return {"name": str(row[0]), "value": row[1]}
+        return {"name": "", "value": json.dumps(list(row), default=str)}
+    if isinstance(row, Mapping):
+        if any(key in row for key in HEADER_ROW_KEYS):
+            return {key: row[key] for key in HEADER_ROW_KEYS if key in row}
+        if len(row) == 1:
+            (name, value), = row.items()
+            return {"name": str(name), "value": value}
+        return {"name": "", "value": json.dumps(dict(row), default=str)}
+    return {"name": "", "value": json.dumps(row, default=str)}
+
+
+def names_credential_header(name: Any) -> bool:
+    """True for a header named like one that carries a credential (``Authorization``, ``X-Api-Key``): such a header is
+    never public, whatever its row says, so an administrator cannot store a key in plain sight by marking it public."""
+    from gateway.litellm_substrate import CREDENTIAL_HEADER_RE
+
+    return isinstance(name, str) and CREDENTIAL_HEADER_RE.search(name) is not None
+
+
+def _entry_keeping_id(ref: str, previous: Any, **public: Any) -> dict[str, Any]:
+    entry = secret_refs.entry(ref, **public)
+    if isinstance(previous, Mapping) and secret_refs.is_entry_id(previous.get("id")):
+        entry["id"] = previous["id"]
+    return entry
+
+
+def _env_text(value: Any) -> str:
+    """The text an environment value is stored as; nothing for a switch or an empty value."""
+    if isinstance(value, Mapping) and "value" in value:
+        value = value["value"]
+    if isinstance(value, bool) or value is None:
+        return ""
+    return _value_text(value)
+
+
+def externalize_service(record: Mapping[str, Any], put: Put, *, reject_ambiguous: bool = False) -> tuple[dict[str, Any], list[str]]:
     """``record`` with every inline secret moved into the store, and the paths that were moved. Idempotent.
 
-    Headers: a legacy row with a value becomes a secret row. Environment: a legacy plain value becomes a secret
-    value. Commands: an argument that follows a credential flag (or sits after ``=`` in one) becomes an entry, and
-    a command line that holds one becomes an argument list. URLs: user info and query values move beside the
-    field. A record with none of these comes back equal to the one that went in.
+    Headers: a legacy row with a value becomes a secret row (only a row that says ``public: true``, exactly, stays
+    public). Environment: a legacy value, in whatever shape, becomes a secret value. Commands: an argument that follows
+    a credential flag (or sits after ``=`` in one) becomes an entry, and a command line that holds one becomes an
+    argument list. URLs: user info and query values move beside the field. A record with none of these comes back
+    equal to the one that went in. With ``reject_ambiguous`` a URL that cannot be read raises ``AmbiguousUrl``.
     """
     out = copy.deepcopy(dict(record))
     moved: list[str] = []
     origin = endpoint_origin(out.get("config"))
 
     headers = _get(out, HEADER_PATH)
+    if isinstance(headers, str) and headers.strip():
+        headers = [line for line in headers.splitlines() if line.strip()]
+        out["config"]["headers"] = headers
+        moved.append(HEADER_PATH)
     if isinstance(headers, list):
         rows: list[Any] = []
-        for row in headers:
-            if isinstance(row, Mapping):
-                # A row has the fields of its type and no others: an extra field inside a carrier is a place for a
-                # value that no view or migration looks at, so it is not kept.
-                row = {key: row[key] for key in HEADER_ROW_KEYS if key in row}
-            if (isinstance(row, Mapping) and "value" in row and not row.get("public")
-                    and not secret_refs.is_secret_entry(row)):
+        for original in headers:
+            row = _coerce_header_row(original)
+            if row is None:
+                continue
+            name = row.get("name")
+            if "name" in row and not isinstance(name, str):
+                row["name"] = "" if name is None else str(name)
+            held = secret_refs.is_secret_entry(row)
+            if (row.get("public") is True and isinstance(row.get("value"), str) and not held
+                    and not names_credential_header(row.get("name"))):
+                rows.append(row)  # a public row says so, exactly, holds text, and is not named for a credential
+                continue
+            if "value" in row:
                 text = _value_text(row["value"])
                 if text:
-                    rows.append(secret_refs.entry(put(text, origin), name=row.get("name")))
+                    rows.append(_entry_keeping_id(put(text, origin), row, name=row.get("name", "")))
                     moved.append(HEADER_PATH)
-                else:
-                    rows.append(dict(row))  # an empty value holds nothing to move
-            else:
-                rows.append(row)
+                    continue
+                row = {key: item for key, item in row.items() if key != "value"} if held else row  # an empty value holds nothing
+            rows.append(row)
         out["config"]["headers"] = rows
     elif isinstance(headers, dict):
         # A name-to-value mapping is not the shape the gateway sends from, but it is still a place a value can be
@@ -331,8 +472,14 @@ def externalize_service(record: Mapping[str, Any], put: Put) -> tuple[dict[str, 
         env = container.get("env") if container is not None else None
         if isinstance(env, dict):
             for name, value in list(env.items()):
-                if isinstance(value, (str, int, float)) and not isinstance(value, bool) and str(value) != "":
-                    env[name] = secret_refs.entry(put(str(value), None))
+                if isinstance(value, Mapping) and value.get("public") is True and isinstance(value.get("value"), str) \
+                        and not secret_refs.is_secret_entry(value):
+                    continue
+                if secret_refs.is_secret_entry(value) and "value" not in value:
+                    continue
+                text = _env_text(value)
+                if text:
+                    env[name] = _entry_keeping_id(put(text, None), value)
                     moved.append(f"{path}.env.{name}")
 
     for path in COMMAND_CONTAINERS:
@@ -354,8 +501,11 @@ def externalize_service(record: Mapping[str, Any], put: Put) -> tuple[dict[str, 
             moved.append(path)
 
     for path, parent, key in list(url_containers(out)):
-        if externalize_url(parent, key, put):
-            moved.append(path)
+        try:
+            if externalize_url(parent, key, put, reject_ambiguous=reject_ambiguous):
+                moved.append(path)
+        except AmbiguousUrl:
+            raise UrlRefused(path) from None
     return out, moved
 
 
@@ -419,6 +569,16 @@ def inline_carriers(record: Mapping[str, Any]) -> list[str]:
 
 
 PACKAGE_SOURCE_URL_KEYS = ("url", "repo_url")
+# The fields of a package source the gateway reads or shows: where it is, which revision, what it is called. Any other
+# field a caller puts in a source (a token, a password, a header, a key) is a credential by default and moves to the
+# store, held beside the source in ``extra_entries``; nothing reads it back (decision D29: unknown means secret).
+PACKAGE_SOURCE_PUBLIC_KEYS = (
+    "type", "kind", "id", "name", "ref", "resolved_ref", "commit", "tag", "branch", "subdir", "path_in_repo", "path",
+    "directory", "repo", "repository", *PACKAGE_SOURCE_URL_KEYS,
+)
+SOURCE_EXTRA_ENTRIES = "extra_entries"
+_SOURCE_EXTRA_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+MAX_SOURCE_EXTRAS = 16
 
 
 def package_sources(index: Mapping[str, Any]) -> Iterator[dict[str, Any]]:
@@ -434,14 +594,59 @@ def package_sources(index: Mapping[str, Any]) -> Iterator[dict[str, Any]]:
             yield source
 
 
+def source_extras(source: Mapping[str, Any]) -> dict[str, str]:
+    """The fields of a package source that are not the source's own, as the text each would be stored as.
+
+    Raises ``ValueError`` (fixed text, no value) for a name that is not a plain name, for too many of them, or for a
+    value too large to store.
+    """
+    extras: dict[str, str] = {}
+    for key, value in source.items():
+        if key in PACKAGE_SOURCE_PUBLIC_KEYS or key.endswith(SECRETS_SUFFIX) or key == SOURCE_EXTRA_ENTRIES:
+            continue
+        if value in (None, "", [], {}):
+            continue
+        if not isinstance(key, str) or not _SOURCE_EXTRA_NAME.fullmatch(key):
+            raise ValueError("a package source field has a name that cannot be kept")
+        text = value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
+        if len(text) > 8192:
+            raise ValueError("a package source field is too large to keep")
+        extras[key] = text
+    if len(extras) > MAX_SOURCE_EXTRAS:
+        raise ValueError("a package source has too many fields")
+    return extras
+
+
+def externalize_source_extras(source: dict[str, Any], put: Put) -> bool:
+    """Move every field of a source that is not its own into the store, one entry per field name. True when it moved any."""
+    extras = source_extras(source)
+    if not extras:
+        return False
+    held = source.get(SOURCE_EXTRA_ENTRIES)
+    held = dict(held) if isinstance(held, Mapping) else {}
+    for key, text in extras.items():
+        held[key] = secret_refs.entry(put(text, None))
+        del source[key]
+    source[SOURCE_EXTRA_ENTRIES] = held
+    return True
+
+
 def externalize_package_index(index: Mapping[str, Any], put: Put) -> tuple[dict[str, Any], list[str]]:
-    """``index`` with the credentials of every git source URL moved into the store. Idempotent."""
+    """``index`` with the credentials of every package source moved into the store (URL parts and every extra field). Idempotent."""
     out = copy.deepcopy(dict(index))
     moved: list[str] = []
     for source in package_sources(out):
         for key in PACKAGE_SOURCE_URL_KEYS:
             if key in source and externalize_url(source, key, put):
                 moved.append(f"source.{key}")
+        try:
+            if externalize_source_extras(source, put):
+                moved.append("source.extra")
+        except ValueError:
+            # a stored source with a field that cannot be kept holds nothing the gateway reads: it is cut down to its own fields
+            for key in [k for k in source if k not in PACKAGE_SOURCE_PUBLIC_KEYS and not k.endswith(SECRETS_SUFFIX) and k != SOURCE_EXTRA_ENTRIES]:
+                del source[key]
+            moved.append("source.extra")
     return out, moved
 
 
@@ -516,4 +721,68 @@ def ingest_service(
             if key in target and target[key] != value and target[key] != _carrier_view(policy_name, value):
                 raise CarrierLocked(path)
             target[key] = copy.deepcopy(value)
-    return externalize_service(record, put)
+    from gateway import projection, projection_types
+
+    # A read hides the settings no type classifies (decision D34); a write built from a read does not carry them, so
+    # the stored ones are kept. The count a read shows is never stored.
+    projection.retain_hidden(projection_types.SERVICE_RECORD, record, stored)
+    return externalize_service(record, put, reject_ambiguous=True)
+
+
+# ---------------------------------------------------------------------------
+# A read written back (decision D27)
+# ---------------------------------------------------------------------------
+
+
+class EchoRefused(ValueError):
+    """A write put, in a reference slot, something other than what a read shows for it or a reference id."""
+
+
+def _echo_view(policy_name: str, held: Any) -> Any:
+    from gateway import projection
+
+    policy = {"configured": projection.CONFIGURED, "ref_map": projection.REF_MAP}[policy_name]
+    return projection.project_policy(policy, held, configured=secret_refs.configured).tree
+
+
+def restore_echoed_record(record: dict[str, Any], stored: Mapping[str, Any] | None) -> None:
+    """Replace, in ``record``, a reference slot that came back as the read showed it with what the store holds.
+
+    A read shows a provider's key reference (``config.api_key_secret_id``) and the record's ``secret_refs`` as
+    ``{"configured": true}`` and as names: no id, nothing to retain by. A write that sends back exactly that view
+    leaves the slot as stored; it is the same rule as for the carriers (``ingest_service``), and the view is compared
+    with what a read of the stored record shows now, never taken as a command. Anything else that is not an id
+    (another marker, a mapping that differs from the view, a reserved text) is refused with fixed text: a slot is
+    changed by sending its new reference id, or its stored key by the secret-entries commands.
+    """
+    from gateway.secret_commands import RESERVED_TEXTS
+
+    config = record.get("config") if isinstance(record.get("config"), dict) else None
+    stored_config = stored.get("config") if isinstance(stored, Mapping) and isinstance(stored.get("config"), Mapping) else {}
+    if config is not None and "api_key_secret_id" in config:
+        value, held = config["api_key_secret_id"], stored_config.get("api_key_secret_id")
+        if isinstance(value, str) and value.strip() in RESERVED_TEXTS:
+            raise EchoRefused("config.api_key_secret_id holds a marker text, not a reference id")
+        if isinstance(value, (Mapping, list)):
+            if isinstance(held, str) and held and isinstance(value, Mapping) and dict(value) == _echo_view("configured", held):
+                config["api_key_secret_id"] = held
+            else:
+                raise EchoRefused("config.api_key_secret_id is not a reference id and is not what a read shows for the stored one")
+    refs = record.get("secret_refs")
+    if isinstance(refs, Mapping) and any(isinstance(item, (Mapping, list)) for item in refs.values()):
+        held_refs = stored.get("secret_refs") if isinstance(stored, Mapping) else None
+        if isinstance(held_refs, Mapping) and held_refs and dict(refs) == _echo_view("ref_map", held_refs):
+            record["secret_refs"] = copy.deepcopy(dict(held_refs))
+        else:
+            raise EchoRefused("secret_refs holds something that is not a reference and is not what a read shows for the stored ones")
+
+
+def restore_echoed_registry(registry: Mapping[str, Any], stored: Mapping[str, Any] | None) -> dict[str, Any]:
+    """``registry`` (a write body) with ``restore_echoed_record`` applied to each service; the input is not changed."""
+    out = copy.deepcopy(dict(registry))
+    services = out.get("services")
+    held = stored.get("services") if isinstance(stored, Mapping) and isinstance(stored.get("services"), Mapping) else {}
+    for service_id, record in (services.items() if isinstance(services, dict) else ()):
+        if isinstance(record, dict):
+            restore_echoed_record(record, held.get(service_id))
+    return out

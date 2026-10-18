@@ -150,9 +150,16 @@ def test_the_route_list_is_found_from_the_app_with_its_mounts_and_websockets(gat
 def test_every_admin_route_is_a_management_route_or_an_inventoried_exception(gateway) -> None:
     unregistered = []
     for item in discover(gateway.proxy.app):
-        if item.path.startswith(egress.MANAGEMENT_PREFIXES) and not item.management and item.module not in egress.UNMANAGED_ADMIN_MODULES:
-            unregistered.append(f"{item.methods} {item.path} ({item.module})")
+        if not item.path.startswith(egress.MANAGEMENT_PREFIXES) or item.management:
+            continue
+        if item.module in egress.UNMANAGED_ADMIN_MODULES:
+            continue
+        # a route of the gateway module is inventoried one by one (egress.UNMANAGED_ADMIN_ROUTES), never as a module
+        if item.module.startswith("proxy") and all((method, item.path) in egress.UNMANAGED_ADMIN_ROUTES for method in item.methods):
+            continue
+        unregistered.append(f"{item.methods} {item.path} ({item.module})")
     assert not unregistered, unregistered
+    egress.verify_and_freeze(gateway.proxy.app)
     assert sum(1 for item in discover(gateway.proxy.app) if item.management) >= 70
 
 

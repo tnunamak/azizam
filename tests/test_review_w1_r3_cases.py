@@ -280,14 +280,12 @@ def test_f3_a_query_token_in_a_declared_path_or_url_field_moves_to_the_store(gat
     assert paths and secret not in json.dumps(moved), (field, moved)
 
 
-def test_f2_f3_undeclared_config_extras_are_public_data_and_the_contract_says_where_a_secret_goes(gateway) -> None:
-    """The one place the review's F2 and F3 still apply: a key the record type does not declare as a carrier.
+def test_f2_f3_undeclared_config_extras_are_kept_and_never_shown_and_the_contract_says_so(gateway) -> None:
+    """The review's F2 and F3 (a key the record type does not declare as a carrier), settled by decision D34.
 
-    D28 makes a field of a record either classified or dropped; a ``config`` key outside the declared carriers is
-    classified as public JSON (an engine definition can carry any setting). A neutral string there is public, as is a
-    list or mapping under a key named for a credential. That is the contract, written in ENGINE_CONTRACT.md, and it
-    is open for the owner (docs/design/ENGINE_CONTRACT.md, "Config extras"): the test pins the documented rule so
-    a change to it is a decision, not a drift.
+    Round 1 classified a ``config`` key outside the declared carriers as public JSON; the round 2 review showed that a
+    secret written there (a token under a neutral name, a mapping under ``password``) was then shown. D34: a key no type
+    classifies is stored unchanged and omitted from every output, with only a count; a write built from a read keeps it.
     """
     owner, *_ = owner_and_admin(gateway)
     _empty_registry(gateway)
@@ -296,10 +294,16 @@ def test_f2_f3_undeclared_config_extras_are_public_data_and_the_contract_says_wh
 
     assert owner.put(REGISTRY, headers=_headers(owner), json=registry).status_code == 200
 
-    shown = owner.get(REGISTRY).json()["service_registry"]["services"]["r3-engine"]["config"]
-    assert shown["vendor_blob"] == "Basic dTpw" and shown["credentials"] == ["listed"]
+    read = owner.get(REGISTRY)
+    shown = read.json()["service_registry"]["services"]["r3-engine"]["config"]
+    assert not {"vendor_blob", "credentials", "password"} & set(shown) and shown["hidden_settings"] == 3
+    assert "dTpw" not in read.text and "listed" not in read.text and "mapped" not in read.text
+    again = owner.put(REGISTRY, headers={**_headers(owner), "If-Match": read.headers["etag"]}, json=read.json()["service_registry"])
+    assert again.status_code == 200, again.text
+    stored = admin_store.get_service_registry_with_generation(path=gateway.path)["value"]["services"]["r3-engine"]["config"]
+    assert stored["vendor_blob"] == "Basic dTpw" and stored["credentials"] == ["listed"] and stored["password"] == {"primary": "mapped"}
     contract = (canary_root() / "docs" / "design" / "ENGINE_CONTRACT.md").read_text()
-    assert re.search(r"config extras.{0,400}public", contract, re.S | re.I), "ENGINE_CONTRACT.md must say config extras are public"
+    assert re.search(r"config extras.{0,600}never shown", contract, re.S | re.I), "ENGINE_CONTRACT.md must say config extras are never shown"
 
 
 def canary_root():
@@ -459,9 +463,9 @@ def test_f6_the_scan_finds_a_new_route_that_answers_with_a_record_through_a_help
 
     @router.post("/plain")
     def plain(body: dict):
-        return egress.plain_json_response({"ok": True})
+        return egress.plain_json_response({"ok": True}, response_class="acknowledgement")
 
-    router.add_api_route("/head-only", lambda: egress.plain_json_response({"ok": True}), methods=["HEAD"])
+    router.add_api_route("/head-only", lambda: egress.plain_json_response({"ok": True}, response_class="acknowledgement"), methods=["HEAD"])
     app.include_router(router)
 
     found = {item.path: item for item in discover(app)}
@@ -509,7 +513,7 @@ def _bypass_app() -> FastAPI:
 
     @router.get("/plain-constructor-with-a-record-key")
     def plain_with_record():
-        return egress.plain_json_response({"engine": RECORD, "service_registry": RECORD})
+        return egress.plain_json_response({"engine": RECORD, "service_registry": RECORD}, response_class="acknowledgement")
 
     app.include_router(router)
     app.add_middleware(egress.EgressGate)

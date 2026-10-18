@@ -96,7 +96,7 @@ class EngineRouteError(Exception):
         content: dict[str, Any] = {"error": error}
         if self.check is not None:
             content["check"] = dict(self.check)
-        return egress.plain_json_response(status_code=self.status_code, content=content, headers=self.headers)
+        return egress.plain_json_response(response_class="error", status_code=self.status_code, content=content, headers=self.headers)
 
 
 def _probe_limit(name: str, default: int) -> int:
@@ -624,24 +624,11 @@ def infer_definition(catalog: EngineCatalog, record: Mapping[str, Any]) -> str:
     return catalog.data["definitions"][0]["definition"]
 
 
-# This page projects only the settings its engine contract declares. Arbitrary
-# config extensions remain stored, but must not become a management read surface.
-_ENGINE_CONFIG_FIELDS = _KNOWN_CONFIG_KEYS | frozenset({
-    "connection", "offerings", "process", "observations", "residency", "resources", "env", "engine_capabilities",
-    "gateway_lifecycle", "gateway_lifecycle_base_url", "base_url", "api_base", "default_base_url", "health_endpoint",
-}) | frozenset(path.removeprefix("config.") for path in record_carriers.URL_FIELD_PATHS
-              if path.startswith("config.") and "." not in path.removeprefix("config."))
-
-
 def _projected_engine_record(stored: Mapping[str, Any]) -> dict[str, Any]:
     record = projection.project("ServiceRecord", stored).tree or {}
     config = record.get("config")
-    if isinstance(config, dict):
-        if "connection" in config:
-            config["connection"] = projection.project("EngineConnection", config["connection"]).tree
-        record["config"] = {name: value for name, value in config.items()
-                            if name in _ENGINE_CONFIG_FIELDS
-                            or name.removesuffix("_entries") in _ENGINE_CONFIG_FIELDS and name.endswith("_entries")}
+    if isinstance(config, dict) and "connection" in config:
+        config["connection"] = projection.project("EngineConnection", config["connection"]).tree
     return record
 
 
@@ -715,7 +702,9 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
     connection = config.get("connection") if isinstance(config.get("connection"), Mapping) else {}
     values["dispatch"] = connection.get("dispatch") or ""
     values["protocol_description"] = connection.get("protocol") or ""
-    other = {}  # Undeclared configuration has no management-plane projection (D34).
+    hidden = config.get(projection.HIDDEN_KEY) if isinstance(config.get(projection.HIDDEN_KEY), int) else 0
+    other = {name: value for name, value in config.items()
+             if name not in _KNOWN_CONFIG_KEYS and name not in ("engine_capabilities", projection.HIDDEN_KEY)}
     request_base = inference_base_url(config)
     operations = []
     for cap_id in caps if schema_matches else ():
@@ -753,11 +742,9 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         "check": copy.deepcopy(config.get("engine_check") or {}),
         "calls": call_line(definition, values),
         "other_settings": copy.deepcopy(other),
-        "hidden_settings_count": sum(name not in _ENGINE_CONFIG_FIELDS and not (
-            name.endswith("_entries") and name.removesuffix("_entries") in _ENGINE_CONFIG_FIELDS
-        ) for name in stored_config),
+        "hidden_settings": hidden,
         "record": redacted_record(stored),
-        "v2": service_registry.service_record_v2(record),
+        "v2": service_registry.service_record_v2(stored),
         "request_path": {"mode": "gateway_lifecycle" if hop_routed else "direct", "source": "service record",
                          "url": operations[0]["url"] if operations else "", "operations": operations},
         "credential_destination": (key.get("origin") or "") if key["state"] == "configured" else origin_of(address),
@@ -1331,6 +1318,12 @@ class EngineService:
             if existing is not None and old_origin and kept_key and not origin_moved:
                 # The owner bound this key to this address; an edit that keeps both keeps the binding.
                 raw["credential_origin"] = old_origin
+            if raw.get("api_key_secret_id") or raw.get("api_key_env") or raw.get("api_key_ref"):
+                # The page's key selection grants inference use at this origin.
+                # A key withheld after a host move must not get a new binding.
+                if not key.withheld:
+                    raw.setdefault("credential_origin", origin)
+                secret_commands.bind_protocol_inference(raw)
             if existing is not None and keep_lifecycle:
                 # Start and stop untouched: keep the stored block exactly (other drivers, status, cwd, env).
                 # The config keeps its own copy of the block; carry that copy, so neither changes.
@@ -1397,7 +1390,7 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
             payload = await asyncio.to_thread(lambda: service.catalog().public())
         except EngineRouteError as exc:
             return exc.as_response()
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content=payload)
+        return egress.plain_json_response(response_class="engine_definitions", status_code=status.HTTP_200_OK, content=payload)
 
     @router.post("/engines/check")
     async def check_engine(request: Request) -> JSONResponse:
@@ -1414,7 +1407,7 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
             if hasattr(exc, "as_response"):
                 return exc.as_response()  # type: ignore[no-any-return]
             raise
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"check": result})
+        return egress.plain_json_response(response_class="engine_check", status_code=status.HTTP_200_OK, content={"check": result})
 
     @router.post("/engines/test")
     async def test_engine(request: Request) -> JSONResponse:
@@ -1431,7 +1424,7 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
             if hasattr(exc, "as_response"):
                 return exc.as_response()  # type: ignore[no-any-return]
             raise
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"test": result})
+        return egress.plain_json_response(response_class="engine_check", status_code=status.HTTP_200_OK, content={"test": result})
 
     @router.post("/engines/access")
     async def engine_access(request: Request) -> JSONResponse:
@@ -1447,7 +1440,7 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
             if hasattr(exc, "as_response"):
                 return exc.as_response()  # type: ignore[no-any-return]
             raise
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"access": result})
+        return egress.plain_json_response(response_class="engine_check", status_code=status.HTTP_200_OK, content={"access": result})
 
     @router.get("/engines/{service_id}")
     async def get_engine(service_id: str, request: Request) -> JSONResponse:
