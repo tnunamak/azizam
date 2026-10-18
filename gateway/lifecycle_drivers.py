@@ -1793,9 +1793,9 @@ class HttpLoadUnloadDriver:
         """Resolve the read-only API key for verify GET calls."""
         lifecycle = svc.get("lifecycle") or {}
         if isinstance(lifecycle, Mapping):
-            key = lifecycle.get("api_key", "")
+            key = runtime_secrets.scalar(lifecycle, "api_key")
             if key:
-                return str(key)
+                return key
         env_var = dc.get("api_key_env", "")
         if env_var:
             return get_env(env_var, "")

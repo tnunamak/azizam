@@ -17,7 +17,7 @@ URL fields          the field holds the public endpoint (no user info, no query,
                     "fragment": entry}``. A URL that cannot be read with confidence is stored whole in
                     ``<field>_entries.whole`` and the field is left empty.
 
-This module is management-safe: it builds and walks structure and never decrypts. A single secret value (``lifecycle.admin_key``) is one entry. The legacy shapes (an inline
+This module is management-safe: it builds and walks structure and never decrypts. A single secret value (``lifecycle.admin_key``, ``lifecycle.api_key``) is one entry. The legacy shapes (an inline
 header value, a plain environment value, a command argument that follows a credential flag, a URL with user info)
 are read here once, by the migration and by ingestion, and turned into entries; nothing else reads them.
 """
@@ -63,9 +63,10 @@ URL_FIELD_PATHS = (
 )
 # A list of mappings whose ``url`` is a URL field too (the models a record lists).
 URL_LIST_PATHS = ("config.models",)
-# A single secret value in a mapping (the admin key of an http load/unload driver).
+# A single secret value in a mapping (the admin key and the API key of an http load/unload driver).
 SCALAR_SECRET_PATHS = (
     "lifecycle.admin_key", "process.legacy_lifecycle.admin_key", "config.lifecycle.admin_key",
+    "lifecycle.api_key", "process.legacy_lifecycle.api_key", "config.lifecycle.api_key",
 )
 HEADER_PATH = "config.headers"
 HEADER_ROW_KEYS = ("id", "name", "secret_ref", "value", "public")
@@ -534,6 +535,8 @@ def externalize_service(record: Mapping[str, Any], put: Put, *, reject_ambiguous
         parent_path, _, key = path.rpartition(".")
         parent = _container(out, parent_path)
         value = parent.get(key) if parent is not None else None
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            value = str(value)  # a key a YAML file wrote as a number is as much a secret as one written as text
         if isinstance(value, str) and value:
             parent[key] = secret_refs.entry(put(value, None))
             moved.append(path)

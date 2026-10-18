@@ -43,13 +43,13 @@ DRIVER_CONFIG = Obj("DriverConfig", {
     # what the lifecycle drivers read (``gateway/lifecycle_drivers.py`` documents each driver's keys)
     **{key: ANY_SCALAR for key in (
         "container", "compose_file", "compose_service", "scope", "unit", "dropin", "swap_strategy", "health_timeout_s",
-        "admin_header", "admin_key_env", "load_body_params", "precheck", "activation_requires_absolute_path", "load_timeout_s", "success_marker", "timeout_s", "cwd")},
+        "admin_header", "admin_key_env", "api_key_env", "activation_model_key", "load_body_params", "precheck", "activation_requires_absolute_path", "load_timeout_s", "success_marker", "timeout_s", "cwd")},
     **{key: JSON for key in ("activation_env_keys", "activation_profiles")},
 }, extras=HIDDEN)
 
 LIFECYCLE = Obj("Lifecycle", {
     "type": SHORT, "managed": BOOL, "service_name": STR, "driver": SHORT, "driver_config": DRIVER_CONFIG,
-    "admin_key": SCALAR_SECRET,
+    "admin_key": SCALAR_SECRET, "api_key": SCALAR_SECRET,
 }, extras=HIDDEN)
 
 PROCESS = Obj("Process", {
@@ -66,7 +66,7 @@ PROCESS = Obj("Process", {
 # Plain settings (a name, a number, a switch, an environment variable's *name*): public scalars.
 CONFIG_SCALAR_KEYS = (
     "port", "base_path", "path_prefix", "scheme", "protocol", "native_passthrough", "definition", "definition_version",
-    "timeout", "api_key_env", "api_key_ref", "credential_origin", "driver_credential_origin", "model_policy_schema_version", "name", "enabled", "role",
+    "timeout", "api_key_env", "api_key_ref", "credential_origin", "driver_credential_origin", "pin_loaded_model", "preset", "downstream_service", "model_policy_schema_version", "name", "enabled", "role",
     "priority", "managed", "base_url_env", "api_base_env", "default_model", "activation_model", "model_id", "model",
     "execution_substrate", "paid_remote", "remote_provider", "preset_id", "provider_id", "provider_type", "cost_class",
     "cost_model", "litellm_model", "litellm_provider", "provider_adapter", "concurrency_limit", "id_param", "cost_path",

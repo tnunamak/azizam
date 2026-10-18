@@ -679,3 +679,53 @@ def test_removing_the_package_removes_the_unchanged_record_and_detaches_the_chan
         package_id="pk", actor=AdminContext(subject="owner", roles=frozenset({"owner"}), actor_kind="user"))
 
     assert {item["id"]: item["action"] for item in removed["affected_records"]} == {unchanged: "removed", changed: "detached"}
+
+
+# ---------------------------------------------------------------------------
+# L2: the driver's API key is a declared carrier like its admin key
+# ---------------------------------------------------------------------------
+
+
+def _stored_api_key_record(db, key="R3-LIFECYCLE-API-KEY"):
+    record = _driver_record(driver_credential_origin=GOOD)
+    record["lifecycle"]["driver_config"].pop("admin_key_env")
+    record["lifecycle"]["driver_config"].pop("api_key_env")
+    record["lifecycle"]["api_key"] = key
+    return _moved(record, db)
+
+
+def test_a_driver_api_key_is_moved_into_the_store_and_shown_as_configured(store):
+    from gateway import projection, secret_commands
+
+    moved = _stored_api_key_record(store)
+    assert secret_refs.is_secret_entry(moved["lifecycle"]["api_key"])
+    assert "R3-LIFECYCLE-API-KEY" not in json.dumps(moved)
+    assert secret_commands.carrier_kind("lifecycle.api_key") == "secret"
+    shown = projection.project("ServiceRecord", moved).tree
+    assert shown["lifecycle"]["api_key"]["configured"] is True and "R3-LIFECYCLE-API-KEY" not in json.dumps(shown)
+    assert "api_key" not in (shown["lifecycle"].get("hidden") or [])
+
+
+def test_the_driver_sends_its_stored_api_key_with_the_verify_request_to_its_bound_origin(store, monkeypatch):
+    backend = service_registry.runtime_backend_from_service(_stored_api_key_record(store))
+    seen = _answering(monkeypatch)
+    calls = _Recorder.calls = []
+    result = asyncio.run(lifecycle_drivers.HttpLoadUnloadDriver().swap(backend, {"model_name": "wanted"}))
+    assert result is True and seen and seen[0].startswith(GOOD)
+    assert calls and calls[0][2].get("x-api-key") == "R3-LIFECYCLE-API-KEY"
+
+
+def test_the_driver_sends_no_stored_api_key_to_an_origin_it_is_not_bound_to(store, monkeypatch):
+    moved = _stored_api_key_record(store)
+    moved["config"]["host"] = "evil.invalid"
+    backend = service_registry.runtime_backend_from_service(moved)
+    seen = _answering(monkeypatch)
+    assert asyncio.run(lifecycle_drivers.HttpLoadUnloadDriver().swap(backend, {"model_name": "wanted"})) is False
+    assert seen == []
+
+
+def test_a_number_written_as_a_driver_key_is_moved_like_text(store):
+    record = _driver_record()
+    record["lifecycle"]["admin_key"] = 123456
+    moved = _moved(record, store)
+    assert secret_refs.is_secret_entry(moved["lifecycle"]["admin_key"]) and "123456" not in json.dumps(moved)
