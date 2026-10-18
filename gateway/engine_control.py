@@ -14,6 +14,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from gateway.engine_contract_view import observations_config, residency_config
+from gateway.engine_credentials import credential_headers
 from gateway.engine_observations import ObservationReader
 from gateway.engine_residency import ResidencyController
 from gateway.engine_switch import SwitchController
@@ -57,10 +58,12 @@ class EngineControlRuntime:
         if (target.scheme, target.netloc) != (origin.scheme, origin.netloc):
             raise ValueError("control operation cannot cross origins")
         self._check_paths(args)
+        headers = credential_headers(self.service, "control")
         timeout_s = max(0.01, min(float(operation.get("timeout_s", 10)), 30))
         async with asyncio.timeout(timeout_s):
             async with self._client_factory(follow_redirects=False, trust_env=False) as client:
-                async with client.stream(method, url, json=dict(args) if method != "GET" else None,
+                async with client.stream(method, url, headers=headers,
+                                         json=dict(args) if method != "GET" else None,
                                          timeout=timeout_s) as response:
                     if response.is_redirect or not 200 <= response.status_code < 300:
                         raise ValueError("control operation failed")
