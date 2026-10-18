@@ -331,3 +331,37 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(hidden, 0)
         # A retry after the fault completes the removal.
         self.assertEqual(self.client.post(REMOVE, headers=VALID).json(), {"removed_assets": 2, "removed_jobs": 1})
+
+    # --- erasing a person erases their hides too ------------------------------------------
+
+    def hides(self) -> dict[str, int]:
+        with sqlite3.connect(self.jobs_db) as conn:
+            return dict(conn.execute("SELECT person_id, COUNT(*) FROM media_hidden_assets GROUP BY person_id"))
+
+    def seed_hides(self) -> None:
+        self.seed()
+        self.assertEqual(self.client.post(REMOVE, headers=VALID).json(), {"removed_assets": 2, "removed_jobs": 1})
+        with media_jobs._conn(self.jobs_db) as conn:
+            media_jobs.hide_assets_in(conn, self.bob["id"], [(asset("E"), "job_bob")])
+            conn.commit()
+        self.assertEqual(self.hides(), {self.alice["id"]: 1, self.bob["id"]: 1})
+
+    def test_deleting_a_person_deletes_their_hide_rows_and_only_theirs(self) -> None:
+        self.seed_hides()
+        prompt_memory.delete_person(self.alice["id"], path=self.jobs_db)
+        self.assertEqual(self.hides(), {self.bob["id"]: 1})
+        self.assertEqual(prompt_memory.get_person_prompts(self.alice["id"], path=self.prompt_db), {})
+
+    def test_deleting_a_person_on_a_database_without_the_hide_table_still_works(self) -> None:
+        self.seed()
+        with sqlite3.connect(self.jobs_db) as conn:
+            conn.execute("DROP TABLE IF EXISTS media_hidden_assets")
+        self.assertGreater(prompt_memory.delete_person(self.alice["id"], path=self.jobs_db), 0)
+
+    def test_a_failure_deleting_the_hides_keeps_the_prompts(self) -> None:
+        self.seed_hides()
+        with patch("gateway.media_jobs.delete_person_hides_in", side_effect=sqlite3.OperationalError("disk I/O error")):
+            with self.assertRaises(sqlite3.OperationalError):
+                prompt_memory.delete_person(self.alice["id"], path=self.jobs_db)
+        self.assertEqual(self.hides(), {self.alice["id"]: 1, self.bob["id"]: 1})
+        self.assertTrue(prompt_memory.get_person_prompts(self.alice["id"], path=self.prompt_db))
