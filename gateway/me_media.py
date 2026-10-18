@@ -296,7 +296,7 @@ def create_me_media_router(
             scope = _member_media_scope(actor.user_id, admin_path)
             plan = _plan_removal(
                 _scoped_jobs(scope, jobs_path=jobs_path, receipts_path=_resolve_path(receipts_path)),
-                is_stored=lambda asset_id: _is_stored(asset_id, storage, asset_path_resolver),
+                is_stored=lambda asset_id: _is_stored(asset_id, storage),
                 already_hidden=(
                     _deleted_asset_ids(scope, admin_path),
                     media_jobs.hidden_assets(scope.user_ids or (), path=jobs_path),
@@ -393,9 +393,9 @@ def create_me_media_router(
 
 @dataclass(frozen=True)
 class StorageSnapshot:
-    """The media folder as it was listed: ``files`` maps a digest to the files that hold its bytes."""
+    """The media folder as it was listed once: the digest of every stored file, under any suffix."""
 
-    files: Mapping[str, tuple[str, ...]]
+    digests: frozenset[str]
 
 
 StorageSnapshotProvider = Callable[[], "StorageSnapshot | None"]
@@ -417,24 +417,21 @@ def create_storage_snapshot_provider(cache_dir: Path) -> StorageSnapshotProvider
             names = os.listdir(cache_dir)
         except OSError:
             return None
-        files: dict[str, list[str]] = {}
-        for name in names:
-            digest = directory_index.stored_digest(name)
-            if digest is not None:
-                files.setdefault(digest, []).append(name)
-        if names and not files:
+        digests = frozenset(digest for digest in map(directory_index.stored_digest, names) if digest is not None)
+        if names and not digests:
             return None
-        return StorageSnapshot({digest: tuple(sorted(found)) for digest, found in files.items()})
+        return StorageSnapshot(digests)
 
     return snapshot
 
 
-def _is_stored(asset_id: str, storage: StorageSnapshot, resolver: AssetPathResolver) -> bool:
-    """Whether a file holds the asset's bytes. An id that cannot be checked counts as stored."""
+def _is_stored(asset_id: str, storage: StorageSnapshot) -> bool:
+    """Whether a file holds the asset's bytes. An id that cannot be checked counts as stored.
+
+    A set lookup in the one listing; the folder is not scanned again for each asset.
+    """
     digest = asset_id.split("_", 1)[1] if isinstance(asset_id, str) and "_" in asset_id else ""
-    if len(digest) != 64:
-        return True
-    return digest in storage.files or _file_is_stored(resolver(asset_id))
+    return len(digest) != 64 or digest in storage.digests
 
 
 @dataclass(frozen=True)
