@@ -20,21 +20,55 @@ Available capabilities depend on your engines and access plan. A registered rout
 
 ## Quickstart
 
-You need Docker with Compose, this repository, and a reachable OpenAI-compatible chat engine. Compose builds the gateway and starts its LiteLLM execution sidecar; it does not include an inference engine or download a model. No `.env` file is required.
+You need an inference engine: a server that runs the model, such as llama.cpp, vLLM, LM Studio or Ollama. The gateway does not include an engine or download a model.
 
-1. Download or clone this repository, open a terminal in its root, and start the services:
+Use Docker Compose, or run without Docker: [bare-metal install](docs/FIRST_RUN_SETUP.md#bare-metal-install-no-docker). The steps below use Compose. No `.env` file is required.
+
+1. Start the gateway. Open a terminal in this repository's folder and run:
 
    ```bash
    docker compose up -d
    ```
 
-2. Open `http://127.0.0.1:5000/setup`. Create the first owner account. Continue to Home, choose your app, and use **Create key for** that app. Save the value when it appears; it is shown once.
-3. Open **Gateway → Engines**. Add your chat engine's OpenAI-compatible base URL as reachable from the gateway container. Set its health endpoint to `/v1/models`. Map a public name such as `my-llama` to the engine's actual model ID.
-4. Open Home and connect an app with base URL `http://127.0.0.1:5000/openai/v1`, your App key, and `my-llama`. Use **Gateway check** to make a real gateway request, then send a message from your app to check its settings.
+   The first start builds the gateway image. This can take several minutes.
 
-Compose publishes the gateway only on `127.0.0.1`, using port `5000` by default. If you set `AZIZAM_PORT`, use that port in the URLs above. State and cache use the named volumes `gateway-data` and `gateway-cache`. See [First-Run Setup](docs/FIRST_RUN_SETUP.md#docker-compose-quick-start) for more detail.
+2. Check that the gateway answers:
 
-On Linux, Compose provides `host.docker.internal` for the host. For example, an engine with a reachable port 8080 can use `http://host.docker.internal:8080/v1`. A host engine bound only to loopback is not reachable from the container; use a reachable host address and restrict access with your firewall.
+   ```bash
+   curl -i http://127.0.0.1:5000/health
+   ```
+
+   The first line of the reply should be `HTTP/1.1 200 OK`. If you set `AZIZAM_PORT`, use that port in every URL here.
+
+3. Create the owner account. Open `http://127.0.0.1:5000/setup/`. Enter an email address, a password, and the password again. This account owns the gateway.
+
+4. Create an App key. Open **Home**, choose your app, and click **Create key for** that app. The key starts with `opk_`. Copy it now. It is shown only once.
+
+5. Add your engine. Open **Gateway → Engines**, then click **Add engine**.
+   - For llama.cpp, vLLM, LM Studio or another OpenAI-compatible server, choose **Any OpenAI-compatible server**. Type an address that ends in `/v1`, such as `http://192.168.1.50:8080/v1`.
+   - For Ollama, choose **Server with its own model list**. Type the address with no `/v1`, such as `http://192.168.1.50:11434`.
+
+   The address must work from where the gateway runs. Read [Connect an engine by where it runs](docs/FIRST_RUN_SETUP.md#connect-an-engine-by-where-it-runs) first. Then click **Continue**. The gateway contacts the server. If the server needs a key, enter the engine's key here. Do not enter your App key. Tick the abilities you want, such as chat. Keep or rename the model names it found, then name the engine and click **Add engine**.
+
+   Write down the public model name you kept, such as `my-llama`. Your app sends this name.
+
+6. Connect your app with these values:
+   - Base URL: `http://127.0.0.1:5000/openai/v1`
+   - API key: your App key (`opk_…`)
+   - Model: the public model name from step 5
+
+   Check the key and the model list with one request:
+
+   ```bash
+   curl -s http://127.0.0.1:5000/openai/v1/models \
+     -H "Authorization: Bearer opk_YOUR_KEY_HERE"
+   ```
+
+   Then send a message from your app. Open **Usage** to see its request record.
+
+Compose publishes the gateway only on `127.0.0.1`, using port `5000` by default. State and cache use the named volumes `gateway-data` and `gateway-cache`. See [First-Run Setup](docs/FIRST_RUN_SETUP.md#docker-compose-quick-start) for more detail.
+
+An engine on another computer, or one run on this computer but not on loopback, needs a listener and a firewall setting. Clients on another device, or in another container, need a different base URL. The [first-run guide](docs/FIRST_RUN_SETUP.md#connect-an-engine-by-where-it-runs) gives the exact values for each layout.
 
 The loopback description here is specific to the Compose quickstart. Do not assume every launch mode binds only to loopback. The checked-in `proxy_config.yml` sets `proxy.host` to `0.0.0.0` and does not grant keyless LAN access. Check the effective listener, published ports, trusted proxies and App trusted addresses before exposing the gateway. A client on another device needs a reachable HTTPS address. The localhost recipe uses non-secure cookies for HTTP setup; enable secure cookies before exposing it over HTTPS. Follow [reverse-proxy setup](docs/REVERSE_PROXY.md), [configuration ownership](docs/CONFIG_SOURCE_OF_TRUTH.md), and the [operator guide](docs/guides/OPERATOR.md).
 

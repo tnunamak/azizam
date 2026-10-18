@@ -354,7 +354,9 @@ Current admin API:
 - `GET /admin/api/extensions`
 - `POST /admin/api/extensions/validate`
 - `POST /admin/api/extensions/enable`
-- `DELETE /admin/api/extensions/{package_id}?mode=remove|disable`
+- `DELETE /admin/api/extensions/{package_id}?mode=remove|disable` removes or
+  disables the package with its installed records. See
+  [KNOWN_WORK item 6](KNOWN_WORK.md#6-finish-extension-package-disableremoval-semantics).
 
 Validation returns package metadata, object counts, normalized candidate
 records, warnings, and errors without mutating state. Enable writes the service
