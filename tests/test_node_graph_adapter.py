@@ -448,7 +448,7 @@ def test_events_follow_one_prompt_until_it_ends(monkeypatch: pytest.MonkeyPatch)
     assert [e.kind for e in events] == ["status", "progress", "status"] and events[-1].state is JobState.succeeded
 
 
-def test_watch_opens_the_push_channel_says_when_it_is_open_and_passes_on_json_objects(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_watch_opens_the_push_channel_says_when_it_is_open_and_passes_on_json_frames(monkeypatch: pytest.MonkeyPatch) -> None:
     from websockets.asyncio import client as ws_client
 
     seen: list[Any] = []
@@ -477,7 +477,8 @@ def test_watch_opens_the_push_channel_says_when_it_is_open_and_passes_on_json_ob
         return out
 
     events = run(go())
-    assert events == [{"type": "status", "data": {}}, {"type": "progress", "data": {"value": 1}}]
+    # A JSON frame is passed on whatever it holds; binary frames and text that is not JSON are skipped.
+    assert events == [[1, 2], {"type": "status", "data": {}}, {"type": "progress", "data": {"value": 1}}]
     url = f"wss://{HOST}/ws?clientId=c1"
     assert seen[:2] == [("connect", url, {"max_size": 8 * 1024 * 1024, "ping_interval": 20, "ping_timeout": 20}), ("open", url)]
     assert seen[-1] == ("closed",)
@@ -557,3 +558,78 @@ def test_a_broken_operator_file_cannot_take_the_reviewed_adapters_away(tmp_path,
     monkeypatch.setenv("AZIZAM_PROTOCOLS_DIR", str(tmp_path))
     assert reviewed.protocol_for_backend({}, "images").adapter_id == "node-graph"
     assert reviewed.protocol_for_backend({}, "speech").adapter_id == "inline-tts"
+
+
+def test_watch_asks_the_stop_flag_after_every_frame_binary_ones_included(monkeypatch: pytest.MonkeyPatch) -> None:
+    from websockets.asyncio import client as ws_client
+
+    asked: list[int] = []
+    delivered: list[Any] = []
+
+    class Socket:
+        async def __aiter__(self):
+            for frame in (b"preview", b"preview", json.dumps({"type": "status"}), json.dumps({"type": "never"})):
+                delivered.append(frame)
+                yield frame
+
+    @asynccontextmanager
+    async def connect(url, **kwargs):
+        yield Socket()
+
+    monkeypatch.setattr(ws_client, "connect", connect)
+
+    def stop() -> bool:
+        asked.append(1)
+        return len(asked) >= 2
+
+    async def go():
+        return [event async for event in NodeGraphAdapter().watch(CONN, "c", stop=stop)]
+
+    assert run(go()) == []  # the second frame, a binary one, already ended the channel
+    assert len(asked) == 2 and len(delivered) == 2
+
+
+def test_an_output_list_that_is_not_made_of_objects_does_not_break_the_image_handles() -> None:
+    job = {"status": {"completed": True}, "outputs": {
+        "9": {"images": [{"filename": "ok.png"}, {"filename": None}], "audio": ["generated.wav"]},
+        "10": "not an output block",
+    }}
+    status = run(NodeGraphAdapter().poll(CONN, JobRef("x", "p1"), session=session(history(job))))
+    assert [json.loads(h).get("filename") for h in status.assets] == ["ok.png", None]
+    client = RecordingClient(lambda m, u, k: Response(404, content=b""))
+    run(NodeGraphAdapter().fetch_outputs(CONN, status, session=session(client)))
+    assert [c[2]["params"] for c in client.calls] == [{"filename": "ok.png", "type": "output"}, {"filename": None, "type": "output"}]
+
+
+def test_a_reply_reads_nothing_until_it_is_asked() -> None:
+    class Spy(Response):
+        reads: list[str] = []
+
+        def json(self):
+            self.reads.append("json")
+            return super().json()
+
+        @property
+        def text(self):
+            self.reads.append("text")
+            return "x"
+
+        @text.setter
+        def text(self, value):
+            pass
+
+    spy = Spy(200, {"a": 1})
+    reply = run(session(RecordingClient(lambda m, u, k: spy)).history("p1"))
+    assert spy.reads == [] and reply.body is None
+    assert (reply.json(), reply.read_text(), spy.reads) == ({"a": 1}, "x", ["json", "text"])
+    bad = Response(404, content=b"gone")
+    refused = run(session(RecordingClient(lambda m, u, k: bad)).upload({"image": ("a", b"x", "image/png")}))
+    assert refused.text == "gone" and refused.read_text() == "gone"
+
+
+def test_an_operator_file_naming_an_unregistered_adapter_falls_through_to_the_shipped_one(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "node-graph.yml").write_text(
+        "protocol_version: 1\nid: node-graph\nexecutor: adapter:nobody-wrote-this\nserves: [images]\n"
+        "operations:\n  graph.submit: {class: generate}\n", encoding="utf-8")
+    monkeypatch.setenv("AZIZAM_PROTOCOLS_DIR", str(tmp_path))
+    assert isinstance(reviewed.adapter_for_backend({}, "images"), NodeGraphAdapter)

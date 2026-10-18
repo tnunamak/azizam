@@ -322,7 +322,9 @@ def test_voice_operations_send_what_the_old_json_call_sent(fake_upstreams, op, p
     assert _wire(seen[1]) == _wire(seen[0])
     assert b'", "' not in seen[1].content  # httpx json= is compact; speech.synthesize keeps json.dumps defaults
     assert (reply.status, reply.raw) == (old.status_code, old.content)
-    assert reply.json() == (old.json() if op == "speech.voice_check" else None)  # a designed voice is audio: never parsed
+    assert reply.body is None  # nothing is parsed until it is asked for: a designed voice is audio and never is
+    if op == "speech.voice_check":
+        assert reply.json() == old.json()
 
 
 def test_voice_operations_keep_httpx_failures_typed_and_pass_other_errors_through(fake_upstreams) -> None:
