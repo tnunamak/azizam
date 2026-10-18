@@ -28540,6 +28540,8 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
     lease = None
     try:
         runtime = await asyncio.to_thread(protocol_dispatch.Runtime, target, assets=store)
+        # Check this operation's key before a selection call can change state.
+        await asyncio.to_thread(runtime.connection_for, op)
         lease = await runtime.lease(drain=_swap_drain, lock_for=swap_lock_for,
                                     may_switch=_target_activation(auth_context) != "existing_only")
         if op == "images":

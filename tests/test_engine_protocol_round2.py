@@ -209,3 +209,34 @@ def test_invalid_first_stream_chunk_is_a_typed_502(engine, monkeypatch):
     response = chat(engine, stream=True)
     assert response.status_code == 502
     assert response.json()['error']['code'] == 'malformed_response'
+
+
+def test_missing_unused_control_key_does_not_break_public_chat(engine, monkeypatch):
+    conn = engine.record['config']['connection']
+    conn['credentials'] = {'control': {'secret_ref':'os.environ/UNSET_CONTROL_R2',
+        'origin':'http://prism.test:9100','header':'X-Control','scheme':''}}
+    monkeypatch.delenv('UNSET_CONTROL_R2', raising=False)
+    assert chat(engine).status_code == 200
+    assert all('x-control' not in request.headers for request in engine.fake.requests)
+
+
+def test_missing_inference_key_fails_closed_before_control_or_generation(engine, monkeypatch):
+    from tests.test_engine_protocol_public import switching
+    switching(engine)
+    conn = engine.record['config']['connection']
+    conn['credentials'] = {'inference': {'secret_ref':'os.environ/UNSET_INFERENCE_R2',
+        'origin':'http://prism.test:9100','header':'X-Inference','scheme':''}}
+    monkeypatch.delenv('UNSET_INFERENCE_R2', raising=False)
+    response = chat(engine)
+    assert response.status_code == 503, response.text
+    assert response.json()['error']['code'] == 'engine_credential_unavailable'
+    assert not engine.fake.requests
+
+
+def test_description_validate_command_prints_all_problems(monkeypatch, tmp_path, capsys):
+    path = tmp_path/'invalid.yml'
+    path.write_text('protocol_version: 2\nid: Invalid\nexecutor: arbitrary\noperations: {}\n')
+    monkeypatch.setattr('sys.argv', ['validate-protocol', str(path)])
+    assert description.main() == 1
+    output = capsys.readouterr().out
+    assert 'invalid.yml' in output and 'protocol_version' in output and 'executor' in output
