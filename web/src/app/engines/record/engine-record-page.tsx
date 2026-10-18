@@ -1030,7 +1030,7 @@ function RecordForm({
           <ProcessFacts
             view={view}
             lifecycleEditable={view.lifecycle_editable && !locked}
-            note={owner && !locked && !view.lifecycle_editable ? processReason : undefined}
+            note={owner && !locked && !view.lifecycle_editable ? secrets.some(d => d.kind === "argv" || d.kind === "env") ? "Command arguments and environment values can change below. Other process settings are read-only here." : processReason : undefined}
           />
           {view.lifecycle_editable && <UnsupportedNote fields={fieldsOf("process")} unsupported={unsupported} />}
         </div>

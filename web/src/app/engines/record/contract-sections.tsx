@@ -126,14 +126,14 @@ function SavedFields({ value }: { value: unknown }) {
   return <>{value === true ? "Yes" : value === false ? "No" : value == null ? "Not recorded" : String(value)}</>;
 }
 /** An argument list exactly as stored: an argument with a space or a quote shows in quotes, so the boundaries stay visible. */
-export function argvText(list: string[]): string {
+export function argvText(list: import("@/lib/engines-api").CommandArgument[]): string {
   return list
     .map((arg) =>
-      arg === "" || /[\s"'\\]/.test(arg) ? JSON.stringify(arg) : arg,
+      typeof arg !== "string" ? `${arg.prefix ?? ""}(${arg.configured ? "configured secret" : "secret unavailable"})` : arg === "" || /[\s"'\\]/.test(arg) ? JSON.stringify(arg) : arg,
     )
     .join(" ");
 }
-const argv = (list: string[] | undefined) =>
+const argv = (list: import("@/lib/engines-api").CommandArgument[] | undefined) =>
   list?.length ? mono(argvText(list)) : "None";
 
 /** The origin of a URL as the HTTP client reads it: the default port of the scheme is dropped. */

@@ -200,3 +200,11 @@ it("keeps URL credential replacement on its saved public endpoint", () => {
   url.rows[0].value = "http://user:pass@localhost:8091/v1?token=new";
   expect(secretProblem(drafts)).toBeNull();
 });
+it("accepts credentials for the same bare host and refuses a different host", () => {
+ const drafts = secretDrafts({ config: { host: "localhost:8091" } });
+ const host = drafts.find(d => d.carrier === "config.host")!;
+ host.rows[0].value = "user:pass@localhost:8091";
+ expect(secretProblem(drafts)).toBeNull();
+ host.rows[0].value = "user:pass@localhost:8092";
+ expect(secretProblem(drafts)).toMatch(/same public endpoint/i);
+});

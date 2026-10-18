@@ -346,15 +346,17 @@ export interface OfferingV2 {
   [extra: string]: unknown;
 }
 
+export type CommandArgument = string | { id: string; configured: boolean; prefix?: string; label?: string };
+
 export interface ProcessV2 {
   driver: "none" | "command" | "process";
-  start?: string[];
-  stop?: string[];
-  status?: string[];
+  start?: CommandArgument[];
+  stop?: CommandArgument[];
+  status?: CommandArgument[];
   env?: Record<string, string>;
   cwd?: string;
   port?: { fixed?: number; reserved?: boolean };
-  profile_apply?: { kind: string; file?: string; reload?: string[]; restore?: string };
+  profile_apply?: { kind: string; file?: string; reload?: CommandArgument[]; restore?: string };
   legacy_driver?: string;
   needs_owner_conversion?: boolean;
   [extra: string]: unknown;

@@ -552,21 +552,32 @@ def engine_headers(
     """The request headers a service record lists (decision D29): public rows as written, secret rows resolved.
 
     A secret row (``{"id", "name", "secret_ref"}``) is resolved by ``resolve(row)``, which only the runtime can
-    supply; without it the row is left out, or with ``preview`` it shows as a placeholder. A row that fails
-    ``header_problem`` is left out: a raw service edit can store anything, and nothing malformed is sent.
+    supply; without it the row is left out, or with ``preview`` it shows as a placeholder. Credential-named
+    headers may be secret entries only. Both forms reject malformed transport data; the canonical inference key
+    owns Authorization whenever it is configured.
     """
     out: dict[str, str] = {}
     for row in config.get("headers") or () if isinstance(config.get("headers"), list) else ():
         if not isinstance(row, Mapping) or not isinstance(row.get("name"), str):
             continue
         name = row["name"].strip()
-        if is_secret_entry(row):
+        secret = is_secret_entry(row)
+        if name.lower() == "authorization" and any(config.get(key) for key in ("api_key_secret_id", "api_key_env", "api_key_ref")):
+            continue  # The canonical inference key owns Authorization when configured.
+        if secret:
             value = HEADER_PLACEHOLDER if preview else (resolve(row) if resolve is not None else None)
         elif row.get("public") is True and isinstance(row.get("value"), str):
             value = row["value"]
         else:
             continue  # a legacy inline row no migration has moved: never sent, never shown
-        if isinstance(value, str) and (preview or not header_problem(name, value)):
+        if not isinstance(value, str):
+            continue
+        if secret:
+            valid = (header_problem(name, "x") in ("", "credential") and bool(value) and value.isascii()
+                     and not any(ord(ch) < 32 or ord(ch) == 127 for ch in value))
+        else:
+            valid = not header_problem(name, value)
+        if valid:
             out[name] = value
     return out
 

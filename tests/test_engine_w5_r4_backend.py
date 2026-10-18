@@ -238,3 +238,22 @@ def test_incompatible_operation_is_refused_before_a_valid_batch_item_can_store_a
     with pytest.raises(secret_commands.CommandError):
         secret_commands.apply_commands(record(), secret_commands.parse_commands(request), put)
     assert writes == []
+
+
+def test_direct_router_resolves_credential_named_secret_headers_but_keeps_public_guard(tmp_path):
+    from gateway import litellm_runtime, record_carriers, runtime_secrets, secret_refs
+    from gateway.litellm_substrate import engine_headers
+    path = tmp_path / 'admin.db'
+    saved, _ = record_carriers.externalize_service(record(headers=[{'name': 'X-Token', 'value': 'direct-router-credential'}]), secret_refs.putter(path))
+    runtime_secrets.configure(path)
+    try:
+        compiled = litellm_runtime.compile_executable_config({'services': {'editor': saved}})
+        entry = next(item for item in compiled['model_list'] if item['model_name'] == 'editor-chat')
+        assert entry['litellm_params']['extra_headers']['X-Token'] == 'direct-router-credential'
+    finally:
+        runtime_secrets.configure(None)
+    assert engine_headers({'headers': [{'name': 'X-Token', 'value': 'public-key', 'public': True}]}) == {}
+    secret_row = {'id': 'ent_0000000000000001', 'name': 'X-Token', 'secret_ref': 'sref_000000000000000000000001'}
+    assert engine_headers({'headers': [secret_row]}, resolve=lambda _: 'bad\r\nInjected: 1') == {}
+    assert engine_headers({'headers': [{**secret_row, 'name': 'Host'}]}, resolve=lambda _: 'other.invalid') == {}
+    assert engine_headers({'headers': [{**secret_row, 'name': 'Authorization'}], 'api_key_env': 'CANONICAL_KEY'}, resolve=lambda _: 'Bearer secondary') == {}

@@ -151,6 +151,8 @@ for (const width of [1280, 390]) {
       await headerValue.fill(`header-replacement-${width}`);
       await environmentValue.fill(`env-replacement-${width}`);
       await replaceArg.fill(`argv-replacement-${width}`);
+      await expect(page.getByRole("textbox", { name: "Name" })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Save changes", exact: true })).toBeEnabled();
 
       const saved = page.waitForResponse((response) =>
         response.request().method() === "POST" &&

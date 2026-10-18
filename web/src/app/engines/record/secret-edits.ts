@@ -350,6 +350,10 @@ export function endpointProblem(address: string): string | null {
 }
 
 function publicEndpoint(value: string): string {
+  if (!value.includes("://") && !value.startsWith("/")) {
+    const authority = value.split(/[?#]/, 1)[0];
+    return `host:${authority.slice(authority.lastIndexOf("@") + 1)}`;
+  }
   try {
     const url = new URL(value, "http://relative.invalid");
     return `${url.protocol}//${url.host}${url.pathname}`;

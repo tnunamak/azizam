@@ -232,3 +232,9 @@ it("requires separate saves for public settings and a secret batch", async () =>
   );
   expect(screen.getByLabelText("Name")).toBeDisabled();
 });
+it("explains which parts of an owned process can be edited", async () => {
+ const view = engineView({ lifecycle_editable: false, record: { process: { driver: "process", start: ["runner"] } } });
+ vi.spyOn(enginesApi, "view").mockResolvedValue(view);
+ renderWithClient(<EngineRecordPage serviceId={view.service_id} onBack={() => {}} onRemove={() => {}} />);
+ expect(await screen.findByText("Command arguments and environment values can change below. Other process settings are read-only here.")).toBeVisible();
+});

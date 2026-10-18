@@ -497,7 +497,7 @@ describe("the six sections mirror the record", () => {
     expect(body).not.toHaveProperty("capabilities");
   });
 
-  it("the owner's edits to every shown field reach the save body", async () => {
+  it("saves public settings and command edits separately without a partial-save sequence", async () => {
     mount({ values: { ...engineView().values, lifecycle_mode: "managed", lifecycle_ready_s: 180 },
       record: { ...engineView().record, lifecycle: { driver: "command", driver_config: { start: ["run-old"], stop: ["stop-old"] } } },
       v2: v2({ process: { driver: "command", start: ["run-old"], stop: ["stop-old"] } }),
@@ -505,28 +505,36 @@ describe("the six sections mirror the record", () => {
     const user = userEvent.setup();
     const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
     const commands = vi.spyOn(enginesApi, "secretEntries").mockResolvedValue(registry);
-    await user.click(
-      await screen.findByText("More options", { selector: "summary span" }),
-    );
-    const timeout = screen.getByLabelText("Time to wait for a reply");
+    await user.click(await screen.findByText("More options", { selector: "summary span" }));
+    let timeout = screen.getByLabelText("Time to wait for a reply");
     await user.clear(timeout);
     await user.type(timeout, "300");
-    await user.selectOptions(
-      screen.getByLabelText("Who starts and stops this server"),
-      "managed",
-    );
-    const program = screen.getByLabelText("lifecycle.driver_config start command Program");
+    expect(screen.getByLabelText("lifecycle.driver_config start command Program")).toBeDisabled();
+    expect(screen.getByText(/Save or discard other settings before editing secrets/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    const program = await screen.findByLabelText("lifecycle.driver_config start command Program");
+    expect(program).toBeEnabled();
     await user.clear(program);
     await user.type(program, "run-it");
+    expect(screen.getByLabelText("Name")).toBeDisabled();
+    expect(screen.getByLabelText("Time to wait for a reply")).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(commands).toHaveBeenCalled());
-    expect(update.mock.calls[0][1].values).toMatchObject({
-      reply_timeout_s: 300,
-      lifecycle_mode: "managed",
-    });
-    expect(update.mock.calls[0][1].values).not.toHaveProperty("lifecycle_start");
+    expect(update).not.toHaveBeenCalled();
     expect(commands.mock.calls[0][1]).toEqual([{ carrier: "lifecycle.driver_config.start", operation: "set", items: [{ literal: "run-it" }], clear: [] }]);
+    await waitFor(() => expect(screen.getByLabelText("Name")).toBeEnabled());
+    const more = screen.getByText("More options", { selector: "summary span" });
+    if (!more.closest("details")?.open) await user.click(more);
+    timeout = screen.getByLabelText("Time to wait for a reply");
+    await user.clear(timeout);
+    await user.type(timeout, "300");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    expect(update.mock.calls[0][1].values).toMatchObject({ reply_timeout_s: 300, lifecycle_mode: "managed" });
+    expect(update.mock.calls[0][1].values).not.toHaveProperty("lifecycle_start");
+    expect(commands).toHaveBeenCalledTimes(1);
   });
+
 });
 
 describe("a test traces exactly what it sent", () => {

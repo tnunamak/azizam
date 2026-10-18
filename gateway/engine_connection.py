@@ -9,7 +9,7 @@ from typing import Any
 
 from gateway import runtime_secrets, secret_store, service_registry
 from gateway.engine_check import join_url
-from gateway.litellm_substrate import SECRET_PLACEHOLDER, _engine_request_settings
+from gateway.litellm_substrate import SECRET_PLACEHOLDER, _engine_request_settings, engine_headers
 
 
 class InferenceConnectionError(ValueError):
@@ -50,8 +50,9 @@ def inference_connection(
     # The compiler's default is a management preview and must never reach an engine.
     settings = _engine_request_settings(config)
     headers = {"content-type": "application/json"}
-    headers.update({name.lower(): value for name, value in runtime_secrets.header_pairs(
-        config.get("headers"), origin=service_registry.origin_of(base),
+    resolved_headers = runtime_secrets.header_pairs(config.get("headers"), origin=service_registry.origin_of(base))
+    headers.update({name.lower(): value for name, value in engine_headers(
+        config, resolve=lambda row: resolved_headers.get(str(row["name"]).strip()),
     ).items()})
     origin = service_registry.origin_of(base)
     if origin and config.get("credential_origin") == origin:

@@ -69,7 +69,7 @@ describe("i: the engine record page", () => {
     expect(screen.getByText("These saved settings have no editor on this page.")).toBeVisible();
     expect(screen.getByText("probe_interval_s")).toBeVisible();
     expect(screen.getByText("bought 2025")).toBeVisible();
-    expect(screen.getByText(/2 settings are kept but not shown/)).toBeVisible();
+    expect(screen.getByText("2 settings hidden: not classified")).toBeVisible();
     expect(screen.getByRole("button", { name: "Copy the stored record" })).toBeVisible();
     for (const box of document.querySelectorAll("textarea")) expect(box).not.toHaveValue(expect.stringContaining("{"));
   });
@@ -180,7 +180,7 @@ describe("N2: editing the address", () => {
     expect(screen.getByText("Your saved key won’t be sent to a new address. Re-enter it, or keep the old address.")).toBeVisible();
     expect(screen.getByLabelText("API key")).toHaveValue("");
     expect(screen.getByLabelText("API key")).toBeDisabled();
-    expect(screen.getByText(/Save the address before editing secrets/)).toBeVisible();
+    expect(screen.getByText(/Save or discard other settings before editing secrets/)).toBeVisible();
     expect(screen.getByTestId("check-line")).toHaveTextContent("Out of date. Check again.");
     expect(screen.getByTestId("check-line")).toHaveTextContent(/Last result, for the old address: reached the server\. 2 models found\./);
     expect(screen.getByText(/Saving removes the old key from this engine\./)).toBeVisible();
@@ -284,7 +284,8 @@ describe("kept-off engines", () => {
     expect(await screen.findByText("Not checked yet; checked when you turn it on or press Check now")).toBeVisible();
     expect(screen.getAllByText("Not checked yet")).toHaveLength(2);
     expect(screen.getByText("Not known yet. Azizam looks the first time the engine starts, or when you press Check now.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Open Start and stop" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Open Start and stop" })).toBeNull();
+    expect(screen.getByText("No process is configured. This page can edit existing process settings; it cannot create process control.")).toBeVisible();
     const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
     await user.click(screen.getByRole("switch", { name: "Enabled" }));
     await waitFor(() => expect(update).toHaveBeenCalledWith("garage-gpu", { definition: "openai-compatible", enabled: true, recheck: true }));
@@ -311,8 +312,9 @@ describe("inference key commands", () => {
     const test = vi.spyOn(enginesApi, "test");
     await user.type(input, "replacement-key");
     expect(screen.getByLabelText("Address")).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Run a real test for Chat" }));
-    expect(await screen.findByText(/Save the secret changes before running a test/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Run a real test for Chat" })).toBeNull();
+    expect(screen.getByLabelText("Name")).toBeDisabled();
+    expect(screen.getByLabelText("Time to wait for a reply")).toBeDisabled();
     expect(test).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(commands).toHaveBeenCalledWith("garage-gpu", [

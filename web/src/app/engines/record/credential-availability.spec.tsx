@@ -38,3 +38,7 @@ it("reports unclassified settings without showing their values", async () => {
     screen.getByText("2 settings hidden: not classified"),
   ).toBeInTheDocument();
 });
+it("describes configured command arguments without object coercion", async () => {
+ const { argvText } = await import("./contract-sections");
+ expect(argvText(["runner", { id: "ent_arg", configured: true }] as never)).toBe("runner (configured secret)");
+});
