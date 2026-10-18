@@ -97,7 +97,7 @@ class EngineControlRuntime:
     def _is_path_like(value: str) -> bool:
         """Whether the string's own form names a file, whatever argument carries it."""
         return (os.path.isabs(value) or value in {".", ".."} or value.startswith(("~", "./", "../"))
-                or value.lower().startswith("file:"))
+                or value.lower().startswith("file:") or ".." in value.replace("\\", "/").split("/"))
 
     def _check_paths(self, args: Mapping[str, Any], declared: frozenset[str]
                      ) -> tuple[Any, list[tuple[str, tuple[int, int] | None]]]:
