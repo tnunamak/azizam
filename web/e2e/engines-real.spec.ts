@@ -75,16 +75,15 @@ test("real registry journey preserves disabled state and unknown config through 
   await page.getByRole("menuitem", { name: "Open engine", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Journey engine" })).toBeVisible();
 
-  // Other settings are listed, read-only, under Technical details; the stored record is not an editor.
-  await page.getByText("Technical details", { exact: true }).click();
+  // Other settings remain read-only under the stored record.
+  await page.getByRole("heading", { name: "Stored record", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Other settings" })).toBeVisible();
   await expect(page.getByText("custom_operator_field", { exact: true })).toBeVisible();
   await expect(page.getByRole("textbox", { name: /JSON/ })).toHaveCount(0);
 
   await page.getByLabel(/^Name/).fill("Renamed journey engine");
   await page.getByLabel(/^Address/).fill(`http://127.0.0.1:${enginePort}/v2`);
-  const more = page.locator("details").filter({ has: page.getByText("More options", { exact: true }) }).first();
-  await more.getByText("More options", { exact: true }).click();
+  const more = page.getByRole("region", { name: "What it offers", exact: true });
   await more.getByText("Add an adjustment").click();
   await more.getByRole("button", { name: /Set defaults/ }).click();
   await more.getByLabel("Field (row 1)").fill("max_tokens");

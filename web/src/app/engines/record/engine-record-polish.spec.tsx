@@ -196,11 +196,11 @@ describe("Retry on the record page", () => {
   });
 });
 
-describe("technical details", () => {
-  it("the stored record and Other settings sit in a collapsed Technical details disclosure", async () => {
+describe("stored record", () => {
+  it("the stored record and Other settings sit in a collapsed Stored record disclosure", async () => {
     const user = userEvent.setup();
     mount();
-    const summary = await screen.findByText("Technical details", { selector: "summary" });
+    const summary = (await screen.findByRole("heading", { name: "Stored record" })).closest("summary") as HTMLElement;
     const details = summary.closest("details") as HTMLElement;
     expect(details).not.toHaveAttribute("open");
     expect(within(details).getByText("Saved configuration for troubleshooting. Secrets are hidden.")).toBeInTheDocument();

@@ -595,7 +595,7 @@ describe("People and Settings red-team regressions", () => {
     ).toBeInTheDocument();
     expect(
       container.querySelectorAll("[data-slot=settings-section]"),
-    ).toHaveLength(8);
+    ).toHaveLength(9); // Includes the engine command permission section added by W2.
     const receipts = screen.getByRole("region", { name: "Receipts" });
     expect(
       within(receipts).getByRole("combobox", { name: "Keep receipts" }),

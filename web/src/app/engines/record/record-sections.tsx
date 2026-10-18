@@ -1,6 +1,6 @@
 "use client";
 
-/** Pieces of the engine page that the editable and the read-only page share. */
+/** The stored record, Remove and the save error text of the engine page. */
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
 import { ApiError } from "@/lib/api";
@@ -14,10 +14,12 @@ export function StoredRecordSection({ view }: { view: EngineView }) {
   const otherSettings = Object.entries(view.other_settings ?? {});
   return (
     <details className="bg-card rounded-panel border">
-      <summary className="text-heading flex min-h-12 cursor-pointer items-center px-4 py-3">Technical details</summary>
+      <summary className="flex min-h-12 cursor-pointer items-center px-4 py-3">
+        <h2 id="engine-stored" className="text-heading scroll-mt-20">Stored record</h2>
+      </summary>
       <section aria-labelledby="engine-stored" className="flex flex-col gap-2 border-t p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 id="engine-stored" className="text-body font-medium">Stored record</h2>
+          <h3 className="text-body font-medium">As saved</h3>
           <CopyButton value={JSON.stringify(view.record, null, 2)} aria-label="Copy the stored record">
             Copy
           </CopyButton>
@@ -31,6 +33,19 @@ export function StoredRecordSection({ view }: { view: EngineView }) {
         >
           {JSON.stringify(view.record, null, 2)}
         </pre>
+        {view.v2 && (
+          <div className="flex flex-col gap-1">
+            <h3 className="text-body font-medium">As the engine record reads it</h3>
+            <p className="text-meta text-muted-foreground">The same record in its parts: connection, offerings, process, observations, residency and resources.</p>
+            <pre
+              tabIndex={0}
+              aria-label="Engine record, read only"
+              className="bg-muted rounded-control text-meta max-h-96 overflow-auto p-3 font-mono whitespace-pre-wrap [overflow-wrap:anywhere]"
+            >
+              {JSON.stringify(view.v2, null, 2)}
+            </pre>
+          </div>
+        )}
         {otherSettings.length > 0 && (
           <div>
             <h3 className="text-meta mb-1 font-medium">Other settings</h3>

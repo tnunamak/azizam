@@ -20,6 +20,12 @@ async function mount(over: Partial<EngineView> = {}) {
   return (await screen.findByText("More options", { selector: "summary span" })).closest("details") as HTMLDetailsElement;
 }
 
+/** A page section by its heading: What it offers holds the adjustments, How it runs holds Start and stop. */
+async function section(over: Partial<EngineView>, heading: string) {
+  await mount(over);
+  return (await screen.findByRole("heading", { level: 2, name: heading })).closest("section") as HTMLElement;
+}
+
 async function openMore(user: User, more: HTMLDetailsElement) {
   if (!more.open) await user.click(within(more).getByText("More options", { selector: "summary span" }));
 }
@@ -64,11 +70,16 @@ describe("More options", () => {
       },
     });
     expect(more.open).toBe(true);
-    expect(within(more).getByText("3 changed from default")).toBeVisible();
+    // More options holds the connection settings only; adjustments and start and stop have their own sections.
+    expect(within(more).getByText("1 changed from default")).toBeVisible();
     expect(within(more).getByText("Changed · default 600 s")).toBeVisible();
-    for (const heading of ["Request headers", "Timeouts", "Extra path", "Request adjustments", "Start and stop"]) {
+    for (const heading of ["Request headers", "Timeouts", "Extra path"]) {
       expect(within(more).getByRole("heading", { name: new RegExp(`^${heading}`) })).toBeVisible();
     }
+    const offers = screen.getByRole("heading", { level: 2, name: "What it offers" }).closest("section") as HTMLElement;
+    expect(within(offers).getByRole("heading", { name: /^Request adjustments/ })).toBeVisible();
+    const runs = screen.getByRole("heading", { level: 2, name: "How it runs" }).closest("section") as HTMLElement;
+    expect(within(runs).getByRole("heading", { name: /^Start and stop/ })).toBeVisible();
   });
 
   it("offers no setting the gateway ignores: no sign-in header, connect time or idle stop", async () => {
@@ -83,7 +94,7 @@ describe("More options", () => {
   it("shows only the groups whose fields the definition lists", async () => {
     const more = await mount({ definition: "own-model-list" });
     expect(within(more).queryByRole("heading", { name: "Extra path" })).toBeNull();
-    expect(within(more).getByRole("heading", { name: "Request adjustments" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Request adjustments" })).toBeInTheDocument();
     expect(within(more).getByRole("heading", { name: "Timeouts" })).toBeInTheDocument();
   });
 
@@ -101,8 +112,7 @@ describe("More options", () => {
 describe("Request adjustments: the six typed forms", () => {
   it("Replace values", async () => {
     const user = userEvent.setup();
-    const more = await mount();
-    await openMore(user, more);
+    const more = await section({}, "What it offers");
     const card = await addAdjustment(user, more, "Replace values");
     await user.type(within(card).getByLabelText("Field"), "reasoning_effort");
     await user.type(within(card).getByLabelText("When the value is (row 1)"), "xhigh");
@@ -115,8 +125,7 @@ describe("Request adjustments: the six typed forms", () => {
 
   it("Rename fields", async () => {
     const user = userEvent.setup();
-    const more = await mount();
-    await openMore(user, more);
+    const more = await section({}, "What it offers");
     const card = await addAdjustment(user, more, "Rename fields");
     await user.type(within(card).getByLabelText("Field name (row 1)"), "max_completion_tokens");
     await user.type(within(card).getByLabelText("Rename to (row 1)"), "max_tokens");
@@ -136,8 +145,7 @@ describe("Request adjustments: the six typed forms", () => {
 
   it("Remove fields", async () => {
     const user = userEvent.setup();
-    const more = await mount();
-    await openMore(user, more);
+    const more = await section({}, "What it offers");
     const card = await addAdjustment(user, more, "Remove fields");
     await user.type(within(card).getByLabelText("Field to remove, item 1"), "logit_bias");
     await user.click(within(card).getByRole("button", { name: "Add a field" }));
@@ -148,8 +156,7 @@ describe("Request adjustments: the six typed forms", () => {
 
   it("Set defaults", async () => {
     const user = userEvent.setup();
-    const more = await mount();
-    await openMore(user, more);
+    const more = await section({}, "What it offers");
     const card = await addAdjustment(user, more, "Set defaults");
     await user.type(within(card).getByLabelText("Field (row 1)"), "top_p");
     await user.type(within(card).getByLabelText("Value when missing (row 1)"), "0.9");
@@ -160,8 +167,7 @@ describe("Request adjustments: the six typed forms", () => {
 
   it("Add a message", async () => {
     const user = userEvent.setup();
-    const more = await mount();
-    await openMore(user, more);
+    const more = await section({}, "What it offers");
     const card = await addAdjustment(user, more, "Add a message");
     await user.selectOptions(within(card).getByLabelText("Where"), "end");
     await user.type(within(card).getByLabelText("Message text"), "Answer in plain language.");
@@ -176,8 +182,7 @@ describe("Request adjustments: the six typed forms", () => {
 
   it("Keep a number in range", async () => {
     const user = userEvent.setup();
-    const more = await mount();
-    await openMore(user, more);
+    const more = await section({}, "What it offers");
     const card = await addAdjustment(user, more, "Keep a number in range");
     await user.type(within(card).getByLabelText("Field"), "temperature");
     await user.type(within(card).getByLabelText("Minimum"), "0");
@@ -190,9 +195,7 @@ describe("Request adjustments: the six typed forms", () => {
 
   it("a built-in shows in words and can be removed", async () => {
     const user = userEvent.setup();
-    const more = await mount();
-    expect(more.open).toBe(false);
-    await openMore(user, more);
+    const more = await section({}, "What it offers");
     expect(within(more).getByText("Built-in adjustment: reasoning effort final chat")).toBeInTheDocument();
     await user.click(within(more).getByRole("button", { name: "Remove adjustment: Built-in adjustment" }));
     expect(await saveAndGetTransforms(user)).toEqual([]);
@@ -202,8 +205,7 @@ describe("Request adjustments: the six typed forms", () => {
 describe("Start and stop", () => {
   it("the owner edits it as a typed form", async () => {
     const user = userEvent.setup();
-    const more = await mount();
-    await openMore(user, more);
+    const more = await section({}, "How it runs");
     await user.selectOptions(within(more).getByLabelText("Who starts and stops this server"), "managed");
     await user.type(within(more).getByLabelText("Start command"), "systemctl --user start garage-llm");
     expect(within(more).getByLabelText("Wait for it to be ready")).toHaveValue("120");
@@ -219,15 +221,18 @@ describe("Start and stop", () => {
 
   it("an administrator reads it with the lock text", async () => {
     viewer.current = { ...viewer.current, role: "admin" };
-    const more = await mount({
-      values: {
-        ...engineView().values,
-        lifecycle_mode: "managed",
-        lifecycle_start: "systemctl --user start garage-llm",
-        lifecycle_stop: "systemctl --user stop garage-llm",
-        lifecycle_ready_s: 180,
+    const more = await section(
+      {
+        values: {
+          ...engineView().values,
+          lifecycle_mode: "managed",
+          lifecycle_start: "systemctl --user start garage-llm",
+          lifecycle_stop: "systemctl --user stop garage-llm",
+          lifecycle_ready_s: 180,
+        },
       },
-    });
+      "How it runs",
+    );
     expect(within(more).getByText(/Only the owner can change this\. Azizam starts and stops this server with the commands below\./)).toBeVisible();
     expect(within(more).queryByLabelText("Who starts and stops this server")).toBeNull();
     expect(within(more).getByText("systemctl --user start garage-llm")).toBeVisible();

@@ -1,10 +1,12 @@
 "use client";
 
 /**
- * The engine record page, opened at /engines/?engine=<id>: Connection, What it
- * can do, Models (with who can use them), More options, the stored record and
- * Remove. Reads GET /admin/api/engines/{id}; saves through the edit route,
- * which re-checks a changed connection on the server.
+ * The engine record page, opened at /engines/?engine=<id>. It mirrors the
+ * engine record: Connection, What it offers, How it runs, What Azizam can
+ * check, Resources and the stored record, then Remove. Reads GET
+ * /admin/api/engines/{id}; saves through the edit route, which re-checks a
+ * changed connection on the server. Every field it shows as editable is one
+ * the gateway uses; the rest show read-only with the reason.
  */
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -37,10 +39,24 @@ import { CapabilityList, rowsFromCheck, type CapabilityRow, type TestState } fro
 import { FindingCard } from "../parts/finding-card";
 import { FormField, LinkButton, Note, Tag, describedBy, focusFirstInvalid } from "../parts/form";
 import { ModelsBlock, draftsFromCheck, duplicateNames, modelsBody, type ModelDraft } from "../parts/models-block";
-import { NotEditableRecord } from "./not-editable-record";
+import {
+  ARGV_REASON,
+  ConnectionFacts,
+  DERIVED_REASON,
+  LockedNote,
+  ObservationList,
+  OfferingFacts,
+  ProcessFacts,
+  ResourceFacts,
+  UNSUPPORTED_REASON,
+  UnsupportedNote,
+  fieldPart,
+  lockReason,
+} from "./contract-sections";
 import { RemoveSection, StoredRecordSection, errorText } from "./record-sections";
 import { cardProblem, cardsFromTransforms, transformsFromCards, type AdjustmentCard } from "./adjustments";
 import {
+  FieldGroups,
   MoreOptions,
   changedCount,
   headersBody,
@@ -161,24 +177,7 @@ export function EngineRecordPage({
         </div>
       )}
       {crumb}
-      {engine.editable === false ? (
-        <NotEditableRecord
-          key={version}
-          view={engine}
-          definition={definition}
-          onRefresh={async () => {
-            await refetchEngine();
-          }}
-          onSaved={async (message) => {
-            await refetchEngine();
-            setVersion((v) => v + 1);
-            setOwnNotice(message);
-            onDismissNotice?.();
-          }}
-          onRemove={() => onRemove(serviceId)}
-        />
-      ) : (
-        <RecordForm
+      <RecordForm
           key={version}
           view={engine}
           definition={definition}
@@ -195,7 +194,6 @@ export function EngineRecordPage({
           onRemove={() => onRemove(serviceId)}
           onOpenEngine={onOpenEngine}
         />
-      )}
     </div>
   );
 }
@@ -259,6 +257,22 @@ function RecordForm({
   const queryClient = useQueryClient();
   const saved = { address: view.values.address ?? "" };
   const locked = view.locked;
+  // Why the engine's settings can't change for this person: the system record, or not the owner.
+  // Name and Enabled still change.
+  const reason = lockReason(view, owner);
+  const settingsLocked = reason !== null;
+  // Settings of the definition this record can't use (its protocol differs): never a control, never sent.
+  const unsupported = view.unsupported_fields ?? {};
+  const mismatched = Object.keys(unsupported).length > 0;
+  // Name and Enabled go through the plain service edit, which sends no definition and no values:
+  // a full engine payload would carry settings this person or this record can't change.
+  const metadataOnly = settingsLocked || mismatched;
+  const allOptions = optionFields(definition).filter((f) => !(f.key in unsupported));
+  const connectionFields = allOptions.filter((f) => fieldPart(f) === "connection");
+  const offeringFields = allOptions.filter((f) => fieldPart(f) === "offerings");
+  const processFields = allOptions.filter((f) => fieldPart(f) === "process");
+  const offeringsEditable = view.can_edit_offerings !== false;
+  const fieldsOf = (part: ReturnType<typeof fieldPart>) => definition.fields.filter((f) => fieldPart(f) === part);
 
   const [name, setName] = useState(view.name);
   const [address, setAddress] = useState(saved.address);
@@ -280,7 +294,16 @@ function RecordForm({
       byName: false,
     })),
   );
-  const [moreOpen, setMoreOpen] = useState(() => changedCount(definition, optionValuesFrom(definition, view), headersFrom(view.values.headers), cardsFromTransforms(view.values.transforms)) > 0);
+  const [moreOpen, setMoreOpen] = useState(
+    () =>
+      changedCount(
+        definition,
+        optionValuesFrom(definition, view),
+        headersFrom(view.values.headers),
+        cardsFromTransforms(view.values.transforms),
+        connectionFields,
+      ) > 0,
+  );
   const [session, setSession] = useState<SessionCheck | null>(null);
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
@@ -299,9 +322,10 @@ function RecordForm({
   function bodyValues(at = address): Record<string, unknown> {
     const keys = new Set(definition.fields.map((f) => f.key));
     const values: Record<string, unknown> = { address: at.trim() };
-    if (newKey) values.api_key = newKey;
+    if (newKey && !("api_key" in unsupported)) values.api_key = newKey;
     if (view.key.source === "env" && view.key.env_name && keys.has("api_key_env")) values.api_key_env = view.key.env_name;
     for (const field of optionFields(definition)) {
+      if (field.key in unsupported) continue;
       // Start and stop is the owner's; anyone else leaves the stored block as it is.
       if (field.owner_only && (!owner || !view.lifecycle_editable || locked)) continue;
       if (field.show_if && options[field.show_if.field] !== String(field.show_if.equals)) continue;
@@ -319,14 +343,20 @@ function RecordForm({
       definition: definition.definition,
       name: name.trim(),
       values: bodyValues() as unknown as UpdateEngineBody["values"],
-      capabilities: definition.capabilities.filter((c) => ticked.has(c.id)).map((c) => c.id),
     };
-    body.models = modelsBody(models);
+    if ("address" in unsupported) delete (body.values as unknown as Record<string, unknown>).address;
+    if (offeringsEditable) {
+      body.capabilities = definition.capabilities.filter((c) => ticked.has(c.id)).map((c) => c.id);
+      body.models = modelsBody(models);
+    }
     return body;
   }
   const [initialBody] = useState(() => JSON.stringify(saveBody()));
   const bodyNow = JSON.stringify(saveBody());
-  const dirty = Boolean(newKey) || bodyNow !== initialBody;
+  // Without the right to change settings, only the name can be unsaved.
+  const dirty = settingsLocked ? name.trim() !== view.name : Boolean(newKey) || bodyNow !== initialBody;
+  // Only the name changed: it saves through the plain service edit when the record needs that.
+  const nameOnly = !newKey && JSON.stringify({ ...saveBody(), name: view.name }) === initialBody;
   const optionKeys = new Set(optionFields(definition).map((f) => f.key));
   // A refusal belongs to the form that was sent. Once the owner edits it, the message steps aside.
   const refusal = saveError && saveError.body === bodyNow ? saveError : null;
@@ -351,7 +381,9 @@ function RecordForm({
   const notStarted = view.check.status === "not_started" && !session;
   const needKey = view.check.reason === "needkey" && view.key.state === "none";
   const managed = options.lifecycle_mode === "managed";
-  const hasLifecycle = definition.fields.some((f) => f.owner_only);
+  const hasLifecycle = processFields.length > 0 && view.lifecycle_editable;
+  const storedArgv = Boolean(view.v2?.process?.start?.length || view.v2?.process?.stop?.length);
+  const processReason = unsupported.lifecycle_mode ?? (storedArgv ? ARGV_REASON : UNSUPPORTED_REASON);
 
   async function runCheck(detectModels = false, at = address) {
     setChecking(true);
@@ -360,7 +392,8 @@ function RecordForm({
     try {
       const result = await enginesApi.check({ definition: definition.definition, values: bodyValues(at) as never, service_id: view.service_id });
       setSession({ result, address: trimAddress(at), key: newKey });
-      if (result.outcome !== "error") {
+      // A check never changes what someone who can't edit the settings sees saved.
+      if (result.outcome !== "error" && !settingsLocked) {
         if (view.check.status === "not_started" && ticked.size === 0) setTicked(new Set(result.capabilities.filter((c) => c.ticked).map((c) => c.id)));
         if (detectModels || models.length === 0) {
           const known = new Set(models.map((m) => m.id));
@@ -392,12 +425,17 @@ function RecordForm({
       });
       setTests((t) => ({ ...t, [capability]: { status: "done", result } }));
       // A pass is stored only when it ran with the saved connection.
-      if (result.ok && !locked && !addressChanged && !newKey) {
-        const registry = await enginesApi.update(view.service_id, {
-          definition: definition.definition,
-          tests: { [capability]: { ok: true, at: result.at, seconds: result.seconds } },
-        });
-        queryClient.setQueryData(queryKeys.serviceRegistry, registry);
+      if (result.ok && !metadataOnly && !addressChanged && !newKey) {
+        // Keeping the pass is a convenience: the test itself passed even if this is refused.
+        try {
+          const registry = await enginesApi.update(view.service_id, {
+            definition: definition.definition,
+            tests: { [capability]: { ok: true, at: result.at, seconds: result.seconds } },
+          });
+          queryClient.setQueryData(queryKeys.serviceRegistry, registry);
+        } catch {
+          // The page still shows the pass; it is not stored.
+        }
       }
     } catch (error) {
       setTests((t) => ({ ...t, [capability]: { status: "error", message: error instanceof Error ? error.message : "" } }));
@@ -410,7 +448,21 @@ function RecordForm({
     setEnableWarning(null);
     try {
       let registry: ServiceRegistry;
-      if (locked) registry = await api.services.edit(view.service_id, { enabled: on });
+      if (metadataOnly) {
+        // Read-only settings still need the existing check before first use.
+        // Check the saved connection without rebuilding any owner fields.
+        if (on && !locked && !mismatched && view.check.status === "not_started") {
+          const result = await enginesApi.check({ definition: definition.definition, service_id: view.service_id, values: bodyValues() as never });
+          const warning = result.findings.find((f) => f.severity === "warning");
+          if (result.outcome === "error" || (warning && !acknowledge)) {
+            setSession({ result, address: trimAddress(address), key: newKey });
+            if (warning && result.outcome !== "error") setEnableWarning(warning);
+            else setEnableError(result.findings[0]?.what ?? "The check found a problem.");
+            return;
+          }
+        }
+        registry = await api.services.edit(view.service_id, { enabled: on });
+      }
       else
         registry = await enginesApi.update(
           view.service_id,
@@ -448,7 +500,7 @@ function RecordForm({
     setSaveError(null);
     try {
       let registry: ServiceRegistry;
-      if (locked) registry = await api.services.edit(view.service_id, { name: name.trim() });
+      if (settingsLocked || (mismatched && nameOnly)) registry = await api.services.edit(view.service_id, { name: name.trim() });
       else {
         const body = saveBody();
         if (options.keepOff) body.disabled = true;
@@ -467,7 +519,7 @@ function RecordForm({
       const field = saveField(fieldFromError(error) ?? finding?.field ?? null);
       setSaveError({ message: errorText(error), finding, field, body: JSON.stringify(saveBody()) });
       // Show the field the server named: open what hides it, and let the effect below move focus.
-      if (field && optionKeys.has(field)) setMoreOpen(true);
+      if (field && connectionFields.some((f) => f.key === field)) setMoreOpen(true);
       if (field === "key" && owner && !locked) setKeyEditing(true);
     } finally {
       setSaving(false);
@@ -782,16 +834,15 @@ function RecordForm({
           }
         />
       )}
-      {locked && <Note tone="lock">Azizam runs this engine itself. Only its name and Enabled can change.</Note>}
+      {locked && <LockedNote lead="Azizam runs this engine itself. Only its name and Enabled can change." reason={DERIVED_REASON} view={view} />}
       {notStarted && hasLifecycle && (
         <Note tone="info">
           {owner ? (
             <>
-              If Azizam should start and stop this server itself, add the commands under More options, in Start and stop.
+              If Azizam should start and stop this server itself, add the commands under How it runs, in Start and stop.
               <br />
               <LinkButton
                 onClick={() => {
-                  setMoreOpen(true);
                   requestAnimationFrame(() => document.getElementById("engine-group-start-and-stop")?.scrollIntoView({ block: "center" }));
                 }}
               >
@@ -799,25 +850,36 @@ function RecordForm({
               </LinkButton>
             </>
           ) : (
-            "If Azizam should start this server itself, the owner adds the start and stop commands under More options."
+            "If Azizam should start this server itself, the owner adds the start and stop commands under How it runs."
           )}
         </Note>
       )}
       <nav aria-label="On this page" className="text-meta -mx-2 flex flex-wrap gap-x-2 gap-y-1">
         <a className={NAV_LINK} href="#engine-connection">Connection</a>
-        <a className={NAV_LINK} href="#engine-abilities">What it can do</a>
-        <a className={NAV_LINK} href="#engine-models">Models</a>
-        <a className={NAV_LINK} href="#engine-more">More options</a>
+        <a className={NAV_LINK} href="#engine-offers">What it offers</a>
+        <a className={NAV_LINK} href="#engine-runs">How it runs</a>
+        <a className={NAV_LINK} href="#engine-checks">What Azizam can check</a>
+        <a className={NAV_LINK} href="#engine-resources">Resources</a>
+        <a className={NAV_LINK} href="#engine-stored">Stored record</a>
       </nav>
 
       <section aria-labelledby="engine-connection" className="flex flex-col gap-2">
         <h2 id="engine-connection" className="text-heading scroll-mt-20">Connection</h2>
+        {reason && !locked && <LockedNote reason={reason} view={view} />}
         <div className="bg-card rounded-panel border">
           <div className="flex flex-col gap-4 p-4">
             <FormField label="Name" error={refusedHere("name")}>
               {(control) => <Input {...control} value={name} autoComplete="off" onChange={(event) => setName(event.target.value)} />}
             </FormField>
-            <fieldset disabled={locked} className="flex min-w-0 flex-col gap-4">
+            <fieldset disabled={settingsLocked} className="flex min-w-0 flex-col gap-4">
+              {"address" in unsupported ? (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-meta font-medium">Address</span>
+                  <p data-testid="address-read-only" className="text-meta font-mono [overflow-wrap:anywhere]">
+                    {view.v2?.connection.address || saved.address}
+                  </p>
+                </div>
+              ) : (
               <FormField
                 label="Address"
                 help={fieldOf(definition, "address")?.help}
@@ -878,7 +940,8 @@ function RecordForm({
                   />
                 )}
               </FormField>
-              {fieldOf(definition, "api_key") && (
+              )}
+              {fieldOf(definition, "api_key") && !("api_key" in unsupported) && (
                 <div role="group" aria-labelledby="engine-key-label" className="flex flex-col gap-1.5">
                   <span id="engine-key-label" className="text-meta font-medium">
                     {fieldOf(definition, "api_key")?.label}
@@ -895,6 +958,8 @@ function RecordForm({
                 </div>
               )}
             </fieldset>
+            <ConnectionFacts view={view} definition={definition} />
+            <UnsupportedNote fields={fieldsOf("connection")} unsupported={unsupported} />
           </div>
           <div className="flex flex-wrap items-center gap-3 border-t px-4 py-3">
             <p data-testid="check-line" role="status" className="text-meta min-w-0 flex-1">
@@ -927,83 +992,175 @@ function RecordForm({
         </div>
       </section>
 
-      <fieldset disabled={locked} className="flex min-w-0 flex-col gap-4">
-        <section aria-labelledby="engine-abilities" className="flex flex-col gap-2">
-          <div>
-            <h2 id="engine-abilities" className="text-heading scroll-mt-20">What it can do</h2>
-            <p className="text-meta text-muted-foreground">
-              {notStarted
-                ? "Not known yet. Azizam looks the first time the engine starts, or when you press Check now."
-                : "Tick what you want to use. A real test proves it."}
-            </p>
-          </div>
-          <CapabilityList
-            rows={rows}
-            ticked={ticked}
-            onTick={(id, on) =>
-              setTicked((s) => {
-                const n = new Set(s);
-                if (on) n.add(id);
-                else n.delete(id);
-                return n;
-              })
-            }
-            tests={shownTests}
-            onTest={locked ? undefined : (id) => void runTest(id)}
-            testNote={testNote}
-            storedNote={STORED_TEST_NOTE}
-            readOnly={locked}
-          />
-        </section>
+      <section aria-label="More options">
+        <MoreOptions
+          definition={definition}
+          fields={connectionFields}
+          values={options}
+          onValues={(patch) => setOptions((o) => ({ ...o, ...patch }))}
+          headers={headers}
+          onHeaders={setHeaders}
+          cards={cards}
+          onCards={setCards}
+          owner={owner}
+          lifecycleEditable={view.lifecycle_editable}
+          locked={settingsLocked}
+          address={address}
+          open={moreOpen}
+          onOpenChange={setMoreOpen}
+          errors={optionErrors}
+        />
+      </section>
 
-        <section aria-labelledby="engine-models" className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 id="engine-models" className="text-heading scroll-mt-20">Models</h2>
-            <Button type="button" variant="outline" size="sm" disabled={checking} onClick={() => void runCheck(true)}>
-              <RefreshCw aria-hidden="true" />
-              Detect models again
-            </Button>
-          </div>
-          {detectNote && <p role="status" className="text-meta text-muted-foreground">{detectNote}</p>}
-          <ModelsBlock
-            models={models}
-            onChange={setModels}
-            readOnly={locked}
-            error={refusedHere("models")}
-            emptyText="No models yet. Azizam lists them the first time the engine starts. You can also add one by name below."
-          />
-          {modelsChanged ? (
-            <AccessAsk
-              capabilities={capabilityIds}
-              models={accessModels(models, definition.capabilities)}
-              debounceMs={400}
-              qualifier="After you save"
-              errorText="Azizam couldn’t read the access plans. You can still save; check who can use the models on this page afterwards."
-            />
+      <section aria-labelledby="engine-offers" className="flex flex-col gap-3">
+        <h2 id="engine-offers" className="text-heading scroll-mt-20">What it offers</h2>
+        {reason && !locked && <LockedNote reason={reason} view={view} />}
+        <UnsupportedNote fields={fieldsOf("offerings")} unsupported={unsupported} />
+        {!offeringsEditable && !fieldsOf("offerings").some((f) => f.key in unsupported) && <Note tone="lock">{UNSUPPORTED_REASON}</Note>}
+        <fieldset disabled={settingsLocked} className="flex min-w-0 flex-col gap-4">
+          {offeringsEditable ? (
+            <>
+              <div className="flex flex-col gap-2">
+                <div>
+                  <h3 id="engine-abilities" className="text-body scroll-mt-20 font-medium">What it can do</h3>
+                  <p className="text-meta text-muted-foreground">
+                    {notStarted
+                      ? "Not known yet. Azizam looks the first time the engine starts, or when you press Check now."
+                      : settingsLocked
+                        ? "What is turned on. A real test proves it."
+                        : "Tick what you want to use. A real test proves it."}
+                  </p>
+                </div>
+                <CapabilityList
+                  rows={rows}
+                  ticked={ticked}
+                  onTick={(id, on) =>
+                    setTicked((s) => {
+                      const n = new Set(s);
+                      if (on) n.add(id);
+                      else n.delete(id);
+                      return n;
+                    })
+                  }
+                  tests={shownTests}
+                  onTest={locked ? undefined : (id) => void runTest(id)}
+                  testNote={testNote}
+                  storedNote={STORED_TEST_NOTE}
+                  readOnly={settingsLocked}
+                />
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 id="engine-models" className="text-body scroll-mt-20 font-medium">Models</h3>
+                  {!settingsLocked && (
+                    <Button type="button" variant="outline" size="sm" disabled={checking} onClick={() => void runCheck(true)}>
+                      <RefreshCw aria-hidden="true" />
+                      Detect models again
+                    </Button>
+                  )}
+                </div>
+                {detectNote && <p role="status" className="text-meta text-muted-foreground">{detectNote}</p>}
+                <ModelsBlock
+                  models={models}
+                  onChange={setModels}
+                  readOnly={settingsLocked}
+                  error={refusedHere("models")}
+                  emptyText="No models yet. Azizam lists them the first time the engine starts. You can also add one by name below."
+                />
+                {modelsChanged ? (
+                  <AccessAsk
+                    capabilities={capabilityIds}
+                    models={accessModels(models, definition.capabilities)}
+                    debounceMs={400}
+                    qualifier="After you save"
+                    errorText="Azizam couldn’t read the access plans. You can still save; check who can use the models on this page afterwards."
+                  />
+                ) : (
+                  <AccessAnswer access={view.access} />
+                )}
+              </div>
+            </>
           ) : (
             <AccessAnswer access={view.access} />
           )}
-        </section>
 
-        <section aria-label="More options">
-          <MoreOptions
-            definition={definition}
-            values={options}
-            onValues={(patch) => setOptions((o) => ({ ...o, ...patch }))}
-            headers={headers}
-            onHeaders={setHeaders}
-            cards={cards}
-            onCards={setCards}
-            owner={owner}
-            lifecycleEditable={view.lifecycle_editable}
-            locked={locked}
-            address={address}
-            open={moreOpen}
-            onOpenChange={setMoreOpen}
-            errors={optionErrors}
+          <div className="flex flex-col gap-2">
+            <h3 className="text-body font-medium">How a request reaches each one</h3>
+            <OfferingFacts v2={view.v2} />
+          </div>
+
+          {offeringFields.length > 0 && (
+            <div className="bg-card rounded-panel border">
+              <FieldGroups
+                definition={definition}
+                fields={offeringFields}
+                values={options}
+                onValues={(patch) => setOptions((o) => ({ ...o, ...patch }))}
+                headers={headers}
+                onHeaders={setHeaders}
+                cards={cards}
+                onCards={setCards}
+                owner={owner}
+                lifecycleEditable={view.lifecycle_editable}
+                locked={settingsLocked}
+                address={address}
+                errors={optionErrors}
+              />
+            </div>
+          )}
+        </fieldset>
+      </section>
+
+      <section aria-labelledby="engine-runs" className="flex flex-col gap-2">
+        <h2 id="engine-runs" className="text-heading scroll-mt-20">How it runs</h2>
+        {reason && !locked && <LockedNote reason={reason} view={view} />}
+        <div className="bg-card rounded-panel flex flex-col gap-3 border p-4">
+          <ProcessFacts
+            view={view}
+            lifecycleEditable={view.lifecycle_editable && !locked}
+            note={owner && !locked && !view.lifecycle_editable ? processReason : undefined}
           />
-        </section>
-      </fieldset>
+          {view.lifecycle_editable && <UnsupportedNote fields={fieldsOf("process")} unsupported={unsupported} />}
+        </div>
+        {/* Start and stop edits only the kinds this page can save; others show above as stored. */}
+        {processFields.length > 0 && !locked && view.lifecycle_editable && (
+          <div className="bg-card rounded-panel border">
+            <FieldGroups
+              definition={definition}
+              fields={processFields}
+              values={options}
+              onValues={(patch) => setOptions((o) => ({ ...o, ...patch }))}
+              headers={headers}
+              onHeaders={setHeaders}
+              cards={cards}
+              onCards={setCards}
+              owner={owner}
+              lifecycleEditable={view.lifecycle_editable}
+              locked={locked}
+              address={address}
+              errors={optionErrors}
+            />
+          </div>
+        )}
+      </section>
+
+      <section aria-labelledby="engine-checks" className="flex flex-col gap-2">
+        <h2 id="engine-checks" className="text-heading scroll-mt-20">What Azizam can check</h2>
+        <p className="text-meta text-muted-foreground">
+          What Azizam can see for itself. Anything it can’t see shows as unknown, never as fine.
+        </p>
+        {reason && !locked ? <LockedNote reason={reason} view={view} /> : !locked && <Note tone="lock">{UNSUPPORTED_REASON}</Note>}
+        <ObservationList view={view} />
+      </section>
+
+      <section aria-labelledby="engine-resources" className="flex flex-col gap-2">
+        <h2 id="engine-resources" className="text-heading scroll-mt-20">Resources</h2>
+        {reason && !locked ? <LockedNote reason={reason} view={view} /> : !locked && <Note tone="lock">{UNSUPPORTED_REASON}</Note>}
+        <div className="bg-card rounded-panel border p-4">
+          <ResourceFacts v2={view.v2} />
+        </div>
+      </section>
 
       <StoredRecordSection view={view} />
 
