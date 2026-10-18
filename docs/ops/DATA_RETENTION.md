@@ -77,8 +77,26 @@ clears the signed-in person's own entries whose file is gone:
   same as every file being gone. A readable folder with no media file (empty,
   or only sidecars or scratch files) looks the same as an unmounted volume, so
   the removal refuses it whenever it would drop an entry. A person with no
-  entries gets a success that removes nothing. A readable folder with at least
-  one media file works as before.
+  entries gets a success that removes nothing when the recorded volume is present.
+- A nonempty folder alone is not proof of the right disk: a write onto a bare
+  mount point can leave one new file while every older file is on an absent disk.
+  The root marker `.azizam-media` holds a random volume ID and creation time;
+  `media_volume_identity` beside the Library index records the expected ID.
+  Missing, malformed or mismatched markers refuse removal without deleting
+  entries. The core rechecks the identity inside the deletion transaction.
+- The first remove-missing on a fresh, globally empty Library creates and
+  records the marker only when the folder is otherwise empty. Existing files,
+  sidecars and unrelated files conservatively require owner confirmation. This is not a per-person empty check. Ordinary media
+  writes never create it, and a previously recorded identity is never
+  automatically regenerated, even after every entry is removed.
+- Existing installs and intentional moves require the owner to verify the
+  original media disk is mounted and choose **This is the right media folder**
+  (`POST /me/api/media/confirm-folder`). The button appears only for the
+  identity refusal and only to an owner. Confirmation writes a new marker and
+  records its ID; it removes nothing and does not retry removal automatically.
+  The empty-folder guard still applies after confirmation. Back up the marker
+  with the media and the identity with the database. Never confirm merely to
+  dismiss a warning when the expected disk is absent.
 - A file is gone only when nothing in the folder holds its digest under any
   suffix (ComfyUI `gifs` and `images` outputs keep their own suffix). The check
   reads the folder, not the Library listing.

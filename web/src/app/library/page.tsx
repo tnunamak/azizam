@@ -306,6 +306,12 @@ class LibraryFailure extends Error {
                 : "This browser couldn't share the file. Use Download.");
   }
 }
+class MediaFolderFailure extends LibraryFailure {
+  constructor() {
+    super("delete", "gateway");
+    this.message = "Azizam can't confirm this is the right media folder, so nothing was removed. Ask the owner to check the disk and confirm this folder.";
+  }
+}
 function failureCopy(error: unknown) {
   return error instanceof LibraryFailure
     ? error.message
@@ -349,11 +355,13 @@ function validPayload(path: string, value: unknown): boolean {
       (value.remote == null || typeof value.remote === "boolean") &&
       (value.cost == null || (record(value.cost) &&
         (value.cost.usd == null || typeof value.cost.usd === "number" || typeof value.cost.usd === "string")));
+  if (route === "/me/api/media/confirm-folder") return value.confirmed === true;
   if (route.startsWith("/me/api/media/")) return validAsset(value.asset);
   return false;
 }
 
 const REMOVE_MISSING_PATH = "/me/api/media/remove-missing";
+const CONFIRM_FOLDER_PATH = "/me/api/media/confirm-folder";
 
 async function mediaRequest<T>(
   path: string,
@@ -366,7 +374,14 @@ async function mediaRequest<T>(
   } catch {
     throw new LibraryFailure(stage, "unknown");
   }
-  if (!response.ok) throw new LibraryFailure(stage, "gateway");
+  if (!response.ok) {
+    if (path === REMOVE_MISSING_PATH) {
+      const failure: unknown = await response.json().catch(() => null);
+      if (record(failure) && record(failure.error) && failure.error.code === "media_folder_unconfirmed")
+        throw new MediaFolderFailure();
+    }
+    throw new LibraryFailure(stage, "gateway");
+  }
   if (init.method === "DELETE" && response.status === 204) return undefined as T;
   let payload: unknown;
   try {
@@ -2269,6 +2284,7 @@ export default function LibraryPage() {
   const [closedDeepLinkId, setClosedDeepLinkId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
+  const [folderNeedsConfirmation, setFolderNeedsConfirmation] = useState(false);
   const [deleteAnnouncement, setDeleteAnnouncement] = useState("");
   const [loadMoreRequest, setLoadMoreRequest] = useState<{ path: string; ids: Set<string>; pages: number } | null>(null);
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
@@ -2645,10 +2661,32 @@ export default function LibraryPage() {
       );
     },
     onSuccess: ({ removed_assets: removed }) => {
+      setFolderNeedsConfirmation(false);
       setDeleteAnnouncement(
         `Removed ${removed} missing ${removed === 1 ? "item" : "items"} from your Library.`,
       );
       void queryClient.invalidateQueries({ queryKey: ["library"] });
+    },
+    onError: (error) => {
+      setFolderNeedsConfirmation(error instanceof MediaFolderFailure);
+      if (error instanceof MediaFolderFailure) setConfirmingRemoval(false);
+      toast.error(failureCopy(error));
+    },
+  });
+  const confirmFolderMutation = useMutation({
+    mutationFn: async () => {
+      const session = await mediaRequest<{ csrf_token: string }>("/me/api/session");
+      return mediaRequest<{ confirmed: boolean }>(CONFIRM_FOLDER_PATH, {
+        method: "POST",
+        headers: {
+          "x-azizam-user-action": "1",
+          "x-azizam-csrf": session.csrf_token,
+        },
+      }, "delete");
+    },
+    onSuccess: () => {
+      setFolderNeedsConfirmation(false);
+      setDeleteAnnouncement("Media folder confirmed. Choose Remove missing items again when you are ready.");
     },
     onError: (error) => toast.error(failureCopy(error)),
   });
@@ -3048,6 +3086,22 @@ export default function LibraryPage() {
             </div>
           </details>
         </section>
+      ) : null}
+      {folderNeedsConfirmation ? (
+        <div role="alert" className="border-border rounded-panel text-meta mt-4 space-y-2 border p-3">
+          <p>Azizam can&apos;t confirm this is the right media folder, so nothing was removed. Ask the owner to check the disk and confirm this folder.</p>
+          {canChooseOwner ? (
+            <>
+              <p>Check that the original media disk is mounted before confirming. This allows missing entries to be removed on your next attempt.</p>
+              <Button
+                disabled={confirmFolderMutation.isPending}
+                onClick={() => confirmFolderMutation.mutate()}
+              >
+                This is the right media folder
+              </Button>
+            </>
+          ) : null}
+        </div>
       ) : null}
       {updating ? (
         <p role="status" className="text-muted-foreground text-meta mt-3">

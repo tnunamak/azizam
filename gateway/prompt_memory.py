@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import stat
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +22,7 @@ import os
 
 from gateway import admin_store, media_jobs, media_metadata, request_connections
 from gateway.sqlite_startup import connect
+from gateway.public_failure import PublicFailure
 
 DB_PATH = media_jobs.DB_PATH
 NAMESPACE = "com.azizam.prompts"
@@ -41,6 +44,11 @@ CREATE TABLE IF NOT EXISTS asset_prompts (
 );
 CREATE INDEX IF NOT EXISTS asset_prompts_expiry ON asset_prompts(kept_until);
 CREATE INDEX IF NOT EXISTS asset_prompts_person ON asset_prompts(person_id);
+CREATE TABLE IF NOT EXISTS media_volume_identity (
+  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+  volume_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 """
 
 
@@ -731,6 +739,156 @@ def prune(*, path: Path | None = None, now: int | None = None) -> int:
         conn.close()
 
 
+MEDIA_FOLDER_MARKER = ".azizam-media"
+
+
+def _folder_identity(folder: Path, expected: tuple[int, int] | None = None) -> None:
+    try:
+        info = folder.stat()
+        if not stat.S_ISDIR(info.st_mode) or (expected is not None and (info.st_dev, info.st_ino) != expected):
+            raise OSError("media folder changed")
+    except OSError as exc:
+        raise PublicFailure("media_folder_unavailable", 503) from exc
+
+
+def _read_media_marker(folder: Path) -> dict[str, Any] | None:
+    try:
+        fd = os.open(folder / MEDIA_FOLDER_MARKER, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("media marker is not a regular file")
+        value = json.loads(os.read(fd, 4097))
+        if (not isinstance(value, dict) or not isinstance(value.get("volume_id"), str)
+                or len(value["volume_id"]) != 32
+                or any(c not in "0123456789abcdef" for c in value["volume_id"])
+                or type(value.get("created_at")) is not int or value["created_at"] <= 0):
+            raise ValueError("invalid media marker")
+        return value
+    finally:
+        os.close(fd)
+
+
+def _write_media_marker(folder: Path, *, replace: bool) -> dict[str, Any]:
+    marker = {"volume_id": uuid.uuid4().hex, "created_at": int(time.time())}
+    scratch = folder / (MEDIA_FOLDER_MARKER + "." + uuid.uuid4().hex + ".tmp")
+    try:
+        with scratch.open("x", encoding="utf-8") as stream:
+            json.dump(marker, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if replace:
+            os.replace(scratch, folder / MEDIA_FOLDER_MARKER)
+        else:
+            # Never overwrite a marker that appeared after the absence check.
+            os.link(scratch, folder / MEDIA_FOLDER_MARKER)
+    finally:
+        scratch.unlink(missing_ok=True)
+    return marker
+
+
+def _remember_media_marker(conn: sqlite3.Connection, marker: Mapping[str, Any]) -> None:
+    conn.execute(
+        "INSERT INTO media_volume_identity(singleton, volume_id, created_at) VALUES(1, ?, ?) "
+        "ON CONFLICT(singleton) DO UPDATE SET volume_id=excluded.volume_id, created_at=excluded.created_at",
+        (marker["volume_id"], marker["created_at"]),
+    )
+
+
+def _require_media_folder(
+    conn: sqlite3.Connection, folder: Path, expected: tuple[int, int] | None = None,
+) -> None:
+    _folder_identity(folder, expected)
+    try:
+        marker = _read_media_marker(folder)
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise PublicFailure("media_folder_unconfirmed", 503) from exc
+    recorded = conn.execute("SELECT volume_id FROM media_volume_identity WHERE singleton=1").fetchone()
+    if marker is None or recorded is None or marker["volume_id"] != recorded[0]:
+        raise PublicFailure("media_folder_unconfirmed", 503)
+
+
+def _has_library_entries(conn: sqlite3.Connection) -> bool:
+    # This is deliberately global, never the current person's filtered Library.
+    # Even an unfinished job prevents automatic adoption of an unknown folder.
+    if conn.execute("SELECT 1 FROM asset_prompts LIMIT 1").fetchone():
+        return True
+    has_jobs = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_jobs'").fetchone()
+    return bool(has_jobs and conn.execute("SELECT 1 FROM media_jobs LIMIT 1").fetchone())
+
+
+def ensure_media_folder(
+    folder: Path, *, path: Path | None = None, prompt_path: Path | None = None,
+    expected: tuple[int, int] | None = None,
+) -> None:
+    """Initialize only a fresh Library; ordinary media writes never call this.
+
+    A recorded identity is never regenerated automatically, even after all
+    entries have been removed. Existing installs and moves need the owner.
+    """
+    _folder_identity(folder, expected)
+    conn = _connect(path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        recorded = conn.execute("SELECT 1 FROM media_volume_identity WHERE singleton=1").fetchone()
+        if recorded is None:
+            populated = _has_library_entries(conn)
+            if prompt_path is not None and Path(prompt_path) != Path(path or media_jobs.DB_PATH):
+                other = _connect(prompt_path)
+                try:
+                    populated = populated or _has_library_entries(other)
+                finally:
+                    other.close()
+            # Orphan files/sidecars may still be Library entries without a job
+            # or retained prompt. Only a truly fresh folder is auto-adopted.
+            try:
+                populated = populated or any(name != MEDIA_FOLDER_MARKER for name in os.listdir(folder))
+            except OSError as exc:
+                raise PublicFailure("media_folder_unavailable", 503) from exc
+            if populated:
+                raise PublicFailure("media_folder_unconfirmed", 503)
+            try:
+                marker = _read_media_marker(folder)
+                if marker is None:
+                    marker = _write_media_marker(folder, replace=False)
+            except (OSError, ValueError, UnicodeError) as exc:
+                raise PublicFailure("media_folder_unconfirmed", 503) from exc
+            _remember_media_marker(conn, marker)
+        _require_media_folder(conn, folder, expected)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def confirm_media_folder(
+    folder: Path, *, owner: bool, path: Path | None = None,
+    expected: tuple[int, int] | None = None,
+) -> None:
+    """The owner explicitly adopts this folder. This action removes no entries."""
+    if not owner:
+        raise PublicFailure("media_folder_owner_required", 403)
+    _folder_identity(folder, expected)
+    conn = _connect(path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            marker = _write_media_marker(folder, replace=True)
+        except OSError as exc:
+            raise PublicFailure("media_folder_unavailable", 503) from exc
+        _remember_media_marker(conn, marker)
+        _require_media_folder(conn, folder, expected)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def remove_missing_media(
     person_id: str,
     gone_asset_ids: Iterable[str],
@@ -738,23 +896,37 @@ def remove_missing_media(
     job_ids: Iterable[str],
     *,
     path: Path | None = None,
+    media_folder: Path | None = None,
+    media_identity: tuple[int, int] | None = None,
+    prompt_path: Path | None = None,
 ) -> int:
-    """Remove a person's missing media entries in one transaction.
+    """Remove missing entries only while the recorded volume is present.
 
-    Deletes their prompts for the gone assets, hides each ``(asset_id, job_id)`` in ``hides``
-    and deletes the finished jobs in ``job_ids``. All of it commits or none of it does.
-    Returns how many jobs were deleted.
+    The volume is checked inside the write transaction before any deletion
+    and again before commit. A split prompt store joins the same transaction,
+    so a refusal or statement failure cannot leave just its prompts deleted.
     """
+    if media_folder is None:
+        raise PublicFailure("media_folder_unavailable", 503)
     conn = _connect(path)
+    other = None
     try:
+        prompts = "asset_prompts"
+        if prompt_path is not None and Path(prompt_path) != Path(path or media_jobs.DB_PATH):
+            other = _connect(prompt_path)
+            # Keep the store connection open to hold its startup/recovery lock.
+            conn.execute("ATTACH DATABASE ? AS retained_prompts", (str(prompt_path),))
+            prompts = "retained_prompts.asset_prompts"
         conn.execute("BEGIN IMMEDIATE")
         try:
+            _require_media_folder(conn, media_folder, media_identity)
             conn.executemany(
-                "DELETE FROM asset_prompts WHERE asset_id=? AND person_id=?",
+                f"DELETE FROM {prompts} WHERE asset_id=? AND person_id=?",
                 [(asset_id, person_id) for asset_id in gone_asset_ids],
             )
             media_jobs.hide_assets_in(conn, person_id, hides)
             deleted = media_jobs.delete_succeeded_in(conn, job_ids)
+            _require_media_folder(conn, media_folder, media_identity)
             conn.commit()
         except BaseException:
             conn.rollback()
@@ -762,6 +934,8 @@ def remove_missing_media(
         return deleted
     finally:
         conn.close()
+        if other is not None:
+            other.close()
 
 
 def delete_asset_for_person(asset_id: str, person_id: str, *, path: Path | None = None) -> int:

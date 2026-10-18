@@ -272,6 +272,27 @@ def create_me_media_router(
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
 
+    @router.post("/media/confirm-folder", include_in_schema=False)
+    def confirm_media_folder(request: Request) -> JSONResponse:
+        try:
+            session = session_provider(request)
+            if session is not None and mutation_validator is not None:
+                action_error = mutation_validator(request, session)
+                if action_error is not None:
+                    return action_error
+            actor = _actor_from_session(session, _resolve_path(admin_db_path))
+            if not actor.owner:
+                raise PublicFailure("media_folder_owner_required", 403)
+            storage = asset_storage_provider() if asset_storage_provider is not None else None
+            if storage is None or storage.folder is None:
+                raise PublicFailure("media_folder_unavailable", 503)
+            prompt_memory.confirm_media_folder(
+                storage.folder, owner=actor.owner, path=_resolve_path(media_jobs_path), expected=storage.identity,
+            )
+            return _json({"confirmed": True})
+        except (PublicFailure, UserPortalError) as exc:
+            return _error_response(exc)
+
     @router.post("/media/remove-missing", include_in_schema=False)
     def remove_missing_media(request: Request) -> JSONResponse:
         """Drop the caller's Library and job entries whose files are gone.
@@ -292,7 +313,7 @@ def create_me_media_router(
             prompt_path = _resolve_path(prompt_memory_path)
             actor = _actor_from_session(session, admin_path)
             storage = asset_storage_provider() if asset_storage_provider is not None else None
-            if storage is None:
+            if storage is None or storage.folder is None:
                 raise PublicFailure("media_folder_unavailable", 503)
             scope = _member_media_scope(actor.user_id, admin_path)
             plan = _plan_removal(
@@ -303,16 +324,16 @@ def create_me_media_router(
                     media_jobs.hidden_assets(scope.user_ids or (), path=jobs_path),
                 ),
             )
+            if (plan.gone_assets or plan.job_ids) and not storage.digests:
+                raise PublicFailure("media_folder_unavailable", 503, copy="media_folder_empty")
+            prompt_memory.ensure_media_folder(
+                storage.folder, path=jobs_path, prompt_path=prompt_path, expected=storage.identity,
+            )
             if plan.gone_assets or plan.job_ids:
-                # Nothing stored here: refuse rather than read every entry as gone.
-                if not storage.digests:
-                    raise PublicFailure("media_folder_unavailable", 503, copy="media_folder_empty")
-                if prompt_path != jobs_path:
-                    for asset_id in plan.gone_assets:
-                        prompt_memory.delete_asset_for_person(asset_id, actor.user_id, path=prompt_path)
                 removed_jobs = prompt_memory.remove_missing_media(
-                    actor.user_id, plan.gone_assets if prompt_path == jobs_path else (), plan.hides, plan.job_ids,
-                    path=jobs_path,
+                    actor.user_id, plan.gone_assets, plan.hides, plan.job_ids,
+                    path=jobs_path, media_folder=storage.folder, media_identity=storage.identity,
+                    prompt_path=prompt_path,
                 )
                 counts = {"removed_assets": len(plan.gone_assets), "removed_jobs": removed_jobs}
                 try:
@@ -400,6 +421,8 @@ class StorageSnapshot:
     """The media folder as it was listed once: the digest of every stored file, under any suffix."""
 
     digests: frozenset[str]
+    folder: Path | None = None
+    identity: tuple[int, int] | None = None
 
 
 StorageSnapshotProvider = Callable[[], "StorageSnapshot | None"]
@@ -417,11 +440,15 @@ def create_storage_snapshot_provider(cache_dir: Path) -> StorageSnapshotProvider
         try:
             if not cache_dir.is_dir():
                 return None
+            before = cache_dir.stat()
             names = os.listdir(cache_dir)
+            after = cache_dir.stat()
+            if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+                return None
         except OSError:
             return None
         digests = frozenset(digest for digest in map(directory_index.stored_digest, names) if digest is not None)
-        return StorageSnapshot(digests)
+        return StorageSnapshot(digests, cache_dir, (after.st_dev, after.st_ino))
 
     return snapshot
 
