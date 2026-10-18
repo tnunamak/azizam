@@ -47,11 +47,9 @@ function controlledBudgets(t: TestContext) {
 	};
 }
 
-/** A child that takes the lock, optionally keeps refreshing it (stale=2 s, refresh 1 s), and reports readiness. */
-function holder(path: string, mode: "refresh" | "crash") {
-	const code = mode === "refresh"
-		? `const l=require("proper-lockfile");l.lock(process.argv[1],{realpath:false,stale:2000,retries:0}).then(()=>{console.log("held");setInterval(()=>{},1000)})`
-		: `require("node:fs").mkdirSync(process.argv[1]+".lock");console.log("held");setInterval(()=>{},1000)`;
+/** A child that dies after creating the lock directory, before registering it. */
+function orphanHolder(path: string) {
+	const code = `require("node:fs").mkdirSync(process.argv[1]+".lock");console.log("held");setInterval(()=>{},1000)`;
 	const piDir = join(import.meta.dirname, "..", "node_modules");
 	const child = spawn(process.execPath, ["-e", code, path], { env: { ...process.env, NODE_PATH: piDir }, stdio: ["ignore", "pipe", "inherit"] });
 	const ready = new Promise<void>((resolve, reject) => {
@@ -63,7 +61,7 @@ function holder(path: string, mode: "refresh" | "crash") {
 
 test("orphaned lock from a crashed holder is reclaimed without stalling", async () => {
 	const { path, lock } = freshDir("crash");
-	const { child, ready } = holder(path, "crash");
+	const { child, ready } = orphanHolder(path);
 	await ready;
 	child.kill("SIGKILL"); // dies holding an unrefreshed lock directory
 	await new Promise((resolve) => child.once("exit", resolve));
