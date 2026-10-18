@@ -13,7 +13,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from gateway.engine_contract_view import observations_config, residency_config
+from gateway.engine_contract_view import connection_config, observations_config, residency_config
 from gateway.engine_credentials import credential_headers
 from gateway.engine_observations import ObservationReader
 from gateway.engine_residency import ResidencyController
@@ -38,6 +38,7 @@ class EngineControlRuntime:
 
     async def observe(self, name: str):
         return await self._observations.read({**self.service,
+            "connection": connection_config(self.service),
             "observations": observations_config(self.service)}, name)
 
     async def invoke(self, name: str, args: Mapping[str, Any]) -> None:
@@ -46,7 +47,7 @@ class EngineControlRuntime:
             raise ValueError(f"undeclared control operation: {name}")
         method = operation.get("method", "POST")
         path = operation.get("path")
-        connection = self.service.get("connection") or {}
+        connection = connection_config(self.service)
         address = connection.get("address") if isinstance(connection, Mapping) else None
         if method not in {"GET", "POST", "PUT", "DELETE"} or not isinstance(path, str) or not path.startswith("/"):
             raise ValueError("control operation needs an HTTP method and absolute path")

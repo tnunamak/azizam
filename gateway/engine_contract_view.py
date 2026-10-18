@@ -48,3 +48,11 @@ def offerings_config(service: Mapping[str, Any]) -> list[Mapping[str, Any]]:
         config = service.get("config")
         offerings = config.get("offerings") if isinstance(config, Mapping) else None
     return [item for item in offerings if isinstance(item, Mapping)] if isinstance(offerings, list) else []
+
+
+def connection_config(service: Mapping[str, Any]) -> Mapping[str, Any]:
+    connection = service.get("connection")
+    if not isinstance(connection, Mapping):
+        config = service.get("config")
+        connection = config.get("connection") if isinstance(config, Mapping) else None
+    return connection if isinstance(connection, Mapping) else {}
