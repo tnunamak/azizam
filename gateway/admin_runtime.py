@@ -817,7 +817,18 @@ class AdminSQLiteStore:
         is recorded with it.
         """
         value = service_registry.normalize_service_registry(registry)
-        changed = service_registry.credential_binding_changes(self.get_service_registry(), value)
+        before_registry = self.get_service_registry()
+        if "owner" not in actor.roles:
+            old_services = before_registry.get("services") or {}
+            for service_id, record in (value.get("services") or {}).items():
+                previous = old_services.get(service_id) or {}
+                for field in ("connection", "process", "protocol_operations", "control_file_roots",
+                              "offerings", "residency", "observations"):
+                    old_value = (previous.get(field), (previous.get("config") or {}).get(field))
+                    new_value = (record.get(field), (record.get("config") or {}).get(field))
+                    if old_value != new_value:
+                        raise PermissionError(f"Only the owner can change service {field}.")
+        changed = service_registry.credential_binding_changes(before_registry, value)
         if not changed:
             return value
         if "owner" not in actor.roles:

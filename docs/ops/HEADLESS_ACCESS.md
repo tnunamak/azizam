@@ -253,6 +253,8 @@ Selected successful workflows are exercised separately.
 | `GET /admin/api/operator/litellm/keys` | owner-bearer | denied | `gateway.admin_api.list_litellm_keys`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/operator/litellm/keys` | owner-bearer | denied | `gateway.admin_api.create_litellm_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/operator/litellm/keys/delete` | owner-bearer | denied | `gateway.admin_api.delete_litellm_keys`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/operator/host-commands` | owner-bearer | denied | `gateway.admin_api.get_host_commands`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/operator/host-commands` | owner-bearer | denied | `gateway.admin_api.update_host_commands`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `PUT /admin/api/operator/media-job-admission` | owner-bearer | denied | `gateway.admin_api.update_media_job_admission_overrides`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/operator/overrides` | owner-bearer | denied | `gateway.admin_api.list_operator_overrides`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PUT /admin/api/operator/service-availability` | owner-bearer | denied | `gateway.admin_api.update_service_availability_overrides`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |

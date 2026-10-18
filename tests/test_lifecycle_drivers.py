@@ -139,6 +139,16 @@ class TestDriverForService(unittest.TestCase):
         driver = self._call("my-vllm", backends)
         self.assertIsInstance(driver, ExternalDriver)
 
+    def test_v2_none_and_process_resolution(self):
+        from gateway.engine_process import ProcessDriver
+
+        backends = {
+            "none": {"process": {"driver": "none"}},
+            "owned": {"process": {"driver": "process"}},
+        }
+        self.assertIsInstance(self._call("none", backends), ExternalDriver)
+        self.assertIsInstance(self._call("owned", backends), ProcessDriver)
+
     def test_lifecycle_driver_docker_returns_docker(self):
         """lifecycle.driver == 'docker' returns DockerDriver."""
         backends = {"ollama": _docker_svc()}
@@ -604,7 +614,26 @@ class TestCommandDriverEnsureReady(unittest.TestCase):
     """ensure_ready orchestration: status-gate the start, then poll health."""
 
     def setUp(self):
-        self.driver = CommandDriver()
+        self.driver = CommandDriver(commands_allowed=lambda: True)
+
+    def test_command_driver_gate_refuses_all_host_calls(self):
+        denied = CommandDriver(commands_allowed=lambda: False)
+        svc = _command_svc(start=["systemctl", "start", "fixture"])
+        with patch("subprocess.run") as run_command:
+            self.assertFalse(_run(denied.ensure_ready(svc, timeout_s=1)))
+            denied.stop(svc)
+            self.assertEqual(_run(denied.status(svc)), ProcessState.UNKNOWN)
+        run_command.assert_not_called()
+
+    def test_v2_command_argv_runs_without_claiming_a_pid(self):
+        svc = {"process": {"driver": "command", "start": ["supervisor", "start", "fixture"]},
+               "host": "127.0.0.1", "port": 1}
+        with patch("subprocess.run", return_value=_proc(0)) as command, patch(
+            "gateway.lifecycle_drivers._poll_health", new=AsyncMock(return_value=True)
+        ):
+            self.assertTrue(_run(self.driver.ensure_ready(svc, timeout_s=1)))
+        self.assertEqual(command.call_args.args[0], ["supervisor", "start", "fixture"])
+        self.assertFalse(hasattr(self.driver, "pid"))
 
     def test_start_runs_when_status_says_stopped(self):
         """status exits non-zero (stopped) -> start command runs, then health poll."""
@@ -678,7 +707,7 @@ class TestCommandDriverCommands(unittest.TestCase):
     """Command parsing, stop, preflight, env/cwd, no-shell."""
 
     def setUp(self):
-        self.driver = CommandDriver()
+        self.driver = CommandDriver(commands_allowed=lambda: True)
 
     def test_string_command_is_shlex_split(self):
         svc = _command_svc(start='nssm start "My Engine"', status="true")

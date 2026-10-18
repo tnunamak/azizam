@@ -1370,6 +1370,7 @@ async def _ensure_target(
     profile: Optional[str],
     *,
     take_lease: bool,
+    offering_id: Optional[str] = None,
 ) -> tuple[bool, Optional[ServingLease]]:
     """ensure_target; with `take_lease`, also lease the backend once it is ready.
 
@@ -1377,15 +1378,24 @@ async def _ensure_target(
     target ready, so no other swap can land between the two.
     """
     from gateway.lifecycle_drivers import driver_for_service, supports_swap, SwapContext
+    from gateway.engine_contract_view import offerings_config, process_config, residency_config
 
     bcfg = (config.get("backends") or {}).get(backend) or {}
+    # The legacy backend projection keys records by id; owned-process state
+    # needs that immutable id even before the v2 registry projection lands.
+    if (bcfg.get("process") or {}).get("driver") == "process" or (
+        (bcfg.get("lifecycle") or {}).get("driver") == "process"
+    ):
+        bcfg = {**bcfg, "id": backend}
     driver = driver_for_service(backend, config.get("backends"))
+    owned_process = process_config(bcfg).get("driver") == "process"
 
     # Non-swap driver, or no model requested → just make the backend ready.
     if not (supports_swap(driver) and model):
         # A service that declares a start budget (driver_config.health_timeout_s: engines that load
         # a model in 30-60 s) gets it; the 5 s default only covers services that declare none.
-        declared = ((bcfg.get("lifecycle") or {}).get("driver_config") or {}).get("health_timeout_s")
+        declared = (process_config(bcfg).get("ready_timeout_s") if owned_process else
+                    ((bcfg.get("lifecycle") or {}).get("driver_config") or {}).get("health_timeout_s"))
         try:
             budget = max(HEALTH_CHECK_TIMEOUT, float(declared)) if declared is not None else HEALTH_CHECK_TIMEOUT
         except (TypeError, ValueError):
@@ -1399,8 +1409,63 @@ async def _ensure_target(
             return False, None
         if not take_lease:
             return True, None
-        async with swap_lock_for(backend):
-            return True, _swap_drain.lease(backend)
+        offerings = offerings_config(bcfg)
+        offering = next((item for item in offerings if item.get("id") == (offering_id or model)), None)
+        if model and offering is None and any(
+            (item.get("selection") or {}).get("mode") == "switch" for item in offerings
+        ):
+            return False, None
+        selection = offering.get("selection") if offering else None
+        if isinstance(selection, Mapping):
+            from gateway.engine_control import EngineControlRuntime
+
+            runtime = EngineControlRuntime({**bcfg, "id": backend, "offerings": offerings},
+                                           drain=_swap_drain, lock_for=swap_lock_for)
+            needs_load = selection.get("implicit_load") is False and bool(residency_config(bcfg).get("load"))
+            if selection.get("mode") == "switch":
+                if owned_process:
+                    driver.request_started(bcfg)
+                try:
+                    lease = await runtime.select(
+                        str(offering["id"]), selection,
+                        on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None,
+                        prepare=runtime.load if needs_load else None,
+                    )
+                except BaseException:
+                    if owned_process:
+                        driver.request_finished(bcfg)
+                    raise
+                return True, lease
+            if needs_load:
+                if owned_process:
+                    driver.request_started(bcfg)
+                leased = False
+                try:
+                    async with swap_lock_for(backend):
+                        await _swap_drain.clear_for_swap(
+                            backend, SwapDrainSettings(enabled=True, timeout_s=30)
+                        )
+                        if not await runtime.load():
+                            return False, None
+                        lease = _swap_drain.lease(
+                            backend, on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None
+                        )
+                        leased = True
+                        return True, lease
+                finally:
+                    if owned_process and not leased:
+                        driver.request_finished(bcfg)
+        if owned_process:
+            driver.request_started(bcfg)
+        try:
+            async with swap_lock_for(backend):
+                return True, _swap_drain.lease(
+                    backend, on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None
+                )
+        except BaseException:
+            if owned_process:
+                driver.request_finished(bcfg)
+            raise
 
     # The driver builds + prechecks its own activation from driver_config. On a
     # precheck failure (e.g. a missing GGUF/aux file) it returns None.
@@ -1457,11 +1522,21 @@ async def _ensure_target_leased(
     target ready, so it always covers the target this request asked for.
     Raises SwapDeferred.
     """
-    if not _swap_drain_settings().enabled:
+    from gateway.engine_contract_view import offerings_config, process_config
+
+    bcfg = (config.get("backends") or {}).get(backend) or {}
+    declared_offerings = offerings_config(bcfg)
+    contract_lease = any(
+        (item.get("selection") or {}).get("mode") == "switch" or
+        (item.get("selection") or {}).get("implicit_load") is False
+        for item in declared_offerings
+    )
+    if not _swap_drain_settings().enabled and process_config(bcfg).get("driver") != "process" and not contract_lease:
         ready = await ensure_target(backend, activation.model, activation.mmproj, profile=activation.profile)
         return ready, None
     return await _ensure_target(
-        backend, activation.model, activation.mmproj, activation.profile, take_lease=True
+        backend, activation.model, activation.mmproj, activation.profile,
+        take_lease=True, offering_id=activation.offering_id,
     )
 
 
@@ -1613,6 +1688,9 @@ ADMIN_SESSION_SIGNING_KEY = (
     else _admin_session_signing_key()
 )
 ADMIN_STORE = AdminSQLiteStore(ADMIN_DB_PATH)
+# The command permission is read from this live database, not the import-time default store.
+from gateway import host_commands
+host_commands.bind_admin_db(ADMIN_DB_PATH)
 # Wire in-process hot-reload: after every service-registry mutation the store
 # calls reload_runtime_config() so the new backend hosts take effect
 # immediately without a process restart.
@@ -2681,6 +2759,7 @@ class LocalModelActivation:
     mmproj: Optional[str] = None
     profile: Optional[str] = None
     backend_model: Optional[str] = None
+    offering_id: Optional[str] = None
 
 
 def _lifecycle_driver_config(service_cfg: Mapping[str, Any] | None) -> Mapping[str, Any]:
@@ -12468,6 +12547,15 @@ async def _initialize_stores() -> None:
     await asyncio.to_thread(providers.recover_provider_spend, path=ADMIN_DB_PATH.parent / "provider_spend.db")
 
 
+def _migrate_host_command_permission() -> None:
+    """Decision D13: installs that already declare command lifecycles keep them working."""
+    registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
+    services = (registry or {}).get("services") or {}
+    host_commands.migrate_legacy_command_lifecycles(
+        ADMIN_DB_PATH, services or config.get("backends") or {}
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
@@ -12475,6 +12563,9 @@ async def lifespan(app: FastAPI):
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
     await asyncio.to_thread(_adopt_bootstrap_signin_lists)
+    await asyncio.to_thread(_migrate_host_command_permission)
+    from gateway.lifecycle_drivers import _process_driver
+    await asyncio.to_thread(_process_driver.recover, config.get("backends") or {})
     print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
     print(f"[proxy] STT backend: {STT_HOST} (enabled: {STT_ENABLED})", flush=True)
@@ -12497,9 +12588,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] firehose replay failed: {e}", flush=True)
 
-    # The gateway does not start engines. They are brought up by the operator's
-    # supervisor (systemd / docker / a `command` LifecycleDriver) and reached
-    # lazily via ensure_target on the first request that needs them.
+    # Engines are reached lazily. A declared process driver may start one on
+    # the first request when the owner has enabled host command execution.
 
     # Log the loop thread's stack whenever the event loop stops answering.
     watchdog = loop_watchdog.start(float(get_env("AZIZAM_LOOP_WATCHDOG_THRESHOLD_S", "1.0")))
@@ -12684,7 +12774,8 @@ async def lifespan(app: FastAPI):
             await receipts_maintenance_task
         except asyncio.CancelledError:
             pass
-    # No engine processes to stop — the gateway never owned an engine's existence.
+    from gateway.lifecycle_drivers import _process_driver
+    await asyncio.to_thread(_process_driver.shutdown)
 
 
 # Build the shared TLS context now, at import, so no request builds it on the event loop.
@@ -26857,7 +26948,15 @@ def _litellm_local_activation_target(
             model=requested_model,
             backend_model=requested_model,
         )
+    from gateway.engine_contract_view import offerings_config
+
     requested = normalize_model_id(requested_model)
+    matching_offerings = [
+        item for item in offerings_config(backend_cfg)
+        if requested in {normalize_model_id(str(value)) for value in
+                         (item.get("id"), item.get("upstream")) if value}
+    ]
+    offering_id = str(matching_offerings[0]["id"]) if len(matching_offerings) == 1 else None
     for item in _service_model_records(backend_cfg):
         candidates = {
             item.get("id"),
@@ -26880,17 +26979,27 @@ def _litellm_local_activation_target(
             ).strip()
             activation_profile = str(item.get("activation_profile") or "").strip()
             backend_model = str(item.get("backend_model") or requested_model).strip()
+            resolved_offering_id = offering_id
+            if resolved_offering_id is None:
+                by_upstream = [
+                    entry for entry in offerings_config(backend_cfg)
+                    if entry.get("upstream") == activation_model
+                ]
+                if len(by_upstream) == 1:
+                    resolved_offering_id = str(by_upstream[0]["id"])
             return LocalModelActivation(
                 backend=backend,
                 model=activation_model or requested_model,
                 mmproj=activation_mmproj or None,
                 profile=activation_profile or None,
                 backend_model=backend_model or requested_model,
+                offering_id=resolved_offering_id,
             )
     return LocalModelActivation(
         backend=backend,
         model=requested_model,
         backend_model=requested_model,
+        offering_id=offering_id,
     )
 
 
