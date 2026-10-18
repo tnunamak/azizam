@@ -66,7 +66,7 @@ PROCESS = Obj("Process", {
 # Plain settings (a name, a number, a switch, an environment variable's *name*): public scalars.
 CONFIG_SCALAR_KEYS = (
     "port", "base_path", "path_prefix", "scheme", "protocol", "native_passthrough", "definition", "definition_version",
-    "timeout", "api_key_env", "api_key_ref", "credential_origin", "model_policy_schema_version", "name", "enabled", "role",
+    "timeout", "api_key_env", "api_key_ref", "credential_origin", "driver_credential_origin", "model_policy_schema_version", "name", "enabled", "role",
     "priority", "managed", "base_url_env", "api_base_env", "default_model", "activation_model", "model_id", "model",
     "execution_substrate", "paid_remote", "remote_provider", "preset_id", "provider_id", "provider_type", "cost_class",
     "cost_model", "litellm_model", "litellm_provider", "provider_adapter", "concurrency_limit", "id_param", "cost_path",

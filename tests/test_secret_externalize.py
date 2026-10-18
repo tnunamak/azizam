@@ -176,7 +176,7 @@ def test_the_schema_11_migration_moves_the_inline_secrets_once_and_audits_counts
     admin_store.init_db(path)
 
     with sqlite3.connect(path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 11
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == admin_store.SCHEMA_VERSION
         stored = conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0]
         stored_index = conn.execute("SELECT value_json FROM operator_settings WHERE key='extension_package_index'").fetchone()[0]
         generation = conn.execute("SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key='service_registry'").fetchone()[0]
@@ -204,7 +204,7 @@ def test_the_schema_11_migration_on_a_live_shaped_registry_is_a_no_op(tmp_path):
     admin_store.init_db(path)
 
     with sqlite3.connect(path) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 11
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == admin_store.SCHEMA_VERSION
         assert conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0] == before
         assert conn.execute("SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key='service_registry'").fetchone()[0] == 1
         assert conn.execute("SELECT count(*) FROM audit_events WHERE action='operator.secrets.externalize'").fetchone()[0] == 0

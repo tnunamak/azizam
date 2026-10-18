@@ -1499,7 +1499,10 @@ class HttpLoadUnloadDriver:
         if not unload_url:
             return
         base_url = self._base_url(svc)
-        admin_key = self._admin_key(svc, dc)
+        keys = self._credentials(svc, dc, base_url)
+        if keys is None:
+            return
+        admin_key, _api_key = keys
         admin_header = dc.get("admin_header", "x-admin-key")
         try:
             import httpx
@@ -1580,16 +1583,16 @@ class HttpLoadUnloadDriver:
             return False
 
         base_url = self._base_url(svc)
-        admin_key = self._admin_key(svc, dc)
+        keys = self._credentials(svc, dc, base_url)
+        if keys is None:
+            return False
+        admin_key, api_key = keys
         admin_header = dc.get("admin_header", "x-admin-key")
         load_url = dc.get("load_url", "/v1/model/load")
         unload_url = dc.get("unload_url", "/v1/model/unload")
         verify_ep = dc.get("verify_endpoint", "/v1/model")
         load_timeout = float(dc.get("load_timeout_s", self._DEFAULT_LOAD_TIMEOUT_S))
         success_marker = dc.get("success_marker", '"status":"finished"')
-
-        # Get the api key for verify calls — read from svc (mirrors proxy.API_KEY pattern)
-        api_key = self._api_key(svc, dc)
 
         # Step 1: check what's currently loaded.
         # If ctx is supplied, use it directly (no extra GET needed — caller
@@ -1715,9 +1718,32 @@ class HttpLoadUnloadDriver:
 
     @staticmethod
     def _base_url(svc: Mapping[str, Any]) -> str:
-        host = svc.get("host", "127.0.0.1")
-        port = svc.get("port", 80)
-        return f"http://{host}:{port}"
+        """The address this driver dials: the one the credential fingerprint covers (``service_registry.lifecycle_dial_url``)."""
+        from gateway import service_registry
+
+        return service_registry.lifecycle_dial_url(svc) or "http://127.0.0.1:80"
+
+    @classmethod
+    def _credentials(cls, svc: Mapping[str, Any], dc: Mapping[str, Any], base_url: str) -> tuple[str, str] | None:
+        """The admin key and the API key to send to ``base_url``, or None when none may be sent there.
+
+        A record that holds a key sends it only to the origin its owner bound it to
+        (``config.driver_credential_origin``): a record whose host moved, or that was written past the owner-only
+        routes, sends nothing. A key that cannot be read also gives None. A record without a key gives two empty texts.
+        """
+        from gateway import service_registry
+
+        if not service_registry.driver_keys_held(svc):
+            return "", ""
+        recorded = service_registry.origin_of(str(svc.get(service_registry.DRIVER_CREDENTIAL_ORIGIN_KEY) or ""))
+        if not recorded or recorded != service_registry.origin_of(base_url):
+            print("[lifecycle] HttpLoadUnloadDriver: a key is held for another address; nothing was sent", flush=True)
+            return None
+        try:
+            return cls._admin_key(svc, dc), cls._api_key(svc, dc)
+        except runtime_secrets.SecretUnavailable:
+            print("[lifecycle] HttpLoadUnloadDriver: a key could not be read; nothing was sent", flush=True)
+            return None
 
     @staticmethod
     def _admin_key(svc: Mapping[str, Any], dc: Mapping[str, Any]) -> str:

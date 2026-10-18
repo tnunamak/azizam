@@ -1527,6 +1527,11 @@ _ENDPOINT_KEYS = (
     "base_url", "api_base", "default_base_url", "host", "port", "scheme", "base_path",
 )
 LIFECYCLE_BASE_KEY = "gateway_lifecycle_base_url"
+# The origin the keys of a lifecycle driver (its admin key and API key) are bound to. The driver sends them only
+# to the address it dials when that address has this origin; only the owner records it.
+DRIVER_CREDENTIAL_ORIGIN_KEY = "driver_credential_origin"
+_DRIVER_KEY_FIELDS = ("admin_key", "api_key")
+_DRIVER_KEY_ENV_FIELDS = ("admin_key_env", "api_key_env")
 
 
 def service_base_url(config: Mapping[str, Any]) -> str:
@@ -1567,7 +1572,7 @@ def _names_credential(key: str) -> bool:
     """
     lowered = key.strip().lower()
     return (
-        lowered in ("credential_origin", "api_key")
+        lowered in ("credential_origin", DRIVER_CREDENTIAL_ORIGIN_KEY, "api_key")
         or lowered.endswith(_REFERENCE_KEY_SUFFIXES)
         or (is_secret_key(lowered) and is_secret_reference_key(lowered))
     )
@@ -1639,6 +1644,26 @@ def _is_driven(block: Any) -> bool:
     return False
 
 
+def driver_keys_held(record: Mapping[str, Any]) -> bool:
+    """True when a lifecycle block of the record names a key its driver sends (an admin key or an API key).
+
+    The key may be stored (an entry) or named by an environment variable (``admin_key_env``, ``api_key_env``).
+    """
+    config = record.get("config")
+    process = record.get("process")
+    blocks = [record.get("lifecycle"), config.get("lifecycle") if isinstance(config, Mapping) else None,
+              process.get("legacy_lifecycle") if isinstance(process, Mapping) else None]
+    for block in blocks:
+        if not isinstance(block, Mapping):
+            continue
+        driver_config = block.get("driver_config")
+        if any(block.get(field) for field in _DRIVER_KEY_FIELDS):
+            return True
+        if isinstance(driver_config, Mapping) and any(driver_config.get(field) for field in _DRIVER_KEY_ENV_FIELDS):
+            return True
+    return False
+
+
 def lifecycle_driver_changed(before: Mapping[str, Any], after: Mapping[str, Any]) -> bool:
     """Whether a lifecycle block that names a driver was created, changed or removed.
 
@@ -1660,12 +1685,43 @@ def _reads_process_command_lines(config: Mapping[str, Any]) -> bool:
     return isinstance(aux, Mapping) and aux.get("probe") == "process-cmdline"
 
 
+def lifecycle_dial_url(config: Mapping[str, Any]) -> str:
+    """Where a lifecycle driver of this record dials: its host and port, else the origin of its base URL.
+
+    The driver's keys (an admin key, an API key) go to this address. It is one of the addresses the credential
+    fingerprint covers, so a change to it is the owner's on a record that holds a key. Empty when the record names
+    no address; the driver then has nowhere to send a key.
+    """
+    host = str(config.get("host") or "").strip()
+    port = config.get("port")
+    if host and port not in (None, ""):
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"  # an IPv6 address needs its brackets to be a URL host
+        scheme = str(config.get("scheme") or "http").strip() or "http"
+        return f"{scheme}://{host}:{port}"
+    return origin_of(service_base_url(config))
+
+
+def _dialed_origins(config: Mapping[str, Any]) -> frozenset[str]:
+    """The origins of every address the gateway can dial for this record, however the record spells them.
+
+    ``service_base_url`` returns the first of ``base_url``, ``api_base`` and ``default_base_url`` that is set, and the
+    host and port apply only when none is, so comparing just its result would hide a change to the others. The
+    lifecycle driver reads the host and port whatever the base URL says. A set, because naming an address a second
+    time sends a key nowhere new.
+    """
+    addresses = [str(config.get(key) or "").strip() for key in ("base_url", "api_base", "default_base_url")]
+    addresses.append(lifecycle_dial_url(config))
+    return frozenset(origin_of(address) or address for address in addresses if address)
+
+
 def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[Any, ...]:
     """Every address a credential of this record can be sent to, and every origin it is bound to.
 
-    The gateway dials the record's base URL (chat), its native URL (the native lane prefers ``url``)
-    and the address the form stores; a native credential goes only to the origin written beside it.
-    A change to any of these moves a key, so each has its own place in the fingerprint.
+    The gateway dials the record's base URL (chat), its native URL (the native lane prefers ``url``),
+    the address the form stores and the host and port a lifecycle driver dials; a native credential goes
+    only to the origin written beside it. A change to any of these moves a key, so each has its own place
+    in the fingerprint.
     """
     connection = config.get("connection") if isinstance(config.get("connection"), Mapping) else {}
     credentials = connection.get("credentials") if isinstance(connection.get("credentials"), Mapping) else {}
@@ -1680,6 +1736,7 @@ def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[Any, ...]:
     )
     return (
         tuple(origin_of(address) or address for address in addresses),
+        tuple(sorted(_dialed_origins(config))),
         bound,
         str(config.get(LIFECYCLE_BASE_KEY) or ""),
     )
@@ -1746,6 +1803,11 @@ def bind_credential_origins(
             origin = origin_of(str(config.get(LIFECYCLE_BASE_KEY) or "") or service_base_url(config))
             if origin:
                 config["credential_origin"] = origin
+        if driver_keys_held(record):
+            # The driver's keys go to the address it dials, which may not be the one the base URL names.
+            driver_origin = origin_of(lifecycle_dial_url(config))
+            if driver_origin:
+                config[DRIVER_CREDENTIAL_ORIGIN_KEY] = driver_origin
         # Each per-class native credential is bound to the host the native lane sends to.
         connection = config.get("connection")
         credentials = connection.get("credentials") if isinstance(connection, Mapping) else None
