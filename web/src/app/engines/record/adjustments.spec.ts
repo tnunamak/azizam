@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AdjustmentsEditor } from "./adjustment-forms";
 import type { TransformRow } from "@/lib/engines-api";
 import {
   ADJUSTMENT_KINDS,
@@ -118,7 +121,7 @@ describe("request adjustments: stored rows <-> typed forms", () => {
     expect(sayAdjustment(pm)).toBe("In replies, Azizam renames “max_completion_tokens” to “max_tokens”.");
     expect(sayAdjustment(drop)).toBe("Azizam leaves “logit_bias”, “user” out of requests.");
     expect(sayAdjustment(defs)).toBe("Azizam adds “top_p” = “0.9” to requests that do not set it.");
-    expect(sayAdjustment(msg)).toBe("Azizam adds a system message at the start of every chat: “Be brief.”.");
+    expect(sayAdjustment(msg)).toBe("Azizam adds a system message at the start of matching chat requests: “Be brief.”.");
     expect(sayAdjustment(clamp)).toBe(
       "In requests, Azizam keeps “temperature” between 0 and 1. A value outside moves to the nearest limit.",
     );
@@ -127,6 +130,64 @@ describe("request adjustments: stored rows <-> typed forms", () => {
   it("shows a named built-in read-only in words", () => {
     const [card] = cardsFromTransforms(["reasoning-effort-final-chat"]);
     expect(card.kind).toBe("builtin");
-    expect(sayAdjustment(card)).toBe("Built-in adjustment: reasoning effort final chat");
+    expect(sayAdjustment(card)).toBe("Built-in adjustment: reasoning effort final chat. Its behavior is not described here. Read-only.");
+  });
+
+  it("shows preserved conditions and options without claiming unconditional behavior", () => {
+    const rows = [
+      { kind: "value-map", param: "level", map: { high: "low" }, default: "medium", when: { model: "example" } },
+      { kind: "param-map", from: "a", to: "b", only_if_destination_absent: true },
+      { kind: "param-map", from: "c", to: "d", when: { route: "chat" } },
+      { kind: "message-inject", role: "system", text: "Brief.", mode: "append-or-insert" },
+      { kind: "clamp", param: "count", max: 4, future_option: false },
+    ] as TransformRow[];
+    const cards = cardsFromTransforms(rows);
+    const summaries = cards.map(sayAdjustment);
+    expect(summaries[0]).toContain("default: medium");
+    expect(summaries[0]).toContain("when: model: example");
+    expect(summaries[1]).toContain("Row 1: only_if_destination_absent: true");
+    expect(summaries[1]).toContain("Row 2: when: route: chat");
+    expect(summaries[2]).toContain("mode: append-or-insert");
+    expect(summaries[3]).toContain("future_option: false");
+    for (const summary of summaries) {
+      expect(summary).toContain("Preserved conditions and options");
+      expect(summary).toContain("not interpreted here");
+      expect(summary).not.toMatch(/Azizam (changes|renames|adds|keeps)/);
+    }
+    expect(transformsFromCards(cards)).toEqual(rows);
+  });
+
+  it.each([
+    [{ min: 0 }, "at or above 0. A lower value moves to the minimum."],
+    [{ max: 4 }, "at or below 4. A higher value moves to the maximum."],
+    [{ min: 0, max: 4 }, "between 0 and 4. A value outside moves to the nearest limit."],
+    [{}, "needs a minimum, a maximum, or both."],
+  ])("describes only configured clamp bounds: %j", (bounds, ending) => {
+    const [card] = cardsFromTransforms([{ kind: "clamp", param: "count", ...bounds }]);
+    expect(sayAdjustment(card)).toContain(ending);
+    expect(sayAdjustment(card)).not.toContain("…");
+  });
+
+  it("keeps unsupported types read-only and does not infer built-in behavior from names", () => {
+    const cards = cardsFromTransforms(["future-builtin", { kind: "future-kind", option: 3 } as unknown as TransformRow]);
+    const html = renderToStaticMarkup(createElement(AdjustmentsEditor, { cards, onChange: () => {} }));
+    expect(html).toContain("Its behavior is not described here. Read-only.");
+    expect(html).toContain("Unsupported adjustment type: future-kind. Kept as stored, read-only.");
+    expect(html).not.toContain("<input");
+    expect(transformsFromCards(cards)).toEqual(["future-builtin", { kind: "future-kind", option: 3 }]);
+  });
+
+  it("uses the exact empty copy without promising unchanged requests", () => {
+    const html = renderToStaticMarkup(createElement(AdjustmentsEditor, { cards: [], onChange: () => {} }));
+    expect(html).toContain("No extra request or reply adjustments are configured.");
+    expect(html).not.toContain("Requests go to the server as they arrive");
+  });
+
+  it.each(["value-map", "param-map", "default-params"] as const)("stacks labeled %s rows on mobile and retains desktop columns", (kind) => {
+    const html = renderToStaticMarkup(createElement(AdjustmentsEditor, { cards: [newCard(kind)], onChange: () => {} }));
+    expect(html).toMatch(/class="[^"]*grid-cols-1[^"]*sm:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)_auto\]/);
+    expect(html.match(/<label class="min-w-0">/g)).toHaveLength(2);
+    expect(html.match(/class="text-meta mb-1 block sm:hidden"/g)).toHaveLength(2);
+    expect(html).toMatch(/<button[^>]*class="[^"]*justify-self-end[^"]*"[^>]*aria-label="Remove row 1"/);
   });
 });
