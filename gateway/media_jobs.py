@@ -357,6 +357,13 @@ CREATE TABLE IF NOT EXISTS media_job_prompt_erasure_cutoffs (
   cutoff_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS media_hidden_assets (
+  person_id TEXT NOT NULL,
+  asset_id TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  hidden_at INTEGER NOT NULL,
+  PRIMARY KEY (person_id, asset_id, job_id)
+);
 CREATE TABLE IF NOT EXISTS media_jobs_schema_version (version INTEGER NOT NULL);
 """
 
@@ -714,6 +721,99 @@ def _clear_prompt_derivatives(job: MediaJob) -> None:
         job.request_id = ""
     if (job.parent_request_id or "").startswith("imgjob_seeded_"):
         job.parent_request_id = None
+
+
+def delete_succeeded_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> int:
+    """Delete finished jobs and their events inside the caller's transaction; receipts are not touched.
+
+    A job that has not succeeded stays, whatever the ids say. Returns how many jobs were deleted.
+    """
+    ids = sorted({job_id for job_id in job_ids if job_id})
+    deleted = 0
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        marks = ",".join("?" for _ in chunk)
+        done = [row[0] for row in conn.execute(
+            f"SELECT job_id FROM media_jobs WHERE status=? AND job_id IN ({marks})",
+            [STATUS_SUCCEEDED, *chunk],
+        )]
+        if not done:
+            continue
+        marks = ",".join("?" for _ in done)
+        conn.execute(f"DELETE FROM media_job_events WHERE job_id IN ({marks})", done)
+        conn.execute(f"DELETE FROM media_jobs WHERE job_id IN ({marks})", done)
+        deleted += len(done)
+    return deleted
+
+
+def delete_succeeded(job_ids: Iterable[str], *, path: Path = DB_PATH) -> int:
+    """``delete_succeeded_in`` in its own transaction."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            deleted = delete_succeeded_in(conn, job_ids)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return deleted
+
+
+HIDDEN_ASSETS_DDL = """CREATE TABLE IF NOT EXISTS media_hidden_assets (
+  person_id TEXT NOT NULL,
+  asset_id TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  hidden_at INTEGER NOT NULL,
+  PRIMARY KEY (person_id, asset_id, job_id)
+)"""
+
+
+def hide_assets_in(conn: sqlite3.Connection, person_id: str, pairs: Iterable[tuple[str, str]]) -> None:
+    """Hide ``(asset_id, job_id)`` from one person's Library, inside the caller's transaction.
+
+    The hide belongs to the asset as that job made it. The same bytes made again by another
+    job are a new item and are not hidden.
+    """
+    conn.execute(HIDDEN_ASSETS_DDL)
+    conn.executemany(
+        "INSERT OR IGNORE INTO media_hidden_assets(person_id, asset_id, job_id, hidden_at) VALUES (?,?,?,?)",
+        [(person_id, asset_id, job_id, _now()) for asset_id, job_id in pairs],
+    )
+
+
+def delete_person_hides_in(conn: sqlite3.Connection, person_id: str) -> int:
+    """Delete one person's Library hides inside the caller's transaction; a database older than the table has none."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_hidden_assets'").fetchone() is None:
+        return 0
+    return conn.execute("DELETE FROM media_hidden_assets WHERE person_id=?", (person_id,)).rowcount
+
+
+# The connection already waits ``busy_timeout`` for a lock; these are the retries after that.
+_HIDDEN_READ_RETRY_PAUSES_S = (0.05, 0.1, 0.2)
+
+
+def hidden_assets(person_ids: Iterable[str], *, path: Path = DB_PATH) -> set[tuple[str, str]]:
+    """The ``(asset_id, job_id)`` pairs these people hid."""
+    ids = sorted(set(person_ids))
+    if not ids:
+        return set()
+    marks = ",".join("?" for _ in ids)
+    # A read that fails must fail the request: an empty answer would show hidden items again.
+    with _conn(path) as conn:
+        for pause in (*_HIDDEN_READ_RETRY_PAUSES_S, None):
+            try:
+                rows = conn.execute(
+                    f"SELECT asset_id, job_id FROM media_hidden_assets WHERE person_id IN ({marks})", ids,
+                ).fetchall()
+                break
+            except sqlite3.OperationalError as exc:
+                message = str(exc)
+                if "no such table: media_hidden_assets" in message:  # a database older than this table
+                    return set()
+                if pause is None or ("locked" not in message and "busy" not in message):
+                    raise
+                time.sleep(pause)
+    return {(row[0], row[1]) for row in rows}
 
 
 def erase_prompt_derivatives(owner_keys: set[str], *, before: int, path: Path = DB_PATH) -> int:

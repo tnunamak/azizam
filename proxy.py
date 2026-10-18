@@ -6669,12 +6669,20 @@ def asset_cache_path(asset_id: str) -> Optional[Path]:
     kind, digest = parsed
     candidates = [IMAGE_CACHE_DIR / f"{digest}{suffix}" for suffix in _ASSET_SUFFIXES_BY_KIND[kind]]
     listed = directory_index.names(IMAGE_CACHE_DIR)  # one listing for every asset, not five probes each
-    if listed is not None:
-        return next((candidate for candidate in candidates if candidate.name in listed), candidates[0])
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[0]
+    if listed is None:
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        try:
+            listed = os.listdir(IMAGE_CACHE_DIR)
+        except OSError:
+            return candidates[0]
+    found = next((candidate for candidate in candidates if candidate.name in listed), None)
+    if found is not None:
+        return found
+    # The output kept its own suffix (a .gif or .webp from ComfyUI `gifs` or `images`).
+    other = directory_index.stored_name(listed, digest)
+    return IMAGE_CACHE_DIR / other if other else candidates[0]
 
 
 def asset_media_type(asset_id: str, path: Path | None = None) -> str:
@@ -13926,6 +13934,7 @@ app.include_router(
             prompt_memory_path=lambda: media_jobs.DB_PATH,
         ),
         make_runtime=_SESSION_MAKE_RUNTIME,
+        asset_storage_provider=lambda: me_media.create_storage_snapshot_provider(IMAGE_CACHE_DIR)(),
         **_PERSON_LIBRARY,
     )
 )

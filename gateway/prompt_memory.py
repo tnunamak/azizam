@@ -14,7 +14,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 import os
 
@@ -455,11 +455,16 @@ def get_person_prompts(person_id: str, *, path: Path | None = None,
 
 
 def delete_person(person_id: str, *, path: Path | None = None) -> int:
+    """Delete a person's prompts and their Library hides in one transaction; returns the prompts deleted."""
     conn = _connect(path)
     try:
         count = conn.execute("DELETE FROM asset_prompts WHERE person_id=?", (person_id,)).rowcount
+        media_jobs.delete_person_hides_in(conn, person_id)
         conn.commit()
         return count
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -722,6 +727,39 @@ def prune(*, path: Path | None = None, now: int | None = None) -> int:
         ).rowcount
         conn.commit()
         return count
+    finally:
+        conn.close()
+
+
+def remove_missing_media(
+    person_id: str,
+    gone_asset_ids: Iterable[str],
+    hides: Iterable[tuple[str, str]],
+    job_ids: Iterable[str],
+    *,
+    path: Path | None = None,
+) -> int:
+    """Remove a person's missing media entries in one transaction.
+
+    Deletes their prompts for the gone assets, hides each ``(asset_id, job_id)`` in ``hides``
+    and deletes the finished jobs in ``job_ids``. All of it commits or none of it does.
+    Returns how many jobs were deleted.
+    """
+    conn = _connect(path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.executemany(
+                "DELETE FROM asset_prompts WHERE asset_id=? AND person_id=?",
+                [(asset_id, person_id) for asset_id in gone_asset_ids],
+            )
+            media_jobs.hide_assets_in(conn, person_id, hides)
+            deleted = media_jobs.delete_succeeded_in(conn, job_ids)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        return deleted
     finally:
         conn.close()
 
