@@ -10,6 +10,7 @@ knows the origin a credential is bound to.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import AsyncIterator, Protocol
 
@@ -18,6 +19,20 @@ import httpx
 from gateway import engine_check
 from gateway.engine_protocol.errors import TransportFailure
 from gateway.engine_protocol.types import Timeouts
+
+
+class _HideQuery(logging.Filter):
+    """httpx logs every request URL at INFO. A key sent as a query value is in that URL, so the query is never logged."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(arg.copy_with(query=b"hidden") if isinstance(arg, httpx.URL) and arg.query else arg for arg in record.args)
+        return True
+
+
+_httpx_log = logging.getLogger("httpx")
+if not any(isinstance(f, _HideQuery) for f in _httpx_log.filters):
+    _httpx_log.addFilter(_HideQuery())
 
 
 @dataclass(frozen=True)

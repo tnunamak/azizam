@@ -32,12 +32,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import json
 import re
 import secrets
 import time
 from typing import Any, AsyncIterator, Callable, Mapping
-from urllib.parse import quote, urljoin, urlsplit
+from urllib.parse import quote, quote_plus, urljoin, urlsplit
 
 from gateway.engine_protocol import framing, pointer
 from gateway.engine_protocol.assets import AssetStore
@@ -89,6 +90,7 @@ class HttpV1Executor:
 
     # --- public: one request ---------------------------------------------------------------------
 
+    @_redacting
     async def invoke(self, conn: Connection, request: CanonicalRequest) -> Reply | StreamReply:
         op = self._operation(request.op, job=False)
         spec, response = op.request, op.response
@@ -102,19 +104,20 @@ class HttpV1Executor:
             async with asyncio.timeout(conn.timeouts.total_s):
                 wire = await self._exchange(conn, spec, op, source, secrets_)
                 if stream is not None:
-                    return self._open_stream(wire, stream, source, deadline, request)
+                    return self._open_stream(wire, stream, source, deadline, request, secrets_)
                 try:
-                    return await self._finish(wire, response, source, request, started)
+                    return await self._finish(wire, response, source, request, started, secrets_)
                 finally:
                     await wire.aclose()
         except TimeoutError:
             raise TransportFailure("timeout", f"The engine did not finish within {conn.timeouts.total_s:g} s.") from None
 
+    @_redacting
     async def preview(self, conn: Connection, request: CanonicalRequest) -> dict[str, Any]:
         """What would be sent, with credentials masked: the effective request path, headers and body."""
         op = self._operation(request.op, job=False)
         assert op.request is not None
-        wire = await self._build(conn, op.request, op, self._source(request))
+        wire = await self._build(conn, op.request, op, self._source(request), preview=True)
         secrets_ = _secrets(conn)
         headers = {k: (MASK if v in secrets_ or any(s in v for s in secrets_) else v) for k, v in wire.headers.items()}
         url = _scrub(wire.url, secrets_)
@@ -122,6 +125,7 @@ class HttpV1Executor:
 
     # --- public: jobs ----------------------------------------------------------------------------
 
+    @_redacting
     async def submit(self, conn: Connection, request: CanonicalRequest) -> JobRef:
         op = self._operation(request.op, job=True)
         assert op.job is not None
@@ -134,6 +138,7 @@ class HttpV1Executor:
             raise MalformedResponse("The engine accepted the job but its answer holds no job id where the description says.")
         return JobRef(op.name, raw)
 
+    @_redacting
     async def poll(self, conn: Connection, ref: JobRef) -> JobStatus:
         op = self._operation(ref.op, job=True)
         assert op.job is not None
@@ -162,8 +167,9 @@ class HttpV1Executor:
                     raise MalformedResponse("An asset handle in the engine's answer is not a string or number.")
                 clean.append(value)
             handles = tuple(clean)
-        return JobStatus(ref, JobState(state), detail, handles)
+        return JobStatus(ref, JobState(state), None if detail is None else _scrub(detail, _secrets(conn)), handles)
 
+    @_redacting
     async def wait(self, conn: Connection, ref: JobRef) -> JobStatus:
         """Poll every ``interval_s`` until the job ends. ``max_wait_s`` bounds the whole wait, a slow poll included."""
         op = self._operation(ref.op, job=True)
@@ -185,6 +191,7 @@ class HttpV1Executor:
                 raise too_long
             await asyncio.sleep(min(interval, remaining))
 
+    @_redacting
     async def cancel(self, conn: Connection, ref: JobRef) -> None:
         """Ask the engine to stop a job that is still running. A job that already ended is left alone: nothing is sent."""
         op = self._operation(ref.op, job=True)
@@ -198,6 +205,7 @@ class HttpV1Executor:
             wire = await self._exchange(conn, op.job.cancel, op, source, _secrets(conn))
             await wire.aclose()
 
+    @_redacting
     async def fetch_assets(self, conn: Connection, ref: JobRef, status: JobStatus) -> tuple[AssetRef, ...]:
         op = self._operation(ref.op, job=True)
         assert op.job is not None
@@ -301,7 +309,7 @@ class HttpV1Executor:
             pairs.append((item.name, text))
         return pairs
 
-    async def _build(self, conn: Connection, spec: RequestSpec, op: Operation, source: Mapping[str, Any]) -> WireRequest:
+    async def _build(self, conn: Connection, spec: RequestSpec, op: Operation, source: Mapping[str, Any], *, preview: bool = False) -> WireRequest:
         budgets = self.budgets
         for place in ("body", "params"):  # first, and without recursion: mapping and JSON writing walk these values
             if pointer.depth_exceeds(source[place], budgets.max_json_depth):
@@ -313,7 +321,7 @@ class HttpV1Executor:
         query = self._query(spec, source)
         if auth is not None and credential is not None and auth.kind != "none":
             if auth.kind == "query":
-                query.append((auth.name or "", credential.secret))
+                query.append((auth.name or "", MASK if preview else credential.secret))
             else:
                 name = credential.header or auth.name or "Authorization"
                 scheme = credential.scheme if credential.scheme is not None else (auth.scheme if auth.scheme is not None else ("Bearer" if auth.kind == "bearer" else ""))
@@ -387,7 +395,7 @@ class HttpV1Executor:
         headers = dict(wire.headers)
         hops = 0
         while True:
-            response = await self._transport.send(WireRequest(method, url, headers, body), conn.timeouts)
+            response = await self._send(WireRequest(method, url, headers, body), conn, secrets_)
             if response.status not in _REDIRECTS:
                 break
             location = response.headers.get("location", "")
@@ -410,6 +418,14 @@ class HttpV1Executor:
         if not 200 <= response.status < 300:
             await self._raise_status(response, secrets_)
         return response
+
+    async def _send(self, wire: WireRequest, conn: Connection, secrets_: list[str]) -> WireResponse:
+        try:
+            return await self._transport.send(wire, conn.timeouts)
+        except ProtocolError:
+            raise
+        except Exception as exc:  # a transport bug or an unexpected client error: typed, and without the URL it may quote
+            raise TransportFailure("aborted", _scrub(f"The request to the engine failed ({type(exc).__name__}).", secrets_)) from None
 
     async def _raise_status(self, response: WireResponse, secrets_: list[str]) -> None:
         raw = b""
@@ -495,8 +511,9 @@ class HttpV1Executor:
                 yield chunk
         return await self._assets.save(capped(), content_type=content_type, max_bytes=limit, name=name)
 
-    async def _finish(self, response: WireResponse, spec: ResponseSpec, source: Mapping[str, Any], request: CanonicalRequest, started: float) -> Reply:
-        headers = dict(response.headers)
+    async def _finish(self, response: WireResponse, spec: ResponseSpec, source: Mapping[str, Any], request: CanonicalRequest, started: float,
+                      secrets_: list[str]) -> Reply:
+        headers = _clean_headers(response.headers, secrets_)
         if spec.framing == "binary":
             asset = await self._save_binary(response)
             return Reply(response.status, headers, asset=asset, seconds=time.perf_counter() - started)
@@ -519,16 +536,17 @@ class HttpV1Executor:
     # --- streaming -------------------------------------------------------------------------------
 
     def _open_stream(self, response: WireResponse, stream: StreamSpec, source: Mapping[str, Any], deadline: float,
-                     request: CanonicalRequest) -> StreamReply:
+                     request: CanonicalRequest, secrets_: list[str]) -> StreamReply:
         try:
             self._check_identity(response)
         except ProtocolError:
             asyncio.ensure_future(response.aclose())
             raise
-        events = self._events(response, stream, request, deadline)
-        return StreamReply(response.status, dict(response.headers), events, response.aclose)
+        events = self._events(response, stream, request, deadline, secrets_)
+        return StreamReply(response.status, _clean_headers(response.headers, secrets_), events, response.aclose)
 
-    async def _events(self, response: WireResponse, stream: StreamSpec, request: CanonicalRequest, deadline: float) -> AsyncIterator[Any]:
+    async def _events(self, response: WireResponse, stream: StreamSpec, request: CanonicalRequest, deadline: float,
+                      secrets_: list[str]) -> AsyncIterator[Any]:
         budgets = self.budgets
         terminal: Terminal | None = stream.terminal
         program = stream.program
@@ -540,8 +558,9 @@ class HttpV1Executor:
         end_value = terminal.equals if terminal is not None else None
         parse = program is not None or end_path is not None
         has_terminal = terminal is not None
-        mapped_source: dict[str, Any] = {"body": None, "status": response.status, "headers": dict(response.headers),
+        mapped_source: dict[str, Any] = {"body": None, "status": response.status, "headers": _clean_headers(response.headers, secrets_),
                                          "params": request.params, "event": None}
+
         def handle(item: Any) -> tuple[bool, Any, bool]:
             """For one decoded event: (deliver it, what to deliver, it ends the stream)."""
             data, name = (item.data, item.event) if sse else (item, None)
@@ -568,34 +587,35 @@ class HttpV1Executor:
         loop = asyncio.get_running_loop()
         total = 0
         finished = False
-        try:
-            async for chunk in response.chunks():
-                total += len(chunk)
-                if total > budgets.max_stream_bytes:
-                    raise BudgetExceeded("max_stream_bytes", f"A stream is larger than {budgets.max_stream_bytes} bytes.")
-                if loop.time() > deadline:
-                    raise TransportFailure("timeout", "The stream ran past the total time allowed.")
-                for item in decoder.feed(chunk):
-                    deliver, value, finished = handle(item)
-                    if deliver:
-                        yield value
+        with _Redact(secrets_):
+            try:
+                async for chunk in response.chunks():
+                    total += len(chunk)
+                    if total > budgets.max_stream_bytes:
+                        raise BudgetExceeded("max_stream_bytes", f"A stream is larger than {budgets.max_stream_bytes} bytes.")
+                    if loop.time() > deadline:
+                        raise TransportFailure("timeout", "The stream ran past the total time allowed.")
+                    for item in decoder.feed(chunk):
+                        deliver, value, finished = handle(item)
+                        if deliver:
+                            yield value
+                        if finished:
+                            break
                     if finished:
                         break
-                if finished:
-                    break
-            else:
-                for item in decoder.finish():  # the end of the stream completes a held CR, or an NDJSON line with no newline
-                    deliver, value, finished = handle(item)
-                    if deliver:
-                        yield value
-                    if finished:
-                        break
-            if has_terminal and not finished:
-                raise TransportFailure("aborted", "The stream ended before the engine's final event.")
-            if not has_terminal and sse and decoder.pending():
-                raise TransportFailure("aborted", "The stream ended in the middle of an event.")
-        finally:
-            await response.aclose()
+                else:
+                    for item in decoder.finish():  # the end of the stream completes a held CR, or an NDJSON line with no newline
+                        deliver, value, finished = handle(item)
+                        if deliver:
+                            yield value
+                        if finished:
+                            break
+                if has_terminal and not finished:
+                    raise TransportFailure("aborted", "The stream ended before the engine's final event.")
+                if not has_terminal and sse and decoder.pending():
+                    raise TransportFailure("aborted", "The stream ended in the middle of an event.")
+            finally:
+                await response.aclose()
 
 
 def _dump_json(value: Any, what: str) -> bytes:
@@ -617,14 +637,54 @@ async def _total(conn: Connection, what: str) -> AsyncIterator[None]:
         raise TransportFailure("timeout", f"{what} within {conn.timeouts.total_s:g} s.") from None
 
 
+@functools.lru_cache(maxsize=8)
+def _variants(secrets_: tuple[str, ...]) -> list[str]:
+    """Every spelling of each secret that can reach a URL, a header or a JSON text, longest first.
+
+    A key sent as a query value is percent-encoded on the wire, and an engine that echoes the URL echoes that spelling.
+    """
+    forms: set[str] = set()
+    for secret in secrets_:
+        if len(secret) >= 4:  # shorter ones would mask ordinary text
+            forms.update((secret, quote(secret), quote(secret, safe=""), quote_plus(secret), json.dumps(secret)[1:-1]))
+    return sorted(forms, key=len, reverse=True)
+
+
 def _secrets(conn: Connection) -> list[str]:
-    return [c.secret for c in conn.credentials.values() if len(c.secret) >= 4]
+    return _variants(tuple(c.secret for c in conn.credentials.values()))
 
 
 def _scrub(text: str, secrets_: list[str]) -> str:
     for secret in secrets_:
         text = text.replace(secret, MASK)
     return text
+
+
+def _clean_headers(headers: Mapping[str, str], secrets_: list[str]) -> dict[str, str]:
+    return {k: _scrub(v, secrets_) for k, v in headers.items()} if secrets_ else dict(headers)
+
+
+class _Redact:
+    """Around every public call: an error leaves with no secret in its text and none in the chain a log would print."""
+
+    def __init__(self, secrets_: list[str]) -> None:
+        self._secrets = secrets_
+
+    def __enter__(self) -> "_Redact":
+        return self
+
+    def __exit__(self, kind: Any, exc: BaseException | None, tb: Any) -> None:
+        if self._secrets and isinstance(exc, ProtocolError):
+            exc.args = tuple(_scrub(arg, self._secrets) if isinstance(arg, str) else arg for arg in exc.args)
+            exc.__cause__ = exc.__context__ = None  # the original may hold the full URL; the typed text says what happened
+
+
+def _redacting(method: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(method)
+    async def wrapper(self: Any, conn: Connection, *args: Any, **kwargs: Any) -> Any:
+        with _Redact(_secrets(conn)):
+            return await method(self, conn, *args, **kwargs)
+    return wrapper
 
 
 def _scrub_bytes(data: bytes, secrets_: list[str]) -> bytes:
