@@ -307,7 +307,8 @@ class GraphSession:
 
 
 def _headers_of(request: CanonicalRequest) -> Any:
-    return dict(request.headers) if request.headers else UNSET
+    """The headers the caller prepared, passed even when empty: the older call always named ``headers=``."""
+    return dict(request.headers)
 
 
 class NodeGraphAdapter:
