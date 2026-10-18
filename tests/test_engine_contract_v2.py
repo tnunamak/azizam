@@ -226,7 +226,10 @@ def test_v2_record_readers_keep_legacy_availability_and_admin_shape() -> None:
     service_registry.migrate_engine_records_v2(registry)
     migrated = registry["services"]["engine-a"]
     assert (_is_idle_startable(migrated), _host_managed_lifecycle(migrated)) == before == (True, True)
-    assert redacted_record(migrated)["lifecycle"]["driver"] == "systemd"
+    public = redacted_record(migrated)
+    assert public["process"]["legacy_lifecycle"]["driver"] == "systemd"
+    assert "lifecycle" not in public
+    assert "lifecycle" not in public["config"]
 
 
 def test_v2_migration_preserves_external_and_system_runtime_wrappers() -> None:
