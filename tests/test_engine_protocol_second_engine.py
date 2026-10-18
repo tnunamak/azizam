@@ -184,15 +184,19 @@ def test_render_job_submit_poll_fetch_and_the_bytes_of_each_step(rig: Rig) -> No
     golden("render.requests.txt", "".join(f'{r["method"]} {r["target"]}\n' for r in rig.fake.requests).encode())
 
 
-def test_render_defaults_and_cancel_and_recover(rig: Rig) -> None:
-    async def go():
-        ref = await rig.adapter.submit(rig.conn, "render", CanonicalRequest(op="render", body={"prompt": "p"}))
-        await rig.adapter.cancel(rig.conn, ref)
-        return ref
-    ref = run(go())
-    assert json.loads(rig.fake.requests[0]["body"]) == {"spec": {"text": "p", "dims": "512x512"}}
-    assert rig.fake.cancelled and rig.fake.requests[-1]["method"] == "DELETE"
-    assert run(rig.adapter.recover(rig.conn, ref)).state is JobState.pending
+def test_render_defaults_and_cancel_and_recover() -> None:
+    rig = Rig(AcmeFake(phases=("WAITING",)))  # still waiting: cancel asks the state first and the job is live
+    try:
+        async def go():
+            ref = await rig.adapter.submit(rig.conn, "render", CanonicalRequest(op="render", body={"prompt": "p"}))
+            await rig.adapter.cancel(rig.conn, ref)
+            return ref
+        ref = run(go())
+        assert json.loads(rig.fake.requests[0]["body"]) == {"spec": {"text": "p", "dims": "512x512"}}
+        assert [r["method"] for r in rig.fake.requests[-2:]] == ["GET", "DELETE"] and rig.fake.cancelled
+        assert run(rig.adapter.recover(rig.conn, ref)).state is JobState.pending
+    finally:
+        rig.close()
 
 
 def test_a_failed_render_carries_acmes_own_reason() -> None:

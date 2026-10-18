@@ -837,7 +837,7 @@ def test_wait_polls_at_the_declared_interval_until_the_job_ends() -> None:
 
 def test_wait_gives_up_at_max_wait_and_stops_polling() -> None:
     stamps: list[float] = []
-    ex, _ = make(fast_job(0.05, 0.3), timed_job_handler([{"state": "busy"}] * 1000, stamps))
+    ex, _ = make(fast_job(0.1, 1), timed_job_handler([{"state": "busy"}] * 1000, stamps))
 
     async def go():
         ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
@@ -847,7 +847,7 @@ def test_wait_gives_up_at_max_wait_and_stops_polling() -> None:
         return raised.value, time.perf_counter() - started
     error, elapsed = run(go())
     assert error.budget == "max_wait_s"
-    assert 0.25 <= elapsed < 1.0 and 3 <= len(stamps) <= 8
+    assert 0.9 <= elapsed < 2.0 and 5 <= len(stamps) <= 12
 
 
 def test_max_wait_also_bounds_a_poll_that_hangs() -> None:
@@ -856,7 +856,7 @@ def test_max_wait_also_bounds_a_poll_that_hangs() -> None:
             return httpx.Response(202, json={"job": {"id": 42}})
         await asyncio.sleep(5)
         return httpx.Response(200, json={"state": "busy"})
-    ex = executor.HttpV1Executor(desc(fast_job(0.05, 0.3)), transport=transport.HttpxTransport.for_tests(HandlerTransport(handler)), assets=MemoryAssetStore())
+    ex = executor.HttpV1Executor(desc(fast_job(0.1, 1)), transport=transport.HttpxTransport.for_tests(HandlerTransport(handler)), assets=MemoryAssetStore())
 
     async def go():
         ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
@@ -865,7 +865,7 @@ def test_max_wait_also_bounds_a_poll_that_hangs() -> None:
             await ex.wait(conn(), ref)
         return raised.value, time.perf_counter() - started
     error, elapsed = run(go())
-    assert error.budget == "max_wait_s" and elapsed < 1.5
+    assert error.budget == "max_wait_s" and 0.9 <= elapsed < 2.0
 
 
 @pytest.mark.parametrize("state", ["ok", "bad", "gone"])
