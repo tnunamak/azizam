@@ -305,7 +305,7 @@ def test_L3_an_edit_that_adds_a_paid_marker_to_a_stored_local_record_is_refused(
 
 # --- L-2: an executor stream receipt records what a legacy stream receipt records ----------------
 
-SSE = (b'data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"coder","choices":[{"index":0,"delta":{"content":"a"}}]}\n\n'
+SSE = (b'data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"coder","choices":[{"index":0,"delta":{"content":"a"},"finish_reason":null}]}\n\n'
        b'data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"coder","choices":[{"index":0,"delta":{"content":"b"},"finish_reason":"stop"}]}\n\n'
        b'data: [DONE]\n\n')
 
