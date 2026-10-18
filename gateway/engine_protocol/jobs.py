@@ -5,7 +5,7 @@ import asyncio
 
 from gateway import media_jobs
 from gateway.engine_protocol.errors import BudgetExceeded, ProtocolError, TransportFailure, UpstreamError, retryable_poll_failure
-from gateway.engine_protocol.types import CanonicalRequest, JobRef, JobState
+from gateway.engine_protocol.types import JobRef, JobState
 
 
 async def run(runtime, op, body, *, job_id):
@@ -36,7 +36,7 @@ async def run(runtime, op, body, *, job_id):
                     raise media_jobs.CancellationPending()
                 try:
                     status = await adapter.poll(conn, ref)
-                except (TransportFailure, UpstreamError, retryable_poll_failure) as exc:
+                except (TransportFailure, UpstreamError) as exc:
                     if not retryable_poll_failure(exc):
                         raise
                     last_error = str(exc)

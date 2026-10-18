@@ -108,6 +108,7 @@ from gateway.engine_protocol import inline_tts as tts_adapter
 from gateway.engine_protocol.errors import (TransportFailure, ProtocolError, MappingError as ProtocolMappingError,
     UpstreamError as ProtocolUpstreamError)
 from gateway.engine_protocol.types import StreamReply as ProtocolStreamReply
+from gateway.engine_switch import SwitchUnavailable as ProtocolSwitchUnavailable
 from gateway.engine_protocol.types import CanonicalRequest as AdapterRequest
 from gateway.engine_protocol.types import Connection as AdapterConnection
 from gateway.engine_protocol.types import Reply as AdapterReply
@@ -20994,7 +20995,9 @@ def _resume_pending_image_media_jobs() -> int:
                 "Image media job payload missing after proxy restart",
             )
             continue
-        if not IMAGE_MEDIA_JOB_RESUME_ON_START or not COMFY_ENABLED:
+        from gateway.engine_protocol.dispatch import opted_in
+        service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
+        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not COMFY_ENABLED):
             _mark_image_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -21562,7 +21565,9 @@ def _resume_pending_audio_media_jobs() -> int:
                 "Audio media job payload missing after proxy restart",
             )
             continue
-        if not IMAGE_MEDIA_JOB_RESUME_ON_START or not COMFY_ENABLED:
+        from gateway.engine_protocol.dispatch import opted_in
+        service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
+        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not COMFY_ENABLED):
             _mark_audio_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -22163,7 +22168,9 @@ def _resume_pending_video_media_jobs() -> int:
                 "Video media job payload missing after proxy restart",
             )
             continue
-        if not IMAGE_MEDIA_JOB_RESUME_ON_START or not COMFY_ENABLED:
+        from gateway.engine_protocol.dispatch import opted_in
+        service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
+        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not COMFY_ENABLED):
             _mark_video_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -28347,6 +28354,13 @@ def _protocol_failure(error: ProtocolError) -> Response:
     return response
 
 
+def _protocol_collection(payload):
+    items = payload.get("data") if isinstance(payload, Mapping) else None
+    if not isinstance(items, list) or any(not isinstance(item, Mapping) for item in items):
+        raise ProtocolError("The engine response needs a data array of objects.", code="malformed_response")
+    return items
+
+
 async def _protocol_image_result(runtime, body, request, auth_context, receipt, store):
     """Keep retries, durable state and asset access in core, outside the adapter."""
     from gateway.engine_protocol import jobs as protocol_jobs
@@ -28388,7 +28402,7 @@ async def _protocol_image_result(runtime, body, request, auth_context, receipt, 
                 # JSON descriptions map images into OpenAI's b64_json shape.
                 # Arbitrary engine URLs are never fetched outside the protocol.
                 refs_list = []
-                for item in (reply.body or {}).get("data", []):
+                for item in _protocol_collection(reply.body):
                     encoded = item.get("b64_json")
                     if not isinstance(encoded, str) or len(encoded) > runtime.target.description.budgets.max_response_bytes:
                         raise ProtocolError("The image response needs bounded b64_json data.", code="malformed_response")
@@ -28461,18 +28475,20 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
     receipt.resolved_model = target.upstream
     receipt.metadata.update({"execution_backend":"http-v1", "engine_id":target.engine_id,
                              "offering_id":target.offering["id"], "upstream_id":target.upstream})
+    if owns_receipt:
+        receipt_store.begin(receipt, path=receipt_store.DB_PATH)
+    from gateway import media_ingestion
     decision = evaluate_and_apply(auth_context.identity, make_policy_request(
         protocol=_protocol_for_intent(intent), intent=intent, model=str(body.get("model")),
         backend=target.engine_id), receipt)
     if decision.denied:
-        return _policy_denied_response(decision)
+        response = _policy_denied_response(decision)
+        return media_ingestion.finish_response(receipt, response) if owns_receipt else response
     admission = _dispatch_admission_response(intent, auth_context=auth_context, service_id=target.engine_id,
         service_available=True, resource_class={"images":"image", "speech":"audio"}.get(op, op), receipt=receipt,
         queue_key=_MEDIA_JOB_QUEUE_KEY if op == "images" else None)
     if admission is not None:
-        return admission
-    if owns_receipt:
-        receipt_store.begin(receipt, path=receipt_store.DB_PATH)
+        return media_ingestion.finish_response(receipt, admission) if owns_receipt else admission
     _begin_media_delivery(auth_context, receipt)
     store = GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=_asset_owner_key(auth_context))
     lease = None
@@ -28489,7 +28505,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
                     try:
                         async for event in reply:
                             data = event if isinstance(event, bytes) else json.dumps(event, separators=(",",":"), ensure_ascii=False).encode()
-                            yield b"data: " + data + b"\n\n"
+                            yield b"data: " + data.replace(b"\n", b"\ndata: ") + b"\n\n"
                         yield b"data: [DONE]\n\n"
                     except ProtocolError as error:
                         receipt.metadata["stream_error_code"] = error.code
@@ -28511,6 +28527,13 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
                                     status_code=reply.status, media_type="application/json")
     except ProtocolError as error:
         response = _protocol_failure(error)
+    except media_jobs.CancellationPending:
+        if _ADMISSION_WORKER.get():
+            raise
+        response = openai_error_response("Generation was canceled by the requester.", status_code=409, code="job_canceled")
+    except ProtocolSwitchUnavailable as error:
+        response = openai_error_response(str(error.detail), status_code=503, code="selection_unavailable")
+        response.headers.update(error.headers or {})
     except media_jobs.IdempotencyConflict:
         response = openai_error_response("The idempotency key names different generation inputs.", status_code=409, code="idempotency_conflict")
     except ValueError:
@@ -28551,7 +28574,7 @@ async def _protocol_models_payload(auth_context):
             await reply.aclose()
             raise ProtocolError("The model list cannot be streamed.", code="malformed_response")
         offered = {str(o["upstream"] or o["id"]):o for o in offerings}
-        for item in (reply.body or {}).get("data", []):
+        for item in _protocol_collection(reply.body):
             offering = offered.get(str(item.get("id"))) or next((o for o in offerings if o["id"] == item.get("id")), None)
             if offering is not None:
                 data.append({**item, "id":offering["id"]})
