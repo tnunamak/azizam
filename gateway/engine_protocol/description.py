@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -208,6 +210,11 @@ _StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _c
 
 def parse_description_text(text: str, *, source: str, budgets: Budgets = DEFAULT_BUDGETS) -> ProtocolDescription:
     try:
+        # Refuse aliases and anchors on the event stream, before the composer expands them. A
+        # short alias chain otherwise multiplies into millions of nodes (about 10x per level).
+        for event in yaml.parse(text, Loader=yaml.SafeLoader):
+            if isinstance(event, yaml.AliasEvent) or getattr(event, "anchor", None):
+                raise DescriptionError(source, ["YAML aliases and anchors are not allowed; write each value out"])
         doc = yaml.load(text, Loader=_StrictLoader)  # noqa: S506 - SafeLoader subclass
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
@@ -539,34 +546,83 @@ class _Compiler:
 # The registry directory
 # ---------------------------------------------------------------------------
 
-_MEMO: dict[Path, tuple[tuple, dict[str, ProtocolDescription]]] = {}
+_MEMO: dict[Path, tuple[tuple, dict[str, ProtocolDescription], dict[str, str]]] = {}
+_LOG = logging.getLogger(__name__)
 
 
-def load_registry(directory: Path = REGISTRY_DIR) -> dict[str, ProtocolDescription]:
-    """Every ``*.yml`` in ``directory``, keyed by id. One bad file fails the whole load, naming the file."""
-    directory = Path(directory)
+def user_directory() -> Path:
+    """Operator descriptions live with state, rather than in the container image."""
+    from gateway import admin_store
+    return Path(os.environ.get("AZIZAM_PROTOCOLS_DIR") or admin_store.DB_PATH.parent / "protocols")
+
+
+def registry_problems() -> list[dict[str, str]]:
+    return [{"file": name, "reason": reason} for _, _, issues in tuple(_MEMO.values()) for name, reason in issues.items()]
+
+
+def _load_directory(directory: Path) -> tuple[dict[str, ProtocolDescription], dict[str, str]]:
     files = sorted(directory.glob("*.yml"))
-    signature = tuple((f.name, f.stat().st_mtime_ns) for f in files) + (("schema", SCHEMA_PATH.stat().st_mtime_ns),)
+    try:
+        signature = tuple((f.name, f.stat().st_mtime_ns, f.stat().st_size) for f in files) + (("schema", SCHEMA_PATH.stat().st_mtime_ns),)
+    except OSError:
+        # A concurrently replaced file is retried on the next request.
+        signature = ()
     cached = _MEMO.get(directory)
-    if cached is not None and cached[0] == signature:
-        return dict(cached[1])
+    if signature and cached is not None and cached[0] == signature:
+        return dict(cached[1]), dict(cached[2])
     loaded: dict[str, ProtocolDescription] = {}
-    problems: list[str] = []
+    problems: dict[str, str] = {}
     for path in files:
         try:
             parsed = parse_description_text(path.read_text(encoding="utf-8"), source=path.name)
-        except DescriptionError as exc:
-            problems.extend(f"{path.name}: {line}" for line in exc.problems)
-            continue
-        if parsed.id != path.stem:
-            problems.append(f"{path.name}: the file name must equal the id; the id is '{parsed.id}'")
-            continue
-        loaded[parsed.id] = parsed
-    if problems:
-        raise DescriptionError(str(directory), problems)
-    _MEMO[directory] = (signature, loaded)
-    return dict(loaded)
+            if parsed.id != path.stem:
+                raise DescriptionError(path.name, ["The file name must equal the description id."])
+            loaded[parsed.id] = parsed
+        except (DescriptionError, OSError, UnicodeError) as error:
+            _LOG.warning("Cannot load protocol description %s: %s", path, error)
+            problems[path.name] = "The description is invalid or unreadable. Validate the file before enabling it."
+    _MEMO[directory] = (signature, loaded, problems)
+    return dict(loaded), dict(problems)
+
+
+def load_registry(directory: Path | None = None) -> dict[str, ProtocolDescription]:
+    """Load valid files independently. User files replace seeds, including invalid overrides."""
+    if directory is not None:
+        return _load_directory(Path(directory))[0]
+    directories = [REGISTRY_DIR, user_directory()]
+    # Retain diagnostics only for the active registry roots.
+    for previous in list(_MEMO):
+        if previous not in directories:
+            del _MEMO[previous]
+    loaded: dict[str, ProtocolDescription] = {}
+    for root in directories:
+        records, issues = _load_directory(root)
+        for file in issues:
+            loaded.pop(Path(file).stem, None)
+        loaded.update(records)
+    return loaded
 
 
 def get_description(protocol_id: str) -> ProtocolDescription | None:
     return load_registry().get(protocol_id)
+
+
+def main() -> int:
+    """Validate a description without booting the gateway or accessing its secrets."""
+    import argparse
+    parser = argparse.ArgumentParser(description="Validate an http-v1 protocol description")
+    parser.add_argument("file", type=Path)
+    args = parser.parse_args()
+    try:
+        doc = parse_description_text(args.file.read_text(encoding="utf-8"), source=args.file.name)
+        if doc.id != args.file.stem:
+            raise DescriptionError(args.file.name, ["The file name must equal the description id."])
+    except (DescriptionError, OSError, UnicodeError) as error:
+        print(error)
+        return 1
+    print(f"{args.file.name}: valid ({len(doc.operations)} operations)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

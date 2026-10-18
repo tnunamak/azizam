@@ -827,6 +827,12 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
           the configured/enabled/role reduction.
     """
     items: list[dict[str, Any]] = []
+    for issue in snapshot.get("protocol_issues", []):
+        label = issue.get("file") or issue.get("engine_id") or "Engine protocol"
+        items.append(_attention_item(kind="service", severity="problem",
+            title=f"{label} needs attention", detail=issue["reason"],
+            target_kind="service" if issue.get("engine_id") else None,
+            target_id=issue.get("engine_id")))
 
     apps = [a for a in snapshot.get("apps", []) if isinstance(a, Mapping)]
     credentials = [c for c in snapshot.get("credentials", []) if isinstance(c, Mapping)]
@@ -886,6 +892,8 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
             if tone not in {"warn", "bad"}:
                 continue
             source = str(signal.get("source") or "system")
+            if source == "engine_protocol" and snapshot.get("protocol_issues"):
+                continue  # named file/engine items above already carry these diagnostics
             reasons = signal.get("reasons")
             detail = next(
                 (reason for reason in reasons if isinstance(reason, str) and reason.strip()),
@@ -1407,8 +1415,11 @@ def _validate_media_job_admission_overrides(
     }
 
 
-def _validate_service_registry(payload: Mapping[str, Any]) -> dict[str, Any]:
+def _validate_service_registry(
+    payload: Mapping[str, Any], *, before: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     try:
+        service_registry.validate_protocol_dispatch_registry(payload, before=before)
         return service_registry.normalize_service_registry(payload)
     except Exception as exc:  # noqa: BLE001
         raise _RouteError(
@@ -1702,7 +1713,11 @@ def create_admin_router(
             availability_evidence=status_snap.get("_availability_evidence") if isinstance(status_snap.get("_availability_evidence"), Mapping) else None,
         )
         frontends = frontend_status() if frontend_status is not None else []
+        from gateway.engine_protocol import description as protocol_descriptions, inventory as protocol_inventory
+        await asyncio.to_thread(protocol_descriptions.load_registry)
+        protocol_issues = protocol_descriptions.registry_problems() + protocol_inventory.problems()
         attention = derive_admin_attention({
+            "protocol_issues": protocol_issues,
             "apps": apps,
             "credentials": credentials,
             "frontends": frontends,
@@ -2340,8 +2355,9 @@ def create_admin_router(
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
             # The registry a caller read hides command secrets behind markers; a marker keeps its stored value.
-            body = engine_redaction.restore_registry(body, store.get_service_registry())
-            registry = _validate_service_registry(body)
+            before = store.get_service_registry()
+            body = engine_redaction.restore_registry(body, before)
+            registry = _validate_service_registry(body, before=before)
             record = store.update_service_registry(
                 data=registry,
                 actor=ctx,
