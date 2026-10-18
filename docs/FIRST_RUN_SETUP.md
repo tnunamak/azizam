@@ -54,12 +54,14 @@ Compose overrides only the container listener with
 container port only on host loopback.
 
 `cookie.secure: false` is only for localhost HTTP first-run. Before exposing
-the gateway over HTTPS, change the deployment config back to secure cookies
-(`admin.oidc.cookie.secure: true`) and publish it behind TLS.
+the gateway over HTTPS, set `admin.oidc.cookie.secure: true` in
+`first-run.yml`, then run `docker compose up -d --build`. The image copies that
+file in at build time, and no environment variable overrides this setting.
+Then publish the gateway behind TLS.
 
 On Linux, Compose also maps `host.docker.internal` to `host-gateway` for the
-gateway container. The engine must still listen on an address reachable from
-the container. If a local engine only binds to `127.0.0.1` on the host, either
+gateway container. Docker Desktop (Mac, Windows) provides that name itself.
+The engine must still listen on an address reachable from the container. If a local engine only binds to `127.0.0.1` on the host, either
 start it on `0.0.0.0` for local setup or use another host address the container
 can reach. Binding to `0.0.0.0` exposes the engine to your whole network; restrict
 its port with your firewall so only the gateway container can reach it.
@@ -95,6 +97,222 @@ from the existing `tests/requirements-hermetic.lock` with hash verification.
 That reviewed closure includes test tooling; no package versions are upgraded
 for first-run. The Docker installer is uv 0.12.21, pinned by image digest.
 
+## Bare-metal install (no Docker)
+
+Use this path when you cannot or do not want to run Docker. The steps were
+written for one Linux computer with GNU coreutils. Other systems are not
+tested here.
+
+Install these first:
+
+- **uv**, a Python installer. See the
+  [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/).
+  `start.sh` uses uv to create a Python 3.12 environment, so uv must be able
+  to find or download Python 3.12.
+- **Node.js 22** with `npm`. The Docker build uses Node 22.
+- **sha256sum** and **timeout**. `start.sh` calls both. Check them with
+  `command -v sha256sum timeout`.
+
+Then follow these steps. Each step has one command or one action.
+
+1. Get the code and enter its folder:
+
+   ```bash
+   git clone https://github.com/tnunamak/azizam.git
+   cd azizam
+   ```
+
+2. Build the web interface. Pages such as `/setup/` come from this build.
+   Without it, those pages answer `503`.
+
+   ```bash
+   npm --prefix web ci
+   npm --prefix web run build
+   ```
+
+3. Start the gateway. Leave this terminal open:
+
+   ```bash
+   AZIZAM_CONFIG_PATH=first-run.yml \
+   AZIZAM_REQUIREMENTS_FILE=tests/requirements-hermetic.lock \
+   AZIZAM_REQUIREMENTS_HASHES=true \
+   ./start.sh
+   ```
+
+   The first start creates `venv/` and installs the pinned Python packages.
+   This can take several minutes. `start.sh` also starts the LiteLLM chat
+   sidecar on `127.0.0.1:4011`.
+
+   Keep `AZIZAM_CONFIG_PATH=first-run.yml` on the first start. That file
+   makes the gateway listen only on this computer. Without it, the default
+   config listens on all network interfaces. Its setup rule then allows
+   claiming the owner account from any `192.168.x.x`, `10.x.x.x` or
+   `100.64.0.0/10` address.
+
+4. Check that the gateway answers. In a second terminal:
+
+   ```bash
+   curl -i http://127.0.0.1:5000/health
+   ```
+
+   The first line of the reply should be `HTTP/1.1 200 OK`.
+
+5. Create the owner account. Open `http://127.0.0.1:5000/setup/`, then enter
+   an email address, a password, and the password again.
+
+6. Add an engine. Go to [Connect an engine by where it runs](#connect-an-engine-by-where-it-runs).
+
+To stop the gateway, press Ctrl+C in the terminal that runs `start.sh`. To
+restart after a config change, use `scripts/safe-restart`. See
+[docs/ops/SAFE_RESTART.md](ops/SAFE_RESTART.md). Do not restart with a plain
+`systemctl` command.
+
+## Connect an engine by where it runs
+
+The address you type in **Add engine** is the address the **gateway** uses.
+It is not the address your browser uses. Find where the gateway runs and where
+the engine runs. Then use the matching section below. For an engine that the
+Add engine dialog does not list, see
+[Add an HTTP engine as data](guides/ADD_HTTP_ENGINE_AS_DATA.md).
+
+Two settings matter:
+
+- **Address:** the URL the gateway calls. Keep `/v1` for OpenAI-compatible
+  servers such as llama.cpp, vLLM and LM Studio. Leave `/v1` off for Ollama.
+- **Listener:** the network address the engine accepts connections on. An
+  engine that listens only on `127.0.0.1` accepts calls from its own computer
+  only. On Linux, a Docker container cannot reach it. Docker Desktop is the
+  exception, as the Compose section below explains.
+
+### Engine on the same computer, gateway running bare metal
+
+- Address: `http://127.0.0.1:8080/v1`. For Ollama, use `http://127.0.0.1:11434`.
+- Listener: the default loopback listener is fine.
+- Reachability check, run on the same computer:
+
+  ```bash
+  curl -i http://127.0.0.1:8080/v1/models
+  ```
+
+  Any HTTP status, including `401`, means the engine answered. "Connection
+  refused" means nothing listens on that port.
+
+### Engine on the same computer, gateway in Docker Compose
+
+Inside the gateway container, `127.0.0.1` means the container itself. Use the
+name `host.docker.internal` instead.
+
+- Address: `http://host.docker.internal:8080/v1`. For Ollama, use
+  `http://host.docker.internal:11434`. Compose maps this name on Linux. Docker
+  Desktop provides it too.
+- Listener: start the engine so it accepts connections on all interfaces, not
+  only loopback. Examples: llama.cpp `llama-server --host 0.0.0.0 --port 8080`,
+  vLLM `--host 0.0.0.0`, LM Studio **Serve on Local Network**, Ollama
+  `OLLAMA_HOST=0.0.0.0:11434`. If Ollama runs as a service, run
+  `sudo systemctl edit ollama`, add `Environment="OLLAMA_HOST=0.0.0.0:11434"`
+  under the `[Service]` line, then restart it. Check your engine's
+  documentation for its flag names.
+
+  The engine must accept connections from the Compose network. Compose creates
+  that network's bridge address only when `docker compose up` runs, so the
+  engine cannot bind to that address beforehand. On Linux, bind to `0.0.0.0`.
+  On Docker Desktop, `host.docker.internal` reaches the host's loopback address,
+  so a loopback-only engine may already answer. The check below shows which
+  case applies to you.
+- Firewall: allow only the Compose network to reach the engine port. By default
+  that network is `172.30.251.0/24` (`AZIZAM_DOCKER_SUBNET`). On Linux, for
+  ufw:
+
+  ```bash
+  sudo ufw allow from 172.30.251.0/24 to any port 8080 proto tcp
+  ```
+
+  Use your own subnet if you changed `AZIZAM_DOCKER_SUBNET`.
+
+  ufw ignores rules until it is enabled. Run `sudo ufw status`. If it says
+  `inactive`, the engine port is open to your whole network. Enable ufw first
+  (allow SSH before you do, with `sudo ufw allow OpenSSH`), or set an API key
+  on the engine.
+- Reachability check, run from the gateway container:
+
+  ```bash
+  docker compose exec gateway python3 -c "import urllib.request as r; r.urlopen('http://host.docker.internal:8080/v1/models', timeout=5)"
+  ```
+
+  No output means the engine answered with a 2xx status. An `HTTPError` with
+  code `401` or `403` means the engine answered and needs a key, so the path
+  works. A timeout or `Connection refused` error means the listener or the
+  firewall still blocks the path.
+
+### Engine on another computer on your network
+
+- Address: the other computer's LAN address, for example
+  `http://192.168.1.50:8080/v1`. On that computer, run `ip addr` to find it.
+  Do not use `127.0.0.1`, `localhost` or `host.docker.internal`. Those names
+  point to the gateway's own computer.
+- Listener: bind to `0.0.0.0` or the LAN address, not only `127.0.0.1`. Use the
+  flags from the Docker section above, such as `--host 0.0.0.0` for llama.cpp
+  or vLLM, LM Studio **Serve on Local Network**, or `OLLAMA_HOST=0.0.0.0:11434`
+  for Ollama.
+- Firewall on the engine's computer: allow only the gateway computer. On Linux,
+  for ufw, where `192.168.1.10` is the gateway computer's LAN address:
+
+  ```bash
+  sudo ufw allow from 192.168.1.10 to any port 8080 proto tcp
+  ```
+
+  A gateway in Docker sends traffic with its host's LAN address, so use the
+  host address here.
+
+  ufw ignores rules until it is enabled. Run `sudo ufw status`. If it says
+  `inactive`, the engine port is open to your whole network. Enable ufw first
+  (allow SSH before you do, with `sudo ufw allow OpenSSH`), or set an API key
+  on the engine.
+- Reachability check. For bare metal, run this on the gateway computer:
+
+  ```bash
+  curl -i http://192.168.1.50:8080/v1/models
+  ```
+
+  For Compose, run this from the gateway container:
+
+  ```bash
+  docker compose exec gateway python3 -c "import urllib.request as r; r.urlopen('http://192.168.1.50:8080/v1/models', timeout=5)"
+  ```
+
+  Read the result the same way as in the Docker section.
+
+### Open WebUI or another client
+
+A client connects to the gateway, not to an engine. Use your App key and the
+`/openai/v1` path. Choose the row that matches your setup.
+
+- **Same computer, client run directly on the host** (gateway bare metal or
+  Compose). Base URL: `http://127.0.0.1:5000/openai/v1`. Check the gateway
+  with `curl -i http://127.0.0.1:5000/health`.
+- **Same computer, Open WebUI in a Docker container.** Compose publishes the
+  gateway only on the host's loopback address, so a container cannot reach it
+  through `host.docker.internal`. Run Open WebUI with host networking. Add
+  `--network host -e PORT=3000` to your usual Open WebUI `docker run` command.
+  Host networking shares the host's ports. Open WebUI would otherwise take port
+  8080, which the engine examples above use. Open http://localhost:3000. Use the
+  base URL `http://127.0.0.1:5000/openai/v1`. If another program uses port 3000,
+  choose another `PORT`.
+- **Another device on your network.** The gateway's loopback address is not
+  reachable from that device. Put an HTTPS reverse proxy on the gateway
+  computer that forwards to `http://127.0.0.1:5000`. See
+  [reverse proxy setup](REVERSE_PROXY.md). Before you use HTTPS, set
+  `admin.oidc.cookie.secure: true` in `first-run.yml`. With Compose, then run
+  `docker compose up -d --build`. On bare metal, restart with
+  `scripts/safe-restart`. This step makes the gateway reachable beyond your computer, so read the security
+  section of the [README](../README.md#security-model) first. Then use the base
+  URL `https://your-gateway-name/openai/v1`. Check it from the other device
+  with `curl -i https://your-gateway-name/health`.
+
+In Open WebUI, go to **Settings → Connections → OpenAI**. Paste the base URL.
+In the API key field, paste the `opk_...` value itself. Do not type the text
+`$AZIZAM_API_KEY`. Then refresh the model list.
+
 ## Short Path
 
 If you just want a working gateway, in order:
@@ -105,27 +323,16 @@ If you just want a working gateway, in order:
    docker compose up -d
    ```
 
-   For bare Python, use the same first-run config and the hash-locked
-   dependency file:
-
-   ```bash
-   npm --prefix web ci
-   npm --prefix web run build
-
-   AZIZAM_CONFIG_PATH=first-run.yml \
-   AZIZAM_REQUIREMENTS_FILE=tests/requirements-hermetic.lock \
-   AZIZAM_REQUIREMENTS_HASHES=true \
-   ./start.sh
-   ```
+   For bare metal, follow [Bare-metal install](#bare-metal-install-no-docker).
 
 2. Open `http://127.0.0.1:5000/setup/`.
 3. Claim or create the first owner (see [Setup States](#setup-states)).
 4. Mint the first `opk_...` runtime key from the same page and configure your
    client against `/openai/v1`.
-5. Add a chat engine from Gateway → Engines (`/engines/`). Use the engine's
-   OpenAI-compatible base URL as seen by the gateway and add at least one model
-   mapping. For generic OpenAI-compatible engines, set health endpoint
-   `/v1/models`. Example: public model `my-llama` -> upstream model
+5. Add an engine from Gateway → Engines (`/engines/`). Choose the address for
+   your layout in [Connect an engine by where it runs](#connect-an-engine-by-where-it-runs).
+   Then keep the public model name the dialog suggests, or rename it. For
+   example, the public name `my-llama` can map to the upstream model
    `TheBloke_Llama-3-8B`.
 6. Test chat with the minted key:
 
@@ -308,7 +515,7 @@ Admin keys are never runtime keys. Use `oak_...` only for
 
 | Concern                                             | Edited via       | Restart? |
 |-----------------------------------------------------|------------------|----------|
-| Listener, TLS, session signing key                  | `proxy_config.yml` / env / generated `data/admin_session_key` | yes for explicit changes |
+| Listener, TLS, session signing key                  | `proxy_config.yml` / env / generated `data/admin_session_key` | yes for explicit changes, with `scripts/safe-restart` |
 | OIDC provider settings                              | the web app (optional bootstrap fallback in `proxy_config.yml`) | no |
 | Service/provider registry                           | the web app; `source` (`ui`, `provisioned`, `builtin`, `discovered`) is provenance | no for non-managed records |
 | Provider seed/provisioning input, model directories, secret references | `proxy_config.yml` / env / Docker secrets | yes |

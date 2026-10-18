@@ -224,7 +224,10 @@ Reference material:
 ## Deployment shape: sidecar (current); library mode is an open question
 
 LiteLLM currently runs as a separate server process (the `litellm[proxy]` CLI
-on :4011); the gateway forwards OpenAI-shaped execution to it over HTTP. Running
+on :4011); the gateway forwards OpenAI-shaped execution to it over HTTP. With
+`start.sh` it listens on `127.0.0.1:4011`. In the Docker Compose deployment the
+sidecar listens on `litellm:4000` inside the Compose network, and the gateway
+uses `http://litellm:4000`. Running
 LiteLLM in-process as a library (`litellm.Router` / `litellm.acompletion`) is a
 possible alternative. **This is not decided.** The sidecar stays for now; the
 deployment shape is deliberately left open to revisit.

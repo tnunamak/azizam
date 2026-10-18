@@ -90,7 +90,8 @@ Concretely:
    and referenced secret stores. Everything the gateway needs to *start*: the
    listener, TLS, optional explicit session signing keys, trust roots,
    secret references, and on-disk model directories. Never dashboard-writable.
-   Restart to apply. Provisioning bundles never carry secrets.
+   Restart to apply, with `scripts/safe-restart`. Provisioning bundles never
+   carry secrets.
 2. **Dashboard plane** — `admin.db`, edited through the web app (and the
    `/admin/api/*` JSON surface). Runtime access policy: the admin user list,
    role grants, Access plans, Apps, App API keys, role→model bindings, admission caps, throttles,
@@ -142,7 +143,7 @@ Implications:
 
 - The dashboard never writes a value that lives in YAML or env. If an
   operator wants such a value to change, the change path is "edit the file
-  and restart" — surfaced in `change_path` and `apply_mode`.
+  and restart with `scripts/safe-restart`" — surfaced in `change_path` and `apply_mode`.
 - The dashboard writes all non-managed service/provider records regardless of
   `source`; source remains provenance after the one-time seed. The managed
   LiteLLM substrate has the limited fields described above.

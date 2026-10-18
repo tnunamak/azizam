@@ -309,6 +309,11 @@ Manifest identity must include enough provenance for receipts and debugging:
 
 ## Adapter Manifest
 
+> Superseded. New integrations use the engine record in
+> [ENGINE_CONTRACT.md](design/ENGINE_CONTRACT.md): a connection, at least one
+> offering, and optional process, observation, residency and resource fields.
+> This section is historical.
+
 An adapter manifest describes one backend family or service instance.
 
 Minimum concepts:
@@ -733,6 +738,9 @@ Rules:
 - scoped by app access plan
 - visible in route receipts
 - never used as a substitute for tested compatibility behavior
+- engine-native access under `/native/{engine_id}/...` is governed by the engine
+  record's `native.allow` rules instead; generation is plan-scoped and control
+  needs owner authority. See [ENGINE_CONTRACT.md section 6](design/ENGINE_CONTRACT.md#6-native-pass-through-f4).
 
 ## First Implementation Target
 
