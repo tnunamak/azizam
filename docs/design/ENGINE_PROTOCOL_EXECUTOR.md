@@ -56,10 +56,21 @@ configured offerings present in the mapped answer. Streaming responses are
 framed as OpenAI SSE, including multiline raw events and the final `[DONE]`.
 A malformed first event returns a typed 502 before SSE headers are sent.
 A later broken event produces a typed error event and a failed receipt.
-Mapped chat and embedding responses must match the public OpenAI shape.
+Mapped chat and embedding responses must match the public OpenAI shape. A
+complete (non-streamed) chat answer needs at least one choice and a non-null
+finish reason; a streamed chunk may leave the reason null until it is done.
 Chat applies the existing extension validator and records stream, output limit
 and request-shape metadata. Embeddings use the existing dimensions validation,
 truncation and normalization rules.
+
+A chat receipt the executor owns matches the legacy route's for the same stream
+request: the same stages (`accepted`, `outer_egress`, `backend_egress`,
+`terminal`), the same terminal reason (`completed`, or `failed` on a stream
+error), the same egress status, and the same request-shape keys, `body_bytes`
+included. It differs in two documented ways. The executor adds `engine_id`,
+`offering_id` and `upstream_id` where the legacy route writes `service_id`, and
+it writes its own `execution_backend` value. `tests/test_engine_protocol_round3.py`
+pins both sets of keys.
 
 Model discovery runs engines concurrently with 1 second per engine and a
 1.5-second total network budget. Valid lists are cached for 15 seconds per engine
