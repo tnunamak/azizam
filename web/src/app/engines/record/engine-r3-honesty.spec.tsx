@@ -43,8 +43,8 @@ it("a draft test is labeled unsaved and never sent as saved evidence", async () 
   mount();
   const user = userEvent.setup();
   const more = await screen.findByText("More options", { selector: "summary span" });
-  await user.click(more);
-  await user.type(screen.getByLabelText("Extra path"), "/draft");
+  if (!more.closest("details")?.open) await user.click(more);
+  await user.type(screen.getByLabelText("Extra path before every request"), "/draft");
   vi.spyOn(enginesApi, "test").mockResolvedValue({ ...testResult("chat_pass"), via: "draft" });
   const update = vi.spyOn(enginesApi, "update").mockResolvedValue({ schema_version: 1, services: {} } as never);
   await user.click(screen.getByRole("button", { name: "Run a real test for Chat" }));
@@ -58,8 +58,11 @@ it("editing after a test starts cannot relabel it as proof of the new draft", as
   vi.spyOn(enginesApi, "test").mockImplementation(() => new Promise(resolve => { complete = resolve; }));
   vi.spyOn(enginesApi, "update").mockResolvedValue({ schema_version: 1, services: {} } as never);
   await user.click(await screen.findByRole("button", { name: "Run a real test for Chat" }));
-  await user.click(screen.getByText("More options", { selector: "summary span" }));
-  await user.type(screen.getByLabelText("Extra path"), "/changed");
+  const more = screen.getByText("More options", { selector: "summary span" });
+  if (!more.closest("details")?.open) await user.click(more);
+  expect(screen.getByLabelText("Extra path before every request")).toBeEnabled();
+  await user.type(screen.getByLabelText("Extra path before every request"), "/changed");
+  expect(screen.getByLabelText("Extra path before every request")).toHaveValue("/changed");
   await act(async () => complete({ ...testResult("chat_pass"), via: "saved" }));
   await waitFor(() => expect(screen.queryByLabelText("Real test of Chat")).toBeNull());
   expect(screen.queryByText(/Tested the saved settings/)).toBeNull();

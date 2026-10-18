@@ -20,8 +20,8 @@ import { AdjustmentsEditor } from "./adjustment-forms";
 /** A header row while it is being typed. Values are plain text. */
 export type HeaderDraft = HeaderRow;
 
-/** The plain values More options edits, as text while they are being typed. */
-export type OptionValues = Record<string, string>;
+/** Scalar settings stay text while typed; command arguments keep their array shape. */
+export type OptionValues = Record<string, string | string[]>;
 
 /** Keeps the gateway's flags on a row (secret, not_sent) so a save sends the hidden row back as it came. */
 function headerRow(h: HeaderRow): HeaderRow {
@@ -79,6 +79,8 @@ export function changedCount(
       }
     } else if (field.type === "duration" || field.type === "number") {
       if (Number(values[field.key]) !== Number(field.default ?? 0)) n += 1;
+    } else if (Array.isArray(values[field.key])) {
+      if (JSON.stringify(values[field.key]) !== JSON.stringify(field.default ?? [])) n += 1;
     } else if ((values[field.key] ?? "") !== defaultText(field)) n += 1;
   }
   return n;
@@ -264,7 +266,7 @@ function GroupBody({
             onChange={(v) => onValues({ [field.key]: v })}
             disabled={locked}
             error={errors[field.key]}
-            after={field.key === "path_prefix" ? <CallLine definition={definition} values={{ address, path_prefix: values.path_prefix }} /> : undefined}
+            after={field.key === "path_prefix" ? <CallLine definition={definition} values={{ address, path_prefix: typeof values.path_prefix === "string" ? values.path_prefix : undefined }} /> : undefined}
           />
         ))}
       </div>,
@@ -282,13 +284,16 @@ function PlainField({
   withDefaultTag = true,
 }: {
   field: EngineField;
-  value: string;
-  onChange: (value: string) => void;
+  value: string | string[];
+  onChange: (value: string | string[]) => void;
   disabled?: boolean;
   after?: ReactNode;
   error?: string;
   withDefaultTag?: boolean;
 }) {
+  if (Array.isArray(value)) {
+    return <CommandArguments field={field} values={value} onChange={onChange} disabled={disabled} error={error} />;
+  }
   const numeric = field.type === "duration" || field.type === "number";
   const changed = numeric ? Number(value) !== Number(field.default ?? 0) : value !== defaultText(field);
   const tag =
@@ -345,6 +350,64 @@ function PlainField({
   );
 }
 
+/** A list command is an executable and its arguments, never shell text. */
+function CommandArguments({
+  field, values, onChange, disabled, error,
+}: {
+  field: EngineField;
+  values: string[];
+  onChange: (values: string[]) => void;
+  disabled?: boolean;
+  error?: string;
+}) {
+  return (
+    <ErrorGroup label={field.label} error={error}>
+      <fieldset disabled={disabled} className="flex min-w-0 flex-col gap-3">
+        <legend className="text-body mb-2 font-medium">{field.label}</legend>
+        {field.help && <p className="text-meta text-muted-foreground">{field.help}</p>}
+        {values.map((argument, index) => (
+          <div key={index} className="flex min-w-0 items-end gap-2">
+            <div className="min-w-0 flex-1">
+              <FormField label={`${field.label} argument ${index + 1}`}>
+                {(control) => (
+                  <Input
+                    {...control}
+                    className="font-mono"
+                    value={argument}
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(event) => onChange(values.map((value, at) => at === index ? event.target.value : value))}
+                  />
+                )}
+              </FormField>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`Remove ${field.label.toLowerCase()} argument ${index + 1}`}
+              onClick={() => onChange(values.filter((_, at) => at !== index))}
+            >
+              <Trash2 aria-hidden="true" />
+            </Button>
+          </div>
+        ))}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-fit"
+          aria-label={`Add ${field.label.toLowerCase()} argument`}
+          onClick={() => onChange([...values, ""])}
+        >
+          <Plus aria-hidden="true" />
+          Add an argument
+        </Button>
+      </fieldset>
+    </ErrorGroup>
+  );
+}
+
 /** Start and stop: owner only. Typed fields for the owner, the lock text for everyone else. */
 function OwnerOnlyGroup({
   fields,
@@ -378,7 +441,11 @@ function OwnerOnlyGroup({
               <div key={f.key} className="contents">
                 <dt className="text-muted-foreground">{f.label}</dt>
                 <dd className="font-mono [overflow-wrap:anywhere]">
-                  {values[f.key] || "None"}
+                  {Array.isArray(values[f.key]) ? (
+                    <ol className="flex flex-col gap-1">
+                      {(values[f.key] as string[]).map((argument, index) => <li key={index}>{argument || '""'}</li>)}
+                    </ol>
+                  ) : values[f.key] || "None"}
                   {f.type === "duration" && values[f.key] ? ` ${unitWord(f.unit)}` : ""}
                 </dd>
               </div>

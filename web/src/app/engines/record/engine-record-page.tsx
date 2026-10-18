@@ -227,7 +227,7 @@ function optionValuesFrom(definition: EngineDefinition, view: EngineView): Optio
   for (const field of optionFields(definition)) {
     if (field.type === "keyvalue" || field.items === "transform") continue;
     const value = values[field.key] ?? field.default;
-    out[field.key] = value === undefined || value === null ? "" : String(value);
+    out[field.key] = Array.isArray(value) ? [...value] : value === undefined || value === null ? "" : String(value);
   }
   return out;
 }
@@ -334,7 +334,7 @@ function RecordForm({
       if (field.type === "keyvalue") values[field.key] = headersBody(headers);
       else if (field.items === "transform") values[field.key] = transformsFromCards(cards);
       else if (field.type === "duration" || field.type === "number") {
-        const text = (options[field.key] ?? "").trim();
+        const text = String(options[field.key] ?? "").trim();
         values[field.key] = /^-?\d+(\.\d+)?$/.test(text) ? Number(text) : text;
       } else values[field.key] = options[field.key] ?? "";
     }
@@ -898,7 +898,7 @@ function RecordForm({
                 )}
                 after={
                   <>
-                    <CallLine definition={definition} values={{ address, path_prefix: options.path_prefix }} />
+                    <CallLine definition={definition} values={{ address, path_prefix: typeof options.path_prefix === "string" ? options.path_prefix : undefined }} />
                     {refusedField === "address" && saveCard(true)}
                     {n2 && (
                       <div role="alert" className="border-warning/40 bg-warning-tint/50 rounded-control flex flex-col gap-2 border p-3">

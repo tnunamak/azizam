@@ -91,7 +91,7 @@ def test_missing_key_still_allows_health_and_resource_checks(monkeypatch, fake_u
     fake = fake_upstreams.asgi(scenario_from_data({
         'protocol': 'openai-compatible', 'name': 'missing-key',
         'provenance': {'source': 'hand-written', 'reference': 'D19: probes proceed without an unavailable key'},
-        'exchanges': [{'id': 'health', 'times': 2, 'match': {'method': 'GET', 'path': '/health',
+        'exchanges': [{'id': 'health', 'times': 2, 'match': {'method': 'GET', 'path': '/v1/health',
                         'headers': {'authorization': {'$absent': True}}}, 'response': {'status': 200, 'json': {'ok': True}}}],
     }), host='review.fk.test')
     config = {'definition': 'openai-compatible', 'probe_with_inference_connection': True, 'base_url': fake.base_url + '/v1',

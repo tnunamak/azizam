@@ -152,6 +152,8 @@ export interface TestResult {
   at: number;
   status: number | null;
   via: "draft" | "saved";
+  model?: string | null;
+  evidence_token?: string;
   key_sent: boolean;
   key_withheld: boolean;
   finding?: { what: string; why: string; fix: string; raw: string };
@@ -205,8 +207,8 @@ export interface EngineValues {
   path_prefix?: string;
   transforms?: TransformRow[];
   lifecycle_mode?: "external" | "managed";
-  lifecycle_start?: string;
-  lifecycle_stop?: string;
+  lifecycle_start?: string | string[];
+  lifecycle_stop?: string | string[];
   lifecycle_ready_s?: number | string;
 }
 
@@ -214,6 +216,8 @@ export interface StoredTest {
   ok: boolean;
   at: number;
   via: "draft" | "saved";
+  model?: string | null;
+  evidence_token?: string;
   seconds?: number;
 }
 
@@ -382,7 +386,7 @@ export interface CreateEngineBody {
   values: EngineValues;
   capabilities?: string[];
   models?: { id: string; public_name: string; context_window?: number | null; enabled?: boolean }[];
-  tests?: Record<string, { ok: boolean; at: number; seconds?: number }>;
+  tests?: Record<string, { ok: boolean; at: number; seconds?: number; evidence_token?: string }>;
   acknowledge_warnings?: boolean;
   disabled?: boolean;
   /** Why it is kept off, when the reason is the owner's to fix: "needkey". */

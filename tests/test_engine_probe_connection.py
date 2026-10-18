@@ -114,7 +114,7 @@ def test_the_ready_check_sends_no_key_bound_to_another_origin(fake_upstreams):
 
 
 def test_the_switch_health_wait_uses_the_saved_connection(fake_upstreams):
-    fake_upstreams.asgi(_engine("/provider/health", {"status": "ok"}), host=HOST)
+    fake_upstreams.asgi(_engine("/health", {"status": "ok"}), host=HOST)
     assert asyncio.run(SystemdDriver()._wait_until_healthy(_saved(), "/health", 1.0)) is not None
 
 
@@ -145,8 +145,8 @@ def test_the_current_model_and_context_window_probes_use_the_saved_connection(mo
     assert asyncio.run(proxy._probed_context_window("probe-llm")) == 32768
 
 
-def test_active_backend_health_uses_the_same_prefixed_keyed_connection(monkeypatch, fake_upstreams):
-    fake_upstreams.asgi(_engine("/provider/health", {"status": "ok"}), host=HOST)
+def test_active_backend_health_keeps_the_root_path_with_saved_headers_and_key(monkeypatch, fake_upstreams):
+    fake_upstreams.asgi(_engine("/health", {"status": "ok"}), host=HOST)
     monkeypatch.setattr(proxy, "config", {"backends": {"health-probe": _saved()}})
     monkeypatch.setattr(proxy, "LLM_BACKEND_HOSTS", {"health-probe": "http://stale.invalid:1"})
     monkeypatch.setattr(proxy, "_RESOURCE_FACT_CACHE", {})

@@ -23,8 +23,8 @@ function mount() {
     values: {
       ...engineView().values,
       lifecycle_mode: "managed",
-      lifecycle_start: [...start] as never,
-      lifecycle_stop: [...stop] as never,
+      lifecycle_start: [...start],
+      lifecycle_stop: [...stop],
       lifecycle_ready_s: 180,
     },
     lifecycle_editable: true,
@@ -56,7 +56,7 @@ it("edits one start argument and sends start and stop as arrays without splittin
 it("keeps readiness editable and round-trips both command arrays when only readiness changes", async () => {
   const user = userEvent.setup();
   const update = mount();
-  const ready = await screen.findByLabelText("Time to become ready");
+  const ready = await screen.findByLabelText("Wait for it to be ready");
   expect(ready).toBeEnabled();
   await user.clear(ready);
   await user.type(ready, "240");

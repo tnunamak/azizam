@@ -846,6 +846,7 @@ class AdminSQLiteStore:
                         "timeout", "headers", "models", "transforms", "lifecycle", "managed", "role",
                         "gateway_lifecycle", "gateway_lifecycle_base_url", "probe_with_inference_connection",
                         "health_endpoint", "api_key", "api_key_env", "api_key_ref", "api_key_secret_id", "credential_origin",
+                        "litellm_provider", "provider_adapter",
                     }
                     if any((old_config.get(key) or defaults.get(key)) != (new_config.get(key) or defaults.get(key))
                            for key in keys):
@@ -1063,12 +1064,25 @@ class AdminSQLiteStore:
         sid = service_registry.normalize_id(service_id)
         current_registry = self.get_service_registry()
         existing = (current_registry.get("services") or {}).get(sid)
-        if existing is not None and set(data) <= {"name", "enabled", "note"}:
+        metadata_fields = {"name", "enabled", "disabled", "note", "acknowledge_warnings"}
+        if existing is not None and "owner" not in actor.roles and set(data) - metadata_fields:
+            raise PermissionError("Only the owner can change service settings.")
+        if existing is not None and set(data) <= metadata_fields:
             # A metadata save must not rebuild a connection through a legacy
             # form, which can discard URL aliases or custom protocol paths.
             registry = copy.deepcopy(current_registry)
             record = registry["services"][sid]
             for field, value in data.items():
+                if field == "acknowledge_warnings":
+                    continue
+                if field == "disabled":
+                    disabled = service_registry.bool_from_config(value, False)
+                    record["enabled"] = not disabled
+                    if "enabled" in record.get("config", {}):
+                        record["config"]["enabled"] = not disabled
+                    if "disabled" in record.get("config", {}):
+                        record["config"]["disabled"] = disabled
+                    continue
                 if field == "enabled":
                     value = service_registry.bool_from_config(value, True)
                 else:

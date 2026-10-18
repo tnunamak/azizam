@@ -212,11 +212,15 @@ def _clean_headers(value: Any, *, stored: Iterable[Any] = ()) -> list[dict[str, 
         if not isinstance(row, Mapping):
             raise DraftError(f"Header {index + 1} needs a name and a value.", field="headers")
         name = str(row.get("name") or "").strip()
-        if row.get("not_sent"):
+        if row.get("not_sent") or row.get("value") == engine_redaction.REDACTED:
             # Bind each hidden row to its stored header name. Reordering or
             # removing rows must never move a secret to a different header.
             matched = next((old for old in remaining if old.get("name") == name
-                            and (old.get("secret") or header_problem(name, str(old.get("value") or "")))), None)
+                            and (old.get("secret") or header_problem(name, str(old.get("value") or ""))
+                                 or engine_redaction.redact_headers([old])[0].get("value") != old.get("value"))), None)
+            if matched is None and not row.get("not_sent"):
+                # Legacy plain markers with a renamed header are dropped, never moved.
+                continue
             if matched is None or row.get("value") != engine_redaction.REDACTED:
                 raise DraftError("This hidden header has no stored value. Remove it and use the API key field.", field="headers")
             remaining.remove(matched)
@@ -634,9 +638,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
                       lifecycle_ready_s=driver_config.get("health_timeout_s", 120))
     else:
         values["lifecycle_mode"] = "external"
-    lifecycle_editable = lifecycle.get("driver") in (None, "", "command", "external") and not any(
-        isinstance(driver_config.get(key), list) for key in ("start", "stop")
-    )
+    lifecycle_editable = lifecycle.get("driver") in (None, "", "command", "external")
     locked = service_registry.is_litellm_service_record(record.get("id"), record)
     editable = not locked
     model_use = (config.get("engine_check") or {}).get("model_use") or {}
@@ -694,7 +696,8 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "key": _redact_record_value(key),
         "capabilities": caps,
         "models": models,
-        "tests": copy.deepcopy(config.get("engine_tests") or {}),
+        "tests": {cap: copy.deepcopy(row) for cap, row in (config.get("engine_tests") or {}).items()
+                  if isinstance(row, Mapping) and row.get("via") == "saved" and row.get("evidence_token")},
         "check": copy.deepcopy(config.get("engine_check") or {}),
         "calls": call_line(definition, values),
         "other_settings": _redact_record_value(other),
@@ -937,6 +940,12 @@ class EngineService:
             values = _restore_hidden_scalars(dict(values), shown["values"], record.get("config") or {})
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
+        if record is not None and not _is_owner(ctx):
+            saved_clean, saved_key = self._saved_test_inputs(catalog, definition, record, ctx)
+            models = (record.get("config") or {}).get("models") or []
+            if (_test_binding(definition, clean, key, str(service_id), models)
+                    != _test_binding(definition, saved_clean, saved_key, str(service_id), models)):
+                raise _owner_only("Only the owner can change service settings.")
         existing = _existing_engines(registry, exclude=service_id)
         if record is not None:
             saved = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)["values"]
@@ -960,11 +969,22 @@ class EngineService:
             values = _restore_hidden_scalars(dict(values), shown["values"], record.get("config") or {})
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
+        if record is not None and not _is_owner(ctx):
+            saved_clean, saved_key = self._saved_test_inputs(catalog, definition, record, ctx)
+            models = (record.get("config") or {}).get("models") or []
+            if (_test_binding(definition, clean, key, str(service_id), models)
+                    != _test_binding(definition, saved_clean, saved_key, str(service_id), models)):
+                raise _owner_only("Only the owner can change service settings.")
         capability = str(body.get("capability") or "")
         model = str(body.get("model") or "").strip() or None
         result = await run_real_test(catalog, definition, clean, capability, key=key, fetch=self.fetch, model=model,
                                      viewer_role="owner" if _is_owner(ctx) else "admin")
         result = _redact_record_value(result)
+        request = result.get("request")
+        if isinstance(request, dict) and isinstance(request.get("headers"), Mapping):
+            rows = engine_redaction.redact_headers([{"name": name, "value": value}
+                                                   for name, value in request["headers"].items()])
+            request["headers"] = {row["name"]: row["value"] for row in rows}
         result["key_sent"] = bool(key.value)
         result["key_withheld"] = key.withheld
         result["capability"] = capability
@@ -1169,6 +1189,7 @@ class EngineService:
         name = str(body.get("name") or before["name"] or service_id).strip()
         disabled = bool(body.get("disabled"))
         enabled = False if disabled else bool(body.get("enabled", before["enabled"]))
+        saved_clean, _ = self._saved_test_inputs(catalog, definition, record, ctx)
         moved = comparable_address(clean["address"]) != comparable_address(before["values"]["address"] or clean["address"])
         connection_changed = (
             moved
