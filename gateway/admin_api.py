@@ -892,6 +892,8 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
             if tone not in {"warn", "bad"}:
                 continue
             source = str(signal.get("source") or "system")
+            if source == "engine_protocol" and snapshot.get("protocol_issues"):
+                continue  # named file/engine items above already carry these diagnostics
             reasons = signal.get("reasons")
             detail = next(
                 (reason for reason in reasons if isinstance(reason, str) and reason.strip()),

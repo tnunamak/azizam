@@ -13625,8 +13625,21 @@ def _runtime_availability_evidence(
     )
 
 
+async def _status_payload_with_protocol_issues(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Use the existing Status health signals for protocol diagnostics."""
+    from gateway.engine_protocol import description as protocol_descriptions, inventory as protocol_inventory
+    await asyncio.to_thread(protocol_descriptions.load_registry)
+    issues = protocol_descriptions.registry_problems() + protocol_inventory.problems()
+    sources = dict(payload.get("health_sources") or {})
+    sources.pop("engine_protocol", None)
+    if issues:
+        sources["engine_protocol"] = {"tone": "warn", "reasons": [
+            f"{issue.get('file') or issue.get('engine_id')}: {issue['reason']}" for issue in issues]}
+    return {**payload, "protocol_issues": issues, "health_sources": sources}
+
+
 async def _status_payload_with_availability() -> Mapping[str, Any]:
-    payload = await status_endpoint.get_cached_status(config)
+    payload = await _status_payload_with_protocol_issues(await status_endpoint.get_cached_status(config))
     try:
         # Registry and capability resolution read SQLite; keep them off the loop.
         service_records, no_auth_capabilities = await asyncio.to_thread(
@@ -24910,10 +24923,7 @@ async def v1_status(request: Request):
         )
 
     try:
-        payload = await status_endpoint.get_cached_status(config)
-        from gateway.engine_protocol import description as protocol_descriptions, inventory as protocol_inventory
-        await asyncio.to_thread(protocol_descriptions.load_registry)
-        payload = {**payload, "protocol_issues": protocol_descriptions.registry_problems() + protocol_inventory.problems()}
+        payload = await _status_payload_with_protocol_issues(await status_endpoint.get_cached_status(config))
     except Exception as e:  # noqa: BLE001
         # Never leak tracebacks. Return a minimal degraded payload instead.
         print(f"[proxy] /v1/status fatal: {e}", flush=True)
@@ -24972,7 +24982,7 @@ async def _render_status_html(request: Request) -> Response:
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
-        payload = await status_endpoint.get_cached_status(config)
+        payload = await _status_payload_with_protocol_issues(await status_endpoint.get_cached_status(config))
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] status render fatal: {e}", flush=True)
         payload = {"error": "status build failed"}
