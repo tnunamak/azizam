@@ -466,7 +466,7 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     # migration run once even on a database already stamped 11 by either branch.
     conn.execute("CREATE TABLE IF NOT EXISTS schema_migration_steps (name TEXT PRIMARY KEY)")
     for name in ("secret-references-v11", "hop-timeout-v11"):
-        if conn.execute("SELECT 1 FROM schema_migration_steps WHERE name=?", (name,)).fetchone():
+        if row is not None and int(row[0]) >= _SECRET_REFS_VERSION and conn.execute("SELECT 1 FROM schema_migration_steps WHERE name=?", (name,)).fetchone():
             continue
         if name == "secret-references-v11":
             from gateway import secret_externalize_migration

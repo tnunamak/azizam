@@ -1729,6 +1729,8 @@ def create_admin_router(
     # Create and edit with a definition run through the services routes below.
     engine_service = engine_admin.EngineService(store, fetch=engine_fetch, hop_timeout=engine_hop_timeout)
     engine_admin.register_engine_routes(router, service=engine_service, guard=_guard, read_json=_read_json_body)
+    from gateway.engine_protocol_admin import register_engine_protocol_routes
+    register_engine_protocol_routes(router, guard=_guard)
 
     @router.get("/session")
     def session(request: Request) -> JSONResponse:

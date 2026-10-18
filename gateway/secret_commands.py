@@ -17,6 +17,7 @@ This module is management-safe: it stores and deletes secrets and never decrypts
 from __future__ import annotations
 
 import copy
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -61,6 +62,8 @@ def carrier_kind(carrier: Any) -> str | None:
     """``headers``, ``env``, ``argv``, ``url`` or ``secret`` for a carrier path the record model declares; None otherwise."""
     if not isinstance(carrier, str):
         return None
+    if carrier == "config.api_key":
+        return "provider_key"
     if carrier == record_carriers.HEADER_PATH:
         return "headers"
     container, _, key = carrier.rpartition(".")
@@ -306,6 +309,43 @@ def _argv(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Out
     out.changed = True
 
 
+def provider_key_entry_id(record: Mapping[str, Any]) -> str:
+    """A server-issued identity for an engine's inference-key slot, independent of its value or source."""
+    return "ent_" + hashlib.sha256((str(record.get("id") or "") + ":inference-key").encode()).hexdigest()[:16]
+
+
+def _provider_key(record: dict[str, Any], command: Mapping[str, Any], put: Put, origin: str | None, out: Outcome) -> None:
+    config = record.setdefault("config", {})
+    held = bool(config.get("api_key_secret_id") or config.get("api_key_env") or config.get("api_key_ref")
+                or (record.get("secret_refs") or {}).get("api_key"))
+    operation = command["operation"]
+    if operation == "add":
+        if held:
+            raise CommandError("duplicate_name", "an inference key is already configured; replace it by its entry id")
+    elif not held or command.get("entry_id") != provider_key_entry_id(record):
+        raise CommandError("unknown_entry", "no inference-key entry with that id")
+    if operation == "retain":
+        return
+    if operation not in ("add", "replace", "clear"):
+        raise CommandError("invalid_command", "that operation does not apply to an inference key")
+    if config.get("api_key_secret_id"):
+        out.retired.append(str(config["api_key_secret_id"]))
+    if operation in ("add", "replace"):
+        if not origin:
+            raise CommandError("carrier_unavailable", "the inference key needs an engine address with an origin")
+        reference = put(validate_value(command.get("value")), origin)
+        out.created.append(reference)
+        config["api_key_secret_id"] = reference
+        config["credential_origin"] = origin
+    else:
+        config.pop("api_key_secret_id", None)
+        config.pop("credential_origin", None)
+    config.pop("api_key_env", None)
+    config.pop("api_key_ref", None)
+    record.get("secret_refs", {}).pop("api_key", None)
+    out.changed = True
+
+
 def _scalar(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Outcome) -> None:
     parent, key = _parent(record, command["carrier"])
     held = parent.get(key)
@@ -375,7 +415,9 @@ def apply_commands(record: Mapping[str, Any], commands: list[dict[str, Any]], pu
     try:
         for command in commands:
             kind = carrier_kind(command["carrier"])
-            if kind == "headers":
+            if kind == "provider_key":
+                _provider_key(out_record, command, put, origin, outcome)
+            elif kind == "headers":
                 _headers(out_record, command, put, origin, outcome)
             elif kind == "env":
                 _env(out_record, command, put, outcome)

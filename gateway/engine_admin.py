@@ -296,10 +296,21 @@ def clean_values(definition: Mapping[str, Any], values: Mapping[str, Any], *,
     if not isinstance(values, Mapping):
         raise DraftError("values must be an object.", field="values")
     fields = {f["key"]: f for f in definition["fields"]}
-    unknown = sorted(set(values) - set(fields))
+    unknown = sorted(set(values) - set(fields) - {"dispatch", "protocol_description"})
     if unknown:
         raise DraftError("This kind of server has no field with one of the names sent.", field="values")
     out = {key: copy.deepcopy(value) for key, value in values.items()}
+    dispatch = values.get("dispatch") or ""
+    if dispatch not in ("", "protocol"):
+        raise DraftError("Choose an installed protocol description or the existing route.", field="dispatch")
+    if dispatch == "protocol":
+        from gateway.engine_protocol import description
+
+        protocol_id = values.get("protocol_description")
+        protocols = description.load_registry()
+        if not isinstance(protocol_id, str) or protocol_id not in protocols or protocols[protocol_id].executor != "http-v1":
+            raise DraftError("Choose a valid installed HTTP protocol description.", field="protocol_description")
+
     out["address"] = normalize_address(values.get("address"), placeholder=fields["address"].get("placeholder", ""))
     prefix = str(values.get("path_prefix") or "").strip()
     if prefix and (not prefix.startswith("/") or any(ch in prefix for ch in "?# \\")):
@@ -495,6 +506,12 @@ def build_raw(
     for alias in ("base_url", "api_base", "default_base_url"):
         raw.pop(alias, None)
     raw.update(_split_address(values["address"], definition, (values.get("path_prefix") or "") if "path_prefix" in has else ""))
+    if values.get("dispatch") == "protocol":
+        connection = copy.deepcopy(raw.get("connection") or {})
+        connection.update(dispatch="protocol", protocol=values["protocol_description"], address=values["address"], transport="http")
+        raw["connection"] = connection
+    elif "dispatch" in values and isinstance(raw.get("connection"), dict):
+        raw["connection"].pop("dispatch", None)
     raw.update({
         "name": name,
         "enabled": enabled,
@@ -644,6 +661,15 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         key = {"state": "configured", "source": "env", "env_name": env_name, "origin": config.get("credential_origin") or ""}
     elif secret_id:
         key = {"state": "configured", "source": "stored", "origin": config.get("credential_origin") or ""}
+    if key["state"] == "configured":
+        key["entry_id"] = secret_commands.provider_key_entry_id(stored)
+        if env_name:
+            key["availability"] = "available" if env(str(env_name)) else "unavailable"
+        else:
+            try:
+                key["availability"] = "unknown" if secret_store.provider_secret_status(secret_id, db_path=db_path).state == "set" else "unavailable"
+            except Exception:
+                key["availability"] = "unavailable"
     caps = config.get("engine_capabilities")
     if not isinstance(caps, list):
         caps = _caps_from_record(catalog, definition, record)
@@ -656,6 +682,9 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
     }
     values = {k: v for k, v in values.items() if k in field_keys}
     values["address"] = address
+    connection = config.get("connection") if isinstance(config.get("connection"), Mapping) else {}
+    values["dispatch"] = connection.get("dispatch") or ""
+    values["protocol_description"] = connection.get("protocol") or ""
     other = {}  # Undeclared configuration has no management-plane projection (D34).
     request_base = inference_base_url(config)
     operations = []
@@ -680,6 +709,8 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         "reply_timeout": {"seconds": effective_timeout, "source": timeout_source},
         "attention": ([{"code": "engine_credential_unavailable",
                         "message": f"Key not available: {env_name} is not set"}] if env_name and not env(str(env_name)) else [])
+                      + ([{"code": "engine_credential_unavailable", "message": "The stored key is unavailable. Replace it in Connection."}]
+                         if secret_id and not env_name and key.get("availability") == "unavailable" else [])
                       + ([{"code": "engine_credential_origin_mismatch",
                            "message": "The saved key is bound to a different address and will not be sent to this engine."}]
                          if key["state"] == "configured" and key.get("origin") != origin_of(address) else []),
@@ -882,13 +913,13 @@ class EngineService:
         values = body.get("values") if isinstance(body.get("values"), Mapping) else {}
         registry = self.store.get_service_registry()
         service_id = body.get("service_id")
-        record = (registry.get("services") or {}).get(service_id) if service_id else None
-        if service_id and record is None:
-            raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", "No engine has that id.")
+        record = self._probe_record(catalog, definition, registry, service_id)
         _header_credentials_are_the_owners(ctx, body.get("values"))
         if record is not None:
             shown = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)
-            values = {**shown["values"], "headers": [], **values}
+            values = {**shown["values"], **values}
+            if values.get("headers") == shown["values"].get("headers"):
+                values["headers"] = []
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         if record is not None and not _is_owner(ctx):
@@ -917,7 +948,9 @@ class EngineService:
         _header_credentials_are_the_owners(ctx, body.get("values"))
         if record is not None:
             shown = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)
-            values = {**shown["values"], "headers": [], **values}
+            values = {**shown["values"], **values}
+            if values.get("headers") == shown["values"].get("headers"):
+                values["headers"] = []
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         stored_models = ((record or {}).get("config") or {}).get("models") or []
@@ -1013,7 +1046,11 @@ class EngineService:
         return answer
 
     def view(self, service_id: str, ctx: Any = None) -> dict[str, Any]:
-        registry = self.store.get_service_registry()
+        snapshot_reader = getattr(self.store, "get_service_registry_snapshot", None)
+        if callable(snapshot_reader):
+            registry, generation = snapshot_reader()
+        else:
+            registry, generation = self.store.get_service_registry(), None
         record = (registry.get("services") or {}).get(service_id)
         if record is None:
             raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", "No engine has that id.")
@@ -1033,6 +1070,8 @@ class EngineService:
         if not served and not provider:
             served = [row["public_name"] for row in view["models"] if row.get("enabled", True) and row.get("public_name")]
         view["access"] = self._access_answer(ctx, served, works, model_works=model_works, remote_provider=provider)
+        view["registry_generation"] = generation
+        view["revision"] = f'"os-{generation}"' if generation is not None else None
         return view
 
     async def create(self, ctx: Any, body: Mapping[str, Any], *, expected_generation: int) -> dict[str, Any]:
@@ -1106,7 +1145,7 @@ class EngineService:
         values = {**before["values"], **sent}
         # What the page was shown for a header or a start and stop command is a read of entries, not text to save:
         # headers are changed only when the body names them, and the commands only when their text differs.
-        if "headers" not in sent:
+        if "headers" not in sent or sent["headers"] == before["values"].get("headers"):
             values["headers"] = []
         lifecycle_changed = any(_same_text(values.get(key)) != _same_text(before["values"].get(key)) for key in _LIFECYCLE_FIELDS)
         stored_config = record.get("config") or {}

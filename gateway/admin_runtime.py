@@ -790,6 +790,14 @@ class AdminSQLiteStore:
             }
         return registry
 
+    def get_service_registry_snapshot(self) -> tuple[dict[str, Any], int]:
+        """One registry read binds the engine view and its compare-and-swap revision."""
+        snapshot = admin_store.get_service_registry_with_generation(path=self.path)
+        if snapshot is None:
+            return service_registry.read_registry({})[0], 0
+        registry, _excluded = service_registry.read_registry(snapshot["value"])
+        return registry, int(snapshot["operator_settings_generation"])
+
     def get_service_registry_exclusions(self) -> list[service_registry.ExcludedRecord]:
         """The stored records ``get_service_registry`` leaves out because they do not validate, each with why."""
         return service_registry.load_service_registry_exclusions(path=self.path)
@@ -1415,7 +1423,11 @@ class AdminSQLiteStore:
         if any(command["operation"] != "retain" for command in commands) and "owner" not in actor.roles:
             raise PermissionError("Only the owner can change a secret.")
         with secret_store.provider_mutation_lock(self.path):
-            registry = self.get_service_registry()
+            snapshot = admin_store.get_service_registry_with_generation(path=self.path)
+            generation = int(snapshot["operator_settings_generation"]) if snapshot else 0
+            if generation != expected_generation:
+                raise admin_store.OperatorSettingsGenerationConflict("the service registry changed")
+            registry = service_registry.read_registry(snapshot["value"])[0] if snapshot else self.get_service_registry()
             record = (registry.get("services") or {}).get(sid)
             if record is None:
                 raise ValueError(f"service {sid!r} not found")

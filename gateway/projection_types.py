@@ -155,6 +155,9 @@ ENGINE_VIEW = register(Obj("EngineView", {
     "enabled": BOOL, "locked": BOOL, "editable": BOOL, "not_editable_reason": STR, "lifecycle_editable": BOOL,
     "values": JSON, "key": JSON, "capabilities": JSON, "models": JSON, "tests": JSON, "check": JSON, "calls": JSON,
     "other_settings": JSON, "record": JSON, "v2": JSON, "access": JSON,
+    "reply_timeout": JSON, "attention": JSON, "request_path": JSON, "credential_destination": STR,
+    "ignored_headers": JSON, "unsupported_fields": JSON, "can_edit_offerings": BOOL, "offering_edit_reason": ANY_SCALAR,
+    "revision": ANY_SCALAR, "registry_generation": ANY_SCALAR,
 }))
 
 # --- the effective configuration -------------------------------------------------------------------------------------------
