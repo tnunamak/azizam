@@ -21,6 +21,7 @@ import asyncio
 import shutil
 import base64
 import copy
+import functools
 import json
 import math
 import os
@@ -13625,12 +13626,27 @@ async def _security_headers_middleware(request: Request, call_next):
 async def _gateway_auth_middleware(request: Request, call_next):
     """Gate gateway-native discovery/receipt APIs, and the per-engine native lane, behind the proxy key layer."""
     if request.url.path.startswith(("/gateway/v1", "/native/")):
-        auth_context = (await asyncio.to_thread(authenticate_request, request, request.url.path))
-        if isinstance(auth_context, Response):
-            return auth_context
-        request.scope["auth_context"] = auth_context
-        request.scope["gateway_audience"] = _gateway_audience_resolver(request)
+        refusal = await _authenticate_mounted_route(request)
+        if refusal is not None:
+            return refusal
     return await call_next(request)
+
+
+async def _authenticate_mounted_route(request: Request) -> Response | None:
+    """Put the caller's identity in the request scope, or return the refusal (401 without a key).
+
+    The middleware above runs it for the gateway and native prefixes. The frontend mount runs it
+    before every operation that does not check the caller itself, so a row on any other prefix gets
+    the same check. A caller the middleware has already identified is not looked up twice.
+    """
+    if isinstance(request.scope.get("auth_context"), AuthContext):
+        return None
+    auth_context = await asyncio.to_thread(authenticate_request, request, request.url.path)
+    if isinstance(auth_context, Response):
+        return auth_context
+    request.scope["auth_context"] = auth_context
+    request.scope["gateway_audience"] = _gateway_audience_resolver(request)
+    return None
 
 
 async def _gateway_resource_lister(*, audience: str) -> list:
@@ -29296,83 +29312,86 @@ async def _ui_admin_page_guard(request: Request, name: str) -> Response | None:
 # declared with. Owned modules mounted first, in the order they registered above.
 # -----------------------------------------------------------------------------
 Op = frontend_mount.Operation
+# These handlers check the caller themselves, in the error shape of their protocol. An Op the mount
+# authenticates (no ``self_authenticates``) is checked before its handler runs, on any path prefix.
+SelfAuthOp = functools.partial(frontend_mount.Operation, self_authenticates=True)
 FRONTEND_TRANSLATORS.register("identity", {
-    "models.list": Op(list_models, frozenset({"GET"})),
-    "models.retrieve": Op(anthropic_model_retrieve, frozenset({"GET"})),
-    "voices.list": Op(list_voices, frozenset({"GET"}), openapi_extra=VOICES_LIST_OPENAPI),
-    "audio.speech": Op(audio_speech, frozenset({"POST"}), openapi_extra=AUDIO_SPEECH_OPENAPI,
-                       response_class=Response),
-    "audio.transcriptions": Op(audio_transcriptions, frozenset({"POST"}),
-                               openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI),
-    "audio.translations": Op(audio_translations, frozenset({"POST"}), openapi_extra=AUDIO_TRANSLATIONS_OPENAPI),
-    "audio.generate": Op(audio_generate, frozenset({"POST"}), openapi_extra=AUDIO_GENERATE_OPENAPI),
-    "audio.models": Op(audio_models, frozenset({"GET"}), openapi_extra=AUDIO_MODELS_OPENAPI),
-    "images.generate": Op(images_generations, frozenset({"POST"}), openapi_extra=IMAGES_GENERATIONS_OPENAPI),
-    "images.variations": Op(images_variations, frozenset({"POST"}), openapi_extra=IMAGES_VARIATIONS_OPENAPI),
-    "images.edit": Op(images_edits, frozenset({"POST"}), openapi_extra=IMAGES_EDITS_OPENAPI),
-    "images.content": Op(images_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
-                         response_class=Response),
-    "assets.content": Op(assets_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
-                         response_class=Response),
-    "videos.create": Op(videos_create, frozenset({"POST"}), openapi_extra=VIDEOS_CREATE_OPENAPI),
-    "videos.retrieve": Op(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI),
-    "videos.content": Op(videos_content, frozenset({"GET"}), openapi_extra=VIDEOS_CONTENT_OPENAPI,
-                         response_class=Response),
-    "videos.list": Op(videos_list, frozenset({"GET"}), openapi_extra=VIDEOS_LIST_OPENAPI),
-    "videos.delete": Op(videos_delete, frozenset({"DELETE"}), openapi_extra=VIDEOS_DELETE_OPENAPI),
-    "videos.remix": Op(videos_remix, frozenset({"POST"}), openapi_extra=VIDEOS_REMIX_OPENAPI),
-    "videos.edit": Op(videos_edit, frozenset({"POST"}), openapi_extra=VIDEOS_EDIT_OPENAPI),
-    "videos.extend": Op(videos_extend, frozenset({"POST"}), openapi_extra=VIDEOS_EXTEND_OPENAPI),
-    "rerank": Op(rerank_v1, frozenset({"POST"})),
-    "rerank.v2": Op(rerank_v2, frozenset({"POST"})),
-    "rerank.root": Op(rerank_root, frozenset({"POST"})),
-    "responses.create": Op(create_response, frozenset({"POST"})),
-    "responses.retrieve": Op(retrieve_response, frozenset({"GET"})),
-    "responses.input_items": Op(list_response_input_items, frozenset({"GET"})),
-    "responses.input_tokens": Op(count_response_input_tokens, frozenset({"POST"})),
-    "responses.cancel": Op(cancel_response, frozenset({"POST"})),
-    "responses.delete": Op(delete_response, frozenset({"DELETE"})),
-    "chat.completions": Op(chat_completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
-    "text.completions": Op(completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
-    "text.embeddings": Op(embeddings, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
-    "unsupported.assistants": Op(openai_assistants_unsupported,
-                                 frozenset({"GET", "POST", "PUT", "DELETE", "PATCH"}), include_in_schema=False),
-    "unsupported.files": Op(openai_files_unsupported, frozenset({"GET", "POST", "DELETE"}),
+    "models.list": SelfAuthOp(list_models, frozenset({"GET"})),
+    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"})),
+    "voices.list": SelfAuthOp(list_voices, frozenset({"GET"}), openapi_extra=VOICES_LIST_OPENAPI),
+    "audio.speech": SelfAuthOp(audio_speech, frozenset({"POST"}), openapi_extra=AUDIO_SPEECH_OPENAPI,
+                               response_class=Response),
+    "audio.transcriptions": SelfAuthOp(audio_transcriptions, frozenset({"POST"}),
+                                       openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI),
+    "audio.translations": SelfAuthOp(audio_translations, frozenset({"POST"}), openapi_extra=AUDIO_TRANSLATIONS_OPENAPI),
+    "audio.generate": SelfAuthOp(audio_generate, frozenset({"POST"}), openapi_extra=AUDIO_GENERATE_OPENAPI),
+    "audio.models": SelfAuthOp(audio_models, frozenset({"GET"}), openapi_extra=AUDIO_MODELS_OPENAPI),
+    "images.generate": SelfAuthOp(images_generations, frozenset({"POST"}), openapi_extra=IMAGES_GENERATIONS_OPENAPI),
+    "images.variations": SelfAuthOp(images_variations, frozenset({"POST"}), openapi_extra=IMAGES_VARIATIONS_OPENAPI),
+    "images.edit": SelfAuthOp(images_edits, frozenset({"POST"}), openapi_extra=IMAGES_EDITS_OPENAPI),
+    "images.content": SelfAuthOp(images_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
+                                 response_class=Response),
+    "assets.content": SelfAuthOp(assets_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
+                                 response_class=Response),
+    "videos.create": SelfAuthOp(videos_create, frozenset({"POST"}), openapi_extra=VIDEOS_CREATE_OPENAPI),
+    "videos.retrieve": SelfAuthOp(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI),
+    "videos.content": SelfAuthOp(videos_content, frozenset({"GET"}), openapi_extra=VIDEOS_CONTENT_OPENAPI,
+                                 response_class=Response),
+    "videos.list": SelfAuthOp(videos_list, frozenset({"GET"}), openapi_extra=VIDEOS_LIST_OPENAPI),
+    "videos.delete": SelfAuthOp(videos_delete, frozenset({"DELETE"}), openapi_extra=VIDEOS_DELETE_OPENAPI),
+    "videos.remix": SelfAuthOp(videos_remix, frozenset({"POST"}), openapi_extra=VIDEOS_REMIX_OPENAPI),
+    "videos.edit": SelfAuthOp(videos_edit, frozenset({"POST"}), openapi_extra=VIDEOS_EDIT_OPENAPI),
+    "videos.extend": SelfAuthOp(videos_extend, frozenset({"POST"}), openapi_extra=VIDEOS_EXTEND_OPENAPI),
+    "rerank": SelfAuthOp(rerank_v1, frozenset({"POST"})),
+    "rerank.v2": SelfAuthOp(rerank_v2, frozenset({"POST"})),
+    "rerank.root": SelfAuthOp(rerank_root, frozenset({"POST"})),
+    "responses.create": SelfAuthOp(create_response, frozenset({"POST"})),
+    "responses.retrieve": SelfAuthOp(retrieve_response, frozenset({"GET"})),
+    "responses.input_items": SelfAuthOp(list_response_input_items, frozenset({"GET"})),
+    "responses.input_tokens": SelfAuthOp(count_response_input_tokens, frozenset({"POST"})),
+    "responses.cancel": SelfAuthOp(cancel_response, frozenset({"POST"})),
+    "responses.delete": SelfAuthOp(delete_response, frozenset({"DELETE"})),
+    "chat.completions": SelfAuthOp(chat_completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
+    "text.completions": SelfAuthOp(completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
+    "text.embeddings": SelfAuthOp(embeddings, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
+    "unsupported.assistants": SelfAuthOp(openai_assistants_unsupported,
+                                         frozenset({"GET", "POST", "PUT", "DELETE", "PATCH"}), include_in_schema=False),
+    "unsupported.files": SelfAuthOp(openai_files_unsupported, frozenset({"GET", "POST", "DELETE"}),
                             include_in_schema=False),
-    "unsupported.batches": Op(openai_batches_unsupported, frozenset({"GET", "POST", "DELETE"}),
+    "unsupported.batches": SelfAuthOp(openai_batches_unsupported, frozenset({"GET", "POST", "DELETE"}),
                               include_in_schema=False),
-    "unsupported.fine_tuning": Op(openai_fine_tuning_unsupported, frozenset({"GET", "POST", "DELETE"}),
+    "unsupported.fine_tuning": SelfAuthOp(openai_fine_tuning_unsupported, frozenset({"GET", "POST", "DELETE"}),
                                   include_in_schema=False),
-    "unsupported.realtime": Op(openai_realtime_unsupported, frozenset({"GET", "POST", "DELETE"}),
+    "unsupported.realtime": SelfAuthOp(openai_realtime_unsupported, frozenset({"GET", "POST", "DELETE"}),
                                include_in_schema=False),
 })
 FRONTEND_TRANSLATORS.register("anthropic", {
-    "chat.completions": Op(anthropic_messages, frozenset({"POST"})),
-    "tokens.count": Op(anthropic_count_tokens, frozenset({"POST"})),
-    "models.list": Op(anthropic_models, frozenset({"GET"})),
-    "models.retrieve": Op(anthropic_model_retrieve, frozenset({"GET"})),
+    "chat.completions": SelfAuthOp(anthropic_messages, frozenset({"POST"})),
+    "tokens.count": SelfAuthOp(anthropic_count_tokens, frozenset({"POST"})),
+    "models.list": SelfAuthOp(anthropic_models, frozenset({"GET"})),
+    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"})),
 })
 FRONTEND_TRANSLATORS.register("ollama", {
-    "chat.completions": Op(ollama_chat, frozenset({"POST"})),
-    "text.completions": Op(ollama_generate, frozenset({"POST"})),
-    "text.embeddings": Op(ollama_embed, frozenset({"POST"})),
-    "text.embeddings.prompt": Op(ollama_embeddings, frozenset({"POST"})),
-    "models.tags": Op(ollama_tags, frozenset({"GET"})),
-    "models.show": Op(ollama_show, frozenset({"POST"})),
-    "models.ps": Op(ollama_ps, frozenset({"GET"})),
-    "version": Op(ollama_version, frozenset({"GET"})),
-    "models.create": Op(ollama_create, frozenset({"POST"})),
-    "models.copy": Op(ollama_copy, frozenset({"POST"})),
-    "models.pull": Op(ollama_pull, frozenset({"POST"})),
-    "models.push": Op(ollama_push, frozenset({"POST"})),
-    "blobs": Op(ollama_blobs, frozenset({"HEAD", "POST"})),
-    "models.delete": Op(ollama_delete, frozenset({"DELETE"})),
+    "chat.completions": SelfAuthOp(ollama_chat, frozenset({"POST"})),
+    "text.completions": SelfAuthOp(ollama_generate, frozenset({"POST"})),
+    "text.embeddings": SelfAuthOp(ollama_embed, frozenset({"POST"})),
+    "text.embeddings.prompt": SelfAuthOp(ollama_embeddings, frozenset({"POST"})),
+    "models.tags": SelfAuthOp(ollama_tags, frozenset({"GET"})),
+    "models.show": SelfAuthOp(ollama_show, frozenset({"POST"})),
+    "models.ps": SelfAuthOp(ollama_ps, frozenset({"GET"})),
+    "version": SelfAuthOp(ollama_version, frozenset({"GET"})),
+    "models.create": SelfAuthOp(ollama_create, frozenset({"POST"})),
+    "models.copy": SelfAuthOp(ollama_copy, frozenset({"POST"})),
+    "models.pull": SelfAuthOp(ollama_pull, frozenset({"POST"})),
+    "models.push": SelfAuthOp(ollama_push, frozenset({"POST"})),
+    "blobs": SelfAuthOp(ollama_blobs, frozenset({"HEAD", "POST"})),
+    "models.delete": SelfAuthOp(ollama_delete, frozenset({"DELETE"})),
 })
 FRONTEND_TRANSLATORS.register("realtime", {
-    "realtime.session": Op(realtime_v1, frozenset({"WEBSOCKET"})),
+    "realtime.session": SelfAuthOp(realtime_v1, frozenset({"WEBSOCKET"})),
 })
 FRONTEND_TRANSLATORS.register("gateway", {
-    "media.job.content": Op(gateway_media_job_content, frozenset({"GET"})),
+    "media.job.content": SelfAuthOp(gateway_media_job_content, frozenset({"GET"})),
 })
 FRONTEND_TRANSLATORS.register("provider-native", {
     "provider.list": Op(provider_native_list, frozenset({"GET"})),
@@ -29392,6 +29411,7 @@ frontend_mount.mount(
     ),
     FRONTEND_TRANSLATORS,
     refuse=_frontend_refusal,
+    authenticate=_authenticate_mounted_route,
 )
 
 

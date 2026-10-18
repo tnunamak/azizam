@@ -52,8 +52,10 @@ def mount_frontend_records(
 
     A stored builtin frontend keeps its own fields (enabled, name), but its routes come from the
     seed: builtin frontends ship with the code and are not editable, so a database seeded before a
-    row existed still mounts it. A builtin seed the stored registry lacks is added. Projections
-    (aliases, policies) keep reading the stored records, as they did before.
+    row existed still mounts it. A builtin seed the stored registry lacks is added. A stored record
+    that claims ``builtin`` for an id the seed does not hold is demoted to a package row, so the
+    claim never unlocks a privileged translator. Projections (aliases, policies) keep reading the
+    stored records, as they did before.
     """
     seed_frontends = service_registry.load_seed_catalogs(proxy_config or {}).get("protocol_frontends", {})
     records: list[dict[str, Any]] = []
@@ -62,10 +64,15 @@ def mount_frontend_records(
         frontend_id = str(record.get("id") or "")
         stored_ids.add(frontend_id)
         seed = seed_frontends.get(frontend_id)
-        if record.get("source") == "builtin" and isinstance(seed, Mapping) and "registered_routes" in seed:
-            record = {**record, "registered_routes": copy.deepcopy(seed["registered_routes"])}
-            if "strictness" in seed:
-                record["strictness"] = seed["strictness"]
+        if record.get("source") == "builtin":
+            if isinstance(seed, Mapping) and seed.get("source") == "builtin":
+                record = {**record, "registered_routes": copy.deepcopy(seed.get("registered_routes") or [])}
+                if "strictness" in seed:
+                    record["strictness"] = seed["strictness"]
+            else:
+                # Only the seed ships with the code. A stored row that claims "builtin" for an id the
+                # seed does not hold is a package row, whatever it says.
+                record = {**record, "source": "ui"}
         records.append(record)
     for frontend_id, seed in seed_frontends.items():
         if frontend_id not in stored_ids and isinstance(seed, Mapping) and seed.get("source") == "builtin":
