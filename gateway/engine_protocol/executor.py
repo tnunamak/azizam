@@ -62,6 +62,7 @@ _PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]*)\}")
 _ENCODED_SEPARATOR = re.compile(r"%(?:2f|5c)", re.IGNORECASE)  # a pre-encoded slash or backslash: some servers decode twice
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 _REDIRECTS = (301, 302, 303, 307, 308)
+_ENDED = frozenset({JobState.succeeded, JobState.failed, JobState.cancelled})
 
 
 def _origin(url: str) -> tuple[str, str, int]:
@@ -163,14 +164,39 @@ class HttpV1Executor:
             handles = tuple(clean)
         return JobStatus(ref, JobState(state), detail, handles)
 
+    async def wait(self, conn: Connection, ref: JobRef) -> JobStatus:
+        """Poll every ``interval_s`` until the job ends. ``max_wait_s`` bounds the whole wait, a slow poll included."""
+        op = self._operation(ref.op, job=True)
+        assert op.job is not None
+        interval, limit = op.job.poll.interval_s, op.job.poll.max_wait_s
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + limit
+        too_long = BudgetExceeded("max_wait_s", f"The job did not end within {limit:g} s.")
+        while True:
+            try:
+                async with asyncio.timeout_at(deadline):
+                    status = await self.poll(conn, ref)
+            except TimeoutError:
+                raise too_long from None
+            if status.state in _ENDED:
+                return status
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise too_long
+            await asyncio.sleep(min(interval, remaining))
+
     async def cancel(self, conn: Connection, ref: JobRef) -> None:
+        """Ask the engine to stop a job that is still running. A job that already ended is left alone: nothing is sent."""
         op = self._operation(ref.op, job=True)
         assert op.job is not None
         if op.job.cancel is None:
             raise UnsupportedByAdapter(f"The protocol does not describe cancelling '{ref.op}'.")
         source = {"body": {}, "params": {"id": ref.id}, "files": {}}
-        wire = await self._timed_exchange(conn, op.job.cancel, op, source)
-        await wire.aclose()
+        async with _total(conn, "The engine did not finish cancelling"):
+            if (await self.poll(conn, ref)).state in _ENDED:
+                return
+            wire = await self._exchange(conn, op.job.cancel, op, source, _secrets(conn))
+            await wire.aclose()
 
     async def fetch_assets(self, conn: Connection, ref: JobRef, status: JobStatus) -> tuple[AssetRef, ...]:
         op = self._operation(ref.op, job=True)

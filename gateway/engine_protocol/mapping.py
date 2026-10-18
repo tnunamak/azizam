@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import time
+from contextvars import ContextVar
 from typing import Any, Callable, Mapping, Sequence
 
 from gateway.engine_protocol import pointer
@@ -34,6 +35,8 @@ Step = Callable[[Mapping[str, Any], dict], None]
 Predicate = Callable[[Mapping[str, Any]], bool]
 MISSING = pointer.MISSING
 _get, _set, _clone = pointer.get, pointer.set_value, pointer.clone
+# The running map's (deadline, mapping_s), so a rule nested in a condition can stop the map too.
+_RUNNING: ContextVar[tuple[float, float] | None] = ContextVar("engine_protocol_mapping_deadline", default=None)
 
 _RULE_KEYS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     # rule: (required keys, optional keys)
@@ -148,22 +151,21 @@ class Program:
         A passthrough map with no rule that writes returns the body itself. A rule that does write works on a copy, so
         ``source`` is never changed.
         """
-        started = time.perf_counter()
-        if self._passthrough:
-            body = source["body"]
-            if type(body) is not dict:
-                raise MappingError("A passthrough map needs the body to be a JSON object.")
-        try:  # the executor checks depth before it maps; this is the net for a caller that does not
-            if self._passthrough:
-                out: dict = _clone(body) if self._writes else body
-            else:
-                out = {}
+        deadline = time.perf_counter() + self._mapping_s
+        body = source["body"]
+        if self._passthrough and type(body) is not dict:
+            raise MappingError("A passthrough map needs the body to be a JSON object.")
+        token = _RUNNING.set((deadline, self._mapping_s))
+        try:  # the executor checks depth before it maps; the RecursionError net is for a caller that does not
+            out: dict = (_clone(body) if self._writes else body) if self._passthrough else {}
             for step in self._steps:
                 step(source, out)
+                if time.perf_counter() > deadline:  # between rules, so a slow map stops while it runs, not after
+                    raise BudgetExceeded("mapping_s", f"A mapping took longer than {self._mapping_s:g} s.")
         except RecursionError:
             raise BudgetExceeded("max_json_depth", "A mapped value nests too deep.") from None
-        if time.perf_counter() - started > self._mapping_s:
-            raise BudgetExceeded("mapping_s", f"A mapping took longer than {self._mapping_s:g} s.")
+        finally:
+            _RUNNING.reset(token)
         return out
 
 
@@ -496,6 +498,9 @@ def _c_when(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
     def when_rule(source: Mapping[str, Any], out: dict) -> None:
         for step in (then if predicate(source) else other):
             step(source, out)
+            running = _RUNNING.get()
+            if running is not None and time.perf_counter() > running[0]:
+                raise BudgetExceeded("mapping_s", f"A mapping took longer than {running[1]:g} s.")
     return when_rule
 
 
