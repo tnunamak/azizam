@@ -51,14 +51,22 @@ the permission on for installs that already declare command, process or systemd
 lifecycles and writes an audit entry that names them. New installs stay off.
 
 **Recovery when the schema 2 migration refuses a record.** The migration keeps a
-record's own `process` block whole. It refuses, with no change to the registry,
-a service that holds two sources that both run a command: a `process` block and
-a `lifecycle` block, or a top-level `process` block and a different
-`config.process` block. The message names the service and the two blocks. To
-recover, decide which block should run the engine, delete the other from the
-service record (in `admin.db` through the service registry API, or in the seed
-file), and start the gateway again. Two equal blocks need no action. The
-refusal message holds no command or environment value.
+record's own `process` block whole. It refuses a service that holds two sources
+that both run a command: a `process` block and a `lifecycle` block, or a
+top-level `process` block and a different `config.process` block. The refusal
+leaves that one service out and does not stop the gateway. The migration migrates
+every other service, leaves the refused record as stored, and adds a
+`migration_refused` field that holds the message. The message names the service
+and the two blocks, and holds no command or environment value. The audit entry
+`operator.engine_record_v2.migrate` lists the left-out service ids.
+
+A record with a `migration_refused` field does not validate. At boot the gateway
+serves the stored services that validate, and the Overview shows "The stored
+service registry is only partly applied" with the left-out service named. To
+recover, decide which block should run the engine and delete the other from the
+service record, then delete the `migration_refused` field from the same record
+(in `admin.db`, or through the service registry API once the record validates)
+and reload. Two equal blocks need no action.
 
 **systemd `KillMode`.** When the gateway itself runs as a systemd unit with the
 default `KillMode=control-group`, stopping or restarting that unit kills every

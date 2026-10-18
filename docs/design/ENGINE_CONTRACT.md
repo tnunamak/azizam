@@ -140,11 +140,33 @@ resources:
   - Every change is owner-only, recorded and shown as a dry run first.
   - Server-side file paths in control calls must sit under owner-allowlisted
     roots.
-  - No view of a record shows a command secret. A caller sees `start`, `stop`
-    and `status` with each credential argument replaced by `[redacted]`, and
-    `env` as names with `[redacted]` values. A save that sends the marker back
-    keeps the stored value; a marker with no stored value is refused. The v2
-    `process` block is an allow-list of fields, never a copy of the stored one.
+  - No view of a record shows a secret (decision D21). One projection,
+    `engine_redaction.public_service_record` (and `public_registry`,
+    `public_value`), turns stored data into what a caller reads. It denies by
+    default: every string, list and mapping in a record is examined, so a new
+    field is covered without a new rule. A caller sees each credential argument
+    of `start`, `stop`, `status` and `reload` replaced by `[redacted]` (a flag is
+    a credential when its name has a whole credential word in it, so
+    `--api-key` and `--auth-token` are hidden and `--tokenizer`, `--max-tokens`
+    and `--keyfile` are not), `env` as names with `[redacted]` values, a header
+    value that holds a credential as `[redacted]`, any other credential value as
+    `<redacted>`, and an address or path without its user name, password, query
+    and fragment. A marker also tells a caller that the slot is set. A save that
+    sends a marker back keeps the stored value, bound by path, by flag (in order)
+    or by header name (in order). A marker with no stored value, a marker inside
+    a longer value, and a save that changes how many values a flag or a header
+    name holds beside a marker are refused with a 400. A create has nothing
+    stored, so a marker in it is refused. The v2 `process` block is an
+    allow-list of fields, never a copy of the stored one.
+  - A save that would keep a stored secret while the record's host moves is
+    owner-only: `credential_references` counts every value the projection hides
+    as a reference. The configuration export (`/admin/api/config/export`) is the
+    owner's backup and keeps every value (decision D18).
+  - `tests/test_admin_secret_sweep.py` is the oracle for all of this. It seeds a
+    store with a secret in every place one can live, reads every GET and HEAD
+    route the app mounts (from `proxy.app.routes`) as an administrator, the
+    owner and a signed-out client, and fails if a seeded value appears in a body
+    or header.
   - Credentials are per operation class and bound to the address origin.
     Cross-origin redirects are refused.
 
