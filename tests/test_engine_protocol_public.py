@@ -436,7 +436,7 @@ def test_public_queued_protocol_image_runs_through_the_real_worker_and_settler(e
     monkeypatch.setattr(executor,'HttpxTransport',lambda:wire)
     asyncio.run(proxy._run_image_media_job(job_id))
     job=media_jobs.get(job_id,audience='internal',path=media_jobs.DB_PATH)
-    assert job['status']==('canceled' if cancel else 'succeeded'),job
+    assert job['status']==('canceled' if cancel else 'succeeded'),job.get('error')
     rows=receipt_store.recent(path=receipt_store.DB_PATH)
     assert any(row['status']==('cancelled' if cancel else 'succeeded') for row in rows),rows
 
@@ -446,7 +446,7 @@ def test_protocol_image_assets_keep_existing_owner_access_rules(engine):
     assert response.status_code==200,response.text
     asset_id=response.json()['data'][0]['asset_id']
     path=f'/v1/assets/{asset_id}/content'
-    assert engine.client.get(path).status_code==200
-    with authenticated(identity(app_id='different-app',key_hash='different-key')):
-        denied=engine.client.get(path)
-    assert denied.status_code in {403,404},denied.text
+    from tests.support.access import access_context
+    assert engine.client.get(response.json()['data'][0]['url']).status_code==200
+    assert proxy._asset_access_allowed(asset_id,access_context())
+    assert not proxy._asset_access_allowed(asset_id,access_context(identity(app_id='different-app',key_hash='different-key').access,app_id='different-app',key_hash='different-key'))

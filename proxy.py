@@ -20823,6 +20823,9 @@ async def _run_image_media_job(job_id: str) -> None:
                 # An interrupted attempt keeps its terminal receipt.
                 finish_image_route_receipt(receipt, None, status="cancelled")
                 raise
+            except media_jobs.CancellationPending:
+                finish_image_route_receipt(receipt, None, status="cancelled")
+                raise
             except Exception as exc:  # noqa: BLE001
                 finish_image_route_receipt(
                     receipt,
