@@ -206,6 +206,31 @@ it("keeps the revision of the entries loaded into the draft after a background r
     ),
   );
 });
+it("does not authorize a stale secret draft after Enabled follows a background refresh", async () => {
+  const { act } = await import("@testing-library/react");
+  const { engineViewKey } = await import("./engine-record-page");
+  let view = engineView({
+    revision: '"os-1"',
+    record: { config: { headers: [{ id: "ent_header", name: "X-Tenant", configured: true }] } },
+  });
+  vi.spyOn(enginesApi, "view").mockImplementation(async () => view);
+  vi.spyOn(enginesApi, "update").mockImplementation(async () => {
+    view = { ...view, revision: '"os-3"', enabled: false };
+    return { services: {} } as never;
+  });
+  const commands = vi.spyOn(enginesApi, "secretEntries").mockResolvedValue({ services: {} } as never);
+  const mounted = renderWithClient(
+    <EngineRecordPage serviceId={view.service_id} onBack={() => {}} onRemove={() => {}} />,
+  );
+  await screen.findByLabelText("Value for X-Tenant");
+  view = { ...view, revision: '"os-2"' };
+  await act(async () => mounted.client.setQueryData(engineViewKey(view.service_id), view));
+  await userEvent.click(screen.getByRole("switch", { name: "Enabled" }));
+  await waitFor(() => expect(screen.getByRole("switch", { name: "Enabled" })).not.toBeChecked());
+  await userEvent.type(screen.getByLabelText("Value for X-Tenant"), "new-value");
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(commands).toHaveBeenCalledWith(view.service_id, expect.any(Array), '"os-1"'));
+});
 it("requires separate saves for public settings and a secret batch", async () => {
   const view = engineView({
     record: {

@@ -185,7 +185,7 @@ export function EngineRecordPage({
           definition={definition}
           onRefresh={async () => {
             const refreshed = await refetchEngine();
-            return refreshed.data?.revision;
+            return refreshed.isSuccess ? refreshed.data?.revision : undefined;
           }}
           onSaved={async (message) => {
             await refetchEngine();
@@ -296,6 +296,13 @@ function RecordForm({
   const [address, setAddress] = useState(saved.address);
   // Background refetches do not authorize an old secret draft against a newer registry.
   const [draftRevision, setDraftRevision] = useState(view.revision);
+  async function refreshAfterOwnWrite() {
+    // A background refresh may have changed the record without rebuilding this draft.
+    // In that case, retain its old revision so Save still gets a 412.
+    const currentRevision = queryClient.getQueryData<EngineView>(engineViewKey(view.service_id))?.revision;
+    const refreshedRevision = await onRefresh();
+    if (refreshedRevision !== undefined && currentRevision === draftRevision) setDraftRevision(refreshedRevision);
+  }
   const [options, setOptions] = useState<OptionValues>(() => optionValuesFrom(definition, view));
   const [headers, setHeaders] = useState<HeaderDraft[]>([]);
   const [secrets, setSecrets] = useState(() => secretDrafts(view.record, view.key));
@@ -466,7 +473,7 @@ function RecordForm({
             tests: { [capability]: { ok: true, at: result.at, seconds: result.seconds, evidence_token: result.evidence_token } },
           });
           queryClient.setQueryData(queryKeys.serviceRegistry, registry);
-          setDraftRevision(await onRefresh());
+          await refreshAfterOwnWrite();
         } catch {
           // The page still shows the pass; it is not stored.
         }
@@ -505,7 +512,7 @@ function RecordForm({
             : { definition: definition.definition, enabled: on },
         );
       queryClient.setQueryData(queryKeys.serviceRegistry, registry);
-      setDraftRevision(await onRefresh());
+      await refreshAfterOwnWrite();
     } catch (error) {
       const refused = checkFromError(error);
       if (refused) {
