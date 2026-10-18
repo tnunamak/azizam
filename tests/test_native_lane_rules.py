@@ -118,9 +118,8 @@ def test_a_control_entry_may_pass_a_path_like_query_value():
 
 
 def test_the_query_that_goes_out_is_rebuilt_from_the_checked_pairs():
-    entry = _entry(query=["limit", "q"])
-    assert native_lane.forwarded_query(entry, "limit=5&q=a%20b") == "limit=5&q=a+b"
-    assert native_lane.forwarded_query(entry, "") == ""
+    assert native_lane.forwarded_query("limit=5&q=a%20b") == "limit=5&q=a+b"
+    assert native_lane.forwarded_query("") == ""
 
 
 @pytest.mark.parametrize("query", ["limit", [1], "limit", [""], ["a b"], ["a=b"], {"x": 1}])

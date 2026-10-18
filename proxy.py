@@ -89,6 +89,7 @@ from gateway import (
     video_media_jobs,
     voice_design,
 )
+from gateway import secret_store
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
 from gateway.http_tls import tls_context
 from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
@@ -28760,6 +28761,9 @@ def _build_provider_native_targets() -> dict[str, dict[str, Any]]:
             "timeout": float(raw_cfg.get("timeout") or UPSTREAM_READ_TIMEOUT),
             # The plain headers the owner listed for this engine (Add engine, Request headers).
             "headers": engine_headers(raw_cfg),
+            # The engine's own record: the native lane reads its policy, its credentials and its remote flag
+            # from here, never from a lookup by name (the record's key may be spelt in any case).
+            "record": raw_cfg,
         }
     return targets
 
@@ -29044,16 +29048,16 @@ async def native_engine_request(request: Request):
             status_code=404,
             code="native_not_enabled",
         )
+    record = target["record"]
     if any(
         service_registry.is_remote_provider_config(candidate)
-        for candidate in _provider_native_backend_configs(engine, target)
+        for candidate in (record, *_provider_native_backend_configs(engine, target))
     ):
         return openai_error_response(
             f"Engine {engine_id!r} is a remote provider and cannot use native pass-through.",
             status_code=403,
             code="native_remote_forbidden",
         )
-    record = next(iter(_provider_native_backend_configs(engine, target)), {})
     return await _forward_provider_native(
         request,
         provider_key=engine,
@@ -29120,6 +29124,53 @@ async def _frontend_refusal(request: Request, row: frontend_mount.RouteRow, repo
     )
 
 
+def _fail_native(
+    owner: ReceiptLifecycleOwner, receipt: RouteReceipt, *, status_code: int, code: str, message: str,
+    reason: str | None = None,
+) -> Response:
+    """End a native call that failed before the engine was reached: a failed receipt and a 502."""
+    receipt.metadata["refusal"] = code
+    owner.report(status="failed", reason=reason or code)
+    return openai_error_response(message, status_code=status_code, error_type="api_error", code=code)
+
+
+async def _native_credential_headers(
+    headers: dict[str, str], target: Mapping[str, Any], klass: str, engine: str,
+) -> dict[str, str] | None:
+    """Add the engine's credential for this call class to ``headers``. None on success, else the error to answer with.
+
+    A credential is sent only to the origin it is bound to, and a class with no credential sends none.
+    """
+    credential = native_lane.credential_for(target["record"], klass)
+    if credential is None:
+        return None
+    if not credential.bound_to(str(target["host"])):
+        return {
+            "code": "native_credential_origin_mismatch", "reason": "credential_origin",
+            "message": f"The {klass} credential of engine {engine!r} is not bound to the address it is sent to.",
+        }
+    secret = ""
+    try:
+        if credential.secret_env:
+            secret = get_env(credential.secret_env, "")
+        elif credential.secret_ref:
+            secret = await asyncio.to_thread(
+                secret_store.get_provider_secret, credential.secret_ref,
+                db_path=ADMIN_DB_PATH, expected_origin=credential.origin,
+            )
+    except Exception:  # noqa: BLE001 - a secret that cannot be read is not sent
+        secret = ""
+    if not secret:
+        return {
+            "code": "native_credential_unavailable", "reason": "credential_unavailable",
+            "message": f"The {klass} credential of engine {engine!r} could not be read.",
+        }
+    for existing in [key for key in headers if key.lower() == credential.header.lower()]:
+        del headers[existing]
+    headers[credential.header] = f"{credential.scheme} {secret}" if credential.scheme else secret
+    return None
+
+
 async def _forward_provider_native(
     request: Request,
     *,
@@ -29155,17 +29206,29 @@ async def _forward_provider_native(
     native_operation = f"{request.method.upper()} {native_request_path}"
     if native_policy is not None:
         receipt.metadata["native_operation"] = native_operation
-        entry = native_policy.entry_for(request.method, native_request_path)
+        resolution = native_policy.resolve(request.method, native_request_path)
+        entry = resolution.entry
         if entry is None:
             return _refuse_native(
                 receipt, status_code=403, code="native_not_allowed",
                 message=f"{native_operation} is not on the allow list of engine {provider_key!r}.",
             )
         receipt.metadata["native_class"] = entry.klass
+        if resolution.ambiguous:
+            return _refuse_native(
+                receipt, status_code=403, code="native_ambiguous_path",
+                message=f"{native_operation} matches a control entry of engine {provider_key!r} only by letter case, "
+                        f"so it is refused.",
+            )
         if entry.klass == native_lane.CONTROL and not _native_caller_is_owner(auth_context.identity):
             return _refuse_native(
                 receipt, status_code=403, code="native_owner_only",
                 message=f"{native_operation} is a control call; only the gateway owner may make it.",
+            )
+        query_problem = native_lane.query_problem(entry, request.url.query)
+        if query_problem is not None:
+            return _refuse_native(
+                receipt, status_code=403, code=query_problem[0], message=query_problem[1],
             )
     decision = evaluate_and_apply(
         auth_context.identity,
@@ -29211,27 +29274,50 @@ async def _forward_provider_native(
     receipt.effective_output_limit = None
     owner = ReceiptLifecycleOwner(receipt)
     async with owner:
-        headers = prepare_downstream_headers(
-            request.headers,
-            auth_context,
-            str(target["service"]),
-            native_request_path,
+        timeout = httpx.Timeout(
+            connect=10.0,
+            read=float(target.get("timeout") or UPSTREAM_READ_TIMEOUT),
+            write=60.0,
+            pool=None,
         )
+        if native_policy is None:
+            headers = prepare_downstream_headers(
+                request.headers,
+                auth_context,
+                str(target["service"]),
+                native_request_path,
+            )
+            query = backend_query_string(request.url.query)
+            client = httpx.AsyncClient(follow_redirects=False, timeout=timeout)
+        else:
+            # The lane sends the engine its own credential for this class and nothing of the caller's.
+            headers = backend_request_headers(request.headers)
+            query = native_lane.forwarded_query(request.url.query)
+            destination = await engine_check.check_destination(str(target["host"]), gateway_ports=_engine_check_self_ports)
+            if destination.transport != "ok":
+                return _fail_native(
+                    owner, receipt, status_code=502, code="native_destination_blocked",
+                    message=f"Engine {provider_key!r} cannot be reached by the native lane: {destination.reason}",
+                    reason="destination_blocked",
+                )
+            credential_error = await _native_credential_headers(
+                headers, target, entry.klass, provider_key,
+            )
+            if credential_error is not None:
+                return _fail_native(owner, receipt, status_code=502, **credential_error)
+            # Dial only the addresses just checked, so a second lookup cannot answer somewhere else.
+            client = httpx.AsyncClient(
+                transport=engine_check.checked_transport(destination), follow_redirects=False,
+                trust_env=False, timeout=timeout,
+            )
         for name, value in (target.get("headers") or {}).items():
             for existing in [key for key in headers if key.lower() == name.lower()]:
                 del headers[existing]
             headers[name] = value
         url = f"{target['host']}{native_request_path}"
-        query = backend_query_string(request.url.query)
         if query:
             url += f"?{query}"
 
-        client = httpx.AsyncClient(follow_redirects=False, timeout=httpx.Timeout(
-            connect=10.0,
-            read=float(target.get("timeout") or UPSTREAM_READ_TIMEOUT),
-            write=60.0,
-            pool=None,
-        ))
         stream_context = client.stream(
             request.method,
             url,
@@ -29281,11 +29367,14 @@ async def _forward_provider_native(
                 owner.report(status="failed", reason="failed")
                 return openai_error_response(refusal[2], status_code=refusal[0], error_type="api_error", code=refusal[1])
 
-        response_headers = {
-            k: v
-            for k, v in upstream.headers.items()
-            if k.lower() not in _PROVIDER_NATIVE_HOP_BY_HOP_HEADERS
-        }
+        if native_policy is None:
+            response_headers = {
+                k: v
+                for k, v in upstream.headers.items()
+                if k.lower() not in _PROVIDER_NATIVE_HOP_BY_HOP_HEADERS
+            }
+        else:
+            response_headers = native_lane.relayed_headers(upstream.headers)
 
         async def _provider_native_body_stream():
             sent = 0
