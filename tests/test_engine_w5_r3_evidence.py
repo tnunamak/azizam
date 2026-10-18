@@ -244,3 +244,14 @@ def test_command_arrays_are_editable_and_save_exact_arguments(service):
         'disabled': True, 'values': body(service, lifecycle_start=argv)['values'],
     }, expected_generation=0))
     assert service.store.written['lifecycle']['driver_config']['start'] == argv
+
+
+def test_saved_evidence_is_hidden_after_another_registry_path_changes_connection(service):
+    result = asyncio.run(service.test(OWNER, body(service)))
+    asyncio.run(service.update(OWNER, 'review', {
+        'disabled': True, 'values': body(service)['values'], 'tests': {'chat': result},
+    }, expected_generation=0))
+    service.store.saved['config']['engine_tests'] = service.store.written['engine_tests']
+    assert service.view('review', OWNER)['tests']['chat']['ok'] is True
+    service.store.saved['config']['headers'] = [{'name': 'X-Tenant', 'value': 'changed-elsewhere'}]
+    assert service.view('review', OWNER)['tests'] == {}
