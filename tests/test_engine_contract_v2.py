@@ -152,6 +152,22 @@ def test_v2_record_stays_collapsed_after_normalization_and_legacy_edit() -> None
     assert record["process"]["legacy_lifecycle"]["driver"] == "command"
 
 
+def test_v2_direct_normalization_and_import_stay_collapsed() -> None:
+    registry = {"schema_version": 1, "services": {"engine-a": _service()}}
+    service_registry.migrate_engine_records_v2(registry)
+    record = service_registry.normalize_service_record("engine-a", registry["services"]["engine-a"])
+    assert "lifecycle" not in record
+
+    imported = service_registry.merge_imported_records(
+        {"schema_version": 2, "services": {}},
+        services={"engine-a": _service(source="imported")},
+    )
+    record = imported["services"]["engine-a"]
+    assert "lifecycle" not in record
+    assert "lifecycle" not in record["config"]
+    assert record["process"]["driver"] == "command"
+
+
 def test_v2_migration_refuses_conflicting_copies_without_partial_change() -> None:
     old = _service()
     old["config"]["lifecycle"]["driver_config"]["start"] = ["other"]
