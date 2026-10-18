@@ -834,7 +834,7 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
     saved = _edit(owner, service_id, {
         "definition": definition, "disabled": True,
         "values": {"address": f"{upstream.base_url}/provider" if definition == "openai-compatible" else upstream.base_url,
-                   "path_prefix": "/v1" if definition == "openai-compatible" else "", "reply_timeout_s": 37,
+                   **({"path_prefix": "/v1"} if definition == "openai-compatible" else {}), "reply_timeout_s": 37,
                    "headers": [{"name": "X-Workspace", "value": "new-value"}]},
         "models": [{"id": "new-upstream", "public_name": "hop-chat"}],
     })
@@ -849,7 +849,7 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
     assert _edit(owner, service_id, {"enabled": True}).status_code == 200
     view = owner.get(f"/admin/api/engines/{service_id}").json()["engine"]
     assert view["request_path"]["mode"] == "gateway_lifecycle"
-    assert view["request_path"]["url"] == f"{upstream.base_url}{request_path}"
+    assert engine_check.comparable_address(view["request_path"]["url"]) == engine_check.comparable_address(f"{upstream.base_url}{request_path}")
     assert view["v2"]["offerings"][0]["id"] == "offering"
     assert view["lifecycle_editable"] is False
     monkeypatch.setenv("AZIZAM_INTERNAL_LITELLM_KEY", "internal-test-key")
@@ -864,6 +864,18 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
     assert clients[-1].timeout.read == 37
     assert len(upstream.requests) == 1
     assert old.requests == []
+    registry = _registry(gateway)
+    registry["services"][service_id]["config"].update(
+        api_key_env="MISSING_HOP_TEST_KEY", credential_origin=engine_check.origin_of(upstream.base_url),
+    )
+    _put_registry(gateway, registry)
+    monkeypatch.delenv("MISSING_HOP_TEST_KEY", raising=False)
+    refused = owner.post(f"/internal/litellm/local/{service_id}/v1/chat/completions",
+                         headers={"Authorization": "Bearer internal-test-key"},
+                         json={"model": "new-upstream", "messages": []})
+    assert refused.status_code == 503, refused.text
+    assert refused.json()["error"]["code"] == "engine_credential_unavailable"
+    assert len(upstream.requests) == 1
 
 
 @pytest.mark.parametrize("body", [
@@ -906,6 +918,7 @@ def test_legacy_host_edit_updates_the_effective_page_address(gateway, fake_upstr
     owner, *_ = owner_and_admin(gateway)
     _silent(fake_upstreams, "before-legacy-edit.fk.test")
     assert _create(owner, {"definition": "openai-compatible", "name": "legacy-address", "disabled": True,
+                           "capabilities": ["chat"],
                            "values": {"address": "http://before-legacy-edit.fk.test/v1"}}).status_code == 201
     changed = _edit(owner, "legacy-address", {"host": "after-legacy-edit.fk.test"})
     assert changed.status_code == 200, changed.text

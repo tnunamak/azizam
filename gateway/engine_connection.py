@@ -57,7 +57,9 @@ def inference_connection(
                 key = secret_store.get_provider_secret(
                     str(config["api_key_secret_id"]), db_path=db_path, expected_origin=origin,
                 )
-            except (KeyError, PermissionError):
+            except Exception:
+                # Missing key files, unreadable ciphertext and stale references
+                # all stop dispatch, without exposing secret-store details.
                 raise InferenceConnectionError("The engine credential is unavailable. Re-enter it in Connection.") from None
         elif config.get("api_key_env"):
             key = env(str(config["api_key_env"]))
