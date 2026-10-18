@@ -1,0 +1,275 @@
+{
+  "assets": [],
+  "caller": [
+    {
+      "label": "translate",
+      "request": {
+        "body": {
+          "boundary": "<boundary>",
+          "epilogue": "\r\n",
+          "kind": "multipart",
+          "parts": [
+            {
+              "body": {
+                "kind": "text",
+                "text": "parakeet"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"model\""
+            },
+            {
+              "body": {
+                "kind": "text",
+                "text": "json"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"response_format\""
+            },
+            {
+              "body": {
+                "kind": "binary",
+                "len": 16044,
+                "magic": "52494646a43e0000",
+                "sha256": "d6562284957991803328564d8eea3102b94635b8ca4c8863412117bb030ba73f"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\nContent-Type: audio/wav"
+            }
+          ],
+          "preamble": ""
+        },
+        "headers": {
+          "content-length": "16404",
+          "content-type": "multipart/form-data; boundary=<boundary>"
+        },
+        "method": "POST",
+        "path": "/v1/audio/translations",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"text\": \"hello world\"}"
+        },
+        "headers": {
+          "content-length": "23",
+          "content-type": "application/json"
+        },
+        "status": 200
+      }
+    }
+  ],
+  "description": "POST /v1/audio/translations against the default engine (whatever the gateway decides for this config)",
+  "engine_requests": [
+    {
+      "body": {
+        "boundary": "<boundary>",
+        "epilogue": "\r\n",
+        "kind": "multipart",
+        "parts": [
+          {
+            "body": {
+              "kind": "text",
+              "text": "json"
+            },
+            "crlf_after_body": true,
+            "headers": "Content-Disposition: form-data; name=\"response_format\""
+          },
+          {
+            "body": {
+              "kind": "text",
+              "text": "parakeet-tdt-0.6b-v3"
+            },
+            "crlf_after_body": true,
+            "headers": "Content-Disposition: form-data; name=\"model\""
+          },
+          {
+            "body": {
+              "kind": "binary",
+              "len": 16044,
+              "magic": "52494646a43e0000",
+              "sha256": "d6562284957991803328564d8eea3102b94635b8ca4c8863412117bb030ba73f"
+            },
+            "crlf_after_body": true,
+            "headers": "Content-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\nContent-Type: audio/wav"
+          }
+        ],
+        "preamble": ""
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "identity",
+        "connection": "keep-alive",
+        "content-length": "16416",
+        "content-type": "multipart/form-data; boundary=<boundary>",
+        "host": "127.0.0.1:5092"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/v1/audio/translations",
+      "query": [],
+      "step": 0,
+      "to": "127.0.0.1:5092"
+    }
+  ],
+  "gateway_sleeps": [],
+  "media_jobs": {
+    "media_jobs_schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "notes": {},
+  "receipts": {
+    "receipts": [
+      {
+        "api_key_name": "test-app",
+        "app_id": "app_test",
+        "app_profile": "plan_everything",
+        "created_at": "<time>",
+        "intent": "audio.translations",
+        "job_id": null,
+        "parent_request_id": null,
+        "path": "/v1/audio/translations",
+        "protocol": "openai.audio",
+        "receipt_json": {
+          "accepted_at_ms": "<time>",
+          "accepted_inputs": [
+            "file",
+            "model",
+            "response_format"
+          ],
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "attempt_number": 1,
+          "backend": "stt",
+          "client_address": null,
+          "client_hint": null,
+          "connection_id": null,
+          "cost": null,
+          "effective_output_limit": null,
+          "fallback_reasons": [
+            "below_threshold"
+          ],
+          "finished_at_ms": "<time>",
+          "first_output_at_ms": null,
+          "ignored_inputs": {},
+          "intent": "audio.translations",
+          "job_id": null,
+          "latency_ms": "<duration>",
+          "manifest_hash": null,
+          "manifest_id": null,
+          "manifest_version": null,
+          "metadata": {
+            "status_code": 200,
+            "stt": {
+              "attempts_started": 0,
+              "chunked": false,
+              "field_count": 2,
+              "file_count": 1
+            },
+            "terminal_reason": "completed"
+          },
+          "owner_key_hash": "app:app_test",
+          "parent_request_id": null,
+          "path": "/v1/audio/translations",
+          "policy_decision": "allowed",
+          "policy_reasons": [
+            "allowed by your access plan"
+          ],
+          "policy_sources": [
+            "access_plan:plan_everything"
+          ],
+          "protocol": "openai.audio",
+          "queued_at_ms": null,
+          "rejected_inputs": {},
+          "remote": false,
+          "request_id": "<req:1>",
+          "requested_model": null,
+          "requested_workflow": null,
+          "resolved_model": null,
+          "resolved_workflow": null,
+          "resource_decision": {
+            "facts": [
+              {
+                "name": "queue_limit",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "queue",
+                "value": 2
+              },
+              {
+                "name": "queue_active",
+                "observed_at": "<time>",
+                "quality": "measured",
+                "resource_class": "queue",
+                "value": 0
+              },
+              {
+                "name": "requested_disk_mb",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "disk",
+                "value": 1536
+              },
+              {
+                "name": "total_disk_mb",
+                "observed_at": "<time>",
+                "quality": "measured",
+                "resource_class": "disk",
+                "value": 10240
+              },
+              {
+                "name": "used_disk_mb",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "disk",
+                "value": 0
+              },
+              {
+                "name": "available_disk_mb",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "disk",
+                "value": 10240
+              }
+            ],
+            "outcome": "accepted",
+            "reasons": [
+              {
+                "code": "estimate_reason",
+                "effect": "info",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "resource",
+                "rule": "bounded STT upload and decoded media workspace"
+              }
+            ]
+          },
+          "source_kind": "app",
+          "source_label": "test-app",
+          "started_at_ms": null,
+          "status": "succeeded",
+          "stream": false,
+          "updated_at_ms": "<time>",
+          "usage": null,
+          "visibility": "full",
+          "warnings": []
+        },
+        "request_id": "<req:1>",
+        "status": "succeeded"
+      }
+    ],
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "stt_translations",
+  "schema": 1
+}
