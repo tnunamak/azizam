@@ -103,10 +103,6 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(self.library()[asset("A")], False)
         self.assertEqual(len(self.job_ids("req_a")), 1)
 
-
-class DeleteSucceededTests(unittest.TestCase):
-    setUp, tearDown = base.MeMediaRouterTests.setUp, base.MeMediaRouterTests.tearDown
-
     def test_only_succeeded_jobs_are_deleted_with_their_events(self) -> None:
         done = media_jobs.create(media_jobs.MediaJob(job_id="done", intent="image.generate",
                                                      status=media_jobs.STATUS_SUCCEEDED), path=self.jobs_db)
