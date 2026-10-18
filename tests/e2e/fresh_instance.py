@@ -135,6 +135,22 @@ def snapshot(destination):
     shutil.copy2(REPO / "tests/e2e/fake_engine.py", destination / "tests/e2e/fake_engine.py")
 
 
+def write_bringup_time(clock, ready):
+    """Record the Compose bring-up: pull, build, and up until /health answers.
+
+    scripts/ci-local sets FRESH_INSTANCE_TIMING_OUT and adds this to the browser
+    journey's time (scripts/ci/journey_clock.py). A cached image layer makes
+    `build` faster than on a new machine; the number is a floor, not a ceiling.
+    """
+    started, pulled, built = clock
+    timing = {"pull_s": round(pulled - started, 1), "build_s": round(built - pulled, 1),
+              "up_s": round(ready - built, 1), "bringup_s": round(ready - started, 1)}
+    print(f"PASS Compose bring-up took {timing['bringup_s']} s "
+          f"(pull {timing['pull_s']}, build {timing['build_s']}, up {timing['up_s']})", flush=True)
+    if os.environ.get("FRESH_INSTANCE_TIMING_OUT"):
+        Path(os.environ["FRESH_INSTANCE_TIMING_OUT"]).write_text(json.dumps(timing) + "\n")
+
+
 def assert_fresh_setup_entry(client, compose):
     if not compose:
         # A source checkout has no web build; the server console still works.
@@ -266,10 +282,15 @@ def run(compose):
                                env=env, stdout=log, stderr=log, check=True, timeout=90)
             stack.callback(down)
             print("Starting disposable Compose gateway, LiteLLM, and fake engine...", flush=True)
+            # What `docker compose up` does for a new operator, timed in its three
+            # parts (release bar 1: the ten minutes start here).
+            clock = [time.monotonic()]
             subprocess.run(command + ["pull", "litellm"], env=env, stdout=log,
                            stderr=log, check=True, timeout=600)
+            clock.append(time.monotonic())
             subprocess.run(command + ["build", "gateway"], env=env, stdout=log,
                            stderr=log, check=True, timeout=600)
+            clock.append(time.monotonic())
             gateway_socket.close()
             subprocess.run(command + ["up", "--no-build", "--pull", "never", "-d"], env=env, stdout=log,
                            stderr=log, check=True, timeout=90)
@@ -286,6 +307,8 @@ def run(compose):
                                                  trust_env=False, timeout=10, follow_redirects=False))
         wait_ready(client, "/health")
         print("PASS fresh gateway health", flush=True)
+        if compose:
+            write_bringup_time(clock, time.monotonic())
         assert_fresh_setup_entry(client, compose)
         password = "Fresh-test-password-" + os.urandom(8).hex()
         expect(client.post("/setup/local-owner", data={"email": "owner@example.test",

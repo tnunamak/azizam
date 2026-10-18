@@ -27,3 +27,5 @@ The gate holds the counts at fixed data sizes: `tests/test_route_work_budget.py`
 ```sh
 PYTHONPATH=. venv/bin/python scripts/perf/run.py --counts-only --no-ui   # a few minutes
 ```
+
+Ports: the perf tools use 18800-18839, outside the gate's default range (`scripts/ci-local`, docs/ops/CI.md), so a perf run and a gate run can share a host (`tests/test_port_ranges.py`).

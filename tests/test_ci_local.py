@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-COPIED = ("scripts/ci-local", "scripts/low-priority", "scripts/ci/gate_cost.py", "scripts/ci/merge_cases.py", "scripts/ci/policy.py", "scripts/ci/prune_receipts.py", "scripts/ci/replay_scan.py", "scripts/ci/pi-unit")
+COPIED = ("scripts/ci-local", "scripts/low-priority", "scripts/ci/gate_cost.py", "scripts/ci/merge_cases.py", "scripts/ci/policy.py", "scripts/ci/prune_receipts.py", "scripts/ci/replay_scan.py", "scripts/ci/pi-unit", "scripts/ci/journey_clock.py")
 
 STUBS = {
     # Tools on PATH.
@@ -78,6 +78,10 @@ case $3 in
 esac
 printf '{"framework":"playwright","config":"%s","project":"chromium","id":"%s","file":"%s","titles":["a"],"status":"passed","duration_ms":5}\\n' \\
   "$3" "$3" "$PWD/$file" >> "$CASE_RECEIPTS_FILE"
+# web/e2e/first-run.spec.ts writes its time where the gate asks (main config only).
+if [[ $3 == playwright.config.ts && -n ${FIRST_RUN_TIMING_OUT:-} && -z ${FAKE_NO_FIRST_RUN_TIME:-} ]]; then
+  printf '{"elapsed_seconds": %s}\\n' "${FAKE_FIRST_RUN_S:-8}" > "$FIRST_RUN_TIMING_OUT"
+fi
 """,
 }
 REPO_FILES = {
@@ -88,6 +92,9 @@ printf '<testsuites><testsuite name="pytest"><testcase classname="tests.test_ok"
     "scripts/ci/mcp-conformance": "#!/usr/bin/env bash\n",
     "scripts/e2e/fresh_instance.sh": """#!/usr/bin/env bash
 if [[ ${1:-} != --compose && -n ${FAKE_DURING_RUN:-} ]]; then eval "$FAKE_DURING_RUN"; fi
+if [[ ${1:-} == --compose && -n ${FRESH_INSTANCE_TIMING_OUT:-} ]]; then
+  printf '{"pull_s": 1.0, "build_s": 2.0, "up_s": 3.0, "bringup_s": %s}\\n' "${FAKE_COMPOSE_S:-120}" > "$FRESH_INSTANCE_TIMING_OUT"
+fi
 """,
     "tests/test_ok.py": "def test_ok():\n    pass\n",
     "tests/suites.toml": "",
@@ -215,7 +222,7 @@ def test_signoff_posts_to_the_tested_sha_then_writes_the_receipt(world: World) -
     assert receipt["status_url"] == f"https://api.github.test/repos/o/r/statuses/{sha}"
     assert receipt["steps"].split(",") == sorted([
         "cases", "compat-node", "e2e-browser", "e2e-household", "e2e-live-data", "e2e-main", "e2e-tree-unchanged", "e2e-venv",
-        "fresh-compose", "fresh-native", "fresh-venv", "mcp-conformance", "pi-unit", "policy", "python-hermetic",
+        "fresh-compose", "fresh-native", "fresh-venv", "journey-clock", "mcp-conformance", "pi-unit", "policy", "python-hermetic",
         "web-build", "web-check", "web-npm-ci", "web-unit"])
     assert receipt["policy"].startswith("policy: ok:")
     assert world.run_dirs() == []  # a passed run removes its directory
@@ -395,7 +402,7 @@ def test_static_checks_overlap_browsers_after_build_in_native_slot(world: World)
     rows = [line.split("\t") for line in (world.receipts / "steps.tsv").read_text().splitlines()]
     names = [row[0] for row in rows]
     assert names == sorted(names)
-    assert len(names) == len(set(names)) == 19
+    assert len(names) == len(set(names)) == 20
     assert all(row[1] == "0" for row in rows)
     assert (world.receipts / "logs/web-build.log").read_text() == "build-log\n"
     assert (world.receipts / "logs/web-check.log").read_text() == "type-log\nlint-log\ndoctor-log\n"
@@ -466,7 +473,7 @@ def test_each_step_records_wall_cpu_and_peak_rss(world: World) -> None:
     result = world.run()
     assert result.returncode == 0, result.stdout + result.stderr
     rows = [line.split("\t") for line in (world.receipts / "steps.tsv").read_text().splitlines()]
-    assert len(rows) == 19
+    assert len(rows) == 20
     for name, rc, seconds, wall, cpu, peak_kb in rows:
         assert rc == "0" and seconds.isdigit(), name
         assert re.fullmatch(r"\d+\.\d{2}", wall) and re.fullmatch(r"\d+\.\d{2}", cpu), name
@@ -501,7 +508,7 @@ def test_the_critical_path_follows_pytest_when_it_is_slowest(world: World) -> No
     result = world.run(FAKE_PYTEST_SECONDS="2.5", FAKE_WEB_BUILD="sleep 0.5", FAKE_BROWSER_GATE="sleep 0.3")
     assert result.returncode == 0, result.stdout + result.stderr
     path = json.loads((world.receipts / "cost.json").read_text())["critical_path"]["steps"]
-    assert path == ["python-hermetic", "e2e-tree-unchanged", "cases", "policy"]
+    assert path == ["python-hermetic", "e2e-tree-unchanged", "journey-clock", "cases", "policy"]
 
 
 def test_the_critical_path_follows_the_web_build_when_it_is_slowest(world: World) -> None:
@@ -510,7 +517,7 @@ def test_the_critical_path_follows_the_web_build_when_it_is_slowest(world: World
     path = json.loads((world.receipts / "cost.json").read_text())["critical_path"]["steps"]
     assert path[:4] == ["web-npm-ci", "web-build", "e2e-venv", "e2e-browser"]
     assert path[4] in ("e2e-main", "e2e-live-data", "e2e-household")  # the three browser lanes tie
-    assert path[5:] == ["e2e-tree-unchanged", "cases", "policy"]
+    assert path[5:] == ["e2e-tree-unchanged", "journey-clock", "cases", "policy"]
 
 
 def test_the_cost_table_is_sorted_by_wall_clock(world: World) -> None:
@@ -524,7 +531,7 @@ def test_the_cost_table_is_sorted_by_wall_clock(world: World) -> None:
         if line.startswith("critical path"):
             break
         rows.append(line.split())
-    assert len(rows) == 19
+    assert len(rows) == 20
     walls = [float(row[2]) for row in rows]
     assert walls == sorted(walls, reverse=True)
     assert rows[0][0] == "python-hermetic"
@@ -644,3 +651,29 @@ chmod +x "$root/bin/python3.12"
         expected.append("continued")
     assert calls == expected
     assert result.stderr.count("hermetic pytest: reinstalling Python 3.12.13") == int(not existing)
+def test_the_first_run_journey_is_timed_end_to_end_into_cost_json(world: World) -> None:
+    result = world.run(FAKE_COMPOSE_S="200", FAKE_FIRST_RUN_S="12.5")
+    assert result.returncode == 0, result.stdout + result.stderr
+    cost = json.loads((world.receipts / "cost.json").read_text())
+    assert cost["journey"] == {"compose_bringup_s": 200.0, "first_run_ui_s": 12.5, "total_s": 212.5, "limit_s": 600, "passed": True}
+    # One file: gate_cost.py's schema, with the journey section journey-clock wrote kept.
+    assert cost["schema"] == 1 and set(cost["steps"]) >= {"journey-clock", "fresh-compose", "e2e-main"}
+    assert cost["steps"]["journey-clock"]["rc"] == 0
+    path = cost["critical_path"]["steps"]
+    assert path[-3:] == ["journey-clock", "cases", "policy"]
+
+
+def test_a_journey_over_ten_minutes_fails_the_gate_but_keeps_cost_json(world: World) -> None:
+    result = world.run(FAKE_COMPOSE_S="595", FAKE_FIRST_RUN_S="5")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (world.receipts / "steps/journey-clock.tsv").read_text().split("\t")[1] == "1"
+    journey = json.loads((world.receipts / "cost.json").read_text())["journey"]
+    assert journey["total_s"] == 600.0 and journey["limit_s"] == 600 and journey["passed"] is False
+    assert not (world.receipts / "PASS").exists()
+
+
+def test_a_journey_with_no_browser_time_fails_the_gate(world: World) -> None:
+    result = world.run(FAKE_NO_FIRST_RUN_TIME="1")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (world.receipts / "steps/journey-clock.tsv").read_text().split("\t")[1] == "1"
+    assert "journey" not in json.loads((world.receipts / "cost.json").read_text())

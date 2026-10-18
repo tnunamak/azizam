@@ -22,7 +22,7 @@ were still stored.
 - It writes receipts to `~/.tmp/azizam-ci-receipts/<tree>/`: `run.tsv`
   (SHA, seed, layout), `steps.tsv` (step, exit code, whole seconds, wall
   seconds, CPU seconds (user plus system), peak RSS kB), `cost.json` (totals,
-  and the critical path: the longest chain of steps, each starting when the
+  the `journey` section, and the critical path: the longest chain of steps, each starting when the
   steps it waits for finish), `logs/`, `raw/` (each framework's report),
   `cases.jsonl`, and browser evidence only when a run fails. A tree that
   already passed is not run again (`--force` reruns it).
@@ -203,7 +203,10 @@ interrupted run, lock waiting, and a killed controller.
   categories or providers. `SECOND_GLOBAL_FILES` in `web/playwright.config.ts`
   names the files that run on the second server (23 cases); any other file,
   including a new one, runs on the first. The two projects are listed before
-  `chromium`, so they start with the pool and run beside it. The live-data
+  `chromium`, so they start with the pool and run beside it. `chromium-first-run`
+  (`BASE+80`, one case) runs `first-run.spec.ts` on a gateway that global setup
+  does not seed: no owner, no engine. Beside it run a LiteLLM stand-in (`+1`) and
+  the engine the test adds (`+2`). The live-data
   (`BASE+30`) and household (`BASE+40`) runs start at the same time. One
   gateway is one Python process: with 6 or 10 workers on a single gateway the
   run took 930-1000 s and failed on timeouts. Each server is one gateway and one
@@ -222,8 +225,19 @@ interrupted run, lock waiting, and a killed controller.
   instead of `./fixtures/isolation`.
 - `--port BASE` defaults to `18640`. Each server reserves gateway +0, fake
   engine +1 and strict-engine candidates +2 through +9. The entire allocation
-  must fit within 18000–18998 or the command fails early. The fresh-instance
+  must fit within 18000–18998 or the command fails early. The default range is
+  18640–18729. Other fixture tools stay out of it (perf uses 18800–18839;
+  `tests/test_port_ranges.py` checks). The fresh-instance
   journeys take the first free ports from 18000 upward.
+- The ten-minute bar (release bar 1) has one clock. `fresh-compose` writes the
+  Compose bring-up (`docker compose pull`, `build`, `up` until `/health`
+  answers) to `raw/compose-bringup.json`; `first-run.spec.ts` writes its browser
+  time to `raw/first-run-ui.json`. The step `journey-clock`
+  (`scripts/ci/journey_clock.py`) adds them into the `journey` section of
+  `cost.json` (`compose_bringup_s`, `first_run_ui_s`, `total_s`, `limit_s`: 600,
+  `passed`) and fails at 600 s or more, or when either half is missing;
+  `gate_cost.py report` keeps that section when it writes the rest. Cached
+  Docker layers make the bring-up a floor, not a ceiling.
 - The browser steps share one completed web directory, read-only: no per-lane
   copies and no npm install or build while they run. The runner writes
   (`test-results`, auth files, screenshots, reports) go to the run directory;

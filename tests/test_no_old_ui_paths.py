@@ -47,6 +47,8 @@ ALLOWED = (
     "scripts/research/reddit_corpus.py", "scripts/local/run_qwen27b_mtp.sh",  # Reddit /r/ and /home/ file paths
     "web/e2e/root-paths.spec.ts", "web/tests/components/page-registry.spec.tsx",
     "web/tests/lib/signin-return.spec.ts",
+    "web/e2e/member-connect.spec.ts",  # asserts a member makes no /admin call except the session check
+    "web/src/app/_home/audit-tests/home.component.spec.tsx",  # asserts the member Home requests no /admin path
 )
 
 

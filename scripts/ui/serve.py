@@ -22,6 +22,9 @@ ENGINE_PORT = int(EXTERNAL_UPSTREAM_PORT) if EXTERNAL_UPSTREAM_PORT else PORT + 
 SEED_PROFILE = os.environ.get('UI_SEED_PROFILE', '')
 if SEED_PROFILE not in ('', 'household'):
     raise SystemExit('UI_SEED_PROFILE must be household or unset')
+# The shipped first-run config (no backends) instead of the fixture's: the
+# instance a new operator starts with, for web/e2e/first-run.spec.ts.
+FIRST_RUN = os.environ.get('UI_E2E_FIRST_RUN') == '1'
 SEED_SCENARIO = os.environ.get('UI_HOUSEHOLD_SCENARIO', 'default')
 if not 18000 <= PORT < 18999:
     raise SystemExit('UI_E2E_PORT must be between 18000 and 18998')
@@ -48,14 +51,19 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
     home.mkdir()
     (state / 'images').mkdir()
     config = state / 'config.yml'
-    # Backend definitions are seed data, not engine-specific implementation.
-    disabled = '\n'.join(f'  {name}: {{enabled: false, host: 127.0.0.1, port: {ENGINE_PORT}}}'
-                         for name in ('kobold', 'comfyui', 'embeddings'))
-    config.write_text(f'proxy:\n  host: 127.0.0.1\n  port: {PORT}\nbackends:\n{disabled}\n  litellm: {{enabled: true, base_url: "http://127.0.0.1:{ENGINE_PORT}", host: 127.0.0.1, port: {ENGINE_PORT}}}\n'
-                      'admin:\n  oidc:\n    cookie:\n      secure: false\n'
-                      'model_aliases:\n  chat:\n    stable:\n      fast: demo-chat\n'
-                      f'images:\n  cache_dir: {state / "images"}\n  vram_estimates_file: {state / "vram.json"}\n'
-)
+    if FIRST_RUN:
+        import yaml
+        document = yaml.safe_load((REPO / 'first-run.yml').read_text())
+        document['proxy']['port'] = PORT
+        config.write_text(yaml.safe_dump(document))
+    else:
+        # Backend definitions are seed data, not engine-specific implementation.
+        disabled = '\n'.join(f'  {name}: {{enabled: false, host: 127.0.0.1, port: {ENGINE_PORT}}}'
+                             for name in ('kobold', 'comfyui', 'embeddings'))
+        config.write_text(f'proxy:\n  host: 127.0.0.1\n  port: {PORT}\nbackends:\n{disabled}\n  litellm: {{enabled: true, base_url: "http://127.0.0.1:{ENGINE_PORT}", host: 127.0.0.1, port: {ENGINE_PORT}}}\n'
+                          'admin:\n  oidc:\n    cookie:\n      secure: false\n'
+                          'model_aliases:\n  chat:\n    stable:\n      fast: demo-chat\n'
+                          f'images:\n  cache_dir: {state / "images"}\n  vram_estimates_file: {state / "vram.json"}\n')
     env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': str(home),
            'PYTHONPATH': str(REPO), 'PYTHONDONTWRITEBYTECODE': '1',
            'AZIZAM_CONFIG_PATH': str(config), 'AZIZAM_GRACEFUL_SHUTDOWN_S': '1',
@@ -104,7 +112,17 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
         merge(document, json.loads(Path(os.environ['UI_E2E_EXTRA_CONFIG']).read_text()))
         config.write_text(yaml.safe_dump(document))
     try:
-        for module, port in [('scripts.ui.fake_engine:app', ENGINE_PORT), ('proxy:app', PORT)]:
+        servers = [('scripts.ui.fake_engine:app', ENGINE_PORT, {}), ('proxy:app', PORT, {})]
+        if FIRST_RUN:
+            # The engine at ENGINE_PORT stands in for LiteLLM and sends each chat to the
+            # address in the config the gateway writes; the operator adds the engine
+            # one port above it (inside the harness's strict-port window), which has a
+            # model and a reply of its own.
+            servers[0][2].update(FAKE_SUBSTRATE_CONFIG=str(state / 'litellm.config.yaml'))
+            servers.insert(1, ('scripts.ui.fake_engine:app', ENGINE_PORT + 1,
+                               {'FAKE_ENGINE_MODEL': 'marker-engine-chat',
+                                'FAKE_ENGINE_REPLY': 'Answered by the engine you just added: marker-engine-chat.'}))
+        for module, port, extra_env in servers:
             if module != 'proxy:app' and EXTERNAL_UPSTREAM_PORT:
                 continue
             log = (state / f'{port}.log').open('w')
@@ -112,7 +130,7 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
                        if module == 'proxy:app' else [sys.executable, '-m', 'uvicorn', module, '--host',
                                                     '127.0.0.1', '--port', str(port),
                                                     '--timeout-keep-alive', '3600'])
-            children.append(subprocess.Popen(command, cwd=state, env=env,
+            children.append(subprocess.Popen(command, cwd=state, env={**env, **extra_env},
                                              stdout=log, stderr=subprocess.STDOUT))
             log.close()
         deadline = time.monotonic() + 90
