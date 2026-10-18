@@ -16,6 +16,7 @@ import pytest
 
 from gateway import admin_store, lifecycle_drivers, runtime_secrets, secret_refs, service_registry
 from tests.support import canary
+from tests.support.fake_upstream import fake_upstreams, scenario_from_data  # noqa: F401
 from tests.test_admin_secret_sweep import host_isolated  # noqa: F401
 from tests.test_secret_canary_matrix import REGISTRY, _etag
 from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin  # noqa: F401
@@ -72,6 +73,7 @@ def error_code(response) -> str:
 # ---------------------------------------------------------------------------
 
 GOOD = "http://good.invalid:9"
+LOAD, UNLOAD, VERIFY = "/v1/model/load", "/v1/model/unload", "/v1/model"
 
 
 def _driver_record(**config):
@@ -80,7 +82,7 @@ def _driver_record(**config):
         "config": {"base_url": f"{GOOD}/v1", "host": "good.invalid", "port": 9, "protocol": "openai-compatible",
                    "models": [{"id": "m", "upstream_model": "m"}], **config},
         "lifecycle": {"type": "http", "driver": "http-load-unload",
-                      "driver_config": {"load_url": "/load", "unload_url": "/unload", "verify_endpoint": "/v1/model",
+                      "driver_config": {"load_url": LOAD, "unload_url": UNLOAD, "verify_endpoint": VERIFY,
                                         "admin_key_env": "R3_DRIVER_ADMIN_KEY", "api_key_env": "R3_DRIVER_API_KEY"}},
     }
 
@@ -171,85 +173,65 @@ def test_the_driver_dials_an_address_the_fingerprint_covers(shape):
                 assert service_registry._endpoint_fingerprint(moved) != service_registry._endpoint_fingerprint(shape), field
 
 
-class _Recorder:
-    """A stand-in for ``httpx.AsyncClient`` that records each request and answers 200."""
-
-    calls: list = []
-
-    def __init__(self, *args, **kwargs):
-        pass
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
-
-    async def _answer(self, method, url, **kwargs):
-        type(self).calls.append((method, url, dict(kwargs.get("headers") or {})))
-
-        class Response:
-            status_code = 200
-            text = '{"status":"finished"}'
-
-            def json(self):
-                return {"id": "wanted"}
-
-            async def aiter_bytes(self):
-                yield b'{"status":"finished"}'
-
-        return Response()
-
-    async def post(self, url, **kwargs):
-        return await self._answer("POST", url, **kwargs)
-
-    async def get(self, url, **kwargs):
-        return await self._answer("GET", url, **kwargs)
-
-
 def _swap_backend(**config):
-    backend = service_registry.runtime_backend_from_service(_driver_record(**config))
-    return backend
+    return service_registry.runtime_backend_from_service(_driver_record(**config))
 
 
-def _run_swap(monkeypatch, backend):
-    import httpx
+def _serve(fakes, host, *exchanges):
+    """A model server at ``host`` that answers ``exchanges`` (each optional, so a test can also expect no call at all)."""
+    scenario = scenario_from_data({
+        "protocol": "http-load-unload", "name": "r3-driver",
+        "provenance": {"source": "hand-written", "reference": "gateway/lifecycle_drivers.py HttpLoadUnloadDriver"},
+        "exchanges": [{"required": False, **exchange} for exchange in exchanges]})
+    return fakes.asgi(scenario, host=host)
 
-    _Recorder.calls = []
-    monkeypatch.setattr(httpx, "AsyncClient", _Recorder)
+
+def _unload(**match):
+    return {"id": "unload", "match": {"method": "POST", "path": UNLOAD, **match}, "response": {"status": 204}}
+
+
+def _load(**match):
+    return {"id": "load", "match": {"method": "POST", "path": LOAD, **match},
+            "response": {"body": [{"text": "{\"status\":\"finished\"}"}]}}
+
+
+def _swap(backend, *, loaded="old"):
+    ctx = None if loaded is None else lifecycle_drivers.SwapContext(loaded_model=loaded, target_model="wanted")
+    return asyncio.run(lifecycle_drivers.HttpLoadUnloadDriver().swap(backend, {"model_name": "wanted"}, ctx=ctx))
+
+
+@pytest.fixture
+def driver_keys(monkeypatch):
     monkeypatch.setenv("R3_DRIVER_ADMIN_KEY", "R3-ADMIN-KEY-VALUE")
     monkeypatch.setenv("R3_DRIVER_API_KEY", "R3-API-KEY-VALUE")
-    result = asyncio.run(lifecycle_drivers.HttpLoadUnloadDriver().swap(
-        backend, {"model_name": "wanted"}, ctx=lifecycle_drivers.SwapContext(loaded_model="old", target_model="wanted")))
-    return result, list(_Recorder.calls)
 
 
-def test_the_driver_sends_its_keys_to_the_origin_they_are_bound_to(monkeypatch):
-    backend = _swap_backend(**{"driver_credential_origin": GOOD})
-    result, calls = _run_swap(monkeypatch, backend)
-    assert result is True
-    assert calls and all(url.startswith(GOOD) for _, url, _ in calls)
-    assert any(headers.get("x-admin-key") == "R3-ADMIN-KEY-VALUE" for _, _, headers in calls)
+def test_the_driver_sends_its_keys_to_the_origin_they_are_bound_to(fake_upstreams, driver_keys):
+    fake = _serve(fake_upstreams, "good.invalid:9",
+                  _unload(headers={"x-admin-key": "R3-ADMIN-KEY-VALUE"}),
+                  _load(headers={"x-admin-key": "R3-ADMIN-KEY-VALUE"}, json={"model_name": "wanted"}))
+    assert _swap(_swap_backend(**{"driver_credential_origin": GOOD})) is True
+    assert [call.path for call in fake.requests] == [UNLOAD, LOAD]
 
 
-@pytest.mark.parametrize("config", [
-    {"host": "evil.invalid", "port": 4444, "driver_credential_origin": GOOD},
-    {"host": "evil.invalid", "port": 4444},
-    {"driver_credential_origin": GOOD, "port": 4444},
-    {"driver_credential_origin": "not a url"},
+@pytest.mark.parametrize("host,config", [
+    ("evil.invalid:4444", {"host": "evil.invalid", "port": 4444, "driver_credential_origin": GOOD}),
+    ("evil.invalid:4444", {"host": "evil.invalid", "port": 4444}),
+    ("good.invalid:4444", {"driver_credential_origin": GOOD, "port": 4444}),
+    ("good.invalid:9", {"driver_credential_origin": "not a url"}),
 ], ids=["host moved", "never bound, host moved", "port moved", "unreadable origin"])
-def test_the_driver_sends_nothing_to_an_origin_its_keys_are_not_bound_to(monkeypatch, config):
-    result, calls = _run_swap(monkeypatch, _swap_backend(**config))
-    assert result is False
-    assert calls == []
+def test_the_driver_sends_nothing_to_an_origin_its_keys_are_not_bound_to(fake_upstreams, driver_keys, host, config):
+    fake = _serve(fake_upstreams, host, _unload(), _load())
+    assert _swap(_swap_backend(**config)) is False
+    assert fake.requests == []
 
 
-def test_a_driver_with_no_key_needs_no_binding(monkeypatch):
+def test_a_driver_with_no_key_needs_no_binding(fake_upstreams):
     backend = _swap_backend()
     backend["lifecycle"]["driver_config"].pop("admin_key_env")
     backend["lifecycle"]["driver_config"].pop("api_key_env")
-    result, calls = _run_swap(monkeypatch, backend)
-    assert result is True and calls
+    fake = _serve(fake_upstreams, "good.invalid:9", _unload(), _load())
+    assert _swap(backend) is True and len(fake.requests) == 2
 
 
 def _v11_database(path, registry) -> None:
@@ -367,52 +349,51 @@ def _moved(record, db):
     return moved
 
 
-def test_the_swap_requests_carry_the_query_credentials_stored_for_load_unload_and_verify(store, monkeypatch):
+def _driver_record_without_keys():
     record = _driver_record()
-    record["lifecycle"]["driver_config"].update(
-        load_url="/load?token=R3LOADTOKEN", unload_url="/unload?token=R3UNLOADTOKEN", verify_endpoint="/v1/model?sig=R3VERIFYSIG")
     for name in ("admin_key_env", "api_key_env"):
         record["lifecycle"]["driver_config"].pop(name)
+    return record
+
+
+def test_the_swap_requests_carry_the_query_credentials_stored_for_load_unload_and_verify(store, fake_upstreams):
+    record = _driver_record_without_keys()
+    record["lifecycle"]["driver_config"].update(
+        load_url=f"{LOAD}?token=R3LOADTOKEN", unload_url=f"{UNLOAD}?token=R3UNLOADTOKEN", verify_endpoint=f"{VERIFY}?sig=R3VERIFYSIG")
     moved = _moved(record, store)
     assert not [seed for seed in ("R3LOADTOKEN", "R3UNLOADTOKEN", "R3VERIFYSIG") if seed in json.dumps(moved)]
-    result, calls = _run_swap(monkeypatch, service_registry.runtime_backend_from_service(moved))
-    assert result is True
-    urls = [url for _, url, _ in calls]
-    assert any(url.endswith("/load?token=R3LOADTOKEN") for url in urls), urls
-    assert any(url.endswith("/unload?token=R3UNLOADTOKEN") for url in urls), urls
+    backend = service_registry.runtime_backend_from_service(moved)
+    fake = _serve(fake_upstreams, "good.invalid:9", _unload(query={"token": "R3UNLOADTOKEN"}), _load(query={"token": "R3LOADTOKEN"}))
+    assert _swap(backend) is True and len(fake.requests) == 2
+    verify = _serve(fake_upstreams, "verify.invalid:9", {"id": "verify", "match": {"method": "GET", "path": VERIFY, "query": {"sig": "R3VERIFYSIG"}},
+                                                         "response": {"json": {"id": "wanted"}}})
+    moved["config"].update(host="verify.invalid")
+    assert _swap(service_registry.runtime_backend_from_service(moved), loaded=None) is True and len(verify.requests) == 1
 
 
-def test_an_unreadable_stored_part_sends_nothing_and_never_falls_back_to_the_default_path(store, monkeypatch):
-    record = _driver_record()
-    record["lifecycle"]["driver_config"].update(load_url="/load?token=R3LOADTOKEN")
-    for name in ("admin_key_env", "api_key_env"):
-        record["lifecycle"]["driver_config"].pop(name)
+def test_an_unreadable_stored_part_sends_nothing_and_never_falls_back_to_the_default_path(store, fake_upstreams):
+    record = _driver_record_without_keys()
+    record["lifecycle"]["driver_config"].update(load_url=f"{LOAD}?token=R3LOADTOKEN")
     moved = _moved(record, store)
     secret_refs.delete(record_carriers.refs_in(moved["lifecycle"]["driver_config"]["load_url_entries"])[0], db_path=store)
-    result, calls = _run_swap(monkeypatch, service_registry.runtime_backend_from_service(moved))
-    assert result is False and calls == []
+    fake = _serve(fake_upstreams, "good.invalid:9", _unload(), _load())
+    assert _swap(service_registry.runtime_backend_from_service(moved)) is False
+    assert fake.requests == []
 
 
-def _answering(monkeypatch, *, client="AsyncClient"):
-    seen: list[str] = []
-
-    class Client(_Recorder):
-        async def _answer(self, method, url, **kwargs):
-            seen.append(str(url))
-            return await super()._answer(method, url, **kwargs)
-
-    monkeypatch.setattr(httpx, client, Client)
-    return seen
-
-
-def test_the_readiness_poll_carries_the_query_credentials_stored_for_the_health_endpoint(store, monkeypatch):
-    record = {"id": "e", "config": {"host": "good.invalid", "port": 9, "health_endpoint": "/ready?token=R3HEALTHTOKEN"},
+def test_the_readiness_poll_carries_the_query_credentials_stored_for_the_health_endpoint(store, fake_upstreams):
+    record = {"id": "e", "config": {"host": "good.invalid", "port": 9, "health_endpoint": "/v1/models?token=R3HEALTHTOKEN"},
               "lifecycle": {"driver": "external"}}
     backend = service_registry.runtime_backend_from_service(_moved(record, store))
     assert "R3HEALTHTOKEN" not in json.dumps(backend)
-    seen = _answering(monkeypatch)
+    scenario = scenario_from_data({
+        "protocol": "openai-compatible", "name": "r3-ready",
+        "provenance": {"source": "hand-written", "reference": "gateway/lifecycle_drivers.py _poll_health"},
+        "exchanges": [{"id": "ready", "match": {"method": "GET", "path": "/v1/models", "query": {"token": "R3HEALTHTOKEN"}},
+                       "response": {"json": {"data": []}}}]})
+    fake = fake_upstreams.asgi(scenario, host="good.invalid:9")
     assert asyncio.run(lifecycle_drivers.ExternalDriver().ensure_ready(backend, 1.0)) is True
-    assert seen == ["http://good.invalid:9/ready?token=R3HEALTHTOKEN"]
+    assert len(fake.requests) == 1
 
 
 def test_the_resource_probe_url_carries_the_user_info_and_query_stored_for_the_health_endpoint(store):
@@ -706,22 +687,20 @@ def test_a_driver_api_key_is_moved_into_the_store_and_shown_as_configured(store)
     assert "api_key" not in (shown["lifecycle"].get("hidden") or [])
 
 
-def test_the_driver_sends_its_stored_api_key_with_the_verify_request_to_its_bound_origin(store, monkeypatch):
+def test_the_driver_sends_its_stored_api_key_with_the_verify_request_to_its_bound_origin(store, fake_upstreams):
     backend = service_registry.runtime_backend_from_service(_stored_api_key_record(store))
-    seen = _answering(monkeypatch)
-    calls = _Recorder.calls = []
-    result = asyncio.run(lifecycle_drivers.HttpLoadUnloadDriver().swap(backend, {"model_name": "wanted"}))
-    assert result is True and seen and seen[0].startswith(GOOD)
-    assert calls and calls[0][2].get("x-api-key") == "R3-LIFECYCLE-API-KEY"
+    fake = _serve(fake_upstreams, "good.invalid:9", {
+        "id": "verify", "match": {"method": "GET", "path": VERIFY, "headers": {"x-api-key": "R3-LIFECYCLE-API-KEY"}},
+        "response": {"json": {"id": "wanted"}}})
+    assert _swap(backend, loaded=None) is True and len(fake.requests) == 1
 
 
-def test_the_driver_sends_no_stored_api_key_to_an_origin_it_is_not_bound_to(store, monkeypatch):
+def test_the_driver_sends_no_stored_api_key_to_an_origin_it_is_not_bound_to(store, fake_upstreams):
     moved = _stored_api_key_record(store)
     moved["config"]["host"] = "evil.invalid"
-    backend = service_registry.runtime_backend_from_service(moved)
-    seen = _answering(monkeypatch)
-    assert asyncio.run(lifecycle_drivers.HttpLoadUnloadDriver().swap(backend, {"model_name": "wanted"})) is False
-    assert seen == []
+    fake = _serve(fake_upstreams, "evil.invalid:9", {"id": "verify", "match": {"method": "GET", "path": VERIFY}, "response": {"json": {"id": "wanted"}}})
+    assert _swap(service_registry.runtime_backend_from_service(moved), loaded=None) is False
+    assert fake.requests == []
 
 
 def test_a_number_written_as_a_driver_key_is_moved_like_text(store):
