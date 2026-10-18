@@ -701,9 +701,46 @@ def init_db(path: Path = DB_PATH) -> None:
         try:
             _apply_pragmas(conn)
             _exec_schema(conn)
+            _migrate_extension_package_digests(conn)
             _move_oidc_client_secret_to_store(conn, path)
         finally:
             conn.close()
+
+
+def _migrate_extension_package_digests(conn: sqlite3.Connection) -> None:
+    """Replace the record copies a stored package index holds with their digests, once.
+
+    The index is returned to callers, and a copy can carry a command or environment secret.
+    The rewrite runs in one immediate transaction and only when the stored index still holds
+    a copy, so a later start finds nothing to do.
+    """
+    from gateway import extension_packages
+
+    key = extension_packages.EXTENSION_PACKAGE_INDEX_SETTING_KEY
+    if conn.in_transaction:
+        conn.commit()
+    # Overwrite the copy's freed bytes, then fold the WAL into the file, so the raw record is not left behind.
+    conn.execute("PRAGMA secure_delete=ON")
+    conn.execute("BEGIN IMMEDIATE")
+    rewritten = False
+    try:
+        row = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (key,)).fetchone()
+        if row is not None:
+            try:
+                value = json.loads(row[0])
+            except (TypeError, json.JSONDecodeError):
+                value = None
+            if extension_packages.needs_installed_records_migration(value):
+                migrated = extension_packages.normalize_extension_package_index(value)
+                payload = json.dumps(migrated, ensure_ascii=False, sort_keys=True)
+                _upsert_setting_in_transaction(conn, key, payload, _now(), None)
+                rewritten = True
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    if rewritten:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
 def _move_oidc_client_secret_to_store(conn: sqlite3.Connection, path: Path) -> None:
@@ -1389,6 +1426,12 @@ def get_access_plan(
 def list_access_plans(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
     with _conn(path) as conn:
         rows = conn.execute("SELECT * FROM access_plans ORDER BY name COLLATE NOCASE, id").fetchall()
+    return [_plan_row_to_dict(row) for row in rows]
+
+
+def list_access_plans_in(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """:func:`list_access_plans` as one open transaction sees it."""
+    rows = conn.execute("SELECT * FROM access_plans ORDER BY name COLLATE NOCASE, id").fetchall()
     return [_plan_row_to_dict(row) for row in rows]
 
 
@@ -3162,14 +3205,17 @@ def write_service_registry_and_setting_with_audits(
     audits: Iterable[Mapping[str, Any]],
     now: int | None = None,
     path: Path = DB_PATH,
+    precheck: Callable[[sqlite3.Connection], None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Commit a registry revision, one ordinary setting and their audit facts atomically.
 
     Each audit mapping carries ``action`` plus the optional ``actor_kind``,
     ``actor_id``, ``actor_label``, ``target_kind``, ``target_id`` and
     ``metadata`` fields of :func:`record_audit`. Any failure rolls back every
-    row, including the generation bump. Artifact publication and reload stay
-    with the caller, after the commit.
+    row, including the generation bump. ``precheck`` runs inside the same write
+    lock, before any row is written, and may raise to refuse the whole change;
+    a caller that must read other tables consistently with the write reads them
+    there. Artifact publication and reload stay with the caller, after the commit.
     """
     setting_name = str(setting_key or "").strip()
     if not setting_name or setting_name in {"service_registry", "prompt_memory"}:
@@ -3181,6 +3227,8 @@ def write_service_registry_and_setting_with_audits(
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            if precheck is not None:
+                precheck(conn)
             next_generation = write_service_registry_in_transaction(
                 conn,
                 registry,

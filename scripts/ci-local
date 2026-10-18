@@ -296,7 +296,7 @@ start_job "$work" bash -c '
   ( step web-unit env CASE_RECEIPTS_FILE="$receipts/raw/vitest.cases.jsonl" bash -c "cd web && npx vitest run --sequence.shuffle --sequence.seed \"\$1\" --reporter=default --reporter=./tests/case-receipts.ts" _ "$seed"; exit "$failed" ) &
   unit_pid=$!
   # Build the export before browsers; static checks move to the native slot.
-  ( step e2e-venv python3 scripts/ci/install_cached.py venv venv; exit "$failed" ) &
+  ( step e2e-venv bash -c "uv venv -q --python 3.12 venv && uv pip sync -q --require-hashes --python venv/bin/python tests/requirements-hermetic.lock"; exit "$failed" ) &
   venv_pid=$!
   ( step e2e-browser bash -c "cd web && npx playwright install chromium"; exit "$failed" ) &
   browser_pid=$!

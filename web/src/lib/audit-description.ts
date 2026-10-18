@@ -39,6 +39,7 @@ const PHRASES: Record<string, string> = {
   "operator.service.toggled": "Changed engine availability",
   "operator.extension_package.enable": "Enabled an extension",
   "operator.extension_package.remove": "Removed an extension",
+  "operator.extension_package.disable": "Turned off an extension",
   "operator.oidc_provider_config.update": "Updated sign-in settings",
 };
 const VERBS: Record<string, string> = {

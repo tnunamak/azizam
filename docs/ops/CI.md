@@ -307,34 +307,38 @@ while working, not a gate: `scripts/ci-local` still runs everything.
 
 ## Installed dependency cache
 
-The gate keeps successful web `node_modules` and browser Python environments in
+The gate keeps successful web `node_modules` in
 `~/Documents/azizam/ci-cache` (`AZIZAM_CI_CACHE` overrides it). This directory is
 outside the scratch reaper. Delete its entries while no gate runs to reclaim disk
 or force a cold dependency install. Download caches and Docker layers are separate;
 a cold installed-cache run does not clear them. The cache keeps the current and
-one recent snapshot per kind and protects active keys with locks during eviction.
+one recent snapshot for Node and protects active keys with locks during eviction.
 The current lockfile has dependency install hooks, so Node cache reuse requires
-the same Git tree; a new tree installs again. The venv cache is retained as a
-requested reusable environment, but measured copies are slower than uv's existing
-download-cache install. Both paths stay off the measured critical path.
+the same Git tree; a new tree installs again. Browser Python environments use
+fresh uv installs from the existing download cache; validated snapshot copies
+were slower in the measured comparison.
 
-`scripts/ci/install_cached.py` keys entries on the manifests and lockfile contents,
-Node and npm versions or the resolved Python interpreter and uv version, platform,
-installer configuration, installer environment, and the helper implementation.
-The Python key includes uv configuration files and interpreter build settings.
+`scripts/ci/install_cached.py` keys entries on manifests and lockfile contents,
+Node and npm versions, platform, effective npm configuration and the helper.
+Installer environment inputs are allowlisted: `npm_config_*`, `NPM_*`, `NODE_*`,
+`UV_*`, `PIP_*`, `PYTHON*`, proxy and SSL certificate variables, and `CI`.
+Session labels and unrelated variables do not change the key.
 The npm key includes effective npm configuration and the complete Git tree when
 a dependency has an install hook, since hooks can read arbitrary project files.
 Root install hooks, workspaces and local dependencies bypass the npm cache
 because they can read arbitrary source.
-`CODEX_TOOL_CALL_ID` is removed from the installer environment before keying or
-execution. Keys contain hashes; configuration and environment values are never logged.
+Keys contain hashes; configuration and environment values are never logged.
 
-A key lock serializes population. An install failure publishes no completed entry.
+The cache root is created with mode `0700` and must belong to the current user,
+including when `AZIZAM_CI_CACHE` selects another location. An existing install
+destination is refused before either installation or restoration.
+A key lock serializes population. Free disk space is not checked. A full disk
+fails the install and the partial entry is removed. An install failure publishes
+no completed entry.
 Only a complete entry whose file contents, modes and symlink targets match its
 stored digest can be reused; a damaged entry is rebuilt. Each run gets an ordinary
 private copy (`cp -a --reflink=auto`, with a full-copy fallback), so test or tool writes cannot
-change the cache or another run. Python console launchers are relocatable. The
-fresh-instance journey and hermetic pytest still create clean environments from
+change the cache or another run. The fresh-instance journey and hermetic pytest still create clean environments from
 the hashed lock on every run. Every test still runs, including on cache hits.
 
 Browser Python setup and browser installation start beside the web build and unit
@@ -350,113 +354,8 @@ and policy checks remain in the gate.
 `--target main` also selects the local `origin/main` budget comparison without
 posting signoff. Signoff still requires `--signoff --force` and remote checks.
 
-## Gate speed measurements, 2026-10-18
-
-The baseline is `5f9a825f`. Two cold and two warm installed-cache runs on
-`3ba8b6ca` kept every gate step. All four passed. Cold means empty installed
-snapshot entries; npm/uv download caches, Python toolchains and Docker layers
-were retained. Each run used the heavy wrapper, started below load 48, held the
-host gate lock and used port 18440 without signoff.
-
-| Run | Elapsed s | Critical path s | Step wall sum s | Receipt CPU s | Peak RSS MB |
-|---|---:|---:|---:|---:|---:|
-| baseline | 380 | 377.91 | 822.81 | 1141.63 | 1340.8 |
-| cold-1 | 290 | 288.18 | 653.72 | 1159.16 | 1341.3 |
-| warm-1 | 282 | 280.05 | 666.00 | 1152.10 | 1336.7 |
-| cold-2 | 297 | 294.34 | 660.67 | 1161.35 | 1340.2 |
-| warm-2 | 292 | 289.42 | 688.58 | 1150.90 | 1318.7 |
-
-The cold median was 293.5 s and the warm median was 287 s, against the single
-380 s baseline. The median over all four runs was 291 s. Host load and order
-seeds varied, so these are observed timings, not an isolated causal estimate.
-CPU is the sum of step receipts. Peak RSS is the largest single process peak,
-not concurrent host memory. Docker daemon work is outside these CPU/RSS meters.
-
-### Where the time went
-
-- The npm download cache already worked: an inspected cold-install log had
-  739 package-cache hits, zero misses and zero HTTP fetches, yet install took
-  15 s. Installed Node snapshots reduced the measured step from 20.17/22.61 s
-  cold to 5.98/7.83 s warm. Dependency hooks require a Git-tree key, so this
-  reuse applies to repeated trees rather than arbitrary source changes.
-- The main browser step fell from 258.21 s to 198.42-203.27 s. The existing
-  two-server global-state split and early serial People project remove two
-  serial scheduling tails. An intermediate run with only the global-state
-  split still took 257.81 s for that step because People started late.
-- Browser venv and Chromium setup now run beside build/unit work. Their former
-  0.25 + 0.75 s dependency chain is absent from the critical path. Installed
-  venv copies took 2.98-4.02 s, slower than the previous uv install; the venv
-  cache remains as requested, off the critical path, with bounded retention.
-- Unit-test wall time also varied from the baseline's 93.45 s to 64.75-81.99 s.
-  Its command and worker count did not change, so this difference is not
-  credited to the cache or browser scheduling. Journey-clock, cases and policy
-  still join all required jobs; their short sequential tail is unchanged.
-
-The critical path in each of the four runs was:
-`web-npm-ci > web-unit > e2e-main > e2e-tree-unchanged > journey-clock > cases > policy`.
-
-### Coverage and isolation proof
-
-`compare.py` in the local evidence directory compares full logical case/outcome
-multisets, including multiplicity. It normalizes only the two expected project
-changes (`chromium-global-state-2` and `chromium-people`). Every baseline case and
-outcome remains, with four added pytest checks for the cache and target behavior.
-All four runs have 11313 pytest passes, 3 skips and 1 expected failure; 2667 vitest
-passes; 460 Playwright passes; 87 Node passes; and 3517 passing subtests. All 20
-step receipts are successful, including Compose, native, conformance and policy.
-
-A seeded run exposed a pre-existing fixture collision: another test recorded the
-literal `req_unknown` before the missing-parent assertion used it. A two-test
-reproduction failed before the fix. The fixture now generates a fresh request ID
-and retains its assertion; the contaminating test followed by all identity tests
-passes (7 tests). The failed run remains in the evidence directory.
-
-Real relocated uvicorn launchers imported packages from their own private copies.
-Changing copy A left copy B and the snapshot unchanged. Independent Playwright
-listing compared the baseline and revised main partition: both contain 442 cases,
-with all 83 untagged People cases moved exactly once and the tagged case still in
-a global-state project. The separate isolation-proof listing retains its original
-30 cases and excludes the 83 cases that the new project would otherwise add.
-
-### Follow-up verification
-
-Independent review requested bounded snapshot retention. The final helper keeps
-current plus one recent peer per kind, skips active keys under nonblocking locks,
-and validates snapshot contents before copying. The focused cache, gate and
-identity tests passed (49 tests), including locked-key protection and later
-eviction. The final proof config also passes TypeScript checking.
-
-The retention/proof and cross-invocation-key follow-up on `877fb51b` was checked
-separately from the four-run timing set above:
-
-| Run | Elapsed s | Critical path s | Step wall sum s | Receipt CPU s | Peak RSS MB |
-|---|---:|---:|---:|---:|---:|
-| final-verification | 283 | 281.40 | 635.30 | 1145.90 | 1337.0 |
-| final-warm | 350 | 347.98 | 794.36 | 1228.08 | 1119.6 |
-
-These follow-ups run in separate tool invocations and require actual cache hits
-on the warm run. A cross-invocation diagnostic exposed `CODEX_TOOL_CALL_ID` in the
-key; the helper now removes this execution label from its own environment before
-both hashing and installer execution. A regression supplies two different call IDs
-and requires warm hits and exact case parity. All other installer environment
-inputs remain in the key. Both follow-ups are checked against the same complete
-case/outcome multiset as the four-run set. Snapshots are bounded to two per kind
-at rest, with active keys protected and transient publication headroom required.
-
-An earlier diagnostic at `ca905621` took 347 s with a Compose web-image rebuild
-(build 67.5 s versus about 2 s in the controlled four-run set), and 321 s when
-that image was cached but the tracing label still forced installed-cache misses.
-Those receipts remain separate from the controlled cache-hit comparisons. Exact
-wall time remains sensitive to Docker build state and shared-host contention.
-The final cross-invocation Node cache hit took
-43.44 s (10.46 CPU-s) after another gate had run, compared with 5.98-7.83 s in
-the controlled hot-cache trials. Hashing and full copies on ext4 can therefore
-cost more than a fresh npm install under storage/scheduling contention; cache
-reuse is verified, but it does not guarantee a wall-time saving in every run.
-
-Full receipts, raw reports, logs, `comparison.json`, comparison scripts, real
-copy-isolation checks and independent reviews are retained locally under
-`~/Documents/azizam/gate-speed-evidence/`. The failed fixture trial and the
-TypeScript build failure found during the proof-config change are retained
-separately; neither is counted as a successful run. No retries, skips or timeout
-relaxations were added to make these measurements pass.
+The measured speedup is roughly 15-25%, mostly from browser scheduling. The
+sample contains one baseline, four initial after runs and later verification,
+including a 350 s warm run. These are shared-host observations, not a controlled
+causal estimate. See [the dated receipts](../verification/CI_GATE_SPEED_RECEIPTS.md)
+for timings, measurement limits and evidence locations.

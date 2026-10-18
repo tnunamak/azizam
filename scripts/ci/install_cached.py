@@ -72,59 +72,50 @@ def prune(root: Path, kind: str, current: Path) -> None:
 
 
 def install(kind: str, destination: Path) -> None:
-    # Tool-call tracing is execution metadata, not an installer input.
-    os.environ.pop("CODEX_TOOL_CALL_ID", None)
+    if kind != "node":
+        raise ValueError(kind)
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(f"dependency destination already exists: {destination}")
     root = Path(os.environ.get("AZIZAM_CI_CACHE", str(Path.home() / "Documents/azizam/ci-cache")))
-    # Exclude only the gate's per-invocation bookkeeping. Keep build flags,
-    # npm/uv settings, HOME, PATH and tool-specific environment in the key.
-    transient = {"PWD", "OLDPWD", "SHLVL", "_", "receipts", "work", "run", "seed"}
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if root.is_symlink() or root.stat().st_uid != os.getuid():
+        raise PermissionError("dependency cache root must be a directory owned by the current user")
+    root.chmod(0o700)
+    # Session metadata must not invalidate installs between shells. Explicit
+    # installer inputs still separate snapshots with different configuration.
+    prefixes = ("npm_config_", "NPM_", "NODE_", "UV_", "PIP_", "PYTHON")
+    variables = {"CI", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                 "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"}
     inputs = {
         "helper": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "platform": [platform.platform(), platform.machine(), platform.libc_ver()],
-        "environment": {k: v for k, v in os.environ.items() if k not in transient and not k.startswith("BASH_FUNC_")},
+        "environment": {k: v for k, v in os.environ.items()
+                        if k.startswith(prefixes) or k.upper() in variables},
     }
-    if kind == "node":
-        manifest = Path("package.json")
-        package = json.loads(manifest.read_text())
-        # Local dependencies and project lifecycle scripts can read arbitrary
-        # source files. Preserve npm ci semantics instead of guessing their inputs.
-        lockfile = Path("package-lock.json").read_text()
-        locked = json.loads(lockfile)
-        local = bool(package.get("workspaces")) or any(str(v).startswith(("file:", "link:", "workspace:"))
-                    for group in ("dependencies", "devDependencies", "optionalDependencies")
-                    for v in package.get(group, {}).values())
-        hooks = set(package.get("scripts", {})) & {"preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare"}
-        local = local or any(item.get("link") or str(item.get("resolved", "")).startswith(("file:", "link:"))
-                             for item in locked.get("packages", {}).values())
-        if local or hooks:
-            subprocess.run(["npm", "ci", "--no-audit", "--no-fund"], check=True)
-            return
-        if any(item.get("hasInstallScript") for item in locked.get("packages", {}).values()):
-            # Dependency hooks can inspect INIT_CWD and arbitrary project files.
-            # Be conservative rather than maintaining a list of trusted hooks.
-            inputs["source_tree"] = output("git", "rev-parse", "HEAD^{tree}")
-        inputs.update(node=output("node", "--version"), npm=output("npm", "--version"),
-                      config=output("npm", "config", "list", "--json"),
-                      manifest=manifest.read_text(), lock=lockfile)
-        command = ["npm", "ci", "--no-audit", "--no-fund"]
-    elif kind == "venv":
-        interpreter = output("uv", "python", "find", "3.12")
-        configs = [parent / name for parent in (Path.cwd(), *Path.cwd().parents)
-                   for name in ("uv.toml", "pyproject.toml")]
-        configs += [Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "uv/uv.toml",
-                    Path("/etc/uv/uv.toml")]
-        if os.environ.get("UV_CONFIG_FILE"):
-            configs.append(Path(os.environ["UV_CONFIG_FILE"]))
-        inputs["uv_configs"] = [hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None for p in configs]
-        inputs.update(uv=output("uv", "--version"),
-                      python=output(interpreter, "-c", "import sys,sysconfig; print((sys.version,sys.executable,sysconfig.get_config_vars()))"),
-                      lock=Path("tests/requirements-hermetic.lock").read_text())
-        command = ["uv", "pip", "sync", "-q", "--python", str(destination / "bin/python"),
-                   "--require-hashes", "tests/requirements-hermetic.lock"]
-    else:
-        raise ValueError(kind)
+    manifest = Path("package.json")
+    package = json.loads(manifest.read_text())
+    # Local dependencies and project lifecycle scripts can read arbitrary
+    # source files. Preserve npm ci semantics instead of guessing their inputs.
+    lockfile = Path("package-lock.json").read_text()
+    locked = json.loads(lockfile)
+    local = bool(package.get("workspaces")) or any(str(v).startswith(("file:", "link:", "workspace:"))
+                for group in ("dependencies", "devDependencies", "optionalDependencies")
+                for v in package.get(group, {}).values())
+    hooks = set(package.get("scripts", {})) & {"preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare"}
+    local = local or any(item.get("link") or str(item.get("resolved", "")).startswith(("file:", "link:"))
+                         for item in locked.get("packages", {}).values())
+    if local or hooks:
+        subprocess.run(["npm", "ci", "--no-audit", "--no-fund"], check=True)
+        return
+    if any(item.get("hasInstallScript") for item in locked.get("packages", {}).values()):
+        # Dependency hooks can inspect INIT_CWD and arbitrary project files.
+        # Be conservative rather than maintaining a list of trusted hooks.
+        inputs["source_tree"] = output("git", "rev-parse", "HEAD^{tree}")
+    inputs.update(node=output("node", "--version"), npm=output("npm", "--version"),
+                  config=output("npm", "config", "list", "--json"),
+                  manifest=manifest.read_text(), lock=lockfile)
+    command = ["npm", "ci", "--no-audit", "--no-fund"]
     key = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
-    root.mkdir(parents=True, exist_ok=True)
     entry = root / f"{kind}-{key}"
     with (root / f"{kind}-{key}.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -140,9 +131,6 @@ def install(kind: str, destination: Path) -> None:
             shutil.rmtree(entry, ignore_errors=True)
             entry.mkdir()
             try:
-                if kind == "venv":
-                    # Relative console launchers stay valid after the private copy.
-                    subprocess.run(["uv", "venv", "-q", "--relocatable", "--python", interpreter, str(destination)], check=True)
                 subprocess.run(command, check=True)
                 subprocess.run(["cp", "-a", "--reflink=auto", str(destination), str(entry / "environment")], check=True)
                 (entry / "complete").write_text(fingerprint(entry / "environment"))

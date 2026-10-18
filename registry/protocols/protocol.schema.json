@@ -244,7 +244,7 @@
             "map": {
               "type": "array",
               "items": {
-                "type": "object"
+                "$ref": "#/$defs/mappingRule"
               }
             },
             "parts": {
@@ -360,7 +360,7 @@
         "map": {
           "type": "array",
           "items": {
-            "type": "object"
+            "$ref": "#/$defs/mappingRule"
           }
         },
         "terminal": {
@@ -389,7 +389,7 @@
             "map": {
               "type": "array",
               "items": {
-                "type": "object"
+                "$ref": "#/$defs/mappingRule"
               }
             },
             "base": {
@@ -474,7 +474,7 @@
             },
             "interval_s": {
               "type": "number",
-              "minimum": 0.05,
+              "minimum": 0.5,
               "maximum": 300
             },
             "max_wait_s": {
@@ -506,6 +506,50 @@
             "request": {
               "$ref": "#/$defs/request"
             }
+          }
+        }
+      }
+    },
+    "mappingRule": {
+      "type": "object",
+      "description": "Rules are validated by the mapping compiler. each maps an array to fresh objects with lexical /item and /index roots; max_rules, combined max_when_depth, cumulative max_selected, mapping_s, max_json_depth and request/response byte budgets apply.",
+      "if": {
+        "required": [
+          "each"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "each"
+        ],
+        "properties": {
+          "each": {
+            "$ref": "#/$defs/each"
+          }
+        }
+      }
+    },
+    "each": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "map"
+      ],
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/pointer"
+        },
+        "to": {
+          "$ref": "#/$defs/pointer"
+        },
+        "map": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mappingRule"
           }
         }
       }

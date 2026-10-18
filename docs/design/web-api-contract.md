@@ -836,6 +836,25 @@ validate call to prevent TOCTOU.
 `409 extension_package_conflict` if the package's services conflict with
 existing registry entries.
 
+### DELETE /admin/api/extensions/{package_id}?mode=remove|disable  (remove or disable a package)
+
+`mode` is `remove` (default) or `disable`; any other value is `422` from validation.
+An optional `If-Match: "os-N"` names the registry generation the page read. A stale
+value is `412 generation_mismatch`; a request without the header uses the current
+generation.
+
+`200` → `{ "extension_package": { … } | null, "extension_packages": { … }, "service_registry": { … }, "operator_settings_generation": N, "affected_records": [ { "kind", "id", "action" } ] }`,
+with `ETag: "os-N"` and `Cache-Control: no-store`. `service_registry` is the redacted
+projection enable returns: command and environment values are hidden in every service.
+
+`404 extension_package_not_found` for an unknown id.
+`409 extension_package_referenced` (`remove` only) when an access plan still names a record the
+package would remove; the message names the plan. `409 extension_package_conflict` when
+reinstalling later finds a record an operator kept.
+
+The `installed_records` in `extension_packages` are digests (`{ "kind", "id", "sha256" }`
+per record) with `installed_records_version: 2`, never record copies.
+
 ### GET /admin/api/operator/overrides  (media-job-admission section)
 
 Same endpoint as Users surface. The Settings surface reads

@@ -824,8 +824,9 @@ class AdminSQLiteStore:
         stored key to the record's host). When the owner does, the host the key is for
         is recorded with it.
         """
-        value = service_registry.normalize_service_registry(registry)
         before = self.get_service_registry()
+        service_registry.validate_protocol_dispatch_registry(registry, before=before)
+        value = service_registry.normalize_service_registry(registry)
         if "owner" not in actor.roles:
             old_services = before.get("services") or {}
             for service_id, record in (value.get("services") or {}).items():
@@ -1150,6 +1151,17 @@ class AdminSQLiteStore:
                 "extension_packages": self.get_extension_package_index(),
             }
 
+        package_id = str((review.get("package") or {}).get("id") or "")
+        existing = self.get_extension_package_index()["packages"].get(package_id)
+        if (existing and not existing.get("enabled", True)
+                and existing.get("package_hash") == review.get("package_hash")):
+            result = self._change_extension_package(
+                package_id=package_id, actor=actor, mode="enable",
+                expected_generation=expected_generation,
+            )
+            result["review"] = review
+            return result
+
         imported = extension_packages.imported_registry_records(review)
         registry = service_registry.merge_imported_records(
             self.get_service_registry(),
@@ -1167,6 +1179,11 @@ class AdminSQLiteStore:
             source=source,
         )
         package_id = str((review.get("package") or {}).get("id") or "")
+        # The snapshot keeps a digest of each normalized record the package wrote, not a copy.
+        package_index["packages"][package_id].update(extension_packages.installed_records_proof({
+            kind: {record_id: registry[kind][record_id] for record_id in imported[kind]}
+            for kind in sorted(extension_packages.DATA_OBJECT_KINDS)
+        }))
         # Registry, package index and both audit facts commit together: a
         # failure at any step leaves the generation and every row unchanged.
         registry_record, index_record = admin_store.write_service_registry_and_setting_with_audits(
@@ -1222,32 +1239,73 @@ class AdminSQLiteStore:
         }
 
     def remove_extension_package(
-        self, *, package_id: str, actor: AdminContext
+        self, *, package_id: str, actor: AdminContext, mode: str = "remove",
+        expected_generation: int | None = None,
     ) -> dict[str, Any]:
-        """Remove an extension package from the index by id."""
+        """Remove or disable package-owned records and the index atomically."""
+        if mode not in {"remove", "disable"}:
+            raise ValueError("package mode must be remove or disable")
+        return self._change_extension_package(
+            package_id=package_id, actor=actor, mode=mode,
+            expected_generation=expected_generation,
+        )
+
+    def _change_extension_package(
+        self, *, package_id: str, actor: AdminContext, mode: str,
+        expected_generation: int | None,
+    ) -> dict[str, Any]:
+        # Preserve raw fields when deciding whether an operator edited a row.
+        record = admin_store.get_service_registry_with_generation(path=self.path)
+        registry = record["value"] if record else {}
+        generation = int(record["operator_settings_generation"]) if record else 0
+        if expected_generation is None:
+            expected_generation = generation
+        index = self.get_extension_package_index()
         try:
-            package_index = extension_packages.remove_extension_package(
-                self.get_extension_package_index(), package_id
+            package_index, next_registry, affected = extension_packages.change_package_lifecycle(
+                index, registry, package_id, mode=mode,
             )
         except KeyError as exc:
             raise ValueError(str(exc)) from exc
-        index_record = admin_store.put_operator_setting(
-            EXTENSION_PACKAGE_INDEX_SETTING_KEY,
-            package_index,
+
+        def refuse_if_a_plan_names_the_package(conn: sqlite3.Connection) -> None:
+            # Runs after the write lock is held, so a plan saved after this read waits and is
+            # either checked here or saved after the removal commits; no plan is read stale.
+            if mode != "remove":
+                return
+            references = {
+                f"access plan {plan['name']}": plan["plan"]
+                for plan in admin_store.list_access_plans_in(conn)
+            }
+            extension_packages.change_package_lifecycle(index, registry, package_id, mode=mode, references=references)
+
+        registry_record, index_record = admin_store.write_service_registry_and_setting_with_audits(
+            next_registry,
+            expected_generation=expected_generation,
+            precheck=refuse_if_a_plan_names_the_package,
             updated_by=actor.subject,
+            setting_key=EXTENSION_PACKAGE_INDEX_SETTING_KEY,
+            setting_value=package_index,
+            audits=[{
+                "action": f"operator.extension_package.{mode}",
+                "actor_kind": actor.actor_kind,
+                "actor_id": actor.audit_actor_id,
+                "actor_label": actor.actor_label,
+                "target_kind": "extension_package",
+                "target_id": package_id,
+                "metadata": {"affected_records": affected},
+            }],
             path=self.path,
         )
-        admin_store.record_audit(
-            "operator.extension_package.remove",
-            actor_kind=actor.actor_kind,
-            actor_id=actor.audit_actor_id,
-            actor_label=actor.actor_label,
-            target_kind="extension_package",
-            target_id=package_id,
-            metadata={},
-            path=self.path,
-        )
-        return {"extension_packages": index_record["value"]}
+        self.write_litellm_config(registry_record["value"])
+        self._fire_registry_changed(registry_record)
+        return {
+            "extension_package": (index_record["value"].get("packages") or {}).get(package_id),
+            "extension_packages": index_record["value"],
+            "service_registry": registry_record["value"],
+            "operator_settings_generation": registry_record["operator_settings_generation"],
+            "affected_records": affected,
+        }
 
     def get_oidc_config_setting(self) -> dict[str, Any] | None:
         """Return the DB-stored OIDC provider config with secrets redacted.

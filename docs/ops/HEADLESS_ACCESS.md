@@ -359,6 +359,7 @@ Selected successful workflows are exercised separately.
 | `POST /me/api/mcp/requests/{request_id}` | session-only | denied | `gateway.mcp_oauth.consent_decision`; Browser session; same-browser binding cookie; mutations require CSRF/action header | hidden |
 | `GET /me/api/media` | session-only | denied | `gateway.me_media.list_media`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /me/api/media/remove-missing` | session-only | denied | `gateway.me_media.remove_missing_media`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/media/confirm-folder` | session-only | denied | `gateway.me_media.confirm_media_folder`; Browser session; mutations require CSRF/action header | hidden |
 | `DELETE /me/api/media/{asset_id}` | session-only | denied | `gateway.me_media.delete_media`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/media/{asset_id}` | session-only | denied | `gateway.me_media.media_detail`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/media/{asset_id}/download` | session-only | denied | `gateway.me_media.media_download`; Browser session; mutations require CSRF/action header | hidden |

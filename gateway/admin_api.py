@@ -29,7 +29,7 @@ import hmac
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
+from typing import Any, Awaitable, Callable, Iterable, Literal, Mapping, Protocol
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
@@ -237,7 +237,8 @@ class AdminStore(Protocol):
     ) -> dict[str, Any]: ...
 
     def remove_extension_package(
-        self, *, package_id: str, actor: AdminContext
+        self, *, package_id: str, actor: AdminContext, mode: str = "remove",
+        expected_generation: int | None = None,
     ) -> dict[str, Any]: ...
 
     def recent_audit(
@@ -827,6 +828,12 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
           the configured/enabled/role reduction.
     """
     items: list[dict[str, Any]] = []
+    for issue in snapshot.get("protocol_issues", []):
+        label = issue.get("file") or issue.get("engine_id") or "Engine protocol"
+        items.append(_attention_item(kind="service", severity="problem",
+            title=f"{label} needs attention", detail=issue["reason"],
+            target_kind="service" if issue.get("engine_id") else None,
+            target_id=issue.get("engine_id")))
 
     apps = [a for a in snapshot.get("apps", []) if isinstance(a, Mapping)]
     credentials = [c for c in snapshot.get("credentials", []) if isinstance(c, Mapping)]
@@ -886,6 +893,8 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
             if tone not in {"warn", "bad"}:
                 continue
             source = str(signal.get("source") or "system")
+            if source == "engine_protocol" and snapshot.get("protocol_issues"):
+                continue  # named file/engine items above already carry these diagnostics
             reasons = signal.get("reasons")
             detail = next(
                 (reason for reason in reasons if isinstance(reason, str) and reason.strip()),
@@ -1407,8 +1416,11 @@ def _validate_media_job_admission_overrides(
     }
 
 
-def _validate_service_registry(payload: Mapping[str, Any]) -> dict[str, Any]:
+def _validate_service_registry(
+    payload: Mapping[str, Any], *, before: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     try:
+        service_registry.validate_protocol_dispatch_registry(payload, before=before)
         return service_registry.normalize_service_registry(payload)
     except Exception as exc:  # noqa: BLE001
         raise _RouteError(
@@ -1702,7 +1714,11 @@ def create_admin_router(
             availability_evidence=status_snap.get("_availability_evidence") if isinstance(status_snap.get("_availability_evidence"), Mapping) else None,
         )
         frontends = frontend_status() if frontend_status is not None else []
+        from gateway.engine_protocol import description as protocol_descriptions, inventory as protocol_inventory
+        await asyncio.to_thread(protocol_descriptions.load_registry)
+        protocol_issues = protocol_descriptions.registry_problems() + protocol_inventory.problems()
         attention = derive_admin_attention({
+            "protocol_issues": protocol_issues,
             "apps": apps,
             "credentials": credentials,
             "frontends": frontends,
@@ -2309,6 +2325,10 @@ def create_admin_router(
             )
         return int(generation_text)
 
+    def _optional_registry_match(request: Request) -> int | None:
+        """The If-Match precondition when the client sends one; a request without it is not refused."""
+        return _registry_match(request) if "if-match" in request.headers else None
+
     def _registry_response(
         record: Mapping[str, Any], *, response_status: int = status.HTTP_200_OK
     ) -> JSONResponse:
@@ -2340,8 +2360,9 @@ def create_admin_router(
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
             # The registry a caller read hides command secrets behind markers; a marker keeps its stored value.
-            body = engine_redaction.restore_registry(body, store.get_service_registry())
-            registry = _validate_service_registry(body)
+            before = store.get_service_registry()
+            body = engine_redaction.restore_registry(body, before)
+            registry = _validate_service_registry(body, before=before)
             record = store.update_service_registry(
                 data=registry,
                 actor=ctx,
@@ -2700,6 +2721,20 @@ def create_admin_router(
             content={"deleted": result},
         )
 
+    def _extension_package_response(result: Mapping[str, Any]) -> JSONResponse:
+        """Answer a package change with the registry as a caller may see it.
+
+        Enable and remove share this one answer, so a new projection (D21) is switched in one place.
+        """
+        if isinstance(result.get("service_registry"), Mapping):
+            result = {**result, "service_registry": engine_redaction.redact_registry(result["service_registry"])}
+        response = JSONResponse(status_code=status.HTTP_200_OK, content=result)
+        generation = result.get("operator_settings_generation")
+        if generation is not None:
+            response.headers["ETag"] = f'"os-{generation}"'
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @router.get("/extensions")
     def list_extension_packages(request: Request) -> JSONResponse:
         ctx = _guard(request)
@@ -2782,36 +2817,39 @@ def create_admin_router(
                 "invalid_extension_package",
                 str(exc),
             ).as_response()
-        if isinstance(result.get("service_registry"), Mapping):
-            result = {**result, "service_registry": engine_redaction.redact_registry(result["service_registry"])}
-        response = JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=result,
-        )
-        generation = result.get("operator_settings_generation")
-        if generation is not None:
-            response.headers["ETag"] = f'"os-{generation}"'
-        response.headers["Cache-Control"] = "no-store"
-        return response
+        return _extension_package_response(result)
 
     @router.delete("/extensions/{package_id}")
     async def remove_extension_package(
-        request: Request, package_id: str
+        request: Request,
+        package_id: str,
+        mode: Literal["remove", "disable"] = "remove",
     ) -> JSONResponse:
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
             result = store.remove_extension_package(
-                package_id=package_id, actor=ctx
+                package_id=package_id, actor=ctx, mode=mode,
+                expected_generation=_optional_registry_match(request),
             )
+        except _RouteError as exc:
+            return exc.as_response()
+        except extension_packages.PackageInUse as exc:
+            return _RouteError(
+                status.HTTP_409_CONFLICT,
+                "extension_package_referenced",
+                str(exc),
+            ).as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND,
                 "extension_package_not_found",
                 str(exc),
             ).as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+        return _extension_package_response(result)
 
     def settings_revision(request: Request) -> str:
         revision = request.headers.get("if-match")

@@ -170,17 +170,15 @@ def test_yaml_that_does_not_parse_is_reported_with_its_line() -> None:
 
 def test_the_file_name_must_equal_the_id(tmp_path: Path) -> None:
     (tmp_path / "other.yml").write_text(yaml.safe_dump(_minimal()), encoding="utf-8")
-    with pytest.raises(DescriptionError) as raised:
-        description.load_registry(tmp_path)
-    assert "other.yml" in str(raised.value) and "tiny" in str(raised.value)
+    assert description.load_registry(tmp_path) == {}
+    assert any(row["file"] == "other.yml" for row in description.registry_problems())
 
 
-def test_a_broken_file_fails_the_whole_load_naming_the_file(tmp_path: Path) -> None:
+def test_a_broken_file_leaves_the_other_descriptions_available(tmp_path: Path) -> None:
     (tmp_path / "tiny.yml").write_text(yaml.safe_dump(_minimal()), encoding="utf-8")
     (tmp_path / "broken.yml").write_text("id: broken\n", encoding="utf-8")
-    with pytest.raises(DescriptionError) as raised:
-        description.load_registry(tmp_path)
-    assert "broken.yml" in str(raised.value)
+    assert set(description.load_registry(tmp_path)) == {"tiny"}
+    assert any(row["file"] == "broken.yml" for row in description.registry_problems())
 
 
 # --- mapping rules and budgets, checked when the file loads --------------------------------------

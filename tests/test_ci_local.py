@@ -688,15 +688,13 @@ def test_target_without_signoff_runs_budget_comparison(world: World) -> None:
 
 
 def test_dependencies_are_private_and_warm_runs_still_test(world: World) -> None:
-    first = world.run(CODEX_TOOL_CALL_ID="first-invocation")
+    first = world.run(CODEX_TOOL_CALL_ID="first-invocation", CLAUDE_CODE_SESSION_ID="first-session", UNRELATED_VARIABLE="first")
     assert first.returncode == 0, first.stdout + first.stderr
     assert "cache miss: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
-    assert "cache miss: venv" in (world.receipts / "logs/e2e-venv.log").read_text()
     cases = (world.receipts / "cases.jsonl").read_text()
-    second = world.run(CODEX_TOOL_CALL_ID="second-invocation")
+    second = world.run(CODEX_TOOL_CALL_ID="second-invocation", CLAUDE_CODE_SESSION_ID="second-session", UNRELATED_VARIABLE="second")
     assert second.returncode == 0, second.stdout + second.stderr
     assert "cache hit: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
-    assert "cache hit: venv" in (world.receipts / "logs/e2e-venv.log").read_text()
     assert (world.receipts / "cases.jsonl").read_text() == cases
     cache = world.home / "Documents/azizam/ci-cache"
     assert not list(cache.glob("node-*/environment/.cache"))
@@ -723,15 +721,36 @@ def test_dependencies_are_private_and_warm_runs_still_test(world: World) -> None
     assert result.returncode == 0, result.stdout + result.stderr
     assert not older.exists() and recent.is_dir()
     assert len(list(cache.glob("node-*/complete"))) == 2
-    assert len(list(cache.glob("venv-*/complete"))) == 1
+    assert not list(cache.glob("venv-*/complete"))
+    assert cache.stat().st_mode & 0o777 == 0o700
+    destination = world.tmp / "existing-node-modules"
+    destination.mkdir()
+    sentinel = destination / "keep"
+    sentinel.write_text("unchanged")
+    result = subprocess.run([sys.executable, str(world.repo / "scripts/ci/install_cached.py"),
+                             "node", str(destination)], cwd=world.repo / "web",
+                            env=world.env(), text=True, capture_output=True)
+    assert result.returncode != 0 and "destination already exists" in result.stderr
+    assert list(destination.iterdir()) == [sentinel]
+    assert sentinel.read_text() == "unchanged"
 
 
-def test_cache_does_not_publish_failed_install(world: World) -> None:
+def test_cache_does_not_publish_failed_install(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
     npm = world.bin / "npm"
     npm.write_text(npm.read_text().replace('mkdir -p node_modules/.bin', 'exit 41; mkdir -p node_modules/.bin'))
     result = world.run()
     assert result.returncode == 1
     assert not list((world.home / "Documents/azizam/ci-cache").glob("node-*/complete"))
+    spec = importlib.util.spec_from_file_location("install_cached", ROOT / "scripts/ci/install_cached.py")
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    custom_root = world.tmp / "custom-cache"
+    custom_root.mkdir()
+    monkeypatch.setenv("AZIZAM_CI_CACHE", str(custom_root))
+    monkeypatch.setattr(helper.os, "getuid", lambda: custom_root.stat().st_uid + 1)
+    with pytest.raises(PermissionError, match="owned by the current user"):
+        helper.install("node", world.tmp / "new-node-modules")
+    assert not list(custom_root.iterdir())
 
 
 def test_lockfile_change_invalidates_node_cache(world: World) -> None:
@@ -749,3 +768,10 @@ def test_lockfile_change_invalidates_node_cache(world: World) -> None:
     result = world.run()
     assert result.returncode == 0, result.stdout + result.stderr
     assert "cache miss: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
+
+    result = world.run(npm_config_registry="https://registry.example.test")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "cache miss: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
+    result = world.run(npm_config_registry="https://registry.example.test")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "cache hit: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
