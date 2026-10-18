@@ -282,7 +282,15 @@ template, through `native.allow`.
   request, and the request dials only the addresses just checked.
 - The engine's reply does not relay `Set-Cookie`, `Strict-Transport-Security`,
   CORS, `WWW-Authenticate`, `Alt-Svc` or the other headers that belong to the
-  engine's origin.
+  engine's origin. Azizam relays the body decoded, so it drops the engine's
+  `Content-Encoding` and `Content-Length`.
+- The older route `/gateway/v1/providers/{provider}/{path}` reaches the same
+  engine record and keeps these rules, with one difference: it has no deny
+  default for reads. A call the record's `native.allow` names is classed as the
+  list says. Any other `GET` or `HEAD` is a `generate` read: its query keys
+  pass, but a value that looks like a file path is refused. Any other method is
+  a `control` call, which only the owner may make. Reply headers, the request
+  and reply caps and the per-request SSRF check are the same as on `/native/`.
 - The receipt records the operation and says "cost unknown" when usage can't be
   measured.
 - Remote providers have no native lane in this version. That is an intentional,
