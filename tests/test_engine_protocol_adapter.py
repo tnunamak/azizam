@@ -17,7 +17,7 @@ from gateway.engine_protocol.executor import HttpV1Executor
 from gateway.engine_protocol.inline_tts import InlineTtsAdapter
 from gateway.engine_protocol.transport import HttpxTransport
 from gateway.engine_protocol.types import CanonicalRequest, Connection, Credential, JobRef, JobState, Timeouts
-from tests.support.fake_upstream import HandlerTransport
+from tests.support.fake_upstream import HandlerTransport, fake_upstreams  # noqa: F401 - fixture
 
 BASE = "http://engine.test:8080"
 INTERFACE = ["health", "inventory", "invoke", "submit", "poll", "events", "cancel", "recover", "fetch_assets"]
