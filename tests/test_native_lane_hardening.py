@@ -70,7 +70,7 @@ def test_a_query_key_the_template_declares_reaches_the_engine_and_any_other_is_r
 
 
 def test_a_template_with_no_query_keys_refuses_any_query_string(fake_upstreams):
-    engine = fake_upstreams.loopback(_models_scenario())
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
     allow = {"allow": [{"method": "GET", "path": "/v1/models", "class": "generate"}]}
 
     with authenticated_profile(plan_for("native-no-query", caps=(), **WIDE)), patch.dict(
@@ -193,7 +193,7 @@ def test_each_class_goes_out_with_its_own_credential_and_never_the_others(fake_u
 
 def test_a_control_call_with_no_control_credential_sends_no_credential_at_all(fake_upstreams, monkeypatch):
     monkeypatch.setenv("NATIVE_INFER_KEY", "infer-secret")
-    engine = _two_call_engine(fake_upstreams)
+    engine = fake_upstreams.loopback(_unload_scenario())
     record = _engine(engine.base_url, native_passthrough=True, native=CALLS,
                      connection=_credentials(engine, control=None))
 
@@ -210,7 +210,7 @@ def test_a_control_call_with_no_control_credential_sends_no_credential_at_all(fa
 
 def test_the_old_single_credential_of_the_service_record_is_not_a_native_credential(fake_upstreams, monkeypatch):
     monkeypatch.setenv("NATIVE_ENGINE_KEY", "engine-secret")
-    engine = _two_call_engine(fake_upstreams)
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/chat-text", model="demo-chat", content="ok"))
     record = _engine(engine.base_url, native_passthrough=True, native=CALLS,
                      auth_inject=[{"header": "x-api-key", "secret_env": "NATIVE_ENGINE_KEY"}],
                      api_key_env="NATIVE_ENGINE_KEY")
@@ -226,7 +226,7 @@ def test_the_old_single_credential_of_the_service_record_is_not_a_native_credent
 def test_a_credential_bound_to_another_origin_is_not_sent_and_the_call_is_refused(fake_upstreams, monkeypatch):
     receipt_store.init_db()
     monkeypatch.setenv("NATIVE_INFER_KEY", "infer-secret")
-    engine = _two_call_engine(fake_upstreams)
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
     moved = {"inference": {"secret_env": "NATIVE_INFER_KEY", "header": "x-api-key", "origin": "http://elsewhere.test:9"}}
     record = _engine(engine.base_url, native_passthrough=True, native=CALLS, connection={"credentials": moved})
     before = _receipts_for(NATIVE_PATH)
@@ -243,7 +243,7 @@ def test_a_credential_bound_to_another_origin_is_not_sent_and_the_call_is_refuse
 
 def test_a_credential_that_names_no_origin_is_not_sent(fake_upstreams, monkeypatch):
     monkeypatch.setenv("NATIVE_INFER_KEY", "infer-secret")
-    engine = _two_call_engine(fake_upstreams)
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
     unbound = {"inference": {"secret_env": "NATIVE_INFER_KEY", "header": "x-api-key"}}
     record = _engine(engine.base_url, native_passthrough=True, native=CALLS, connection={"credentials": unbound})
 
@@ -257,7 +257,7 @@ def test_a_credential_that_names_no_origin_is_not_sent(fake_upstreams, monkeypat
 
 
 def test_a_credential_names_its_secret_by_stored_reference_too(fake_upstreams, monkeypatch):
-    engine = _two_call_engine(fake_upstreams)
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/chat-text", model="demo-chat", content="ok"))
     origin = service_registry.origin_of(engine.base_url)
     stored = {"inference": {"secret_ref": "sec_native_1", "header": "x-api-key", "origin": origin}}
     record = _engine(engine.base_url, native_passthrough=True, native=CALLS, connection={"credentials": stored})
@@ -407,7 +407,7 @@ def test_saving_an_engine_whose_name_resolves_to_a_blocked_address_is_refused(tm
 # --- ambiguous paths -----------------------------------------------------------------------------
 
 def test_a_path_that_matches_a_control_entry_only_by_letter_case_is_refused(fake_upstreams):
-    engine = _two_call_engine(fake_upstreams)
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
     allow = {"allow": [
         {"method": "POST", "path": "/v1/Embeddings", "class": "control"},
         {"method": "POST", "path": "/v1/{action}", "class": "generate"},
@@ -423,7 +423,7 @@ def test_a_path_that_matches_a_control_entry_only_by_letter_case_is_refused(fake
 
 
 def test_an_engine_declared_case_insensitive_treats_the_folded_path_as_the_control_call(fake_upstreams):
-    engine = _two_call_engine(fake_upstreams)
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
     allow = {"case_insensitive": True, "allow": [
         {"method": "POST", "path": "/v1/Embeddings", "class": "control"},
         {"method": "POST", "path": "/v1/{action}", "class": "generate"},
@@ -441,7 +441,7 @@ def test_an_engine_declared_case_insensitive_treats_the_folded_path_as_the_contr
 # --- HEAD and the engine's own record ------------------------------------------------------------
 
 def test_a_head_request_to_the_native_lane_is_not_served(fake_upstreams):
-    engine = fake_upstreams.loopback(_models_scenario())
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
     allow = {"allow": [{"method": "GET", "path": "/v1/models", "class": "generate"}]}
 
     with authenticated_profile(plan_for("native-head", caps=(), **WIDE)), patch.dict(
