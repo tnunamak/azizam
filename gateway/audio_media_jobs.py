@@ -133,7 +133,11 @@ def audio_artifacts_from_result(
     suffix = suffix_for_response_format(response_format)
     default_media_type = media_type or _AUDIO_MEDIA_TYPES.get(suffix, DEFAULT_AUDIO_MEDIA_TYPE)
     if isinstance(result, (bytes, bytearray, memoryview)):
-        return [AudioArtifact(bytes(result), default_media_type, suffix)]
+        content = bytes(result)
+        # Bytes are stored by what they are: the backend's container decides,
+        # not the format the caller asked for (a FLAC workflow answers FLAC).
+        actual = _suffix_from_content(content) or _suffix_from_media_type(media_type or "") or suffix
+        return [AudioArtifact(content, _AUDIO_MEDIA_TYPES.get(actual, default_media_type), actual)]
 
     data = result.get("data") if isinstance(result, Mapping) else None
     if isinstance(data, list):
@@ -217,6 +221,21 @@ def _normalize_media_type(media_type: str, suffix: str) -> str:
     if media_type.startswith("audio/"):
         return media_type
     return _AUDIO_MEDIA_TYPES.get(suffix, DEFAULT_AUDIO_MEDIA_TYPE)
+
+
+def _suffix_from_content(content: bytes) -> str | None:
+    """The container suffix from the leading bytes, or None if unrecognized."""
+    if content[:4] == b"RIFF" and content[8:12] == b"WAVE":
+        return ".wav"
+    if content[:4] == b"fLaC":
+        return ".flac"
+    if content[:4] == b"OggS":
+        return ".ogg"
+    if content[:3] == b"ID3" or content[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        return ".mp3"
+    if content[4:8] == b"ftyp":
+        return ".m4a"
+    return None
 
 
 def _suffix_from_media_type(media_type: str) -> str | None:
