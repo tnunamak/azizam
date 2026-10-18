@@ -111,3 +111,127 @@ def test_public_speech_if_declared(engine):
     assert response.status_code == 200, response.text
     assert response.content[:4] == b'RIFF'
     assert engine.fake.requests[0].content == b'{"text":"hi","voice_model":"voice-v1"}'
+
+
+def switching(engine):
+    cfg = engine.record['config']
+    cfg['observations'] = {'selected':{'op':'selected'}}
+    cfg['offerings'] = [cfg['offerings'][0], {**copy.deepcopy(cfg['offerings'][0]), 'id':'prism-old','upstream':'text-old'}]
+    for offering in cfg['offerings']:
+        offering['selection'] = {'mode':'switch','switch':{'call':'choose','args':{'model':offering['upstream']},'observe_selected':'selected','exclusive_scope':'engine','drain_timeout_s':0.02,'queue_wait_s':0.02,'on_failure':'restore'}}
+
+
+def test_switch_mode_uses_declared_control_then_verifies_before_public_chat(engine):
+    switching(engine)
+    response = chat(engine)
+    assert response.status_code == 200, response.text
+    assert [(r.method,r.url.path,r.content) for r in engine.fake.requests] == [('GET','/prefix/selected',b''),('POST','/prefix/selected',b'{"model":"text-v2"}'),('GET','/prefix/selected',b''),('POST','/prefix/api/v3/converse',b'{"engine":{"model":"text-v2"},"input":{"turns":[{"role":"user","content":"Hello"}]},"delivery":"once","sampling":{"t":2}}')]
+
+
+def test_unknown_offering_never_switches(engine):
+    switching(engine)
+    response=engine.client.post('/v1/chat/completions',json={'model':'prism-local/missing','messages':[]})
+    assert response.status_code >= 400
+    assert not engine.fake.requests
+
+
+def test_unverified_switch_restores_and_never_generates(engine):
+    switching(engine)
+    engine.fake.fail_selection=True
+    response=chat(engine)
+    assert response.status_code == 503, response.text
+    assert response.headers['retry-after']
+    assert all(r.url.path != '/prefix/api/v3/converse' for r in engine.fake.requests)
+    assert engine.fake.requests[-2].content == b'{"model":"text-old"}'
+
+
+def test_switch_lease_holds_until_public_stream_finishes(engine,monkeypatch):
+    import asyncio
+    from gateway.swap_drain import SwapDrain
+    switching(engine)
+    async def run():
+        drain=SwapDrain(); locks={}
+        monkeypatch.setattr(proxy,'_swap_drain',drain)
+        monkeypatch.setattr(proxy,'swap_lock_for',lambda key:locks.setdefault(key,asyncio.Lock()))
+        entered=asyncio.Event();release=asyncio.Event()
+        from tests.test_engine_protocol_executor import Chunks
+        old=engine.fake.handler if hasattr(engine.fake,'handler') else engine.fake.__call__
+        def handler(request):
+            if request.url.path.endswith('/converse') and b'"live"' in request.content:
+                engine.fake.requests.append(request)
+                class Held(Chunks):
+                    async def __aiter__(self):
+                        yield b'data: {"delta":"Hi","done":false}\n\n'
+                        entered.set()
+                        await release.wait()
+                        yield b'data: {"delta":"","done":true,"why":"eos","meter":{"in":3,"out":1}}\n\n'
+                return httpx.Response(200,stream=Held([]),headers={'content-type':'text/event-stream'})
+            return old(request)
+        fake_wire=transport.HttpxTransport.for_tests(HandlerTransport(handler))
+        monkeypatch.setattr(executor,'HttpxTransport',lambda:fake_wire)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=proxy.app),base_url='http://gateway.test') as client:
+            first=asyncio.create_task(client.post('/v1/chat/completions',json={'model':'prism-chat','messages':[],'stream':True}))
+            await asyncio.wait_for(entered.wait(),2)
+            second=await client.post('/v1/chat/completions',json={'model':'prism-old','messages':[]})
+            assert second.status_code == 503, second.text
+            assert engine.fake.active == 'text-v2'
+            release.set()
+            assert (await first).status_code == 200
+            third=await client.post('/v1/chat/completions',json={'model':'prism-old','messages':[]})
+            assert third.status_code == 200, third.text
+            assert engine.fake.active == 'text-old'
+    asyncio.run(run())
+
+
+def test_credentials_use_origin_and_operation_class_without_forwarding_client_key(engine,monkeypatch):
+    monkeypatch.setenv('PROTOCOL_INFERENCE','test-inference')
+    monkeypatch.setenv('PROTOCOL_CONTROL','test-control')
+    conn=engine.record['config']['connection']
+    conn['credentials']={cls:{'secret_ref':'os.environ/PROTOCOL_'+cls.upper(),'origin':'http://prism.test:9100','header':header,'scheme':''} for cls,header in [('inference','X-Inference'),('control','X-Control')]}
+    switching(engine)
+    response=chat(engine)
+    assert response.status_code == 200,response.text
+    assert engine.fake.requests[-1].headers['x-inference']=='test-inference'
+    assert 'x-control' not in engine.fake.requests[-1].headers
+    assert all(r.headers['x-control']=='test-control' and 'x-inference' not in r.headers for r in engine.fake.requests[:-1])
+    engine.fake.requests.clear()
+    conn['credentials']['inference']['origin']='http://different.test:9100'
+    response=chat(engine)
+    assert response.status_code == 502
+    assert not engine.fake.requests
+
+
+def test_image_idempotency_replays_without_resubmit_and_conflicts_on_changed_inputs(engine):
+    body={'model':'prism-image','prompt':'blue'}
+    first=engine.client.post('/v1/images/generations',json=body,headers={'idempotency-key':'one'})
+    assert first.status_code==200,first.text
+    count=len(engine.fake.requests)
+    second=engine.client.post('/v1/images/generations',json=body,headers={'idempotency-key':'one'})
+    assert second.status_code==200,second.text
+    assert second.json()['job_id']==first.json()['job_id']
+    assert len(engine.fake.requests)==count
+    changed=engine.client.post('/v1/images/generations',json={**body,'prompt':'green'},headers={'idempotency-key':'one'})
+    assert changed.status_code==409,changed.text
+    assert len(engine.fake.requests)==count
+
+
+def test_data_only_fixture_addition_has_no_production_diff_or_name_dependency():
+    # The commit that adds this engine contains test data and test code only.
+    # Replacement names and addresses are loaded through the same registry seam.
+    root=Path(__file__).parent.parent
+    for file in [root/'proxy.py',*(root/'gateway').rglob('*.py')]:
+        assert 'prism' not in file.read_text().lower(),file
+
+
+def test_admission_denial_precedes_all_protocol_network_calls(engine,monkeypatch):
+    monkeypatch.setattr(proxy,'_effective_media_job_admission_cfg',lambda:{'disabled_intents':['chat.generate']})
+    response=chat(engine)
+    assert response.status_code==503,response.text
+    assert not engine.fake.requests
+
+
+def test_plan_denial_precedes_all_protocol_network_calls(engine):
+    with authenticated(identity(plan_for(caps=('speech',)))):
+        response=chat(engine)
+    assert response.status_code==403,response.text
+    assert not engine.fake.requests
