@@ -788,19 +788,31 @@ def delete_person_hides_in(conn: sqlite3.Connection, person_id: str) -> int:
     return conn.execute("DELETE FROM media_hidden_assets WHERE person_id=?", (person_id,)).rowcount
 
 
+# The connection already waits ``busy_timeout`` for a lock; these are the retries after that.
+_HIDDEN_READ_RETRY_PAUSES_S = (0.05, 0.1, 0.2)
+
+
 def hidden_assets(person_ids: Iterable[str], *, path: Path = DB_PATH) -> set[tuple[str, str]]:
     """The ``(asset_id, job_id)`` pairs these people hid."""
     ids = sorted(set(person_ids))
     if not ids:
         return set()
     marks = ",".join("?" for _ in ids)
+    # A read that fails must fail the request: an empty answer would show hidden items again.
     with _conn(path) as conn:
-        try:
-            rows = conn.execute(
-                f"SELECT asset_id, job_id FROM media_hidden_assets WHERE person_id IN ({marks})", ids,
-            ).fetchall()
-        except sqlite3.OperationalError:  # a database older than this table
-            return set()
+        for pause in (*_HIDDEN_READ_RETRY_PAUSES_S, None):
+            try:
+                rows = conn.execute(
+                    f"SELECT asset_id, job_id FROM media_hidden_assets WHERE person_id IN ({marks})", ids,
+                ).fetchall()
+                break
+            except sqlite3.OperationalError as exc:
+                message = str(exc)
+                if "no such table: media_hidden_assets" in message:  # a database older than this table
+                    return set()
+                if pause is None or ("locked" not in message and "busy" not in message):
+                    raise
+                time.sleep(pause)
     return {(row[0], row[1]) for row in rows}
 
 
