@@ -1313,7 +1313,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         # A caller who is not the owner may POST through the provider route only what the record declares.
         declared = {"native": {"allow": [{"method": "POST", "path": "/prompt", "class": "generate"}]}}
         with authenticated_profile(profile, downstream=downstream), patch.dict(
-            proxy.config["backends"]["comfyui"], declared,
+            proxy._PROVIDER_NATIVE_TARGETS["comfyui"]["record"], declared,
         ), patch.object(
             proxy.httpx,
             "AsyncClient",
@@ -1352,7 +1352,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
         declared = {"native": {"allow": [{"method": "POST", "path": "/v1/chat/completions", "class": "generate"}]}}
         with authenticated_profile(profile), patch.dict(
-            proxy.config["backends"]["kobold"], declared,
+            proxy._PROVIDER_NATIVE_TARGETS["kobold"]["record"], declared,
         ), patch.object(
             proxy.httpx,
             "AsyncClient",
