@@ -6,6 +6,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from gateway import service_registry
+
 
 # These field names are legacy/configured gateway-host filesystem paths by
 # contract unless the row or service explicitly scopes model files to the
@@ -169,8 +171,7 @@ def _model_file_scope(model: Mapping[str, Any], service: Mapping[str, Any] | Non
 def _host_managed_lifecycle(service: Mapping[str, Any] | None) -> bool:
     if not isinstance(service, Mapping):
         return False
-    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
-    lifecycle = service.get("lifecycle") if isinstance(service.get("lifecycle"), Mapping) else config.get("lifecycle")
+    lifecycle = service_registry.legacy_lifecycle_from_service(service)
     if not isinstance(lifecycle, Mapping):
         return False
     driver = str(lifecycle.get("driver") or "").strip().casefold()

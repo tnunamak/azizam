@@ -308,6 +308,8 @@ def checked_transport(destination: Destination) -> httpx.AsyncHTTPTransport:
     return transport
 
 
+
+
 class _Decoder:
     """Content decoding with a ceiling on what each step may produce, so a small compressed answer cannot fill memory."""
 
@@ -427,6 +429,9 @@ def _connect_failure(exc: BaseException) -> tuple[str, str]:
     if "ssl" in lowered or "certificate" in lowered:
         return "tls", text
     return "refused", text
+
+
+connect_failure = _connect_failure  # public name for gateway/engine_protocol/transport.py
 
 
 # ---------------------------------------------------------------------------

@@ -104,6 +104,12 @@ from gateway import stable_aliases
 from gateway import model_metadata
 from gateway import engine_check
 from gateway import speech_stream
+from gateway.engine_protocol import inline_tts as tts_adapter
+from gateway.engine_protocol.errors import TransportFailure
+from gateway.engine_protocol.types import CanonicalRequest as AdapterRequest
+from gateway.engine_protocol.types import Connection as AdapterConnection
+from gateway.engine_protocol.types import Reply as AdapterReply
+from gateway.engine_protocol.types import Timeouts as AdapterTimeouts
 from gateway import custom_voices
 from gateway import voice_audio
 from gateway import voices_api
@@ -791,6 +797,13 @@ tts_cfg = config.get("backends", {}).get("tts", {})
 TTS_ENABLED = bool_from_config(tts_cfg.get("enabled"), True)
 TTS_HOST = f"http://{tts_cfg.get('host', '127.0.0.1')}:{tts_cfg.get('port', 8880)}"
 TTS_TIMEOUT = int(tts_cfg.get("timeout", 120))
+# The in-tree speech client, reached through the adapter interface (contract v2.1 section 4).
+_TTS_ADAPTER = tts_adapter.InlineTtsAdapter()
+
+
+def _tts_connection(address: str) -> AdapterConnection:
+    """The speech engine at ``address``, with the read timeout every speech call has always had."""
+    return AdapterConnection(address=address, timeouts=AdapterTimeouts(connect_s=10, first_byte_s=TTS_TIMEOUT, total_s=TTS_TIMEOUT))
 
 # STT backend
 stt_cfg = config.get("backends", {}).get("stt", {})
@@ -1472,6 +1485,7 @@ async def _ensure_target(
     profile: Optional[str],
     *,
     take_lease: bool,
+    offering_id: Optional[str] = None,
 ) -> tuple[bool, Optional[ServingLease]]:
     """ensure_target; with `take_lease`, also lease the backend once it is ready.
 
@@ -1479,15 +1493,24 @@ async def _ensure_target(
     target ready, so no other swap can land between the two.
     """
     from gateway.lifecycle_drivers import driver_for_service, supports_swap, SwapContext
+    from gateway.engine_contract_view import offerings_config, process_config, residency_config
 
     bcfg = (config.get("backends") or {}).get(backend) or {}
+    # The legacy backend projection keys records by id; owned-process state
+    # needs that immutable id even before the v2 registry projection lands.
+    if (bcfg.get("process") or {}).get("driver") == "process" or (
+        (bcfg.get("lifecycle") or {}).get("driver") == "process"
+    ):
+        bcfg = {**bcfg, "id": backend}
     driver = driver_for_service(backend, config.get("backends"))
+    owned_process = process_config(bcfg).get("driver") == "process"
 
     # Non-swap driver, or no model requested → just make the backend ready.
     if not (supports_swap(driver) and model):
         # A service that declares a start budget (driver_config.health_timeout_s: engines that load
         # a model in 30-60 s) gets it; the 5 s default only covers services that declare none.
-        declared = ((bcfg.get("lifecycle") or {}).get("driver_config") or {}).get("health_timeout_s")
+        declared = (process_config(bcfg).get("ready_timeout_s") if owned_process else
+                    ((bcfg.get("lifecycle") or {}).get("driver_config") or {}).get("health_timeout_s"))
         try:
             budget = max(HEALTH_CHECK_TIMEOUT, float(declared)) if declared is not None else HEALTH_CHECK_TIMEOUT
         except (TypeError, ValueError):
@@ -1501,8 +1524,63 @@ async def _ensure_target(
             return False, None
         if not take_lease:
             return True, None
-        async with swap_lock_for(backend):
-            return True, _swap_drain.lease(backend)
+        offerings = offerings_config(bcfg)
+        offering = next((item for item in offerings if item.get("id") == (offering_id or model)), None)
+        if model and offering is None and any(
+            (item.get("selection") or {}).get("mode") == "switch" for item in offerings
+        ):
+            return False, None
+        selection = offering.get("selection") if offering else None
+        if isinstance(selection, Mapping):
+            from gateway.engine_control import EngineControlRuntime
+
+            runtime = EngineControlRuntime({**bcfg, "id": backend, "offerings": offerings},
+                                           drain=_swap_drain, lock_for=swap_lock_for)
+            needs_load = selection.get("implicit_load") is False and bool(residency_config(bcfg).get("load"))
+            if selection.get("mode") == "switch":
+                if owned_process:
+                    driver.request_started(bcfg)
+                try:
+                    lease = await runtime.select(
+                        str(offering["id"]), selection,
+                        on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None,
+                        prepare=runtime.load if needs_load else None,
+                    )
+                except BaseException:
+                    if owned_process:
+                        driver.request_finished(bcfg)
+                    raise
+                return True, lease
+            if needs_load:
+                if owned_process:
+                    driver.request_started(bcfg)
+                leased = False
+                try:
+                    async with swap_lock_for(backend):
+                        await _swap_drain.clear_for_swap(
+                            backend, SwapDrainSettings(enabled=True, timeout_s=30)
+                        )
+                        if not await runtime.load():
+                            return False, None
+                        lease = _swap_drain.lease(
+                            backend, on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None
+                        )
+                        leased = True
+                        return True, lease
+                finally:
+                    if owned_process and not leased:
+                        driver.request_finished(bcfg)
+        if owned_process:
+            driver.request_started(bcfg)
+        try:
+            async with swap_lock_for(backend):
+                return True, _swap_drain.lease(
+                    backend, on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None
+                )
+        except BaseException:
+            if owned_process:
+                driver.request_finished(bcfg)
+            raise
 
     # The driver builds + prechecks its own activation from driver_config. On a
     # precheck failure (e.g. a missing GGUF/aux file) it returns None.
@@ -1559,11 +1637,21 @@ async def _ensure_target_leased(
     target ready, so it always covers the target this request asked for.
     Raises SwapDeferred.
     """
-    if not _swap_drain_settings().enabled:
+    from gateway.engine_contract_view import offerings_config, process_config
+
+    bcfg = (config.get("backends") or {}).get(backend) or {}
+    declared_offerings = offerings_config(bcfg)
+    contract_lease = any(
+        (item.get("selection") or {}).get("mode") == "switch" or
+        (item.get("selection") or {}).get("implicit_load") is False
+        for item in declared_offerings
+    )
+    if not _swap_drain_settings().enabled and process_config(bcfg).get("driver") != "process" and not contract_lease:
         ready = await ensure_target(backend, activation.model, activation.mmproj, profile=activation.profile)
         return ready, None
     return await _ensure_target(
-        backend, activation.model, activation.mmproj, activation.profile, take_lease=True
+        backend, activation.model, activation.mmproj, activation.profile,
+        take_lease=True, offering_id=activation.offering_id,
     )
 
 
@@ -1715,6 +1803,9 @@ ADMIN_SESSION_SIGNING_KEY = (
     else _admin_session_signing_key()
 )
 ADMIN_STORE = AdminSQLiteStore(ADMIN_DB_PATH)
+# The command permission is read from this live database, not the import-time default store.
+from gateway import host_commands
+host_commands.bind_admin_db(ADMIN_DB_PATH)
 # Wire in-process hot-reload: after every service-registry mutation the store
 # calls reload_runtime_config() so the new backend hosts take effect
 # immediately without a process restart.
@@ -2783,6 +2874,7 @@ class LocalModelActivation:
     mmproj: Optional[str] = None
     profile: Optional[str] = None
     backend_model: Optional[str] = None
+    offering_id: Optional[str] = None
 
 
 def _lifecycle_driver_config(service_cfg: Mapping[str, Any] | None) -> Mapping[str, Any]:
@@ -3822,29 +3914,34 @@ async def _stream_tts_upstream(
     ``sse`` (``speech.audio.delta`` events). An upstream error status is
     returned as a normal response before any streaming starts.
     """
-    client = httpx.AsyncClient(timeout=httpx.Timeout(TTS_TIMEOUT, connect=10))
     upstream = None
     streaming = False
     # Until the body is handed to the StreamingResponse this function owns the
-    # client and the upstream body, on every exit including cancellation.
+    # adapter's stream (its upstream response and client), on every exit
+    # including cancellation.
     try:
         try:
-            upstream = await client.send(client.build_request("POST", url, headers=headers, content=body), stream=True)
-            if not 200 <= upstream.status_code < 300:
-                content = await upstream.aread()
-                if _speech_allocation_failed(upstream.status_code, content.decode("utf-8", "replace")):
+            upstream = await _TTS_ADAPTER.invoke(
+                _tts_connection(url.removesuffix(tts_adapter.SPEECH_PATH)), "speech.stream",
+                AdapterRequest(op="speech.stream", headers=headers, raw_body=body),
+            )
+            if isinstance(upstream, AdapterReply):
+                refused, upstream = upstream, None
+                if _speech_allocation_failed(refused.status, refused.raw.decode("utf-8", "replace")):
                     return _tts_gpu_memory_response()
-                retry_after = upstream.headers.get("retry-after")
+                retry_after = refused.headers.get("retry-after")
                 return Response(
-                    content=content,
-                    status_code=upstream.status_code,
-                    media_type=upstream.headers.get("content-type", "application/json"),
+                    content=refused.raw,
+                    status_code=refused.status,
+                    media_type=refused.headers.get("content-type", "application/json"),
                     headers={"Retry-After": retry_after} if retry_after else None,
                 )
-        except httpx.TimeoutException:
-            return _tts_error("TTS request timeout", 504)
-        except httpx.ConnectError:
-            return _tts_error(f"TTS backend unavailable at {url}", 502, "tts_backend_unavailable")
+        except TransportFailure as e:
+            if e.kind == "timeout":
+                return _tts_error("TTS request timeout", 504)
+            if e.kind == "unreachable":
+                return _tts_error(f"TTS backend unavailable at {url}", 502, "tts_backend_unavailable")
+            return _tts_error(f"TTS proxy error: {e}", 502)
         except Exception as e:  # noqa: BLE001
             return _tts_error(f"TTS proxy error: {e}", 502)
 
@@ -3852,11 +3949,11 @@ async def _stream_tts_upstream(
         # first and fails inside the stream when GPU0 is full, so the status alone cannot be
         # trusted. Read the first chunk before committing a 200 to the client: a stream that
         # dies before any audio becomes a 503 and the tier falls back to its next engine.
-        raw_chunks = upstream.aiter_raw()
+        raw_chunks = upstream.__aiter__()
         try:
             first_chunk = await anext(raw_chunks, b"")
-        except (httpx.TransportError, httpx.StreamError) as e:
-            print(f"[proxy] TTS engine at {url} dropped the stream before any audio: {e!r}", flush=True)
+        except TransportFailure as e:
+            print(f"[proxy] TTS engine at {url} dropped the stream before any audio: {e}", flush=True)
             return _tts_error("TTS engine failed before sending audio (likely GPU0 memory pressure)", 503, "tts_engine_stream_failed")
         if not first_chunk:
             return _tts_error("TTS engine returned no audio", 502, "tts_engine_empty_stream")
@@ -3879,7 +3976,6 @@ async def _stream_tts_upstream(
                     yield chunk
             finally:
                 await upstream.aclose()
-                await client.aclose()
 
         media_type = "text/event-stream" if stream_format == "sse" else TTS_RESPONSE_MEDIA_TYPES[response_format]
         response = StreamingResponse(
@@ -3890,10 +3986,8 @@ async def _stream_tts_upstream(
         streaming = True
         return response
     finally:
-        if not streaming:
-            if upstream is not None:
-                await upstream.aclose()
-            await client.aclose()
+        if not streaming and upstream is not None:
+            await upstream.aclose()
 
 
 async def proxy_tts_request(request: Request, auth_context: AuthContext, *, receipt: RouteReceipt | None = None) -> Response:
@@ -4121,83 +4215,88 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         )
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(TTS_TIMEOUT, connect=10)) as client:
-            resp = await client.post(url, headers=headers, content=body)
+        # The adapter owns the HTTP client; the answer handling below is unchanged.
+        resp = await _TTS_ADAPTER.invoke(
+            _tts_connection(_tts_host), "speech.synthesize",
+            AdapterRequest(op="speech.synthesize", headers=headers, raw_body=body),
+        )
 
-            if not 200 <= resp.status_code < 300:
-                if _speech_allocation_failed(resp.status_code, resp.text):
-                    return _tts_gpu_memory_response()
-                return openai_error_response(
-                    "TTS backend rejected the speech request.",
-                    status_code=resp.status_code if 400 <= resp.status_code < 600 else 502,
-                    error_type="invalid_request_error" if 400 <= resp.status_code < 500 else "api_error",
-                    code="tts_backend_error",
-                )
-
-            # TTS returns audio data, stream it back
-            content = resp.content
-            content_type = resp.headers.get("content-type", TTS_RESPONSE_MEDIA_TYPES["wav"])
-            if 200 <= resp.status_code < 300 and requested_response_format not in {"wav", "mp3"}:
-                try:
-                    content = await asyncio.to_thread(
-                        convert_wav_to_audio_format,
-                        resp.content,
-                        requested_response_format,
-                    )
-                    content_type = TTS_RESPONSE_MEDIA_TYPES[requested_response_format]
-                except Exception as e:
-                    return Response(
-                        content=json.dumps({"error": {"message": f"TTS audio conversion failed: {e}", "type": "api_error"}}),
-                        status_code=502,
-                        media_type="application/json",
-                    )
-            elif 200 <= resp.status_code < 300 and requested_response_format == "mp3":
-                try:
-                    content = await asyncio.to_thread(convert_wav_to_mp3, resp.content)
-                    content_type = TTS_RESPONSE_MEDIA_TYPES["mp3"]
-                except Exception as e:
-                    return Response(
-                        content=json.dumps({"error": {"message": f"TTS audio conversion failed: {e}", "type": "api_error"}}),
-                        status_code=502,
-                        media_type="application/json",
-                    )
-            elif 200 <= resp.status_code < 300:
-                content_type = TTS_RESPONSE_MEDIA_TYPES.get(requested_response_format, content_type)
-            if 200 <= resp.status_code < 300 and receipt is not None and stream_format != "sse":
-                from gateway import media_ingestion
-                await asyncio.to_thread(media_ingestion.store_audio_response, content, content_type, receipt, store_asset=store_asset_bytes)
-            if 200 <= resp.status_code < 300 and stream_format == "sse":
-                # Engine cannot stream: still answer in the SSE shape, as one delta.
-                async def one_delta():
-                    yield content
-                return StreamingResponse(
-                    speech_stream.pcm_to_sse(one_delta()),
-                    media_type="text/event-stream",
-                    headers={"Cache-Control": "no-cache"},
-                )
-            if (
-                200 <= resp.status_code < 300
-                and media_delivery.current_mode() == provenance.METADATA_NONE
-            ):
-                # Buffered (non-streaming) speech only: strip container tags
-                # losslessly. Streams are delivered as the engine produced them.
-                try:
-                    content = await asyncio.to_thread(
-                        media_delivery.deliver_bytes, content, content_type, provenance.METADATA_NONE
-                    )
-                except media_metadata.MediaMetadataError as exc:
-                    print(f"[proxy] speech metadata strip failed: {exc}", flush=True)
-                    return _tts_error("Could not prepare audio for delivery", 502)
-            return Response(
-                content=content,
-                status_code=resp.status_code,
-                media_type=content_type
+        if not 200 <= resp.status < 300:
+            if _speech_allocation_failed(resp.status, resp.raw.decode("utf-8", "replace")):
+                return _tts_gpu_memory_response()
+            return openai_error_response(
+                "TTS backend rejected the speech request.",
+                status_code=resp.status if 400 <= resp.status < 600 else 502,
+                error_type="invalid_request_error" if 400 <= resp.status < 500 else "api_error",
+                code="tts_backend_error",
             )
 
-    except httpx.TimeoutException:
-        return _tts_error("TTS request timeout", 504)
-    except httpx.ConnectError:
-        return _tts_error(f"TTS backend unavailable at {_tts_host}", 502, "tts_backend_unavailable")
+        # TTS returns audio data, stream it back
+        content = resp.raw
+        content_type = resp.headers.get("content-type", TTS_RESPONSE_MEDIA_TYPES["wav"])
+        if 200 <= resp.status < 300 and requested_response_format not in {"wav", "mp3"}:
+            try:
+                content = await asyncio.to_thread(
+                    convert_wav_to_audio_format,
+                    resp.raw,
+                    requested_response_format,
+                )
+                content_type = TTS_RESPONSE_MEDIA_TYPES[requested_response_format]
+            except Exception as e:
+                return Response(
+                    content=json.dumps({"error": {"message": f"TTS audio conversion failed: {e}", "type": "api_error"}}),
+                    status_code=502,
+                    media_type="application/json",
+                )
+        elif 200 <= resp.status < 300 and requested_response_format == "mp3":
+            try:
+                content = await asyncio.to_thread(convert_wav_to_mp3, resp.raw)
+                content_type = TTS_RESPONSE_MEDIA_TYPES["mp3"]
+            except Exception as e:
+                return Response(
+                    content=json.dumps({"error": {"message": f"TTS audio conversion failed: {e}", "type": "api_error"}}),
+                    status_code=502,
+                    media_type="application/json",
+                )
+        elif 200 <= resp.status < 300:
+            content_type = TTS_RESPONSE_MEDIA_TYPES.get(requested_response_format, content_type)
+        if 200 <= resp.status < 300 and receipt is not None and stream_format != "sse":
+            from gateway import media_ingestion
+            await asyncio.to_thread(media_ingestion.store_audio_response, content, content_type, receipt, store_asset=store_asset_bytes)
+        if 200 <= resp.status < 300 and stream_format == "sse":
+            # Engine cannot stream: still answer in the SSE shape, as one delta.
+            async def one_delta():
+                yield content
+            return StreamingResponse(
+                speech_stream.pcm_to_sse(one_delta()),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache"},
+            )
+        if (
+            200 <= resp.status < 300
+            and media_delivery.current_mode() == provenance.METADATA_NONE
+        ):
+            # Buffered (non-streaming) speech only: strip container tags
+            # losslessly. Streams are delivered as the engine produced them.
+            try:
+                content = await asyncio.to_thread(
+                    media_delivery.deliver_bytes, content, content_type, provenance.METADATA_NONE
+                )
+            except media_metadata.MediaMetadataError as exc:
+                print(f"[proxy] speech metadata strip failed: {exc}", flush=True)
+                return _tts_error("Could not prepare audio for delivery", 502)
+        return Response(
+            content=content,
+            status_code=resp.status,
+            media_type=content_type
+        )
+
+    except TransportFailure as e:
+        if e.kind == "timeout":
+            return _tts_error("TTS request timeout", 504)
+        if e.kind == "unreachable":
+            return _tts_error(f"TTS backend unavailable at {_tts_host}", 502, "tts_backend_unavailable")
+        return _tts_error(f"TTS proxy error: {str(e)}", 502)
     except Exception as e:
         return _tts_error(f"TTS proxy error: {str(e)}", 502)
 
@@ -6771,12 +6870,20 @@ def asset_cache_path(asset_id: str) -> Optional[Path]:
     kind, digest = parsed
     candidates = [IMAGE_CACHE_DIR / f"{digest}{suffix}" for suffix in _ASSET_SUFFIXES_BY_KIND[kind]]
     listed = directory_index.names(IMAGE_CACHE_DIR)  # one listing for every asset, not five probes each
-    if listed is not None:
-        return next((candidate for candidate in candidates if candidate.name in listed), candidates[0])
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[0]
+    if listed is None:
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        try:
+            listed = os.listdir(IMAGE_CACHE_DIR)
+        except OSError:
+            return candidates[0]
+    found = next((candidate for candidate in candidates if candidate.name in listed), None)
+    if found is not None:
+        return found
+    # The output kept its own suffix (a .gif or .webp from ComfyUI `gifs` or `images`).
+    other = directory_index.stored_name(listed, digest)
+    return IMAGE_CACHE_DIR / other if other else candidates[0]
 
 
 def asset_media_type(asset_id: str, path: Path | None = None) -> str:
@@ -12570,6 +12677,15 @@ async def _initialize_stores() -> None:
     await asyncio.to_thread(providers.recover_provider_spend, path=ADMIN_DB_PATH.parent / "provider_spend.db")
 
 
+def _migrate_host_command_permission() -> None:
+    """Decision D13: installs that already declare command lifecycles keep them working."""
+    registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
+    services = (registry or {}).get("services") or {}
+    host_commands.migrate_legacy_command_lifecycles(
+        ADMIN_DB_PATH, services or config.get("backends") or {}
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
@@ -12577,6 +12693,9 @@ async def lifespan(app: FastAPI):
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
     await asyncio.to_thread(_adopt_bootstrap_signin_lists)
+    await asyncio.to_thread(_migrate_host_command_permission)
+    from gateway.lifecycle_drivers import _process_driver
+    await asyncio.to_thread(_process_driver.recover, config.get("backends") or {})
     print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
     print(f"[proxy] STT backend: {STT_HOST} (enabled: {STT_ENABLED})", flush=True)
@@ -12599,9 +12718,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] firehose replay failed: {e}", flush=True)
 
-    # The gateway does not start engines. They are brought up by the operator's
-    # supervisor (systemd / docker / a `command` LifecycleDriver) and reached
-    # lazily via ensure_target on the first request that needs them.
+    # Engines are reached lazily. A declared process driver may start one on
+    # the first request when the owner has enabled host command execution.
 
     # Log the loop thread's stack whenever the event loop stops answering.
     watchdog = loop_watchdog.start(float(get_env("AZIZAM_LOOP_WATCHDOG_THRESHOLD_S", "1.0")))
@@ -12786,7 +12904,8 @@ async def lifespan(app: FastAPI):
             await receipts_maintenance_task
         except asyncio.CancelledError:
             pass
-    # No engine processes to stop — the gateway never owned an engine's existence.
+    from gateway.lifecycle_drivers import _process_driver
+    await asyncio.to_thread(_process_driver.shutdown)
 
 
 # Build the shared TLS context now, at import, so no request builds it on the event loop.
@@ -14065,6 +14184,7 @@ app.include_router(
             prompt_memory_path=lambda: media_jobs.DB_PATH,
         ),
         make_runtime=_SESSION_MAKE_RUNTIME,
+        asset_storage_provider=lambda: me_media.create_storage_snapshot_provider(IMAGE_CACHE_DIR)(),
         **_PERSON_LIBRARY,
     )
 )
@@ -26907,7 +27027,15 @@ def _litellm_local_activation_target(
             model=requested_model,
             backend_model=requested_model,
         )
+    from gateway.engine_contract_view import offerings_config
+
     requested = normalize_model_id(requested_model)
+    matching_offerings = [
+        item for item in offerings_config(backend_cfg)
+        if requested in {normalize_model_id(str(value)) for value in
+                         (item.get("id"), item.get("upstream")) if value}
+    ]
+    offering_id = str(matching_offerings[0]["id"]) if len(matching_offerings) == 1 else None
     for item in _service_model_records(backend_cfg):
         candidates = {
             item.get("id"),
@@ -26930,17 +27058,27 @@ def _litellm_local_activation_target(
             ).strip()
             activation_profile = str(item.get("activation_profile") or "").strip()
             backend_model = str(item.get("backend_model") or requested_model).strip()
+            resolved_offering_id = offering_id
+            if resolved_offering_id is None:
+                by_upstream = [
+                    entry for entry in offerings_config(backend_cfg)
+                    if entry.get("upstream") == activation_model
+                ]
+                if len(by_upstream) == 1:
+                    resolved_offering_id = str(by_upstream[0]["id"])
             return LocalModelActivation(
                 backend=backend,
                 model=activation_model or requested_model,
                 mmproj=activation_mmproj or None,
                 profile=activation_profile or None,
                 backend_model=backend_model or requested_model,
+                offering_id=resolved_offering_id,
             )
     return LocalModelActivation(
         backend=backend,
         model=requested_model,
         backend_model=requested_model,
+        offering_id=offering_id,
     )
 
 

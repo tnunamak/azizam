@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the real-data performance harness end to end and judge it against budgets.toml.
 
-    scripts/perf/run.py [--port 18740] [--out DIR] [--no-ui] [--counts-only] [--open-issue]
+    scripts/perf/run.py [--port 18830] [--out DIR] [--no-ui] [--counts-only] [--open-issue]
 
 1. copies the live databases and media (read-only) into a scratch directory under ~/.tmp, deleted when the run ends
    and starts an instrumented gateway on PORT (and PORT+1 for the fake engine);
@@ -100,7 +100,7 @@ def open_issue(violations: list[dict], sha: str, load: float, out: Path, gh=None
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--port", type=int, default=18740)
+    parser.add_argument("--port", type=int, default=18830)
     parser.add_argument("--source", type=Path, default=Path.home() / "applications" / "azizam")
     parser.add_argument("--out", type=Path)
     parser.add_argument("--python", default=str((REPO / "venv" / "bin" / "python") if (REPO / "venv/bin/python").exists() else sys.executable))

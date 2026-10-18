@@ -20,6 +20,11 @@ baseline's paths and its own. Only these differences are allowed:
   /admin/api/engines/... are new admin routes (tests/test_engine_admin_routes.py
   covers them), and /admin/api/operator/service-presets is deleted and falls to
   the catch-all or a 405;
+* /admin/api/operator/host-commands is the new owner-only command permission
+  (tests/test_admin_owner_holes_round4.py covers its write boundary);
+* POST /me/api/media/remove-missing is new (Library "Remove missing items"): that
+  method is its own route, and every other method answers as /me/api/media/{asset_id}
+  did before (the sample path /me/api/media/sample);
 * GET and HEAD with an HTML Accept on a first segment no route registers get
   the web app's 404 page (503 here: the sandbox has no web build). The same
   requests without HTML in Accept keep their r18 answer.
@@ -59,7 +64,10 @@ ACCESS_PLAN_API_PREFIXES = (
 MCP_OAUTH_PREFIXES = ("/.well-known/oauth-authorization-server", "/oauth", "/me/api/mcp/")
 ENGINE_PATHS = ("/admin/api/engine-definitions", "/admin/api/engines/")
 DELETED_PRESETS = "/admin/api/operator/service-presets"
+HOST_COMMANDS = "/admin/api/operator/host-commands"
 THUMBNAIL_PATH, THUMBNAIL_SIBLING = "/v1/assets/sample/thumbnail", "/v1/assets/sample/content"
+REMOVE_MISSING_PATH, REMOVE_MISSING_SIBLING = "/me/api/media/remove-missing", "/me/api/media/sample"
+REMOVE_MISSING_ROUTE = "/me/api/media/remove-missing remove_missing_media"
 
 
 SHARDS = 4
@@ -90,6 +98,10 @@ def _now_needs_a_key(old: str | None, new: str | None) -> bool:
     return re.sub(r"none: (404|405)[^;]*", "none: 401 application/json", old, count=1) == new
 
 
+def _same_as_sibling_or_needs_a_key(sibling: str | None, new: str | None) -> bool:
+    return sibling is not None and (sibling == new or _now_needs_a_key(sibling, new))
+
+
 def _now_needs_a_key_any(old: str | None, new: str | None) -> bool:
     """Same as the API-client outcome, except a caller with no key now gets 401, not 404."""
     old_any, new_any = _any_accept(old), _any_accept(new)
@@ -109,6 +121,8 @@ def _deliberate(key: str) -> str | None:
         return "signin"  # owner routes added after the baseline (gateway/signin_api.py)
     if path.startswith(ENGINE_PATHS) or path == DELETED_PRESETS:
         return "engines"  # Add engine (gateway/engine_admin.py) replaced the preset list
+    if path == HOST_COMMANDS:
+        return "host_commands"
     if ui_routes.classify(path) is not None:
         return "ui"
     if path in DELETED_PATHS or ui_routes.first_segment(path) in DELETED_SEGMENTS:
@@ -119,11 +133,17 @@ def _deliberate(key: str) -> str | None:
         return "new"
     if path == THUMBNAIL_PATH:
         return "thumbnail"
+    if path == REMOVE_MISSING_PATH:
+        return "remove_missing"
     if path.startswith(MCP_OAUTH_PREFIXES):
         return "mcp_oauth"
     if _method in {"GET", "HEAD"} and ui_routes.first_segment(path) not in proxy.WEB_UI_ROUTE.registered_segments:
         return "html404"
     return None
+
+
+def _remove_missing_sibling(key: str) -> str:
+    return key.replace(REMOVE_MISSING_PATH, REMOVE_MISSING_SIBLING)
 
 
 def _thumbnail_sibling(key: str) -> str:
@@ -186,11 +206,18 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # a new lane; tests/test_native_passthrough.py covers it
         if kind == "engines" and (key not in old or route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
             continue  # new Add engine routes, or the deleted preset list falling through
+        if kind == "host_commands" and key not in old:
+            continue  # new owner command permission route
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
                 f"{m} /setup/console" for m in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS")}:
             continue
+        if kind == "remove_missing" and key not in old:
+            # POST is the new route itself and must say so; every other method answers as the sibling does.
+            expected = REMOVE_MISSING_ROUTE if _method_of(key) == "POST" else new.get(_remove_missing_sibling(key))
+            if outcome == expected:
+                continue
         if kind == "thumbnail" and key not in old:
             same_as_content = new.get(_thumbnail_sibling(key), "").replace("/content", "/thumbnail").replace(
                 "assets_content", "assets_thumbnail")
@@ -220,10 +247,15 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines", "native"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines", "host_commands", "native"}:
             continue
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue
+        if kind == "remove_missing" and key not in old:
+            # A POST has a real handler, so it is never a live row; the others answer as the sibling did.
+            assert _method_of(key) != "POST", key
+            if _same_as_sibling_or_needs_a_key(BASELINE["live"].get(_remove_missing_sibling(key)), new.get(key)):
+                continue
         if kind == "html404" and _now_needs_a_key_any(old.get(key), new.get(key)):
             continue
         if kind == "thumbnail" and key not in old and new.get(key) == new.get(_thumbnail_sibling(key)) is not None:
@@ -260,3 +292,12 @@ def test_api_protocol_paths_keep_their_r18_answers(current, live_client):
     for key in sorted(required):
         assert live[key] == BASELINE["live"][key], key
     assert _flat(current["routing"])["HEAD /api/blobs/sample"] == _flat(BASELINE["routing"])["HEAD /api/blobs/sample"]
+
+
+def test_remove_missing_is_a_session_route_that_other_callers_cannot_use(current, live_client):
+    assert _flat(current["routing"])[f"POST {REMOVE_MISSING_PATH}"] == REMOVE_MISSING_ROUTE
+    client, principals = live_client
+    answers = {name: client.post(REMOVE_MISSING_PATH, headers=headers).status_code
+               for name, headers in principals.items()}
+    assert answers["none"] == 401
+    assert all(400 <= status < 500 for status in answers.values()), answers

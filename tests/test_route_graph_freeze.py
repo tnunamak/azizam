@@ -20,6 +20,10 @@ FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 ADDED_PATHS: dict[str, str] = {
     "/native": "per-engine native pass-through (contract section 5): one route, off unless an "
                "engine record sets native_passthrough, outside the OpenAPI schema",
+    "/admin/api/operator/host-commands": "owner-only permission for engines that run host commands "
+                                         "(contract D13); tests/test_admin_owner_holes_round4.py covers it",
+    "/me/api/media/remove-missing": "Library 'Remove missing items' (r64), outside the OpenAPI schema; "
+                                    "tests/test_library_remove_missing.py covers it",
 }
 
 

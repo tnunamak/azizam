@@ -168,6 +168,14 @@
     "tag": "apps and keys",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   },
+  "GET /admin/api/operator/host-commands": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "PUT /admin/api/operator/host-commands": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+  },
   "PUT /admin/api/operator/media-job-admission": {
     "tag": "media and library",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"

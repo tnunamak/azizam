@@ -19,6 +19,9 @@ Both children are stopped and temporary state is removed on exit.
 The default gateway/engine ports are 18180/18181. Override `UI_E2E_PORT` only within
 18000–18998. `UI_E2E_PYTHON` selects a dependency-installed interpreter when `venv`
 is absent. `UI_E2E_STATE_ROOT` can select another disk-backed temporary parent.
+`UI_E2E_FIRST_RUN=1` starts the gateway on the shipped `first-run.yml` (no backends,
+no owner, no seed) for `web/e2e/first-run.spec.ts`, which `playwright.config.ts` runs
+as the `chromium-first-run` project on `UI_E2E_PORT + 70`.
 
 Screenshots: `web/test-results/screens/`, named by route, theme and width.
 Failures include traces under `web/test-results/artifacts/`. All artifacts and

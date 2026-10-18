@@ -545,6 +545,21 @@ def get(
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
     """Return the stored receipt filtered for ``audience``, or None."""
+    found = get_with_created_at(
+        request_id, audience=audience, now_ms=now_ms, stale_after_ms=stale_after_ms, path=path
+    )
+    return None if found is None else found[0]
+
+
+def get_with_created_at(
+    request_id: str,
+    *,
+    audience: str = "internal",
+    now_ms: int | None = None,
+    stale_after_ms: int = STALE_AFTER_MS,
+    path: Path = DB_PATH,
+) -> tuple[dict[str, Any], float] | None:
+    """Return ``(receipt, created_at)``; ``created_at`` is the table column, as the lists show it."""
     with _conn(path) as conn:
         row = conn.execute(
             "SELECT receipt_json, created_at FROM receipts WHERE request_id = ?",
@@ -559,7 +574,7 @@ def get(
         _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience
     )
     out.setdefault("_stored_at", int(row[1]))
-    return out
+    return out, row[1]
 
 
 def recent(

@@ -77,6 +77,8 @@ interface UsageReceipt {
   createdAt: number | string | null;
   capability: UsageCapability;
   model: string | null;
+  /** Job-submission receipts name a workflow and no model. */
+  workflow: string | null;
   requestedModel: string | null;
   servedModel: string | null;
   fallbackModel: string | null;
@@ -813,6 +815,11 @@ function ReceiptsList({
                       {nameModel(receipt.model)}
                     </p>
                   )}
+                  {!receipt.model && receipt.workflow && (
+                    <p className="text-muted-foreground mt-1 break-words text-meta">
+                      {receipt.workflow}
+                    </p>
+                  )}
                   {receipt.sourceLabel ? (
                     <p className="text-muted-foreground mt-1 text-meta">
                       {receipt.sourceLabel}
@@ -1200,6 +1207,7 @@ function normalizeReceipt(raw: unknown, selectionKey: string): UsageReceipt {
     ),
     capability,
     model,
+    workflow: nullableString(data.resolved_workflow ?? data.requested_workflow),
     requestedModel,
     servedModel,
     fallbackModel,

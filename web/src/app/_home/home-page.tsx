@@ -21,7 +21,7 @@ import { formatAppName } from "@/lib/format";
 import { useViewer } from "@/components/shell/session";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { keyPromptNote } from "@/lib/prompt-memory";
-import { ApiError } from "@/lib/api";
+import { api, ApiError, queryKeys } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1394,6 +1394,18 @@ function Recent({
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
 
+function AddEngineLink() {
+  return (
+    <Link prefetch={false}
+      href="/engines/"
+      className="text-link inline-flex items-center gap-0.5 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
+    >
+      Add an engine
+      <ChevronRight aria-hidden="true" className="size-4" />
+    </Link>
+  );
+}
+
 export default function HomePage() {
   const viewer = useViewer();
   const {
@@ -1410,6 +1422,21 @@ export default function HomePage() {
     viewer.admin,
   );
   const model = useCapabilityViews(isOwner);
+  // The same registry the capability views read (one cached request). No enabled
+  // service beyond the gateway's built-in ones: the owner has no engine, and
+  // Status cannot say what to do, so Home also points at Engines. A registry that
+  // cannot be read says nothing.
+  const { data: registry } = useQuery({
+    queryKey: queryKeys.serviceRegistry,
+    queryFn: api.services.registry,
+    enabled: isOwner,
+  });
+  const noEngineAdded =
+    isOwner &&
+    registry != null &&
+    !Object.values(registry.services).some(
+      (service) => service.source !== "builtin" && service.enabled,
+    );
   const views = model.views;
   const verdict = model.verdict;
   const refusal = activeCapRefusal(model.requests);
@@ -1492,6 +1519,7 @@ export default function HomePage() {
               checkedAt={verdict.checkedAt}
               unconfirmed={verdict.unconfirmed}
             >
+              {noEngineAdded ? <AddEngineLink /> : null}
               {verdict.problems.length ? (
                 // Members too: on a phone Status is under More, so the
                 // warning itself leads to its explanation (red team round 2).
@@ -1502,7 +1530,8 @@ export default function HomePage() {
                   {isOwner ? "Open Status" : "See what is happening"}
                   <ChevronRight aria-hidden="true" className="size-4" />
                 </Link>
-              ) : home.has_access_plan === false ? (
+              ) : null}
+              {home.has_access_plan === false ? (
                 // No plan: nothing can run until the owner chooses one (design §3.4).
                 isOwner ? (
                   <Link
@@ -1517,23 +1546,17 @@ export default function HomePage() {
                     {`You can't use models yet. Ask ${home.gateway?.owner_name?.trim() || "the gateway owner"} to choose an access plan for you.`}
                   </span>
                 )
-              ) : verdict.tone === "off" && !isOwner ? (
+              ) : verdict.problems.length || verdict.tone !== "off" ? null : isOwner ? (
+                // Nothing turned on: the owner's next step is an engine.
+                noEngineAdded ? null : <AddEngineLink />
+              ) : (
                 // A member cannot turn anything on; say who can.
                 <span className="text-muted-foreground">
                   {home.gateway?.owner_name?.trim()
                     ? `Ask ${home.gateway.owner_name.trim()} to turn something on.`
                     : "Ask the gateway owner to turn something on."}
                 </span>
-              ) : verdict.tone === "off" && isOwner ? (
-                // Nothing turned on: the owner's next step is an engine.
-                <Link prefetch={false}
-                  href="/engines/"
-                  className="text-link inline-flex items-center gap-0.5 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
-                >
-                  Add an engine
-                  <ChevronRight aria-hidden="true" className="size-4" />
-                </Link>
-              ) : null}
+              )}
             </StatusLine>
           </PageHeader>
           {/* Sections 32 apart (--space-section), the Connect card 32 to the

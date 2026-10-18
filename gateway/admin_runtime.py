@@ -826,6 +826,22 @@ class AdminSQLiteStore:
         """
         value = service_registry.normalize_service_registry(registry)
         before = self.get_service_registry()
+        if "owner" not in actor.roles:
+            old_services = before.get("services") or {}
+            for service_id, record in (value.get("services") or {}).items():
+                previous = old_services.get(service_id) or {}
+                for field in ("connection", "process", "protocol_operations", "control_file_roots",
+                              "offerings", "residency", "observations"):
+                    # Migration writes empty blocks; an empty block grants nothing.
+                    old_value = (previous.get(field) or None, (previous.get("config") or {}).get(field) or None)
+                    new_value = (record.get(field) or None, (record.get("config") or {}).get(field) or None)
+                    if field == "process":
+                        # Migration turns an external lifecycle into a process that
+                        # runs nothing; lifecycle_driver_changed below judges whether
+                        # a top-level process controls the host.
+                        old_value, new_value = old_value[1], new_value[1]
+                    if old_value != new_value:
+                        raise PermissionError(f"Only the owner can change service {field}.")
         route_registry.refuse_unmountable_frontends(before, value)
         changed = service_registry.credential_binding_changes(before, value)
         if changed:
@@ -1032,13 +1048,13 @@ class AdminSQLiteStore:
             # A lifecycle driver kept only on the record (not in its config) must
             # survive a partial edit: dropping it would count as removing a driver,
             # which only the owner may do.
-            existing_lifecycle = existing.get("lifecycle")
-            if (
-                "lifecycle" not in form_base
-                and isinstance(existing_lifecycle, Mapping)
-                and existing_lifecycle.get("driver")
-            ):
-                form_base["lifecycle"] = copy.deepcopy(dict(existing_lifecycle))
+            existing_lifecycle = service_registry.legacy_lifecycle_from_service(existing)
+            if "lifecycle" not in form_base and existing_lifecycle:
+                kept_lifecycle = copy.deepcopy(dict(existing_lifecycle))
+                for form_key, block_key in service_registry._LIFECYCLE_FORM_KEYS.items():
+                    if form_key in data:
+                        kept_lifecycle[block_key] = data[form_key]
+                form_base["lifecycle"] = kept_lifecycle
             # Drop None values so they don't override defaults downstream, then
             # overlay the caller-supplied partial data.
             merged: dict[str, Any] = {

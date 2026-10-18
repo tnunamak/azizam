@@ -44,7 +44,7 @@ from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.availability import availability_evidence_snapshot, project_service
 from gateway.model_presentation import service_presentation, starts_on_demand
 from gateway.backends.litellm_admin import LiteLLMAdminError
-from gateway import admin_catalog, admin_store, engine_admin, engine_check, extension_packages, service_registry
+from gateway import admin_catalog, admin_store, engine_admin, engine_check, engine_redaction, extension_packages, service_registry
 
 __all__ = [
     "AdminAuthError",
@@ -2310,7 +2310,7 @@ def create_admin_router(
             return ctx
         response = JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"service_registry": store.get_service_registry()},
+            content={"service_registry": engine_redaction.redact_registry(store.get_service_registry())},
         )
         if hasattr(store, "path"):
             record = admin_store.get_service_registry_with_generation(path=store.path)
@@ -2342,7 +2342,7 @@ def create_admin_router(
     ) -> JSONResponse:
         response = JSONResponse(
             status_code=response_status,
-            content={"service_registry": record["value"]},
+            content={"service_registry": engine_redaction.redact_registry(record["value"])},
         )
         response.headers.update(
             {
@@ -2367,6 +2367,8 @@ def create_admin_router(
         try:
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
+            # The registry a caller read hides command secrets behind markers; a marker keeps its stored value.
+            body = engine_redaction.restore_registry(body, store.get_service_registry())
             registry = _validate_service_registry(body)
             record = store.update_service_registry(
                 data=registry,
@@ -2808,6 +2810,8 @@ def create_admin_router(
                 "invalid_extension_package",
                 str(exc),
             ).as_response()
+        if isinstance(result.get("service_registry"), Mapping):
+            result = {**result, "service_registry": engine_redaction.redact_registry(result["service_registry"])}
         response = JSONResponse(
             status_code=status.HTTP_200_OK,
             content=result,
@@ -2845,6 +2849,61 @@ def create_admin_router(
 
     def settings_conflict() -> JSONResponse:
         return _RouteError(409, "settings_conflict", "Settings changed elsewhere; reload to see the latest").as_response()
+
+    @router.get("/operator/host-commands")
+    def get_host_commands(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        record = admin_store.get_operator_setting("allow_host_commands", path=store.path)
+        response = JSONResponse({
+            "enabled": bool(record and record["value"].get("enabled") is True),
+            "revision": admin_store.operator_setting_revision(record),
+            "label": "Allow Azizam to run commands on this computer",
+        })
+        response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @router.put("/operator/host-commands")
+    async def update_host_commands(request: Request) -> JSONResponse:
+        ctx = await asyncio.to_thread(_guard, request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        if "owner" not in ctx.roles:
+            return _RouteError(403, "owner_required", "Only the owner can change command execution.").as_response()
+        try:
+            body = await _read_json_body(request)
+            if set(body) != {"enabled"} or not isinstance(body["enabled"], bool):
+                raise _RouteError(400, "invalid_host_commands", "enabled must be a boolean")
+            record = admin_store.put_operator_setting_with_audit(
+                "allow_host_commands", {"enabled": body["enabled"]},
+                updated_by=ctx.subject,
+                audit_action="operator.host_commands.update",
+                audit_actor_kind=ctx.actor_kind,
+                audit_actor_id=ctx.audit_actor_id,
+                audit_actor_label=ctx.actor_label,
+                audit_target_kind="operator_setting",
+                audit_target_id="allow_host_commands",
+                audit_metadata={"enabled": body["enabled"]},
+                expected_revision=settings_revision(request),
+                path=store.path,
+            )
+        except _RouteError as exc:
+            return exc.as_response()
+        except admin_store.SettingsConflictError:
+            return settings_conflict()
+        result = {
+            "enabled": record["value"]["enabled"],
+            "revision": admin_store.operator_setting_revision(record),
+        }
+        if not result["enabled"]:
+            result["running_processes"] = "unchanged"
+            result["note"] = ("New starts are blocked. Processes Azizam already runs keep running "
+                              "until they are stopped or the gateway restarts.")
+        response = JSONResponse(result)
+        response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
+        return response
 
     @router.put("/operator/media-job-admission")
     async def update_media_job_admission_overrides(
