@@ -192,7 +192,10 @@ export function EngineRecordPage({
             setOwnNotice(message);
             onDismissNotice?.();
           }}
-          onDiscard={() => setVersion((v) => v + 1)}
+          onDiscard={async () => {
+            const refreshed = await refetchEngine();
+            if (refreshed.isSuccess) setVersion((v) => v + 1);
+          }}
           onRemove={() => onRemove(serviceId)}
           onOpenEngine={onOpenEngine}
         />
@@ -203,6 +206,7 @@ export function EngineRecordPage({
 /** A refused Save: what the server said, the check behind it, and the field it is about. */
 interface SaveError {
   message: string;
+  stale?: boolean;
   finding?: Finding;
   /** The form field the message belongs to: name, address, key, models or one of More options' keys. */
   field: string | null;
@@ -249,7 +253,7 @@ function RecordForm({
   definition: EngineDefinition;
   onRefresh: () => Promise<void>;
   onSaved: (message: string) => Promise<void>;
-  onDiscard: () => void;
+  onDiscard: () => Promise<void>;
   onRemove: () => void;
   onOpenEngine?: (serviceId: string) => void;
 }) {
@@ -289,7 +293,6 @@ function RecordForm({
 
   const [name, setName] = useState(view.name);
   const [address, setAddress] = useState(saved.address);
-  const [viewedRevision] = useState(view.revision);
   const [options, setOptions] = useState<OptionValues>(() => optionValuesFrom(definition, view));
   const [headers, setHeaders] = useState<HeaderDraft[]>([]);
   const [secrets, setSecrets] = useState(() => secretDrafts(view.record, view.key));
@@ -460,6 +463,7 @@ function RecordForm({
             tests: { [capability]: { ok: true, at: result.at, seconds: result.seconds, evidence_token: result.evidence_token } },
           });
           queryClient.setQueryData(queryKeys.serviceRegistry, registry);
+          await onRefresh();
         } catch {
           // The page still shows the pass; it is not stored.
         }
@@ -529,7 +533,7 @@ function RecordForm({
       let registry: ServiceRegistry;
       if (commandProblem || addressProblem) throw new Error(commandProblem || addressProblem || "");
       if (commands.length && publicDirty) throw new Error("Save secret changes separately from other settings. Save or discard one group first.");
-      if (commands.length) registry = await enginesApi.secretEntries(view.service_id, commands, viewedRevision);
+      if (commands.length) registry = await enginesApi.secretEntries(view.service_id, commands, view.revision);
       else if (settingsLocked || nameOnly) registry = await api.services.edit(view.service_id, { name: name.trim() });
       else {
         const body = saveBody();
@@ -548,7 +552,7 @@ function RecordForm({
       const refused = checkFromError(error);
       const finding = refused?.findings.find((f) => f.severity === "error") ?? refused?.findings[0];
       const field = saveField(fieldFromError(error) ?? finding?.field ?? null);
-      setSaveError({ message: errorText(error), finding, field, body: JSON.stringify({ body: saveBody(), commands }) });
+      setSaveError({ message: errorText(error), finding, field, body: JSON.stringify({ body: saveBody(), commands }), stale: error instanceof ApiError && error.status === 412 });
       // Show the field the server named: open what hides it, and let the effect below move focus.
       if (field && connectionFields.some((f) => f.key === field)) setMoreOpen(true);
     } finally {
@@ -1114,7 +1118,7 @@ function RecordForm({
 
       {refusal && (
         <div className="flex flex-col gap-2">
-          <Callout as="div" severity="critical" title="The changes could not be saved" meta={refusal.message} />
+          <Callout as="div" severity="critical" title="The changes could not be saved" meta={refusal.message} actions={refusal.stale ? <Button type="button" variant="outline" size="sm" onClick={() => void onDiscard()}>Refresh engine settings</Button> : undefined} />
           {saveCard(false)}
         </div>
       )}

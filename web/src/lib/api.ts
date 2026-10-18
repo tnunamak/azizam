@@ -835,7 +835,7 @@ export const api = {
         `/admin/api/operator/services/${serviceId}`,
         { method: "DELETE" },
       ).then(withLeftOut),
-    /** Save an edited copy of a left-out record; a marker in it keeps the value stored at its place. */
+    /** Save an edited copy of a left-out record. */
     fixLeftOut: (section: string, id: string, record: unknown) =>
       adminRegistryMutation<ServiceRegistryResponse>(
         `/admin/api/operator/service-registry/excluded/${encodeURIComponent(section)}/${encodeURIComponent(id)}`,

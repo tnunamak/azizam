@@ -430,6 +430,22 @@ describe("inference key commands", () => {
     await waitFor(() => expect(commands).toHaveBeenCalledWith("garage-gpu", expect.any(Array), '"os-2"'));
   });
 
+  it("uses the refreshed revision after storing a successful test", async () => {
+    const user = userEvent.setup();
+    mount({ revision: '"os-4"' });
+    vi.spyOn(enginesApi, "test").mockResolvedValue({ ...testResult("chat_pass"), via: "saved", evidence_token: "server-issued" });
+    vi.spyOn(enginesApi, "update").mockImplementation(async () => {
+      view = { ...view, revision: '"os-5"' };
+      return registry;
+    });
+    const commands = vi.spyOn(enginesApi, "secretEntries").mockResolvedValue(registry);
+    await user.click(await screen.findByRole("button", { name: "Run a real test for Chat" }));
+    await waitFor(() => expect(enginesApi.view).toHaveBeenCalledTimes(2));
+    await user.type(screen.getByLabelText("API key"), "replacement-value");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(commands).toHaveBeenCalledWith("garage-gpu", expect.any(Array), '"os-5"'));
+  });
+
   it("Discard refetches and a 412 Refresh clears stale edits", async () => {
     const user = userEvent.setup();
     mount({ revision: '"os-1"' });
@@ -506,7 +522,7 @@ describe("headers", () => {
       expect(input).toHaveAttribute("type", "password");
     }
     expect(within(group).queryByRole("checkbox")).toBeNull();
-    expect(within(group).getByText(/Header values are stored as secrets/)).toBeVisible();
+    expect(within(group).getByText(/Values marked Secret are write-only/)).toBeVisible();
     expect(screen.queryByText(/saved as plain text/)).toBeNull();
     cleanup();
     viewer.current = { ...viewer.current, role: "admin" };

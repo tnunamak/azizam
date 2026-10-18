@@ -994,8 +994,10 @@ class AdminSQLiteStore:
                         "health_endpoint", "api_key", "api_key_env", "api_key_ref", "api_key_secret_id", "credential_origin",
                         "litellm_provider", "provider_adapter",
                     }
-                    if any((old_config.get(key) or defaults.get(key)) != (new_config.get(key) or defaults.get(key))
-                           for key in keys):
+                    missing_timeout = object()
+                    if (old_config.get("timeout", missing_timeout) != new_config.get("timeout", missing_timeout)
+                            or any((old_config.get(key) or defaults.get(key)) != (new_config.get(key) or defaults.get(key))
+                                   for key in keys if key != "timeout")):
                         raise PermissionError("Only the owner can change service settings.")
                     for field in ("capabilities", "priority", "role", "kind", "resources", "secret_refs"):
                         if previous.get(field) != record.get(field):

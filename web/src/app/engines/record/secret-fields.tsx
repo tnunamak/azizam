@@ -2,7 +2,7 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FormField, Tag } from "../parts/form";
-import type { SecretDraft, SecretRow } from "./secret-edits";
+import { credentialFlag, type SecretDraft, type SecretRow } from "./secret-edits";
 let nextRow = 0;
 export function SecretFields({
   drafts,
@@ -39,6 +39,13 @@ export function SecretFields({
           const rows = draft.rows.filter((r) => !r.removed);
           const command = draft.kind === "argv";
           const named = draft.kind === "headers" || draft.kind === "env";
+          const move = (index: number, direction: -1 | 1) => {
+            const reordered = [...draft.rows];
+            const here = reordered.findIndex((row) => row.key === rows[index].key);
+            const there = reordered.findIndex((row) => row.key === rows[index + direction].key);
+            [reordered[here], reordered[there]] = [reordered[there], reordered[here]];
+            change(draft.carrier, reordered);
+          };
           return (
             <fieldset
               key={draft.carrier}
@@ -50,8 +57,8 @@ export function SecretFields({
               </legend>
               {draft.kind === "headers" && (
                 <p className="text-meta text-muted-foreground">
-                  Header values are stored as secrets. Enter a replacement or
-                  remove a row. Unchanged entries keep their configured values.
+                  Values marked Secret are write-only. Public values remain visible.
+                  Enter a replacement or remove a row.
                 </p>
               )}
               {draft.kind === "env" && (
@@ -89,7 +96,7 @@ export function SecretFields({
                       ? "API key"
                       : `${draft.carrier} key`
                     : draft.kind === "url"
-                      ? `${draft.carrier} replacement URL`
+                      ? "Replacement URL"
                       : `Value for ${r.name || "new entry"}`;
                 const removalLabel =
                   draft.kind === "headers"
@@ -101,7 +108,7 @@ export function SecretFields({
                           ? "Clear API key"
                           : `Clear ${draft.carrier} key`
                         : draft.kind === "url"
-                          ? `Clear ${draft.carrier} credentials`
+                          ? "Clear URL credentials"
                           : `Remove ${label}`;
                 return (
                   <div
@@ -169,6 +176,15 @@ export function SecretFields({
                           Secret
                         </label>
                       )}
+                      {command && index > 0 && !r.secret && credentialFlag((rows[index - 1].prefix ?? "") + rows[index - 1].value) && (
+                        <p className="text-meta text-warning">This public argument may contain a credential. Mark it Secret to keep it write-only.</p>
+                      )}
+                      {command && index > 1 && (
+                        <Button type="button" variant="ghost" size="sm" aria-label={`Move ${label} up`} onClick={() => move(index, -1)}>Move up</Button>
+                      )}
+                      {command && index > 0 && index < rows.length - 1 && (
+                        <Button type="button" variant="ghost" size="sm" aria-label={`Move ${label} down`} onClick={() => move(index, 1)}>Move down</Button>
+                      )}
                       {(r.edited || (!!r.value && r.secret)) && (
                         <span className="text-meta">
                           {r.id || r.configured
@@ -176,7 +192,7 @@ export function SecretFields({
                             : "New value pending"}
                         </span>
                       )}
-                      <Button
+                      {!(command && index === 0) && !(draft.kind === "url" && !r.configured) && <Button
                         type="button"
                         variant="ghost"
                         size="sm"
@@ -188,7 +204,7 @@ export function SecretFields({
                           : draft.kind === "url"
                             ? "Clear credentials"
                             : "Remove"}
-                      </Button>
+                      </Button>}
                       {r.edited && (
                         <Button
                           type="button"
@@ -258,7 +274,7 @@ export function SecretFields({
                         name: "",
                         originalName: "",
                         value: "",
-                        secret: !command,
+                        secret: !command || (rows.length > 1 && credentialFlag((rows[rows.length - 1].prefix ?? "") + rows[rows.length - 1].value)),
                       },
                     ])
                   }

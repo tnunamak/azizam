@@ -36,35 +36,12 @@ const containers = [
   "config.process",
   "config.process.profile_apply",
 ];
-const urlFields = [
-  "config.endpoint",
-  "config.upstream",
-  "config.host",
-  "config.url",
-  "config.address",
-  "config.base_url",
-  "config.api_base",
-  "config.default_base_url",
-  "config.health_endpoint",
-  "config.key_url",
-  "config.docs_url",
-  "config.gateway_lifecycle_base_url",
-  "config.context_window_probe.endpoint",
-  "process.health_endpoint",
-  "process.legacy_lifecycle.driver_config.health_endpoint",
-  "lifecycle.driver_config.health_endpoint",
-  "config.lifecycle.driver_config.health_endpoint",
-  "config.process.health_endpoint",
-  ...[
-    "process.legacy_lifecycle.driver_config",
-    "lifecycle.driver_config",
-    "config.lifecycle.driver_config",
-  ].flatMap((base) =>
-    ["load_url", "unload_url", "verify_endpoint"].map(
-      (key) => `${base}.${key}`,
-    ),
-  ),
-];
+const connectionUrlFields = ["config.address", "config.base_url", "config.api_base", "config.default_base_url"];
+
+/** A separate value after a credential flag is usually sensitive, whatever engine receives it. */
+export function credentialFlag(value: string): boolean {
+  return /(?:^|[-_])(?:key|token|secret|password|auth)(?:$|[-_])/i.test(value.trim());
+}
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -193,21 +170,15 @@ export function secretDrafts(
     )
       add("process.env", "Process environment", "env", []);
   }
-  const models = get(record, "config.models");
-  const modelUrls = Array.isArray(models)
-    ? models.map((_, index) => `config.models[${index}].url`)
-    : [];
-  const observationUrls = Object.keys(
-    object(get(record, "observations")),
-  ).flatMap((name) => [
-    `observations.${name}.http.url`,
-    `observations.${name}.http.path`,
-  ]);
-  for (const carrier of [...urlFields, ...modelUrls, ...observationUrls]) {
+  const connectionUrl = connectionUrlFields.find((carrier) => {
+    const value = get(record, carrier);
+    return (typeof value === "string" && Boolean(value)) || Object.keys(object(get(record, carrier + "_entries"))).length > 0;
+  });
+  for (const carrier of connectionUrl ? [connectionUrl] : []) {
     const value = get(record, carrier);
     const entries = object(get(record, carrier + "_entries"));
     if ((typeof value === "string" && value) || Object.keys(entries).length)
-      add(carrier, `${carrier} credentials`, "url", [
+      add(carrier, "Connection URL credentials", "url", [
         {
           key: carrier,
           name: "",
@@ -252,7 +223,7 @@ export function secretCommands(drafts: SecretDraft[]): SecretCommand[] {
       });
     } else if (draft.kind === "url") {
       const r = draft.rows[0];
-      if (r.removed) commands.push({ carrier, operation: "clear_credentials" });
+      if (r.removed && r.configured) commands.push({ carrier, operation: "clear_credentials" });
       else if (r.edited || r.value)
         commands.push({ carrier, operation: "set_credentials", url: r.value });
     } else {
@@ -294,6 +265,11 @@ export function secretProblem(drafts: SecretDraft[]): string | null {
   for (const draft of drafts) {
     if (JSON.stringify(draft.rows) === draft.initial) continue;
     const rows = draft.rows.filter((r) => !r.removed);
+    if (draft.kind === "argv") {
+      const original = (JSON.parse(draft.initial) as SecretRow[])[0];
+      if (original && rows[0]?.key !== original.key)
+        return `${draft.label}: the program cannot be removed.`;
+    }
     if (
       draft.kind === "argv" &&
       draft.carrier.endsWith(".start") &&

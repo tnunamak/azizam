@@ -227,8 +227,8 @@ it("keeps URL credential replacement on its saved public endpoint", () => {
   expect(secretProblem(drafts)).toBeNull();
 });
 it("accepts credentials for the same bare host and refuses a different host", () => {
-  const drafts = secretDrafts({ config: { host: "localhost:8091" } });
-  const host = drafts.find((d) => d.carrier === "config.host")!;
+  const drafts = secretDrafts({ config: { address: "localhost:8091" } });
+  const host = drafts.find((d) => d.carrier === "config.address")!;
   host.rows[0].value = "user:pass@localhost:8091";
   expect(secretProblem(drafts)).toBeNull();
   host.rows[0].value = "user:pass@localhost:8092";

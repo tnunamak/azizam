@@ -334,7 +334,9 @@ def clean_values(definition: Mapping[str, Any], values: Mapping[str, Any], *,
         raise DraftError("The key holds a space or a character a request cannot carry. Paste it again.", field="api_key")
     out["headers"] = _clean_headers(values.get("headers"), stored=stored_headers)
     out["transforms"] = _clean_transforms(values["transforms"]) if "transforms" in values else None
-    out["reply_timeout_s"] = _number(values, "reply_timeout_s", _field_default(definition, "reply_timeout_s", 600), low=1, high=3600)
+    timeout_value = values.get("reply_timeout_s")
+    out["reply_timeout_s"] = (None if timeout_value == ""
+                              else _number(values, "reply_timeout_s", _field_default(definition, "reply_timeout_s", 600), low=1, high=3600))
     return out
 
 
@@ -543,7 +545,7 @@ def build_raw(
             raw["path_prefix"] = values["path_prefix"]
         else:
             raw.pop("path_prefix", None)
-    if "reply_timeout_s" in has:
+    if "reply_timeout_s" in has and values.get("reply_timeout_s") is not None:
         # The model router waits this long for a reply (litellm_substrate reads ``timeout``).
         raw["timeout"] = int(values["reply_timeout_s"])
     if "headers" in has:
@@ -1195,6 +1197,8 @@ class EngineService:
         return {**record, "service_id": service_id}
 
     async def update(self, ctx: Any, service_id: str, body: Mapping[str, Any], *, expected_generation: int) -> dict[str, Any]:
+        if body.get("recheck") is True and not _is_owner(ctx):
+            raise _owner_only("Only the owner can recheck service settings.")
         catalog = self.catalog()
         registry = self.store.get_service_registry()
         record = (registry.get("services") or {}).get(service_id)

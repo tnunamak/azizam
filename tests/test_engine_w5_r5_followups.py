@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from gateway import engine_admin, service_registry
 from tests.test_engine_w5_review import Store, record
-from tests.test_engine_admin_routes import _put_registry, _record, _registry  # noqa: F401
+from tests.test_engine_admin_routes import _edit, _put_registry, _record, _registry  # noqa: F401
 from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin  # noqa: F401
 from tests.test_admin_cannot_act_as_owner import _etag  # noqa: F401
 
@@ -39,3 +40,15 @@ def test_administrator_cannot_put_absent_hop_timeout_as_600(gateway):
                         headers={**csrf_for(admin), "If-Match": _etag(admin)}, json=changed)
     assert refused.status_code == 403, refused.text
     assert "timeout" not in _record(gateway, "hop-absent")["config"]
+
+
+def test_administrator_recheck_is_refused_before_outbound_probe(gateway, monkeypatch):
+    _, _, _, admin = owner_and_admin(gateway)
+    registry = _registry(gateway)
+    registry["services"]["hop-recheck"] = record(definition="openai-compatible", definition_version=1)
+    _put_registry(gateway, registry)
+    run_check = AsyncMock(side_effect=AssertionError("recheck made an outbound probe"))
+    monkeypatch.setattr(engine_admin, "run_check", run_check)
+    refused = _edit(admin, "hop-recheck", {"definition": "openai-compatible", "recheck": True})
+    assert refused.status_code == 403, refused.text
+    run_check.assert_not_called()
