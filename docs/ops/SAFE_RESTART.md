@@ -8,7 +8,7 @@ synchronous media call that is running.
 scripts/safe-restart --dry-run   # what is in flight? changes nothing
 scripts/safe-restart             # build stale UI, wait for idle + quiet, drain, restart, verify
 scripts/safe-restart --quiet-seconds 0   # skip the quiet-window wait
-scripts/safe-restart --llama     # drain chat, wait, restart llama-bee
+scripts/safe-restart --llama     # drain chat, wait, restart local-llm
 scripts/safe-restart --force     # skip the wait; KILLS in-flight work
 scripts/safe-restart --skip-web-build  # skip checking and rebuilding web/out
 ```
@@ -115,7 +115,7 @@ The key is never printed.
   `{"error": {"code": "gateway_draining", "type": "server_error", ...}}`.
   Reads, job polls, cancels (`.../cancel`), `/health` and `/admin/*` still work.
 - `--llama` also waits for llama-server `/slots` to be idle, restarts
-  `llama-bee`, waits for its `/health`, then switches the gateway drain off.
+  `local-llm`, waits for its `/health`, then switches the gateway drain off.
   llama-server cannot drain by itself, so the gateway is the place to stop new
   chat.
 

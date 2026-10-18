@@ -1058,10 +1058,10 @@ def test_nested_lifecycle_driver_survives_first_boot_seed() -> None:
                 "lifecycle": {
                     "type": "systemd",
                     "managed": True,
-                    "service_name": "llama-bee.service",
+                    "service_name": "local-llm.service",
                     "driver": "systemd",
                     "driver_config": {
-                        "unit": "llama-bee.service",
+                        "unit": "local-llm.service",
                         "activation_env_keys": {"model": "LLAMA_BEE_MODEL"},
                         "precheck": "gguf_path",
                     },

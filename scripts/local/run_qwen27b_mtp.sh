@@ -18,7 +18,7 @@
 #   build/bin/llama-server --spec-type mtp --model /dev/null   # must NOT say "unknown speculative type"
 #
 # CAVEAT if you ever enable this: LLAMA_MTP_PORT below defaults to 5051, which
-# is the LIVE llama-bee chat backend's port. Override LLAMA_MTP_PORT (and pick a
+# is the LIVE local-llm chat backend's port. Override LLAMA_MTP_PORT (and pick a
 # non-conflicting GPU via LLAMA_MTP_VISIBLE_DEVICES) before starting, or it will
 # collide with the running backend.
 

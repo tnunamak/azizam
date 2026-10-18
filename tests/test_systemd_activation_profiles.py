@@ -15,7 +15,7 @@ def _service() -> dict:
             "driver": "systemd",
             "driver_config": {
                 "scope": "user",
-                "unit": "llama-bee.service",
+                "unit": "local-llm.service",
                 "dropin": "95-activation.conf",
                 "health_endpoint": "/v1/models",
                 "activation_env_keys": {
@@ -116,7 +116,7 @@ def test_exact_model_aux_and_profile_is_noop_but_profile_change_restarts(tmp_pat
         "systemctl",
         "--user",
         "restart",
-        "llama-bee.service",
+        "local-llm.service",
     )
     assert dropin.read_text() == driver._dropin_text(q8)
 

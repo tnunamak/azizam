@@ -185,7 +185,7 @@ start it again. `roles:` and `models:` declarations are read from `proxy_config.
 
 | ids | `input_modalities` | `tags` | why |
 |---|---|---|---|
-| `default`, `coder`, `coder-q5`, `coder-q8`, `coder-unchained`, `rp` | text, image | reasoning, tool-use, vision | Every record loads the mmproj (image input); llama-bee runs with `--jinja` (native tool calls) and `--reasoning on`, and the gateway maps `reasoning_effort` to a thinking budget. |
+| `default`, `coder`, `coder-q5`, `coder-q8`, `coder-unchained`, `rp` | text, image | reasoning, tool-use, vision | Every record loads the mmproj (image input); local-llm runs with `--jinja` (native tool calls) and `--reasoning on`, and the gateway maps `reasoning_effort` to a thinking budget. |
 | `default-fast` | text, image | tool-use, vision | Same weights; the record's `reasoning_effort: none` overlay turns thinking off, so clients should not send an effort. |
 | `current`, `current-fast` | text | none | The fallback only (see "Dynamic aliases"): the values when nothing declared is loaded, for example the text-only `cydonia-24b` (`models:`, no mmproj, no declaration). With a Qwen record loaded they inherit text, image and tool-use, vision, plus reasoning for `current`. |
 
