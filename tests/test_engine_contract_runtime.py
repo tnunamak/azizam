@@ -460,6 +460,23 @@ def test_switch_preparation_waits_for_previous_response_lease():
     run(scenario())
 
 
+def test_control_credential_is_bound_to_connection_origin():
+    from gateway.engine_credentials import credential_headers
+
+    service = {"connection": {"address": "http://fixture.test:18091",
+               "credentials": {"control": {"secret_ref": "fixture-secret",
+                   "origin": "http://fixture.test:18091", "header": "Authorization",
+                   "scheme": "Bearer"}}}}
+    with patch("gateway.engine_credentials.secret_store.get_provider_secret",
+               return_value="fixture-value") as get_secret:
+        assert credential_headers(service, "control") == {"Authorization": "Bearer fixture-value"}
+        assert get_secret.call_args.kwargs["expected_origin"] == "http://fixture.test:18091"
+        service["connection"]["address"] = "http://other.test:18091"
+        with pytest.raises(ValueError, match="origin"):
+            credential_headers(service, "control")
+        assert get_secret.call_count == 1
+
+
 def test_observations_are_unknown_without_probe_and_inventory_is_not_residency():
     reader = ObservationReader()
     assert run(reader.read({"connection": {"address": "http://127.0.0.1:1"}}, "resident")).known is False
