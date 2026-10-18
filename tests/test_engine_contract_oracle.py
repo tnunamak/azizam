@@ -100,4 +100,4 @@ def test_policy_denial_receipt_is_frozen() -> None:
                                   make_policy_request(intent="image.generate", model="example"), receipt)
     assert decision.decision == "denied"
     receipt.finish("denied", latency_ms=0, now_ms=1_700_000_000_000)
-    assert _digest({audience: receipt.to_dict(audience) for audience in ("client", "admin")}) == "FILL_DENIAL"
+    assert _digest({audience: receipt.to_dict(audience) for audience in ("client", "admin")}) == "7dc4d305bd62836755f72655b601c9b55305bd64ed028d4fca7f6e3088feee1a"
