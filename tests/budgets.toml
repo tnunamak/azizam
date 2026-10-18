@@ -16,7 +16,7 @@
 # the orphans' assertions into gated suites; node:test cases are new, from
 # probe-gates.test.mjs in the compat-node step. Measured at 0bff0431 + S13.
 [ceilings]
-pytest = 11408  # W5 round 2: 11402 full-run cases plus 6 frozen-main readiness probes, including the merged engine-page and compatibility regressions.
+pytest = 11409  # W5 round 2: 11402 full-run cases plus 6 frozen-main readiness probes and the reload-revision regression, including the merged engine-page and compatibility regressions.
 vitest = 2690  # W5 round 2: measured with vitest list, including contract sections and Connection honesty cases.
 playwright = 461  # W5 round 2: 443 main + 3 live-data + 15 household; adds the absent-timeout and hidden-header save journey.
 

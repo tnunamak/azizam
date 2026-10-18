@@ -208,3 +208,8 @@ in this use; source reads and trace inspection were still necessary.
 - `ds recent` found the integration-base commits and engine runtime files.
 - `ds recent --limit 3` failed with `unknown flag`; plain `ds recent` worked.
 - A focused `ds find 'lifecycle hop forwarding'` started a full 2,327-file index. That startup cost was too high for this lookup, so source inspection remained necessary.
+
+
+## 2026-10-18: W5 round 2 compatibility repairs
+
+`ds tldr` and a two-slice `ds task` completed in the isolated worktree. Task creation reported progress through 2,415 candidate files, then 7,321 new and 192 updated index entries. The task ID and separate compatibility and verification slices were useful for the handoff. Indexing was substantial for a repair whose files and acceptance checks were already known; source inspection and committed regression tests supplied the decisive evidence while indexing ran.
