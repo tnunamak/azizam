@@ -56,10 +56,10 @@ def test_the_unchanged_gateway_matches_the_golden(tmp_path):
 
 
 def test_an_extra_field_in_the_engine_request_body_is_caught(tmp_path):
-    real = proxy._build_comfy_submit_payload
+    real = proxy._build_graph_submit_payload
 
     def change(rig):
-        rig.set(proxy, "_build_comfy_submit_payload", lambda workflow, **kw: {**real(workflow, **kw), "front": True})
+        rig.set(proxy, "_build_graph_submit_payload", lambda workflow, **kw: {**real(workflow, **kw), "front": True})
 
     message = replay_with(tmp_path, change)
     assert "engine_requests" in message and ".body.text" in message
@@ -77,7 +77,7 @@ def test_one_engine_request_more_or_fewer_is_caught(tmp_path):
     async def no_stats(_client):
         return None
 
-    message = replay_with(tmp_path, lambda rig: rig.set(proxy, "comfy_free_vram_bytes", no_stats))
+    message = replay_with(tmp_path, lambda rig: rig.set(proxy, "graph_free_vram_bytes", no_stats))
     assert "engine_requests" in message
 
 
