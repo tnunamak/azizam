@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StatusView } from "./status-view";
 import { productApi, type MemberStatus as Snapshot } from "@/lib/product-api";
 import * as session from "@/components/shell/session";
+import { api } from "@/lib/api";
 
 // Own file: the module registry is per file, so the load count cannot depend on
 // which case ran first (the gate shuffles case order).
@@ -50,4 +51,14 @@ it("does not load the owner status module for a member", async () => {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}><StatusView /></QueryClientProvider>);
   await screen.findByRole("heading", { name: "Your latest requests" }).catch(() => undefined);
   expect(ownerModule.loads).toBe(0);
+});
+
+it("never asks a member's browser for the owner overview", async () => {
+  vi.spyOn(session, "useViewer").mockReturnValue({ admin: false } as ReturnType<typeof session.useViewer>);
+  vi.spyOn(productApi, "status").mockResolvedValue(snapshot);
+  const overview = vi.spyOn(api, "overview");
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}><StatusView /></QueryClientProvider>);
+  await screen.findByRole("heading", { name: "Your latest requests" }).catch(() => undefined);
+  expect(overview).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Apply again" })).toBeNull();
 });
