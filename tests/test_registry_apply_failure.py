@@ -377,3 +377,15 @@ def test_a_gateway_started_on_a_registry_with_one_bad_service_serves_the_rest(tm
     assert result["backends"] == ["good-engine"]
     assert result["problem"]["mode"] == "partial" and set(result["problem"]["left_out"]) == {"bad-engine"}
     assert "bad-engine" in done.stdout  # the loud log line
+
+
+def test_a_failed_reload_after_a_partial_boot_keeps_the_partial_report(live, monkeypatch):
+    partial = {"mode": "partial", "error": "bad", "left_out": {"bad-engine": "x"}, "served": 1}
+    monkeypatch.setattr(proxy, "REGISTRY_APPLY_PROBLEM", partial, raising=False)
+    with monkeypatch.context() as broken:
+        broken.setattr(service_registry, "ensure_service_registry", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+        with pytest.raises(RuntimeError):
+            proxy.reload_runtime_config()
+    assert proxy.REGISTRY_APPLY_PROBLEM == partial
+    proxy.reload_runtime_config()
+    assert proxy.REGISTRY_APPLY_PROBLEM is None

@@ -375,7 +375,7 @@ def servable_part_of_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any],
             except Exception as error:  # noqa: BLE001 - any refusal of this record leaves it out; the rest still serve
                 left_out[record_id if kind == "service" else f"{kind}:{record_id}"] = f"{type(error).__name__}: {error}"[:300]
                 continue
-            kept[record_id if kind != "workflow" and kind != "capability" else record["id"]] = record
+            kept[record["id"] if kind in ("workflow", "capability") else record_id] = record
         return kept
 
     def service(service_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:

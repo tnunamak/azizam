@@ -177,3 +177,16 @@ def test_the_owner_can_write_an_auth_inject_rule(tmp_path):
     owner = AdminContext(subject="owner-user", roles=frozenset({"owner"}), actor_kind="user")
     settled = store._settle_credential_bindings(_with(_plain(), "auth_inject", INJECT_BY_SECRET), owner)
     assert settled["services"]["eng"]["config"]["auth_inject"] == INJECT_BY_SECRET
+
+
+def test_a_non_owner_administrator_can_still_edit_a_service_that_carries_auth_inject_rules(tmp_path):
+    """A partial edit carries every config key over, so keeping the rules is not a change to them."""
+    store = _store_with(tmp_path, _with(_plain(), "auth_inject", INJECT_BY_ENV))
+    admin = AdminContext(subject="admin-user", roles=frozenset({"admin"}), actor_kind="user")
+    generation = admin_store.get_service_registry_with_generation(path=store.path)["operator_settings_generation"]
+
+    store.update_service(service_id="eng", data={"name": "renamed"}, actor=admin, expected_generation=generation)
+
+    saved = store.get_service_registry()["services"]["eng"]
+    assert saved["name"] == "renamed"
+    assert saved["config"]["auth_inject"] == INJECT_BY_ENV

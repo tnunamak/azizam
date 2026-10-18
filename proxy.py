@@ -1060,10 +1060,12 @@ def reload_runtime_config() -> dict:
         try:
             updates = _apply_stored_registry()
         except Exception as error:  # noqa: BLE001 - reported, then re-raised for the caller
-            REGISTRY_APPLY_PROBLEM = {
-                "mode": "stale", "left_out": {}, "served": len(config.get("backends") or {}),
-                "error": f"{type(error).__name__}: {error}"[:300],
-            }
+            if REGISTRY_APPLY_PROBLEM is None or REGISTRY_APPLY_PROBLEM.get("mode") == "stale":
+                # A boot that served only part of the registry keeps saying so: that is still the running state.
+                REGISTRY_APPLY_PROBLEM = {
+                    "mode": "stale", "left_out": {}, "served": len(config.get("backends") or {}),
+                    "error": f"{type(error).__name__}: {error}"[:300],
+                }
             print(f"[proxy] ERROR: runtime config reload failed; the previous config is still serving: {error}", flush=True)
             raise
         REGISTRY_APPLY_PROBLEM = None
