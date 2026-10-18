@@ -59,34 +59,46 @@ class SecretStatus:
         }
 
 
+def ensure_provider_secret_schema_on(conn: sqlite3.Connection) -> None:
+    """Create or upgrade the secret table on ``conn``, inside whatever transaction it holds."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS provider_secrets (
+          id TEXT PRIMARY KEY,
+          nonce_b64 TEXT NOT NULL,
+          ciphertext_b64 TEXT NOT NULL,
+          suffix TEXT NOT NULL,
+          approved_origin TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+        """
+    )
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_secrets)")}
+    if "approved_origin" not in columns:
+        conn.execute("ALTER TABLE provider_secrets ADD COLUMN approved_origin TEXT")
+
+
 def ensure_provider_secret_schema(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite_startup.connect(path)) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS provider_secrets (
-              id TEXT PRIMARY KEY,
-              nonce_b64 TEXT NOT NULL,
-              ciphertext_b64 TEXT NOT NULL,
-              suffix TEXT NOT NULL,
-              approved_origin TEXT,
-              created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL
-            )
-            """
-        )
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_secrets)")}
-        if "approved_origin" not in columns:
-            conn.execute("ALTER TABLE provider_secrets ADD COLUMN approved_origin TEXT")
+        ensure_provider_secret_schema_on(conn)
         conn.commit()
 
 
-def put_provider_secret(secret_id: str, value: str, *, db_path: Path, key_path: Path | None = None, now: int | None = None, approved_origin: str | None = None, conn: sqlite3.Connection | None = None) -> SecretStatus:
+def put_provider_secret(secret_id: str, value: str, *, db_path: Path, key_path: Path | None = None, now: int | None = None, approved_origin: str | None = None, conn: sqlite3.Connection | None = None, allow_short: bool = False, keep_suffix: bool = True) -> SecretStatus:
     """Store one secret. With ``conn``, write inside the caller's open transaction and leave the commit to
-    the caller; the caller must have run :func:`ensure_provider_secret_schema` before it began."""
+    the caller; the caller must have run :func:`ensure_provider_secret_schema` before it began.
+
+    A provider key must be longer than 4 characters and keeps its last 4 as a display suffix. A secret
+    entry of a record (a header, an environment value, a command argument, a URL credential) may be any
+    non-empty text (``allow_short``) and keeps no suffix (``keep_suffix=False``): nothing of it is ever shown.
+    """
     secret_id = _normalize_secret_id(secret_id)
     approved_origin = _normalize_origin(approved_origin) if approved_origin else None
-    if len(value) <= 4:
+    if not value:
+        raise ValueError("secret value is required")
+    if len(value) <= 4 and not allow_short:
         raise ValueError("secret value must be longer than 4 characters")
     if conn is None:
         ensure_provider_secret_schema(db_path)
@@ -95,7 +107,7 @@ def put_provider_secret(secret_id: str, value: str, *, db_path: Path, key_path: 
     aad = _secret_aad(secret_id, approved_origin)
     ciphertext = AESGCM(key).encrypt(nonce, value.encode("utf-8"), aad)
     timestamp = int(time.time() if now is None else now)
-    suffix = value[-4:]
+    suffix = value[-4:] if keep_suffix else ""
     insert = """
             INSERT INTO provider_secrets(id, nonce_b64, ciphertext_b64, suffix, approved_origin, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
