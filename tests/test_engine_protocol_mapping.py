@@ -311,3 +311,122 @@ def test_mapping_s_stops_rules_inside_a_condition_too(clock) -> None:
 def test_a_map_within_mapping_s_still_runs_every_rule(clock) -> None:
     program = mapping.build(_rules(3), base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(mapping_s=5))
     assert sorted(program.apply({"body": {}, "params": {}, "files": {}})) == ["k0", "k1", "k2"]
+
+def _each(children=None, source="/body/models", target="/data"):
+    return {"each": {"from": source, "to": target, "map": children if children is not None else [
+        {"copy": {"from": "/item/name", "to": "/id"}},
+        {"copy": {"from": "/index", "to": "/index"}},
+    ]}}
+
+
+def test_each_maps_items_indexes_and_existing_roots():
+    rules = [_each([
+        {"copy": {"from": "/item/name", "to": "/id"}},
+        {"copy": {"from": "/index", "to": "/index"}},
+        {"copy": {"from": "/params/tag", "to": "/tag"}},
+        {"copy": {"from": "/body/version", "to": "/version"}},
+    ])]
+    assert run(rules, {"models": [{"name": "a"}, {"name": "b"}], "version": 7}, params={"tag": "t"}) == {
+        "data": [{"id": "a", "index": 0, "tag": "t", "version": 7},
+                 {"id": "b", "index": 1, "tag": "t", "version": 7}]}
+
+
+def test_each_missing_empty_scalar_items_and_non_list():
+    assert run([_each()], {}) == {}
+    assert run([_each()], {"models": []}) == {"data": []}
+    assert run([_each([{"copy": {"from": "/item", "to": "/value"}}])],
+               {"models": [0, False, None, "x"]}) == {"data": [{"value": x} for x in [0, False, None, "x"]]}
+    for value in ({}, "abc", 1, True, None):
+        with pytest.raises(MappingError):
+            run([_each()], {"models": value})
+
+
+def test_each_nested_scope_and_when_restore_parent_item_and_index():
+    children = [
+        _each([{"copy": {"from": "/item", "to": "/value"}},
+               {"copy": {"from": "/index", "to": "/index"}}], "/item/children", "/children"),
+        {"when": {"if": {"path": "/item/name", "present": True},
+                  "then": [{"copy": {"from": "/item/name", "to": "/name"}}]}},
+        {"copy": {"from": "/index", "to": "/index"}},
+    ]
+    assert run([_each(children)], {"models": [{"name": "a", "children": [4, 5]}, {"name": "b", "children": [6]}]}) == {
+        "data": [{"children": [{"value": 4, "index": 0}, {"value": 5, "index": 1}], "name": "a", "index": 0},
+                 {"children": [{"value": 6, "index": 0}], "name": "b", "index": 1}]}
+
+
+def test_each_iteration_budget_is_cumulative_and_resets_after_failure():
+    rules = [_each([], target="/a"), _each([], target="/b")]
+    program = mapping.build(rules, base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(max_selected=3))
+    with pytest.raises(BudgetExceeded) as raised:
+        program.apply({"body": {"models": [1, 2]}})
+    assert raised.value.budget == "max_selected"
+    assert program.apply({"body": {"models": [1]}}) == {"a": [{}], "b": [{}]}
+    nested = mapping.build([_each([_each([], "/item", "/children")])],
+                           base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(max_selected=3))
+    with pytest.raises(BudgetExceeded) as raised:
+        nested.apply({"body": {"models": [[1, 2, 3]]}})
+    assert raised.value.budget == "max_selected"
+
+
+def test_each_combines_when_depth_and_total_rule_budgets():
+    wrapped = {"when": {"if": {"path": "/body/models", "present": True}, "then": [_each()]}}
+    with pytest.raises(DescriptionError):
+        mapping.build([wrapped], base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(max_when_depth=1))
+    mapping.build([wrapped], base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(max_when_depth=2))
+    with pytest.raises(DescriptionError):
+        mapping.build([_each()], base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(max_rules=2))
+    mapping.build([_each()], base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(max_rules=3))
+
+
+@pytest.mark.parametrize("rule", [
+    {"each": {"from": "/body/models", "to": "/data"}},
+    {"each": {"from": "/body/models", "to": "/data", "map": [], "filter": True}},
+    {"each": {"from": "/body/models", "to": "/data", "map": {}}},
+    {"each": {"from": "/item", "to": "/data", "map": []}},
+    {"each": {"from": "/body/models/*", "to": "/data", "map": []}},
+    {"copy": {"from": "/index", "to": "/index"}},
+    {"copy": {"from": "/item", "to": "/item"}},
+])
+def test_each_closed_grammar_and_lexical_roots(rule):
+    with pytest.raises(DescriptionError):
+        mapping.build([rule], base="empty", roots=mapping.REQUEST_ROOTS)
+
+
+def test_each_never_mutates_source_through_nested_or_later_writes():
+    body = {"models": [{"name": "a", "opts": {"x": [1]}}]}
+    before = json.dumps(body)
+    rules = [_each([
+        {"copy": {"from": "/item/opts", "to": "/opts"}},
+        {"set": {"to": "/opts/flag", "value": True}},
+        {"copy": {"from": "/item", "to": "/original"}},
+    ]), {"set": {"to": "/data/0/original/name", "value": "changed"}}]
+    assert run(rules, body)["data"][0]["original"]["name"] == "changed"
+    assert json.dumps(body) == before
+    # The result's writable array/object graph belongs to this invocation.
+    out = run([_each([{"copy": {"from": "/item", "to": "/value"}}])], body)
+    out["data"][0]["value"]["opts"]["x"].append(2)
+    assert json.dumps(body) == before
+
+
+def test_each_deadline_stops_empty_maps_and_nested_rules(clock):
+    program = mapping.build([_each([])], base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(mapping_s=0.55))
+    with pytest.raises(BudgetExceeded) as raised:
+        program.apply({"body": {"models": list(range(100))}})
+    assert raised.value.budget == "mapping_s"
+    assert clock.now < 2
+    program = mapping.build([_each(_rules(40))], base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(mapping_s=0.55))
+    with pytest.raises(BudgetExceeded) as raised:
+        program.apply({"body": {"models": [1]}})
+    assert raised.value.budget == "mapping_s" and clock.clones <= 8
+
+
+def test_each_checks_json_depth_for_source_and_assembled_output():
+    program = mapping.build([_each([{"copy": {"from": "/item", "to": "/a/b"}}])],
+                            base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(max_json_depth=3))
+    with pytest.raises(BudgetExceeded) as raised:
+        program.apply({"body": {"models": [1]}})
+    assert raised.value.budget == "max_json_depth"
+    deep = {"models": [{"a": {"b": {"c": 1}}}]}
+    with pytest.raises(BudgetExceeded) as raised:
+        program.apply({"body": deep})
+    assert raised.value.budget == "max_json_depth"

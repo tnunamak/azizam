@@ -92,3 +92,134 @@ def test_sse_crlf_split_is_preserved_through_executor():
         reply=await ex.invoke(conn(),req('one'))
         return [event async for event in reply]
     assert run(go())==[b'one']
+
+
+@pytest.mark.parametrize('value', ['job%ready', 'job;ready', 'job%2Fready'])
+def test_upstream_job_identifiers_are_encoded_once_for_poll_and_cancel(value):
+    from urllib.parse import quote
+    ex, fake = make(JOB, lambda r: httpx.Response(200, json={'state': 'busy'}))
+    run(ex.cancel(conn(), JobRef('render', value)))
+    encoded = quote(value, safe='')
+    assert [r.url.raw_path.decode() for r in fake.requests] == [
+        '/jobs/' + encoded, '/jobs/' + encoded + '/cancel']
+
+
+@pytest.mark.parametrize('value', ['asset%ready', 'asset;ready', 'asset%2Fready'])
+def test_upstream_asset_handles_are_encoded_once(value):
+    from urllib.parse import quote
+    ex, fake = make(JOB, lambda r: httpx.Response(
+        200, content=b'\x89PNG\r\n\x1a\n' + b'\x00' * 32,
+        headers={'content-type': 'image/png'}))
+    ref = JobRef('render', 'job%;ready')
+    status = JobStatus(ref, JobState.succeeded, assets=(value,))
+    assets = run(ex.fetch_assets(conn(), ref, status))
+    expected = ex.description.operations['render'].job.fetch.path
+    expected = expected.replace('{id}', quote(ref.id, safe='')).replace('{asset}', quote(value, safe=''))
+    assert assets
+    assert [r.url.raw_path.decode() for r in fake.requests] == [expected]
+
+
+@pytest.mark.parametrize('value', ['user%ready', 'user;ready', 'user%2Fready'])
+def test_user_path_values_still_reject_percent_and_semicolon(value):
+    operations = {'one': {'class': 'generate', 'request': {'method': 'GET', 'path': '/items/{id}'},
+                          'response': {'framing': 'json'}}}
+    ex, fake = make(operations, lambda r: httpx.Response(200, json={}))
+    with pytest.raises(MappingError):
+        run(ex.invoke(conn(), req('one', params={'id': value})))
+    assert not fake.requests
+
+
+@pytest.mark.parametrize('value', ['.', '..', 'a/b', 'a\\b', 'a\nb', 'a\x00b', '\uff0f', '\uff0e'])
+def test_upstream_job_path_values_retain_segment_defenses(value):
+    ex, fake = make(JOB, lambda r: httpx.Response(200, json={'state': 'busy'}))
+    with pytest.raises(MappingError):
+        run(ex.poll(conn(), JobRef('render', value)))
+    assert not fake.requests
+
+
+def _credential_runtime(monkeypatch, credential_headers, *, observations=None, selection=None):
+    from gateway.engine_protocol import dispatch
+    from gateway.engine_protocol.types import Connection
+    operations = {
+        name: {'class': cls, 'request': {'method': 'GET', 'path': '/' + name},
+               'response': {'framing': 'json', 'select': {'value': '/value'}}}
+        for name, cls in [('generate', 'generate'), ('select', 'control'), ('health', 'inventory')]
+    }
+    doc = description.parse_description({
+        'id': 'credentials-r2', 'protocol_version': 1, 'executor': 'http-v1',
+        'auth': {'inference': {'kind': 'bearer'}, 'control': {'kind': 'bearer'}},
+        'operations': operations}, source='credentials-r2')
+    service = {'connection': {'credentials': {
+        cls: {'secret_ref': 'env:TEST_' + cls.upper(), 'scheme': 'Bearer'}
+        for cls in ('inference', 'control')}},
+        'observations': observations or {}}
+    offering = {'id': 'fixture', 'selection': selection or {}}
+    monkeypatch.setattr(dispatch, 'connection_config', lambda service: service['connection'])
+    monkeypatch.setattr(dispatch, 'connection_from_record', lambda *args: Connection(address='http://engine.example'))
+    monkeypatch.setattr(dispatch, 'observations_config', lambda service: service['observations'])
+    monkeypatch.setattr(dispatch, 'offerings_config', lambda service: [offering])
+    monkeypatch.setattr(dispatch, 'credential_headers', credential_headers)
+    runtime = dispatch.Runtime(dispatch.Target('fixture', service, offering, doc))
+    return runtime
+
+
+def test_runtime_resolves_only_current_operation_credentials(monkeypatch):
+    calls = []
+    def headers(service, cls):
+        calls.append(cls)
+        if cls == 'control':
+            raise AssertionError('Unused control credential was resolved')
+        return {'Authorization': 'Bearer fixture-inference'}
+    runtime = _credential_runtime(monkeypatch, headers)
+    assert calls == []
+    seen = []
+    async def invoke(connection, op, request):
+        seen.append(connection.credentials)
+    monkeypatch.setattr(runtime.adapter, 'invoke', invoke)
+    run(runtime.invoke('generate', {}))
+    assert calls == ['inference']
+    assert list(seen[0]) == ['inference']
+
+
+def test_runtime_missing_generation_credential_is_typed_and_never_sent(monkeypatch):
+    from gateway.engine_protocol.errors import ProtocolError
+    runtime = _credential_runtime(monkeypatch, lambda service, cls: {})
+    async def invoke(*args):
+        pytest.fail('A generation request without its required credential was sent')
+    monkeypatch.setattr(runtime.adapter, 'invoke', invoke)
+    with pytest.raises(ProtocolError) as raised:
+        run(runtime.invoke('generate', {}))
+    assert raised.value.code == 'engine_credential_unavailable'
+
+
+def test_runtime_selection_and_observation_resolve_separate_credentials(monkeypatch):
+    from types import SimpleNamespace
+    from gateway.engine_protocol import dispatch
+    calls = []
+    def headers(service, cls):
+        calls.append(cls)
+        return {'Authorization': 'Bearer fixture-control'} if cls == 'control' else {}
+    runtime = _credential_runtime(monkeypatch, headers,
+        observations={'ready': {'op': 'health'}}, selection={'mode': 'switch'})
+    assert calls == []
+    sent = []
+    async def invoke(connection, op, request):
+        sent.append((op, dict(connection.credentials)))
+        return SimpleNamespace(status=200, selected={'value': True})
+    monkeypatch.setattr(runtime.adapter, 'invoke', invoke)
+    class Checker:
+        def __init__(self, *args, **kwargs): pass
+        def _check_paths(self, args, roots): return args, []
+        def _recheck_paths(self, identities): pass
+    monkeypatch.setattr(dispatch, 'EngineControlRuntime', Checker)
+    class Switch:
+        def __init__(self, *, invoke, observe, **kwargs):
+            self.test_invoke, self.test_observe = invoke, observe
+        async def select(self, *args, **kwargs):
+            await self.test_invoke('select', {})
+            await self.test_observe('ready')
+    monkeypatch.setattr(dispatch, 'SwitchController', Switch)
+    run(runtime.lease(drain=None, lock_for=None))
+    assert calls == ['control', 'inference']
+    assert list(sent[0][1]) == ['control']
+    assert sent[1] == ('health', {})
