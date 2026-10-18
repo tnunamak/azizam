@@ -7,7 +7,7 @@
  */
 import { useId, type ReactNode } from "react";
 import { Check, CircleCheck, CircleHelp, CircleX, Circle, Lock, Loader2, type LucideIcon } from "lucide-react";
-import type { CapabilityLevel, CheckedCapability, StoredTest, TestResult } from "@/lib/engines-api";
+import type { CapabilityLevel, CheckedCapability, SentRequest, StoredTest, TestResult } from "@/lib/engines-api";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -26,10 +26,10 @@ export interface CapabilityRow {
 }
 
 export type TestState =
-  | { status: "running" }
-  | { status: "done"; result: TestResult; tickedForYou?: boolean }
+  | { status: "running"; snapshot?: string }
+  | { status: "done"; result: TestResult; snapshot?: string; tickedForYou?: boolean }
   | { status: "stored"; stored: StoredTest }
-  | { status: "error"; message: string };
+  | { status: "error"; message: string; snapshot?: string };
 
 const LEVEL: Record<RowLevel, { word: string; icon: LucideIcon; className: string }> = {
   likely: { word: "Likely", icon: CircleCheck, className: "bg-success-tint text-success" },
@@ -64,7 +64,7 @@ export function withTests(rows: CapabilityRow[], tests: Record<string, TestState
     return {
       ...row,
       level: "likely",
-      evidence: `A real test passed at ${clockTime(test.result.at)}. That shows the server can do this.`,
+      evidence: `A test of ${row.label.toLowerCase()}${test.result.model ? ` with ${test.result.model}` : ""} passed at ${new Date(test.result.at * 1000).toLocaleString()} using ${test.result.via === "saved" ? "saved" : "unsaved"} settings.`,
       why: undefined,
     };
   });
@@ -95,9 +95,9 @@ export function TestResultBlock({
     return (
       <p role="status" className="text-meta text-muted-foreground flex items-center gap-2">
         <Loader2 aria-hidden="true" className="size-4 animate-spin" />
-        {note.startsWith("Ran on the gateway’s computer with the saved")
-          ? "Testing… one tiny request with the saved settings"
-          : "Testing… one tiny request from the gateway’s computer"}
+        {note.startsWith("Tested the saved settings")
+          ? "Testing with the saved settings…"
+          : "Testing from the gateway’s computer…"}
       </p>
     );
   if (test.status === "error")
@@ -115,7 +115,7 @@ export function TestResultBlock({
   const at = test.status === "done" ? test.result.at : test.stored.at;
   const head = ok
     ? `Test passed at ${clockTime(at)}.${test.status === "done" && test.tickedForYou ? " Ticked for you." : ""}`
-    : `Test failed at ${clockTime(at)}. The server said no.`;
+    : `Test failed at ${clockTime(at)}. See the reason below.`;
   const Icon = ok ? CircleCheck : CircleX;
   const rows: [string, ReactNode][] = [];
   if (test.status === "done") {
@@ -155,7 +155,8 @@ export function TestResultBlock({
           ))}
         </dl>
       )}
-      <p className="text-meta text-muted-foreground mt-2">{note}</p>
+      {test.status === "done" && test.result.request && <RequestTrace request={test.result.request} />}
+      <p className="text-meta text-muted-foreground mt-2">{note} <time dateTime={new Date(at * 1000).toISOString()}>{new Date(at * 1000).toLocaleDateString()}</time></p>
       <Button type="button" variant="ghost" size="sm" className="mt-1" disabled={disabled} onClick={onTestAgain}>
         Test again
       </Button>
@@ -303,7 +304,7 @@ export function CapabilityLegend() {
   const items: [RowLevel, string][] = [
     ["likely", "The server’s own details say so, or a real test passed. Ticked for you."],
     ["possible", "The server answers, but nothing proves it. Left unticked."],
-    ["against", "The server said no. Left unticked."],
+    ["against", "See the reason below. Left unticked."],
   ];
   return (
     <div className="flex flex-col gap-1.5">
@@ -314,5 +315,33 @@ export function CapabilityLegend() {
         </div>
       ))}
     </div>
+  );
+}
+
+/** Exactly what the test sent: method, URL, headers (the key hidden by the gateway), body and time limit. */
+export function RequestTrace({ request }: { request: SentRequest }) {
+  const headers = Object.entries(request.headers ?? {});
+  const body =
+    request.body === undefined || request.body === null
+      ? ""
+      : typeof request.body === "string"
+        ? request.body
+        : JSON.stringify(request.body, null, 2);
+  return (
+    <details className="text-meta mt-2">
+      <summary className="text-link cursor-pointer max-sm:min-h-11">Request sent, with secrets hidden</summary>
+      <pre
+        tabIndex={0}
+        aria-label="Request sent, with secrets hidden"
+        className="bg-muted rounded-control mt-1 max-h-72 overflow-auto p-2 font-mono whitespace-pre-wrap [overflow-wrap:anywhere]"
+      >
+        {[
+          `${request.method} ${request.url}`,
+          ...headers.map(([name, value]) => `${name}: ${value}`),
+          ...(body ? ["", body] : []),
+        ].join("\n")}
+      </pre>
+      {request.timeout_s !== undefined && <p className="text-muted-foreground mt-1">Waits up to {request.timeout_s} seconds for the reply.</p>}
+    </details>
   );
 }

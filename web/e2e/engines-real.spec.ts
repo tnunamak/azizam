@@ -75,16 +75,15 @@ test("real registry journey preserves disabled state and unknown config through 
   await page.getByRole("menuitem", { name: "Open engine", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Journey engine" })).toBeVisible();
 
-  // Other settings are listed, read-only, under Technical details; the stored record is not an editor.
-  await page.getByText("Technical details", { exact: true }).click();
+  // Other settings remain read-only under the stored record.
+  await page.getByRole("heading", { name: "Stored record", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Other settings" })).toBeVisible();
   await expect(page.getByText("custom_operator_field", { exact: true })).toBeVisible();
   await expect(page.getByRole("textbox", { name: /JSON/ })).toHaveCount(0);
 
-  await page.getByLabel(/^Name/).fill("Renamed journey engine");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Renamed journey engine");
   await page.getByLabel(/^Address/).fill(`http://127.0.0.1:${enginePort}/v2`);
-  const more = page.locator("details").filter({ has: page.getByText("More options", { exact: true }) }).first();
-  await more.getByText("More options", { exact: true }).click();
+  const more = page.getByRole("region", { name: "What it offers", exact: true });
   await more.getByText("Add an adjustment").click();
   await more.getByRole("button", { name: /Set defaults/ }).click();
   await more.getByLabel("Field (row 1)").fill("max_tokens");
@@ -138,3 +137,76 @@ test("real registry journey preserves disabled state and unknown config through 
   await expect(focusTarget).toBeFocused();
   expect((await registry()).services[serviceId]).toBeUndefined();
 });
+
+for (const width of [1280, 390]) {
+  test(`engine contract edits preserve arguments and fit at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({ page, baseURL }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const read = async () => {
+      const response = await page.request.get("/admin/api/operator/service-registry");
+      expect(response.ok()).toBe(true);
+      return { value: (await response.json()).service_registry, revision: response.headers().etag };
+    };
+    const session = await (await page.request.get("/admin/api/session")).json();
+    const headers = (revision?: string) => ({
+      "x-azizam-csrf": session.actor.csrf_token, "x-azizam-admin-action": "1", "if-match": revision ?? "",
+    });
+    const created = await page.request.post("/admin/api/operator/services", {
+      headers: headers((await read()).revision), data: {
+        definition: "openai-compatible", name: `Contract ${width}`,
+        values: { address: `http://127.0.0.1:${Number(new URL(baseURL!).port) + 1}/contract-${width}/v1` }, disabled: true,
+      },
+    });
+    expect(created.status()).toBe(201);
+    const id = (await created.json()).service_id;
+    const seed = await read();
+    const record = seed.value.services[id];
+    const start = ["runner", "--model", "/models/family, chat.bin", "--token", "isolated-command-key"];
+    const stop = ["stop-runner", "family chat"];
+    record.lifecycle = { driver: "command", driver_config: { start, stop, health_timeout_s: 120 } };
+    record.process = { driver: "command", start, stop, legacy_lifecycle: record.lifecycle };
+    record.config.engine_capabilities = ["chat"];
+    const longId = "family/" + "large-model-name-".repeat(16);
+    record.config.models = [{ model_group: "family-chat", upstream_model: longId }];
+    record.config.transforms = [{ kind: "param-map", from: "old_field", to: "new_field" }];
+    const put = await page.request.put("/admin/api/operator/service-registry", { headers: headers(seed.revision), data: seed.value });
+    expect(put.ok()).toBe(true);
+    await page.goto(`/engines/?engine=${id}`);
+    await expect(page.getByRole("heading", { level: 1, name: `Contract ${width}` })).toBeVisible();
+    await expect(page.getByTestId("engine-health")).toContainText("Unknown");
+    const arg = page.getByRole("textbox", { name: "Start command argument 3" });
+    await expect(arg).toHaveValue(start[2]);
+    await expect(page.getByRole("textbox", { name: "Start command argument 5" })).toHaveValue("[redacted]");
+    await arg.fill("/models/new family, chat.bin");
+    const from = page.getByLabel("Field name (row 1)");
+    const to = page.getByLabel("Rename to (row 1)");
+    await from.scrollIntoViewIfNeeded();
+    await expect(from).toBeVisible();
+    await expect(to).toBeVisible();
+    if (width === 390) {
+      const first = await from.boundingBox();
+      const second = await to.boundingBox();
+      expect(second!.y).toBeGreaterThan(first!.y + first!.height);
+      expect(first!.width).toBeGreaterThan(200);
+      await page.screenshot({ path: "test-results/engine-contract-390-inputs.png" });
+      const saveBar = page.getByRole("status").filter({ hasText: "You have unsaved changes." });
+      await expect(saveBar).toHaveCSS("position", "static");
+    }
+    const saved = page.waitForResponse(r => r.request().method() === "PATCH" && r.url().endsWith(`/services/${id}`));
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    expect((await saved).status()).toBe(200);
+    const after = (await read()).value.services[id];
+    expect(after.process.start).toEqual([start[0], start[1], "/models/new family, chat.bin", "--token", "[redacted]"]);
+    expect(after.process.stop).toEqual(stop);
+    await page.reload();
+    await expect(page.getByRole("textbox", { name: "Start command argument 3" })).toHaveValue("/models/new family, chat.bin");
+    // Long workflow IDs and required inputs stay inspectable even without an editor.
+    const workflow = await read();
+    workflow.value.services[id].offerings = [{ id: longId, kind: "workflow", tasks: [{ task: "images", evidence: "declared" }], inputs: { prompt: { type: "string", required: true } }, options: { steps: { type: "integer" } }, selection: { mode: "whole_graph" } }];
+    expect((await page.request.put("/admin/api/operator/service-registry", { headers: headers(workflow.revision), data: workflow.value })).ok()).toBe(true);
+    await page.reload();
+    await expect(page.getByTestId("offering-facts")).toContainText("prompt");
+    await page.getByTestId("offering-facts").scrollIntoViewIfNeeded();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: `test-results/engine-contract-${width}.png` });
+  });
+}

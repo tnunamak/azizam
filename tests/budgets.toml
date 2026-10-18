@@ -2,8 +2,7 @@
 # Units: pytest collected items (each parameter set counts; subtests do not);
 # vitest test cases; Playwright test x project over the gate configs
 # (playwright.config.ts, .live-data, .household). Retries never count.
-# Set at the counts measured on 2026-10-12 at origin/main 945a0cec
-# with this slice merged. Only a slice that must add cases
+# Updated from measured suite/list counts on 2026-10-18 for W5 round 3. Only a slice that must add cases
 # raises a ceiling, in the same PR and with its reason; S14 lowers them.
 
 # VT (browser display-state cases moved to vitest, plus VT-FIX oracle restorations):

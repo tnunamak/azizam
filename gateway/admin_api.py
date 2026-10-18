@@ -1680,6 +1680,7 @@ def create_admin_router(
     litellm_key_client: LiteLLMKeyClient | None = None,
     known_model_names_getter: Callable[[], frozenset[str]] | None = None,
     engine_fetch: engine_check.Fetch | None = None,
+    engine_hop_timeout: Callable[[], float] | None = None,
     frontend_status: Callable[[], list[dict[str, Any]]] | None = None,
     registry_problem: Callable[[], Mapping[str, Any] | None] | None = None,
     prefix: str = "/admin/api",
@@ -1715,7 +1716,7 @@ def create_admin_router(
 
     # Add engine: definitions, check, draft test, who can use the models and the engine view.
     # Create and edit with a definition run through the services routes below.
-    engine_service = engine_admin.EngineService(store, fetch=engine_fetch)
+    engine_service = engine_admin.EngineService(store, fetch=engine_fetch, hop_timeout=engine_hop_timeout)
     engine_admin.register_engine_routes(router, service=engine_service, guard=_guard, read_json=_read_json_body)
 
     @router.get("/session")

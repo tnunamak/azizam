@@ -96,7 +96,7 @@ describe("f: what a detected server can do", () => {
     const group = within(dialog).getByRole("group", { name: "What this server can do" });
     expect(within(group).getByRole("checkbox", { name: "Embeddings" })).toBeChecked();
     expect(within(group).getAllByText("Likely")).toHaveLength(2);
-    expect(within(group).getByText(`A real test passed at ${at}. That shows the server can do this.`)).toBeVisible();
+    expect(within(group).getByText(/^A test of embeddings.*passed at .* using unsaved settings\./)).toBeVisible();
     expect(within(group).getByText("POST http://192.168.1.50:8080/v1/embeddings")).toBeVisible();
     expect(
       within(group).getByText("Ran on the gateway’s computer with the values on this screen. Nothing was saved, and it is not in Activity."),
@@ -113,10 +113,10 @@ describe("g, h: models, name and create", () => {
     await user.click(within(dialog).getByRole("button", { name: "Continue" }));
     expect(within(dialog).getByText("Step 4 of 5 · Models")).toBeVisible();
     expect(within(dialog).getByText("3 of 3 models offered")).toBeVisible();
-    const pub = within(dialog).getAllByLabelText("Public name");
+    const pub = within(dialog).getAllByLabelText("Name apps use");
     expect(pub[0]).toHaveValue("qwen3-32b");
     expect(within(dialog).getAllByText("Suggested").length).toBeGreaterThan(2);
-    expect(within(dialog).getAllByLabelText("Context window")[0]).toHaveValue("40960");
+    expect(within(dialog).getAllByLabelText("Context limit (tokens)")[0]).toHaveValue("40960");
     expect(within(dialog).getAllByText("Reported by server")).toHaveLength(3);
     await user.click(within(dialog).getByRole("checkbox", { name: "Offer gemma-3-12b-it" }));
     expect(within(dialog).getByText("2 of 3 models offered")).toBeVisible();
@@ -131,7 +131,7 @@ describe("g, h: models, name and create", () => {
     await user.clear(pub[2]);
     await user.type(pub[2], "nomic-embed");
     await user.type(within(dialog).getByRole("searchbox", { name: "Search models" }), "nomic");
-    expect(within(dialog).getAllByLabelText("Public name")).toHaveLength(1);
+    expect(within(dialog).getAllByLabelText("Name apps use")).toHaveLength(1);
   });
 
   it("h: names the engine, recaps, creates, and hands the page the new id and message", async () => {
@@ -178,7 +178,7 @@ describe("g, h: models, name and create", () => {
     const dialog = await toStep3(user, /Any OpenAI-compatible server/, "oai_ok", "http://192.168.1.50:8080/v1");
     await user.click(within(dialog).getByRole("checkbox", { name: "Embeddings" }));
     await user.click(within(dialog).getByRole("button", { name: "Continue" }));
-    const pub = within(dialog).getAllByLabelText("Public name");
+    const pub = within(dialog).getAllByLabelText("Name apps use");
     await user.clear(pub[0]);
     await user.type(pub[0], "my-chat");
     await user.click(within(dialog).getByRole("checkbox", { name: "Offer gemma-3-12b-it" }));
