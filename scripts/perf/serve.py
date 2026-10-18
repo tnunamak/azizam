@@ -8,7 +8,7 @@ copy only). This adds the media files (copied from the source checkout's image
 cache) and runs scripts/perf/gateway_main.py so every response carries
 statement, connection and subprocess counts. The source tree is never written.
 
-    scripts/perf/serve.py --port 18710 [--source ~/applications/azizam] [--clone STATE_OF_A_RUNNING_SERVER]
+    scripts/perf/serve.py --port 18800 [--source ~/applications/azizam] [--clone STATE_OF_A_RUNNING_SERVER]
 
 The copy lives in a scratch directory (scripts/scratch_owner.py): it is removed when this process
 ends, also on TERM, INT or HUP, and a copy left by a killed run is removed by the next start.

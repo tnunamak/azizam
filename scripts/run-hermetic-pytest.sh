@@ -12,8 +12,9 @@ lock_file="$repo_root/tests/requirements-hermetic.lock"
 python_store="$state_root/azizam-hermetic-python"
 python_abi=cpython-312
 python_minor=3.12
+python_version=3.12.13
 platform=linux-x86_64
-python_root="$python_store/cpython-3.12.13-linux-x86_64-gnu"
+python_root="$python_store/cpython-$python_version-linux-x86_64-gnu"
 created_cache_mount_dir=0
 
 # --junit-xml-out PATH: pytest writes JUnit XML inside the sandbox, which
@@ -34,6 +35,15 @@ for file in "$lock_file" "$repo_root/tests/requirements-hermetic.in" "$repo_root
   [[ -f $file ]] || { echo "error: required hermetic test input is missing: $file" >&2; exit 127; }
 done
 "$repo_root/scripts/hermetic_source_preflight.sh" "$repo_root" "$lock_file" "$repo_root/requirements.txt" "$repo_root/tests/requirements-hermetic.in"
+
+if [[ ! -x $python_root/bin/python3.12 ]]; then
+  echo "hermetic pytest: reinstalling Python $python_version in $python_store" >&2
+  env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$state_root/hermetic-uv-cache" UV_NO_CONFIG=1 uv python install "$python_version" --install-dir "$python_store"
+fi
+if [[ $("$python_root/bin/python3.12" --version) != "Python $python_version" ]]; then
+  echo "error: hermetic pytest requires Python $python_version at $python_root/bin/python3.12" >&2
+  exit 1
+fi
 
 lock_sha256=$(sha256sum "$lock_file" | awk '{print $1}')
 manifest_sha256=$(sha256sum "$repo_root/requirements.txt" | awk '{print $1}')

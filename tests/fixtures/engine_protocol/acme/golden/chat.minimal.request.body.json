@@ -1,0 +1,1 @@
+{"engine":{"model":"acme-1"},"input":{"turns":[{"role":"system","content":"Be brief."},{"role":"user","content":"Say hello"}]},"delivery":"once"}

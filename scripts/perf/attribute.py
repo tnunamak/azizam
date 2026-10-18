@@ -3,7 +3,7 @@
 
 Needs a fixture started with PERF_ATTRIBUTE=1 (scripts/perf/serve.py):
 
-    PERF_ATTRIBUTE=1 scripts/perf/serve.py --port 18720 &
+    PERF_ATTRIBUTE=1 scripts/perf/serve.py --port 18810 &
     scripts/perf/attribute.py --manifest STATE/perf-manifest.json /me/api/usage/summary [--member]
 
 Prints the 25 largest groups as `count  kind 'statement' @ file:line:function < caller < caller`.

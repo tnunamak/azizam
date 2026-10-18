@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 from starlette.requests import Request
 
 import proxy
+from gateway import engine_check
 from tests.support.access import plan_for, access, access_context, auth_identity  # noqa: E402
 def _request(path: str, payload: dict) -> Request:
     sent = False
@@ -27,7 +28,20 @@ def _request(path: str, payload: dict) -> Request:
     return Request({"type": "http", "method": "POST", "path": path, "headers": []}, receive)
 
 
+# The provider route reads the engine record: a caller who is not the owner may POST only what it declares.
+_GENERATES_CHAT = {"native": {"allow": [{"method": "POST", "path": "/v1/chat/completions", "class": "generate"}]}}
+
+
 class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        # The fixtures name an engine host that has no address; the destination check is not what these tests cover.
+        for patcher in (
+            patch.object(proxy.engine_check, "check_destination", AsyncMock(return_value=engine_check.Destination("ok"))),
+            patch.object(proxy.engine_check, "checked_transport", return_value=None),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     async def test_provider_native_rejects_paid_remote_record_before_dispatch(self) -> None:
         class Upstream:
             status_code = 200
@@ -271,7 +285,8 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
             async def aclose(self):
                 return None
 
-        target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True}
+        target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True,
+                  "record": _GENERATES_CHAT}
         with patch.object(proxy, "_PROVIDER_NATIVE_TARGETS", {"test": target}), patch.object(
             proxy, "_auth_context_from_scope", return_value=access_context()
         ), patch.object(proxy, "evaluate_and_apply", return_value=SimpleNamespace(denied=False)), patch.object(
@@ -305,7 +320,8 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
             async def aclose(self):
                 return None
 
-        target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True}
+        target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True,
+                  "record": _GENERATES_CHAT}
         with patch.object(proxy, "_PROVIDER_NATIVE_TARGETS", {"test": target}), patch.object(
             proxy, "_auth_context_from_scope", return_value=access_context()
         ), patch.object(proxy, "evaluate_and_apply", return_value=SimpleNamespace(denied=False)), patch.object(
@@ -356,7 +372,8 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
                         self.closed = True
                         return None
 
-                target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True}
+                target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True,
+                  "record": _GENERATES_CHAT}
                 client = Client()
                 with patch.object(proxy, "_PROVIDER_NATIVE_TARGETS", {"test": target}), patch.object(
                     proxy, "_auth_context_from_scope", return_value=access_context()

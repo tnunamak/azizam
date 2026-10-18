@@ -5,8 +5,19 @@ import re
 import time
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, Response
 
 app = FastAPI()
+
+# The first-run fixture (scripts/ui/serve.py, UI_E2E_FIRST_RUN) runs two copies:
+# - FAKE_SUBSTRATE_CONFIG names the LiteLLM config the gateway writes. This copy
+#   stands in for LiteLLM: a chat goes to the engine address that config gives its
+#   model, so a reply proves the route the operator set up, not the stand-in itself.
+# - FAKE_ENGINE_MODEL and FAKE_ENGINE_REPLY make a copy the operator can add as an
+#   engine, with a model and a reply of its own.
+_SUBSTRATE_CONFIG = os.environ.get("FAKE_SUBSTRATE_CONFIG")
+_ENGINE_MODEL = os.environ.get("FAKE_ENGINE_MODEL")
+_ENGINE_REPLY = os.environ.get("FAKE_ENGINE_REPLY")
 
 # Request state per test namespace (docs/design/TEST_STRATEGY.md 3.4.7). One
 # engine serves many parallel browser tests; a test tags its prompts with
@@ -76,7 +87,7 @@ def models():
     if os.environ.get('UI_SEED_PROFILE') == 'household':
         from scripts.ui.household_seed import MODEL_GROUPS
         return {'object': 'list', 'data': [{'id': mid, 'object': 'model', 'owned_by': 'household', 'name': name} for group in MODEL_GROUPS.values() for mid, name, cap in group]}
-    return {"object": "list", "data": [{"id": "demo-chat", "object": "model", "owned_by": "demo"}]}
+    return {"object": "list", "data": [{"id": _ENGINE_MODEL or "demo-chat", "object": "model", "owned_by": "demo"}]}
 
 
 @app.get("/provider/v1/key")
@@ -101,10 +112,31 @@ def provider_models():
     }
 
 
+async def send_to_configured_engine(body: dict):
+    import httpx
+    import yaml
+
+    try:
+        entries = yaml.safe_load(open(_SUBSTRATE_CONFIG).read())["model_list"]
+    except (OSError, KeyError, TypeError):
+        entries = []
+    entry = next((item for item in entries if item.get("model_name") == body.get("model")), None)
+    if entry is None:
+        return JSONResponse({"error": {"code": "model_not_found",
+                                       "message": f"{body.get('model')} is not in the LiteLLM config"}}, status_code=400)
+    params = entry["litellm_params"]
+    upstream = {**body, "model": params["model"].split("/", 1)[-1]}
+    async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+        answer = await client.post(params["api_base"].rstrip("/") + "/chat/completions", json=upstream)
+    return Response(answer.content, status_code=answer.status_code, media_type="application/json")
+
+
 @app.post("/v1/chat/completions")
 @app.post("/provider/v1/chat/completions")
 async def chat(request: Request):
     body = await request.json()
+    if _SUBSTRATE_CONFIG:
+        return await send_to_configured_engine(body)
     messages = body.get("messages") or []
     content = " ".join(str((message or {}).get("content", "")) for message in messages if isinstance(message, dict))
     if "[hold]" in content and (held := _NAMESPACE.search(content.encode())):
@@ -116,7 +148,7 @@ async def chat(request: Request):
         "model": body.get("model", "demo-chat"),
         "choices": [{
             "index": 0,
-            "message": {"role": "assistant", "content": "Your gateway is connected. This is a demonstration response from the isolated capture engine."},
+            "message": {"role": "assistant", "content": _ENGINE_REPLY or "Your gateway is connected. This is a demonstration response from the isolated capture engine."},
             "finish_reason": "stop",
         }],
     }

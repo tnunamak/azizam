@@ -128,21 +128,21 @@ function progress(evidence = {}) {
   };
 }
 
-function renderHome() {
+const ownerViewer = {
+  authenticated: true,
+  name: "Alex",
+  email: null,
+  role: "owner",
+  admin: true,
+};
+
+function renderHome(viewer: typeof ownerViewer = ownerViewer) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <ViewerContext.Provider
-        value={{
-          authenticated: true,
-          name: "Alex",
-          email: null,
-          role: "owner",
-          admin: true,
-        }}
-      >
+      <ViewerContext.Provider value={viewer}>
         <HomePage />
       </ViewerContext.Provider>
     </QueryClientProvider>,
@@ -848,5 +848,116 @@ describe("Home audit component behavior", () => {
     await userEvent.click(screen.getByRole("combobox", { name: "API key" }));
     await userEvent.click(await screen.findByRole("option", { name: /Browser test app/ }));
     expect(screen.getByLabelText("Paste your API Key (Optional)")).toBeVisible();
+  });
+  describe("the owner's next step on a gateway with no engine", () => {
+    const service = (id: string, source: string, enabled = true) => ({
+      id,
+      name: id,
+      kind: "provider",
+      source,
+      enabled,
+      editable: true,
+      capabilities: [],
+      config: {},
+    });
+    const unknownImage = {
+      capability: "image",
+      icon_key: "image",
+      model: "flux",
+      use_name: "flux",
+      available: false,
+      status: "unknown",
+      reason_code: "unknown",
+      availability: { available: false, status: "unknown", evidence: { kind: "unknown" } },
+    };
+    // `capabilities` default: they exist but nothing serves them, so each reads Unknown.
+    function mockHome(
+      registry: Record<string, unknown> | "error",
+      homeFields: Record<string, unknown> = {},
+    ) {
+      const requested: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          const path = String(input);
+          requested.push(path);
+          if (path === "/me/api/home")
+            return Response.json({ ...home, receipts: [], capabilities: [unknownImage], ...homeFields });
+          if (path === "/me/api/media?limit=12")
+            return Response.json({ assets: [] });
+          if (path === "/admin/api/operator/service-registry")
+            return registry === "error"
+              ? Response.json({ error: { message: "no" } }, { status: 500 })
+              : Response.json({ service_registry: { schema_version: 1, services: registry } });
+          throw new Error(`Unexpected request: ${path}`);
+        }),
+      );
+      return requested;
+    }
+    const builtIn = {
+      litellm: service("litellm", "builtin"),
+      openrouter: service("openrouter", "builtin", false),
+    };
+    const addEngine = () => screen.queryByRole("link", { name: "Add an engine" });
+
+    it("leads the owner to Add an engine when only the built-in services exist", async () => {
+      mockHome(builtIn);
+      renderHome();
+      const link = await screen.findByRole("link", { name: "Add an engine" });
+      expect(link).toHaveAttribute("href", expect.stringMatching(/^\/engines\/?$/));
+    });
+
+    it("keeps the problems link beside Add an engine", async () => {
+      mockHome(builtIn);
+      renderHome();
+      expect(await screen.findByRole("link", { name: "Add an engine" })).toBeVisible();
+      expect(screen.getByRole("link", { name: "Open Status" })).toBeVisible();
+    });
+
+    it("keeps the access plan prompt beside Add an engine", async () => {
+      mockHome(builtIn, { has_access_plan: false, capabilities: [] });
+      renderHome();
+      expect(await screen.findByRole("link", { name: "Add an engine" })).toBeVisible();
+      expect(screen.getByRole("link", { name: /You don.t have an access plan yet/ })).toBeVisible();
+    });
+
+    it("shows Add an engine once when nothing is turned on", async () => {
+      mockHome(builtIn, { capabilities: [] });
+      renderHome();
+      await screen.findByRole("link", { name: "Add an engine" });
+      expect(screen.getAllByRole("link", { name: "Add an engine" })).toHaveLength(1);
+    });
+
+    it("keeps Open Status once the owner has added an engine", async () => {
+      mockHome({ litellm: service("litellm", "builtin"), "my-engine": service("my-engine", "ui") });
+      renderHome();
+      expect(await screen.findByRole("link", { name: "Open Status" })).toBeVisible();
+      expect(addEngine()).toBeNull();
+    });
+
+    it.each([
+      ["a disabled built-in service", { litellm: service("litellm", "builtin", false) }],
+      ["no built-in service at all", {}],
+      ["an engine the owner added and turned off", { litellm: service("litellm", "builtin"), mine: service("mine", "ui", false) }],
+    ])("counts %s as no engine", async (_name, registry) => {
+      mockHome(registry);
+      renderHome();
+      expect(await screen.findByRole("link", { name: "Add an engine" })).toBeVisible();
+    });
+
+    it("says nothing about engines when the registry cannot be read", async () => {
+      mockHome("error");
+      renderHome();
+      expect(await screen.findByRole("link", { name: "Open Status" })).toBeVisible();
+      expect(addEngine()).toBeNull();
+    });
+
+    it("never asks a member for the registry or offers Add an engine", async () => {
+      const requested = mockHome(builtIn);
+      renderHome({ ...ownerViewer, name: "Sam", role: "member", admin: false });
+      expect(await screen.findByRole("link", { name: "See what is happening" })).toBeVisible();
+      expect(addEngine()).toBeNull();
+      expect(requested.filter((path) => path.startsWith("/admin"))).toEqual([]);
+    });
   });
 });

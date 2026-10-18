@@ -265,6 +265,13 @@ it("says when a kept-off engine is checked, or that it waits for the owner's key
           name: "Locked server",
           config: { engine_check: { status: "not_started", reason: "needkey" } },
         },
+        command: {
+          ...registry.services.image,
+          id: "command",
+          name: "Command server",
+          config: { engine_check: { status: "not_started" } },
+          process: { driver: "command", legacy_lifecycle: { driver: "command" } },
+        },
       },
     } as ServiceRegistry,
   });
@@ -272,6 +279,7 @@ it("says when a kept-off engine is checked, or that it waits for the owner's key
   await user.click(screen.getByRole("switch", { name: "Show not in use" }));
   expect(within(engineRow("Local image engine")).getByText("Not checked yet; checked when you turn it on or press Check now")).toBeVisible();
   expect(within(engineRow("Locked server")).getByText("Waiting for the owner to add a key")).toBeVisible();
+  expect(within(engineRow("Command server")).getByText("Not started; checked on first start")).toBeVisible();
 });
 
 it("opens the record page from ?engine=, goes back, and removes the engine there", async () => {

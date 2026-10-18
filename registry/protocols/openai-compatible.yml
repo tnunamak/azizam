@@ -1,0 +1,75 @@
+# How Azizam calls an engine that serves the OpenAI-shaped HTTP API.
+#
+# This file is data. It describes the operations Azizam sends itself: the
+# inventory read, and the speech and transcription calls. Chat and embeddings
+# execution still goes through the managed LiteLLM substrate; their entries here
+# serve probes, inventory and a direct executor, and must stay equal to what the
+# substrate sends. Paths include /v1 because the engine address is the root
+# (contract section 2: "the protocol joins operation paths").
+protocol_version: 1
+id: openai-compatible
+title: OpenAI-compatible HTTP API
+executor: http-v1
+
+auth:
+  inference: {kind: bearer}
+  control: {kind: bearer}
+
+errors:
+  - {status: [401, 403], code: key_rejected, advice: "The engine rejected the key. Check the key saved for this engine, and that the engine expects a bearer key."}
+  - {status: 404, code: route_missing, advice: "The engine has no such route. Check the address, and whether the engine needs an extra path before /v1."}
+  - {status: 429, code: engine_busy, advice: "The engine is rate limiting or full. Retry later."}
+  - {status: 503, code: engine_unavailable, advice: "The engine is up but cannot serve now, for example while it loads a model. Retry later."}
+
+operations:
+  models:
+    class: inventory
+    request: {method: GET, path: /v1/models}
+    response:
+      framing: json
+      select: {ids: /data/*/id}
+
+  chat:
+    class: generate
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: {encoding: json, base: passthrough}
+    response:
+      framing: json
+      stream:
+        when: {path: /body/stream, equals: true}
+        framing: sse
+        terminal: {sentinel: "[DONE]"}
+
+  embeddings:
+    class: generate
+    request:
+      method: POST
+      path: /v1/embeddings
+      body: {encoding: json, base: passthrough}
+    response: {framing: json}
+
+  speech:
+    class: generate
+    request:
+      method: POST
+      path: /v1/audio/speech
+      body: {encoding: json, base: passthrough}
+    response: {framing: binary}
+
+  transcribe:
+    class: generate
+    request:
+      method: POST
+      path: /v1/audio/transcriptions
+      body:
+        encoding: multipart
+        parts:
+          - {name: file, kind: file, from: /files/file, required: true}
+          - {name: model, kind: field, from: /body/model, required: true}
+          - {name: language, kind: field, from: /body/language}
+          - {name: prompt, kind: field, from: /body/prompt}
+          - {name: response_format, kind: field, from: /body/response_format}
+          - {name: temperature, kind: field, from: /body/temperature}
+    response: {framing: json}

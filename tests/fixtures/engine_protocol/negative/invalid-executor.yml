@@ -1,0 +1,5 @@
+protocol_version: 1
+id: invalid-executor
+executor: python
+operations:
+  chat: {class: generate, request: {method: GET, path: /c}}

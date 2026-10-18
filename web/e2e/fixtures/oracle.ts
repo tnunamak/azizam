@@ -12,7 +12,7 @@
 //
 // The server is thrown away afterwards, so no call can touch a server that a
 // browser test shares. Ports: the oracle gateway uses the run's port - 10 and
-// the fake engine port - 9. scripts/ci-local gives each gate seven blocks of ten
+// the fake engine port - 9. scripts/ci-local gives each gate eight blocks of ten
 // ports and starts the main browser run on the second, so the block before it is free.
 import { request, type APIRequestContext } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
