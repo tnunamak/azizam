@@ -601,34 +601,39 @@ def _systemd(**extra):
 _PROCESS_MAPPING = {"start": ["run"], "port": {"fixed": 8080}}
 
 # Every live lifecycle shape from the reality audit (section 4) plus the v2 shapes.
+# The registry projection carries ``config`` and the lifecycle wrapper onto the
+# flat backend, so a v2 ``process`` mapping lives in ``config``; the flat shapes
+# (``flat=True``) are the backend dicts the driver factory also accepts directly.
 _SHAPES = {
     "systemd wrapper plus nested copy (13 live)": (
         _systemd(config={"lifecycle": {"driver": "systemd", "driver_config": {"unit": "unit.service"}}}),
-        "systemd"),
-    "systemd wrapper only": (_systemd(), "systemd"),
-    "systemd nested copy only": (
-        _record(config={"lifecycle": {"driver": "systemd", "driver_config": {"unit": "u.service"}}},
-                lifecycle={}), "systemd"),
-    "external wrapper without nested copy (7 live)": (_record(), "external"),
-    "no lifecycle at all": ({"id": "svc", "config": {}}, "external"),
-    "empty driver string": (_record(lifecycle={"driver": ""}), "external"),
-    "unknown driver": (_record(lifecycle={"driver": "mystery"}), "external"),
-    "legacy command string": (_record(lifecycle={"driver": "command", "driver_config": {"start": "run"}}),
-                              "command"),
-    "docker": (_record(lifecycle={"driver": "docker", "driver_config": {"container": "c"}}), "docker"),
-    "http-load-unload": (_record(lifecycle={"driver": "http-load-unload"}), "http-load-unload"),
-    "systemd plus process mapping without a driver (top level)": (
-        _systemd(process=dict(_PROCESS_MAPPING)), "systemd"),
+        "systemd", False),
+    "systemd wrapper only": (_systemd(), "systemd", False),
+    "external wrapper without nested copy (7 live)": (_record(), "external", False),
+    "no lifecycle at all": ({"id": "svc", "config": {}}, "external", False),
+    "empty driver string": (_record(lifecycle={"driver": ""}), "external", False),
+    "unknown driver": (_record(lifecycle={"driver": "mystery"}), "external", False),
+    "legacy command string": (
+        _record(lifecycle={"driver": "command", "driver_config": {"start": "run"}}), "command", False),
+    "docker": (_record(lifecycle={"driver": "docker", "driver_config": {"container": "c"}}), "docker", False),
+    "http-load-unload": (_record(lifecycle={"driver": "http-load-unload"}), "http-load-unload", False),
     "systemd plus process mapping without a driver (config)": (
-        _systemd(config={"process": dict(_PROCESS_MAPPING)}), "systemd"),
-    "systemd plus process driver none": (
-        _systemd(process={"driver": "none", **_PROCESS_MAPPING}), "systemd"),
-    "systemd plus blank process driver": (
-        _systemd(process={"driver": "", **_PROCESS_MAPPING}), "systemd"),
-    "v2 process driver wins": (
-        _systemd(process={"driver": "process", **_PROCESS_MAPPING}), "process"),
-    "v2 command driver": (_record(process={"driver": "command", "start": ["run"]}), "command"),
-    "v2 process alone": (_record(process={"driver": "process", **_PROCESS_MAPPING}), "process"),
+        _systemd(config={"process": dict(_PROCESS_MAPPING)}), "systemd", False),
+    "systemd plus process driver none (config)": (
+        _systemd(config={"process": {"driver": "none", **_PROCESS_MAPPING}}), "systemd", False),
+    "systemd plus blank process driver (config)": (
+        _systemd(config={"process": {"driver": "", **_PROCESS_MAPPING}}), "systemd", False),
+    "v2 process driver wins over systemd (config)": (
+        _systemd(config={"process": {"driver": "process", **_PROCESS_MAPPING}}), "process", False),
+    "v2 command driver (config)": (
+        _record(config={"process": {"driver": "command", "start": ["run"]}}), "command", False),
+    "v2 process alone (config)": (
+        _record(config={"process": {"driver": "process", **_PROCESS_MAPPING}}), "process", False),
+    "flat systemd plus top-level process mapping without a driver": (
+        {"lifecycle": {"driver": "systemd"}, "process": dict(_PROCESS_MAPPING)}, "systemd", True),
+    "flat v2 process driver": ({"process": {"driver": "process", **_PROCESS_MAPPING}}, "process", True),
+    "flat systemd nested copy only": (
+        {"config": {"lifecycle": {"driver": "systemd"}}, "process": dict(_PROCESS_MAPPING)}, "systemd", True),
 }
 
 
@@ -636,12 +641,12 @@ _SHAPES = {
 def test_driver_resolution_keeps_every_live_lifecycle_shape(name):
     from gateway import lifecycle_drivers, service_registry
 
-    record, expected = _SHAPES[name]
+    record, expected, flat = _SHAPES[name]
     drivers = {
         "systemd": lifecycle_drivers._systemd_driver, "command": lifecycle_drivers._command_driver,
         "docker": lifecycle_drivers._docker_driver, "process": lifecycle_drivers._process_driver,
         "http-load-unload": lifecycle_drivers._http_load_unload_driver,
         "external": lifecycle_drivers._external_driver,
     }
-    backend = service_registry.runtime_backend_from_service(record)
+    backend = record if flat else service_registry.runtime_backend_from_service(record)
     assert lifecycle_drivers.driver_for_service("svc", {"svc": backend}) is drivers[expected]
