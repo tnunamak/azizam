@@ -33,6 +33,9 @@ def engine(monkeypatch, tmp_path):
     monkeypatch.setattr(proxy, '_litellm_runtime_config', lambda: SimpleNamespace(enabled=False))
     monkeypatch.setattr(proxy, 'config', {**proxy.config,'model_aliases':{},'backends':{},'roles':{},'models':[]})
     monkeypatch.setattr(proxy, 'IMAGE_CACHE_DIR', tmp_path/'assets')
+    monkeypatch.setattr(proxy, 'IMAGE_MEDIA_JOB_PAYLOAD_DIR', tmp_path/'payloads')
+    original_record=receipt_store.record
+    monkeypatch.setattr(receipt_store,'record',lambda receipt:original_record(receipt,path=receipt_store.DB_PATH))
     monkeypatch.setattr(media_jobs, 'DB_PATH', tmp_path/'jobs.db')
     monkeypatch.setattr(receipt_store, 'DB_PATH', tmp_path/'receipts.db')
     media_jobs.init_db(path=media_jobs.DB_PATH)
@@ -409,3 +412,41 @@ def test_queued_protocol_image_jobs_do_not_depend_on_other_engine_enablement(eng
     monkeypatch.setattr(proxy,'_schedule_image_media_job',scheduled)
     assert proxy._resume_pending_image_media_jobs()==1
     scheduled.assert_called_once_with(job.job_id)
+
+
+@pytest.mark.parametrize('cancel',[False,True])
+def test_public_queued_protocol_image_runs_through_the_real_worker_and_settler(engine,monkeypatch,cancel):
+    import asyncio
+    monkeypatch.setattr(proxy,'_schedule_image_media_job',lambda _:False)
+    monkeypatch.setattr(proxy,'IMAGE_MEDIA_JOB_MAX_ATTEMPTS',1)
+    body={'model':'prism-image','prompt':'blue'}
+    response=engine.client.post('/gateway/v1/media/jobs/image-generations',json=body)
+    assert response.status_code==202,response.text
+    job_id=response.json()['job_id']
+    job=media_jobs.get(job_id,audience='internal',path=media_jobs.DB_PATH)
+    assert job['backend']=='prism-local'
+    original=engine.fake.__call__
+    def handler(request):
+        if cancel and request.method=='POST' and request.url.path=='/prefix/api/v3/renders':
+            media_jobs.request_cancel(job_id,path=media_jobs.DB_PATH)
+        if cancel and request.method=='GET' and request.url.path=='/prefix/api/v3/renders/job-1':
+            return httpx.Response(200,json={'phase':'WORKING'})
+        return original(request)
+    wire=transport.HttpxTransport.for_tests(HandlerTransport(handler))
+    monkeypatch.setattr(executor,'HttpxTransport',lambda:wire)
+    asyncio.run(proxy._run_image_media_job(job_id))
+    job=media_jobs.get(job_id,audience='internal',path=media_jobs.DB_PATH)
+    assert job['status']==('canceled' if cancel else 'succeeded'),job
+    rows=receipt_store.recent(path=receipt_store.DB_PATH)
+    assert any(row['status']==('cancelled' if cancel else 'succeeded') for row in rows),rows
+
+
+def test_protocol_image_assets_keep_existing_owner_access_rules(engine):
+    response=engine.client.post('/v1/images/generations',json={'model':'prism-image','prompt':'blue'})
+    assert response.status_code==200,response.text
+    asset_id=response.json()['data'][0]['asset_id']
+    path=f'/v1/assets/{asset_id}/content'
+    assert engine.client.get(path).status_code==200
+    with authenticated(identity(app_id='different-app',key_hash='different-key')):
+        denied=engine.client.get(path)
+    assert denied.status_code in {403,404},denied.text
