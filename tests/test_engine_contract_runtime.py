@@ -9,6 +9,8 @@ import signal
 import socket
 import sys
 import time
+import threading
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -88,18 +90,67 @@ def test_process_argv_concurrent_start_and_bounded_stop(tmp_path):
 def test_idle_stop_keeps_gateway_event_loop_responsive(tmp_path):
     svc = process_service(tmp_path)
     svc["residency"]["idle_stop_s"] = 0.01
-    svc["process"]["stop_timeout_s"] = 0.35
+    import gateway.engine_process as engine_process
+
     driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
 
     async def scenario():
+        idle_gate = asyncio.Event()
+        worker_started = asyncio.Event()
+        release_worker = threading.Event()
+        caller_thread = threading.current_thread()
+        invoked_thread = []
+        idle_task = None
+        started_task = None
+        terminate_group = driver._terminate_group
+
+        async def gated_idle_sleep(_delay):
+            await idle_gate.wait()
+
+        def blocked_termination(*args):
+            invoked_thread.append(threading.current_thread())
+            if invoked_thread[-1] is caller_thread:
+                raise AssertionError("process termination blocked the event loop")
+            loop.call_soon_threadsafe(worker_started.set)
+            release_worker.wait()
+            terminate_group(*args)
+
         try:
             assert await driver.ensure_ready(svc, 2)
-            with patch.object(driver, "_group_alive", return_value=True):
-                started = time.monotonic()
-                await asyncio.sleep(0.05)
-                assert time.monotonic() - started < 0.2
-                await asyncio.sleep(0.4)
+            loop = asyncio.get_running_loop()
+            async_proxy = SimpleNamespace(
+                sleep=gated_idle_sleep,
+                get_running_loop=asyncio.get_running_loop,
+                current_task=asyncio.current_task,
+                Lock=asyncio.Lock,
+                to_thread=asyncio.to_thread,
+            )
+            with patch.object(engine_process, "asyncio", async_proxy), \
+                 patch.object(driver, "_terminate_group", side_effect=blocked_termination):
+                driver.request_started(svc)
+                driver.request_finished(svc)
+                idle_task = driver._idle_tasks["fixture"]
+                started_task = asyncio.create_task(worker_started.wait())
+                await asyncio.sleep(0)  # let the idle task reach its gated sleep
+                driver._last_use["fixture"] = time.monotonic() - svc["residency"]["idle_stop_s"]
+                idle_gate.set()
+                done, _ = await asyncio.wait(
+                    {idle_task, started_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                assert started_task in done, "event loop did not run while termination was pending"
+                assert not idle_task.done()
+                release_worker.set()
+                await idle_task
+                assert invoked_thread and invoked_thread[0] is not caller_thread
         finally:
+            release_worker.set()
+            idle_gate.set()
+            if started_task is not None and not started_task.done():
+                started_task.cancel()
+            if idle_task is not None:
+                await asyncio.gather(idle_task, return_exceptions=True)
+            if started_task is not None:
+                await asyncio.gather(started_task, return_exceptions=True)
             driver.stop(svc)
 
     run(scenario())
@@ -244,17 +295,28 @@ def test_adopted_process_that_never_passes_readiness_is_stopped(tmp_path):
 
 def test_process_readiness_probe_respects_total_deadline(tmp_path):
     svc = process_service(tmp_path)
+    import gateway.engine_process as engine_process
+    now = [0.0]
 
-    class SlowProbe:
+    class ImmediateProbe:
         async def read(self, *_args):
-            await asyncio.sleep(0.08)
             return type("Fact", (), {"known": True, "value": True})()
 
     driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True,
-                           observations=SlowProbe())
-    started = time.monotonic()
-    assert run(driver._ready(svc, 0.01)) is False
-    assert time.monotonic() - started < 0.06
+                           observations=ImmediateProbe())
+    budgets = []
+
+    async def expire_at_deadline(awaitable, *, timeout):
+        budgets.append(timeout)
+        now[0] += timeout
+        if hasattr(awaitable, "close"):
+            awaitable.close()
+        raise asyncio.TimeoutError
+
+    with patch.object(engine_process, "time", SimpleNamespace(monotonic=lambda: now[0])), \
+         patch.object(engine_process.asyncio, "wait_for", side_effect=expire_at_deadline):
+        assert run(driver._ready(svc, 0.01)) is False
+    assert budgets == pytest.approx([0.01])
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Linux process groups")
@@ -352,19 +414,34 @@ def test_stop_recovers_descendant_after_leader_crashes_first(tmp_path):
 
 
 def test_residency_deadline_includes_control_and_observation_wait():
+    import gateway.engine_residency as engine_residency
+
+    now = [0.0]
+    waits = []
+
+    async def initial_observation(_name):
+        return False
+
     async def slow_invoke(_op, _args):
-        await asyncio.sleep(0.08)
+        raise AssertionError("the control operation should be stopped by its deadline")
 
-    async def slow_observe(_name):
-        await asyncio.sleep(0.08)
-        return True
+    async def deadline_wait_for(awaitable, *, timeout):
+        waits.append(timeout)
+        if len(waits) == 1:
+            result = await awaitable
+            now[0] += 0.006
+            return result
+        if hasattr(awaitable, "close"):
+            awaitable.close()
+        raise asyncio.TimeoutError
 
-    controller = ResidencyController(invoke=slow_invoke, observe=slow_observe)
+    controller = ResidencyController(invoke=slow_invoke, observe=initial_observation)
     service = {"residency": {"load": {"op": "load"},
                              "load_deadline": {"stall_s": 0.01, "max_s": 0.02}}}
-    started = time.monotonic()
-    assert run(controller.load(service)) is False
-    assert time.monotonic() - started < 0.06
+    with patch.object(engine_residency, "time", SimpleNamespace(monotonic=lambda: now[0])), \
+         patch.object(engine_residency.asyncio, "wait_for", side_effect=deadline_wait_for):
+        assert run(controller.load(service)) is False
+    assert waits == pytest.approx([0.01, 0.004])
 
 
 def test_declared_http_switch_reaches_fake_peer_and_keeps_scope_locked():

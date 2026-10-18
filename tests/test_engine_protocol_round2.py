@@ -2,9 +2,9 @@
 import asyncio
 import copy
 import json
-import time
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -22,6 +22,25 @@ from tests.support.access import access_context
 def wire(monkeypatch, handler):
     client = transport.HttpxTransport.for_tests(HandlerTransport(handler))
     monkeypatch.setattr(executor, 'HttpxTransport', lambda: client)
+
+
+def control_listing_deadline(monkeypatch, inventory, started, expected, all_started):
+    state = {'scheduled': [], 'fired': False}
+
+    class ControlledAsyncio:
+        def __getattr__(self, name):
+            return getattr(asyncio, name)
+
+        async def wait(self, tasks, timeout=None, return_when=asyncio.ALL_COMPLETED):
+            state['scheduled'].append(timeout)
+            await all_started.wait()
+            assert len(started) == expected
+            state['fired'] = True
+            return set(), set(tasks)
+
+    monkeypatch.setattr(inventory, 'time', SimpleNamespace(monotonic=lambda: 0.0))
+    monkeypatch.setattr(inventory, 'asyncio', ControlledAsyncio())
+    return state
 
 
 def test_one_unreachable_engine_does_not_remove_healthy_models(engine, monkeypatch):
@@ -170,21 +189,84 @@ def test_inventory_timeout_leaves_healthy_results_and_status_issue(engine, monke
     from gateway.engine_protocol import inventory
     monkeypatch.setattr(inventory, 'ENGINE_TIMEOUT_S', .04)
     monkeypatch.setattr(inventory, 'LIST_TIMEOUT_S', .08)
+    monkeypatch.setattr(inventory, '_descriptions', lambda budget: asyncio.sleep(0, result=description.load_registry()))
     original = dispatch.Runtime.invoke
+    healthy_finished = asyncio.Event()
+    hung_started = asyncio.Event()
+    timeout_ready = asyncio.Event()
+    state = {'engine_scheduled': [], 'listing_scheduled': [], 'engine_fired': []}
+
+    class ControlledTimeout:
+        def __init__(self, delay):
+            self.delay = delay
+            self.owner = None
+            self.inner = asyncio.timeout(None)
+            self.armer = None
+
+        async def __aenter__(self):
+            state['engine_scheduled'].append(self.delay)
+            self.owner = asyncio.current_task()
+            timeout = await self.inner.__aenter__()
+            self.armer = asyncio.create_task(self._fire(timeout))
+            return timeout
+
+        async def _fire(self, timeout):
+            await timeout_ready.wait()
+            if self.owner is hung_task:
+                state['engine_fired'].append(self.delay)
+                timeout.reschedule(asyncio.get_running_loop().time())
+
+        async def __aexit__(self, *exc_info):
+            if self.armer is not None:
+                self.armer.cancel()
+                await asyncio.gather(self.armer, return_exceptions=True)
+            return await self.inner.__aexit__(*exc_info)
+
+    hung_task = None
+
+    def ready_if_both_started():
+        if healthy_finished.is_set() and hung_started.is_set():
+            timeout_ready.set()
+
+    class ControlledAsyncio:
+        def __getattr__(self, name):
+            return getattr(asyncio, name)
+
+        @staticmethod
+        def timeout(delay):
+            return ControlledTimeout(delay)
+
+        async def wait(self, tasks, timeout=None, return_when=asyncio.ALL_COMPLETED):
+            state['listing_scheduled'].append(timeout)
+            return await asyncio.wait(tasks, return_when=return_when)
+
+    monkeypatch.setattr(inventory, 'time', SimpleNamespace(monotonic=lambda: 0.0))
+    monkeypatch.setattr(inventory, 'asyncio', ControlledAsyncio())
+
     async def invoke(self, op, body):
+        nonlocal hung_task
         if self.target.engine_id == 'hung':
-            await asyncio.sleep(5)
-        return await original(self, op, body)
+            hung_task = asyncio.current_task()
+            hung_started.set()
+            ready_if_both_started()
+            await asyncio.Future()
+        result = await original(self, op, body)
+        healthy_finished.set()
+        ready_if_both_started()
+        return result
     monkeypatch.setattr(dispatch.Runtime, 'invoke', invoke)
     bad = copy.deepcopy(engine.record)
     bad['id'] = 'hung'
     engine.registry['services']['hung'] = bad
-    started = time.monotonic()
     response = engine.client.get('/v1/models')
     assert response.status_code == 200
-    assert time.monotonic() - started < 1
     assert 'prism-chat' in {r['id'] for r in response.json()['data']}
-    assert any(row['engine_id'] == 'hung' for row in inventory.problems())
+    assert any(row['engine_id'] == 'hung' and 'unavailable or invalid' in row['reason']
+               for row in inventory.problems())
+    assert state['engine_scheduled'] == [inventory.ENGINE_TIMEOUT_S, inventory.ENGINE_TIMEOUT_S]
+    assert state['listing_scheduled'] == [inventory.LIST_TIMEOUT_S]
+    assert state['engine_fired'] == [inventory.ENGINE_TIMEOUT_S]
+    assert healthy_finished.is_set() and hung_started.is_set()
 
 
 def test_user_descriptions_override_seeds_and_reload_independently(monkeypatch, tmp_path):
@@ -252,8 +334,17 @@ def test_total_inventory_deadline_reports_cancelled_engines(engine, monkeypatch)
     inventory._issues.clear()
     monkeypatch.setattr(inventory, 'ENGINE_TIMEOUT_S', 5)
     monkeypatch.setattr(inventory, 'LIST_TIMEOUT_S', .03)
+    monkeypatch.setattr(inventory, '_descriptions', lambda budget: asyncio.sleep(0, result=description.load_registry()))
+    started = []
+    all_started = asyncio.Event()
+    deadline = control_listing_deadline(monkeypatch, inventory, started, 1, all_started)
+    async def in_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+    monkeypatch.setattr(inventory.asyncio, 'to_thread', in_thread)
     closed = []
     async def hang(self, op, body):
+        started.append(self.target.engine_id)
+        all_started.set()
         try:
             await asyncio.sleep(5)
         finally:
@@ -261,8 +352,12 @@ def test_total_inventory_deadline_reports_cancelled_engines(engine, monkeypatch)
     monkeypatch.setattr(dispatch.Runtime, 'invoke', hang)
     response = engine.client.get('/v1/models')
     assert response.status_code == 200
+    assert started == [engine.record['id']]
     assert closed == [engine.record['id']]
-    assert any(row['engine_id'] == engine.record['id'] for row in inventory.problems())
+    assert deadline['scheduled'] == [inventory.LIST_TIMEOUT_S]
+    assert deadline['fired']
+    assert any(row['engine_id'] == engine.record['id'] and 'total time limit' in row['reason']
+               for row in inventory.problems())
 
 
 def test_later_invalid_stream_event_is_typed_without_done_and_receipt_stays_failed(engine, monkeypatch):
