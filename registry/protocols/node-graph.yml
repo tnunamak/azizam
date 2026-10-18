@@ -5,13 +5,16 @@
 # history polling, file reads and the push channel are not expressible in the
 # http-v1 grammar. An adapter description lists operation names only. `label`
 # is how caller-facing messages name this engine; `serves` lists the capability
-# tokens for which this adapter answers when an engine record names no protocol.
+# tokens for which this adapter answers when an engine record names no protocol;
+# `binding` is the key under a workflow manifest's `bindings` that holds this
+# engine's graph.
 protocol_version: 1
 id: node-graph
 title: Node-graph prompt engine
 label: ComfyUI
 executor: adapter:node-graph
 serves: [images, videos, audio.generate]
+binding: comfyui
 notes: >-
   Operations: submit a prompt, read its history, read the queue, read an output
   file, upload an input image, cancel, delete a history entry, read system
