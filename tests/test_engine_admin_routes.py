@@ -991,13 +991,36 @@ def test_page_masks_environment_values_and_ignored_credential_headers(gateway, f
     record = registry["services"]["masked-process"]
     record["process"] = {"driver": "process", "start": ["server"], "env": {"WORKSPACE": "test-private-env-value"}}
     record["config"]["headers"] = [{"name": "Authorization", "value": "test-private-header-value"},
+                                      {"name": "X-Client", "value": "test-explicit-secret-header-value", "secret": True},
                                       {"name": "X-Workspace", "value": "public-value"}]
     _put_registry(gateway, registry)
     response = (admin if administrator else owner).get("/admin/api/engines/masked-process")
     assert response.status_code == 200
     assert "test-private-env-value" not in response.text
     assert "test-private-header-value" not in response.text
+    assert "test-explicit-secret-header-value" not in response.text
     view = response.json()["engine"]
     assert view["v2"]["process"]["env"] == {"WORKSPACE": "configured"}
     assert view["values"]["headers"] == [{"name": "X-Workspace", "value": "public-value"}]
-    assert view["ignored_headers"] == ["Authorization"]
+    assert view["ignored_headers"] == ["Authorization", "X-Client"]
+
+
+@pytest.mark.parametrize("location", ["record", "config"])
+def test_declared_switch_and_workflow_offerings_reach_the_page(gateway, fake_upstreams, location):
+    owner, *_ = owner_and_admin(gateway)
+    fake = _silent(fake_upstreams, "declared-offerings.fk.test")
+    assert _create(owner, {"definition": "openai-compatible", "name": "declared-offerings", "disabled": True,
+                           "values": {"address": fake.base_url}}).status_code == 201
+    declared = [
+        {"id": "switch-offering", "kind": "model", "upstream": "selected-model",
+         "selection": {"mode": "switch", "switch": {"call": "load", "observe_selected": "selected"}}},
+        {"id": "workflow-offering", "kind": "workflow", "selection": {"mode": "whole_graph"},
+         "inputs": {"prompt": {"type": "string"}}},
+    ]
+    registry = _registry(gateway)
+    record = registry["services"]["declared-offerings"]
+    holder = record if location == "record" else record["config"]
+    holder["offerings"] = declared
+    _put_registry(gateway, registry)
+    view = owner.get("/admin/api/engines/declared-offerings").json()["engine"]
+    assert view["v2"]["offerings"] == declared

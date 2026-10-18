@@ -89,6 +89,20 @@ def test_the_ready_check_reaches_the_saved_prefix_with_header_and_key(fake_upstr
     assert asyncio.run(ExternalDriver().ensure_ready({**_saved(), "health_endpoint": "/v1/models"}, timeout_s=1.0))
 
 
+def test_legacy_secret_reference_survives_the_actual_readiness_path(monkeypatch, fake_upstreams):
+    from gateway import service_registry
+
+    fake_upstreams.asgi(_engine("/provider/v1/models", MODELS), host=HOST)
+    monkeypatch.setenv("AZIZAM_DOWNSTREAM_API_KEY", KEY)
+    raw = {**_saved(), "health_endpoint": "/v1/models"}
+    raw.pop("api_key_env")
+    service = service_registry.service_from_backend_config("legacy-key", raw, source="ui")
+    service["secret_refs"] = {"api_key": "<external-secret>"}
+    projected = service_registry.runtime_backend_from_service(service)
+    monkeypatch.setattr(proxy, "config", {"backends": {"legacy-key": projected}})
+    assert asyncio.run(proxy._ensure_target("legacy-key", None, None, None, take_lease=False)) == (True, None)
+
+
 def test_the_ready_check_sends_no_key_bound_to_another_origin(fake_upstreams):
     fake_upstreams.asgi(_engine("/provider/v1/models", {}, keyed=False), host=HOST)
     svc = {**_saved(), "health_endpoint": "/v1/models", "credential_origin": "https://other.fk.test:443"}
