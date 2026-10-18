@@ -301,3 +301,61 @@ def test_L3_an_edit_that_adds_a_paid_marker_to_a_stored_local_record_is_refused(
     edited['config']['cost_class'] = 'paid-remote'
     with pytest.raises(ValueError):
         sr.validate_protocol_dispatch_registry({'services': {'e': edited}}, before={'services': {'e': stored}})
+
+
+# --- L-2: an executor stream receipt records what a legacy stream receipt records ----------------
+
+SSE = (b'data: {"id":"x","choices":[{"index":0,"delta":{"content":"a"}}]}\n\n'
+       b'data: {"id":"x","choices":[{"index":0,"delta":{"content":"b"},"finish_reason":"stop"}]}\n\n'
+       b'data: [DONE]\n\n')
+
+
+def _receipt_projection(row):
+    metadata = row['metadata']
+    return {
+        'status': row['status'],
+        'stream': row.get('stream'),
+        'terminal_reason': metadata.get('terminal_reason'),
+        'stages': [stage['stage'] for stage in metadata.get('request_shape_stages', [])],
+        'request_shape': sorted(metadata.get('request_shape', {})),
+        'egress_status': [stage.get('status_code') for stage in metadata.get('request_shape_stages', [])
+                          if stage['stage'] == 'backend_egress'],
+    }
+
+
+def test_L2_executor_stream_receipt_matches_the_legacy_receipt_for_the_same_request(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from gateway import media_jobs as jobs
+    fixture = json.loads((Path(__file__).parent / 'fixtures/engine_protocol/live-shaped.json').read_text())
+    fixture['services']['exec'] = {'id': 'exec', 'enabled': True, 'config': {
+        'connection': {'transport': 'http', 'dispatch': 'protocol', 'protocol': 'openai-compatible',
+                       'address': 'http://127.0.0.1:18080', 'credentials': {}},
+        'offerings': [{'id': 'exec-coder', 'kind': 'model', 'upstream': 'coder', 'tasks': [{'task': 'chat'}],
+                       'selection': {'mode': 'request_field'}}]}}
+    monkeypatch.setattr(proxy.ADMIN_STORE, 'get_service_registry', lambda: fixture)
+    monkeypatch.setattr(proxy, 'config', {**copy.deepcopy(proxy.config), 'model_aliases': {}, 'roles': {}, 'models': [], 'backends': {}})
+    monkeypatch.setattr(proxy, '_litellm_runtime_config', lambda: SimpleNamespace(enabled=True, service_id='litellm', base_url='http://substrate.test:4100', api_key='fixture-key'))
+    monkeypatch.setattr(proxy, '_service_availability_response', lambda *a, **k: None)
+    monkeypatch.setattr(proxy, '_prepare_litellm_local_llm_request', AsyncMock(side_effect=lambda *a, **kw: (None, kw['body_json'])))
+    monkeypatch.setattr(proxy, '_activate_prepared_litellm_local_target', AsyncMock(return_value=None))
+
+    async def legacy_send(request, **kwargs):
+        return httpx.AsyncClient(), httpx.Response(200, content=SSE, headers={'content-type': 'text/event-stream'})
+    monkeypatch.setattr(proxy, 'send_llm_execution_request', legacy_send)
+    monkeypatch.setattr(executor, 'HttpxTransport', lambda: transport.HttpxTransport.for_tests(
+        HandlerTransport(lambda request: httpx.Response(200, content=SSE, headers={'content-type': 'text/event-stream'}))))
+    monkeypatch.setattr(media_jobs, 'DB_PATH', tmp_path / 'j.db')
+    monkeypatch.setattr(receipt_store, 'DB_PATH', tmp_path / 'r.db')
+    media_jobs.init_db(path=media_jobs.DB_PATH)
+    receipt_store.init_db(path=receipt_store.DB_PATH)
+    message = [{'role': 'user', 'content': 'hi'}]
+    with authenticated():
+        client = TestClient(proxy.app)
+        legacy = client.post('/v1/chat/completions', json={'model': 'coder', 'messages': message, 'stream': True})
+        protocol = client.post('/v1/chat/completions', json={'model': 'exec-coder', 'messages': message, 'stream': True})
+    assert legacy.status_code == 200 and protocol.status_code == 200, (legacy.text, protocol.text)
+    rows = {row['request_id']: row for row in receipt_store.recent(path=receipt_store.DB_PATH)}
+    legacy_row = rows[legacy.headers['x-request-id']]
+    protocol_row = rows[protocol.headers['x-request-id']]
+    assert _receipt_projection(protocol_row) == _receipt_projection(legacy_row)
