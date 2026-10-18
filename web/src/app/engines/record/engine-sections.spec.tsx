@@ -155,7 +155,7 @@ describe("the six sections mirror the record", () => {
     const offers = section("What it offers");
     expect(within(offers).getByText(/the model-list editor cannot preserve/)).toBeVisible();
     expect(within(offers).getByTestId("offering-facts")).toHaveTextContent("Each request runs the whole workflow.");
-    expect(within(offers).queryByLabelText("Public name")).toBeNull();
+    expect(within(offers).queryByLabelText("Name apps use")).toBeNull();
     expect(screen.getByLabelText("Address")).toBeEnabled();
     for (const button of within(offers).queryAllByRole("button")) expect(button).toBeDisabled();
   });
@@ -197,13 +197,13 @@ describe("the six sections mirror the record", () => {
       ).toBeInTheDocument();
     const facts = screen.getByTestId("connection-facts");
     expect(facts).toHaveTextContent(
-      "Requests go tohttp://192.168.1.50:8080/v1/chat/completions",
+      "Saved request destinationshttp://192.168.1.50:8080/v1/chat/completions",
     );
     expect(facts).toHaveTextContent(
-      "Straight from the model router to this address. Source: service record.",
+      "Azizam sends requests directly to this address. From this engine’s saved connection settings.",
     );
     expect(facts).toHaveTextContent(
-      "Key is sent tohttp://192.168.1.50:8080 only.",
+      "Inference key is sent tohttp://192.168.1.50:8080 only.",
     );
     expect(screen.getByLabelText("Address")).toBeEnabled();
     expect(screen.queryByText(OWNER_ONLY)).toBeNull();
@@ -226,7 +226,7 @@ describe("the six sections mirror the record", () => {
     expect(
       within(checks).getByText("The server is up").parentElement,
     ).toHaveTextContent(
-      "Not declared, so Azizam can’t tell. It shows as unknown.",
+      "No check is configured, so this is unknown.",
     );
     expect(
       within(checks).getAllByLabelText("Unknown").length,
@@ -283,7 +283,7 @@ describe("the six sections mirror the record", () => {
     });
     await screen.findByRole("heading", { level: 1, name: "garage-gpu" });
     expect(screen.getByTestId("connection-facts")).toHaveTextContent(
-      "http://127.0.0.1:8081/v1/chat/completionsThrough the gateway’s start-and-stop service, which then calls this address.",
+      "http://127.0.0.1:8081/v1/chat/completionsAzizam starts the server when needed, then forwards the request to this address.",
     );
     // Hop engines are no longer refused: the connection edits like any other.
     expect(screen.getByLabelText("Address")).toBeEnabled();
@@ -358,7 +358,7 @@ describe("the six sections mirror the record", () => {
     expect(screen.getByLabelText("Address")).toBeDisabled();
     expect(screen.getByLabelText("Name")).toBeEnabled();
     expect(
-      screen.queryByRole("button", { name: "Detect models again" }),
+      screen.queryByRole("button", { name: "Find new models" }),
     ).toBeNull();
     expect(screen.queryByRole("button", { name: "Remove engine" })).toBeNull();
     const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
@@ -413,7 +413,7 @@ describe("the six sections mirror the record", () => {
     for (const box of within(offers).getAllByRole("checkbox"))
       expect(box).toBeDisabled();
     expect(
-      within(offers).queryByRole("button", { name: "Detect models again" }),
+      within(offers).queryByRole("button", { name: "Find new models" }),
     ).toBeNull();
     expect(within(offers).queryByText("Add an adjustment")).toBeNull();
     const runs = section("How it runs");
@@ -465,7 +465,7 @@ describe("the six sections mirror the record", () => {
     const offers = section("What it offers");
     expect(within(offers).getByTestId("unsupported-note")).toHaveTextContent(why);
     expect(within(offers).queryByRole("checkbox")).toBeNull();
-    expect(within(offers).queryByLabelText("Public name")).toBeNull();
+    expect(within(offers).queryByLabelText("Name apps use")).toBeNull();
     expect(within(offers).queryByText("Add an adjustment")).toBeNull();
     expect(within(offers).getByTestId("offering-facts")).toHaveTextContent("qwen3-32b");
     const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
@@ -546,7 +546,7 @@ describe("a test traces exactly what it sent", () => {
     await user.click(
       await screen.findByRole("button", { name: "Run a real test for Chat" }),
     );
-    const trace = await screen.findByLabelText("Exact request sent");
+    const trace = await screen.findByLabelText("Request sent, with secrets hidden");
     expect(trace).toHaveTextContent(
       "POST http://192.168.1.50:8080/v1/chat/completions",
     );
@@ -600,9 +600,9 @@ describe("saved contract facts acceptance", () => {
     const view = engineView({ v2: record, credential_destination: null, key: { state: "configured" } });
     renderWithClient(<ConnectionFacts view={view} definition={{ ...definitions.definitions[0], fields: [] }} />);
     const facts = screen.getByTestId("connection-facts");
-    expect(facts).toHaveTextContent("Key is sent toUnknown. The saved destination is not recorded.");
+    expect(facts).toHaveTextContent("Inference key is sent toUnknown. The saved destination is not recorded.");
     expect(facts).toHaveTextContent("Control key destinationhttps://control.example");
-    expect(facts).not.toHaveTextContent("No key is sent.");
+    expect(facts).not.toHaveTextContent("No inference key is configured.");
   });
   it("shows workflow tasks, inputs, options, profiles, adjustments and evidence safely", () => {
     renderWithClient(<OfferingFacts v2={v2({ offerings: [{ id: "workflow-long-id", kind: "workflow",
@@ -613,6 +613,7 @@ describe("saved contract facts acceptance", () => {
     const facts = screen.getByTestId("offering-facts");
     for (const word of ["image", "declared", "Required inputs", "prompt", "Options", "small", "Start settings", "quiet", "Adjustments", "seed"]) expect(facts).toHaveTextContent(word);
     expect(facts).not.toHaveTextContent("[object Object]");
+    expect(screen.getByText("Required inputs").nextElementSibling).not.toHaveTextContent("{");
   });
   it("does not turn unknown selection or unknown process settings into verified claims", () => {
     renderWithClient(<OfferingFacts v2={v2({ offerings: [{ id: "a", kind: "model", selection: { mode: "switch" } }], selected_offering: "a" })} />);
