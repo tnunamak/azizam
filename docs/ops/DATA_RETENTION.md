@@ -64,14 +64,24 @@ The API records an audit entry that hides the item from that person's Library.
 The everyone view does not apply those per-person hiding entries.
 This endpoint does not itself delete job or receipt rows.
 
-Until 2026-10-11 the gateway deleted every generated file 24 hours after its
-last write (the cache eviction loop in `proxy.py`). Library items made before
-then often have a record and no file. The Library says so, with "deleted on or
-before Oct 11 and can't be recovered". Remove missing items
+Until 2026-10-11 11:59 CDT the gateway deleted every generated file 24 hours
+after its last write (the cache eviction loop in `proxy.py`). Library items made
+before then often have a record and no file. The Library says so, with the
+cutoff in the viewer's time zone and "can't be recovered". Remove missing items
 (`POST /me/api/media/remove-missing`, after a confirmation in the Library)
-removes the signed-in person's own items whose file is gone: it hides each from
-their Library, deletes its saved prompt, and deletes a finished job entry when
-every file that job made is gone. It never deletes a stored file or a receipt.
+clears the signed-in person's own entries whose file is gone:
+
+- It refuses, and changes nothing, unless the media folder is a readable
+  directory that holds at least one media file. A folder that is missing,
+  unmounted or empty looks the same as every file being gone.
+- A file is gone only when nothing in the folder holds its digest under any
+  suffix (ComfyUI `gifs` and `images` outputs keep their own suffix). The check
+  reads the folder, not the Library listing.
+- A finished job entry is deleted only when every asset its record names is
+  gone. Otherwise each gone asset is hidden as that job made it
+  (`media_hidden_assets`), so the same bytes made again by a later job are listed.
+- Prompts, hides and job deletions commit together in the media-jobs database or
+  not at all. It never deletes a stored file or a receipt.
 
 A quarantine uses a new private `<database>.broken-<time>-<unique-id>/`
 directory on the same filesystem. If any rename fails, startup raises and the
