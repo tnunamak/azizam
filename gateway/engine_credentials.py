@@ -9,6 +9,10 @@ from typing import Any, Mapping
 from gateway import admin_store, secret_store
 
 
+class CredentialUnavailable(ValueError):
+    """The operation's configured key cannot be read; distinct from an origin or format error."""
+
+
 def credential_headers(service: Mapping[str, Any], operation_class: str) -> dict[str, str]:
     connection = service.get("connection") or (service.get("config") or {}).get("connection") or {}
     if not isinstance(connection, Mapping):
@@ -37,11 +41,14 @@ def credential_headers(service: Mapping[str, Any], operation_class: str) -> dict
     if reference.startswith("os.environ/"):
         value = os.environ.get(reference.removeprefix("os.environ/"))
         if not value:
-            raise ValueError("engine credential reference is unavailable")
+            raise CredentialUnavailable("engine credential reference is unavailable")
     else:
-        value = secret_store.get_provider_secret(
-            reference, db_path=admin_store.DB_PATH, expected_origin=actual
-        )
+        try:
+            value = secret_store.get_provider_secret(
+                reference, db_path=admin_store.DB_PATH, expected_origin=actual
+            )
+        except (KeyError, FileNotFoundError):
+            raise CredentialUnavailable("engine credential reference is unavailable") from None
     if "\r" in value or "\n" in value:
         raise ValueError("engine credential value is invalid")
     return {header: f"{scheme} {value}" if scheme else value}

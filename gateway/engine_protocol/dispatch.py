@@ -6,10 +6,12 @@ before invocation. Selection uses the same transaction as other engine paths.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import secrets
+import time
 from typing import Any, Mapping
 
 from gateway.engine_contract_view import connection_config, observations_config, offerings_config
-from gateway.engine_credentials import credential_headers
+from gateway.engine_credentials import CredentialUnavailable, credential_headers
 from gateway.engine_control import EngineControlRuntime
 from gateway.engine_observations import Observation, UNKNOWN
 from gateway.engine_protocol import description
@@ -73,29 +75,39 @@ class Runtime:
     def __init__(self, target: Target, *, assets: AssetStore | None = None, transport=None):
         self.target = target
         connection = connection_config(target.service)
-        # The origin check and secret lookup are the same as the native lane.
-        # Resolve only after dispatch is selected, never while listing records.
-        credentials = {}
-        for cls, spec in (connection.get('credentials') or {}).items():
-            if not spec or not spec.get('secret_ref'):
-                continue
-            values = credential_headers(target.service, cls)
-            value = next(iter(values.values()))
-            scheme = spec.get('scheme') or ''
-            if scheme:
-                value = value[len(scheme)+1:]
-            credentials[cls] = Credential(value, header=spec.get('header'), scheme=spec.get('scheme'))
-        self.connection = replace(connection_from_record({**connection, 'credentials': {}}, lambda ref: None),
-                                  credentials=credentials)
+        self.connection = connection_from_record({**connection, 'credentials': {}}, lambda ref: None)
         self.adapter = AdapterRegistry({target.description.id: target.description}, assets=assets,
                                        transport=transport).adapter_for(target.description.id)
 
+    def connection_for(self, op: str, *, operation=None, probe: bool = False):
+        """Resolve only this operation's class; missing probe credentials may be omitted."""
+        operation = operation or self.target.description.operations[op]
+        cls = 'control' if operation.op_class == 'control' else 'inference'
+        spec = (connection_config(self.target.service).get('credentials') or {}).get(cls) or {}
+        if not spec.get('secret_ref'):
+            return self.connection
+        try:
+            values = credential_headers(self.target.service, cls)
+            if not values:
+                raise CredentialUnavailable('engine credential reference is unavailable')
+        except CredentialUnavailable:
+            if probe or operation.op_class == 'inventory':
+                return self.connection
+            raise ProtocolError('The credential required by this operation is unavailable.',
+                                code='engine_credential_unavailable') from None
+        value = next(iter(values.values()))
+        scheme = spec.get('scheme') or ''
+        if scheme:
+            value = value[len(scheme)+1:]
+        return replace(self.connection, credentials={cls: Credential(value, header=spec.get('header'), scheme=spec.get('scheme'))})
+
     def request(self, op: str, body: Mapping[str, Any]) -> CanonicalRequest:
         return CanonicalRequest(op=op, body={**body, 'model': self.target.upstream},
-                                params={'model': self.target.upstream, 'offering': self.target.offering['id']})
+                                params={'model': self.target.upstream, 'offering': self.target.offering['id'],
+                                        'request_id': 'req_' + secrets.token_hex(12), 'created': int(time.time())})
 
     async def invoke(self, op: str, body: Mapping[str, Any]):
-        return await self.adapter.invoke(self.connection, op, self.request(op, body))
+        return await self.adapter.invoke(self.connection_for(op), op, self.request(op, body))
 
     async def lease(self, *, drain, lock_for, may_switch: bool = True):
         selection = self.target.offering.get('selection') or {}
@@ -113,7 +125,7 @@ class Runtime:
             checker = EngineControlRuntime(service, drain=drain, lock_for=lock_for)
             checked, identities = checker._check_paths(args, frozenset())
             checker._recheck_paths(identities)
-            reply = await self.adapter.invoke(self.connection, name, CanonicalRequest(name, body=checked))
+            reply = await self.adapter.invoke(self.connection_for(name), name, CanonicalRequest(name, body=checked))
             if isinstance(reply, StreamReply):
                 await reply.aclose()
                 raise ValueError('selection control cannot be streamed')
@@ -141,11 +153,14 @@ class Runtime:
                 }, source='engine observation', budgets=self.target.description.budgets)
                 adapter = AdapterRegistry({'observation': observation}).adapter_for('observation')
                 seconds = max(0.01, min(float(http.get('timeout_s', 2)), 30))
+                connection = self.connection_for('observe', operation=observation.operations['observe'], probe=True)
                 connection = replace(connection, timeouts=replace(connection.timeouts, total_s=seconds,
                                        first_byte_s=min(seconds, connection.timeouts.first_byte_s)))
                 op = 'observe'
             elif not isinstance(op, str) or op not in self.target.description.operations:
                 return UNKNOWN
+            else:
+                connection = self.connection_for(op, probe=True)
             try:
                 reply = await adapter.invoke(connection, op, CanonicalRequest(op))
                 if isinstance(reply, StreamReply):

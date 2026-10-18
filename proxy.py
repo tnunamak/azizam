@@ -28603,7 +28603,8 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
             raise
         response = openai_error_response("Generation was canceled by the requester.", status_code=409, code="job_canceled")
     except ProtocolSwitchUnavailable as error:
-        response = openai_error_response(str(error.detail), status_code=503, code="selection_unavailable")
+        logging.getLogger("gateway.engine_protocol").warning("Engine selection failed: %s", error.detail)
+        response = openai_error_response("The engine selection could not be completed or verified.", status_code=503, code="selection_unavailable")
         response.headers.update(error.headers or {})
     except media_jobs.IdempotencyConflict:
         response = openai_error_response("The idempotency key names different generation inputs.", status_code=409, code="idempotency_conflict")

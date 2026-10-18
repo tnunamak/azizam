@@ -167,7 +167,7 @@ class HttpV1Executor:
         op = self._operation(ref.op, job=True)
         assert op.job is not None
         poll = op.job.poll
-        parsed, _ = await self._json_step(conn, poll.request, op, {"body": {}, "params": {"id": ref.id}, "files": {}})
+        parsed, _ = await self._json_step(conn, poll.request, op, {"body": {}, "params": {"id": ref.id}, "files": {}, "_engine_path_values": frozenset({"id"})})
         raw = pointer.get(parsed, poll.status.segments)
         if raw is MISSING or isinstance(raw, (dict, list)):
             raise MalformedResponse("The job status is missing from the engine's answer.")
@@ -233,7 +233,7 @@ class HttpV1Executor:
         assert op.job is not None
         if op.job.cancel is None:
             raise UnsupportedByAdapter(f"The protocol does not describe cancelling '{ref.op}'.")
-        source = {"body": {}, "params": {"id": ref.id}, "files": {}}
+        source = {"body": {}, "params": {"id": ref.id}, "files": {}, "_engine_path_values": frozenset({"id"})}
         # Poll has its own total timeout. A failed poll must not consume the
         # cancellation request's deadline or suppress that request.
         try:
@@ -271,7 +271,7 @@ class HttpV1Executor:
                 params: dict[str, Any] = {"id": ref.id}
                 if handle is not None:
                     params["asset"] = handle
-                wire = await self._exchange(conn, fetch, op, {"body": {}, "params": params, "files": {}}, secrets_)
+                wire = await self._exchange(conn, fetch, op, {"body": {}, "params": params, "files": {}, "_engine_path_values": frozenset({"id", "asset"})}, secrets_)
                 try:
                     asset = await self._save_binary(wire, name=handle, fetch_left=self.budgets.max_fetch_bytes - total)
                 finally:
@@ -321,7 +321,7 @@ class HttpV1Executor:
         except TimeoutError:
             raise TransportFailure("timeout", f"The engine did not answer within {conn.timeouts.total_s:g} s.") from None
 
-    def _expand_path(self, spec: RequestSpec, params: Mapping[str, Any]) -> str:
+    def _expand_path(self, spec: RequestSpec, params: Mapping[str, Any], *, engine_values: frozenset[str] = frozenset()) -> str:
         def fill(match: re.Match[str]) -> str:
             value = params.get(match.group(1), MISSING)
             if type(value) is int:
@@ -329,8 +329,9 @@ class HttpV1Executor:
             if type(value) is not str or not value:
                 raise MappingError(f"The request needs the value '{match.group(1)}' for the path {spec.path}.")
             normalized = unicodedata.normalize("NFKC", value)
+            refused = "/\\" if match.group(1) in engine_values else "/\\%;"
             if (normalized in (".", "..")
-                    or any(c in "/\\%;" or unicodedata.category(c) in {"Cc", "Cs"} for c in normalized)
+                    or any(c in refused or unicodedata.category(c) in {"Cc", "Cs"} for c in normalized)
                     or any(c != "." and "." in unicodedata.normalize("NFKC", c) for c in value)):
                 raise MappingError(f"The value '{match.group(1)}' is not a safe single path segment.")
             return quote(value, safe="")
@@ -363,7 +364,7 @@ class HttpV1Executor:
         for place in ("body", "params"):  # first, and without recursion: mapping and JSON writing walk these values
             if pointer.depth_exceeds(source[place], budgets.max_json_depth):
                 raise BudgetExceeded("max_json_depth", f"The request {place} nests deeper than {budgets.max_json_depth}.")
-        path = self._expand_path(spec, source["params"])
+        path = self._expand_path(spec, source["params"], engine_values=source.get("_engine_path_values", frozenset()))
         auth = self.description.auth.get("control" if op.op_class == "control" else "inference")
         credential = conn.credentials.get("control" if op.op_class == "control" else "inference")
         headers: dict[str, str] = {"accept-encoding": "identity"}

@@ -9,7 +9,7 @@ from gateway.engine_protocol.types import JobRef, JobState
 
 
 async def run(runtime, op, body, *, job_id):
-    adapter, conn = runtime.adapter, runtime.connection
+    adapter, conn = runtime.adapter, runtime.connection_for(op)
     spec = runtime.target.description.operations[op].job
     current = media_jobs.get(job_id, audience='internal', path=media_jobs.DB_PATH)
     metadata = (current or {}).get('metadata') or {}
