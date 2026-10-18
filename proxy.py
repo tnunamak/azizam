@@ -1423,22 +1423,28 @@ async def _ensure_target(
                                            drain=_swap_drain, lock_for=swap_lock_for)
             needs_load = selection.get("implicit_load") is False and bool(residency_config(bcfg).get("load"))
             if selection.get("mode") == "switch":
-                lease = await runtime.select(
-                    str(offering["id"]), selection,
-                    on_acquired=(lambda: driver.request_started(bcfg)) if owned_process else None,
-                    on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None,
-                    prepare=runtime.load if needs_load else None,
-                )
+                if owned_process:
+                    driver.request_started(bcfg)
+                try:
+                    lease = await runtime.select(
+                        str(offering["id"]), selection,
+                        on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None,
+                        prepare=runtime.load if needs_load else None,
+                    )
+                except BaseException:
+                    if owned_process:
+                        driver.request_finished(bcfg)
+                    raise
                 return True, lease
             if needs_load:
-                async with swap_lock_for(backend):
-                    await _swap_drain.clear_for_swap(
-                        backend, SwapDrainSettings(enabled=True, timeout_s=30)
-                    )
-                    if owned_process:
-                        driver.request_started(bcfg)
-                    leased = False
-                    try:
+                if owned_process:
+                    driver.request_started(bcfg)
+                leased = False
+                try:
+                    async with swap_lock_for(backend):
+                        await _swap_drain.clear_for_swap(
+                            backend, SwapDrainSettings(enabled=True, timeout_s=30)
+                        )
                         if not await runtime.load():
                             return False, None
                         lease = _swap_drain.lease(
@@ -1446,15 +1452,20 @@ async def _ensure_target(
                         )
                         leased = True
                         return True, lease
-                    finally:
-                        if owned_process and not leased:
-                            driver.request_finished(bcfg)
-        async with swap_lock_for(backend):
+                finally:
+                    if owned_process and not leased:
+                        driver.request_finished(bcfg)
+        if owned_process:
+            driver.request_started(bcfg)
+        try:
+            async with swap_lock_for(backend):
+                return True, _swap_drain.lease(
+                    backend, on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None
+                )
+        except BaseException:
             if owned_process:
-                driver.request_started(bcfg)
-            return True, _swap_drain.lease(
-                backend, on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None
-            )
+                driver.request_finished(bcfg)
+            raise
 
     # The driver builds + prechecks its own activation from driver_config. On a
     # precheck failure (e.g. a missing GGUF/aux file) it returns None.
