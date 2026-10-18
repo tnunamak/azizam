@@ -2684,7 +2684,7 @@ def create_admin_router(
             return ctx
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"extension_packages": store.get_extension_package_index()},
+            content={"extension_packages": extension_packages.public_package_index(store.get_extension_package_index())},
         )
 
     @router.post("/extensions/validate")
@@ -2705,7 +2705,7 @@ def create_admin_router(
             return _owner_required(exc)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"review": review},
+            content={"review": extension_packages.public_package_review(review)},
         )
 
     @router.post("/extensions/enable")
@@ -2761,6 +2761,7 @@ def create_admin_router(
             ).as_response()
         if isinstance(result.get("service_registry"), Mapping):
             result = {**result, "service_registry": engine_redaction.redact_registry(result["service_registry"])}
+        result = extension_packages.public_package_result(result)
         response = JSONResponse(
             status_code=status.HTTP_200_OK,
             content=result,
@@ -2788,7 +2789,7 @@ def create_admin_router(
                 "extension_package_not_found",
                 str(exc),
             ).as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=extension_packages.public_package_result(result))
 
     def settings_revision(request: Request) -> str:
         revision = request.headers.get("if-match")
