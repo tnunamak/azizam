@@ -2643,6 +2643,25 @@ execution: job
         self.assertEqual(resp.json()["error"]["code"], "invalid_extension_package_mode")
         self.assertIn("demo-package", store.extension_package_index["packages"])
 
+    def test_admin_remove_never_returns_an_unrelated_services_secret(self) -> None:
+        # The enable route hides command and environment values; DELETE returns the same registry.
+        for mode in ("remove", "disable"):
+            with self.subTest(mode=mode):
+                client, store = _make_client()
+                self._install_demo_package(store)
+                store.service_registry["services"]["unrelated"] = {
+                    "id": "unrelated",
+                    "enabled": True,
+                    "process": {"driver": "process", "env": {"TOKEN": "seeded-secret-value"}},
+                }
+
+                resp = client.delete(f"/admin/api/extensions/demo-package?mode={mode}", headers=_auth())
+
+                self.assertEqual(resp.status_code, 200, resp.text)
+                self.assertNotIn("seeded-secret-value", resp.text)
+                self.assertIn("unrelated", resp.json()["service_registry"]["services"])
+                self.assertEqual(resp.headers["Cache-Control"], "no-store")
+
     def test_operator_override_write_requires_admin(self) -> None:
         client, _ = _make_client()
         resp = client.put(
