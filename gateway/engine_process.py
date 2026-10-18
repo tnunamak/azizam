@@ -92,10 +92,10 @@ class ProcessDriver:
                 if ready:
                     self._schedule_idle(ident, svc)
                 else:
-                    self._stop(svc, reset_budget=False)
+                    await self._stop_async(svc, reset_budget=False)
                 return ready
             if self._identity_matches(self._read_state(ident)):
-                self._stop(svc, reset_budget=False)
+                await self._stop_async(svc, reset_budget=False)
             address = (svc.get("connection") or {}).get("address") or f"http://{svc.get('host', '127.0.0.1')}:{port}"
             if self._port_in_use(urlsplit(address).hostname or "127.0.0.1", port):
                 return False
@@ -116,17 +116,17 @@ class ProcessDriver:
             self._services[ident] = svc
             start = _start_time(child.pid)
             if start is None:
-                self.stop(svc)
+                await self._stop_async(svc, reset_budget=True)
                 return False
             self._write_state(ident, child.pid, start, port, argv)
             threading.Thread(target=self._copy_logs, args=(ident, child, cfg), daemon=True).start()
             try:
                 ready = await self._ready(svc, float(cfg.get("ready_timeout_s", timeout_s)), ident)
             except asyncio.CancelledError:
-                self._stop(svc, reset_budget=False)
+                await self._stop_async(svc, reset_budget=False)
                 raise
             if not ready:
-                self._stop(svc, reset_budget=False)
+                await self._stop_async(svc, reset_budget=False)
                 return False
             self._schedule_idle(ident, svc)
             return True
@@ -135,10 +135,32 @@ class ProcessDriver:
         self._stop(svc, reset_budget=True)
 
     def _stop(self, svc: Mapping[str, Any], *, reset_budget: bool) -> None:
+        parts = self._prepare_stop(svc)
+        if parts is None:
+            return
+        ident, pid, timeout_s, child = parts
+        try:
+            self._terminate_group(pid, timeout_s, child)
+        finally:
+            self._finish_stop(ident, reset_budget=reset_budget)
+
+    async def _stop_async(self, svc: Mapping[str, Any], *, reset_budget: bool) -> None:
+        parts = self._prepare_stop(svc)
+        if parts is None:
+            return
+        ident, pid, timeout_s, child = parts
+        from gateway.lifecycle_drivers import _finish_even_if_cancelled
+
+        try:
+            await _finish_even_if_cancelled(asyncio.to_thread(self._terminate_group, pid, timeout_s, child))
+        finally:
+            self._finish_stop(ident, reset_budget=reset_budget)
+
+    def _prepare_stop(self, svc: Mapping[str, Any]) -> tuple[str, int, float, subprocess.Popen | None] | None:
         try:
             ident = _identifier(svc)
         except ValueError:
-            return
+            return None
         task = self._idle_tasks.pop(ident, None)
         try:
             current = asyncio.current_task()
@@ -150,16 +172,19 @@ class ProcessDriver:
         if not state or not self._identity_matches(state):
             self._remove_state(ident)
             self._services.pop(ident, None)
-            return
+            return None
         pid = state["pid"]
         cfg = _configuration(svc)
+        timeout_s = max(0.01, min(float(cfg.get("stop_timeout_s", 5)), 30))
+        return ident, pid, timeout_s, self._children.get(ident)
+
+    def _terminate_group(self, pid: int, timeout_s: float, child: subprocess.Popen | None) -> None:
         try:
             os.killpg(pid, signal.SIGTERM)
         except (OSError, ProcessLookupError):
             pass
-        deadline = time.monotonic() + max(0.01, min(float(cfg.get("stop_timeout_s", 5)), 30))
+        deadline = time.monotonic() + timeout_s
         while self._group_alive(pid) and time.monotonic() < deadline:
-            child = self._children.get(ident)
             if child:
                 child.poll()
             time.sleep(0.01)
@@ -168,12 +193,14 @@ class ProcessDriver:
                 os.killpg(pid, signal.SIGKILL)
             except (OSError, ProcessLookupError):
                 pass
-        child = self._children.pop(ident, None)
         if child:
             try:
                 child.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 pass
+
+    def _finish_stop(self, ident: str, *, reset_budget: bool) -> None:
+        self._children.pop(ident, None)
         self._remove_state(ident)
         self._services.pop(ident, None)
         if reset_budget:
@@ -432,8 +459,10 @@ class ProcessDriver:
 
         async def idle_stop() -> None:
             await asyncio.sleep(delay)
-            if self._active.get(ident, 0) == 0 and time.monotonic() - self._last_use[ident] >= delay:
-                self.stop(svc)
+            lock = self._locks.setdefault(ident, asyncio.Lock())
+            async with lock:
+                if self._active.get(ident, 0) == 0 and time.monotonic() - self._last_use[ident] >= delay:
+                    await self._stop_async(svc, reset_budget=True)
 
         self._idle_tasks[ident] = asyncio.create_task(idle_stop())
 
