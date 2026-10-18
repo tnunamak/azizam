@@ -1018,7 +1018,11 @@ def reload_runtime_config() -> dict:
         frontends.commit()
         web_ui = _g.get("WEB_UI_ROUTE")
         if web_ui is not None:
-            web_ui.registered_segments = ui_routes.registered_first_segments(app.router.routes)
+            # The web app and the catch-all are what the segments are for, not segments themselves.
+            web_ui.registered_segments = ui_routes.registered_first_segments(
+                app.router.routes,
+                exclude=tuple(route for route in app.router.routes if getattr(route, "path", None) in {"", "/{path:path}"}),
+            )
     _g["config"] = new_cfg
     for name, value in updates.items():
         _g[name] = value
