@@ -20,10 +20,21 @@ were still stored.
   in a clean detached worktree with `npm ci` and fresh Python environments
   from `tests/requirements-hermetic.lock`.
 - It writes receipts to `~/.tmp/azizam-ci-receipts/<tree>/`: `run.tsv`
-  (SHA, seed, layout), `steps.tsv` (step, exit code, seconds), `logs/`,
-  `raw/` (each framework's report), `cases.jsonl`, and browser evidence only
-  when a run fails. A tree that already passed is not run again (`--force`
-  reruns it).
+  (SHA, seed, layout), `steps.tsv` (step, exit code, whole seconds, wall
+  seconds, CPU seconds (user plus system), peak RSS kB), `cost.json` (totals,
+  and the critical path: the longest chain of steps, each starting when the
+  steps it waits for finish), `logs/`, `raw/` (each framework's report),
+  `cases.jsonl`, and browser evidence only when a run fails. A tree that
+  already passed is not run again (`--force` reruns it).
+- Each step is measured by GNU time (`/usr/bin/time -q -o`), or by
+  `scripts/ci/gate_cost.py run` (wait4) when GNU time is absent
+  (`AZIZAM_CI_TIME` sets its path). Both report the step's own rusage, which
+  includes the children it waited for. Peak RSS is the largest single
+  process's peak, not the sum over processes alive at once. The run prints
+  its cost table at the end. `scripts/gate-cost [-n N]` prints the median and
+  worst cost of each step over the newest N finished runs. Pruning keeps
+  `steps.tsv` and `cost.json` only for the newest 20 runs and recent signoffs,
+  so older runs drop out of `gate-cost`.
 - Its worktrees and dependency copies live in `~/.tmp/azizam-ci-local.*`
   (about 7 GB). Exit removes that directory, except after a failed run:
   ci-local then keeps it, prints its path and records it in

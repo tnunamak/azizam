@@ -181,6 +181,10 @@ add_worktree "$run/fresh"
 started=$(date -u +%FT%TZ)
 printf 'sha\t%s\ntree\t%s\nstarted\t%s\nseed\t%s\nbrowser_workers\t%s\npy_workers\t%s\nbase_port\t%s\n' "$sha" "$tree" "$started" "$seed" "$browser_workers" "$py_workers" "$port" > "$receipts/run.tsv"
 
+# Cost per step (scripts/ci/gate_cost.py reports it): GNU time when present, else wait4.
+gate_time=${AZIZAM_CI_TIME:-/usr/bin/time}
+cost_mode=wait4
+if [[ -x $gate_time ]]; then cost_mode=gnu-time; fi
 failed=0
 step() {
   local name=$1; shift
@@ -188,12 +192,34 @@ step() {
   echo "== $name"
   # Run in the background and wait: a trapped INT or TERM interrupts wait at
   # once, while a foreground child would make bash defer or drop the signal.
-  ( "$@" ) > "$receipts/logs/$name.log" 2>&1 &
+  ( measure_step "$name" "$@" ) > "$receipts/logs/$name.log" 2>&1 &
   wait "$!" || rc=$?
   # One writer per file; aggregation happens only after every job is reaped.
-  printf '%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" > "$receipts/steps/$name.tsv"
+  printf '%s\t%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" "$(cost_columns "$name")" > "$receipts/steps/$name.tsv"
   if ((rc)); then failed=1; echo "   FAILED (exit $rc): $receipts/logs/$name.log"; fi
   return 0
+}
+# GNU time writes "wall user system max_rss_kb" with -o; -q keeps its "exited with
+# status" message out of the step's log. Without GNU time, wait4 measures the step.
+# Both return the step's own exit status.
+measure_step() {
+  local name=$1; shift
+  local cost=$receipts/steps/$name.cost
+  if [[ $cost_mode == gnu-time ]] && : > "$cost" 2>/dev/null; then
+    "$gate_time" -q -o "$cost" -f '%e %U %S %M' "$@"
+  else
+    python3 -I "$repo/scripts/ci/gate_cost.py" run "$cost" -- "$@"
+  fi
+}
+# The steps.tsv columns after the name, exit code and whole seconds: wall, CPU
+# (user plus system) and peak RSS kB. A step with no measurement reports "-".
+cost_columns() {
+  local file=$receipts/steps/$1.cost wall user sys_time peak
+  if [[ -s $file ]] && read -r wall user sys_time peak < "$file" && [[ $peak =~ ^[0-9]+$ ]]; then
+    awk -v w="$wall" -v u="$user" -v s="$sys_time" -v p="$peak" 'BEGIN { printf "%s\t%.2f\t%s", w, u + s, p }'
+  else
+    printf '%s\t%s\t%s' - - -
+  fi
 }
 # npm, uv and Playwright retain their shared download caches across runs.
 # Keep installed environments private; fresh-venv uses copy-on-write clones
@@ -205,8 +231,8 @@ cleanup_step() {
     rm -rf -- "$@"
   fi
 }
-export receipts work skip_compose py_workers run seed
-export -f step cleanup_step
+export receipts work skip_compose py_workers run seed repo gate_time cost_mode
+export -f step cleanup_step measure_step cost_columns
 start_job() {
   local directory=$1; shift
   setsid bash -c 'cd "$1" || exit; shift; "$@"' _ "$directory" "$@" &
@@ -246,7 +272,7 @@ start_job "$run/fresh" bash -c '
   failed=0
   step fresh-venv bash -c "uv venv -q --python 3.12.13 .ci-fresh-venv && uv pip sync -q --no-build --strict --require-hashes --link-mode clone --python .ci-fresh-venv/bin/python tests/requirements-hermetic.lock"
   if ((skip_compose)); then
-    printf "fresh-compose\tskipped\t0\n" > "$receipts/steps/fresh-compose.tsv"
+    printf "fresh-compose\tskipped\t0\t-\t-\t-\n" > "$receipts/steps/fresh-compose.tsv"
     failed=1
     echo "== fresh-compose SKIPPED: the run cannot pass without it"
   else
@@ -402,13 +428,15 @@ git worktree remove --force "$work"
 cat "$receipts"/steps/*.tsv > "$receipts/steps.tsv"
 # Missing/truncated receipts or skipped/nonzero steps can never produce PASS.
 if ! awk -F '\t' -v expected="$((browser_steps + 15))" '
-  NF != 3 || $2 != "0" || $3 !~ /^[0-9]+$/ { bad=1 }
+  NF != 6 || $2 != "0" || $3 !~ /^[0-9]+$/ { bad=1 }
   END { exit (bad || NR != expected) }
 ' "$receipts/steps.tsv"; then failed=1; fi
 # Failed runs retain textual logs and case/step receipts, not duplicate
 # browser traces, auth files, builds, environments or mutable test state.
 printf 'finished\t%s\n' "$(date -u +%FT%TZ)" >> "$receipts/run.tsv"
-column -t "$receipts/steps.tsv"
+# The cost table and cost.json. Evidence only: the verdict does not depend on them.
+python3 "$repo/scripts/ci/gate_cost.py" report "$receipts" --measure "$cost_mode" ||
+  echo "cost report failed; steps.tsv keeps the raw costs"
 if ((failed)); then
   echo "ci-local FAILED for $sha; receipts: $receipts"
   exit 1

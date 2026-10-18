@@ -12,16 +12,20 @@ also delivers the signals, since the hermetic guard forbids os.kill here.
 from __future__ import annotations
 
 import fcntl
+import importlib.util
+import json
 import os
+import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-COPIED = ("scripts/ci-local", "scripts/low-priority", "scripts/ci/merge_cases.py", "scripts/ci/policy.py", "scripts/ci/prune_receipts.py", "scripts/ci/replay_scan.py", "scripts/ci/pi-unit")
+COPIED = ("scripts/ci-local", "scripts/low-priority", "scripts/ci/gate_cost.py", "scripts/ci/merge_cases.py", "scripts/ci/policy.py", "scripts/ci/prune_receipts.py", "scripts/ci/replay_scan.py", "scripts/ci/pi-unit")
 
 STUBS = {
     # Tools on PATH.
@@ -78,6 +82,7 @@ printf '{"framework":"playwright","config":"%s","project":"chromium","id":"%s","
 }
 REPO_FILES = {
     "scripts/run-hermetic-pytest.sh": """#!/usr/bin/env bash
+sleep "${FAKE_PYTEST_SECONDS:-0}"
 printf '<testsuites><testsuite name="pytest"><testcase classname="tests.test_ok" name="test_ok" time="0.1"/></testsuite></testsuites>\\n' > "$2"
 """,
     "scripts/ci/mcp-conformance": "#!/usr/bin/env bash\n",
@@ -447,3 +452,124 @@ def test_static_check_write_into_shared_build_is_fatal(world: World) -> None:
     assert "web/static-output.json" in (world.receipts / "logs/e2e-tree-unchanged.log").read_text()
     assert not (world.receipts / "PASS").exists()
     assert world.run_dirs() == []
+
+
+def load_gate_cost():
+    spec = importlib.util.spec_from_file_location("gate_cost", ROOT / "scripts/ci/gate_cost.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_each_step_records_wall_cpu_and_peak_rss(world: World) -> None:
+    result = world.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    rows = [line.split("\t") for line in (world.receipts / "steps.tsv").read_text().splitlines()]
+    assert len(rows) == 19
+    for name, rc, seconds, wall, cpu, peak_kb in rows:
+        assert rc == "0" and seconds.isdigit(), name
+        assert re.fullmatch(r"\d+\.\d{2}", wall) and re.fullmatch(r"\d+\.\d{2}", cpu), name
+        assert peak_kb.isdigit() and int(peak_kb) > 0, name
+
+
+def test_a_skipped_compose_step_keeps_the_same_columns(world: World) -> None:
+    result = world.run("--skip-compose")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (world.receipts / "steps/fresh-compose.tsv").read_text() == "fresh-compose\tskipped\t0\t-\t-\t-\n"
+
+
+def test_cost_json_has_totals_and_the_critical_path(world: World) -> None:
+    result = world.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    gate_cost = load_gate_cost()
+    cost = json.loads((world.receipts / "cost.json").read_text())
+    steps = cost["steps"]
+    assert cost["measure"] == "gnu-time"
+    assert set(steps) == set(gate_cost.GATE_DEPS)
+    assert cost["totals"]["cpu_s"] == pytest.approx(sum(step["cpu_s"] for step in steps.values()), abs=0.01)
+    assert cost["totals"]["max_step_rss_kb"] == max(step["max_rss_kb"] for step in steps.values())
+    path = cost["critical_path"]["steps"]
+    assert path[-1] == "policy"
+    # Each step on the path waits for the one before it.
+    assert all(before in gate_cost.GATE_DEPS[after] for before, after in zip(path, path[1:]))
+    assert cost["critical_path"]["wall_s"] == pytest.approx(sum(steps[name]["wall_s"] for name in path), abs=0.01)
+    assert cost["elapsed_s"] + 1 >= cost["critical_path"]["wall_s"]  # elapsed has whole seconds
+
+
+def test_the_critical_path_follows_pytest_when_it_is_slowest(world: World) -> None:
+    result = world.run(FAKE_PYTEST_SECONDS="2.5", FAKE_WEB_BUILD="sleep 0.5", FAKE_BROWSER_GATE="sleep 0.3")
+    assert result.returncode == 0, result.stdout + result.stderr
+    path = json.loads((world.receipts / "cost.json").read_text())["critical_path"]["steps"]
+    assert path == ["python-hermetic", "e2e-tree-unchanged", "cases", "policy"]
+
+
+def test_the_critical_path_follows_the_web_build_when_it_is_slowest(world: World) -> None:
+    result = world.run(FAKE_WEB_BUILD="sleep 2.5", FAKE_BROWSER_GATE="sleep 0.3")
+    assert result.returncode == 0, result.stdout + result.stderr
+    path = json.loads((world.receipts / "cost.json").read_text())["critical_path"]["steps"]
+    assert path[:4] == ["web-npm-ci", "web-build", "e2e-venv", "e2e-browser"]
+    assert path[4] in ("e2e-main", "e2e-live-data", "e2e-household")  # the three browser lanes tie
+    assert path[5:] == ["e2e-tree-unchanged", "cases", "policy"]
+
+
+def test_the_cost_table_is_sorted_by_wall_clock(world: World) -> None:
+    result = world.run(FAKE_PYTEST_SECONDS="1.5", FAKE_WEB_BUILD="sleep 0.5")
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.splitlines()
+    header = next(line for line in lines if line.startswith("step "))
+    assert header.split() == ["step", "rc", "wall_s", "cpu_s", "peak_mb"]
+    rows = []
+    for line in lines[lines.index(header) + 1:]:
+        if line.startswith("critical path"):
+            break
+        rows.append(line.split())
+    assert len(rows) == 19
+    walls = [float(row[2]) for row in rows]
+    assert walls == sorted(walls, reverse=True)
+    assert rows[0][0] == "python-hermetic"
+
+
+def test_without_gnu_time_a_wait4_fallback_measures_each_step(world: World) -> None:
+    result = world.run(AZIZAM_CI_TIME=str(world.tmp / "no-such-time"), FAKE_TYPE_RC="17")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (world.receipts / "steps/web-check.tsv").read_text().split("\t")[:2] == ["web-check", "17"]
+    # The fallback adds nothing to the step's log: no GNU time message.
+    assert (world.receipts / "logs/web-check.log").read_text() == "type-log\n"
+    cost = json.loads((world.receipts / "cost.json").read_text())
+    assert cost["measure"] == "wait4"
+    assert cost["steps"]["web-check"]["rc"] == 17
+    assert all(step["cpu_s"] is not None and step["max_rss_kb"] > 0 for step in cost["steps"].values())
+
+
+def test_the_wait4_wrapper_returns_a_signalled_steps_shell_status(tmp_path: Path) -> None:
+    cost = tmp_path / "step.cost"
+    result = subprocess.run([sys.executable, str(ROOT / "scripts/ci/gate_cost.py"), "run", str(cost), "--",
+                             "sh", "-c", "kill -TERM $$"], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 143  # 128 + SIGTERM, as the shell reports it
+    assert result.stderr == ""
+    wall, user, system, peak_kb = cost.read_text().split()
+    assert float(wall) >= 0 and float(user) >= 0 and float(system) >= 0 and int(peak_kb) > 0
+
+
+def test_gate_cost_prints_the_median_and_worst_of_the_last_runs(world: World) -> None:
+    root = world.tmp / "receipts"
+    for index, (wall, started) in enumerate([(10, "2026-10-01T00:00:00Z"), (20, "2026-10-02T00:00:00Z"),
+                                             (90, "2026-10-03T00:00:00Z")]):
+        run = root / f"{index:040x}"
+        run.mkdir(parents=True)
+        (run / "run.tsv").write_text(f"started\t{started}\nfinished\t{started}\n")
+        (run / "steps.tsv").write_text(f"python-hermetic\t0\t{wall}\t{wall}.00\t1.00\t2048\n")
+    for runs, median in ((2, "55.00"), (3, "20.00")):
+        result = subprocess.run([sys.executable, str(ROOT / "scripts/gate-cost"), "-n", str(runs),
+                                 "--receipts", str(root)], capture_output=True, text=True, timeout=60)
+        assert result.returncode == 0, result.stderr
+        row = next(line.split() for line in result.stdout.splitlines() if line.startswith("python-hermetic "))
+        assert row[1] == str(runs) and row[2] == median and row[3] == "90.00"
+
+
+def test_critical_path_takes_the_longest_chain_and_ignores_unmeasured_predecessors() -> None:
+    gate_cost = load_gate_cost()
+    durations = {"a": 1.0, "b": 2.0, "c": 4.0, "d": 0.5, "e": 6.0}
+    deps = {"a": (), "b": ("a",), "c": ("a", "b"), "d": ("missing",), "e": ()}
+    assert gate_cost.critical_path(durations, deps) == (["a", "b", "c"], 7.0)
