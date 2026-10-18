@@ -2797,12 +2797,17 @@ def create_admin_router(
 
     @router.delete("/extensions/{package_id}")
     async def remove_extension_package(
-        request: Request, package_id: str, mode: str = "remove"
+        request: Request, package_id: str
     ) -> JSONResponse:
-        """Remove the package's records, or disable them with ``?mode=disable``."""
+        """Remove the package's records, or disable them with ``?mode=disable``.
+
+        ``mode`` is read from the query string rather than declared as a parameter: the OpenAPI
+        schema is frozen by tests/test_route_graph_freeze.py and tests/fixtures/headless_openapi.json.
+        """
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        mode = request.query_params.get("mode", "remove")
         if mode not in ("remove", "disable"):
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,

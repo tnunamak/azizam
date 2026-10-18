@@ -1290,7 +1290,7 @@ class AdminSQLiteStore:
             path=self.path,
         )
         self.write_litellm_config(registry_record["value"])
-        self._fire_registry_changed()
+        self._fire_registry_changed(registry_record)
         return {
             "extension_package": (index_record["value"].get("packages") or {}).get(package_id),
             "extension_packages": index_record["value"],
