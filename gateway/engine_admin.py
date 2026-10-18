@@ -59,7 +59,7 @@ from gateway.litellm_substrate import CREDENTIAL_HEADER_RE, SECRET_PLACEHOLDER, 
 _KNOWN_CONFIG_KEYS = frozenset({
     "host", "port", "base_path", "scheme", "protocol", "native_passthrough", "transforms", "models",
     "definition", "definition_version", "address", "path_prefix",
-    "timeout", "headers", "api_key_secret_id", "api_key_env", "api_key_ref", "credential_origin",
+    "timeout", "headers", "probe_with_inference_connection", "api_key_secret_id", "api_key_env", "api_key_ref", "credential_origin",
     "engine_check", "engine_tests", "model_policy_schema_version",
     "name", "enabled", "capabilities", "role", "priority", "managed", "lifecycle",
 })
@@ -1169,6 +1169,8 @@ class EngineService:
                 # edits or rechecks Connection. A name or unchanged echo grants
                 # no new destination permission for an inference credential.
                 raw["probe_with_inference_connection"] = True
+            elif "probe_with_inference_connection" in old_config:
+                raw["probe_with_inference_connection"] = copy.deepcopy(old_config["probe_with_inference_connection"])
             if existing is not None:
                 if keep_timeout:
                     if "timeout" in old_config:
