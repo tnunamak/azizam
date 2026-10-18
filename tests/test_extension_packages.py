@@ -1080,9 +1080,10 @@ def test_the_stored_index_keeps_a_digest_of_each_installed_record(tmp_path, monk
     from gateway import admin_store
     stored = admin_store.get_operator_setting(EXTENSION_PACKAGE_INDEX_SETTING_KEY, path=store.path)["value"]
     entry = stored["packages"]["lifecycle"]["installed_records"]["services"]["lifecycle-service"]
-    assert set(entry) == {"kind", "id", "sha256"}
+    assert set(entry) == {"kind", "id", "mac"}  # a keyed digest (version 3); a bare hash of a record can be guessed
     assert entry["kind"] == "services" and entry["id"] == "lifecycle-service"
-    assert re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])
+    assert re.fullmatch(r"[0-9a-f]{64}", entry["mac"])
+    assert stored["packages"]["lifecycle"]["installed_records_version"] == 3
     assert "localhost:9999" not in json.dumps(stored)
 
 
