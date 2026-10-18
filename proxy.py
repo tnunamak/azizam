@@ -1377,7 +1377,7 @@ async def _ensure_target(
     target ready, so no other swap can land between the two.
     """
     from gateway.lifecycle_drivers import driver_for_service, supports_swap, SwapContext
-    from gateway.engine_contract_view import process_config
+    from gateway.engine_contract_view import offerings_config, process_config, residency_config
 
     bcfg = (config.get("backends") or {}).get(backend) or {}
     # The legacy backend projection keys records by id; owned-process state
@@ -1408,6 +1408,28 @@ async def _ensure_target(
             return False, None
         if not take_lease:
             return True, None
+        offerings = offerings_config(bcfg)
+        offering = next((item for item in offerings if item.get("id") == model), None)
+        if model and offering is None and any(
+            (item.get("selection") or {}).get("mode") == "switch" for item in offerings
+        ):
+            return False, None
+        selection = offering.get("selection") if offering else None
+        if isinstance(selection, Mapping):
+            from gateway.engine_control import EngineControlRuntime
+
+            runtime = EngineControlRuntime({**bcfg, "id": backend, "offerings": offerings},
+                                           drain=_swap_drain, lock_for=swap_lock_for)
+            if selection.get("implicit_load") is False and residency_config(bcfg).get("load"):
+                if not await runtime.load():
+                    return False, None
+            if selection.get("mode") == "switch":
+                lease = await runtime.select(
+                    str(offering["id"]), selection,
+                    on_acquired=(lambda: driver.request_started(bcfg)) if owned_process else None,
+                    on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None,
+                )
+                return True, lease
         async with swap_lock_for(backend):
             if owned_process:
                 driver.request_started(bcfg)
@@ -1470,10 +1492,16 @@ async def _ensure_target_leased(
     target ready, so it always covers the target this request asked for.
     Raises SwapDeferred.
     """
-    from gateway.engine_contract_view import process_config
+    from gateway.engine_contract_view import offerings_config, process_config
 
     bcfg = (config.get("backends") or {}).get(backend) or {}
-    if not _swap_drain_settings().enabled and process_config(bcfg).get("driver") != "process":
+    declared_offerings = offerings_config(bcfg)
+    contract_lease = any(
+        (item.get("selection") or {}).get("mode") == "switch" or
+        (item.get("selection") or {}).get("implicit_load") is False
+        for item in declared_offerings
+    )
+    if not _swap_drain_settings().enabled and process_config(bcfg).get("driver") != "process" and not contract_lease:
         ready = await ensure_target(backend, activation.model, activation.mmproj, profile=activation.profile)
         return ready, None
     return await _ensure_target(

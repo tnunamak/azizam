@@ -40,3 +40,11 @@ def residency_config(service: Mapping[str, Any]) -> Mapping[str, Any]:
         config = service.get("config")
         residency = config.get("residency") if isinstance(config, Mapping) else None
     return residency if isinstance(residency, Mapping) else {}
+
+
+def offerings_config(service: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    offerings = service.get("offerings")
+    if not isinstance(offerings, list):
+        config = service.get("config")
+        offerings = config.get("offerings") if isinstance(config, Mapping) else None
+    return [item for item in offerings if isinstance(item, Mapping)] if isinstance(offerings, list) else []

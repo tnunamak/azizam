@@ -30,6 +30,7 @@ class SwitchLease:
         self._lock = lock
         self._serving = serving
         self._released = False
+        self.handed_off = False
 
     def release(self) -> None:
         if self._released:
@@ -39,6 +40,7 @@ class SwitchLease:
         self._lock.release()
 
     def hand_off(self, stream: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+        self.handed_off = True
         async def owned() -> AsyncIterator[bytes]:
             try:
                 async with aclosing(stream) as source:
@@ -70,7 +72,9 @@ class SwitchController:
         self._lock_for = lock_for or (lambda scope: self._locks.setdefault(scope, asyncio.Lock()))
 
     async def select(
-        self, service: Mapping[str, Any], offering_id: str, selection: Mapping[str, Any]
+        self, service: Mapping[str, Any], offering_id: str, selection: Mapping[str, Any],
+        *, on_acquired: Callable[[], None] | None = None,
+        on_release: Callable[[], None] | None = None,
     ) -> SwitchLease:
         offerings = service.get("offerings") or []
         offering = next((row for row in offerings if isinstance(row, Mapping) and row.get("id") == offering_id), None)
@@ -123,7 +127,9 @@ class SwitchController:
                 if isinstance(exc, asyncio.CancelledError):
                     raise
                 raise SwitchUnavailable("selection failed or is unknown") from exc
-            lease = SwitchLease(lock, self._drain.lease(scope))
+            if on_acquired is not None:
+                on_acquired()
+            lease = SwitchLease(lock, self._drain.lease(scope, on_release=on_release))
             handed_off = True
             return lease
         except SwapDeferred as exc:
