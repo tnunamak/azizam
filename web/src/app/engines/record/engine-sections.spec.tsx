@@ -2,11 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { api } from "@/lib/api";
-import type { TransformRow } from "@/lib/transforms";
 import {
   enginesApi,
   type EngineRecordV2,
   type EngineView,
+  type TransformRow,
 } from "@/lib/engines-api";
 import {
   accessAnswer,
