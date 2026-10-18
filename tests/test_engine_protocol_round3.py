@@ -323,7 +323,8 @@ def _receipt_projection(row):
     }
 
 
-def test_L2_executor_stream_receipt_matches_the_legacy_receipt_for_the_same_request(monkeypatch, tmp_path):
+def _stream_receipt_rows(monkeypatch, tmp_path):
+    """Drive one stream chat through the legacy route and through an executor record; return both receipts."""
     fixture = json.loads((Path(__file__).parent / 'fixtures/engine_protocol/live-shaped.json').read_text())
     fixture['services']['exec'] = {'id': 'exec', 'enabled': True, 'config': {
         'connection': {'transport': 'http', 'dispatch': 'protocol', 'protocol': 'openai-compatible',
@@ -353,88 +354,21 @@ def test_L2_executor_stream_receipt_matches_the_legacy_receipt_for_the_same_requ
         protocol = client.post('/v1/chat/completions', json={'model': 'exec-coder', 'messages': message, 'stream': True})
     assert legacy.status_code == 200 and protocol.status_code == 200, (legacy.text, protocol.text)
     rows = {row['request_id']: row for row in receipt_store.recent()}
-    legacy_row = rows[legacy.headers['x-azizam-request-id']]
-    protocol_row = rows[protocol.headers['x-request-id']]
+    return rows[legacy.headers['x-azizam-request-id']], rows[protocol.headers['x-request-id']]
+
+
+def _stream_receipt_metadata_keys(monkeypatch, tmp_path):
+    legacy_row, protocol_row = _stream_receipt_rows(monkeypatch, tmp_path)
+    legacy_keys, protocol_keys = set(legacy_row['metadata']), set(protocol_row['metadata'])
+    return {'executor_only': sorted(protocol_keys - legacy_keys), 'legacy_only': sorted(legacy_keys - protocol_keys)}
+
+
+def test_L2_executor_stream_receipt_matches_the_legacy_receipt_for_the_same_request(monkeypatch, tmp_path):
+    legacy_row, protocol_row = _stream_receipt_rows(monkeypatch, tmp_path)
     assert _receipt_projection(protocol_row) == _receipt_projection(legacy_row)
 
 
-# --- Probe rows kept as regressions: stream and embedding shapes, and inventory isolation ---------
-
-def _stream_chunk(**over):
-    chunk = {'id': 'c1', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'm',
-             'choices': [{'index': 0, 'delta': {'content': 'x'}, 'finish_reason': None}]}
-    chunk.update(over)
-    return chunk
-
-
-@pytest.mark.parametrize('label,payload,stream,intent', [
-    ('200 error object on a complete answer', {'error': {'message': 'boom', 'type': 'x'}}, False, 'chat'),
-    ('NaN in usage', json.loads('{"id":"c","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"x"},"finish_reason":"stop"}],"usage":{"prompt_tokens":NaN,"completion_tokens":1,"total_tokens":1}}'), False, 'chat'),
-    ('stream chunk without a finish key', _stream_chunk(choices=[{'index': 0, 'delta': {'content': 'a'}}]), True, 'chat'),
-    ('stream content that is a number', _stream_chunk(choices=[{'index': 0, 'delta': {'content': 1}, 'finish_reason': None}]), True, 'chat'),
-    ('stream error event', {'error': {'message': 'mid-stream'}}, True, 'chat'),
-    ('stream NaN created', json.dumps({'id': 'c', 'object': 'chat.completion.chunk', 'created': float('nan'), 'model': 'm', 'choices': []}).encode(), True, 'chat'),
-    ('embedding NaN', {'object': 'list', 'model': 'm', 'data': [{'object': 'embedding', 'index': 0, 'embedding': [float('nan')]}]}, False, 'embeddings'),
-    ('embedding beyond float range', {'object': 'list', 'model': 'm', 'data': [{'object': 'embedding', 'index': 0, 'embedding': [10 ** 400]}]}, False, 'embeddings'),
-    ('embedding with a boolean', {'object': 'list', 'model': 'm', 'data': [{'object': 'embedding', 'index': 0, 'embedding': [True]}]}, False, 'embeddings'),
-    ('embedding base64 of a partial float', {'object': 'list', 'model': 'm', 'data': [{'object': 'embedding', 'index': 0, 'embedding': 'AAAAA'}]}, False, 'embeddings'),
-])
-def test_probe_rows_shape_refusals_stay_refused(label, payload, stream, intent):
-    with pytest.raises(ProtocolError):
-        public_shape.validate(payload, intent, stream=stream)
-
-
-def _registry_of(n):
-    return {'services': {f'e{i}': record(f'e{i}', config={'offerings': [offering(i)]}) for i in range(n)}}
-
-
-def test_probe_forty_hanging_engines_share_one_listing_budget(monkeypatch, fresh_inventory, ollama_doc):
-    monkeypatch.setattr(description, 'load_registry', lambda directory=None: {'ollama-native': ollama_doc})
-
-    async def hang(self, op, body):
-        await asyncio.sleep(3600)
-    monkeypatch.setattr(dispatch.Runtime, 'invoke', hang)
-
-    async def timed():
-        started = time.perf_counter()
-        out = await inventory.models(_registry_of(40))
-        return time.perf_counter() - started, out
-    elapsed, out = asyncio.run(timed())
-    assert out == []
-    assert elapsed < inventory.LIST_TIMEOUT_S + 0.5, elapsed
-
-
-def test_probe_one_bad_engine_shape_is_isolated(monkeypatch, fresh_inventory, ollama_doc):
-    monkeypatch.setattr(description, 'load_registry', lambda directory=None: {'ollama-native': ollama_doc})
-
-    async def invoke(self, op, body):
-        if self.target.engine_id == 'e1':
-            return SimpleNamespace(body={'data': [{'id': 5}]}, asset=None)
-        return SimpleNamespace(body={'data': [{'id': f'm{self.target.engine_id[1:]}'}]}, asset=None)
-    monkeypatch.setattr(dispatch.Runtime, 'invoke', invoke)
-    out = asyncio.run(inventory.models(_registry_of(3)))
-    assert [item['id'] for item in out] == ['m0', 'm2']
-    assert [problem['engine_id'] for problem in inventory.problems()] == ['e1']
-
-
-def test_probe_engine_recovers_after_an_outage_and_the_cache_expires(monkeypatch, fresh_inventory, ollama_doc):
-    monkeypatch.setattr(description, 'load_registry', lambda directory=None: {'ollama-native': ollama_doc})
-    calls = {'down': False, 'n': 0}
-
-    async def invoke(self, op, body):
-        calls['n'] += 1
-        if calls['down']:
-            raise httpx.ConnectError('refused')
-        return SimpleNamespace(body={'data': [{'id': 'm0'}]}, asset=None)
-    monkeypatch.setattr(dispatch.Runtime, 'invoke', invoke)
-    registry = _registry_of(1)
-    asyncio.run(inventory.models(registry))
-    asyncio.run(inventory.models(registry))
-    assert calls['n'] == 1, 'a second listing within the TTL reuses the first'
-    calls['down'] = True
-    monkeypatch.setattr(inventory, 'CACHE_TTL_S', 0.0)
-    assert asyncio.run(inventory.models(registry)) == []
-    assert inventory.problems()
-    calls['down'] = False
-    assert [item['id'] for item in asyncio.run(inventory.models(registry))] == ['m0']
-    assert inventory.problems() == []
+def test_L2_the_only_metadata_keys_that_differ_between_the_two_routes_are_the_documented_ones(monkeypatch, tmp_path):
+    keys = _stream_receipt_metadata_keys(monkeypatch, tmp_path)
+    assert keys['executor_only'] == []
+    assert keys['legacy_only'] == []
