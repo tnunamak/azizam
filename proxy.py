@@ -3344,9 +3344,25 @@ async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
 
 
 async def _probe_service_resource_fact(bcfg: Mapping[str, Any]) -> dict[str, Any]:
-    url = _service_resource_probe_url(bcfg)
-    if not url:
+    from gateway.lifecycle_drivers import engine_read_request
+
+    probe_config = dict(bcfg)
+    env_name = str(bcfg.get("base_url_env") or bcfg.get("api_base_env") or "").strip()
+    env_base = str(get_env(env_name) or "").strip() if env_name else ""
+    if env_base:
+        probe_config["base_url"] = env_base
+    endpoint = str(bcfg.get("health_endpoint") or "/health").strip() or "/health"
+    absolute = endpoint.startswith(("http://", "https://"))
+    if absolute:
+        # The read helper binds the key to this destination too, even when an
+        # owner declares health on a different origin from inference.
+        probe_config["base_url"] = endpoint
+    probe = engine_read_request(probe_config, "" if absolute else endpoint)
+    if probe is None:
         return {"status": "unknown"}
+    url, headers = probe
+    if absolute:
+        url = endpoint
     try:
         timeout = float(bcfg.get("timeout") or HEALTH_CHECK_TIMEOUT)
     except (TypeError, ValueError):
@@ -3356,7 +3372,7 @@ async def _probe_service_resource_fact(bcfg: Mapping[str, Any]) -> dict[str, Any
     timeout = min(timeout, HEALTH_CHECK_TIMEOUT)
     try:
         async with httpx.AsyncClient(verify=tls_context()) as client:
-            resp = await client.get(url, timeout=timeout)
+            resp = await client.get(url, timeout=timeout, **({"headers": headers} if headers else {}))
             if 200 <= resp.status_code < 300:
                 return {"status": "available"}
             if resp.status_code in {502, 503, 504}:
