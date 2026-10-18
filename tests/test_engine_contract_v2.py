@@ -106,9 +106,9 @@ def test_engine_admin_exposes_v2_beside_existing_fields_and_uses_record_permissi
     record["config"]["api_key_secret_id"] = "test-secret-reference"
     assert not reaches_engine_directly("engine-a", record)
     view = engine_view(load_engine_catalog(), record, db_path=tmp_path / "admin.db")
-    # The current form still gates fields it cannot apply; the v2 contract
-    # carries the independent record permission for the later editor.
-    assert view["editable"] is False
+    # The final hop now reads the edited record, so its routing path does not
+    # impose a second permission rule on the form.
+    assert view["editable"] is True
     assert view["v2"]["editable"] is True
     assert view["v2"]["connection"]["headers"] == [{"name": "Authorization", "value": "configured"}]
     assert view["v2"]["connection"]["credentials"]["inference"]["secret_ref"] == "configured"
