@@ -42,10 +42,12 @@ def _git_package(monkeypatch, tmp_path, service_yaml, name="evilpkg"):
     """Like _package, but offered as an https git source (the only kind an administrator may name)."""
     local = _package(tmp_path, service_yaml, name)
 
-    def fake_clone(url, ref, target):
+    def fake_clone(url, ref, target, **kwargs):
+        fake_clone.urls.append(url)  # the URL the clone was asked for: a test can see it held the credentials
         shutil.copytree(local["path"], target)
         return "deadbeef"
 
+    fake_clone.urls = []
     monkeypatch.setattr(extension_packages, "_clone_git_source", fake_clone)
     return {"type": "git", "url": "https://example.com/package.git"}
 
