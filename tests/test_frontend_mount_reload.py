@@ -63,7 +63,7 @@ def _broken(mounts: frontend_mount.FrontendMounts) -> dict[str, list[dict]]:
 
 def test_a_row_that_collides_with_post_chat_completions_is_skipped_and_the_others_mount():
     seed = route_registry.protocol_frontend_records(proxy_config=proxy.config)
-    clash = _frontend("acme", _post("/v1/chat/completions"), _get("/acme/v1/models"))
+    clash = _frontend("acme", _post("/v1/chat/completions"), _get("/acme/api/version"))
     mounts = frontend_mount.FrontendMounts(FastAPI(), proxy.FRONTEND_TRANSLATORS,
                                            authenticate=proxy._authenticate_mounted_route)
 
@@ -73,7 +73,7 @@ def test_a_row_that_collides_with_post_chat_completions_is_skipped_and_the_other
     chat = [route for route in mounts.app.routes
             if getattr(route, "path", "") == "/v1/chat/completions" and "POST" in route.methods]
     assert [route.endpoint for route in chat] == [proxy.chat_completions]
-    assert any(getattr(route, "path", "") == "/acme/v1/models" for route in mounts.app.routes)
+    assert any(getattr(route, "path", "") == "/acme/api/version" for route in mounts.app.routes)
     [error] = _broken(mounts)["acme"]
     assert "POST /v1/chat/completions" in error["message"]
     assert error["route"] == "/v1/chat/completions"
@@ -240,29 +240,29 @@ def _get_status(path: str) -> int:
 
 
 def test_reloading_the_runtime_config_mounts_a_new_package_row_and_unmounts_a_removed_one(live):
-    acme = _frontend("acme", {"methods": ["GET"], "canonical": "/acme/v1/models", "intent": "models.list",
-                              "translator": "identity"})
-    assert _get_status("/acme/v1/models") == 404
+    acme = _frontend("acme", {"methods": ["GET"], "canonical": "/acme/api/version", "intent": "version",
+                              "translator": "ollama"})
+    assert _get_status("/acme/api/version") == 404
 
     _publish_registry(live, acme)
     proxy.reload_runtime_config()
-    assert _get_status("/acme/v1/models") == 200
+    assert _get_status("/acme/api/version") == 200
 
     _publish_registry(live)
     proxy.reload_runtime_config()
-    assert _get_status("/acme/v1/models") == 404
+    assert _get_status("/acme/api/version") == 404
 
 
 def test_a_reload_that_cannot_mount_leaves_the_old_config_and_routes_serving(live, monkeypatch):
-    acme = _frontend("acme", {"methods": ["GET"], "canonical": "/acme/v1/models", "intent": "models.list",
-                              "translator": "identity"})
+    acme = _frontend("acme", {"methods": ["GET"], "canonical": "/acme/api/version", "intent": "version",
+                              "translator": "ollama"})
     _publish_registry(live, acme)
     proxy.reload_runtime_config()
     config_before = proxy.config
     routes_before = list(proxy.app.router.routes)
 
-    _publish_registry(live, acme, _frontend("beta", {"methods": ["GET"], "canonical": "/beta/v1/models",
-                                                     "intent": "models.list", "translator": "identity"}))
+    _publish_registry(live, acme, _frontend("beta", {"methods": ["GET"], "canonical": "/beta/api/version",
+                                                     "intent": "version", "translator": "ollama"}))
 
     def failing(*args, **kwargs):
         raise RuntimeError("mount failed")
@@ -273,8 +273,8 @@ def test_a_reload_that_cannot_mount_leaves_the_old_config_and_routes_serving(liv
 
     assert proxy.config is config_before
     assert proxy.app.router.routes == routes_before
-    assert _get_status("/acme/v1/models") == 200
-    assert _get_status("/beta/v1/models") == 404
+    assert _get_status("/acme/api/version") == 200
+    assert _get_status("/beta/api/version") == 404
 
 
 def test_a_package_row_forced_into_the_store_does_not_mount_a_privileged_translator_on_reload(live):
