@@ -21,7 +21,8 @@ def validate(payload, intent: str, *, stream: bool = False):
     require(not stream or intent == 'chat', 'Only chat supports a public event stream.')
     require(intent != 'speech', 'Speech synthesis must return an audio asset.')
     def integer(value):
-        return type(value) is int and value >= 0
+        # Counts and indexes stay within the range JSON readers hold exactly.
+        return type(value) is int and 0 <= value <= 2 ** 53 - 1
     def finite_number(value):
         try:
             return type(value) in (int, float) and math.isfinite(value)
@@ -34,7 +35,8 @@ def validate(payload, intent: str, *, stream: bool = False):
         require(isinstance(payload.get('id'), str) and integer(payload.get('created')) and
                 isinstance(payload.get('model'), str), 'The mapped chat response needs id, created and model fields.')
         choices = payload.get('choices')
-        require(isinstance(choices, list), 'The mapped chat response needs a choices array.')
+        require(isinstance(choices, list) and (stream or choices),
+                'The mapped chat response needs a choices array; a complete response has at least one choice.')
         for choice in choices:
             require(isinstance(choice, Mapping) and integer(choice.get('index')), 'Each chat choice needs an integer index.')
             message = choice.get('delta' if stream else 'message')
@@ -67,8 +69,10 @@ def validate(payload, intent: str, *, stream: bool = False):
                         ((stream and 'name' not in function) or isinstance(function.get('name'), str)) and
                         ((stream and 'arguments' not in function) or isinstance(function.get('arguments'), str)),
                         'A function call needs string name and arguments fields.')
-            require('finish_reason' in choice and choice['finish_reason'] in
-                    (None, 'stop', 'length', 'tool_calls', 'content_filter', 'function_call'), 'A chat choice has an invalid finish reason.')
+            # A streamed chunk may be unfinished (null). A complete response must say why it ended.
+            require('finish_reason' in choice and (choice['finish_reason'] in
+                    ('stop', 'length', 'tool_calls', 'content_filter', 'function_call') or
+                    (stream and choice['finish_reason'] is None)), 'A chat choice has an invalid finish reason.')
     elif intent == 'embeddings':
         require(not stream and payload.get('object') == 'list' and isinstance(payload.get('model'), str),
                 'The mapped embeddings response needs object list and model fields.')
@@ -81,6 +85,7 @@ def validate(payload, intent: str, *, stream: bool = False):
             require(isinstance(value, str) or (isinstance(value, list) and all(finite_number(v) for v in value)),
                     'Each embedding must be a numeric array or a base64 string.')
             if isinstance(value, str):
+                require(value != '', 'The encoded embedding must not be empty.')
                 try:
                     decoded = base64.b64decode(value, validate=True)
                 except (ValueError, binascii.Error):

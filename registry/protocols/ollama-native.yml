@@ -38,13 +38,15 @@ operations:
         - copy: {from: /body/model, to: /model}
         - set:
             to: /choices
-            value: [{index: 0, message: {role: assistant, content: null}, finish_reason: null}]
+            value: [{index: 0, message: {role: assistant, content: null}}]
         - copy: {from: /body/message/content, to: /choices/0/message/content}
         - enum:
             from: /body/done_reason
             to: /choices/0/finish_reason
             table: {stop: stop, length: length}
             unmapped: error
+        # A complete answer without done_reason is a stop. Streamed chunks keep a null reason until done.
+        - default: {to: /choices/0/finish_reason, value: stop}
       stream:
         when: {path: /body/stream, equals: true}
         framing: ndjson
