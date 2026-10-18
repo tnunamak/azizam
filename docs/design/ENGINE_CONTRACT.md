@@ -282,8 +282,8 @@ template, through `native.allow`.
   each bound to the origin it was attached for. A class with no credential
   sends none, and never the other class's. It never forwards the client's auth
   or cookies, and it does not use the service record's single `auth_inject`
-  key. A credential that is not bound to the address it would go to is not
-  sent, and the call is refused.
+  key or a caller's per-identity downstream secrets. A credential that is not
+  bound to the address it would go to is not sent, and the call is refused.
 - Request and response bytes are capped. Redirects are refused. Configured
   hosts are SSRF-checked with `gateway/engine_check.py`: the address as written
   when the record is saved, the lookup result when it is saved and on every
@@ -293,12 +293,27 @@ template, through `native.allow`.
   engine's origin. Azizam relays the body decoded, so it drops the engine's
   `Content-Encoding` and `Content-Length`.
 - The older route `/gateway/v1/providers/{provider}/{path}` reaches the same
-  engine record and keeps these rules, with one difference: it has no deny
-  default for reads. A call the record's `native.allow` names is classed as the
-  list says. Any other `GET` or `HEAD` is a `generate` read: its query keys
-  pass, but a value that looks like a file path is refused. Any other method is
-  a `control` call, which only the owner may make. Reply headers, the request
+  engine record and keeps these rules, with two differences. It sends the
+  same per-class credential and no other (never `auth_inject`), and it drops a
+  body sent with a `GET` or `HEAD`. A call the record's `native.allow` names is
+  classed as the list says. Any other `GET` or `HEAD` is a `generate` read: its
+  query keys must be plain key names (letters, digits, `_`, `.`, `-`, `[`, `]`),
+  and a value that looks like a file path is refused. Any other method is a
+  `control` call, which only the owner may make. Reply headers, the request
   and reply caps and the per-request SSRF check are the same as on `/native/`.
+- `native.unlisted_reads` sets what that route does with a `GET` or `HEAD` the
+  list does not name: `allow` (the default) serves it as a `generate` read,
+  `deny` refuses it with `native_not_allowed`. A `GET` that changes state (a
+  stop, a reload, a delete by URL) cannot be told from a read, so list it as a
+  `control` entry, for example `{method: GET, path: /admin/stop, class:
+  control}`, and set `unlisted_reads: deny` so a state-changing `GET` you did
+  not list is refused rather than served. `/native/{engine}/` refuses every
+  call the list does not name, whatever this value is.
+- A `generate` value is also refused when it still holds an encoded `/`, `\`
+  or `.` (`%2F`, `%5C`, `%2E`) after the one decode the lane does, because the
+  engine may decode it again. A `control` value passes.
+- The caps are data: `native.max_request_bytes` (default 8 MiB) and
+  `native.max_response_bytes` (default 256 MiB), on both routes.
 - The receipt records the operation and says "cost unknown" when usage can't be
   measured.
 - Remote providers have no native lane in this version. That is an intentional,
