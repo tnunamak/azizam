@@ -56,6 +56,29 @@ describe("the reply timeout on Connection", () => {
   });
 });
 
+describe("a direct record with no saved timeout", () => {
+  it("shows the source alone, invents no number, and saves the empty value unchanged", async () => {
+    const user = userEvent.setup();
+    mount({
+      values: { ...engineView().values, reply_timeout_s: "" },
+      reply_timeout: { seconds: null, source: "model router default (no saved timeout)" },
+    });
+    await screen.findByRole("heading", { level: 1, name: "garage-gpu" });
+    const facts = screen.getByTestId("connection-facts");
+    expect(facts).toHaveTextContent("Time to wait for a replymodel router default (no saved timeout).");
+    expect(facts).not.toHaveTextContent(/null|NaN|\d+ seconds/);
+    expect(screen.getByLabelText("Time to wait for a reply")).toHaveValue("");
+    await user.click(screen.getByText("More options", { selector: "summary span" }));
+    await user.click(screen.getByRole("button", { name: "Add a header" }));
+    await user.type(screen.getByLabelText("Header name"), "X-Region");
+    await user.type(screen.getByLabelText("Value"), "lan");
+    const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    expect(update.mock.calls[0][1].values?.reply_timeout_s).toBe("");
+  });
+});
+
 describe("attention from the gateway", () => {
   it("shows a missing key variable where the owner can see it", async () => {
     mount({
@@ -79,7 +102,9 @@ describe("a header the gateway does not send", () => {
     expect(within(group).getByText("Not sent")).toBeVisible();
     expect(screen.getByDisplayValue("Authorization")).toBeDisabled();
     expect(screen.getByDisplayValue("[redacted]")).toBeDisabled();
-    await user.type(await screen.findByLabelText("Name"), "!");
+    // A change to another setting goes through the engine update; a rename alone would not.
+    await user.clear(screen.getByLabelText("Time to wait for a reply"));
+    await user.type(screen.getByLabelText("Time to wait for a reply"), "300");
     const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(update).toHaveBeenCalled());

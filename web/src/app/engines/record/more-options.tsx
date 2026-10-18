@@ -23,12 +23,22 @@ export type HeaderDraft = HeaderRow;
 /** The plain values More options edits, as text while they are being typed. */
 export type OptionValues = Record<string, string>;
 
+/** Keeps the gateway's flags on a row (secret, not_sent) so a save sends the hidden row back as it came. */
+function headerRow(h: HeaderRow): HeaderRow {
+  return {
+    name: h.name,
+    value: h.value,
+    ...(h.secret ? { secret: true } : {}),
+    ...(h.not_sent ? { not_sent: true } : {}),
+  };
+}
+
 export function headersFrom(rows: HeaderRow[] | undefined): HeaderDraft[] {
-  return (rows ?? []).map((h) => ({ name: h.name, value: h.value }));
+  return (rows ?? []).map(headerRow);
 }
 
 export function headersBody(rows: HeaderDraft[]): HeaderRow[] {
-  return rows.map((h) => ({ name: h.name, value: h.value }));
+  return rows.map(headerRow);
 }
 
 function unitWord(unit: EngineField["unit"]): string {
@@ -428,7 +438,10 @@ function HeadersEditor({
   return (
     <ErrorGroup label={field.label} error={error}>
       {field.help && <p className="text-meta text-muted-foreground">{field.help}</p>}
-      {rows.map((row, i) => (
+      {rows.map((row, i) => {
+        // A hidden value cannot be read or changed here; the row can only be removed.
+        const hidden = Boolean(row.secret || row.not_sent);
+        return (
         <div key={i} className="grid items-end gap-2 sm:grid-cols-[1fr_1fr_auto]">
           <FormField label="Header name">
             {(control) => (
@@ -438,7 +451,7 @@ function HeadersEditor({
                 className="font-mono"
                 placeholder="X-Client"
                 value={row.name}
-                disabled={disabled}
+                disabled={disabled || hidden}
                 autoComplete="off"
                 spellCheck={false}
                 onChange={(event) => set(i, { name: event.target.value })}
@@ -452,13 +465,15 @@ function HeadersEditor({
                 size="sm"
                 className="font-mono"
                 value={row.value}
-                disabled={disabled}
+                disabled={disabled || hidden}
                 autoComplete="off"
                 spellCheck={false}
                 onChange={(event) => set(i, { value: event.target.value })}
               />
             )}
           </FormField>
+          <div className="flex items-center gap-2">
+          {row.not_sent && <Tag tone="changed">Not sent</Tag>}
           <Button
             type="button"
             variant="ghost"
@@ -469,8 +484,10 @@ function HeadersEditor({
           >
             <Trash2 aria-hidden="true" />
           </Button>
+          </div>
         </div>
-      ))}
+        );
+      })}
       {!disabled && (
         <Button
           type="button"

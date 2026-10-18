@@ -189,6 +189,10 @@ interface PhaseFields {
 export interface HeaderRow {
   name: string;
   value: string;
+  /** The stored value is hidden: the gateway shows "[redacted]" in its place. */
+  secret?: boolean;
+  /** The gateway does not send this header (it cannot override credentials or transport settings). */
+  not_sent?: boolean;
 }
 
 /** Draft values, keyed by the definition's field keys. */
@@ -290,6 +294,10 @@ export interface EngineView {
   /** The origin a saved key is sent to. Nowhere else gets it. */
   credential_destination?: string | { origin?: string } | null;
   ignored_headers?: string[];
+  /** The effective reply timeout and where it comes from. Absent on older gateways. */
+  reply_timeout?: { seconds: number | null; source: string };
+  /** Things about this engine that want a look, such as a key variable that is not set. */
+  attention?: { code: string; message: string }[];
 }
 
 export interface RequestPath {

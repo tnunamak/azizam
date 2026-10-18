@@ -122,12 +122,35 @@ export function argvText(list: string[]): string {
 const argv = (list: string[] | undefined) =>
   list?.length ? mono(argvText(list)) : "None";
 
+/** The origin of a URL as the HTTP client reads it: the default port of the scheme is dropped. */
+export function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
+}
+
 export function credentialOrigin(view: EngineView): string {
   const dest = view.credential_destination;
   if (typeof dest === "string" && dest) return dest;
   if (dest && typeof dest === "object" && dest.origin) return dest.origin;
   return (
     view.v2?.connection.credentials.inference?.origin || view.key.origin || ""
+  );
+}
+
+/** What the gateway says wants a look on this engine, in its own words. */
+export function AttentionNotes({ view }: { view: EngineView }) {
+  if (!view.attention?.length) return null;
+  return (
+    <div className="flex flex-col gap-2" data-testid="engine-attention">
+      {view.attention.map((item) => (
+        <Note key={item.code + item.message} tone="warn" role="alert">
+          {item.message}
+        </Note>
+      ))}
+    </div>
   );
 }
 
@@ -163,9 +186,16 @@ export function ConnectionFacts({
     ]);
   if (definition.fields.some((f) => f.key === "api_key")) {
     const origin = credentialOrigin(view);
+    const requestOrigin = path?.url ? originOf(path.url) : "";
+    const keyHere = view.key.state === "configured" && origin;
+    const elsewhere = keyHere && requestOrigin && originOf(origin) !== requestOrigin;
     rows.push([
       "Key is sent to",
-      view.key.state === "configured" && origin ? (
+      elsewhere ? (
+        <span key="dest">
+          No key is sent: the key belongs to {mono(originOf(origin) || origin)} but this engine’s address is {mono(requestOrigin)}.
+        </span>
+      ) : keyHere ? (
         <span key="dest">
           {mono(origin)} only. Azizam never sends it to another address.
         </span>
@@ -174,6 +204,13 @@ export function ConnectionFacts({
       ),
     ]);
   }
+  if (view.reply_timeout)
+    rows.push([
+      "Time to wait for a reply",
+      view.reply_timeout.seconds == null
+        ? `${view.reply_timeout.source}.`
+        : `${view.reply_timeout.seconds} seconds. Source: ${view.reply_timeout.source}.`,
+    ]);
   const protocol = view.v2?.connection.protocol;
   if (protocol) rows.push(["Protocol", mono(protocol)]);
   if (view.ignored_headers?.length)

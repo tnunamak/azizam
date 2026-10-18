@@ -41,6 +41,7 @@ import { FormField, LinkButton, Note, Tag, describedBy, focusFirstInvalid } from
 import { ModelsBlock, draftsFromCheck, duplicateNames, modelsBody, type ModelDraft } from "../parts/models-block";
 import {
   ARGV_REASON,
+  AttentionNotes,
   ConnectionFacts,
   DERIVED_REASON,
   LockedNote,
@@ -959,6 +960,7 @@ function RecordForm({
                 </div>
               )}
             </fieldset>
+            <AttentionNotes view={view} />
             <ConnectionFacts view={view} definition={definition} />
             <UnsupportedNote fields={fieldsOf("connection")} unsupported={unsupported} />
           </div>
