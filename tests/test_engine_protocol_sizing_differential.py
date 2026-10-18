@@ -255,3 +255,19 @@ def _mapping_corpus_oracle(request, monkeypatch):
 
     monkeypatch.setattr(mapping, "compile_program", compile_both)
     monkeypatch.setattr(mapping.Program, "apply", apply_both)
+
+
+def test_opaque_tuple_stringify_keeps_native_encoder_compatibility():
+    value = 0
+    for _ in range(990):
+        value = (value,)
+    # Avoid deepcopy's own earlier recursion limit: invoke the frozen and current
+    # programs on the same immutable tuple graph under the same constant clock.
+    rules = [each([{'stringify': {'from': '/item', 'to': '/v'}}])]
+    source = {'body': {'items': [value]}}
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(mapping, 'time', _CLOCK)
+        patch.setattr(reference, 'time', _CLOCK)
+        kwargs = dict(base='empty', roots=mapping.RESPONSE_ROOTS)
+        assert_same(capture(lambda: mapping.build(rules, **kwargs).apply(source)),
+                    capture(lambda: reference.build(rules, **kwargs).apply(source)))

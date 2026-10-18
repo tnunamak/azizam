@@ -70,6 +70,7 @@ class _JsonFacts:
 
     def __init__(self, budgets: Budgets) -> None:
         self.budgets = budgets
+        self.opaque = False
         self.nodes: dict[int, tuple[Any, int | None, int]] = {}
         self.scalars: dict[tuple[type, Any], int] = {}
         self.numbers: dict[type, dict[Any, int]] = {int: {}, float: {}}
@@ -78,6 +79,7 @@ class _JsonFacts:
         kind = type(value)
         if kind not in (dict, list):
             if kind not in (str, int, float, bool, type(None)):
+                self.opaque = True
                 return None, 0
             key = (kind, repr(value) if kind is float and value == 0 else value)
             size = self.scalars.get(key)
@@ -119,6 +121,8 @@ class _JsonFacts:
                 if type(key) is str:
                     key_size, _ = self.measure(key)
                 elif type(key) in (int, float, bool, type(None)):
+                    if type(key) is int and key.bit_length() > 1024:
+                        _check_deadline(force=True)
                     key_size, _ = self.measure(json.dumps(key))
                 else:
                     key_size = None
@@ -245,7 +249,11 @@ def _json_text(value: Any, *, compact: bool, ensure_ascii: bool) -> str:
     The ordinary mapping path keeps the native encoder. During each, neither a
     large array nor a long string may hide unbounded work inside one rule.
     """
-    if _FACTS.get() is None:
+    facts = _FACTS.get()
+    # Python callers may carry opaque values such as tuples or upload objects.
+    # Preserve the native encoder's compatibility and recursion behavior there;
+    # protocol JSON input contains only the ordinary JSON types.
+    if facts is None or facts.opaque:
         return json.dumps(value, ensure_ascii=ensure_ascii, **({"separators": (",", ":")} if compact else {}))
     output = StringIO()
     markers: set[int] = set()
@@ -276,6 +284,8 @@ def _json_text(value: Any, *, compact: bool, ensure_ascii: bool) -> str:
                     if isinstance(key, str):
                         string(key)
                     elif key is None or isinstance(key, (int, float, bool)):
+                        if isinstance(key, int) and key.bit_length() > 1024:
+                            _check_deadline(force=True)
                         string(json.dumps(key))
                     else:
                         raise TypeError(f"keys must be str, int, float, bool or None, not {type(key).__name__}")
