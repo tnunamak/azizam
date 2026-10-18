@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from gateway import admin_store, frontend_mount, route_registry, service_registry
 from gateway.admin_api import AdminContext, derive_admin_attention
-from gateway.admin_runtime import AdminSQLiteStore, RegistryNotApplied
+from gateway.admin_runtime import AdminSQLiteStore
 
 
 async def _served(request: Request) -> dict:
@@ -196,6 +196,8 @@ def _generation(store: AdminSQLiteStore) -> int:
 # --- the admin save reports a reload that failed ------------------------------------------------
 
 def test_an_admin_save_whose_reload_fails_says_so_instead_of_answering_success(tmp_path):
+    from gateway.admin_runtime import RegistryNotApplied
+
     store = _store(tmp_path)
 
     def failing_reload():
@@ -213,6 +215,7 @@ def test_an_admin_save_whose_reload_fails_says_so_instead_of_answering_success(t
 def test_the_admin_api_answers_a_failed_reload_with_a_clear_error():
     from fastapi.responses import JSONResponse
     from gateway.admin_api import registry_not_applied_response
+    from gateway.admin_runtime import RegistryNotApplied
 
     response = registry_not_applied_response(RegistryNotApplied("boom", record={"value": {}}))
 
