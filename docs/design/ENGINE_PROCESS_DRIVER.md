@@ -6,7 +6,9 @@ by default. Engine records and the permission are owner-only writes with audit
 events. New `process` and `command` recipes use argv arrays; legacy command
 strings remain readable for existing records.
 
-On Linux, Azizam starts the child in a new session. A private runtime file under
+On Linux, Azizam starts a small supervisor in a new session. It launches the
+owner argv without a shell and remains alive if the engine exits. A private
+runtime file under
 `data/processes/` stores the session leader's PID, kernel start tick, declared
 port, and argv digest. On restart, matching live state is adopted. A stale PID
 or changed recipe is never treated as owned. Normal shutdown sends SIGTERM to

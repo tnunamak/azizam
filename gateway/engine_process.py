@@ -15,6 +15,7 @@ import re
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -104,7 +105,8 @@ class ProcessDriver:
             self.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             try:
                 child = subprocess.Popen(
-                    argv, cwd=cfg.get("cwd") or None, env=self._environment(cfg),
+                    [sys.executable, str(Path(__file__).with_name("engine_supervisor.py")), *argv],
+                    cwd=cfg.get("cwd") or None, env=self._environment(cfg),
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     start_new_session=True, shell=False,
                 )
