@@ -180,6 +180,7 @@ def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, An
 
 
 def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
+    schema_version = int(value.get("schema_version") or SERVICE_REGISTRY_SCHEMA_VERSION)
     services = {}
     for raw_id, raw in (value.get("services") or {}).items():
         if not isinstance(raw, Mapping):
@@ -187,7 +188,18 @@ def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
         service_id = normalize_id(raw.get("id") or raw_id)
         if not service_id:
             continue
-        services[service_id] = normalize_service_record(service_id, raw)
+        prepared = raw
+        if schema_version >= ENGINE_RECORD_VIEW_VERSION:
+            prepared = copy.deepcopy(dict(raw))
+            if "process" in prepared:
+                prepared.pop("lifecycle", None)
+                if isinstance(prepared.get("config"), dict):
+                    prepared["config"].pop("lifecycle", None)
+            else:
+                temporary = {"schema_version": 1, "services": {service_id: prepared}}
+                migrate_engine_records_v2(temporary)
+                prepared = temporary["services"][service_id]
+        services[service_id] = normalize_service_record(service_id, prepared, schema_version=schema_version)
 
     frontends = {}
     for raw_id, raw in (value.get("protocol_frontends") or {}).items():
@@ -223,7 +235,7 @@ def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
     _validate_public_alias_uniqueness(services)
 
     return {
-        "schema_version": int(value.get("schema_version") or SERVICE_REGISTRY_SCHEMA_VERSION),
+        "schema_version": schema_version,
         "services": services,
         "protocol_frontends": frontends,
         "workflows": workflows,
@@ -871,7 +883,7 @@ def service_from_backend_config(
     return record
 
 
-def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
+def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_version: int = 1) -> dict[str, Any]:
     source = str(raw.get("source") or "ui")
     if source not in SERVICE_SOURCES:
         source = "ui"
@@ -942,6 +954,9 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
     for key in ("process", "observations", "residency", "resources"):
         if key in raw:
             record[key] = copy.deepcopy(raw[key])
+    if schema_version >= ENGINE_RECORD_VIEW_VERSION:
+        record.pop("lifecycle", None)
+        record["config"].pop("lifecycle", None)
     # EDITABILITY LAW: editable is true for all records except managed-substrate
     # rows (LiteLLM). Stored editable:false from old seeds is normalized away.
     record["editable"] = not is_litellm_service_record(service_id, record)
