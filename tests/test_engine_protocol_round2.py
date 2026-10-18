@@ -114,10 +114,17 @@ def test_chat_receipt_has_legacy_stream_shape_and_limit_fields(engine):
     assert {'accepted','outer_egress'} <= row['metadata']['request_shape_stages'].keys()
 
 
-def test_unknown_chat_extension_matches_legacy_rejection(engine):
-    response = chat(engine, extensions={'unknown_input': True})
-    assert response.status_code == 400, response.text
-    assert not engine.fake.requests
+@pytest.mark.parametrize('known_namespace', [False, True])
+def test_unknown_chat_extension_matches_legacy_validation(engine, known_namespace):
+    from gateway.chat_extensions import CHAT_EXTENSION_NAMESPACE, validate_chat_completions_extensions
+    extensions = {CHAT_EXTENSION_NAMESPACE: {'unknown_input': True}} if known_namespace else {'unknown_namespace': {'x': True}}
+    expected = validate_chat_completions_extensions({'extensions':extensions})
+    response = chat(engine, extensions=extensions)
+    assert response.status_code == (200 if expected.ok else 400), response.text
+    if expected.ok:
+        assert b'extensions' not in engine.fake.requests[-1].content
+    else:
+        assert not engine.fake.requests
 
 
 def test_embedding_dimensions_are_removed_upstream_and_normalized(engine):
@@ -145,3 +152,9 @@ def test_multiline_sse_held_cr_does_not_end_event_early():
     assert decoder.feed(b'\ndata: two\r') == []
     assert decoder.feed(b'\n\r') == []
     assert decoder.feed(b'\n') == [SseEvent(None, b'one\ntwo')]
+
+
+def test_protocol_image_entry_is_neutral():
+    import inspect
+    assert '_try_protocol_request' not in inspect.getsource(proxy.proxy_comfy_request)
+    assert '_try_protocol_request' in inspect.getsource(proxy.proxy_image_request)
