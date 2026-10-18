@@ -214,7 +214,11 @@ when a reload fails.
   the Overview attention list); the gateway keeps serving. A reload builds the
   new table before it publishes any config, then swaps it in one step at the
   old rows' position. A build or swap that fails leaves the old config and
-  routes serving.
+  routes serving, and the manager's own route list is put back too. Each row is
+  checked and added on its own: a row the router rejects (an unknown path
+  converter, a repeated parameter name) is skipped like a colliding row, and
+  never stops boot or a reload. An admin save whose hot reload fails is stored
+  and answers `500 registry_saved_not_applied`.
 - **Authentication.** The mount runs an authenticator before every operation
   that does not check the caller itself, on any path prefix, so a row at
   `/x/{provider}` gets a 401 without a key. The operations that check the
@@ -227,7 +231,11 @@ when a reload fails.
   are reserved for builtin rows, which come from the seed that ships with the
   code. A package is refused at review if a row names a privileged translator or
   opens its path with a parameter; the mount checks again, and a stored row
-  that claims `builtin` for an id the seed does not hold is a package row.
+  that claims `builtin` for an id the seed does not hold is a package row. A
+  builtin's id belongs to the seed: a stored or imported record that takes it
+  (and is not the builtin) is refused on write and on package import, and at
+  mount it is ignored and reported as broken while the builtin mounts from the
+  seed. A write that adds a row the router rejects is refused.
 
 - **The data-only promise covers HTTP frontends** whose shapes fit identity or
   http-v1 mapping. In practice that means OpenAI-structured shapes, because
