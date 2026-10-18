@@ -246,7 +246,7 @@ export function secretCommands(drafts: SecretDraft[]): SecretCommand[] {
                   secret: r.value,
                   ...(r.prefix ? { prefix: r.prefix } : {}),
                 }
-              : { literal: r.value },
+              : { literal: (r.prefix ?? "") + r.value },
         ),
         clear: draft.ids.filter((id) => !kept.includes(id)),
       });

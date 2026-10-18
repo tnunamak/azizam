@@ -201,8 +201,9 @@ resources:
     from the same registry snapshot as the displayed record. Use that revision
     for commands against those entries. A retain-only call also checks it.
     With protocol dispatch selected, the key's reference or environment source
-    also supplies `connection.credentials.inference`; the control credential stays
-    separate. A changed inference credential, header or endpoint clears the saved
+    also supplies `connection.credentials.inference`, bound to the active connection's
+    origin even when a legacy endpoint differs. The control credential stays
+    separate and is read-only on this page; Phase 1 has no command carrier for it. A changed inference credential, header or endpoint clears the saved
     connection check and test evidence.
     A URL credential command that changes origin must be saved separately from
     other secret commands. The parser checks carrier/operation compatibility for

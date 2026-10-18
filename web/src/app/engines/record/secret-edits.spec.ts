@@ -190,6 +190,33 @@ it("edits scalar control keys by entry id", () => {
     },
   ]);
 });
+it("keeps the displayed argument prefix when replacing a secret with public text", () => {
+  const drafts = secretDrafts({
+    process: {
+      start: [
+        "runner",
+        { id: "ent_arg", configured: true, prefix: "--credential=" },
+      ],
+    },
+  });
+  const argv = drafts.find((draft) => draft.carrier === "process.start")!;
+  Object.assign(argv.rows[1], {
+    secret: false,
+    value: "public-replacement",
+    edited: true,
+  });
+  expect(secretCommands(drafts)).toEqual([
+    {
+      carrier: "process.start",
+      operation: "set",
+      items: [
+        { literal: "runner" },
+        { literal: "--credential=public-replacement" },
+      ],
+      clear: ["ent_arg"],
+    },
+  ]);
+});
 it("keeps URL credential replacement on its saved public endpoint", () => {
   const drafts = secretDrafts({
     config: { base_url: "http://localhost:8091/v1" },
@@ -201,10 +228,10 @@ it("keeps URL credential replacement on its saved public endpoint", () => {
   expect(secretProblem(drafts)).toBeNull();
 });
 it("accepts credentials for the same bare host and refuses a different host", () => {
- const drafts = secretDrafts({ config: { host: "localhost:8091" } });
- const host = drafts.find(d => d.carrier === "config.host")!;
- host.rows[0].value = "user:pass@localhost:8091";
- expect(secretProblem(drafts)).toBeNull();
- host.rows[0].value = "user:pass@localhost:8092";
- expect(secretProblem(drafts)).toMatch(/same public endpoint/i);
+  const drafts = secretDrafts({ config: { host: "localhost:8091" } });
+  const host = drafts.find((d) => d.carrier === "config.host")!;
+  host.rows[0].value = "user:pass@localhost:8091";
+  expect(secretProblem(drafts)).toBeNull();
+  host.rows[0].value = "user:pass@localhost:8092";
+  expect(secretProblem(drafts)).toMatch(/same public endpoint/i);
 });
