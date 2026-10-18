@@ -1,223 +1,297 @@
-# Engine and Protocol Contract
+# Engine and Protocol Contract (v2.1)
 
 Status: decided 2026-10-19 (overnight program, on Tim's authority via the lead).
+v2.1 folds in the red-team (~/Documents/azizam/engine-contract/redteam-codex.md,
+findings F1–F16).
+
 Supersedes: the "Adapter Manifest" section of docs/CORE_CONTRACTS.md, and these
 parts of docs/design/ENGINE_REGISTRY_DESIGN.md: axiom 2 ("never owns
-existence"), axiom 4 (file-wins target) and the five-driver lifecycle list.
-Everything else in those documents stands.
+existence"), axiom 4 (file-wins target) and its driver list. Everything else in
+those documents stands, including its routing resolution (section 3 here).
 
 Identity: docs/PRODUCT_STRATEGY.md "Identity". Extension rules:
 docs/EXTENSION_ARCHITECTURE.md. Evidence (divan, local-ai-gateway/): gateways
 4eccb54, local runners 8ccad98, platform lifecycle e927fa5, community setups
-aa87d59, model picks 95c470a, media stacks c603498, media delivery d627bf2, and the reality audit
-(~/Documents/azizam/engine-contract/reality-audit.md).
+aa87d59, media stacks c603498, model picks 95c470a, media delivery d627bf2. Code
+audit: ~/Documents/azizam/engine-contract/reality-audit.md.
 
-## 1. The one-sentence model
+## 1. Model and scope
 
-**An engine is a place that answers requests.** It has a connection (how Azizam
-reaches it), offerings (what it can run) and, optionally, a process and residency
-(how it comes and goes). Every engine setting belongs to exactly one of those
-parts. Each part is data the owner can author in the UI. Code exists only for
-generic primitives and for reviewed adapters, and the owner chooses those by id.
+**An engine is a place that answers inference requests.** It has:
+- a **connection**: how Azizam reaches it
+- **offerings**: what it can run
+- optionally, a **process**: how it starts and stops
+- optional **observations**: what Azizam can verify about it
 
-## 2. Engine record (schema v2)
+Every owner setting belongs to exactly one part, and each part is owner data.
+Code exists only as generic primitives, and as reviewed adapters and
+translators that the owner selects by id.
+
+**Out of scope for the engine form** (F9, F12):
+- the managed LiteLLM substrate, a system record with derived, locked fields,
+  which is honestly shown as such
+- routing objects (aliases and pools), section 3
+- training and other long-lived workloads. They get a separate future
+  `workload` contract with its own lifecycle, admission and receipts; they are
+  not forced into `model | workflow`.
+
+## 2. Engine record
 
 ```yaml
-id: local-llm                 # immutable; display name is separate
+id: local-llm                       # immutable
 name: Local LLM
 enabled: true
 provenance: {source: ui | provisioned | imported | builtin, package: null}
 
 connection:
-  address: http://127.0.0.1:8080      # root address; no operation path
-  protocol: openai-compatible         # id of a protocol description (section 3)
-  path_prefix: /v1                    # optional; the protocol says how it is joined
-  credential: {secret_ref: null, env: null, header: Authorization, scheme: Bearer}
-  headers: [{name: X-Example, value: "..."}]   # credential-like names are owner-only
+  transport: http                   # http | websocket | tcp | unix (non-http needs an adapter)
+  address: http://127.0.0.1:8080    # root; the protocol joins operation paths
+  protocol: openai-compatible       # protocol description id (section 4)
+  credentials:                      # per operation class, each bound to the address origin (F5)
+    inference: {secret_ref: null, header: Authorization, scheme: Bearer}
+    control: null                   # load, unload, switch, admin; owner-only
+  headers: []                       # credential-like names are owner-only, stored as secrets
   timeouts: {connect_s: 5, first_byte_s: 120, total_s: 600}
-  native_passthrough: false           # privileged lane (section 5)
 
-offerings:                            # what callers can use; one row each
-  - public_name: default              # the name apps call; unique across engines
+offerings:
+  - id: qwen27b                     # immutable within the engine; identity = (engine_id, offering_id)
     kind: model | workflow
-    upstream: qwen3.8-27b             # id the engine knows
-    selector: per_request | engine_state | whole_graph   # how a request picks it (divan c603498)
-    options: {voices: {list: {http: {path: /v1/audio/voices, select: /voices/*/id}}, accept_unlisted: false}}
+    upstream: qwen3.8-27b
     tasks: [{task: chat, evidence: declared | metadata | real_test}]
-    inputs: {}                        # typed inputs (workflows); JSON Schema subset
-    start_profile: {}                 # values handed to the process for this offering
-    adjustments: []                   # transform ids (gateway/transforms.py primitives)
+    inputs: {}                      # typed inputs; required for whole-graph workflows
+    options: {voices: {list: ..., accept_unlisted: true}}
+    selection:                      # how a request reaches this offering (F1)
+      mode: request_field | switch | whole_graph
+      switch: {call: <protocol op>, args: {...}, observe_selected: <observation>,
+               exclusive_scope: engine, drain_timeout_s: 30, queue_wait_s: 60,
+               on_failure: restore | fail}
+      implicit_load: true | false | unknown
+    start_profile: {}               # values the process needs to serve this offering (F3)
+    adjustments: []                 # transform primitive ids
 
-process:                              # optional; absent = Azizam never starts it
+process:                            # absent = Azizam never starts or stops it
   driver: none | command | process
-  start: [argv...]                    # command/process; argv arrays, never a shell string
-  stop: [argv...]                     # command only
-  status: [argv...]                   # command only; exit 0 = running
-  env: {}                             # placeholders {{port}}, {{offering.start_profile.*}}
-  cwd: null
+  start: [argv]                     # process: Azizam spawns and owns it
+  stop: [argv]                      # command: an external manager owns it
+  status: [argv]
+  profile_apply:                    # command only: how start_profile reaches the engine (F3)
+    kind: none | write_env_file_then_restart
+    file: ~/.config/systemd/user/local-llm.service.d/95-azizam.conf   # owner-chosen path
+    reload: [argv]
+    restore: on_failure
+  port: {fixed: 8080}               # process: fixed or reserved, never guessed
 
-probes:                               # missing probe = unknown, never ready
-  alive: {http: {path: /health, expect: 200}} | {tcp: {}}
-  ready: {http: {path: /v1/models, expect: 200, select: /data/0/id}}
+observations:                       # each optional; missing = unknown, never green (F11)
+  process_ready:  {http: {path: /health, expect: 200}}
+  inventory:      {http: {path: /v1/models, select: /data/*/id}, means: available | loaded}
+  offering_ready: {http: ..., select: ...}
+  selected:       {http: ..., select: ...}
+  resident:       {http: ..., select: ...}
+  sleep_state:    {http: ..., select: ...}
 
-residency:                            # what is loaded, and who owns idling
-  observe: {http: {path: /v1/models, select: /data/*/id}}   # JSON pointer selector
-  load:   {http: {method: POST, path: ..., body: {...}}}     # templated; optional
-  unload: {http: {method: POST, path: ..., body: {...}}}     # templated; optional
-  idle_owner: gateway | engine        # exactly one owner per engine
-  idle_stop_s: 900                    # only when idle_owner is gateway
-  load_deadline: {stall_s: 120}       # resets on progress, never a fixed total
+residency:
+  load:   {op: <protocol op>}       # optional
+  unload: {op: <protocol op>}       # optional; verified with `resident`, never assumed
+  sleep:  {op: ...}                 # memory sleep, e.g. vLLM; distinct from unload
+  wake:   {op: ...}
+  idle_owner: gateway | engine      # exactly one owner per engine
+  idle_stop_s: 900
+  load_deadline: {stall_s: 120, max_s: 900, progress: <observation | none>}
+
+native:                             # section 6; default deny
+  allow: []                         # [{method, path_template, class: generate | control}]
 
 resources:
-  gpu: {devices: [0], vram_gb_estimate: 18}    # input to fair sharing
+  gpu: {devices: [0], vram_gb_estimate: 18, enforced: false}   # advisory unless enforced
 ```
 
 **Rules:**
-- A record with only `connection` and `offerings` is complete. Process,
-  probes and residency are additive.
-- **Drivers: three, and no more** (divan e927fa5):
-  - `none` connects and probes only (always-on, remote, or self-managing such
-    as Ollama and LM Studio).
-  - `command` runs owner-written start, stop and status argv against a manager
-    Azizam doesn't own: `systemctl --user`, `launchctl`, `docker`, `sc.exe`,
-    `lms`, SSH.
-  - `process` makes Azizam spawn and own the engine process (PID, logs,
-    restart, idle-stop) from owner-written argv. This is the macOS and Windows
-    path, and the llama-swap path.
-- **Readiness and idle-stop are always Azizam's,** because no OS supervisor
-  has HTTP readiness and Windows has no TCP socket activation. A missing
-  `ready` probe reports "unknown" and never shows green.
-- **Per-offering `start_profile` replaces generated systemd drop-ins**
-  (95-activation.conf). Under `command`, profile values reach the engine
-  through env and argv placeholders. The existing systemd drop-in writer
-  stays as a migration shim, inside the `command` driver only, until golden
-  tests prove parity. Then it is deleted.
-- **Security:**
-  - Only the owner may set or change `process`, the credential, or a
-    credential-like header.
-  - `process` and `command` are off until the owner enables "Allow Azizam to
-    run commands" (default off, as with Nomad's raw_exec).
-  - argv arrays only; no shell.
-  - Imported packages never enable process drivers without an owner review.
-- **Capabilities sit on offerings, not on the engine.** Evidence levels:
-  `declared` < `metadata` < `real_test`.
-- **The selector kind decides how Azizam picks an offering:**
-  - `per_request` sends the upstream id in each request (OpenAI-style, speaches).
-  - `engine_state` switches the engine first, as with A1111 checkpoints and
-    whisper.cpp `/load`. Azizam serializes those switches and validates the
-    name itself, because these engines silently drop unknown names.
-  - `whole_graph` sends the workflow graph (ComfyUI). Azizam owns the typed
-    `inputs`, because ComfyUI publishes none.
-- **Voices are options of a speech offering,** not offerings. List membership
-  is advisory unless `accept_unlisted: false`.
-- **Unload is verified by observing, never assumed.** ComfyUI's `/free`
-  returns before memory is released, so `residency.observe` or a resource
-  probe confirms it.
-- **Identity:** `id` never changes. Receipts, health history and plans key on
-  `id` and `public_name`, never on display names or array positions.
+- Only `connection` plus one offering is required. Every other block is additive.
+- **Drivers.** The current primitives are `none`, `command` and `process`.
+  Adding a driver requires evidence (F16).
+  - `command` controls an external manager. It never claims a PID or an
+    environment.
+  - `process` makes Azizam own the process group (a Job Object on Windows),
+    with PID plus start-time identity, a fixed or reserved port, bounded
+    readiness and stop, a restart budget with backoff, adoption or termination
+    of orphans after a gateway crash, and size-capped, redacted logs (F14).
+- **`start_profile` reaches the engine only through a declared mechanism:**
+  argv or env for `process`, or `profile_apply` for `command`. The
+  `write_env_file_then_restart` kind is the generic form of today's systemd
+  activation drop-in: write an owner-chosen file, run the owner's reload argv,
+  verify, and restore on failure. The current systemd activation code is
+  retained until golden tests prove byte and rollback parity; then it is
+  replaced by this kind (F3).
+- **Switching is a transaction (F1).** For `selection.mode: switch`, Azizam:
+  1. acquires an exclusive lease on the scope
+  2. drains in-flight requests up to `drain_timeout_s`
+  3. switches, then verifies with `observe_selected` (and `offering_ready` if
+     declared)
+  4. holds the lease until the final response byte
+  5. on failure, restores the previous selection or fails
 
-## 3. Protocol descriptions (how Azizam talks to an engine)
+  Waiting callers get 503 with Retry-After after `queue_wait_s`. A switch that
+  can't be verified reports "unknown". Unknown names are refused before
+  switching.
+- **Security (F5).** `command` and `process` grant host code execution. argv
+  arrays do not make that safe; they only remove shell parsing. So:
+  - These drivers are off until the owner enables "Allow Azizam to run
+    commands on this computer".
+  - Every change is owner-only, recorded and shown as a dry run first.
+  - Server-side file paths in control calls must sit under owner-allowlisted
+    roots.
+  - Credentials are per operation class and bound to the address origin.
+    Cross-origin redirects are refused.
 
-A protocol description is data (`registry/protocols/*.yml`, plus package-
-provided ones). The engine record refers to it by id. It declares:
+## 3. Routing objects (aliases and pools) (F9, F10)
 
-```yaml
-id: openai-compatible
-executor: generic-http | adapter:<id>     # see below
-endpoints:                                 # operation -> request
-  chat: {method: POST, path: /chat/completions, framing: sse | json}
-  models: {method: GET, path: /models, select: /data/*/id}
-async: none | submit-poll | event-stream   # generic job patterns
-auth: [bearer, header, query, none]
-mapping: {}                                # canonical <-> engine, safe mapping language
-errors: {}                                 # status/body -> advice rows (data)
-```
+- A **public name** (alias) is its own registry object. It maps to ordered
+  candidate offerings `(engine_id, offering_id)`, with a selection and fallback
+  policy (the existing ENGINE_REGISTRY_DESIGN routing resolution). Pools and
+  local-plus-remote fallback are first-class.
+- Name collisions are checked when an alias is created.
+- Receipts record the alias, the chosen `(engine_id, offering_id)`, the
+  upstream id and the fallback reasons.
+- The LiteLLM substrate is compiled from aliases and offerings, and the frozen
+  oracle compares the compiled sidecar config byte for byte.
 
-- **`executor: generic-http`** runs entirely from the description: HTTP calls,
-  SSE, NDJSON or JSON framing, the submit-poll async pattern, multipart and
-  binary bodies, and a safe, non-Turing-complete mapping language. Adding a
-  new HTTP-shaped engine needs no code.
-- **`executor: adapter:<id>`** names a reviewed adapter: in-tree for now, or a
-  trusted package (section 6). It is used only for what generic-http can't
-  express: stateful WebSocket sessions, graph patching, chunked
-  speech-to-text merge. The in-tree ComfyUI, speech-to-text and text-to-speech
-  clients become adapters behind this one interface. They stop being
-  `proxy.py` branches.
-- **The adapter interface is small:** `health`, `inventory`,
-  `invoke(operation, canonical_request) -> response | job`, `cancel`, and
-  `events`. Job state, receipts, policy and admission stay in core.
-- **Seeded descriptions are bundled data rows** the owner can copy and edit:
-  OpenAI-compatible, Ollama-style, A1111 sdapi, ComfyUI graph (adapter),
-  OpenAI audio, and custom-path speech.
+## 4. Protocol descriptions (how Azizam talks to an engine)
 
-## 4. Inbound frontends (how callers talk to Azizam)
+A protocol description is data: `registry/protocols/*.yml`, or one provided by
+a package. Each declares `operations` (named requests: chat, models, switch,
+load, unload and so on), `auth`, `errors` (advice rows) and an `executor`.
 
-`registry/protocol_frontends.yml` becomes an executable mount table. Each row
-binds method and path to a canonical intent and a translator id.
+- **`executor: http-v1` is a bounded, versioned grammar (F2, F16).** It covers:
+  - methods, path templates and query strings
+  - JSON request bodies built by a mapping
+  - response selection with JSON pointers
+  - framing: JSON, SSE and NDJSON
+  - multipart bodies, with named file parts from canonical assets
+  - binary responses saved as assets
+  - one async pattern: submit, then poll a status path, then fetch an
+    artifact, with typed id, status and asset selectors
 
-- **The translator** is `identity` (the OpenAI canonical shape), a declarative
-  mapping (data, the same language as section 3), or a reviewed translator
-  (in-tree: Anthropic, Ollama, A1111, MCP, Realtime; or a trusted package).
-- **A new vendor SDK** is a frontend row plus, if needed, a mapping. When its
-  shape is OpenAI-like, no code at all.
-- **Routes mount from the table at boot and on reload.** Method and path
-  together are the key (the audit found path-only collisions).
+  The **mapping language** is fixed: field copy, rename, constants, defaults,
+  enums mapped by table, and simple conditionals on presence. No loops, no
+  arbitrary expressions, no side effects, and size, depth and time budgets.
+  The claim "a new HTTP-shaped engine needs no code" applies exactly to this
+  grammar. It is proven by a second-engine fixture for each pattern.
+- **`executor: adapter:<id>`** is a reviewed adapter, for anything outside
+  http-v1: graph patching (ComfyUI), framed or socket protocols (Wyoming),
+  chunked speech-to-text merge, novel stateful streams. The in-tree ComfyUI,
+  STT and TTS clients become adapters behind one interface.
+- **The adapter interface is versioned:** `health`, `inventory`,
+  `invoke(op, canonical_request)`, and for jobs `submit`, `poll` or `events`,
+  `cancel`, `recover` and `fetch_assets`.
+- **Core owns the durable job state machine** (F8): idempotency keys, retry
+  boundaries, event order, asset lifetime and access, and receipt
+  finalization. Adapters return typed result, job, event or asset references.
 
-## 5. Native pass-through
+## 5. Inbound frontends (how callers talk to Azizam) (F7)
 
-This is per engine: `connection.native_passthrough: true`. It exposes the
-engine's own API at `/native/{engine_id}/...`, untouched. Azizam adds only
-authentication, access plans and receipts. It is disabled by default, scoped
-by plan, and never used for remote providers. The cost is no translation; the
-benefit is no feature loss.
+A frontend descriptor is data. It declares:
+- `transport` (http, or websocket)
+- routes, with method and path together as the key
+- the canonical intent
+- the translator: `identity`, an http-v1 mapping, or a reviewed translator id
+- request, response and error framing
+- the stream lifecycle
+- auth and handshake
+- conformance fixtures
 
-## 6. Plugins (the escape hatch)
+Descriptors mount at boot and on reload, with collision checks and rollback
+when a reload fails.
+
+- **The data-only promise covers HTTP frontends** whose shapes fit identity or
+  http-v1 mapping. That includes any OpenAI-like vendor SDK.
+- **Other shapes** (new handshakes, WebSocket session protocols, signed
+  webhooks) need a reviewed translator. A translator package becomes
+  installable without a release once the trusted loader exists (section 7).
+  Until then, it is an in-tree reviewed module.
+
+## 6. Native pass-through (F4)
+
+Native pass-through is default deny, per engine and per method plus path
+template, through `native.allow`.
+- A `generate` entry is plan-scoped.
+- A `control` entry (load, settings, restart, file paths) is owner-only and
+  never implied by generation access.
+- Azizam forwards the request with the engine's own credential for that class.
+  It never forwards the client's auth or cookies.
+- Request and response bytes are capped. Redirects are refused or
+  origin-checked, and configured hosts are SSRF-checked.
+- The receipt records the operation and says "cost unknown" when usage can't be
+  measured.
+- Remote providers have no native lane in this version. That is an intentional,
+  stated fidelity limit.
+
+## 7. Plugins (F6)
 
 These are docs/EXTENSION_ARCHITECTURE.md packages.
-- Data objects (engines, protocols, frontends, offerings, mappings) enable live
-  after validation.
-- Code objects (adapters, translators) run only after an explicit owner trust
-  decision. They run as a sidecar process speaking a small JSON protocol over
-  stdio or local HTTP, with declared network and filesystem permissions.
-- In-tree adapters implement the same interface. "Builtin" is provenance, not
-  a privilege.
+- **Data objects** (engines, protocols, frontends, offerings, aliases,
+  mappings) enable live after validation.
+- **Code objects** (adapters, translators) are trusted host code. Until a real
+  OS sandbox enforces mounts, network and process limits, declared permissions
+  are reviewed, not enforced, and the UI says so.
+- **A code object runs as a sidecar,** after an explicit owner trust decision:
+  - a versioned RPC over stdio, with peer authentication
+  - time, memory and output limits
+  - restart on crash
+  - secrets delivered as scoped references
+  - hash pinning
+  - atomic disable, update and uninstall, with dependency checks
 
-## 7. Source of truth
+  The sidecar loader is staged after the first concrete package needs it
+  (F16). In-tree adapters implement the same interface, and "builtin" is
+  provenance only.
 
-The DB/UI registry is authoritative (docs/CONFIG_SOURCE_OF_TRUTH.md). YAML and
-packages are seed and import. Export and restore round-trip the registry, so a
-setup is portable without file-wins. Two lifecycle copies (`lifecycle` and
-`config.lifecycle`) collapse into `process`, `probes` and `residency`, with a
-one-time migration that refuses conflicting copies loudly.
+## 8. Source of truth
 
-## 8. UI: views of this contract
+The DB/UI registry is authoritative. YAML and packages are seed and import.
 
-The engine page has five sections that mirror the record: Connection, What it
-offers, How it runs (process, probes, residency), Resources, Stored record.
-Add engine is the guided path into the same record: registry pick or address,
-then the check, then offerings, then name.
+- **Export** marks references that can't move between machines: host paths,
+  secret references, package hashes, process permissions.
+- **Restore** reconciles missing secrets, package hashes and collisions in one
+  transaction (F15).
+- **The two lifecycle copies** collapse into `process`, `observations` and
+  `residency`. A one-time migration refuses conflicting copies loudly.
 
-There are no locked or dead fields. A field shows only if the engine's protocol
-and driver use it, and every field that shows can be edited by an owner. The
-page shows the one thing that belongs to the owner's system (the unit or
-compose file named in the `command` argv) as read-only text with its path.
+## 9. UI (F13)
 
-The "These settings can't be changed here" message goes away, because its
-cause, a second hidden lifecycle path, goes away.
+The engine page mirrors the record: Connection, What it offers, How it runs,
+What Azizam can check, Resources, Stored record. Add engine is the guided path
+into the same record: registry pick or address, then the check, then
+offerings, then name.
 
-## 9. Tests that prove the contract
+- **Rule: every editable setting shown has an effect.**
+  - Settings that the protocol or driver doesn't use are hidden.
+  - Derived and system values are read-only, with their source and reason
+    (the LiteLLM substrate stays honestly locked).
+  - The page shows the effective request path, the credential destination,
+    the selected offering, the process owner and the evidence behind each
+    observation.
+- **Test** traces exactly what will be sent.
+- Files that belong to the owner's system (a unit or compose file named in
+  `command`) are shown read-only with their path.
+- "These settings can't be changed here" disappears, because the hidden second
+  lifecycle path disappears.
 
-1. **A frozen oracle:** redacted registry shapes, the route graph, catalog
-   surfaces and fake-upstream wire bytes for every enabled family. It is
-   compared before and after each slice.
-2. **A data-only engine:** a new HTTP-shaped engine fixture, added purely as
-   data with a new protocol description, appears on every discovery surface
-   and serves requests. No code change.
-3. **A data-only frontend:** a new inbound frontend fixture mounts from the
-   table without editing `proxy.py`.
-4. **The process driver:** argv without a shell, readiness timeout, crash and
-   restart, PID ownership, concurrent requests, idle-stop, shutdown.
-5. **Migration:** every live record shape migrates. Conflicting lifecycle
-   copies fail loudly. Export, then a clean DB, then restore gives an identical
-   catalog and route graph.
+## 10. Proof (F15)
+
+1. **A frozen differential oracle,** compared before and after each slice:
+   - the shapes of registry records
+   - the route graph and catalog surfaces
+   - fake-upstream wire bytes, including final stream bytes
+   - the compiled LiteLLM config and `current`
+   - systemd drop-in bytes and their rollback
+   - swap deferral
+   - media jobs and assets (cancel races, replay)
+   - policy-denial receipts
+2. **The second-engine fixtures:** an http-v1 engine added as data only, and a
+   switch-mode engine that verifies its selection.
+3. **A data-only frontend fixture** that mounts without editing `proxy.py`.
+4. **The process state machine,** on Linux in CI, with Windows and macOS
+   semantics documented and their tests marked platform-gated.
+5. **Migration,** rehearsed on a copy of the live registry, plus export, then
+   a clean DB, then restore.
 6. **The boundary ratchet falls** only after these pass.
