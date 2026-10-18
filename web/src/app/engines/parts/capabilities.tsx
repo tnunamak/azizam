@@ -156,7 +156,7 @@ export function TestResultBlock({
         </dl>
       )}
       {test.status === "done" && test.result.request && <RequestTrace request={test.result.request} />}
-      <p className="text-meta text-muted-foreground mt-2">{note}</p>
+      <p className="text-meta text-muted-foreground mt-2">{note} <time dateTime={new Date(at * 1000).toISOString()}>{new Date(at * 1000).toLocaleDateString()}</time></p>
       <Button type="button" variant="ghost" size="sm" className="mt-1" disabled={disabled} onClick={onTestAgain}>
         Test again
       </Button>

@@ -309,16 +309,18 @@ export interface RequestPath {
   mode: "direct" | "gateway_lifecycle";
   /** Where the URL comes from, in words. */
   source: string;
+  /** Every saved capability destination resolved by the gateway. */
+  operations?: { capability: string; method: string; url: string }[];
   /** The effective chat URL. */
   url: string;
 }
 
 /** One observation: how Azizam looks, and, once it has looked, what it saw. */
 export interface ObservationV2 {
-  http?: { path?: string; expect?: number; select?: string };
+  http?: { path?: string; method?: string; expect?: number; select?: string };
   means?: string;
   /** The last result, when the gateway reports one. Missing means unknown, never green. */
-  last?: { ok: boolean; at?: number; detail?: string };
+  last?: { ok: boolean; at?: number; detail?: string; source?: string };
   [extra: string]: unknown;
 }
 
@@ -332,6 +334,10 @@ export interface OfferingV2 {
     switch?: { call?: string; observe_selected?: string; [extra: string]: unknown };
     implicit_load?: boolean | "unknown";
   };
+  /** Structured declarations are preserved, including shapes this editor cannot interpret. */
+  required_inputs?: unknown;
+  options?: unknown;
+  start_profiles?: unknown;
   adjustments?: TransformRow[];
   [extra: string]: unknown;
 }
@@ -420,6 +426,7 @@ export const enginesApi = {
     values: EngineValues;
     capability: string;
     model?: string;
+    models?: CreateEngineBody["models"];
     service_id?: string;
   }) => adminFetch<{ test: TestResult }>("/admin/api/engines/test", { method: "POST", body }).then((r) => r.test),
   /** Who could use these models (capability ids and public names). Saves nothing. */

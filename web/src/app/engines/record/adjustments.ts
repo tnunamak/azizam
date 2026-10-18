@@ -274,7 +274,7 @@ export function sayAdjustment(card: AdjustmentCard): string {
   const where = "phase" in card && card.phase === "response" ? "replies" : "requests";
   switch (card.kind) {
     case "builtin":
-      return `Built-in adjustment: ${card.name.replace(/[-_]+/g, " ")}. Its behavior is not described here. Read-only.`;
+      return `Built-in adjustment: ${card.name}. Its behavior is not described here. Read-only.`;
     case "other":
       return `Unsupported adjustment type: ${String(card.orig.kind ?? "unknown")}. Kept as stored, read-only.`;
     case "value-map": {
@@ -296,7 +296,7 @@ export function sayAdjustment(card: AdjustmentCard): string {
       return `Azizam adds ${pairs.join(" and ") || q("")} to requests that do not set it.`;
     }
     case "message-inject":
-      return `Azizam adds a ${card.role} message at the ${card.where} of matching chat requests: ${q(card.text)}.`;
+      return `Azizam adds ${card.role === "system" ? "instructions" : "a user message"} at the ${card.where} of matching chat requests: ${q(card.text)}.`;
     case "clamp": {
       const min = card.min.trim();
       const max = card.max.trim();

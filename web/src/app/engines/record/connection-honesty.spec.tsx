@@ -122,11 +122,11 @@ describe("a header the gateway does not send", () => {
   });
 });
 
-describe("Key is sent to", () => {
+describe("Inference key is sent to", () => {
   it("names the origin when the request goes to the same origin", async () => {
     mount({ request_path: requestPath("http://192.168.1.50:8080/v1/chat/completions") });
     await screen.findByRole("heading", { level: 1, name: "garage-gpu" });
-    expect(screen.getByTestId("connection-facts")).toHaveTextContent("Key is sent tohttp://192.168.1.50:8080 only.");
+    expect(screen.getByTestId("connection-facts")).toHaveTextContent("Inference key is sent tohttp://192.168.1.50:8080 only.");
   });
 
   it("says no key is sent when the engine address is another origin", async () => {
@@ -137,7 +137,7 @@ describe("Key is sent to", () => {
     await screen.findByRole("heading", { level: 1, name: "garage-gpu" });
     const facts = screen.getByTestId("connection-facts");
     expect(facts).toHaveTextContent(
-      "No key is sent: the key belongs to http://192.168.1.50:8080 but this engine’s address is http://10.0.0.9:8080",
+      "No inference key is sent: the key belongs to http://192.168.1.50:8080 but this engine’s address is http://10.0.0.9:8080",
     );
     expect(facts).not.toHaveTextContent("only. Azizam never sends it");
   });
@@ -164,7 +164,7 @@ describe("Key is sent to", () => {
       key: { state: "configured", source: "stored", origin: "http://gpu.example:8080" },
     });
     await screen.findByRole("heading", { level: 1, name: "garage-gpu" });
-    expect(screen.getByTestId("connection-facts")).toHaveTextContent("No key is sent: the key belongs to");
+    expect(screen.getByTestId("connection-facts")).toHaveTextContent("No inference key is sent: the key belongs to");
   });
 });
 
@@ -180,5 +180,5 @@ it("says no key is sent when the configured environment key is unavailable", asy
     key: { state: "configured", source: "env", env_name: "MISSING_KEY", origin: "https://gpu.example" },
     attention: [{ code: "engine_credential_unavailable", message: "Key not available: MISSING_KEY is not set" }] });
   await screen.findByRole("heading", { level: 1, name: "garage-gpu" });
-  expect(screen.getByTestId("connection-facts")).toHaveTextContent("No key is sent. The configured key is not available.");
+  expect(screen.getByTestId("connection-facts")).toHaveTextContent("No inference key is sent. The configured key is not available.");
 });

@@ -979,11 +979,15 @@ class EngineService:
             values = _restore_hidden_scalars({**shown["values"], **values}, shown["values"], record.get("config") or {})
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
+        stored_models = ((record or {}).get("config") or {}).get("models") or []
+        if "models" in body and not isinstance(body["models"], list):
+            raise DraftError("models must be a list.", field="models")
+        tested_models = (_models_config(definition, clean, body["models"], stored_models)
+                         if "models" in body else stored_models)
         if record is not None and not _is_owner(ctx):
             saved_clean, saved_key = self._saved_test_inputs(catalog, definition, record, ctx)
-            models = (record.get("config") or {}).get("models") or []
-            if (_test_binding(definition, clean, key, str(service_id), models)
-                    != _test_binding(definition, saved_clean, saved_key, str(service_id), models)):
+            if (_test_binding(definition, clean, key, str(service_id), tested_models)
+                    != _test_binding(definition, saved_clean, saved_key, str(service_id), stored_models)):
                 raise _owner_only("Only the owner can change service settings.")
         capability = str(body.get("capability") or "")
         model = str(body.get("model") or "").strip() or None
@@ -1002,10 +1006,9 @@ class EngineService:
         result["via"] = "draft"
         if record is not None:
             saved_clean, saved_key = self._saved_test_inputs(catalog, definition, record, ctx)
-            models = (record.get("config") or {}).get("models") or []
-            binding = _test_binding(definition, clean, key, str(service_id), models)
-            known_model = model is None or any(row.get("upstream_model") == model for row in model_rows(models))
-            if known_model and binding == _test_binding(definition, saved_clean, saved_key, str(service_id), models):
+            binding = _test_binding(definition, clean, key, str(service_id), tested_models)
+            known_model = model is None or any(row.get("upstream_model") == model for row in model_rows(stored_models))
+            if known_model and binding == _test_binding(definition, saved_clean, saved_key, str(service_id), stored_models):
                 result["via"] = "saved"
                 token = secrets.token_urlsafe(32)
                 result["evidence_token"] = token

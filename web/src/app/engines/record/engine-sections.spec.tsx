@@ -308,7 +308,7 @@ describe("the six sections mirror the record", () => {
     ).toBeNull();
     expect(
       within(runs).getByText(
-        /^These commands store each argument separately/,
+        /^This page cannot safely edit this server’s process setup yet/,
       ),
     ).toBeVisible();
     const checks = within(section("What Azizam can check")).getByTestId(
@@ -600,7 +600,7 @@ describe("saved contract facts acceptance", () => {
     const view = engineView({ v2: record, credential_destination: null, key: { state: "configured" } });
     renderWithClient(<ConnectionFacts view={view} definition={{ ...definitions.definitions[0], fields: [] }} />);
     const facts = screen.getByTestId("connection-facts");
-    expect(facts).toHaveTextContent("Inference key is sent toUnknown. The saved destination is not recorded.");
+    expect(facts).toHaveTextContent("Inference key is sent toThe saved key’s destination is unknown.");
     expect(facts).toHaveTextContent("Control key destinationhttps://control.example");
     expect(facts).not.toHaveTextContent("No inference key is configured.");
   });

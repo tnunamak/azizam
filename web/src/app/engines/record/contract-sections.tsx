@@ -9,6 +9,7 @@
 import type { ReactNode } from "react";
 import { CircleCheck, CircleHelp, CircleX } from "lucide-react";
 import type {
+  CheckResult,
   EngineDefinition,
   EngineField,
   EngineRecordV2,
@@ -21,11 +22,11 @@ import { Note, Tag } from "../parts/form";
 
 export const OWNER_ONLY = "Only the owner can change this.";
 export const DERIVED_REASON =
-  "Azizam builds this record itself from your aliases and engines, so it stays in step with them. Change those instead.";
+  "Azizam creates these settings from your public model names and engines. Change those sources to update this record.";
 export const UNSUPPORTED_REASON =
-  "This page can’t change this setting yet. Azizam keeps it exactly as stored.";
+  "This page cannot safely edit this saved setting yet.";
 export const ARGV_REASON =
-  "These commands are stored as exact argument lists. This page edits a command as one line, which could change them, so it shows them as stored.";
+  "This page cannot safely edit this server’s process setup yet. Its saved command arguments are shown above.";
 
 /** The record part a definition field edits. A definition can say; otherwise owner-only fields are the process and adjustments the offerings. */
 export function fieldPart(
@@ -110,7 +111,20 @@ function Facts({
   );
 }
 
-const mono = (text: string) => <span className="font-mono">{text}</span>;
+const mono = (text: string) => <span className="font-mono [overflow-wrap:anywhere]">{text}</span>;
+/** Keep unrecognized values readable without inventing semantics. */
+function storedText(value: unknown): string {
+  if (typeof value === "string") return value;
+  return JSON.stringify(value) ?? "Unknown";
+}
+function SavedFields({ value }: { value: unknown }) {
+  if (Array.isArray(value)) return <ul className="flex flex-col gap-1">{value.map((item, i) => <li key={i}><SavedFields value={item} /></li>)}</ul>;
+  if (value !== null && typeof value === "object") return <dl className="flex flex-col gap-1">{Object.entries(value).map(([key, item]) => <div key={key}>
+    <dt className="font-medium">{key === "required" ? "Required" : key === "type" ? "Value type" : key.replace(/_/g, " ")}</dt>
+    <dd className="pl-3"><SavedFields value={item} /></dd>
+  </div>)}</dl>;
+  return <>{value === true ? "Yes" : value === false ? "No" : value == null ? "Not recorded" : String(value)}</>;
+}
 /** An argument list exactly as stored: an argument with a space or a quote shows in quotes, so the boundaries stay visible. */
 export function argvText(list: string[]): string {
   return list
@@ -157,47 +171,39 @@ export function AttentionNotes({ view }: { view: EngineView }) {
 /** Connection: the request path and the key's destination, as saved. */
 export function ConnectionFacts({
   view,
-  definition,
 }: {
   view: EngineView;
   definition: EngineDefinition;
 }) {
   const rows: [string, ReactNode][] = [];
   const path = view.request_path;
-  if (path?.url)
-    rows.push([
-      "Requests go to",
-      <span key="path">
-        {mono(path.url)}
-        <span className="text-muted-foreground block">
-          {path.mode === "gateway_lifecycle"
-            ? "Through the gateway’s start-and-stop hop, which then calls this address."
-            : "Straight from the model router to this address."}{" "}
-          Source: {path.source}.
-        </span>
-      </span>,
-    ]);
-  else
-    rows.push([
-      "Requests go to",
-      <span key="path" className="text-muted-foreground">
-        Unknown. The gateway did not say.
-      </span>,
-    ]);
-  if (definition.fields.some((f) => f.key === "api_key")) {
+  rows.push(["Saved request destinations", <span key="destinations">
+    {path?.operations?.length ? <ul>{path.operations.map((op, index) => <li key={index}>{op.capability}: {mono(`${op.method} ${op.url}`)}</li>)}</ul>
+      : path?.url ? mono(path.url) : "The request destination is unknown. Azizam did not return it."}
+    {path?.url && <span className="text-muted-foreground block">
+      {path.mode === "gateway_lifecycle" ? "Azizam starts the server when needed, then forwards the request to this address." : "Azizam sends requests directly to this address."}
+      {" "}From this engine’s saved connection settings.
+    </span>}
+    <span className="text-muted-foreground block">Draft edits do not change these destinations until saved.</span>
+  </span>]);
+  {
     const origin = credentialOrigin(view);
     const requestOrigin = path?.url ? originOf(path.url) : "";
-    const keyHere = view.key.state === "configured" && origin;
+    const inference = view.v2?.connection.credentials.inference;
+    const keyConfigured = view.key.state === "configured" || Boolean(inference?.secret_ref || inference?.env);
+    const keyHere = keyConfigured && origin;
     const elsewhere = keyHere && requestOrigin && originOf(origin) !== requestOrigin;
     const unavailable = view.attention?.some((item) => item.code === "engine_credential_unavailable");
     rows.push([
-      "Key is sent to",
+      "Inference key is sent to",
       elsewhere ? (
         <span key="dest">
-          No key is sent: the key belongs to {mono(originOf(origin) || origin)} but this engine’s address is {mono(requestOrigin)}.
+          No inference key is sent: the key belongs to {mono(originOf(origin) || origin)} but this engine’s address is {mono(requestOrigin)}.
         </span>
       ) : keyHere && unavailable ? (
-        "No key is sent. The configured key is not available."
+        "No inference key is sent. The configured key is not available."
+      ) : !origin && (keyConfigured || inference) ? (
+        "The saved key’s destination is unknown."
       ) : keyHere && !requestOrigin ? (
         "Unknown. The request address is unavailable."
       ) : keyHere ? (
@@ -205,9 +211,14 @@ export function ConnectionFacts({
           {mono(origin)} only. Azizam never sends it to another address.
         </span>
       ) : (
-        "No key is sent."
+        "No inference key is configured."
       ),
     ]);
+  }
+  const control = view.v2?.connection.credentials.control;
+  if (control != null) {
+    const destination = typeof control === "object" && "origin" in control && typeof control.origin === "string" ? control.origin : "";
+    rows.push(["Control key destination", destination ? mono(destination) : "The saved key’s destination is unknown."]);
   }
   if (view.reply_timeout)
     rows.push([
@@ -227,8 +238,8 @@ export function ConnectionFacts({
 }
 
 const selectionWords = {
-  request_field: "The model field of each request picks it.",
-  switch: "Azizam switches the engine to it, then checks the switch.",
+  request_field: "Apps choose this model with the request’s model field.",
+  switch: "Azizam switches the engine to this model, then checks the selection.",
   whole_graph: "Each request runs the whole workflow.",
 } as const;
 
@@ -238,7 +249,7 @@ export function OfferingFacts({ v2 }: { v2: EngineRecordV2 | undefined }) {
   if (!offerings.length)
     return (
       <p className="text-meta text-muted-foreground">
-        The record lists no offerings yet.
+        No models or workflows are listed yet.
       </p>
     );
   const switching = offerings.some((o) => o.selection?.mode === "switch");
@@ -248,17 +259,21 @@ export function OfferingFacts({ v2 }: { v2: EngineRecordV2 | undefined }) {
         <p className="text-meta">
           Selected now:{" "}
           {v2?.selected_offering ? (
-            mono(v2.selected_offering)
+            <>{mono(v2.selected_offering)} <span className="text-muted-foreground">
+              {v2.observations.selected?.last?.ok === true ? "Verified by a check." : "Not verified by a check."}
+              {v2.observations.selected?.last?.at ? <> <RelativeTime ts={v2.observations.selected.last.at} fallback="" />.</> : " Check time unknown."}
+              {" "}Source: {v2.observations.selected?.last?.source ?? "saved record"}.
+            </span></>
           ) : (
             <span className="text-muted-foreground">
-              Unknown. Azizam has not observed it.
+              Unknown. The selected model has not been verified.
             </span>
           )}
         </p>
       )}
       <ul className="bg-card rounded-panel divide-y border">
         {offerings.map((o) => (
-          <li key={o.id} className="text-meta flex flex-col gap-0.5 p-3">
+          <li key={o.id} className="text-meta min-w-0 flex flex-col gap-0.5 p-3 [overflow-wrap:anywhere]">
             <span className="flex flex-wrap items-center gap-2">
               {mono(o.id)}
               <Tag>{o.kind === "workflow" ? "Workflow" : "Model"}</Tag>
@@ -270,12 +285,24 @@ export function OfferingFacts({ v2 }: { v2: EngineRecordV2 | undefined }) {
             )}
             <span className="text-muted-foreground">
               {o.selection
-                ? selectionWords[o.selection.mode]
+                ? selectionWords[o.selection.mode] ?? "The saved selection method is not explained."
                 : "How a request reaches it is not recorded."}
               {o.selection?.mode === "switch" && o.selection.switch?.call ? (
-                <> Switch call: {mono(o.selection.switch.call)}.</>
+                <> Operation used to switch models: {mono(o.selection.switch.call)}.</>
               ) : null}
             </span>
+            <Facts rows={[
+              ...(o.tasks ? [["Tasks and evidence", <ul>{o.tasks.map((task, index) => <li key={index}>{task.task}: {task.evidence === "declared" ? "declared in the saved settings" : task.evidence === "observed" ? "reported by a server check" : task.evidence === "tested" ? "verified by a test" : task.evidence}</li>)}</ul>] as [string, ReactNode]] : []),
+              ...(o.required_inputs != null ? [["Required inputs", <SavedFields value={o.required_inputs} />] as [string, ReactNode]] : []),
+              ...(o.options != null ? [["Options", <SavedFields value={o.options} />] as [string, ReactNode]] : []),
+              ...(o.start_profiles != null ? [["Start settings", <SavedFields value={o.start_profiles} />] as [string, ReactNode]] : []),
+              ...(o.adjustments != null ? [["Adjustments", <SavedFields value={o.adjustments} />] as [string, ReactNode]] : []),
+              ...(o.inputs != null ? [["Inputs", <SavedFields key="inputs" value={o.inputs} />] as [string, ReactNode]] : []),
+              ...(o.kind === "model" ? [["Loading", o.selection?.implicit_load === true ? "Loads when first requested." : o.selection?.implicit_load === false ? "Does not load automatically on first request." : "Whether this model loads on first request is unknown."] as [string, ReactNode]] : []),
+            ]} />
+            <details><summary className="text-link cursor-pointer max-sm:min-h-11">Technical details</summary>
+              <pre className="whitespace-pre-wrap [overflow-wrap:anywhere]">{JSON.stringify(o, null, 2)}</pre>
+            </details>
           </li>
         ))}
       </ul>
@@ -285,10 +312,11 @@ export function OfferingFacts({ v2 }: { v2: EngineRecordV2 | undefined }) {
 
 function processOwner(process: ProcessV2 | null | undefined): string {
   if (!process || process.driver === "none")
-    return "Not Azizam. Something outside Azizam keeps this server running; Azizam only sends it requests.";
+    return !process ? "Who runs this server is unknown." : "Not Azizam. Something outside Azizam keeps this server running; Azizam only sends it requests.";
   if (process.driver === "command")
-    return "An outside manager. Azizam runs the start and stop commands; it never claims the process.";
-  return "Azizam. It starts the process itself and owns it until it stops.";
+    return "An outside process manager owns this server. Azizam asks it to start and stop using the saved commands.";
+  if (process.driver === "process") return "Azizam. It starts the process itself and owns it until it stops.";
+  return "Who runs this server is unknown.";
 }
 
 /** How it runs: who owns the process, and the parts of it this page can't edit. */
@@ -315,28 +343,26 @@ export function ProcessFacts({
     if (process.port?.fixed) rows.push(["Port", String(process.port.fixed)]);
   }
   const apply = process?.profile_apply;
-  if (apply?.file)
-    rows.push([
-      "Settings file",
-      <span key="file">
-        {mono(apply.file)}
-        <span className="text-muted-foreground block">
-          This file belongs to your system. Azizam writes it before a start
-          {apply.restore === "on_failure"
-            ? " and restores it if the start fails"
-            : ""}
-          . Edit its location in your system, not here.
-        </span>
-      </span>,
-    ]);
+  if (apply) {
+    rows.push(["Saved file operation", mono(apply.kind)]);
+    if (apply.reload?.length) rows.push(["Reload", argv(apply.reload)]);
+    if (apply.file) rows.push(["Settings file", <span key="file">
+      {mono(apply.file)}
+      <span className="text-muted-foreground block">
+        The saved process settings choose this path. Moving the file does not update those settings.
+        {apply.kind === "write_env_file_then_restart" ? " Azizam writes this environment settings file before restarting." : " The file's role is specified by the saved setting above."}
+        {apply.restore === "on_failure" ? " The saved setting calls for restoring it if starting fails." : ""}
+      </span>
+    </span>]);
+  }
   const residency = view.v2?.residency ?? {};
   const idleOwner = residency.idle_owner;
   if (typeof idleOwner === "string")
     rows.push([
       "Stops when idle",
       idleOwner === "gateway"
-        ? `Azizam stops it after ${residency.idle_stop_s ?? "?"} seconds idle.`
-        : "The engine decides.",
+        ? typeof residency.idle_stop_s === "number" ? `Azizam stops it after ${residency.idle_stop_s} seconds idle.` : "Azizam stops it when idle. The idle delay is unknown."
+        : idleOwner === "engine" ? "The engine decides." : "Who stops it when idle is unknown.",
     ]);
   const legacy = Boolean(
     process?.needs_owner_conversion || residency.needs_owner_conversion,
@@ -347,11 +373,8 @@ export function ProcessFacts({
       {note && !legacy && <Note tone="lock">{note}</Note>}
       {legacy && (
         <Note tone="warn">
-          This engine still uses an older start-and-stop setup (
-          {String(
-            process?.legacy_driver ?? residency.legacy_driver ?? "unknown",
-          )}
-          ). {UNSUPPORTED_REASON}
+          This server uses an older start-and-stop configuration. It is read-only here.
+          <details><summary>Technical details</summary>{String(process?.legacy_driver ?? residency.legacy_driver ?? "unknown")}</details>
         </Note>
       )}
     </div>
@@ -372,16 +395,16 @@ function howWords(o: ObservationV2): ReactNode {
   if (o.http?.path)
     return (
       <>
-        Asks {mono(`GET ${o.http.path}`)}
+        Asks {mono(`${o.http.method ?? "GET"} ${o.http.path}`)}
         {o.http.expect ? `, expects ${o.http.expect}` : ""}
         {select ? <>, reads {mono(select)}</> : null}.
       </>
     );
-  return "Declared in the record.";
+  return "A check is configured, but its method is not explained.";
 }
 
 /** What Azizam can check: each observation, how it looks and what it saw. Missing is unknown, never green. */
-export function ObservationList({ view }: { view: EngineView }) {
+export function ObservationList({ view, latestCheck }: { view: EngineView; latestCheck?: CheckResult | null }) {
   const observations = view.v2?.observations ?? {};
   const known = new Set(OBSERVATIONS.map(([key]) => key));
   const rows: [string, string, ObservationV2 | undefined][] = [
@@ -405,9 +428,9 @@ export function ObservationList({ view }: { view: EngineView }) {
       <li className="text-meta flex items-start gap-2 p-3">
         <Evidence
           ok={
-            view.check.status === "ok"
+            view.check.checked_at && view.check.status === "ok"
               ? true
-              : view.check.status === "failed"
+              : view.check.checked_at && view.check.status === "failed"
                 ? false
                 : undefined
           }
@@ -418,9 +441,9 @@ export function ObservationList({ view }: { view: EngineView }) {
             The connection check asks {mono(view.calls)}.{" "}
             {view.check.checked_at ? (
               <>
-                Last result:{" "}
+                Saved result:{" "}
                 {view.check.status === "ok" ? "reached" : "a problem"},{" "}
-                <RelativeTime ts={view.check.checked_at} fallback="" />.
+                <RelativeTime ts={view.check.checked_at} fallback="" />. Source: {view.check.origin || "saved connection check"}.
               </>
             ) : (
               "Not checked yet."
@@ -428,6 +451,11 @@ export function ObservationList({ view }: { view: EngineView }) {
           </span>
         </span>
       </li>
+      {latestCheck && <li className="text-meta p-3">
+        Latest unsaved connection check: {latestCheck.reachable ? "reached the server" : "could not reach the server"}.
+        {" "}<RelativeTime ts={latestCheck.checked_at} fallback="" />. Source: {mono(latestCheck.calls)}.
+        {" "}This result does not replace the saved results below.
+      </li>}
       {rows.map(([key, label, o]) => (
         <li key={key} className="text-meta flex items-start gap-2 p-3">
           <Evidence ok={o?.last?.ok} />
@@ -437,9 +465,11 @@ export function ObservationList({ view }: { view: EngineView }) {
               {o ? (
                 <>
                   {howWords(o)}{" "}
+                  {key === "inventory" && (o.means === "loaded" ? "Models loaded in memory. " : o.means === "available" ? "Models available to use. " : "Whether this lists available or loaded models is unknown. ")}
+
                   {o.last ? (
                     <>
-                      Last result:{" "}
+                      Saved result:{" "}
                       {o.last.detail ??
                         (o.last.ok ? "as expected" : "not as expected")}
                       {o.last.at ? (
@@ -447,14 +477,14 @@ export function ObservationList({ view }: { view: EngineView }) {
                           , <RelativeTime ts={o.last.at} fallback="" />
                         </>
                       ) : null}
-                      .
+                      . Source: {o.last.source ?? "saved check"}. {o.last.at ? "" : "Check time unknown."}
                     </>
                   ) : (
                     "No result yet, so it is unknown."
                   )}
                 </>
               ) : (
-                "Not declared, so Azizam can’t tell. It shows as unknown."
+                "No check is configured, so this is unknown."
               )}
             </span>
           </span>
@@ -468,7 +498,7 @@ function Evidence({ ok }: { ok: boolean | undefined }) {
   if (ok === true)
     return (
       <CircleCheck
-        aria-label="Seen"
+        aria-label="Verified by a check"
         className="text-success mt-0.5 size-4 shrink-0"
       />
     );
@@ -493,25 +523,13 @@ export function ResourceFacts({ v2 }: { v2: EngineRecordV2 | undefined }) {
   const entries = Object.entries(resources);
   if (!entries.length)
     return <p className="text-meta text-muted-foreground">None recorded.</p>;
+  const labels: Record<string, string> = { gpu: "GPU", cpu: "CPU", memory: "Memory", ram: "Memory", devices: "Devices", vram_gb_estimate: "Estimated video memory (GB)", ram_gb_estimate: "Estimated memory (GB)", cores: "Cores" };
+  const label = (key: string) => labels[key] ?? key.replace(/_/g, " ");
   const rows: [string, ReactNode][] = entries.map(([key, value]) => {
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      const v = value as Record<string, unknown>;
-      const parts = Object.entries(v)
-        .filter(([k]) => k !== "enforced")
-        .map(
-          ([k, x]) =>
-            `${k.replace(/_/g, " ")}: ${Array.isArray(x) ? x.join(", ") : String(x)}`,
-        );
-      const enforced =
-        v.enforced === true
-          ? "Enforced."
-          : "Advisory: Azizam plans with it but does not enforce it.";
-      return [
-        key.toUpperCase() === "GPU" ? "GPU" : key,
-        `${parts.join("; ")}. ${enforced}`,
-      ];
-    }
-    return [key, String(value)];
+    const object = value != null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+    const detail = object ? Object.entries(object).filter(([k]) => k !== "enforced").map(([k, v]) => `${label(k)}: ${storedText(v)}`).join("; ") : storedText(value);
+    const enforcement = object?.enforced === true ? "Enforced." : object?.enforced === false ? "Resource estimate only; not enforced." : "Enforcement unknown.";
+    return [label(key), `${detail}. ${enforcement}`];
   });
   return <Facts rows={rows} testId="resource-facts" />;
 }

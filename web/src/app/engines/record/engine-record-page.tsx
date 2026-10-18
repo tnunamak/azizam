@@ -73,7 +73,6 @@ export const engineViewKey = (serviceId: string) => ["engineView", serviceId] as
 const NAV_LINK = "text-link inline-flex items-center px-2 hover:underline max-sm:min-h-11";
 
 const SAVED_TEST_NOTE = "Tested the saved settings from the gateway’s computer. This test is not listed in Activity.";
-const GATEWAY_TEST_NOTE = "Tested through Azizam’s app-facing route.";
 const DRAFT_TEST_NOTE = "Tested your unsaved changes from the gateway’s computer. The test did not save your changes and is not listed in Activity.";
 const STORED_TEST_NOTE = "A previous test passed using the settings saved at that time. It is not listed in Activity.";
 
@@ -219,6 +218,7 @@ interface SessionCheck {
   address: string;
   /** The key typed when the check ran; the result says nothing about another key. */
   key: string;
+  snapshot?: string;
 }
 
 function optionValuesFrom(definition: EngineDefinition, view: EngineView): OptionValues {
@@ -379,7 +379,7 @@ function RecordForm({
   // The server withholds a stored key from another origin (resolve_key), and drops it on Save.
   const keyOrigin = view.key.origin || originOf(saved.address);
   const n2 = keyStored && originOf(address) !== keyOrigin;
-  const fresh = session && session.address === trimAddress(address) && session.key === newKey ? session : null;
+  const fresh = session && session.address === trimAddress(address) && session.key === newKey && (!session.snapshot || session.snapshot === JSON.stringify(bodyValues())) ? session : null;
   const freshPassed = Boolean(fresh && fresh.result.outcome !== "error");
   const keyAcceptedHere = Boolean(fresh && freshPassed && fresh.result.key_sent && fresh.result.auth === "accepted");
   const blocked = addressChanged && !freshPassed;
@@ -396,7 +396,7 @@ function RecordForm({
     setDetectNote(null);
     try {
       const result = await enginesApi.check({ definition: definition.definition, values: bodyValues(at) as never, service_id: view.service_id });
-      setSession({ result, address: trimAddress(at), key: newKey });
+      setSession({ result, address: trimAddress(at), key: newKey, snapshot: JSON.stringify(bodyValues(at)) });
       // A check never changes what someone who can't edit the settings sees saved.
       if (result.outcome !== "error" && !settingsLocked) {
         if (view.check.status === "not_started" && ticked.size === 0) setTicked(new Set(result.capabilities.filter((c) => c.ticked).map((c) => c.id)));
@@ -427,6 +427,7 @@ function RecordForm({
         definition: definition.definition,
         values: values as never,
         capability,
+        ...(offeringsEditable ? { models: modelsBody(models) } : {}),
         ...(model ? { model } : {}),
         service_id: view.service_id,
       });
@@ -567,9 +568,7 @@ function RecordForm({
   const via = Object.values(currentTests).find((t) => t.status === "done");
   const testNote =
     via?.status === "done"
-      ? (via.result.via as string) === "gateway"
-        ? GATEWAY_TEST_NOTE
-        : via.result.via === "saved"
+      ? via.result.via === "saved"
           ? SAVED_TEST_NOTE
           : DRAFT_TEST_NOTE
       : configurationSnapshot === initialConfiguration ? SAVED_TEST_NOTE : DRAFT_TEST_NOTE;
@@ -1092,7 +1091,7 @@ function RecordForm({
               </div>
             </>
           ) : (
-            <AccessAnswer access={view.access} workflows />
+            <><AccessAnswer access={view.access} workflows /><p className="text-meta text-muted-foreground">This page cannot run a sample request for this saved workflow or selection setup yet.</p></>
           )}
 
           <div className="flex flex-col gap-2">
@@ -1161,7 +1160,7 @@ function RecordForm({
           What Azizam can see for itself. Anything it can’t see shows as unknown, never as fine.
         </p>
         {reason && !locked ? <LockedNote reason={reason} view={view} /> : !locked && <Note tone="lock">These checks are read-only here. This page has no editor for their settings.</Note>}
-        <ObservationList view={view} />
+        <ObservationList view={view} latestCheck={fresh?.result} />
       </section>
 
       <section aria-labelledby="engine-resources" className="flex flex-col gap-2">

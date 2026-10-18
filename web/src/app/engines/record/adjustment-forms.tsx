@@ -314,7 +314,7 @@ export function AdjustmentsEditor({
             <div className="bg-muted/40 flex flex-wrap items-center gap-2 border-b px-3 py-2">
               <div className="flex-1">
                 <h5 className="text-meta font-medium">
-                  {card.kind === "builtin" ? `Built-in adjustment: ${card.name.replace(/[-_]+/g, " ")}` : readOnly ? sayAdjustment(card) : name}
+                  {card.kind === "builtin" ? `Built-in adjustment: ${card.name}` : readOnly ? sayAdjustment(card) : name}
                 </h5>
                 {card.kind === "builtin" && <p className="text-meta text-muted-foreground">Its behavior is not described here. Read-only.</p>}
               </div>
