@@ -773,3 +773,175 @@ def test_a_file_replaced_by_another_file_after_the_check_is_refused(tmp_path):
         with pytest.raises(ValueError, match="changed"):
             run(runtime.invoke("load", {"model_path": str(target)}))
     assert calls == []
+
+
+# -- finding 9: the process, its output, and its state outlive the gateway ----
+
+
+def _script(tmp_path: Path, name: str, body: str) -> Path:
+    path = tmp_path / name
+    path.write_text(body)
+    return path
+
+
+def _ticker(tmp_path: Path) -> Path:
+    return _script(tmp_path, "ticker.py", (
+        "import sys, time\n"
+        "marker = sys.argv[1]\n"
+        "n = 0\n"
+        "while True:\n"
+        "    try:\n"
+        "        print('tick', n, flush=True)\n"
+        "    except BaseException as exc:\n"
+        "        open(marker + '.err', 'w').write(repr(exc))\n"
+        "        raise\n"
+        "    open(marker, 'w').write(str(n))\n"
+        "    n += 1\n"
+        "    time.sleep(0.03)\n"))
+
+
+def _owned(tmp_path: Path, script: Path, *args: str, **process) -> dict:
+    svc = process_service(tmp_path)
+    svc["residency"]["idle_owner"] = "engine"
+    svc["process"]["start"] = [sys.executable, str(script), *args]
+    svc["process"].update(process)
+    return svc
+
+
+def _wait_for(predicate, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_adopted_engine_keeps_a_working_stdout_after_the_gateway_lets_go(tmp_path):
+    marker = tmp_path / "ticks"
+    svc = _owned(tmp_path, _ticker(tmp_path), str(marker))
+    driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True,
+                           observations=Probe())
+
+    async def scenario():
+        assert await driver.ensure_ready(svc, 2)
+        child = driver._children["fixture"]
+        for pipe in (child.stdout, child.stderr):  # what a gateway restart does to its end of a pipe
+            if pipe:
+                pipe.close()
+        before = int(marker.read_text() or 0)
+        await asyncio.sleep(0.4)
+        assert int(marker.read_text()) > before + 3
+        assert not Path(str(marker) + ".err").exists(), Path(str(marker) + ".err").read_text()
+
+    try:
+        run(scenario())
+    finally:
+        driver.stop(svc)
+
+
+def test_an_unwritable_log_does_not_stop_the_engine_from_starting(tmp_path):
+    marker = tmp_path / "ticks"
+    state = tmp_path / "state"
+    (state).mkdir(mode=0o700)
+    (state / "fixture.log").mkdir()  # the log path cannot be opened for writing
+    svc = _owned(tmp_path, _ticker(tmp_path), str(marker))
+    driver = ProcessDriver(state_dir=state, commands_allowed=lambda: True, observations=Probe())
+    try:
+        assert run(driver.ensure_ready(svc, 2)) is True
+        assert _wait_for(lambda: marker.exists() and int(marker.read_text() or 0) > 2)
+        assert not Path(str(marker) + ".err").exists()
+    finally:
+        driver.stop(svc)
+
+
+def test_log_pump_drains_the_engine_even_when_every_write_fails(tmp_path):
+    import io
+
+    from gateway import engine_supervisor
+
+    source = io.BytesIO(b"".join(b"line %d %s\n" % (n, b"x" * 200) for n in range(5000)))
+    pump = engine_supervisor.LogPump(tmp_path / "missing-dir" / "engine.log", limit=4096, secrets=[])
+    assert pump.run(source) == 5000  # every line consumed; the failing writes never block the reader
+
+
+def test_secrets_in_argv_are_redacted_from_the_log(tmp_path):
+    script = _script(tmp_path, "argv.py", "import sys, time\nprint(sys.argv, flush=True)\ntime.sleep(30)\n")
+    svc = _owned(tmp_path, script, "--api-key", "sk-live-0123456789", "--token=tok-abcdef-9876",
+                 "MODEL_PASSWORD=hunter2hunter2", "--model", "visible-model")
+    driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True,
+                           observations=Probe())
+    log = tmp_path / "state" / "fixture.log"
+    try:
+        assert run(driver.ensure_ready(svc, 2))
+        assert _wait_for(lambda: log.exists() and b"visible-model" in log.read_bytes())
+        text = log.read_text()
+        for secret in ("sk-live-0123456789", "tok-abcdef-9876", "hunter2hunter2"):
+            assert secret not in text
+        assert text.count("[redacted]") >= 3
+    finally:
+        driver.stop(svc)
+
+
+def test_log_rotates_instead_of_truncating(tmp_path):
+    script = _script(tmp_path, "chatty.py", (
+        "import time\n"
+        "for n in range(12):\n"
+        "    print('entry %02d ' % n + 'x' * 200, flush=True)\n"
+        "print('done', flush=True)\n"
+        "time.sleep(30)\n"))
+    svc = _owned(tmp_path, script, log_max_bytes=1024)
+    driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True,
+                           observations=Probe())
+    log = tmp_path / "state" / "fixture.log"
+    rotated = tmp_path / "state" / "fixture.log.1"
+    try:
+        assert run(driver.ensure_ready(svc, 2))
+        assert _wait_for(lambda: log.exists() and b"done" in log.read_bytes())
+        assert rotated.exists(), "an over-limit log was truncated, not rotated"
+        assert len(log.read_bytes()) <= 1024 and len(rotated.read_bytes()) <= 1024
+        kept = (rotated.read_bytes() + log.read_bytes()).decode()
+        assert "entry 11" in kept and "entry 10" in kept  # recent history survives the rollover
+        assert all(f.stat().st_mode & 0o777 == 0o600 for f in (log, rotated))
+    finally:
+        driver.stop(svc)
+
+
+def test_a_gateway_crash_right_after_spawn_leaves_a_state_file_for_the_orphan(tmp_path):
+    real_popen = subprocess.Popen
+    marker = tmp_path / "ticks"
+    svc = _owned(tmp_path, _ticker(tmp_path), str(marker))
+
+    class GatewayCrash(BaseException):
+        pass
+
+    def crash_after_spawn(*args, **kwargs):
+        real_popen(*args, **kwargs)
+        raise GatewayCrash
+
+    first = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True, observations=Probe())
+    with patch("gateway.engine_process.subprocess.Popen", side_effect=crash_after_spawn):
+        with pytest.raises(GatewayCrash):
+            run(first.ensure_ready(svc, 2))
+    second = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True, observations=Probe())
+    try:
+        assert _wait_for(lambda: (tmp_path / "state" / "fixture.json").exists()), "orphan has no state"
+        second.recover({"fixture": svc})
+        assert run(second.status(svc)) == "running"
+    finally:
+        second.stop(svc)
+    assert run(second.status(svc)) == "stopped"
+
+
+@pytest.mark.parametrize("cwd", [["a", "list"], 7, {"path": "/"}, "bad\x00dir"])
+def test_process_cwd_must_be_a_string_path(tmp_path, cwd):
+    svc = process_service(tmp_path)
+    svc["process"]["cwd"] = cwd
+    driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
+    assert "cwd" in (run(driver.preflight(svc)) or "")
+    assert run(driver.ensure_ready(svc, 0.2)) is False
+
+
+def test_process_docs_explain_systemd_kill_mode():
+    docs = (Path(__file__).resolve().parent.parent / "docs" / "design" / "ENGINE_PROCESS_DRIVER.md").read_text()
+    assert "KillMode" in docs and "control-group" in docs
