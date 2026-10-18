@@ -578,7 +578,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     else:
         values["lifecycle_mode"] = "external"
     lifecycle_editable = lifecycle.get("driver") in (None, "", "command", "external")
-    editable = reaches_engine_directly(str(record.get("id") or ""), record)
+    editable = bool(record.get("editable", True)) and not service_registry.is_litellm_service_record(record.get("id"), record)
     model_use = (config.get("engine_check") or {}).get("model_use") or {}
     models = [{"id": m.get("upstream_model"), "public_name": m.get("model_group") or m.get("id"),
                "context_window": m.get("context_window"), "enabled": m.get("enabled", True),
@@ -607,7 +607,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         # False when the model router does not call this engine at its own address: the page would
         # save settings the gateway does not use, so it shows them and changes only name and on/off.
         "editable": editable,
-        "not_editable_reason": "" if editable else NOT_EDITABLE_HERE,
+        "not_editable_reason": "" if editable else "This is a managed system record with derived settings.",
         "lifecycle_editable": lifecycle_editable,
         "values": values,
         "key": key,
@@ -618,6 +618,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "calls": call_line(definition, values),
         "other_settings": copy.deepcopy(other),
         "record": redacted_record(record),
+        "v2": service_registry.service_record_v2(record),
     }
 
 
@@ -930,8 +931,6 @@ class EngineService:
             raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
         if service_registry.is_litellm_service_record(service_id, record):
             raise EngineRouteError(status.HTTP_403_FORBIDDEN, "service_not_editable", "Azizam runs this engine itself. Only its name and Enabled can change.")
-        if not reaches_engine_directly(service_id, record):
-            raise EngineRouteError(status.HTTP_409_CONFLICT, "engine_not_editable_here", NOT_EDITABLE_HERE)
         before = engine_view(catalog, record, db_path=self.db_path)
         definition = _definition(catalog, body.get("definition") or before["definition"])
         values = {**before["values"], **(body.get("values") if isinstance(body.get("values"), Mapping) else {})}

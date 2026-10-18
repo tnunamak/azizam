@@ -37,7 +37,8 @@ from gateway.manifests import manifest_identity, validate_manifest
 
 
 SERVICE_REGISTRY_SETTING_KEY = "service_registry"
-SERVICE_REGISTRY_SCHEMA_VERSION = 1
+SERVICE_REGISTRY_SCHEMA_VERSION = 2
+ENGINE_RECORD_VIEW_VERSION = 2
 MODEL_POLICY_SCHEMA_VERSION = 1
 
 SERVICE_SOURCES = frozenset({"ui", "provisioned", "builtin", "discovered", "imported"})
@@ -158,7 +159,7 @@ def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, An
         )
 
     seeded = normalize_service_registry({
-        "schema_version": SERVICE_REGISTRY_SCHEMA_VERSION,
+        "schema_version": 1,
         "services": services,
         "protocol_frontends": catalogs.get("protocol_frontends") or {},
         "workflows": catalogs.get("workflows") or {},
@@ -173,7 +174,9 @@ def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, An
         "updated_at": int(time.time()),
     })
     # The seed comes from the operator's own files, so a key it names is meant for the host it names.
-    return bind_credential_origins(seeded, seeded["services"])
+    seeded = bind_credential_origins(seeded, seeded["services"])
+    migrate_engine_records_v2(seeded)
+    return seeded
 
 
 def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -504,7 +507,8 @@ def runtime_backend_from_service(service: Mapping[str, Any]) -> dict[str, Any]:
             out[field] = copy.deepcopy(value)
     # ``managed`` and the systemd service name live under ``lifecycle`` in the
     # record but flat on the backend dict; promote them for managed backends.
-    lifecycle = service.get("lifecycle")
+    process = service.get("process")
+    lifecycle = (process.get("legacy_lifecycle") if isinstance(process, Mapping) else None) or service.get("lifecycle")
     if isinstance(lifecycle, Mapping):
         if lifecycle.get("managed"):
             out["managed"] = True
@@ -516,6 +520,139 @@ def runtime_backend_from_service(service: Mapping[str, Any]) -> dict[str, Any]:
         # agnostic: a service declares its driver as DATA; we only project it.
         out["lifecycle"] = copy.deepcopy(dict(lifecycle))
     return {key: value for key, value in out.items() if value not in (None, "")}
+
+
+def _agreed_lifecycle(service_id: str, record: Mapping[str, Any]) -> dict[str, Any]:
+    """Top-level wins; a nested copy may fill gaps but may not disagree."""
+    top = record.get("lifecycle")
+    config = record.get("config")
+    nested = config.get("lifecycle") if isinstance(config, Mapping) else None
+    top = dict(top) if isinstance(top, Mapping) else {}
+    nested = dict(nested) if isinstance(nested, Mapping) else {}
+
+    def merge(dst: dict[str, Any], src: Mapping[str, Any], path: str) -> None:
+        for key, value in src.items():
+            if key not in dst:
+                dst[key] = copy.deepcopy(value)
+            elif isinstance(dst[key], dict) and isinstance(value, Mapping):
+                merge(dst[key], value, f"{path}.{key}")
+            elif dst[key] != value:
+                raise ValueError(f"service {service_id!r} lifecycle {path}.{key} conflict between lifecycle and config.lifecycle")
+
+    out = copy.deepcopy(top)
+    merge(out, nested, "lifecycle")
+    return out
+
+
+def _v2_process(lifecycle: Mapping[str, Any]) -> dict[str, Any] | None:
+    if not lifecycle or (not lifecycle.get("driver") and not lifecycle.get("managed")):
+        return None
+    driver = str(lifecycle.get("driver") or "external")
+    driver_config = lifecycle.get("driver_config") if isinstance(lifecycle.get("driver_config"), Mapping) else {}
+    process: dict[str, Any] = {"driver": "none" if driver == "external" else "command" if driver == "systemd" else driver}
+    for key in ("start", "stop", "status", "env", "cwd"):
+        if key in driver_config:
+            process[key] = copy.deepcopy(driver_config[key])
+    if driver == "systemd":
+        unit = driver_config.get("unit")
+        scope = ["--user"] if driver_config.get("scope") == "user" else []
+        if unit:
+            process.setdefault("start", ["systemctl", *scope, "start", unit])
+            process.setdefault("stop", ["systemctl", *scope, "stop", unit])
+            process.setdefault("status", ["systemctl", *scope, "is-active", unit])
+        if driver_config.get("dropin"):
+            process["profile_apply"] = {
+                "kind": "write_env_file_then_restart", "file": driver_config["dropin"],
+                "reload": ["systemctl", *scope, "daemon-reload"], "restore": "on_failure",
+            }
+    # The existing drivers still consume this one compatibility payload. It is
+    # the only persisted lifecycle source after migration; there is no second
+    # config.lifecycle to silently override an owner's edit.
+    process["legacy_lifecycle"] = copy.deepcopy(dict(lifecycle))
+    return process
+
+
+def service_record_v2(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the additive v2.1 view of a legacy or migrated service record."""
+    service_id = str(record.get("id") or "")
+    config = record.get("config") if isinstance(record.get("config"), Mapping) else {}
+    system = is_litellm_service_record(service_id, record)
+    address = str(config.get("address") or service_base_url(config) or "")
+    origin = str(config.get("credential_origin") or origin_of(address) or "")
+    inference = None
+    if config.get("api_key_secret_id") or config.get("api_key_env"):
+        inference = {"secret_ref": "configured" if config.get("api_key_secret_id") else None,
+                     "env": config.get("api_key_env") or None, "origin": origin,
+                     "header": "Authorization", "scheme": "Bearer"}
+    models = config.get("models") if isinstance(config.get("models"), list) else []
+    offerings = []
+    for model in models:
+        if not isinstance(model, Mapping):
+            continue
+        offering_id = str(model.get("id") or model.get("upstream_model") or "")
+        if not offering_id:
+            continue
+        capabilities = normalize_string_list(model.get("capabilities") or record.get("capabilities"))
+        offerings.append({"id": offering_id, "kind": "model", "upstream": model.get("upstream_model") or None,
+                          "selection": {"mode": "request_field", "implicit_load": "unknown"},
+                          "tasks": [{"task": cap, "evidence": "declared"} for cap in capabilities],
+                          "inputs": {}, "options": {}, "start_profile": {},
+                          "adjustments": copy.deepcopy(config.get("transforms") or [])})
+    if not offerings and not system:
+        offerings.append({"id": service_id, "kind": "model", "upstream": config.get("default_model") or None,
+                          "selection": {"mode": "request_field", "implicit_load": "unknown"},
+                          "tasks": [{"task": cap, "evidence": "declared"} for cap in normalize_string_list(record.get("capabilities"))],
+                          "inputs": {}, "options": {}, "start_profile": {},
+                          "adjustments": copy.deepcopy(config.get("transforms") or [])})
+    lifecycle = _agreed_lifecycle(service_id, record) if "process" not in record else {}
+    process = copy.deepcopy(record.get("process")) if isinstance(record.get("process"), Mapping) else _v2_process(lifecycle)
+    if process is not None:
+        process.pop("legacy_lifecycle", None)
+    observations = copy.deepcopy(record.get("observations")) if isinstance(record.get("observations"), Mapping) else {}
+    if not observations and isinstance(lifecycle.get("driver_config"), Mapping):
+        endpoint = lifecycle["driver_config"].get("health_endpoint")
+        if endpoint:
+            observations["process_ready"] = {"http": {"path": endpoint, "expect": 200}}
+    residency = copy.deepcopy(record.get("residency")) if isinstance(record.get("residency"), Mapping) else {}
+    resources = copy.deepcopy(record.get("resources")) if isinstance(record.get("resources"), Mapping) else {}
+    return {"schema_version": ENGINE_RECORD_VIEW_VERSION, "id": service_id, "name": record.get("name") or service_id,
+            "enabled": bool(record.get("enabled", True)), "record_type": "system" if system else "engine",
+            "derived": system, "editable": bool(record.get("editable", not system)) and not system,
+            "provenance": {"source": record.get("source") or "ui", "package": (record.get("provenance") or {}).get("package_id")},
+            "connection": {"transport": "http", "address": address,
+                           "protocol": config.get("protocol") or None,
+                           "credentials": {"inference": inference, "control": None},
+                           "headers": [{"name": row.get("name"), "value": "configured"}
+                                       for row in (config.get("headers") or []) if isinstance(row, Mapping)],
+                           "timeouts": {"total_s": config.get("timeout") or 600}},
+            "offerings": offerings, "process": process, "observations": observations,
+            "residency": residency, "resources": resources}
+
+
+def migrate_engine_records_v2(registry: dict[str, Any]) -> list[str]:
+    """Collapse duplicate lifecycle sources atomically in a registry document."""
+    if int(registry.get("schema_version") or 1) >= ENGINE_RECORD_VIEW_VERSION:
+        return []
+    services = registry.get("services") or {}
+    migrated = copy.deepcopy(services)
+    changed: list[str] = []
+    for service_id, record in sorted(migrated.items()):
+        if not isinstance(record, dict):
+            continue
+        lifecycle = _agreed_lifecycle(service_id, record)
+        observations = service_record_v2(record)["observations"]
+        residency = service_record_v2(record)["residency"]
+        process = _v2_process(lifecycle)
+        if process is not None:
+            record["process"] = process
+        record["observations"] = observations
+        record["residency"] = residency
+        record["config"].pop("lifecycle", None)
+        record.pop("lifecycle", None)
+        changed.append(service_id)
+    registry["services"] = migrated
+    registry["schema_version"] = ENGINE_RECORD_VIEW_VERSION
+    return changed
 
 
 def runtime_backends(registry: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -746,7 +883,8 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
             normalized_models.append(normalized_model)
         config["models"] = normalized_models
     capabilities = normalize_string_list(raw.get("capabilities") or config.get("capabilities"))
-    lifecycle = raw.get("lifecycle")
+    process = raw.get("process")
+    lifecycle = (process.get("legacy_lifecycle") if isinstance(process, Mapping) else None) or raw.get("lifecycle")
     if not isinstance(lifecycle, Mapping):
         lifecycle = {}
     secret_refs = raw.get("secret_refs")
@@ -786,6 +924,9 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
         },
         "provenance": copy.deepcopy(dict(provenance)),
     }
+    for key in ("process", "observations", "residency", "resources"):
+        if key in raw:
+            record[key] = copy.deepcopy(raw[key])
     # EDITABILITY LAW: editable is true for all records except managed-substrate
     # rows (LiteLLM). Stored editable:false from old seeds is normalized away.
     record["editable"] = not is_litellm_service_record(service_id, record)
