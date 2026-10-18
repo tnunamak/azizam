@@ -267,6 +267,8 @@ def test_switch_refuses_unknown_name_and_holds_lease_through_stream():
             await controller.select(svc, "old", {**selection, "switch": {**selection["switch"],
                 "args": {"model": "old"}, "queue_wait_s": 0.01}})
         assert caught.value.retry_after_s > 0
+        assert caught.value.status_code == 503
+        assert caught.value.headers["Retry-After"]
         assert [chunk async for chunk in chunks] == [b"last"]
         second = await controller.select(svc, "old", {**selection, "switch": {**selection["switch"],
             "args": {"model": "old"}}})
@@ -286,6 +288,28 @@ def test_switch_restores_previous_selection_after_failed_verification():
 
     async def observe(_name):
         return "wrong" if selected[0] == "new" else selected[0]
+
+    controller = SwitchController(drain=SwapDrain(), invoke=invoke, observe=observe)
+    svc = {"id": "scope", "offerings": [{"id": "old"}, {"id": "new"}]}
+    selection = {"mode": "switch", "switch": {"call": "select", "args": {"model": "new"},
+                 "observe_selected": "selected", "on_failure": "restore"}}
+    with pytest.raises(SwitchUnavailable):
+        run(controller.select(svc, "new", selection))
+    assert calls == ["new", "old"]
+
+
+def test_switch_restores_after_a_control_call_that_raises():
+    calls = []
+    selected = ["old"]
+
+    async def invoke(_op, args):
+        calls.append(args["model"])
+        selected[0] = args["model"]
+        if args["model"] == "new":
+            raise RuntimeError("reply lost after switch")
+
+    async def observe(_name):
+        return selected[0]
 
     controller = SwitchController(drain=SwapDrain(), invoke=invoke, observe=observe)
     svc = {"id": "scope", "offerings": [{"id": "old"}, {"id": "new"}]}
