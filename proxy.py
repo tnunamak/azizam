@@ -3354,8 +3354,8 @@ async def _probe_service_resource_fact(bcfg: Mapping[str, Any]) -> dict[str, Any
     endpoint = str(bcfg.get("health_endpoint") or "/health").strip() or "/health"
     absolute = endpoint.startswith(("http://", "https://"))
     if absolute:
-        # The read helper binds the key to this destination too, even when an
-        # owner declares health on a different origin from inference.
+        # Check the key against the health destination so an origin different
+        # from its approved inference origin cannot receive it.
         probe_config["base_url"] = endpoint
     probe = engine_read_request(probe_config, "" if absolute else endpoint)
     if probe is None:
@@ -3399,6 +3399,8 @@ def _service_resource_probe_config(service_id: str) -> Mapping[str, Any] | None:
         return None
     scfg = service.get("config")
     if isinstance(scfg, Mapping):
+        if service.get("secret_refs"):
+            return {**scfg, "secret_refs": copy.deepcopy(service["secret_refs"])}
         return scfg
     return None
 

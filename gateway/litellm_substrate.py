@@ -536,14 +536,14 @@ def header_problem(name: str, value: str) -> str:
 def engine_headers(config: Mapping[str, Any]) -> dict[str, str]:
     """The plain request headers a service record lists as ``[{"name", "value"}]`` rows.
 
-    A row that fails ``header_problem`` is left out: a raw service edit can store
-    anything, and nothing malformed or credential-shaped is sent.
+    Explicitly secret, malformed and credential-shaped rows are not sent as
+    plain headers, even when a raw service edit stored them.
     """
     out: dict[str, str] = {}
     for row in config.get("headers") or () if isinstance(config.get("headers"), list) else ():
         if isinstance(row, Mapping) and isinstance(row.get("name"), str) and isinstance(row.get("value"), str):
             name = row["name"].strip()
-            if not header_problem(name, row["value"]):
+            if not row.get("secret") and not header_problem(name, row["value"]):
                 out[name] = row["value"]
     return out
 
