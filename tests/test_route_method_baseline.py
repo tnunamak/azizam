@@ -226,8 +226,10 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
         if kind == "engines" and (key not in old or route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
             continue  # new Add engine routes, or the deleted preset list falling through
         if kind == "engine_protocols" and key not in old:
-            expected = (f"{ENGINE_PROTOCOLS_PATH} engine_protocols" if _method_of(key) == "GET"
-                        else new.get(key.replace(ENGINE_PROTOCOLS_PATH, "/admin/api/engine-definitions")))
+            method = _method_of(key)
+            expected = (f"{ENGINE_PROTOCOLS_PATH} engine_protocols" if method == "GET"
+                        else f"405 allow=GET via {ENGINE_PROTOCOLS_PATH} engine_protocols" if method == "HEAD"
+                        else "/{path:path} unmatched_route")
             if outcome == expected:
                 continue
         if kind == "host_commands" and key not in old:
@@ -277,7 +279,11 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
             continue
         if kind == "engine_protocols" and key not in old:
             assert _method_of(key) != "GET", key
-            expected = "; ".join(f"{principal}: 405 application/json allow=GET" for principal in ("none", "app", "admin"))
+            # HEAD has only a partial GET match. Other methods reach the unchanged
+            # catch-all, whose authentication rules reject these three callers.
+            expected = ("; ".join(f"{principal}: 405 application/json allow=GET" for principal in ("none", "app", "admin"))
+                        if _method_of(key) == "HEAD" else
+                        "none: 401 application/json; app: 404 application/json; admin: 401 application/json")
             if new.get(key) == expected:
                 continue
         if _now_needs_a_key(old.get(key), new.get(key)):

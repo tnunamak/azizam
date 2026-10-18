@@ -379,3 +379,21 @@ def test_protocol_can_be_saved_off_and_changed_without_touching_unused_fields(tm
     assert writes[-1][1]['probe_connection_changed'] is True
     assert writes[-1][1]['check']['status'] == 'not_started'
     assert writes[-1][1]['tests'] == {}
+
+
+@pytest.mark.parametrize('top_level', [False, True])
+def test_protocol_key_uses_actual_connection_origin_when_legacy_endpoint_differs(tmp_path, top_level):
+    saved = record()
+    connection = {'dispatch': 'protocol', 'protocol': 'openai-compatible', 'address': 'http://127.0.0.1:9090/native',
+                  'credentials': {'control': {'secret_ref': 'separate-control-ref', 'origin': 'http://127.0.0.1:9090'}}}
+    (saved if top_level else saved['config'])['connection'] = connection
+    updated, _, writes = apply(saved, {'carrier': 'config.api_key', 'operation': 'add', 'value': 'protocol-new-key'})
+    active = (updated if top_level else updated['config'])['connection']
+    assert writes == [('protocol-new-key', 'http://127.0.0.1:9090')]
+    assert active['credentials']['inference']['origin'] == 'http://127.0.0.1:9090'
+    assert active['credentials']['control'] == connection['credentials']['control']
+    shown = engine_admin.engine_view(load_engine_catalog(), updated, db_path=tmp_path / 'admin.db')
+    assert shown['key']['origin'] == 'http://127.0.0.1:9090'
+    assert not any(row['code'] == 'engine_credential_origin_mismatch' for row in shown['attention'])
+    cleared, _, _ = apply(updated, {'carrier': 'config.api_key', 'operation': 'clear', 'entry_id': shown['key']['entry_id']})
+    assert 'inference' not in (cleared if top_level else cleared['config'])['connection']['credentials']

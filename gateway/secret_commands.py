@@ -352,13 +352,14 @@ def provider_key_entry_id(record: Mapping[str, Any]) -> str:
     return "ent_" + hashlib.sha256((str(record.get("id") or "") + ":inference-key").encode()).hexdigest()[:16]
 
 
-def bind_protocol_inference(config: dict[str, Any]) -> None:
+def bind_protocol_inference(config: dict[str, Any], *, connection: dict[str, Any] | None = None) -> None:
     """Project the selected inference-key binding into explicitly opted-in protocol data.
 
     The control credential remains independent. References and environment names
     are copied as metadata; a management write never reads the key back.
     """
-    connection = config.get("connection")
+    if connection is None:
+        connection = config.get("connection")
     if not isinstance(connection, dict) or connection.get("dispatch") != "protocol":
         return
     reference = config.get("api_key_secret_id")
@@ -378,7 +379,12 @@ def bind_protocol_inference(config: dict[str, Any]) -> None:
 
 
 def _provider_key(record: dict[str, Any], command: Mapping[str, Any], put: Put, origin: str | None, out: Outcome) -> None:
+    from gateway.engine_contract_view import connection_config
+
     config = record.setdefault("config", {})
+    connection = connection_config(record)
+    if connection.get("dispatch") == "protocol":
+        origin = secret_refs.origin_or_none(str(connection.get("address") or ""))
     held = bool(config.get("api_key_secret_id") or config.get("api_key_env") or config.get("api_key_ref")
                 or (record.get("secret_refs") or {}).get("api_key"))
     operation = command["operation"]
@@ -407,11 +413,10 @@ def _provider_key(record: dict[str, Any], command: Mapping[str, Any], put: Put, 
     config.pop("api_key_ref", None)
     record.get("secret_refs", {}).pop("api_key", None)
     if operation == "clear":
-        connection = config.get("connection")
         if isinstance(connection, dict) and connection.get("dispatch") == "protocol" and isinstance(connection.get("credentials"), dict):
             connection["credentials"].pop("inference", None)
     else:
-        bind_protocol_inference(config)
+        bind_protocol_inference(config, connection=connection if isinstance(connection, dict) else None)
     out.changed = True
 
 
