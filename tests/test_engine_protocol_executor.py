@@ -372,6 +372,34 @@ def test_an_sse_stream_cut_inside_its_last_event_is_still_a_failure() -> None:
             collect(run(ex.invoke(conn(), req("chat", {}))))
 
 
+def nested_json(depth: int) -> bytes:
+    return b'{"a":' * depth + b"1" + b"}" * depth
+
+
+DEEP_STREAMS = {
+    "sse mapped": ({"framing": "sse", "map": [{"copy": {"from": "/body", "to": "/deep"}}]}, lambda e: b"data: " + e + b"\n\n"),
+    "sse terminal path": ({"framing": "sse", "terminal": {"path": "/b", "equals": True}}, lambda e: b"data: " + e + b"\n\n"),
+    "ndjson mapped": ({"framing": "ndjson", "map": [{"copy": {"from": "/body", "to": "/deep"}}]}, lambda e: e + b"\n"),
+    "ndjson mapped, no final newline": ({"framing": "ndjson", "map": [{"copy": {"from": "/body", "to": "/deep"}}]}, lambda e: e),
+    "ndjson terminal path, no final newline": ({"framing": "ndjson", "terminal": {"path": "/b", "equals": True}}, lambda e: e),
+}
+
+
+@pytest.mark.parametrize("name", list(DEEP_STREAMS))
+def test_a_stream_event_deeper_than_the_json_depth_budget_is_refused(name: str) -> None:
+    response, wire = DEEP_STREAMS[name]
+    ops = {"chat": {"class": "generate", "request": {"method": "POST", "path": "/c", "body": {"encoding": "json"}}, "response": response}}
+    ex, _ = make(ops, lambda r: httpx.Response(200, content=wire(nested_json(40))), budgets=Budgets(max_json_depth=32))
+    with pytest.raises(BudgetExceeded) as raised:
+        collect(run(ex.invoke(conn(), req("chat", {}))))
+    assert raised.value.budget == "max_json_depth"
+    ok, _ = make(ops, lambda r: httpx.Response(200, content=wire(nested_json(20)) + (b"" if "ndjson" in name else b"")), budgets=Budgets(max_json_depth=32))
+    try:
+        collect(run(ok.invoke(conn(), req("chat", {}))))
+    except TransportFailure:
+        pass  # a terminal that never came is a different failure; the depth is within budget
+
+
 def test_a_stream_map_turns_each_event_into_a_dict() -> None:
     ops = {"chat": {"class": "generate", "request": {"method": "POST", "path": "/c", "body": {"encoding": "json"}}, "response": {
         "framing": "ndjson", "terminal": {"path": "/done", "equals": True},
