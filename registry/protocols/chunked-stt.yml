@@ -4,7 +4,9 @@
 # (gateway/engine_protocol/chunked_stt.py) sends each upload as a multipart
 # request, bounds and classifies the engine's answer, and relays event streams.
 # The chunk planner and the merge of chunk transcripts stay in
-# gateway/stt_chunking.py, which the adapter drives.
+# gateway/stt_chunking.py, which the adapter drives. The operation names the
+# route; a native event stream is a choice core makes for one run (any route),
+# not an operation of its own.
 protocol_version: 1
 id: chunked-stt
 title: OpenAI-shaped transcription route
@@ -14,4 +16,3 @@ serves: [transcriptions]
 operations:
   stt.transcribe: {class: generate}
   stt.translate: {class: generate}
-  stt.stream: {class: generate}

@@ -120,6 +120,7 @@ from gateway.engine_protocol.errors import UnsupportedByAdapter as ProtocolUnsup
 from gateway.engine_protocol import node_info
 from gateway.engine_protocol import node_ui_graph
 from gateway.engine_protocol.node_validation import validate_workflow_graph
+from gateway.engine_protocol import chunked_stt
 from gateway import custom_voices
 from gateway import voice_audio
 from gateway import voices_api
@@ -763,13 +764,18 @@ tts_cfg = config.get("backends", {}).get("tts", {})
 TTS_ENABLED = bool_from_config(tts_cfg.get("enabled"), True)
 TTS_HOST = f"http://{tts_cfg.get('host', '127.0.0.1')}:{tts_cfg.get('port', 8880)}"
 TTS_TIMEOUT = int(tts_cfg.get("timeout", 120))
-# The in-tree speech client, reached through the adapter interface (contract v2.1 section 4).
-_TTS_ADAPTER = tts_adapter.InlineTtsAdapter()
+_TTS_BACKEND_ID = "tts"
 
 
-def _tts_connection(address: str) -> AdapterConnection:
-    """The speech engine at ``address``, with the read timeout every speech call has always had."""
-    return AdapterConnection(address=address, timeouts=AdapterTimeouts(connect_s=10, first_byte_s=TTS_TIMEOUT, total_s=TTS_TIMEOUT))
+def _tts_adapter(service_id: str = _TTS_BACKEND_ID):
+    """The reviewed adapter a speech service's record selects (contract v2.1 section 4); core never branches on what it is."""
+    return reviewed_adapters.adapter_for_backend((config.get("backends") or {}).get(service_id) or {}, "speech")
+
+
+def _tts_connection(address: str, read_s: float | None = None) -> AdapterConnection:
+    """The speech engine at ``address``; the read timeout is every speech call's own unless a call names its own."""
+    read = read_s or TTS_TIMEOUT
+    return AdapterConnection(address=address, timeouts=AdapterTimeouts(connect_s=10, first_byte_s=read, total_s=read))
 
 # STT backend
 stt_cfg = config.get("backends", {}).get("stt", {})
@@ -3682,16 +3688,19 @@ async def _probe_voice_quality(reference: Path) -> dict[str, Any] | None:
             reason = "engine_would_not_start"
         else:
             try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
-                    resp = await client.post(f"{base_url}/v1/audio/voice-check", json={"voice_ref": str(reference)})
-                if resp.status_code == 200:
+                resp = await _tts_adapter(service_id).invoke(
+                    _tts_connection(base_url, 120), "speech.voice_check",
+                    AdapterRequest(op="speech.voice_check", body={"voice_ref": str(reference)}),
+                )
+                if resp.status == 200:
                     data = resp.json()
                     return {"speaker_similarity": float(data["speaker_similarity"]), "encoder": data.get("encoder"), "engine": engine_id}
-                reason = "gpu_busy" if resp.status_code == 503 else f"engine_http_{resp.status_code}"
-                if resp.status_code != 503:
+                reason = "gpu_busy" if resp.status == 503 else f"engine_http_{resp.status}"
+                if resp.status != 503:
                     break
-            except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-                reason = f"engine_error: {type(exc).__name__}"
+            except (TransportFailure, ValueError, KeyError, TypeError) as exc:
+                # A transport failure names the httpx error it came from, as the reason always did.
+                reason = f"engine_error: {type(exc.__cause__ if isinstance(exc, TransportFailure) else exc).__name__}"
         if attempt < 2:
             await asyncio.sleep(5)
     return {"error": reason}
@@ -3717,18 +3726,18 @@ async def _design_voice(instruct: str, script: str, seed: int) -> bytes:
     if not_ready is not None:
         raise custom_voices.VoiceError(503, "backend_unavailable", "The voice design engine could not be started.")
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(180, connect=10)) as client:
-            resp = await client.post(
-                f"{base_url}/v1/audio/speech",
-                json=voice_design.design_request(_voice_design_settings(), script=script, instructions=instruct, seed=seed),
-            )
-    except httpx.HTTPError as exc:
+        resp = await _tts_adapter(service_id).invoke(
+            _tts_connection(base_url, 180), "speech.design",
+            AdapterRequest(op="speech.design", body=voice_design.design_request(
+                _voice_design_settings(), script=script, instructions=instruct, seed=seed)),
+        )
+    except TransportFailure as exc:
         raise custom_voices.VoiceError(502, "backend_error", f"Voice design failed: {exc}") from exc
-    if resp.status_code == 400:
+    if resp.status == 400:
         raise custom_voices.VoiceError(400, "invalid_prompt", "The voice design engine rejected this description.", param="prompt")
-    if resp.status_code != 200:
-        raise custom_voices.VoiceError(502, "backend_error", f"Voice design failed with HTTP {resp.status_code}.")
-    return resp.content
+    if resp.status != 200:
+        raise custom_voices.VoiceError(502, "backend_error", f"Voice design failed with HTTP {resp.status}.")
+    return resp.raw
 
 
 async def _reference_transcript(owner: str | None, meta: Mapping[str, Any], reference: Path) -> str:
@@ -3739,14 +3748,18 @@ async def _reference_transcript(owner: str | None, meta: Mapping[str, Any], refe
     if not isinstance(stt, Mapping) or not stt.get("host"):
         raise custom_voices.VoiceError(503, "backend_unavailable", "Transcribing the voice sample needs the stt service.")
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
-            resp = await client.post(
-                f"http://{stt['host']}:{stt['port']}/v1/audio/transcriptions",
-                files={"file": ("reference.wav", reference.read_bytes(), "audio/wav")},
-                data={"model": str(stt.get("default_model") or "parakeet-tdt-0.6b-v3")},
-            )
-        text = str(resp.json().get("text") or "").strip() if resp.status_code == 200 else ""
-    except (httpx.HTTPError, ValueError, OSError):
+        clip = chunked_stt.SttUpload(
+            op="stt.transcribe",
+            parts={"file": ("reference.wav", reference.read_bytes(), "audio/wav")},
+            body={"model": str(stt.get("default_model") or "parakeet-tdt-0.6b-v3")},
+        )
+        resp = await _stt_adapter(stt).invoke(
+            AdapterConnection(address=f"http://{stt['host']}:{stt['port']}",
+                              timeouts=AdapterTimeouts(connect_s=10, first_byte_s=120, total_s=120)),
+            "stt.transcribe", clip,
+        )
+        text = str(resp.json().get("text") or "").strip() if resp.status == 200 else ""
+    except (TransportFailure, ValueError, OSError):
         text = ""
     if not text:
         raise custom_voices.VoiceError(503, "backend_unavailable", "The voice sample could not be transcribed for this engine.")
@@ -3867,6 +3880,7 @@ async def _stream_tts_upstream(
     stream_format: str,
     response_format: str,
     native_rate: int,
+    service_id: str = _TTS_BACKEND_ID,
 ) -> Response:
     """Forward an engine's PCM stream to the client while it is still synthesizing.
 
@@ -3881,7 +3895,7 @@ async def _stream_tts_upstream(
     # including cancellation.
     try:
         try:
-            upstream = await _TTS_ADAPTER.invoke(
+            upstream = await _tts_adapter(service_id).invoke(
                 _tts_connection(url.removesuffix(tts_adapter.SPEECH_PATH)), "speech.stream",
                 AdapterRequest(op="speech.stream", headers=headers, raw_body=body),
             )
@@ -4172,11 +4186,12 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             stream_format=stream_mode,
             response_format=requested_response_format,
             native_rate=native_rate,
+            service_id=tts_service_id,
         )
 
     try:
         # The adapter owns the HTTP client; the answer handling below is unchanged.
-        resp = await _TTS_ADAPTER.invoke(
+        resp = await _tts_adapter(tts_service_id).invoke(
             _tts_connection(_tts_host), "speech.synthesize",
             AdapterRequest(op="speech.synthesize", headers=headers, raw_body=body),
         )
@@ -4290,6 +4305,18 @@ def audio_translation_unsupported_response() -> Response:
         param="file",
         code="unsupported_audio_translation",
     )
+
+
+def _stt_adapter(record: Mapping[str, Any]):
+    """The reviewed adapter an STT service's record selects (contract v2.1 section 4); core never branches on what it is."""
+    return reviewed_adapters.adapter_for_backend(record, "transcriptions")
+
+
+def _stt_connection(execution: stt_chunking.SttExecutionConfig) -> AdapterConnection:
+    """The STT engine of one execution snapshot, with the timeouts its requests have always had."""
+    return AdapterConnection(address=execution.host, timeouts=AdapterTimeouts(
+        connect_s=min(10.0, execution.timeout_seconds), first_byte_s=execution.timeout_seconds,
+        total_s=execution.timeout_seconds))
 
 
 def _stt_execution_snapshot(
@@ -4737,7 +4764,7 @@ async def proxy_stt_request(
             cancellation_registry().signal(receipt.request_id)
 
     async def execute() -> Response:
-        nonlocal execution
+        nonlocal execution, cleanup_deferred
         try:
             if "multipart/form-data" not in request.headers.get("content-type", ""):
                 return openai_error_response("No file part in the request.", status_code=400, param="file", code="missing_file")
@@ -4858,111 +4885,50 @@ async def proxy_stt_request(
             headers = prepare_downstream_headers(request.headers, auth_context, execution.service_id, f"/v1/audio/{operation}", backend_config=execution.backend_config)
             pop_header(headers, "content-type")
             pop_header(headers, "content-length")
-            url = f"{execution.host}/v1/audio/{operation}"
-            client = httpx.AsyncClient(timeout=httpx.Timeout(execution.timeout_seconds, connect=min(10.0, execution.timeout_seconds)))
-            cleanup.add("http_client", client.aclose)
+            streams = wants_stream and native_stream and len(uploads) == 1
 
-            async def send_files(files: list[tuple[str, tuple[str, Any, str]]]) -> stt_chunking.UpstreamResponse:
-                try:
-                    outgoing = client.build_request("POST", url, headers=headers, data=multipart_fields, files=files)
-                    upstream = await stt_chunking.await_with_cancellation(client.send(outgoing, stream=True), cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation)
-                    cleanup.add("upstream_response", upstream.aclose)
-                    try:
-                        body = await stt_chunking.read_bounded_response(upstream, max_bytes=execution.max_response_bytes, cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation)
-                    finally:
-                        await cleanup.release("upstream_response", upstream.aclose)
-                    return stt_chunking.UpstreamResponse(upstream.status_code, body, dict(upstream.headers))
-                except httpx.TimeoutException as error:
-                    raise stt_chunking.SttBackendTimeout("STT backend timed out") from error
-                except httpx.ConnectError as error:
-                    raise stt_chunking.SttBackendUnavailable("STT backend is unavailable") from error
-                except httpx.TransportError as error:
-                    # Reset/closed/protocol error after the connection was made: the engine died
-                    # mid-request (typically a GPU out-of-memory kill). Another engine may serve it.
-                    raise stt_chunking.SttBackendConnectionLost("STT backend dropped the connection") from error
+            def record_outcome(outcome: stt_chunking.ChunkingOutcome) -> None:
+                # Receipts are core's: the adapter reports the chunking outcome before any later request.
+                receipt.metadata["stt"].update({"attempts_started": outcome.attempts_started, "chunked": outcome.mode == "chunked"})
+                if outcome.fallback_reason:
+                    receipt.add_fallback_reason(outcome.fallback_reason)
+                if outcome.mode == "chunked":
+                    receipt.metadata["status_code"] = 200
+                elif outcome.mode == "upstream_error" and outcome.upstream_response is not None:
+                    receipt.metadata["status_code"] = outcome.upstream_response.status_code
+                elif streams:
+                    receipt.metadata["status_code"] = 200
 
-            async def post_file(path: Path, filename: str, media_type: str) -> stt_chunking.UpstreamResponse:
-                handle = path.open("rb")
-                cleanup.add("chunk_upload_handle", handle.close)
-                try:
-                    return await send_files([("file", (filename, handle, media_type))])
-                finally:
-                    await cleanup.release("chunk_upload_handle", handle.close)
-
-            async def prepared_wav(upload: Any) -> Path:
-                """Decode the upload to 16 kHz mono WAV, the only input audio.cpp engines accept."""
-                destination = workspace / "normalized-16k.wav"
-                cleanup.add("normalized_wav", lambda: destination.unlink(missing_ok=True))
-                try:
-                    await stt_chunking.run_media_command(
-                        [
-                            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                            "-i", os.fspath(stt_chunking.source_path(upload)),
-                            "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le",
-                            os.fspath(destination),
-                        ],
-                        timeout_seconds=execution.timeout_seconds,
-                        cancellation_waiters=waiters,
-                        deadline_at=deadline_at,
-                        on_cancel=signal_cancellation,
-                        max_output_bytes=execution.max_media_output_bytes,
-                    )
-                except stt_chunking.SttMediaCommandFailed as error:
-                    # ffmpeg ran and refused the file: the caller sent something that is not audio.
-                    raise stt_chunking.SttInvalidAudio("STT input is not readable audio") from error
-                size = destination.stat().st_size if destination.exists() else 0
-                if size <= 44:
-                    raise stt_chunking.SttInvalidAudio("STT input holds no decodable audio")
-                if size > execution.max_decoded_bytes:
-                    raise stt_chunking.SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
-                return destination
-
-            async def open_stream(path: Path, filename: str) -> Response:
-                """Relay an engine's SSE transcript while it is being produced."""
-                nonlocal cleanup_deferred
-                handle = path.open("rb")
-                cleanup.add("stream_upload_handle", handle.close)
-                outgoing = client.build_request(
-                    "POST", url, headers=headers, data=multipart_fields,
-                    files=[("file", (filename, handle, "audio/wav" if wav16k_input else "application/octet-stream"))],
-                )
-                try:
-                    upstream = await stt_chunking.await_with_cancellation(
-                        client.send(outgoing, stream=True),
-                        cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation,
-                    )
-                except httpx.TimeoutException as error:
-                    raise stt_chunking.SttBackendTimeout("STT backend timed out") from error
-                except httpx.ConnectError as error:
-                    raise stt_chunking.SttBackendUnavailable("STT backend is unavailable") from error
-                cleanup.add("upstream_response", upstream.aclose)
-                if upstream.status_code != 200:
-                    body = await stt_chunking.read_bounded_response(
-                        upstream, max_bytes=execution.max_response_bytes,
-                        cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation,
-                    )
-                    return _stt_response_from_upstream(
-                        stt_chunking.UpstreamResponse(upstream.status_code, body, dict(upstream.headers))
-                    )
+            reply = await _stt_adapter(execution.backend_config).invoke(
+                _stt_connection(execution),
+                "stt.translate" if operation == "translations" else "stt.transcribe",
+                chunked_stt.SttRun(
+                    op="stt.translate" if operation == "translations" else "stt.transcribe",
+                    headers=headers,
+                    execution=execution,
+                    fields=fields,
+                    multipart_fields=multipart_fields,
+                    uploads=uploads,
+                    workspace=workspace,
+                    cleanup=cleanup,
+                    cancellation_waiters=waiters,
+                    deadline_at=deadline_at,
+                    on_cancel=signal_cancellation,
+                    on_attempt_started=lambda count: receipt.metadata["stt"].update({"attempts_started": count}),
+                    on_outcome=record_outcome,
+                    wav16k_input=wav16k_input,
+                    stream=streams,
+                ),
+            )
+            if isinstance(reply, ProtocolStreamReply):
+                # Relay the engine's event stream while it is being produced. The adapter reads each
+                # chunk under the run's cancellation, deadline and byte budget; the cleanup owner
+                # (which holds the upstream response) closes when the relay ends.
                 cleanup_deferred = True
 
                 async def relay():
                     try:
-                        total = 0
-                        iterator = upstream.aiter_raw().__aiter__()
-                        while True:
-                            try:
-                                chunk = await stt_chunking.await_with_cancellation(
-                                    iterator.__anext__(),
-                                    cancellation_waiters=waiters,
-                                    deadline_at=deadline_at,
-                                    on_cancel=signal_cancellation,
-                                )
-                            except StopAsyncIteration:
-                                break
-                            total += len(chunk)
-                            if total > execution.max_response_bytes:
-                                raise stt_chunking.SttResponseLimitExceeded("STT backend response exceeds the configured limit")
+                        async for chunk in reply:
                             yield chunk
                     except (ClientDisconnect, stt_chunking.SttCancelled) as error:
                         signal_cancellation()
@@ -4996,62 +4962,16 @@ async def proxy_stt_request(
                     media_type="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
                 )
-
-            async def post_uploads() -> stt_chunking.UpstreamResponse:
-                opened: list[tuple[str, Any, str, str]] = []
+            if reply.mode == "chunked":
+                return Response(content=json.dumps(reply.body), status_code=200, media_type="application/json")
+            upstream = stt_chunking.UpstreamResponse(reply.status, reply.raw, reply.headers)
+            if reply.mode != "direct":
+                return _stt_response_from_upstream(upstream)
+            receipt.metadata["status_code"] = reply.status
+            response = _stt_response_from_upstream(upstream)
+            if wants_stream and not native_stream and reply.status == 200:
                 try:
-                    for index, (name, upload) in enumerate(uploads):
-                        handle = stt_chunking.source_path(upload).open("rb")
-                        opened.append((name, handle, upload.filename or "audio", upload.content_type or "application/octet-stream"))
-                        cleanup.add(f"direct_upload_handle_{index}", handle.close)
-                    return await send_files([(name, (filename, handle, media_type)) for name, handle, filename, media_type in opened])
-                finally:
-                    for index, (_name, handle, _filename, _media_type) in enumerate(opened):
-                        await cleanup.release(f"direct_upload_handle_{index}", handle.close)
-
-            prepared_source: Path | None = None
-            if len(uploads) == 1:
-                _name, upload = uploads[0]
-                if wav16k_input:
-                    prepared_source = await prepared_wav(upload)
-                outcome = await stt_chunking.execute_chunking(
-                    source_path=prepared_source or stt_chunking.source_path(upload),
-                    source_stem=Path(upload.filename or "audio").stem or "audio",
-                    fields=fields,
-                    config=execution,
-                    post_file=lambda path, filename: post_file(path, filename, "audio/wav"),
-                    cancellation_waiters=waiters,
-                    deadline_at=deadline_at,
-                    on_cancel=signal_cancellation,
-                    on_attempt_started=lambda count: receipt.metadata["stt"].update({"attempts_started": count}),
-                    cleanup=cleanup,
-                )
-            else:
-                outcome = stt_chunking.ChunkingOutcome("passthrough", 0, "multiple_files")
-            receipt.metadata["stt"].update({"attempts_started": outcome.attempts_started, "chunked": outcome.mode == "chunked"})
-            if outcome.fallback_reason:
-                receipt.add_fallback_reason(outcome.fallback_reason)
-            if outcome.mode == "chunked":
-                receipt.metadata["status_code"] = 200
-                return Response(content=json.dumps(outcome.merged_payload), status_code=200, media_type="application/json")
-            if outcome.mode == "upstream_error" and outcome.upstream_response is not None:
-                receipt.metadata["status_code"] = outcome.upstream_response.status_code
-                return _stt_response_from_upstream(outcome.upstream_response)
-            if wants_stream and native_stream and len(uploads) == 1:
-                receipt.metadata["status_code"] = 200
-                return await open_stream(
-                    prepared_source or stt_chunking.source_path(uploads[0][1]),
-                    "audio.wav" if prepared_source else (uploads[0][1].filename or "audio"),
-                )
-            if prepared_source is not None:
-                direct = await post_file(prepared_source, "audio.wav", "audio/wav")
-            else:
-                direct = await post_uploads()
-            receipt.metadata["status_code"] = direct.status_code
-            response = _stt_response_from_upstream(direct)
-            if wants_stream and not native_stream and direct.status_code == 200:
-                try:
-                    events = speech_stream.transcript_json_to_sse(json.loads(direct.body))
+                    events = speech_stream.transcript_json_to_sse(json.loads(reply.raw))
                 except (ValueError, TypeError):
                     return _stt_error("STT backend returned an invalid JSON transcript for streaming.", status_code=502, code="invalid_stt_stream_response")
                 return Response(
