@@ -732,6 +732,11 @@ def legacy_lifecycle_from_service(record: Mapping[str, Any]) -> Mapping[str, Any
     return nested if isinstance(nested, Mapping) else {}
 
 
+def _is_argument_entry(arg: Any) -> bool:
+    """A command argument that is a secret entry (stored) or its view (``{"id", "configured"}``): not text, but not unknown."""
+    return isinstance(arg, Mapping) and (_refs.is_secret_entry(arg) or ("id" in arg and "configured" in arg))
+
+
 def _v2_process(lifecycle: Mapping[str, Any]) -> dict[str, Any] | None:
     if not lifecycle:
         return None
@@ -747,7 +752,7 @@ def _v2_process(lifecycle: Mapping[str, Any]) -> dict[str, Any] | None:
         if key in driver_config:
             value = driver_config[key]
             if key in {"start", "stop", "status"} and (
-                not isinstance(value, list) or not all(isinstance(arg, str) for arg in value)
+                not isinstance(value, list) or not all(isinstance(arg, str) or _is_argument_entry(arg) for arg in value)
             ):
                 process["needs_owner_conversion"] = True
             else:
@@ -813,7 +818,7 @@ def service_record_v2(record: Mapping[str, Any], *, public: bool = True) -> dict
     process = record.get("process") if isinstance(record.get("process"), Mapping) else _v2_process(lifecycle)
     if process is not None and public:
         # The projected block narrowed to an allow-list of fields. It is never a copy of what the gateway runs.
-        process = projection.public_process(process)
+        process = projection.public_process(process, projected=True)  # the record above is already the projection
     observations = copy.deepcopy(record.get("observations")) if isinstance(record.get("observations"), Mapping) else {}
     if not observations and isinstance(lifecycle.get("driver_config"), Mapping):
         endpoint = lifecycle["driver_config"].get("health_endpoint")

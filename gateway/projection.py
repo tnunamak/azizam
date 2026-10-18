@@ -485,12 +485,16 @@ def scrub_value(value: Any, secrets: Any = ()) -> Any:
     return value
 
 
-def public_process(process: Mapping[str, Any]) -> dict[str, Any]:
-    """The process fields the v2 record view may show: an allow-list, projected like the rest of a record."""
+def public_process(process: Mapping[str, Any], *, projected: bool = False) -> dict[str, Any]:
+    """The process fields the v2 record view may show: an allow-list.
+
+    A stored process block is projected like the rest of a record. A block taken from a record that was already
+    projected (``projected=True``) is only narrowed: projecting a view again would read its entries as plain values.
+    """
     from gateway import projection_types
 
-    projected = project_policy(projection_types.PROCESS, process).tree or {}
-    return {key: projected[key] for key in projection_types.PUBLIC_PROCESS_FIELDS if key in projected}
+    tree = process if projected else (project_policy(projection_types.PROCESS, process).tree or {})
+    return {key: tree[key] for key in projection_types.PUBLIC_PROCESS_FIELDS if key in tree}
 
 
 def public_json(value: Any) -> Any:

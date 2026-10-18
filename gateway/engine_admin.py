@@ -272,6 +272,10 @@ def lifecycle_block(values: Mapping[str, Any], definition: Mapping[str, Any]) ->
     mode = str(values.get("lifecycle_mode") or _field_default(definition, "lifecycle_mode", "external"))
     if mode != "managed":
         return None
+    if "lifecycle_start" in values and values["lifecycle_start"] is None:
+        # The page read a command that holds a secret entry as ``null`` (it cannot be edited as text, decision D27) and sent
+        # that back: the stored command is kept, which a record built without a lifecycle block does (``write_engine``).
+        return None
     start = _command_value(values.get("lifecycle_start"))
     if not start:
         raise DraftError("Type the command that starts the server.", field="lifecycle_start")
