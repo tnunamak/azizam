@@ -277,6 +277,19 @@ def test_failed_runs_keep_logs_without_scratch(world: World) -> None:
     assert world.run_dirs() == []
 
 
+def test_a_timed_out_step_fails_with_its_name_and_receipt(world: World) -> None:
+    timeout = world.bin / "timeout"
+    timeout.write_text("#!/usr/bin/env bash\n"
+                       "if [[ $* == *run-hermetic-pytest.sh* ]]; then exit 124; fi\n"
+                       "while [[ $1 != 1200s ]]; do shift; done\n"
+                       "shift; exec \"$@\"\n")
+    timeout.chmod(0o755)
+    result = world.run()
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "python-hermetic exceeded the 1200-second step limit" in result.stdout
+    assert "python-hermetic\t124\t" in (world.receipts / "steps.tsv").read_text()
+
+
 def test_abandoned_and_legacy_kept_scratch_are_swept(world: World) -> None:
     root = world.home / ".tmp"
     for name in ("SIGKILLED", "OLDFAILURE"):
