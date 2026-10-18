@@ -171,8 +171,9 @@ load, unload and so on), `auth`, `errors` (advice rows) and an `executor`.
   - one async pattern: submit, then poll a status path, then fetch an
     artifact, with typed id, status and asset selectors
 
-  The **mapping language** is fixed: field copy, rename, constants, defaults,
-  enums mapped by table, and simple conditionals on presence. No loops, no
+  The **mapping language** is fixed at nine rules: copy, rename, set
+  (constant), default, drop, enum (table), clamp, stringify, and `when`, with
+  `present`, `equals` and `in` conditions (D14). No loops, no
   arbitrary expressions, no side effects, and size, depth and time budgets.
   The claim "a new HTTP-shaped engine needs no code" applies exactly to this
   grammar. It is proven by a second-engine fixture for each pattern.
