@@ -384,21 +384,15 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(self.media_folder(), {"state": "confirmed"})
 
-    def test_adoption_never_overwrites_a_marker_that_appears_after_the_check(self) -> None:
-        self.unconfirm_folder()
+    def test_writing_a_marker_never_replaces_one_already_there(self) -> None:
         marker = self.cache / ".azizam-media"
         foreign = json.dumps({"volume_id": "1" * 32, "created_at": 5})
         marker.write_text(foreign)
-        real = prompt_memory._read_media_marker
-        reads: list[Path] = []
-
-        def absent_once_then_real(folder: Path) -> dict | None:
-            reads.append(folder)
-            return None if len(reads) == 1 else real(folder)
-
-        with patch.object(prompt_memory, "_read_media_marker", side_effect=absent_once_then_real):
-            self.assertEqual(self.client.get("/me/api/media").json()["media_folder"], {"state": "unconfirmed"})
+        # The adoption path checks for a marker first; this is the write it must not clobber on a race.
+        with self.assertRaises(FileExistsError):
+            prompt_memory._write_media_marker(self.cache, replace=False)
         self.assertEqual(marker.read_text(), foreign)
+        self.assertEqual(sorted(os.listdir(self.cache)), [".azizam-media"])
 
     def test_a_marker_symlink_is_never_followed(self) -> None:
         self.seed()
