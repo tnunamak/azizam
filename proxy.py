@@ -14103,6 +14103,8 @@ MCP_OAUTH = mcp_oauth.McpOAuth(mcp_oauth.McpOAuthDeps(
     audit=_mcp_oauth_audit,
     mcp_path=MCP_PATH,
 ))
+
+
 def _mount_mcp(app: FastAPI) -> None:
     if MCP_OAUTH_ENABLED:
         MCP_OAUTH.register(app)
