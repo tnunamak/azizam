@@ -36,11 +36,12 @@ const containers = [
   "config.process",
   "config.process.profile_apply",
 ];
-const connectionUrlFields = ["config.address", "config.base_url", "config.api_base", "config.default_base_url"];
+// Match service_base_url's precedence; address is used when no explicit base URL exists.
+const connectionUrlFields = ["config.base_url", "config.api_base", "config.default_base_url", "config.address"];
 
 /** A separate value after a credential flag is usually sensitive, whatever engine receives it. */
 export function credentialFlag(value: string): boolean {
-  return /(?:^|[-_])(?:key|token|secret|password|auth)(?:$|[-_])/i.test(value.trim());
+  return /(?:^|[-_/])(?:api[-_]?)?(?:key|token|secret|password|auth(?:orization)?)(?:$|[-_=])/i.test(value.trim());
 }
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
