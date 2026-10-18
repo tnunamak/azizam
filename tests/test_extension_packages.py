@@ -1114,6 +1114,33 @@ def test_an_index_from_before_the_digests_is_migrated_once_and_keeps_its_matchin
     assert entry == {"kind": "services", "id": "old-service", "sha256": installed_record_digest(record)}
 
 
+def test_the_digest_migration_leaves_no_raw_record_bytes_in_admin_db_or_its_wal(tmp_path):
+    from gateway import admin_store
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    marker = "http://localhost:9997/raw-record-marker"
+    record = {
+        "id": "old-service", "enabled": True, "name": "Old",
+        "config": {"base_url": marker},
+        "provenance": {"package_id": "old", "package_version": "1", "package_hash": "h"},
+    }
+    legacy = {"packages": {"old": {
+        "id": "old", "version": "1", "enabled": True, "package_hash": "h",
+        "installed_records": {"services": {"old-service": record}},
+    }}, "sources": [], "updated_at": 1}
+    admin_store.put_operator_setting(EXTENSION_PACKAGE_INDEX_SETTING_KEY, legacy, path=db)
+    assert marker.encode() in db.read_bytes() or any(
+        marker.encode() in candidate.read_bytes()
+        for candidate in tmp_path.iterdir() if candidate.name.startswith("admin.db")
+    )
+
+    admin_store.init_db(db)
+
+    for candidate in tmp_path.iterdir():
+        if candidate.name.startswith("admin.db"):
+            assert marker.encode() not in candidate.read_bytes(), candidate.name
+
+
 def _plan_naming_the_package_service(store_path, name: str):
     from gateway import admin_store
     from gateway.access_plans import plan_to_document
