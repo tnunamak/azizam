@@ -743,7 +743,7 @@ def _media_folder_refusal(method, template, response, row):
     if (method, template) != ("POST", "/me/api/media/remove-missing") or response.status_code != 503:
         return
     if response.json().get("error", {}).get("code") == "media_folder_unavailable":
-        row["outcome"] = "refused (contract)"
+        row["outcome"] = "metadata (contract)"
         row["rule"] = "no media folder was seen, so nothing was removed; runs no model"
         row["detail"] = ""
 
