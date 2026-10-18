@@ -641,8 +641,8 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
             base = request_base
             operations.append({"capability": cap_id, "method": "POST", "url": join_url(base, route["path"])})
     v2 = service_registry.service_record_v2(record)
-    v2["process"] = _redact_record_value(v2.get("process"))
     v2["connection"]["address"] = address
+    v2 = _redact_record_value(v2)
     return {
         "service_id": record.get("id"),
         "definition": definition["definition"],

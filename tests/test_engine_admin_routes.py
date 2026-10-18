@@ -990,6 +990,8 @@ def test_page_masks_environment_values_and_ignored_credential_headers(gateway, f
     registry = _registry(gateway)
     record = registry["services"]["masked-process"]
     record["process"] = {"driver": "process", "start": ["server"], "env": {"WORKSPACE": "test-private-env-value"}}
+    record["config"]["offerings"] = [{"id": "profile", "kind": "model", "start_profile": {
+        "env": {"PROFILE_KEY": "test-private-profile-value"}}}]
     record["config"]["headers"] = [{"name": "Authorization", "value": "test-private-header-value"},
                                       {"name": "X-Client", "value": "test-explicit-secret-header-value", "secret": True},
                                       {"name": "X-Workspace", "value": "public-value"}]
@@ -997,6 +999,7 @@ def test_page_masks_environment_values_and_ignored_credential_headers(gateway, f
     response = (admin if administrator else owner).get("/admin/api/engines/masked-process")
     assert response.status_code == 200
     assert "test-private-env-value" not in response.text
+    assert "test-private-profile-value" not in response.text
     assert "test-private-header-value" not in response.text
     assert "test-explicit-secret-header-value" not in response.text
     view = response.json()["engine"]
