@@ -7,10 +7,13 @@
  *   x-azizam-admin-action: 1
  *   x-azizam-csrf: <token from GET /admin/api/session>
  * The CSRF token is fetched lazily, cached, and refreshed once on a
- * 403 admin_csrf_required (rolled session). No secret values are ever
+ * 403 admin_csrf_required (rolled session). A risky action from a stale
+ * session answers 401 reauth_required; adminFetch then opens the shared
+ * confirm prompt (lib/reauth.ts) and retries once. No secret values are ever
  * logged by this module. */
 
 import { networkFetch } from "./network-error";
+import { parseReauth, requestReauth } from "./reauth";
 import { QueryClient } from "@tanstack/react-query";
 
 const SERVICE_REGISTRY_PATH = "/admin/api/operator/service-registry";
@@ -615,16 +618,98 @@ async function rawFetch(
   });
 }
 
+interface Answer {
+  response: Response;
+  payload: unknown;
+}
+
+/** One request with its CSRF token. On a 403 `admin_csrf_required` the session
+ * is refetched and the write sent again (the session rolled underneath us). */
+async function send(
+  path: string,
+  init: AdminFetchInit,
+  freshSession: boolean,
+  parse: boolean,
+): Promise<Answer> {
+  const isWrite = (init.method ?? "GET") !== "GET";
+  let csrfToken: string | null = null;
+  if (isWrite) {
+    csrfToken =
+      (await fetchSession(freshSession ? { force: true } : undefined)).actor
+        .csrf_token || null;
+  }
+
+  const read = async (response: Response): Promise<Answer> => ({
+    response,
+    // A download keeps its body for the caller unless the server refused it.
+    payload:
+      response.status === 204 || (!parse && response.ok)
+        ? undefined
+        : await response.json().catch(() => null),
+  });
+
+  let answer = await read(await rawFetch(path, init, csrfToken));
+  if (
+    !answer.response.ok &&
+    answer.response.status === 403 &&
+    isWrite &&
+    isErrorEnvelope(answer.payload) &&
+    answer.payload.error.code === CSRF_REQUIRED_CODE
+  ) {
+    const fresh = await fetchSession({ force: true });
+    answer = await read(
+      await rawFetch(path, init, fresh.actor.csrf_token || null),
+    );
+  }
+  return answer;
+}
+
+/** Send the request; when the gateway asks the person to confirm it is them
+ * (`401 reauth_required`), wait for the one shared prompt and send it once
+ * more. A cancelled prompt leaves the first answer, so callers see the
+ * original `reauth_required` ApiError. */
+async function sendWithReauth(
+  path: string,
+  init: AdminFetchInit,
+  parse: boolean,
+): Promise<Answer> {
+  const first = await send(path, init, false, parse);
+  const reauth =
+    first.response.status === 401 ? parseReauth(first.payload) : null;
+  if (!reauth || !(await requestReauth(reauth))) return first;
+  // Confirming re-issues the session cookie, so the CSRF token may differ.
+  return send(path, init, true, parse);
+}
+
+function toApiError(
+  { response, payload }: Answer,
+  method: string,
+  path: string,
+): ApiError {
+  if (isErrorEnvelope(payload)) {
+    return new ApiError(
+      payload.error.code,
+      payload.error.message,
+      response.status,
+      payload,
+    );
+  }
+  return new ApiError(
+    "unexpected_response",
+    `${method} ${path} failed (${response.status})`,
+    response.status,
+  );
+}
+
 /** The one fetch wrapper every admin call goes through. Reads need only the
- * cookie; writes get the action + CSRF headers injected. On a 403
- * `admin_csrf_required` the session is refetched and the write retried once
- * (the session rolled underneath us). Throws `ApiError` on any non-2xx. */
+ * cookie; writes get the action + CSRF headers injected. A risky action from a
+ * stale session opens the shared confirm-it's-you prompt and is retried once.
+ * Throws `ApiError` on any non-2xx. */
 export async function adminFetch<T>(
   path: string,
   init: AdminFetchInit = {},
 ): Promise<T> {
   const method = init.method ?? "GET";
-  const isWrite = method !== "GET";
   const isRegistryMutation = isServiceRegistryMutation(path, method);
   let requestInit = init;
   if (isRegistryMutation && !hasHeader(init.headers, "If-Match")) {
@@ -641,56 +726,88 @@ export async function adminFetch<T>(
     };
   }
 
-  let csrfToken: string | null = null;
-  if (isWrite) {
-    csrfToken = (await fetchSession()).actor.csrf_token || null;
-  }
-
-  let response = await rawFetch(path, requestInit, csrfToken);
-  let payload: unknown =
-    response.status === 204
-      ? undefined
-      : await response.json().catch(() => null);
-
-  if (
-    !response.ok &&
-    response.status === 403 &&
-    isWrite &&
-    isErrorEnvelope(payload) &&
-    payload.error.code === CSRF_REQUIRED_CODE
-  ) {
-    const fresh = await fetchSession({ force: true });
-    response = await rawFetch(
-      path,
-      requestInit,
-      fresh.actor.csrf_token || null,
-    );
-    payload =
-      response.status === 204
-        ? undefined
-        : await response.json().catch(() => null);
-  }
-
-  if (!response.ok) {
-    if (isErrorEnvelope(payload)) {
-      throw new ApiError(
-        payload.error.code,
-        payload.error.message,
-        response.status,
-        payload,
-      );
-    }
-    throw new ApiError(
-      "unexpected_response",
-      `${method} ${path} failed (${response.status})`,
-      response.status,
-    );
-  }
+  const answer = await sendWithReauth(path, requestInit, true);
+  if (!answer.response.ok) throw toApiError(answer, method, path);
   if (isServiceRegistryResponse(path, method)) {
-    const etag = response.headers.get("etag");
+    const etag = answer.response.headers.get("etag");
     if (etag) serviceRegistryEtag = etag;
   }
-  return payload as T;
+  return answer.payload as T;
+}
+
+/** Save a file the gateway serves behind a sign-in check (an export). A plain
+ * link would show the raw JSON of a `reauth_required` answer; this asks for
+ * the confirm prompt, retries, then saves the bytes. */
+export async function adminDownload(
+  path: string,
+  fallbackName: string,
+): Promise<void> {
+  const answer = await sendWithReauth(path, {}, false);
+  if (!answer.response.ok) throw toApiError(answer, "GET", path);
+  const disposition = answer.response.headers.get("content-disposition") ?? "";
+  const name =
+    /filename="?([^";]+)"?/i.exec(disposition)?.[1]?.trim() || fallbackName;
+  const url = URL.createObjectURL(await answer.response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // The browser has the bytes once the click returns; free the blob after.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/** The CSRF token of the person's own sign-in. Any signed-in person has one
+ * on `/me/api/session`; `/admin/api/session` refuses members and is the
+ * fallback for an owner whose snapshot has none. Read fresh each time: these
+ * routes are rare, and confirming a password re-issues the cookie. */
+async function personCsrf(): Promise<string> {
+  const response = await networkFetch("/me/api/session", {
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  const snapshot = (await response.json().catch(() => null)) as {
+    csrf_token?: unknown;
+  } | null;
+  if (typeof snapshot?.csrf_token === "string" && snapshot.csrf_token)
+    return snapshot.csrf_token;
+  return (await fetchSession({ force: true })).actor.csrf_token;
+}
+
+/** POST to a /auth/api/ route that acts on the caller's own session. These
+ * routes take the CSRF header only. */
+async function authPost(path: string, body?: unknown): Promise<unknown> {
+  const response = await networkFetch(path, {
+    method: "POST",
+    headers: {
+      "x-azizam-csrf": await personCsrf(),
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    credentials: "same-origin",
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) throw toApiError({ response, payload }, "POST", path);
+  return payload;
+}
+
+/** Prove the signed-in person's password to the step-up prompt. The gateway
+ * re-issues the session cookie, so the cached CSRF token is dropped. A wrong
+ * password is `invalid_password` (401). */
+export async function confirmWithPassword(password: string): Promise<void> {
+  await authPost("/auth/api/reauth", { password });
+  resetSessionCache();
+}
+
+/** End every sign-in this person has, on every device including this one.
+ * Resolves with the page to open next (the sign-in page). */
+export async function signOutEverywhere(): Promise<string> {
+  const payload = await authPost("/auth/api/sign-out-everywhere");
+  const next = (payload as { next?: unknown } | null)?.next;
+  // Only a path on this site; anything else goes to the sign-in page.
+  return typeof next === "string" && /^\/(?!\/)/.test(next) ? next : "/sign-in/";
 }
 
 /** Run a registry mutation against the latest known snapshot ETag. */

@@ -19,6 +19,7 @@ import {
 import { CapNotice } from "@/components/product/cap-notice";
 import { PageHeader } from "@/components/product/page-header";
 import { ApiError } from "@/lib/api";
+import { REAUTH_REQUIRED_CODE } from "@/lib/reauth";
 import { productApi, type MemberStatusCapability } from "@/lib/product-api";
 import {
   activeCapRefusal,
@@ -74,7 +75,10 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
   });
   const retryStatus = () => void refetch();
   const model = useCapabilityViews(false);
-  const expired = error instanceof ApiError && error.status === 401;
+  const expired =
+    error instanceof ApiError &&
+    error.status === 401 &&
+    error.code !== REAUTH_REQUIRED_CODE;
   const refusal = activeCapRefusal(model.requests);
   // Home and Status read the same snapshot. If Home has no rows (an older
   // gateway), the Status rows go through the same model instead.

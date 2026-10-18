@@ -124,6 +124,16 @@ beforeEach(() => {
     "/admin/api/extensions": { extension_packages: { packages: {} } },
     "/admin/api/operator/host-commands": { enabled: false, revision: "0" },
     "/admin/api/settings/receipts": { retention_days: null, revision: "0" },
+    "/admin/api/settings/sessions": {
+      sessions: { idle_timeout_days: 30, absolute_lifetime_days: 90, step_up_minutes: 15 },
+      defaults: { idle_timeout_days: 30, absolute_lifetime_days: 90, step_up_minutes: 15 },
+      bounds: {
+        idle_timeout_days: [1, 90],
+        absolute_lifetime_days: [1, 365],
+        step_up_minutes: [1, 1440],
+      },
+      revision: "0",
+    },
     "/admin/api/settings/prompt-memory": {
       prompt_memory: {
         default_remember: true,
@@ -596,7 +606,7 @@ describe("People and Settings red-team regressions", () => {
     ).toBeInTheDocument();
     expect(
       container.querySelectorAll("[data-slot=settings-section]"),
-    ).toHaveLength(9);
+    ).toHaveLength(10);
     const receipts = screen.getByRole("region", { name: "Receipts" });
     expect(
       within(receipts).getByRole("combobox", { name: "Keep receipts" }),

@@ -65,6 +65,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { ReauthGate } from "./reauth-gate";
 import { ToastGate } from "./toast-gate";
 import { ErrorState } from "@/components/product/error-state";
 import { PageHeader } from "@/components/product/page-header";
@@ -1066,6 +1067,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <QueryClientProvider client={queryClient}>
         <Shell>{children}</Shell>
+        <ReauthGate />
         <ToastGate />
       </QueryClientProvider>
     </ThemeProvider>
