@@ -85,6 +85,26 @@ def test_process_argv_concurrent_start_and_bounded_stop(tmp_path):
     run(scenario())
 
 
+def test_idle_stop_keeps_gateway_event_loop_responsive(tmp_path):
+    svc = process_service(tmp_path)
+    svc["residency"]["idle_stop_s"] = 0.01
+    svc["process"]["stop_timeout_s"] = 0.35
+    driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
+
+    async def scenario():
+        try:
+            assert await driver.ensure_ready(svc, 2)
+            with patch.object(driver, "_group_alive", return_value=True):
+                started = time.monotonic()
+                await asyncio.sleep(0.05)
+                assert time.monotonic() - started < 0.2
+                await asyncio.sleep(0.4)
+        finally:
+            driver.stop(svc)
+
+    run(scenario())
+
+
 def test_process_missing_probe_is_unknown_and_does_not_claim_ready(tmp_path):
     svc = process_service(tmp_path)
     svc.pop("observations")
