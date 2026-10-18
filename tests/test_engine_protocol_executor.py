@@ -1013,7 +1013,7 @@ def test_a_stream_that_breaks_midway_never_holds_the_key() -> None:
 
 
 def test_answer_headers_and_a_job_failure_reason_never_hold_the_key() -> None:
-    echo = {"x-echo": f"http://engine.test:8080/x?api_key={quote_plus(QKEY)}", "location-hint": QKEY}
+    echo = {"x-echo": f"http://engine.test:8080/x?api_key={quote_plus(QKEY)}", "x-plus": quote_plus(QKEY), "x-plain": quote(QKEY)}
     ex, _ = make(QOPS, lambda r: httpx.Response(200, json={}, headers=echo), auth=QUERY_AUTH)
     clean(run(ex.invoke(qconn(), req("x"))).headers)
     jobs = fast_job(0.1, 1)
