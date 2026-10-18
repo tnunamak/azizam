@@ -74,7 +74,8 @@ describe("a header the gateway does not send", () => {
     const user = userEvent.setup();
     mount({ values: { ...engineView().values, headers: [blocked, plain] } });
     await screen.findByText("More options", { selector: "summary span" });
-    const group = screen.getByRole("group", { name: "Request headers" });
+    const more = screen.getByText("More options", { selector: "summary span" }).closest("details") as HTMLElement;
+    const group = await within(more).findByRole("region", { name: "Request headers" });
     expect(within(group).getByText("Not sent")).toBeVisible();
     expect(screen.getByDisplayValue("Authorization")).toBeDisabled();
     expect(screen.getByDisplayValue("[redacted]")).toBeDisabled();
