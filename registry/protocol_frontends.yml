@@ -1,9 +1,11 @@
-# Each frontend declares `strictness`: `exact` refuses a request field the translator cannot carry,
-# `lenient` drops it and reports it (response header x-azizam-loss and the receipt). A route row that
-# declares `carries: [field, ...]` is held to that list; a row without `carries` is not checked, and
-# an identity row never declares it (it carries every field, so its loss report is empty). The anthropic
-# and ollama translators drop fields they do not map today, so they declare `lenient` until their rows
-# declare `carries`.
+# Each frontend declares `strictness`: `exact` refuses a request field the translator cannot carry and a
+# body that is not a JSON object, `lenient` drops the field and reports it (response header x-azizam-loss
+# and the receipt). A route row that declares `carries: [path, ...]` is held to that list; a path names a
+# nested field (`options.temperature`, `messages[].role`), and a name alone carries everything under it. A
+# row without `carries` is not checked, and an identity row never declares it (it carries every field, so
+# its loss report is empty). A row with `body: multipart` cannot be checked field by field; it says so, and
+# declares no `carries`. The anthropic and ollama rows list what their translators read (gateway/protocols/);
+# they stay `lenient`, because clients send fields these translators do not map and a refusal would break them.
 records:
   - id: openai
     name: OpenAI-compatible
@@ -76,12 +78,14 @@ records:
         intent: audio.transcriptions
         canonical: /v1/audio/transcriptions
         alias: /openai/v1/audio/transcriptions
+        body: multipart
         runtime_policy: {protocol: openai.audio, intent: speech.transcription, backend: stt, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
       - methods: [POST]
         translator: identity
         intent: audio.translations
         canonical: /v1/audio/translations
         alias: /openai/v1/audio/translations
+        body: multipart
         runtime_policy: {protocol: openai.audio, intent: speech.translation, backend: stt, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
       - methods: [POST]
         translator: identity
@@ -105,6 +109,7 @@ records:
         intent: images.edit
         canonical: /v1/images/edits
         alias: /openai/v1/images/edits
+        body: multipart
       - methods: [GET]
         translator: identity
         intent: images.content
@@ -236,10 +241,12 @@ records:
         canonical: /v1/images/variations
         translator: identity
         intent: images.variations
+        body: multipart
       - methods: [POST]
         canonical: /openai/v1/images/variations
         translator: identity
         intent: images.variations
+        body: multipart
       - methods: [POST]
         canonical: /v2/rerank
         translator: identity
@@ -422,11 +429,48 @@ records:
         intent: chat.completions
         canonical: /v1/messages
         alias: /anthropic/v1/messages
+        carries:
+          - model
+          - max_tokens
+          - stream
+          - temperature
+          - top_p
+          - top_k
+          - stop_sequences
+          - system
+          - "messages[].role"
+          - "messages[].content"
+          - "tools[].type"
+          - "tools[].name"
+          - "tools[].description"
+          - "tools[].input_schema"
+          - "tool_choice.type"
+          - "tool_choice.name"
+          - "tool_choice.disable_parallel_tool_use"
+          - "thinking.type"
+          - "thinking.budget_tokens"
+          - "output_config.effort"
+          - "metadata.user_id"
       - methods: [POST]
         translator: anthropic
         intent: tokens.count
         canonical: /v1/messages/count_tokens
         alias: /anthropic/v1/messages/count_tokens
+        carries:
+          - model
+          - system
+          - "messages[].role"
+          - "messages[].content"
+          - "tools[].type"
+          - "tools[].name"
+          - "tools[].description"
+          - "tools[].input_schema"
+          - "tool_choice.type"
+          - "tool_choice.name"
+          - "tool_choice.disable_parallel_tool_use"
+          - "thinking.type"
+          - "thinking.budget_tokens"
+          - "output_config.effort"
       - methods: [GET]
         canonical: /anthropic/v1/models
         translator: anthropic
@@ -479,21 +523,83 @@ records:
         intent: chat.completions
         canonical: /api/chat
         alias: /ollama/api/chat
+        carries:
+          - model
+          - stream
+          - format
+          - think
+          - keep_alive
+          - "messages[].role"
+          - "messages[].content"
+          - "messages[].images"
+          - "messages[].tool_calls"
+          - "messages[].tool_name"
+          - "tools[].type"
+          - "tools[].function"
+          - "options.temperature"
+          - "options.top_p"
+          - "options.seed"
+          - "options.stop"
+          - "options.presence_penalty"
+          - "options.frequency_penalty"
+          - "options.top_k"
+          - "options.min_p"
+          - "options.typical_p"
+          - "options.repeat_penalty"
+          - "options.repeat_last_n"
+          - "options.mirostat"
+          - "options.mirostat_tau"
+          - "options.mirostat_eta"
+          - "options.num_predict"
       - methods: [POST]
         translator: ollama
         intent: text.completions
         canonical: /api/generate
         alias: /ollama/api/generate
+        carries:
+          - model
+          - prompt
+          - suffix
+          - template
+          - system
+          - images
+          - stream
+          - format
+          - think
+          - raw
+          - keep_alive
+          - "options.temperature"
+          - "options.top_p"
+          - "options.seed"
+          - "options.stop"
+          - "options.presence_penalty"
+          - "options.frequency_penalty"
+          - "options.top_k"
+          - "options.min_p"
+          - "options.typical_p"
+          - "options.repeat_penalty"
+          - "options.repeat_last_n"
+          - "options.mirostat"
+          - "options.mirostat_tau"
+          - "options.mirostat_eta"
+          - "options.num_predict"
       - methods: [POST]
         translator: ollama
         intent: text.embeddings
         canonical: /api/embed
         alias: /ollama/api/embed
+        carries:
+          - model
+          - input
+          - dimensions
       - methods: [POST]
         translator: ollama
         intent: text.embeddings.prompt
         canonical: /api/embeddings
         alias: /ollama/api/embeddings
+        carries:
+          - model
+          - prompt
       - methods: [GET]
         translator: ollama
         intent: models.tags

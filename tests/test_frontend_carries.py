@@ -430,6 +430,7 @@ def test_the_seed_marks_exactly_the_routes_that_read_a_multipart_body():
     assert multipart == {
         ("openai", "/v1/audio/transcriptions"), ("openai", "/v1/audio/translations"),
         ("openai", "/v1/images/edits"), ("openai", "/v1/images/variations"),
+        ("openai", "/openai/v1/images/variations"),
     }
     for record in SEED.values():
         for route in record.get("registered_routes") or []:

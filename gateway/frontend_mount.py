@@ -7,10 +7,13 @@ registers for that intent. A row without a translator is a declaration; the modu
 that owns those paths registers them itself. A disabled frontend mounts nothing.
 
 A frontend declares ``strictness`` (``exact`` or ``lenient``; ``exact`` when it says nothing). A row
-may declare ``carries``, the top-level request fields its translator can carry. Such a row mounts
-behind a check: ``exact`` refuses any other field, ``lenient`` drops it, and either way the
-``x-azizam-loss`` header reports it (gateway/frontend_loss.py). An ``identity`` row carries every
-field, so it may not declare ``carries``; its loss report is empty.
+may declare ``carries``, the request fields its translator can carry, as paths (``options.temperature``,
+``messages[].role``; a name alone carries everything under it). Such a row mounts behind a check:
+``exact`` refuses any other field and a body that is not a JSON object, ``lenient`` drops the field,
+and either way the ``x-azizam-loss`` header reports it (gateway/frontend_loss.py). An ``identity`` row
+carries every field, so it may not declare ``carries``; its loss report is empty. A row whose body is
+``multipart`` cannot be checked field by field: it declares ``body: multipart``, may not declare
+``carries``, and a translated response says ``unchecked`` in its loss report.
 
 Two registries hold what can be mounted. ``Translators`` maps translator id ->
 intent -> Operation and is the only place a handler becomes reachable from data.
@@ -36,6 +39,9 @@ from gateway import frontend_loss
 from gateway.frontend_loss import LossReport
 
 IDENTITY = "identity"
+JSON = "json"
+MULTIPART = "multipart"
+BODIES = (JSON, MULTIPART)
 
 WEBSOCKET = "WEBSOCKET"
 
@@ -73,6 +79,8 @@ class RouteRow:
     translator: str
     strictness: str = frontend_loss.EXACT
     carries: frozenset[str] | None = None
+    # ``json`` or ``multipart``: what a loss check can read of the request body.
+    body: str = JSON
     # The row comes from the builtin seed, which ships with the code; every other row is a package row.
     builtin: bool = False
 
@@ -175,6 +183,9 @@ def _rows_of(frontend: Mapping[str, Any]) -> list[RouteRow]:
             continue
         methods = frozenset(_methods(item.get("methods")))
         carries = _carries(frontend_id, item)
+        body = item.get("body", JSON)
+        if body not in BODIES:
+            raise FrontendMountError(f"{frontend_id}: body must be one of {list(BODIES)}, not {body!r}")
         for path in (item.get("canonical"), item.get("alias")):
             if path:
                 rows.append(RouteRow(
@@ -185,6 +196,7 @@ def _rows_of(frontend: Mapping[str, Any]) -> list[RouteRow]:
                     translator=str(item["translator"]),
                     strictness=strictness,
                     carries=carries,
+                    body=body,
                     builtin=builtin,
                 ))
     return rows
@@ -300,6 +312,11 @@ def _check_row(
     if row.carries is not None and row.translator == IDENTITY:
         raise FrontendMountError(
             f"{row.frontend}: {row.path} is an identity row, which carries every field and declares no carries"
+        )
+    if row.body == MULTIPART and row.carries is not None:
+        raise FrontendMountError(
+            f"{row.frontend}: {row.path} has a multipart body, which cannot be checked field by field; "
+            f"it declares no carries"
         )
     unserved = row.methods - operation.methods
     if unserved:
@@ -500,10 +517,13 @@ def _mounted_route_class(
 ) -> type[APIRoute] | None:
     """A route class that authenticates the caller, and holds the row's request to what its translator carries.
 
-    None when the operation authenticates itself and the row declares no ``carries``: the route needs no wrapper.
+    None when the route needs no wrapper: the operation authenticates itself, the row declares no
+    ``carries``, and it is not a multipart row of a translator that could lose fields.
     """
     authenticating = not operation.self_authenticates
-    if not authenticating and row.carries is None:
+    unchecked = row.body == MULTIPART and row.translator != IDENTITY
+    carries = frontend_loss.Carries(row.carries) if row.carries is not None else None
+    if not authenticating and carries is None and not unchecked:
         return None
 
     class MountedRoute(APIRoute):
@@ -516,9 +536,12 @@ def _mounted_route_class(
                     refusal = await authenticate(request)
                     if refusal is not None:
                         return refusal
-                if row.carries is None:
-                    return await serve(request)
-                return await _serve_checked(request, serve, row, refuse)
+                if carries is not None:
+                    return await _serve_checked(request, serve, row, carries, refuse)
+                if unchecked:
+                    with frontend_loss.tracking(LossReport(unchecked="multipart body")) as report:
+                        return _with_loss_header(await serve(request), report)
+                return await serve(request)
 
             return handler
 
@@ -529,10 +552,19 @@ async def _serve_checked(
     request: Request,
     serve: Callable[[Request], Awaitable[Response]],
     row: RouteRow,
+    carries: frontend_loss.Carries,
     refuse: Refuse | None,
 ) -> Response:
-    payload = _json_object(await request.body())
-    lost = [name for name in payload if name not in row.carries] if payload is not None else []
+    payload, unreadable = _json_object(await request.body())
+    if payload is None:
+        if row.strictness == frontend_loss.EXACT:
+            report = LossReport(invalid=unreadable)
+            refusal = await refuse(request, row, report) if refuse else _bare_refusal(row, report)
+            return _with_loss_header(refusal, report)
+        # A lenient frontend leaves a body it cannot read to the handler, which answers it, and says it did not check.
+        with frontend_loss.tracking(LossReport(unchecked=unreadable)) as report:
+            return _with_loss_header(await serve(request), report)
+    kept, lost = carries.split(payload)
     if not lost:
         with frontend_loss.tracking(LossReport()) as report:
             return _with_loss_header(await serve(request), report)
@@ -540,17 +572,19 @@ async def _serve_checked(
     if row.strictness == frontend_loss.EXACT:
         refusal = await refuse(request, row, report) if refuse else _bare_refusal(row, report)
         return _with_loss_header(refusal, report)
-    kept = {name: value for name, value in payload.items() if name in row.carries}
     with frontend_loss.tracking(report):
         return _with_loss_header(await serve(_with_body(request, kept)), report)
 
 
-def _json_object(body: bytes) -> dict[str, Any] | None:
+def _json_object(body: bytes) -> tuple[dict[str, Any] | None, str]:
+    """(the body as an object, "") or (None, why it is not one)."""
     try:
         payload = json.loads(body) if body else None
     except ValueError:
-        return None
-    return payload if isinstance(payload, dict) else None
+        return None, "the body is not valid JSON"
+    if isinstance(payload, dict):
+        return payload, ""
+    return None, "the body is not a JSON object"
 
 
 def _with_body(request: Request, payload: Mapping[str, Any]) -> Request:
@@ -577,7 +611,17 @@ def _with_loss_header(response: Response, report: LossReport) -> Response:
     return response
 
 
+BODY_INVALID = "frontend_body_invalid"
+FIELD_UNSUPPORTED = "frontend_field_unsupported"
+
+
+def refusal_code(report: LossReport) -> str:
+    return BODY_INVALID if report.invalid else FIELD_UNSUPPORTED
+
+
 def refusal_message(row: RouteRow, report: LossReport) -> str:
+    if report.invalid:
+        return f"{row.path} needs a JSON object as its body: {report.invalid}."
     fields = ", ".join(str(name)[:48] for name in report.dropped[:8])
     return f"{row.path} cannot carry these request fields: {fields}. Remove them, or use a lenient frontend."
 
@@ -585,6 +629,6 @@ def refusal_message(row: RouteRow, report: LossReport) -> str:
 def _bare_refusal(row: RouteRow, report: LossReport) -> Response:
     return JSONResponse(
         {"error": {"message": refusal_message(row, report), "type": "invalid_request_error",
-                   "code": "frontend_field_unsupported"}},
+                   "code": refusal_code(report)}},
         status_code=400,
     )

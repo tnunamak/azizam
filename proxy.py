@@ -29110,12 +29110,12 @@ async def _frontend_refusal(request: Request, row: frontend_mount.RouteRow, repo
     for name in report.dropped:
         receipt.reject_input(str(name)[:48], "this frontend cannot carry the field")
     receipt.metadata["loss"] = report.as_dict()
-    receipt.metadata["refusal"] = "frontend_field_unsupported"
+    receipt.metadata["refusal"] = frontend_mount.refusal_code(report)
     receipt.finish("denied")
     _record_native_passthrough_receipt(receipt)
     return openai_error_response(
         frontend_mount.refusal_message(row, report),
-        code="frontend_field_unsupported",
+        code=frontend_mount.refusal_code(report),
         param=str(report.dropped[0])[:48] if report.dropped else None,
     )
 
