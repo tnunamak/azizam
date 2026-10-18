@@ -406,7 +406,7 @@ def _models_config(definition: Mapping[str, Any], values: Mapping[str, Any], mod
             raise DraftError(f"Two models use the public name “{public}”. Each needs its own.", field="models")
         taken.add(public)
         item = stored_row(upstream, public)
-        item.pop("id", None)
+        # A public name or upstream edit does not create a new offering.
         item.update(model_group=public, upstream_model=upstream)
         window = row.get("context_window")
         if window not in (None, ""):
@@ -577,7 +577,9 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
                       lifecycle_ready_s=driver_config.get("health_timeout_s", 120))
     else:
         values["lifecycle_mode"] = "external"
-    lifecycle_editable = lifecycle.get("driver") in (None, "", "command", "external")
+    lifecycle_editable = lifecycle.get("driver") in (None, "", "command", "external") and not any(
+        isinstance(driver_config.get(key), list) for key in ("start", "stop")
+    )
     locked = service_registry.is_litellm_service_record(record.get("id"), record)
     editable = not locked
     model_use = (config.get("engine_check") or {}).get("model_use") or {}
@@ -595,6 +597,11 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     if not isinstance(caps, list):
         caps = _caps_from_record(catalog, definition, record)
     field_keys = {f["key"] for f in definition["fields"]}
+    schema_matches = not config.get("protocol") or config["protocol"] == definition["record"]["protocol"]
+    unsupported_fields = {} if schema_matches else {
+        key: "The stored protocol has no matching definition schema, so this page cannot edit this setting safely."
+        for key in field_keys
+    }
     values = {k: v for k, v in values.items() if k in field_keys}
     other = {k: v for k, v in config.items() if k not in _KNOWN_CONFIG_KEYS and k != "engine_capabilities"}
     request_base = join_url(address, str(config.get("path_prefix") or ""))
@@ -602,7 +609,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         row.get("gateway_lifecycle") for row in model_rows(config.get("models"))
     ))
     operations = []
-    for cap_id in caps:
+    for cap_id in caps if schema_matches else ():
         route = (catalog.capability(cap_id) or {}).get("route") or {}
         if route.get("path"):
             base = request_base
@@ -632,6 +639,8 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "request_path": {"mode": "gateway_lifecycle" if hop_routed else "direct", "source": "service record",
                          "url": operations[0]["url"] if operations else "", "operations": operations},
         "credential_destination": key.get("origin") or origin_of(address),
+        "unsupported_fields": unsupported_fields,
+        "can_edit_offerings": schema_matches,
     }
 
 

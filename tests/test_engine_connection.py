@@ -41,3 +41,12 @@ def test_legacy_callers_keep_their_fallback_wire_request(tmp_path):
     assert result.url == "http://fallback.invalid/v1/chat/completions"
     assert result.headers == {"content-type": "application/json"}
     assert result.read_timeout == 99
+
+
+def test_plain_headers_cannot_override_credentials_or_http_framing(tmp_path):
+    result = connection({"address": "http://server.invalid/v1", "headers": [
+        {"name": "Authorization", "value": "unbound"},
+        {"name": "Host", "value": "other.invalid"},
+        {"name": "X-Workspace", "value": "tenant"},
+    ]}, tmp_path)
+    assert result.headers == {"content-type": "application/json", "x-workspace": "tenant"}

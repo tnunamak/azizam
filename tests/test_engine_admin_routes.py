@@ -399,6 +399,7 @@ def test_an_administrator_can_rename_an_engine_that_holds_a_key_and_start_comman
     # Schema v2 stores the legacy driver payload under process and keeps it
     # unchanged when the owner edits only the name.
     assert after["process"] == before["process"]
+    assert after["config"]["models"][0]["id"] == "offering"
     assert "lifecycle" not in after
 
 
@@ -504,6 +505,8 @@ def test_engine_records_remain_editable_regardless_of_router_path(gateway, fake_
     view = owner.get(f"/admin/api/engines/{service_id}").json()["engine"]
     assert view["editable"] is True
     assert "not_editable_reason" not in view
+    assert view["can_edit_offerings"] is (config.get("protocol") in (None, "", "openai-compatible"))
+    assert bool(view["unsupported_fields"]) is (config.get("protocol") not in (None, "", "openai-compatible"))
     # Renaming stays possible through the plain service edit.
     renamed = _edit(owner, service_id, {"name": "Renamed"})
     assert renamed.status_code == 200, renamed.text
@@ -836,6 +839,8 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
     view = owner.get(f"/admin/api/engines/{service_id}").json()["engine"]
     assert view["request_path"]["mode"] == "gateway_lifecycle"
     assert view["request_path"]["url"] == f"{upstream.base_url}/provider/v1/chat/completions"
+    assert view["v2"]["offerings"][0]["id"] == "offering"
+    assert view["lifecycle_editable"] is False
     monkeypatch.setenv("AZIZAM_INTERNAL_LITELLM_KEY", "internal-test-key")
     monkeypatch.setattr(proxy, "_service_availability_response", lambda *a, **kw: None)
     monkeypatch.setattr(proxy, "_ensure_target_leased", AsyncMock(return_value=(True, None)))

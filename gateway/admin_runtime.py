@@ -838,7 +838,7 @@ class AdminSQLiteStore:
                                for key in keys):
                             raise PermissionError(f"Only the owner can change service {section}.")
                 for field in ("connection", "process", "protocol_operations", "control_file_roots",
-                              "offerings", "residency", "observations"):
+                              "offerings", "residency", "observations", "credentials"):
                     # Migration writes empty blocks; an empty block grants nothing.
                     old_value = (previous.get(field) or None, (previous.get("config") or {}).get(field) or None)
                     new_value = (record.get(field) or None, (record.get("config") or {}).get(field) or None)
