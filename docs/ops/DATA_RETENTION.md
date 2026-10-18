@@ -76,27 +76,32 @@ clears the signed-in person's own entries whose file is gone:
   directory. A folder that is missing, not a directory or unreadable looks the
   same as every file being gone. A readable folder with no media file (empty,
   or only sidecars or scratch files) looks the same as an unmounted volume, so
-  the removal refuses it whenever it would drop an entry. A person with no
-  entries gets a success that removes nothing when the recorded volume is present.
+  the removal refuses it whenever it would drop an entry. When nothing is
+  missing the removal succeeds and removes nothing, whatever the folder's state.
 - A nonempty folder alone is not proof of the right disk: a write onto a bare
   mount point can leave one new file while every older file is on an absent disk.
   The root marker `.azizam-media` holds a random volume ID and creation time;
   `media_volume_identity` beside the Library index records the expected ID.
   Missing, malformed or mismatched markers refuse removal without deleting
   entries. The core rechecks the identity inside the deletion transaction.
-- The first remove-missing on a fresh, globally empty Library creates and
-  records the marker only when the folder is otherwise empty. Existing files,
-  sidecars and unrelated files conservatively require owner confirmation. This is not a per-person empty check. Ordinary media
-  writes never create it, and a previously recorded identity is never
-  automatically regenerated, even after every entry is removed.
-- Existing installs and intentional moves require the owner to verify the
-  original media disk is mounted and choose **This is the right media folder**
-  (`POST /me/api/media/confirm-folder`). The button appears only for the
-  identity refusal and only to an owner. Confirmation writes a new marker and
-  records its ID; it removes nothing and does not retry removal automatically.
-  The empty-folder guard still applies after confirmation. Back up the marker
-  with the media and the identity with the database. Never confirm merely to
-  dismiss a warning when the expected disk is absent.
+- The first Library read on a fresh install (nothing recorded, no entry in
+  either store, and no media file in the folder) records the marker. Sidecars,
+  scratch files and the signing secret do not count as media. Any other folder
+  state needs the owner. Ordinary media writes never create the marker, and a
+  recorded identity is never regenerated, even after every entry is removed.
+  The marker is created with `O_EXCL`, so a filesystem without hard links (FAT,
+  exFAT, some SMB mounts) works.
+- Existing installs and intentional moves need the owner, once. The Library
+  read carries `media_folder`: `confirmed`, `unconfirmed` or `mismatch`. Until
+  the folder is confirmed, the owner sees a notice with the folder path, the
+  count "N of M Library items have their files here" and **This is the right
+  media folder** (`POST /me/api/media/confirm-folder`). Members see only that
+  the owner confirms the folder once. Confirmation refuses a folder that holds
+  none of a non-empty Library (409 `media_folder_no_matches`), writes a new
+  marker, records its ID and is audited as `media.folder.confirm`. It removes
+  nothing. Back up the marker with the media and the identity with the
+  database. Never confirm merely to dismiss the notice when the expected disk
+  is absent.
 - A file is gone only when nothing in the folder holds its digest under any
   suffix (ComfyUI `gifs` and `images` outputs keep their own suffix). The check
   reads the folder, not the Library listing.

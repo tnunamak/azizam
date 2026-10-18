@@ -430,6 +430,21 @@ class RemoveMissingTests(unittest.TestCase):
                         marker.unlink()
                     marker.write_text(json.dumps({"volume_id": self.recorded_volume(), "created_at": 1}))
 
+    def test_a_fifo_holding_a_valid_marker_is_not_a_marker(self) -> None:
+        self.seed()
+        marker = self.cache / ".azizam-media"
+        marker.unlink()
+        os.mkfifo(marker)
+        # O_RDWR opens a FIFO without waiting for a reader on Linux, so the value is there to be read.
+        writer = os.open(marker, os.O_RDWR)
+        try:
+            os.write(writer, json.dumps({"volume_id": self.recorded_volume(), "created_at": 1}).encode())
+            self.assertEqual(self.media_folder(), {"state": "mismatch"})
+            self.refused_unconfirmed()
+        finally:
+            os.close(writer)
+            marker.unlink()
+
     def test_a_folder_replaced_after_it_was_listed_removes_nothing(self) -> None:
         self.seed()
         snapshot = me_media.create_storage_snapshot_provider(self.cache)()
