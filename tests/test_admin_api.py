@@ -608,6 +608,10 @@ class FakeAdminStore:
             "workflows": {},
             "capabilities": {},
         }
+        # Documents that name a package's records; a removal they still name is refused.
+        self.references: dict[str, Any] = {}
+        # The registry generation an If-Match names; a package change advances it.
+        self.generation = 1
         self.extension_package_index: dict[str, Any] = (
             extension_packages.empty_extension_package_index()
         )
@@ -990,24 +994,40 @@ class FakeAdminStore:
         }
 
     def remove_extension_package(
-        self, *, package_id: str, actor: AdminContext
+        self, *, package_id: str, actor: AdminContext, mode: str = "remove",
+        expected_generation: int | None = None,
     ) -> dict[str, Any]:
+        if expected_generation is not None and expected_generation != self.generation:
+            raise admin_store.OperatorSettingsGenerationConflict("service registry changed")
         try:
-            self.extension_package_index = extension_packages.remove_extension_package(
+            index, registry, affected = extension_packages.change_package_lifecycle(
                 self.extension_package_index,
+                self.service_registry,
                 package_id,
+                mode=mode,
+                references=self.references,
             )
         except KeyError as exc:
             raise ValueError(str(exc)) from exc
+        self.extension_package_index = index
+        self.service_registry = registry
         self.audit.append(
             {
                 "at": "2026-05-17T01:00:00Z",
                 "actor": actor.subject,
-                "action": "operator.extension_package.remove",
+                "action": f"operator.extension_package.{mode}",
                 "target": package_id,
+                "metadata": {"affected_records": affected},
             }
         )
-        return {"extension_packages": self.extension_package_index}
+        self.generation += 1
+        return {
+            "extension_package": index["packages"].get(package_id),
+            "extension_packages": index,
+            "service_registry": registry,
+            "affected_records": affected,
+            "operator_settings_generation": self.generation,
+        }
 
     def recent_audit(self, *, limit: int) -> list[dict[str, Any]]:
         return list(self.audit[-limit:])
@@ -2576,6 +2596,112 @@ execution: job
             resp.json()["error"]["code"],
             "extension_package_not_found",
         )
+
+    @staticmethod
+    def _install_demo_package(store: FakeAdminStore) -> None:
+        provenance = {"package_id": "demo-package", "package_version": "0.1.0", "package_hash": "hash-1"}
+        record = {"id": "demo-service", "enabled": True, "provenance": provenance,
+                  "config": {"models": [{"id": "demo-model"}]}}
+        store.service_registry["services"] = {"demo-service": record}
+        store.extension_package_index = {
+            "packages": {"demo-package": {
+                "id": "demo-package", "version": "0.1.0", "enabled": True, "package_hash": "hash-1",
+                "source": {"type": "local_directory", "path": "/tmp/demo"},
+                "installed_records": {"services": {"demo-service": {**record, "provenance": dict(provenance)}}},
+            }},
+            "sources": [],
+            "updated_at": 1,
+        }
+
+    def test_admin_disable_switches_off_each_owned_record_and_reports_it(self) -> None:
+        client, store = _make_client()
+        self._install_demo_package(store)
+
+        resp = client.delete("/admin/api/extensions/demo-package?mode=disable", headers=_auth())
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertFalse(store.extension_package_index["packages"]["demo-package"]["enabled"])
+        self.assertFalse(store.service_registry["services"]["demo-service"]["enabled"])
+        self.assertEqual(resp.json()["affected_records"],
+                         [{"kind": "services", "id": "demo-service", "action": "disabled"}])
+        self.assertIn("operator.extension_package.disable", [event["action"] for event in store.audit])
+
+    def test_admin_remove_refuses_a_package_that_a_plan_still_names(self) -> None:
+        client, store = _make_client()
+        self._install_demo_package(store)
+        store.references = {"access plan Family": {"models": ["demo-model"]}}
+
+        resp = client.delete("/admin/api/extensions/demo-package", headers=_auth())
+
+        self.assertEqual(resp.status_code, 409, resp.text)
+        self.assertEqual(resp.json()["error"]["code"], "extension_package_referenced")
+        self.assertIn("access plan Family", resp.json()["error"]["message"])
+        self.assertIn("demo-package", store.extension_package_index["packages"])
+        self.assertIn("demo-service", store.service_registry["services"])
+
+    def test_admin_package_mode_must_be_remove_or_disable(self) -> None:
+        client, store = _make_client()
+        self._install_demo_package(store)
+
+        resp = client.delete("/admin/api/extensions/demo-package?mode=purge", headers=_auth())
+
+        self.assertEqual(resp.status_code, 422, resp.text)
+        self.assertIn("demo-package", store.extension_package_index["packages"])
+
+    def test_admin_remove_declares_mode_as_remove_or_disable_in_the_schema(self) -> None:
+        client, _ = _make_client()
+
+        operation = client.app.openapi()["paths"]["/admin/api/extensions/{package_id}"]["delete"]
+        mode = next(item for item in operation["parameters"] if item["name"] == "mode")
+
+        self.assertEqual(mode["in"], "query")
+        self.assertEqual(mode["schema"]["enum"], ["remove", "disable"])
+        self.assertEqual(mode["schema"]["default"], "remove")
+
+    def test_admin_remove_honours_if_match_when_the_client_sends_it(self) -> None:
+        client, store = _make_client()
+        self._install_demo_package(store)
+
+        stale = client.delete(
+            "/admin/api/extensions/demo-package", headers={**_auth(), "If-Match": '"os-0"'},
+        )
+
+        self.assertEqual(stale.status_code, 412, stale.text)
+        self.assertEqual(stale.json()["error"]["code"], "generation_mismatch")
+        self.assertIn("demo-package", store.extension_package_index["packages"])
+        current = client.delete(
+            "/admin/api/extensions/demo-package", headers={**_auth(), "If-Match": '"os-1"'},
+        )
+        self.assertEqual(current.status_code, 200, current.text)
+        self.assertEqual(current.headers["ETag"], '"os-2"')
+
+    def test_admin_remove_without_if_match_still_removes(self) -> None:
+        client, store = _make_client()
+        self._install_demo_package(store)
+
+        resp = client.delete("/admin/api/extensions/demo-package", headers=_auth())
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertNotIn("demo-package", store.extension_package_index["packages"])
+
+    def test_admin_remove_never_returns_an_unrelated_services_secret(self) -> None:
+        # The enable route hides command and environment values; DELETE returns the same registry.
+        for mode in ("remove", "disable"):
+            with self.subTest(mode=mode):
+                client, store = _make_client()
+                self._install_demo_package(store)
+                store.service_registry["services"]["unrelated"] = {
+                    "id": "unrelated",
+                    "enabled": True,
+                    "process": {"driver": "process", "env": {"TOKEN": "seeded-secret-value"}},
+                }
+
+                resp = client.delete(f"/admin/api/extensions/demo-package?mode={mode}", headers=_auth())
+
+                self.assertEqual(resp.status_code, 200, resp.text)
+                self.assertNotIn("seeded-secret-value", resp.text)
+                self.assertIn("unrelated", resp.json()["service_registry"]["services"])
+                self.assertEqual(resp.headers["Cache-Control"], "no-store")
 
     def test_operator_override_write_requires_admin(self) -> None:
         client, _ = _make_client()

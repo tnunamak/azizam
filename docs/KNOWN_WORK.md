@@ -130,10 +130,21 @@ through the admin API. Bundled data and code-bearing review fixtures prove the
 boundary: code is staged for review and is not executed merely by installing a
 package.
 
-The remaining lifecycle defect is concrete: the current delete endpoint removes
-only the package-index record. It does not remove or disable the
-package-provenance registry records that enablement added, so it cannot yet
-truthfully mean "disable/remove this installed package."
+Lifecycle implementation snapshots normalized installed records. Removal deletes
+exact matches and detaches edited, copied or unproven legacy rows, restoring
+enabled on a row the package had disabled, and reports each affected record.
+Disable saves each row's previous enabled state; enable (a reinstall of the same
+content hash) restores it without replacing operator edits. The route
+`DELETE /admin/api/extensions/{id}` takes `?mode=disable`. Removal answers 409
+`extension_package_referenced` when a record that stays, or an access plan,
+still names an owned model or service id. A model alias the package owns is
+removed with its base model. Registry, index and audit writes commit together
+with generation checking.
+
+Still open: access plans are read before the registry transaction, and a plan
+write does not bump the registry generation, so a plan saved during a removal
+can be missed. The registry has no pool concept; its stored references are
+alias records, service config models and access plans.
 
 Done means:
 
