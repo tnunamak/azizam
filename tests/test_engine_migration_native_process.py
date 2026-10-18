@@ -70,6 +70,37 @@ def test_a_native_process_and_a_conflicting_legacy_lifecycle_are_refused_before_
     assert registry == before
 
 
+def test_the_refusal_names_the_service_and_both_blocks_and_says_to_keep_one() -> None:
+    registry = {"schema_version": 1, "services": {"engine-a": _legacy(LEGACY_COMMAND, process=copy.deepcopy(NATIVE))}}
+    with pytest.raises(ValueError) as refused:
+        service_registry.migrate_engine_records_v2(registry)
+    message = str(refused.value)
+    assert "'engine-a'" in message and "process" in message and "lifecycle" in message
+    assert "keep one" in message.lower() and "delete" in message.lower()
+    assert "legacy-start" not in message and "runner" not in message
+
+
+def test_a_top_level_process_and_a_different_config_process_are_refused_before_any_change() -> None:
+    mixed = _record(process=copy.deepcopy(NATIVE))
+    mixed["config"]["process"] = {**NATIVE, "start": ["other-runner"]}
+    registry = {"schema_version": 1, "services": {"engine-a": mixed}}
+    before = copy.deepcopy(registry)
+    with pytest.raises(ValueError) as refused:
+        service_registry.migrate_engine_records_v2(registry)
+    message = str(refused.value)
+    assert "'engine-a'" in message and "config.process" in message and "keep one" in message.lower()
+    assert "other-runner" not in message
+    assert registry == before
+
+
+def test_equal_top_level_and_config_process_blocks_migrate_to_one() -> None:
+    record = _record(process=copy.deepcopy(NATIVE))
+    record["config"]["process"] = copy.deepcopy(NATIVE)
+    migrated = _migrate(record)["services"]["engine-a"]
+    assert {key: migrated["process"][key] for key in NATIVE} == NATIVE
+    assert "process" not in migrated["config"]
+
+
 def test_a_process_marker_beside_a_legacy_lifecycle_still_takes_the_legacy_command() -> None:
     registry = _migrate(_legacy(LEGACY_COMMAND, process={"driver": "none"}))
     process = registry["services"]["engine-a"]["process"]
@@ -125,8 +156,8 @@ def test_the_admin_schema_migration_keeps_a_native_process_and_refuses_a_mixed_r
     with sqlite3.connect(other) as conn:
         conn.execute("UPDATE schema_version SET version=9")
         conn.execute("INSERT INTO operator_settings(key,value_json,updated_at) VALUES ('service_registry',?,0)", (json.dumps(mixed),))
-    with pytest.raises(ValueError, match="engine-a"):
-        admin_store.init_db(other)
+    admin_store.init_db(other)  # a refused record no longer stops the gateway from starting
     with sqlite3.connect(other) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 9
-        assert json.loads(conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0]) == mixed
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 11
+        stored = json.loads(conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0])
+    assert stored["services"]["engine-a"]["migration_refused"]

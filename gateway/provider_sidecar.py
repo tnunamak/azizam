@@ -20,10 +20,10 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from gateway.bootstrap_config import resolve_admin_db_path
+from gateway.litellm_runtime import write_litellm_config_artifact
 from gateway.litellm_substrate import (
     litellm_config_path_from_registry,
     secret_env_name_for_provider,
-    write_litellm_config_artifact,
 )
 from gateway.secret_store import credential_origin_from_url, get_provider_secret
 from gateway.service_registry import service_base_url

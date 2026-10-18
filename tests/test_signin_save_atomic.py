@@ -63,8 +63,8 @@ def test_a_failure_after_the_grants_are_removed_puts_back_the_rules_grants_keys_
     assert roles_before
     restore = fail_at(monkeypatch, "signin.admin_removed")     # the last write for the person who loses administrator
 
-    with pytest.raises(RuntimeError, match="injected failure"):
-        save(owner, snapshot, proposal(snapshot, rules=NO_RULES))
+    failed = save(owner, snapshot, proposal(snapshot, rules=NO_RULES))
+    assert failed.status_code == 500 and "injected" not in failed.text  # the gate answers its fixed 500, never the exception
 
     restore()
     assert stored_state(sg) == before
@@ -86,8 +86,8 @@ def test_a_failure_while_the_connection_is_written_puts_back_the_rules_and_the_g
     before = stored_state(sg)
     fail_at(monkeypatch, "operator.oidc_provider_config.update")
 
-    with pytest.raises(RuntimeError, match="injected failure"):
-        save(owner, snapshot, proposal(snapshot, rules=NO_RULES, name="New name"))
+    failed = save(owner, snapshot, proposal(snapshot, rules=NO_RULES, name="New name"))
+    assert failed.status_code == 500 and "injected" not in failed.text  # the gate answers its fixed 500, never the exception
 
     assert stored_state(sg) == before
     assert helper.get("/admin/api/access-plans").status_code == 200
@@ -105,8 +105,8 @@ def test_a_failure_after_a_new_secret_is_stored_leaves_the_old_secret_and_no_str
     assert len(before["secrets"]) == 1
     fail_at(monkeypatch, "operator.oidc_provider_config.update")
 
-    with pytest.raises(RuntimeError, match="injected failure"):
-        save(owner, snapshot, proposal(snapshot, client_secret="the-second-secret"), save_for_later=True)
+    failed = save(owner, snapshot, proposal(snapshot, client_secret="the-second-secret"), save_for_later=True)
+    assert failed.status_code == 500 and "injected" not in failed.text  # the gate answers its fixed 500, never the exception
 
     assert stored_state(sg) == before
 
@@ -131,8 +131,8 @@ def test_a_failure_leaves_the_people_the_rules_now_keep_out_signed_in_and_their_
 
     monkeypatch.setattr(signin_admin, "sync_rule_plan_in", fail_for_the_member)
 
-    with pytest.raises(RuntimeError, match="injected failure"):
-        save(owner, snapshot, proposal(snapshot, rules={"fallback": "closed", "rules": [snapshot["rules"]["rules"][0]]}))
+    failed = save(owner, snapshot, proposal(snapshot, rules={"fallback": "closed", "rules": [snapshot["rules"]["rules"][0]]}))
+    assert failed.status_code == 500 and "injected" not in failed.text  # the gate answers its fixed 500, never the exception
 
     monkeypatch.setattr(signin_admin, "sync_rule_plan_in", real)
     assert stored_state(sg) == before

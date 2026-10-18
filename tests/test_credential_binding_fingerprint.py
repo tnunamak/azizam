@@ -104,3 +104,89 @@ def test_an_edit_that_leaves_every_address_alone_is_not_a_binding_change():
 def test_naming_the_address_the_record_already_uses_is_not_a_binding_change():
     same = _with(_stored(), "url", OLD_HOST)
     assert service_registry.credential_binding_changes(_stored(), same) == {}
+
+
+# --- auth_inject: the record's own key rules --------------------------------------------------------
+# A rule's ``secret`` names a downstream secret the gateway holds, and ``secret_env`` an environment
+# variable. Neither ends in a suffix the credential scan knows, so the first version of the scan missed
+# ``secret`` and a non-owner could add a rule and move the host in one save.
+
+def _plain():
+    """A record with no credential of any kind, so only the new fields can make the change an owner's."""
+    return {"services": {"eng": {"name": "eng", "config": {"native_passthrough": True, "base_url": f"{OLD_HOST}/v1"}}}}
+
+
+INJECT_BY_SECRET = [{"header": "x-api-key", "secret": "api_key"}]
+INJECT_BY_ENV = [{"header": "x-api-key", "secret_env": "PROBE_ENGINE_KEY"}]
+
+
+@pytest.mark.parametrize("rules", [INJECT_BY_SECRET, INJECT_BY_ENV], ids=["secret", "secret_env"])
+def test_a_rule_names_a_credential_by_secret_or_secret_env(rules):
+    refs = service_registry.credential_references(_with(_plain(), "auth_inject", rules)["services"]["eng"])
+    assert any("auth_inject" in path for path in refs), refs
+
+
+@pytest.mark.parametrize("rules", [INJECT_BY_SECRET, INJECT_BY_ENV], ids=["secret", "secret_env"])
+def test_adding_an_auth_inject_rule_is_a_binding_change(rules):
+    changed = service_registry.credential_binding_changes(_plain(), _with(_plain(), "auth_inject", rules))
+    assert any("auth_inject" in reason for reason in changed.get("eng", [])), changed
+
+
+def test_adding_a_rule_and_moving_the_host_in_one_save_is_a_binding_change():
+    attacked = _with(_with(_plain(), "auth_inject", INJECT_BY_SECRET), "base_url", f"{NEW_HOST}/v1")
+    assert service_registry.credential_binding_changes(_plain(), attacked).get("eng")
+
+
+def test_changing_or_removing_a_rule_is_a_binding_change():
+    stored = _with(_plain(), "auth_inject", INJECT_BY_ENV)
+    changed_rule = _with(stored, "auth_inject", [{"header": "x-api-key", "secret_env": "OTHER_KEY"}])
+    removed = _with(stored, "auth_inject", [])
+    assert service_registry.credential_binding_changes(stored, changed_rule).get("eng")
+    assert service_registry.credential_binding_changes(stored, removed).get("eng")
+
+
+def test_a_rule_that_is_not_changed_is_not_a_binding_change():
+    stored = _with(_plain(), "auth_inject", INJECT_BY_ENV)
+    renamed = copy.deepcopy(stored)
+    renamed["services"]["eng"]["name"] = "renamed"
+    assert service_registry.credential_binding_changes(stored, renamed) == {}
+
+
+def _store_with(tmp_path, registry):
+    path = tmp_path / "admin.db"
+    admin_store.init_db(path)
+    admin_store.write_service_registry_with_audit(
+        registry, expected_generation=0, updated_by="seed", audit_action="seed",
+        audit_actor_kind="user", audit_actor_id="seed", audit_actor_label="seed",
+        audit_target_kind="operator_setting", audit_target_id="service_registry", path=path,
+    )
+    return AdminSQLiteStore(path)
+
+
+@pytest.mark.parametrize("rules", [INJECT_BY_SECRET, INJECT_BY_ENV], ids=["secret", "secret_env"])
+def test_a_non_owner_administrator_cannot_add_a_rule_and_move_the_host_in_one_save(tmp_path, rules):
+    store = _store_with(tmp_path, _plain())
+    attacked = _with(_with(_plain(), "auth_inject", rules), "base_url", f"{NEW_HOST}/v1")
+    admin = AdminContext(subject="admin-user", roles=frozenset({"admin"}), actor_kind="user")
+    with pytest.raises(PermissionError):
+        store._settle_credential_bindings(attacked, admin)
+
+
+def test_the_owner_can_write_an_auth_inject_rule(tmp_path):
+    store = _store_with(tmp_path, _plain())
+    owner = AdminContext(subject="owner-user", roles=frozenset({"owner"}), actor_kind="user")
+    settled = store._settle_credential_bindings(_with(_plain(), "auth_inject", INJECT_BY_SECRET), owner)
+    assert settled["services"]["eng"]["config"]["auth_inject"] == INJECT_BY_SECRET
+
+
+def test_a_non_owner_administrator_can_still_edit_a_service_that_carries_auth_inject_rules(tmp_path):
+    """A partial edit carries every config key over, so keeping the rules is not a change to them."""
+    store = _store_with(tmp_path, _with(_plain(), "auth_inject", INJECT_BY_ENV))
+    admin = AdminContext(subject="admin-user", roles=frozenset({"admin"}), actor_kind="user")
+    generation = admin_store.get_service_registry_with_generation(path=store.path)["operator_settings_generation"]
+
+    store.update_service(service_id="eng", data={"name": "renamed"}, actor=admin, expected_generation=generation)
+
+    saved = store.get_service_registry()["services"]["eng"]
+    assert saved["name"] == "renamed"
+    assert saved["config"]["auth_inject"] == INJECT_BY_ENV

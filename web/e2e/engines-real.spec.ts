@@ -75,10 +75,11 @@ test("real registry journey preserves disabled state and unknown config through 
   await page.getByRole("menuitem", { name: "Open engine", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Journey engine" })).toBeVisible();
 
-  // Other settings are listed, read-only, under Technical details; the stored record is not an editor.
+  // Unclassified keys are never shown (D34): Technical details only says one is kept, and the key stays off the page.
   await page.getByText("Technical details", { exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Other settings" })).toBeVisible();
-  await expect(page.getByText("custom_operator_field", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 setting is kept but not shown", { exact: false })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Other settings" })).toHaveCount(0);
+  await expect(page.getByText("custom_operator_field")).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: /JSON/ })).toHaveCount(0);
 
   await page.getByLabel(/^Name/).fill("Renamed journey engine");
@@ -102,7 +103,11 @@ test("real registry journey preserves disabled state and unknown config through 
   expect(after.config.host).toBe("127.0.0.1");
   expect(after.config.port).toBe(enginePort);
   expect(after.config.base_path).toBe("/v2");
-  expect(after.config.custom_operator_field).toEqual({ preserve: true });
+  // The projection leaks no unclassified key, yet the engine view still counts the one stored key: kept through the edit.
+  expect(after.config.custom_operator_field).toBeUndefined();
+  const afterView = (await (await page.request.get(`/admin/api/engines/${serviceId}`)).json()).engine;
+  expect(afterView.hidden_settings).toBe(1);
+  expect(JSON.stringify(afterView)).not.toContain("custom_operator_field");
   expect(after.config.transforms).toContainEqual({ kind: "default-params", set: { max_tokens: 9 } });
   expect(after.config.models).toEqual([
     expect.objectContaining({ model_group: "existing-chat", upstream_model: "existing-upstream", routing_hint: "keep-me" }),
