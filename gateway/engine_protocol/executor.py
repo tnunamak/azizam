@@ -58,6 +58,7 @@ MISSING = pointer.MISSING
 MASK = "<configured>"
 _ERROR_BODY_CAP = 64 * 1024
 _PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]*)\}")
+_ENCODED_SEPARATOR = re.compile(r"%(?:2f|5c)", re.IGNORECASE)  # a pre-encoded slash or backslash: some servers decode twice
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 _REDIRECTS = (301, 302, 303, 307, 308)
 
@@ -241,8 +242,15 @@ class HttpV1Executor:
                 value = str(value)
             if type(value) is not str or not value:
                 raise MappingError(f"The request needs the value '{match.group(1)}' for the path {spec.path}.")
+            if _ENCODED_SEPARATOR.search(value):
+                raise MappingError(f"The value '{match.group(1)}' holds an encoded slash; Azizam does not send it in a path.")
             return quote(value, safe="")
-        return _PLACEHOLDER.sub(fill, spec.path) if spec.placeholders else spec.path
+        if not spec.placeholders:
+            return spec.path
+        path = _PLACEHOLDER.sub(fill, spec.path)
+        if any(segment in (".", "..") for segment in path.split("/")):
+            raise MappingError(f"A path value would make a '.' or '..' segment in {spec.path}; Azizam does not send it.")
+        return path
 
     def _query(self, spec: RequestSpec, source: Mapping[str, Any]) -> list[tuple[str, str]]:
         pairs: list[tuple[str, str]] = []
