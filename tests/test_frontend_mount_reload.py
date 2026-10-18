@@ -305,7 +305,7 @@ def test_a_broken_frontend_is_an_attention_item_with_its_reason():
     assert "registered twice" in item["detail"]
 
 
-def test_the_admin_api_lists_every_frontend_with_its_mount_status():
+def test_the_admin_overview_lists_every_frontend_with_its_mount_status_and_flags_a_broken_one():
     from gateway.admin_api import create_admin_router
     from tests.test_admin_api import FakeAdminStore, _admin_auth, _auth
 
@@ -317,8 +317,24 @@ def test_the_admin_api_lists_every_frontend_with_its_mount_status():
     app = FastAPI()
     app.include_router(create_admin_router(FakeAdminStore(), auth=_admin_auth, frontend_status=lambda: status))
 
-    response = TestClient(app).get("/admin/api/operator/frontends", headers=_auth())
+    response = TestClient(app).get("/admin/api/overview", headers=_auth())
 
     assert response.status_code == 200, response.text
-    assert response.json() == {"frontends": status}
-    assert TestClient(app).get("/admin/api/operator/frontends").status_code in {401, 403}
+    body = response.json()
+    assert body["frontends"] == status
+    [item] = [item for item in body["attention"] if item["kind"] == "frontend"]
+    assert "Acme" in item["title"] and "registered twice" in item["detail"]
+
+
+def test_the_live_overview_reports_the_frontend_table():
+    from gateway.admin_api import create_admin_router
+    from tests.test_admin_api import FakeAdminStore, _admin_auth, _auth
+
+    app = FastAPI()
+    app.include_router(create_admin_router(
+        FakeAdminStore(), auth=_admin_auth, frontend_status=lambda: proxy.FRONTEND_MOUNTS.status()))
+
+    body = TestClient(app).get("/admin/api/overview", headers=_auth()).json()
+
+    assert {item["id"] for item in body["frontends"]} >= {"openai", "anthropic", "ollama", "native"}
+    assert [item for item in body["attention"] if item["kind"] == "frontend"] == []

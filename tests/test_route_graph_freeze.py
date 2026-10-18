@@ -20,8 +20,6 @@ FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 ADDED_PATHS: dict[str, str] = {
     "/native": "per-engine native pass-through (contract section 5): one route, off unless an "
                "engine record sets native_passthrough, outside the OpenAPI schema",
-    "/admin/api/operator/frontends": "the mount status of each protocol frontend, with why a broken one "
-                                     "was skipped (contract section 5), outside the OpenAPI schema",
 }
 
 

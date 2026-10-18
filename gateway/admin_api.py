@@ -1688,10 +1688,11 @@ def create_admin_router(
             observation_available=status_available,
             availability_evidence=status_snap.get("_availability_evidence") if isinstance(status_snap.get("_availability_evidence"), Mapping) else None,
         )
+        frontends = frontend_status() if frontend_status is not None else []
         attention = derive_admin_attention({
             "apps": apps,
             "credentials": credentials,
-            "frontends": frontend_status() if frontend_status is not None else [],
+            "frontends": frontends,
             "services": current_health["services"],
             "status": status_snap,
             "current_health": current_health,
@@ -1720,6 +1721,8 @@ def create_admin_router(
             },
             "attention": attention,
             "current_health": current_health,
+            # Every protocol frontend and whether its routes are mounted, broken (with why) or disabled.
+            "frontends": frontends,
         }
         return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
 
@@ -2258,19 +2261,6 @@ def create_admin_router(
             status_code=status.HTTP_200_OK,
             content={"service_availability": record},
         )
-
-    @router.get("/operator/frontends", include_in_schema=False)
-    def list_frontends(request: Request) -> JSONResponse:
-        """Every protocol frontend and whether its routes are mounted, broken (with why) or disabled."""
-        ctx = _guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        response = JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"frontends": frontend_status() if frontend_status is not None else []},
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
 
     @router.get("/operator/service-registry")
     def get_service_registry(request: Request) -> JSONResponse:

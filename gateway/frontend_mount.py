@@ -53,7 +53,8 @@ PACKAGE_MOUNTABLE_TRANSLATORS = frozenset({IDENTITY, "anthropic", "ollama"})
 
 
 class FrontendMountError(ValueError):
-    """A row cannot be mounted. The mount refuses the whole table before it adds any route."""
+    """A row cannot be mounted. ``mount`` refuses the whole table before it adds any route;
+    ``FrontendMounts`` skips the row, logs it and reports its frontend as broken."""
 
 
 @dataclass(frozen=True)
