@@ -224,8 +224,9 @@ export function secretCommands(drafts: SecretDraft[]): SecretCommand[] {
       });
     } else if (draft.kind === "url") {
       const r = draft.rows[0];
-      if (r.removed && r.configured) commands.push({ carrier, operation: "clear_credentials" });
-      else if (r.edited || r.value)
+      if (r.removed) {
+        if (r.configured) commands.push({ carrier, operation: "clear_credentials" });
+      } else if (r.edited || r.value)
         commands.push({ carrier, operation: "set_credentials", url: r.value });
     } else {
       for (const r of draft.rows) {

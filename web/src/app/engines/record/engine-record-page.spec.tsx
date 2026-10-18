@@ -522,7 +522,7 @@ describe("headers", () => {
       expect(input).toHaveAttribute("type", "password");
     }
     expect(within(group).queryByRole("checkbox")).toBeNull();
-    expect(within(group).getByText(/Values marked Secret are write-only/)).toBeVisible();
+    expect(within(group).getByText(/Configured values are write-only/)).toBeVisible();
     expect(screen.queryByText(/saved as plain text/)).toBeNull();
     cleanup();
     viewer.current = { ...viewer.current, role: "admin" };

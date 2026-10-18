@@ -57,7 +57,7 @@ export function SecretFields({
               </legend>
               {draft.kind === "headers" && (
                 <p className="text-meta text-muted-foreground">
-                  Values marked Secret are write-only. Public values remain visible.
+                  Configured values are write-only. Public values remain visible.
                   Enter a replacement or remove a row.
                 </p>
               )}
