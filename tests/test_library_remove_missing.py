@@ -22,6 +22,8 @@ from tests import test_me_media as base
 
 REMOVE = "/me/api/media/remove-missing"
 VALID = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
+UNSEEN = "Azizam can't see its media folder right now, so nothing was removed. Try again when the folder is back."
+EMPTY = "Azizam's media folder is empty, which usually means it isn't mounted, so nothing was removed. Check the disk, then try again."
 
 
 def asset(letter: str) -> str:
@@ -78,6 +80,13 @@ class RemoveMissingTests(unittest.TestCase):
             request_id="req_cd", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
             assets=[{"asset_id": asset("C"), "media_type": "image/png"},
                     {"asset_id": asset("D"), "media_type": "image/png"}]), path=self.jobs_db)
+
+    def empty_the_folder(self) -> None:
+        """Every stored file is gone: the folder is readable and holds no media."""
+        for letter in "BD":
+            self._asset_path(asset(letter)).unlink()
+            self._meta_path(asset(letter)).unlink()
+        self.assertEqual(os.listdir(self.cache), [])
 
     def library(self) -> dict[str, bool]:
         rows = self.client.get("/me/api/media").json()["assets"]
@@ -159,12 +168,12 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(set(kept), {asset(letter) for letter in "ABCD"})
         self.assertEqual(admin_store.list_audit(action_prefix="media.", limit=50, path=self.admin_db), [])
 
-    def refused(self) -> None:
+    def refused(self, message: str = UNSEEN) -> None:
         response = self.client.post(REMOVE, headers=VALID)
         self.assertEqual(response.status_code, 503, response.text)
         error = response.json()["error"]
         self.assertEqual(error["code"], "media_folder_unavailable")
-        self.assertEqual(error["message"], "Azizam can't see its media folder right now, so nothing was removed. Try again when the folder is back.")
+        self.assertEqual(error["message"], message)
         self.assert_nothing_changed()
 
     def test_a_missing_media_folder_removes_nothing(self) -> None:
@@ -183,18 +192,21 @@ class RemoveMissingTests(unittest.TestCase):
         with patch("gateway.me_media.os.listdir", side_effect=PermissionError("denied")):
             self.refused()
 
-    def test_an_empty_media_folder_is_healthy_and_every_entry_is_gone(self) -> None:
-        # The folder exists and is readable. It holds nothing, so nothing is stored.
+    def test_an_empty_media_folder_with_entries_is_refused_and_removes_nothing(self) -> None:
+        # The folder is readable but holds no media. An unmounted volume looks the same, and there every entry would read as gone.
         self.seed()
-        for letter in "BD":
-            self._asset_path(asset(letter)).unlink()
-            self._meta_path(asset(letter)).unlink()
-        self.assertEqual(os.listdir(self.cache), [])
+        self.empty_the_folder()
+        self.refused(EMPTY)
+
+    def test_an_empty_media_folder_removes_nothing_for_a_caller_with_no_entries(self) -> None:
+        # The owner has nothing on record, so the empty folder is no reason to refuse. Nobody else's entries change.
+        self.seed()
+        self.empty_the_folder()
+        self.current_user = self.owner
         response = self.client.post(REMOVE, headers=VALID)
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json(), {"removed_assets": 4, "removed_jobs": 3})
-        self.assertEqual(self.library(), {})
-        self.assertEqual(len(self.job_ids("req_e")), 1, "Bob's entries are not the caller's")
+        self.assertEqual(response.json(), {"removed_assets": 0, "removed_jobs": 0})
+        self.assert_nothing_changed()
 
     def test_an_empty_media_folder_and_an_empty_library_has_nothing_to_remove(self) -> None:
         self.assertEqual(os.listdir(self.cache), [])
@@ -207,7 +219,7 @@ class RemoveMissingTests(unittest.TestCase):
         for letter in "BD":
             self._asset_path(asset(letter)).unlink()
         (self.cache / ("f" * 64 + ".png.tmp")).write_bytes(b"half a write")
-        self.refused()
+        self.refused(EMPTY)
 
     # --- missing is decided by what is on disk, not by a guessed suffix ----------------
 
