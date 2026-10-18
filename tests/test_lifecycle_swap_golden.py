@@ -1349,5 +1349,39 @@ def test_owned_process_forward_holds_activity_lease_and_declared_start_budget():
     _run(scenario())
 
 
+def test_declared_switch_and_load_reach_local_forward_before_request():
+    from gateway import lifecycle_drivers
+
+    svc = {
+        "connection": {"address": "http://127.0.0.1:18091"},
+        "offerings": [{"id": "target", "selection": {
+            "mode": "switch", "implicit_load": False,
+            "switch": {"call": "select", "args": {"model": "target"},
+                       "observe_selected": "selected"}}}],
+        "residency": {"load": {"op": "load"}},
+        "observations": {"selected": {"http": {"path": "/state", "select": "/selected"}}},
+    }
+    fake_driver = MagicMock()
+    fake_driver._SWAPPABLE = False
+    fake_driver.ensure_ready = AsyncMock(return_value=True)
+    fake_runtime = MagicMock()
+    fake_runtime.load = AsyncMock(return_value=True)
+    fake_lease = MagicMock()
+    fake_runtime.select = AsyncMock(return_value=fake_lease)
+    activation = proxy.LocalModelActivation(backend="fixture-switch", model="target")
+
+    async def scenario():
+        with patch.dict(proxy.config["backends"], {"fixture-switch": svc}), \
+             patch.object(lifecycle_drivers, "_external_driver", fake_driver), \
+             patch("gateway.engine_control.EngineControlRuntime", return_value=fake_runtime), \
+             patch.object(proxy, "_swap_drain_settings", return_value=proxy.SwapDrainSettings(enabled=False)):
+            ready, lease = await proxy._ensure_target_leased("fixture-switch", activation)
+            assert ready and lease is fake_lease
+            fake_runtime.select.assert_awaited_once()
+            fake_runtime.load.assert_awaited_once()
+
+    _run(scenario())
+
+
 if __name__ == "__main__":
     unittest.main()
