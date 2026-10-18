@@ -28366,6 +28366,9 @@ def _protocol_failure(error: ProtocolError) -> Response:
         code = error.advice_code or code
         headers = {k: v for k, v in error.headers.items() if k == "retry-after"}
         message = "The engine refused the request. Check its status and protocol configuration."
+        # Advice is operator-authored public copy, but must not expose a filesystem path.
+        if error.advice and len(error.advice) <= 512 and not re.search(r"/\S|[A-Za-z]:[\\/]|\\\\", error.advice):
+            message = error.advice
     elif isinstance(error, TransportFailure) and error.kind == "timeout":
         status = 504
     elif isinstance(error, ProtocolMappingError):

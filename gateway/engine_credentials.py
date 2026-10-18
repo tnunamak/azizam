@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
+from cryptography.exceptions import InvalidTag
 from typing import Any, Mapping
 
 from gateway import admin_store, secret_store
@@ -47,7 +49,10 @@ def credential_headers(service: Mapping[str, Any], operation_class: str) -> dict
             value = secret_store.get_provider_secret(
                 reference, db_path=admin_store.DB_PATH, expected_origin=actual
             )
-        except (KeyError, FileNotFoundError):
+        except PermissionError:
+            # An origin refusal must never turn into an anonymous probe.
+            raise ValueError("engine credential is not approved for this connection") from None
+        except (KeyError, OSError, InvalidTag, sqlite3.Error):
             raise CredentialUnavailable("engine credential reference is unavailable") from None
     if "\r" in value or "\n" in value:
         raise ValueError("engine credential value is invalid")

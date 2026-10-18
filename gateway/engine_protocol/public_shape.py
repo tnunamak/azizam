@@ -22,6 +22,11 @@ def validate(payload, intent: str, *, stream: bool = False):
     require(intent != 'speech', 'Speech synthesis must return an audio asset.')
     def integer(value):
         return type(value) is int and value >= 0
+    def finite_number(value):
+        try:
+            return type(value) in (int, float) and math.isfinite(value)
+        except OverflowError:
+            return False
     require(isinstance(payload, Mapping), 'The mapped response must be a JSON object.')
     if intent == 'chat':
         require(payload.get('object') == ('chat.completion.chunk' if stream else 'chat.completion'),
@@ -43,6 +48,10 @@ def validate(payload, intent: str, *, stream: bool = False):
                     require(isinstance(call, Mapping), 'Each chat tool call must be an object.')
                     if stream:
                         require(integer(call.get('index')), 'Each streamed tool call needs an integer index.')
+                        require('id' not in call or isinstance(call['id'], str), 'A streamed tool id must be text.')
+                        require('type' not in call or call['type'] == 'function', 'A streamed tool type must be function.')
+                        if 'function' not in call:
+                            continue
                     else:
                         require(isinstance(call.get('id'), str) and call.get('type') == 'function',
                                 'Each chat tool call needs an id and type function.')
@@ -69,7 +78,7 @@ def validate(payload, intent: str, *, stream: bool = False):
             require(isinstance(item, Mapping) and item.get('object') == 'embedding' and integer(item.get('index')),
                     'Each embedding needs object embedding and an integer index.')
             value = item.get('embedding')
-            require(isinstance(value, str) or (isinstance(value, list) and all(type(v) in (int, float) and math.isfinite(v) for v in value)),
+            require(isinstance(value, str) or (isinstance(value, list) and all(finite_number(v) for v in value)),
                     'Each embedding must be a numeric array or a base64 string.')
             if isinstance(value, str):
                 try:

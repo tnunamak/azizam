@@ -552,7 +552,7 @@ def user_directory() -> Path:
 
 
 def registry_problems() -> list[dict[str, str]]:
-    return [{"file": name, "reason": reason} for _, _, issues in _MEMO.values() for name, reason in issues.items()]
+    return [{"file": name, "reason": reason} for _, _, issues in tuple(_MEMO.values()) for name, reason in issues.items()]
 
 
 def _load_directory(directory: Path) -> tuple[dict[str, ProtocolDescription], dict[str, str]]:

@@ -53,12 +53,14 @@ async def models(registry: Mapping) -> list[dict]:
             return []
         op = doc.operations.get('models')
         if doc.executor != 'http-v1' or op is None:
+            _issues.pop(engine_id, None)
             return []
         if op.op_class != 'inventory':
             _issues[engine_id] = 'Model listing needs an inventory operation.'
             return []
         offerings = offerings_config(service)
         if not offerings:
+            _issues.pop(engine_id, None)
             return []
         # Include credential refs, address, offerings and the compiled document.
         # Configuration changes cannot reuse a previous origin's inventory.
@@ -85,7 +87,7 @@ async def models(registry: Mapping) -> list[dict]:
             while len(_cache) > MAX_CACHED_ENGINES:
                 _cache.popitem(last=False)
             return copy.deepcopy(rows)
-        except (ProtocolError, ValueError, TimeoutError) as error:
+        except Exception as error:  # one engine cannot take the aggregate down; cancellation still propagates
             _LOG.warning('Protocol inventory failed for %s: %s', engine_id, error)
             _issues[engine_id] = 'The engine model list is unavailable or invalid.'
             return []
