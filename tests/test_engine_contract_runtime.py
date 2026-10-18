@@ -400,9 +400,8 @@ def test_declared_http_switch_reaches_fake_peer_and_keeps_scope_locked():
     async def scenario():
         lease = await runtime.select("new", selection)
         assert selected == ["new"]
-        assert lock.locked()
+        assert not lock.locked()  # the scope is exclusive only while the selection changes
         lease.release()
-        assert not lock.locked()
 
     run(scenario())
     assert calls == [("GET", "/state"), ("POST", "/select"),
@@ -520,9 +519,9 @@ def test_switch_preparation_waits_for_previous_response_lease():
     controller = SwitchController(drain=SwapDrain(), invoke=invoke, observe=observe)
     service = {"id": "fixture", "offerings": [{"id": "old"}, {"id": "new"}]}
     new = {"mode": "switch", "switch": {"call": "select", "args": {"model": "new"},
-           "observe_selected": "selected", "queue_wait_s": 0.02}}
+           "observe_selected": "selected", "queue_wait_s": 0.02, "drain_timeout_s": 0.02}}
     old = {"mode": "switch", "switch": {"call": "select", "args": {"model": "old"},
-           "observe_selected": "selected", "queue_wait_s": 0.02}}
+           "observe_selected": "selected", "queue_wait_s": 0.02, "drain_timeout_s": 0.02}}
 
     async def scenario():
         first = await controller.select(service, "new", new, prepare=prepare)
