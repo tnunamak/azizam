@@ -1035,11 +1035,30 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_
     return record
 
 
-def validate_protocol_dispatch_registry(registry: Mapping[str, Any]) -> None:
-    """Strict mutation check. Reads retain older refused records for repair and diagnostics."""
-    for service in (registry.get("services") or {}).values():
-        if isinstance(service, Mapping):
+def validate_protocol_dispatch_registry(
+    registry: Mapping[str, Any], *, before: Mapping[str, Any] | None = None,
+) -> None:
+    """Check mutations without blocking repair of an older refused record.
+
+    An unchanged stored record can remain, or be disabled with no other change.
+    Every new record, other edit, and re-enable must satisfy the current policy.
+    Compare raw records so normalization cannot hide a newly supplied paid flag.
+    """
+    previous = (before or {}).get("services") or {}
+    for service_id, service in (registry.get("services") or {}).items():
+        if not isinstance(service, Mapping):
+            continue
+        old = previous.get(service_id)
+        if isinstance(old, Mapping):
+            if service == old:
+                continue
+            disabled = dict(old, enabled=False)
+            if bool_from_config(old.get("enabled"), True) and service == disabled:
+                continue
+        try:
             validate_protocol_dispatch_local_only(service)
+        except ValueError as exc:
+            raise ValueError(f"service {service_id!r}: {exc}") from exc
 
 
 def validate_protocol_dispatch_local_only(service: Mapping[str, Any]) -> None:

@@ -1415,9 +1415,11 @@ def _validate_media_job_admission_overrides(
     }
 
 
-def _validate_service_registry(payload: Mapping[str, Any]) -> dict[str, Any]:
+def _validate_service_registry(
+    payload: Mapping[str, Any], *, before: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     try:
-        service_registry.validate_protocol_dispatch_registry(payload)
+        service_registry.validate_protocol_dispatch_registry(payload, before=before)
         return service_registry.normalize_service_registry(payload)
     except Exception as exc:  # noqa: BLE001
         raise _RouteError(
@@ -2353,8 +2355,9 @@ def create_admin_router(
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
             # The registry a caller read hides command secrets behind markers; a marker keeps its stored value.
-            body = engine_redaction.restore_registry(body, store.get_service_registry())
-            registry = _validate_service_registry(body)
+            before = store.get_service_registry()
+            body = engine_redaction.restore_registry(body, before)
+            registry = _validate_service_registry(body, before=before)
             record = store.update_service_registry(
                 data=registry,
                 actor=ctx,

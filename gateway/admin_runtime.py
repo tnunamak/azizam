@@ -824,9 +824,9 @@ class AdminSQLiteStore:
         stored key to the record's host). When the owner does, the host the key is for
         is recorded with it.
         """
-        service_registry.validate_protocol_dispatch_registry(registry)
-        value = service_registry.normalize_service_registry(registry)
         before = self.get_service_registry()
+        service_registry.validate_protocol_dispatch_registry(registry, before=before)
+        value = service_registry.normalize_service_registry(registry)
         if "owner" not in actor.roles:
             old_services = before.get("services") or {}
             for service_id, record in (value.get("services") or {}).items():
