@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,34 @@ def fingerprint(directory: Path) -> str:
             digest.update(b"directory\0")
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def prune(root: Path, kind: str, current: Path) -> None:
+    """Keep the current snapshot and one recent peer; never remove an active key."""
+    with (root / ".prune.lock").open("a") as pruning:
+        fcntl.flock(pruning, fcntl.LOCK_EX)
+        entries = []
+        for path in root.iterdir():
+            if path == current or path.is_symlink() or not path.is_dir():
+                continue
+            if re.fullmatch(rf"{kind}-[a-f0-9]{{64}}", path.name):
+                marker = path / "complete"
+                try:
+                    last_used = marker.stat().st_mtime if marker.is_file() else path.stat().st_mtime
+                except FileNotFoundError:
+                    continue
+                entries.append((last_used, path))
+        for _, path in sorted(entries, reverse=True)[1:]:
+            with (root / f"{path.name}.lock").open("a") as candidate:
+                try:
+                    fcntl.flock(candidate, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    continue
+                try:
+                    shutil.rmtree(path)
+                except FileNotFoundError:
+                    continue
+                print(f"dependency cache pruned: {path.name}", flush=True)
 
 
 def install(kind: str, destination: Path) -> None:
@@ -121,6 +150,8 @@ def install(kind: str, destination: Path) -> None:
         else:
             print(f"dependency cache hit: {kind} {key}", flush=True)
             subprocess.run(["cp", "-a", "--reflink=auto", str(entry / "environment"), str(destination)], check=True)
+        os.utime(complete, None)
+        prune(root, kind, entry)
 
 
 if __name__ == "__main__":

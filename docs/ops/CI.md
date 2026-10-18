@@ -180,10 +180,10 @@ interrupted run, lock waiting, and a killed controller.
 
 ## Parallel local layout
 
-- At start, three jobs run side by side, each in its own clean detached
-  worktree: the Python hermetic suite; the fresh-instance venv and Compose
-  journey; and web install, then unit tests beside check/build, then the
-  browser venv, Chromium and the lane plan.
+- At start, four jobs run across three clean detached worktrees: hermetic
+  Python; the fresh-instance venv and Compose journey; web dependency setup,
+  followed by unit tests, build, browser venv and Chromium in parallel; and
+  Node compatibility, Pi and MCP conformance checks in the shared web tree.
 - The Python suite runs under pytest-xdist: `--py-workers N` (default `12`)
   workers with `--dist worksteal`. Each worker keeps its gateway stores in a
   private subdirectory of the run's state directory. The serial and parallel
@@ -194,14 +194,14 @@ interrupted run, lock waiting, and a killed controller.
   so the browser lanes start only after Compose finishes. The native
   fresh-instance journey runs beside the lanes; it needs no Docker network.
 - `--browser-workers N` (default `10`) and `--browser-servers N` (default `2`)
-  size the main run. It is one `playwright test` invocation with up to five
+  size the main run. It is one `playwright test` invocation with up to six
   servers: the parallel pool (project `chromium`, N workers spread over the
   pool's servers by worker index) on ports `BASE+10`, `BASE+50`, `BASE+60`,
   and two serial `@global-state` projects, each with one worker and a server of
   its own (`chromium-global-state` on `BASE+20`, `chromium-global-state-2` on
-  `BASE+70`). The 33 cases write owner-wide settings, services, profiles,
+  `BASE+70`). These cases write owner-wide settings, services, profiles,
   categories or providers. `SECOND_GLOBAL_FILES` in `web/playwright.config.ts`
-  names the files that run on the second server (23 cases); any other file,
+  names the files that run on the second server; any other file,
   including a new one, runs on the first. The two projects are listed before
   `chromium`, so they start with the pool and run beside it. `chromium-first-run`
   (`BASE+80`, one case) runs `first-run.spec.ts` on a gateway that global setup
@@ -267,8 +267,8 @@ host was shared with other agents (load 13-40).
 
 Wall seconds stay noisy while other agents use the host (load 15-31 here). The
 two serial `@global-state` projects each run about 115 s of test time; the pool
-ends at about the same time. The tail now is `try.spec.ts`: its cases share the
-lane's Try key and run one after another, and the file sorts last. The rest of
+ends at about the same time. At that point `try.spec.ts` was the tail: its cases shared the lane's Try key
+and ran one after another, and the file sorted last. The rest of
 the gate (Python tier) is unchanged.
 
 ## Priority
@@ -311,7 +311,12 @@ The gate keeps successful web `node_modules` and browser Python environments in
 `~/Documents/azizam/ci-cache` (`AZIZAM_CI_CACHE` overrides it). This directory is
 outside the scratch reaper. Delete its entries while no gate runs to reclaim disk
 or force a cold dependency install. Download caches and Docker layers are separate;
-a cold installed-cache run does not clear them.
+a cold installed-cache run does not clear them. The cache keeps the current and
+one recent snapshot per kind and protects active keys with locks during eviction.
+The current lockfile has dependency install hooks, so Node cache reuse requires
+the same Git tree; a new tree installs again. The venv cache is retained as a
+requested reusable environment, but measured copies are slower than uv's existing
+download-cache install. Both paths stay off the measured critical path.
 
 `scripts/ci/install_cached.py` keys entries on the manifests and lockfile contents,
 Node and npm versions or the resolved Python interpreter and uv version, platform,
@@ -319,13 +324,13 @@ installer configuration, installer environment, and the helper implementation.
 The Python key includes uv configuration files and interpreter build settings.
 The npm key includes effective npm configuration and the complete Git tree when
 a dependency has an install hook, since hooks can read arbitrary project files.
-Root install hooks, workspaces
-and local dependencies bypass the npm cache because they can read arbitrary source.
+Root install hooks, workspaces and local dependencies bypass the npm cache because they can read arbitrary source.
 Keys contain hashes; configuration and environment values are never logged.
 
 A key lock serializes population. An install failure publishes no completed entry.
 Only a complete entry whose file contents, modes and symlink targets match its
-stored digest can be reused; a damaged entry is rebuilt. Each run gets an ordinary private copy
+stored digest can be reused; a damaged entry is rebuilt. Each run gets an ordinary
+private copy
 (`cp -a --reflink=auto`, with a full-copy fallback), so test or tool writes cannot
 change the cache or another run. Python console launchers are relocatable. The
 fresh-instance journey and hermetic pytest still create clean environments from
@@ -339,7 +344,6 @@ global-state split (`UI_E2E_GLOBAL=2`); each server owns separate state and port
 The long serial People file starts early in its own one-worker project on the
 existing gateway. Its case order stays intact, and it is excluded from the pool
 project to avoid duplicate runs. The parallel pool, Try serialization, all three
-browser configurations, unchanged
-build check, journey clock, case aggregation and policy checks remain in the gate.
+browser configurations, unchanged build check, journey clock, case aggregation and policy checks remain in the gate.
 `--target main` also selects the local `origin/main` budget comparison without
 posting signoff. Signoff still requires `--signoff --force` and remote checks.

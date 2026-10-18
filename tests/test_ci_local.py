@@ -707,6 +707,24 @@ def test_dependencies_are_private_and_warm_runs_still_test(world: World) -> None
     assert "cache miss: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
     assert snapshot.read_text().startswith("#!/usr/bin/env bash")
 
+    # Retention is per kind and must not evict another active cache key.
+    older = cache / ("node-" + "0" * 64)
+    recent = cache / ("node-" + "1" * 64)
+    for index, entry in enumerate((older, recent), 1):
+        entry.mkdir()
+        (entry / "complete").write_text("old fixture")
+        os.utime(entry / "complete", (index, index))
+    with (cache / f"{older.name}.lock").open("a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        result = world.run()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert older.is_dir()  # an active publisher/reader is never removed
+    result = world.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not older.exists() and recent.is_dir()
+    assert len(list(cache.glob("node-*/complete"))) == 2
+    assert len(list(cache.glob("venv-*/complete"))) == 1
+
 
 def test_cache_does_not_publish_failed_install(world: World) -> None:
     npm = world.bin / "npm"
