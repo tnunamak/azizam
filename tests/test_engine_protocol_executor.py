@@ -153,6 +153,34 @@ def test_path_parameters_are_percent_encoded_and_cannot_change_the_path() -> Non
         run(ex.invoke(conn(), req("get", params={"name": ""})))
 
 
+DOT_PATH = {"get": {"class": "inventory", "request": {"method": "GET", "path": "/api/v1/models/{id}/unload"}, "response": {"framing": "json"}}}
+
+
+@pytest.mark.parametrize("value", ["..", ".", "%2F", "a%2fb", "x%5Cy", "%2e%2e%2F"])
+def test_a_path_value_cannot_climb_the_path_or_carry_an_encoded_slash(value: str) -> None:
+    ex, fake = make(DOT_PATH, lambda r: httpx.Response(200, json={}))
+    with pytest.raises(MappingError):
+        run(ex.invoke(conn(), req("get", params={"id": value})))
+    assert fake.requests == []
+
+
+def test_two_placeholders_cannot_join_into_a_dot_segment() -> None:
+    ops = {"get": {"class": "inventory", "request": {"method": "GET", "path": "/v1/{a}{b}/x"}, "response": {"framing": "json"}}}
+    ex, fake = make(ops, lambda r: httpx.Response(200, json={}))
+    with pytest.raises(MappingError):
+        run(ex.invoke(conn(), req("get", params={"a": ".", "b": "."})))
+    assert fake.requests == []
+
+
+@pytest.mark.parametrize("value", ["a.b", "..x", "x..", "v1.5", "a/b", "...", "é"])
+def test_a_path_value_with_dots_inside_a_name_is_still_sent_encoded(value: str) -> None:
+    ex, fake = make(DOT_PATH, lambda r: httpx.Response(200, json={}))
+    run(ex.invoke(conn(), req("get", params={"id": value})))
+    segments = fake.requests[0].url.raw_path.split(b"/")
+    assert len(segments) == 6 and segments[4] not in (b".", b"..")
+    assert segments[5] == b"unload"
+
+
 def test_an_address_with_a_path_prefix_keeps_it() -> None:
     ex, fake = make(MODELS, lambda r: httpx.Response(200, json={}))
     run(ex.invoke(conn(address=BASE + "/openai/"), req("models")))
