@@ -45,7 +45,7 @@ import contextlib
 import contextvars
 import io
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, Mapping, Optional, Sequence
+from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, Optional, Sequence
 from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlsplit
 
 import httpx
@@ -1979,6 +1979,14 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
     """
     if is_public_path(request_path):
         return NO_AUTH_CONTEXT
+
+    # A protocol frontend's loopback runs as the caller it serves, handed over
+    # in process. It never re-authenticates by its own 127.0.0.1 address, which
+    # the owner may trust for another App.
+    handoff = request.headers.get(_INTERNAL_IDENTITY_HEADER)
+    if handoff is not None or _is_internal_protocol_forward(request):
+        handed = _INTERNAL_IDENTITIES.get(handoff or "")
+        return handed if handed is not None else access_error("key_required")
 
     # An MCP OAuth access token is never treated as an App key.
     bearer = _authorization_bearer(request)
@@ -13959,12 +13967,18 @@ _MCP_SKIP_FORWARD_HEADERS = {
 }
 
 
+def _mcp_transport(request: Request) -> httpx.ASGITransport:
+    """The in-process call keeps the caller's client address, and has none when
+    the caller had none: it must never look like a call from 127.0.0.1."""
+    client = request.client
+    return httpx.ASGITransport(app=app, client=(client.host, client.port) if client else None)  # type: ignore[arg-type]
+
+
 async def _mcp_internal_call(request: Request, method: str, path: str, **kwargs: Any) -> httpx.Response:
     headers = {k: v for k, v in request.headers.items()
                if k.lower() not in _MCP_SKIP_FORWARD_HEADERS and not k.lower().startswith("mcp-param-")}
-    client = request.client
-    transport = httpx.ASGITransport(app=app, client=(client.host, client.port) if client else ("127.0.0.1", 0))
-    async with httpx.AsyncClient(transport=transport, base_url="http://gateway.internal", timeout=None) as http:
+    async with httpx.AsyncClient(transport=_mcp_transport(request), base_url="http://gateway.internal",
+                                 timeout=None) as http:
         return await http.request(method, path, headers=headers, **kwargs)
 
 
@@ -13972,11 +13986,10 @@ async def _mcp_dispatch_call(request: Request, method: str, path: str, **kwargs:
     """The MCP adapter's in-process call. The marker lets a core route accept
     the caller's MCP access token, which is valid only at /mcp otherwise."""
     headers = {**(kwargs.pop("headers", None) or {}), _MCP_DISPATCH_HEADER: _MCP_DISPATCH_SECRET}
-    client = request.client
-    transport = httpx.ASGITransport(app=app, client=(client.host, client.port) if client else ("127.0.0.1", 0))
     forwarded = {k: v for k, v in request.headers.items()
                  if k.lower() not in _MCP_SKIP_FORWARD_HEADERS and not k.lower().startswith("mcp-param-")}
-    async with httpx.AsyncClient(transport=transport, base_url="http://gateway.internal", timeout=None) as http:
+    async with httpx.AsyncClient(transport=_mcp_transport(request), base_url="http://gateway.internal",
+                                 timeout=None) as http:
         return await http.request(method, path, headers={**forwarded, **headers}, **kwargs)
 
 
@@ -24807,6 +24820,26 @@ def _api_key_name(auth_context) -> Optional[str]:
         return None
 
 
+_INTERNAL_IDENTITY_HEADER = "x-azizam-internal-identity"
+_INTERNAL_IDENTITIES: dict[str, AuthContext] = {}
+
+
+@contextlib.contextmanager
+def _identity_handoff(auth_context: AuthContext) -> Iterator[dict[str, str]]:
+    """Headers that make an in-process loopback run as ``auth_context``.
+
+    The token is random, exists only in this process while the call starts,
+    and is not a credential anyone holds. ``authenticate_request`` returns the
+    handed-over caller for it; a loopback without one is refused.
+    """
+    token = secrets.token_urlsafe(32)
+    _INTERNAL_IDENTITIES[token] = auth_context
+    try:
+        yield {_INTERNAL_IDENTITY_HEADER: token}
+    finally:
+        _INTERNAL_IDENTITIES.pop(token, None)
+
+
 def _protocol_loopback_source_headers(request: Request) -> dict[str, str]:
     """Carry the selected credential through adapters as one Bearer header."""
     headers = {
@@ -24858,23 +24891,26 @@ async def _forward_chat_completions(
     if stream:
         # The caller owns the client only once it is returned.
         try:
-            req = client.build_request(
-                "POST",
-                loopback_request.url,
-                headers=loopback_request.headers,
-                content=loopback_request.body,
-            )
-            resp = await client.send(req, stream=True)
+            # The loopback authenticates before its headers return.
+            with _identity_handoff(auth_context) as handoff:
+                req = client.build_request(
+                    "POST",
+                    loopback_request.url,
+                    headers={**loopback_request.headers, **handoff},
+                    content=loopback_request.body,
+                )
+                resp = await client.send(req, stream=True)
         except BaseException:
             await client.aclose()
             raise
         return client, resp
     try:
-        resp = await client.post(
-            loopback_request.url,
-            headers=loopback_request.headers,
-            content=loopback_request.body,
-        )
+        with _identity_handoff(auth_context) as handoff:
+            resp = await client.post(
+                loopback_request.url,
+                headers={**loopback_request.headers, **handoff},
+                content=loopback_request.body,
+            )
         return resp
     finally:
         if not stream:
@@ -24902,11 +24938,12 @@ async def _forward_embeddings(
     )
     client = httpx.AsyncClient(timeout=loopback_request.timeout)
     try:
-        return await client.post(
-            loopback_request.url,
-            headers=loopback_request.headers,
-            content=loopback_request.body,
-        )
+        with _identity_handoff(auth_context) as handoff:
+            return await client.post(
+                loopback_request.url,
+                headers={**loopback_request.headers, **handoff},
+                content=loopback_request.body,
+            )
     finally:
         await client.aclose()
 
