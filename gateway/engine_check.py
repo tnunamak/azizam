@@ -308,7 +308,6 @@ def checked_transport(destination: Destination) -> httpx.AsyncHTTPTransport:
     return transport
 
 
-checked_transport = _checked_transport  # public name for gateway/engine_protocol/transport.py
 
 
 class _Decoder:
