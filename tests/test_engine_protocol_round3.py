@@ -355,6 +355,6 @@ def test_L2_executor_stream_receipt_matches_the_legacy_receipt_for_the_same_requ
         protocol = client.post('/v1/chat/completions', json={'model': 'exec-coder', 'messages': message, 'stream': True})
     assert legacy.status_code == 200 and protocol.status_code == 200, (legacy.text, protocol.text)
     rows = {row['request_id']: row for row in receipt_store.recent()}
-    legacy_row = rows[legacy.headers['x-request-id']]
+    legacy_row = rows[legacy.headers['x-azizam-request-id']]
     protocol_row = rows[protocol.headers['x-request-id']]
     assert _receipt_projection(protocol_row) == _receipt_projection(legacy_row)
