@@ -16,6 +16,11 @@ import pytest
 
 from gateway.engine_process import ProcessDriver
 from tests.test_engine_contract_runtime import free_port, process_service, run
+from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
+    csrf_for,
+    gateway,
+    owner_and_admin,
+)
 
 
 class Probe:
@@ -565,8 +570,6 @@ def test_turning_commands_off_blocks_new_starts_but_leaves_a_running_engine_alon
 
 def test_disabling_the_setting_reports_that_running_processes_continue(gateway):
     from unittest.mock import patch as _patch
-    from tests.test_admin_cannot_act_as_owner import csrf_for
-    from tests.test_admin_owner_holes_round4 import owner_and_admin
 
     owner, _, _, _admin = owner_and_admin(gateway)
     path = "/admin/api/operator/host-commands"
