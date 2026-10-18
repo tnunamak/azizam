@@ -348,24 +348,6 @@ class BoundedMultipartTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_plan_budget_rejects_before_extraction_or_upload(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            source = root / "source.wav"
-            source.write_bytes(b"source")
-            config = _config(root, target_seconds=30, threshold_seconds=40, max_segments=2, max_duration_seconds=150)
-            extract = AsyncMock()
-            post = AsyncMock()
-            with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(125, 8000, 1))), patch.object(stt_chunking, "detect_silences", new=AsyncMock(return_value=[])), patch.object(stt_chunking, "extract_segment", new=extract):
-                with self.assertRaises(stt_chunking.SttResourceLimitExceeded):
-                    await stt_chunking.execute_chunking(
-                        source_path=source, source_stem="source", fields=[("response_format", "json")],
-                        config=config, cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10,
-                        on_cancel=None, post_file=post,
-                    )
-            extract.assert_not_awaited()
-            post.assert_not_awaited()
-
     async def test_missing_silence_posts_only_bounded_segments(self) -> None:
         for silences in ([], [(29, 31), (89, 91)]):
             with self.subTest(silences=silences), tempfile.TemporaryDirectory() as temp_dir:
@@ -823,39 +805,32 @@ class MediaLimitTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(probed.channels, 1)
 
     async def test_segment_limit_and_deadline_are_deterministic(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            source = root / "source.wav"
-            source.write_bytes(b"source")
-            config = _config(root, max_segments=2)
-            with (
-                patch.object(
-                    stt_chunking,
-                    "probe_audio",
-                    new=AsyncMock(return_value=stt_chunking.ProbedAudio(75, 8000, 1)),
-                ),
-                patch.object(
-                    stt_chunking,
-                    "detect_silences",
-                    new=AsyncMock(return_value=[(19, 21), (39, 41)]),
-                ),
-            ):
-                with self.assertRaises(stt_chunking.SttResourceLimitExceeded):
-                    await stt_chunking.execute_chunking(
-                        source_path=source,
-                        source_stem="source",
-                        fields=[("response_format", "json")],
-                        config=config,
-                        post_file=AsyncMock(),
-                        cancellation_waiters=(),
-                        deadline_at=asyncio.get_running_loop().time() + 1,
-                        on_cancel=None,
-                    )
-            with self.assertRaises(stt_chunking.SttDeadlineExceeded):
-                await stt_chunking.await_with_cancellation(
-                    asyncio.Future(),
-                    deadline_at=asyncio.get_running_loop().time() + 0.01,
-                )
+        # The same admission contract covers silence-selected and forced cuts.
+        for silences in ([], [(19, 21), (39, 41)]):
+            with self.subTest(silences=silences), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                source = root / "source.wav"
+                source.write_bytes(b"source")
+                config = _config(root, max_segments=2)
+                extract = AsyncMock()
+                post = AsyncMock()
+                with (
+                    patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(75, 8000, 1))),
+                    patch.object(stt_chunking, "detect_silences", new=AsyncMock(return_value=silences)),
+                    patch.object(stt_chunking, "extract_segment", new=extract),
+                ):
+                    with self.assertRaises(stt_chunking.SttResourceLimitExceeded):
+                        await stt_chunking.execute_chunking(
+                            source_path=source, source_stem="source", fields=[("response_format", "json")],
+                            config=config, post_file=post, cancellation_waiters=(),
+                            deadline_at=asyncio.get_running_loop().time() + 1, on_cancel=None,
+                        )
+                extract.assert_not_awaited()
+                post.assert_not_awaited()
+        with self.assertRaises(stt_chunking.SttDeadlineExceeded):
+            await stt_chunking.await_with_cancellation(
+                asyncio.Future(), deadline_at=asyncio.get_running_loop().time() + 0.01,
+            )
 
     async def test_real_offline_ffmpeg_fixture_covers_segments_and_cleanup(self) -> None:
         if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
