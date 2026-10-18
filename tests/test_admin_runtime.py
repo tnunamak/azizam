@@ -1037,6 +1037,20 @@ class ServicePatchRoundTripTests(unittest.TestCase):
         self.assertNotIn("lifecycle", after)
         self.assertNotIn("lifecycle", after["config"])
 
+    def test_v2_legacy_lifecycle_edit_changes_process(self) -> None:
+        seed = service_registry.build_service_registry_seed({"backends": {
+            "legacy": {"protocol": "openai-compatible", "host": "engine", "port": 18001,
+                       "lifecycle": {"driver": "command", "driver_config": {"start": ["old"]}}},
+        }})
+        write_service_registry_for_test(seed, path=self.db)
+        registry = self.store.update_service(
+            service_id="legacy", data={"lifecycle": {"driver": "command", "driver_config": {"start": ["new"]}}},
+            actor=self.ctx,
+        )
+        process = registry["services"]["legacy"]["process"]
+        self.assertEqual(process["start"], ["new"])
+        self.assertEqual(process["legacy_lifecycle"]["driver_config"]["start"], ["new"])
+
     def _seed_embeddings(self) -> None:
         """Add the canonical 'embeddings' service from the spec example."""
         self.store.add_service(

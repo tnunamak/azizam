@@ -178,6 +178,49 @@ def test_v2_migration_refuses_conflicting_copies_without_partial_change() -> Non
     assert registry == before
 
 
+def test_v2_migration_refuses_nested_only_driver_and_preserves_normalized_runtime() -> None:
+    record = _service()
+    record["lifecycle"].pop("driver")
+    record["lifecycle"].pop("driver_config")
+    registry = {"schema_version": 1, "services": {"engine-a": record}}
+    with pytest.raises(ValueError, match=r"engine-a.*lifecycle.*driver.*conflict"):
+        service_registry.migrate_engine_records_v2(registry)
+
+    record["config"].pop("lifecycle")
+    record["lifecycle"]["status"] = "not-a-runtime-field"
+    before = service_registry.runtime_backends(service_registry.normalize_service_registry(registry))
+    service_registry.migrate_engine_records_v2(registry)
+    after = service_registry.runtime_backends(service_registry.normalize_service_registry(registry))
+    assert after == before
+
+
+def test_v2_command_changes_still_require_owner() -> None:
+    old = {"schema_version": 2, "services": {}}
+    new = {"schema_version": 2, "services": {"engine-a": _service()}}
+    assert "lifecycle" in service_registry.credential_binding_changes(old, new)["engine-a"]
+    migrated = {"schema_version": 1, "services": {"engine-a": _service()}}
+    service_registry.migrate_engine_records_v2(migrated)
+    edited = copy.deepcopy(migrated)
+    edited["services"]["engine-a"]["process"]["start"] = ["different"]
+    assert "lifecycle" in service_registry.credential_binding_changes(migrated, edited)["engine-a"]
+
+
+def test_v2_record_readers_keep_legacy_availability_and_admin_shape() -> None:
+    from gateway.availability import _is_idle_startable
+    from gateway.engine_admin import redacted_record
+    from gateway.model_files import _host_managed_lifecycle
+
+    record = _service()
+    record["lifecycle"]["driver"] = "systemd"
+    record["config"]["lifecycle"]["driver"] = "systemd"
+    before = (_is_idle_startable(record), _host_managed_lifecycle(record))
+    registry = {"schema_version": 1, "services": {"engine-a": record}}
+    service_registry.migrate_engine_records_v2(registry)
+    migrated = registry["services"]["engine-a"]
+    assert (_is_idle_startable(migrated), _host_managed_lifecycle(migrated)) == before == (True, True)
+    assert redacted_record(migrated)["lifecycle"]["driver"] == "systemd"
+
+
 def test_v2_migration_preserves_external_and_system_runtime_wrappers() -> None:
     ordinary = _service()
     ordinary["lifecycle"] = {"type": "external", "managed": False, "service_name": ""}
