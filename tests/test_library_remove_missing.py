@@ -179,13 +179,24 @@ class RemoveMissingTests(unittest.TestCase):
         with patch("gateway.me_media.os.listdir", side_effect=PermissionError("denied")):
             self.refused()
 
-    def test_an_empty_media_folder_removes_nothing(self) -> None:
-        # A volume that is mounted but empty looks exactly like every file being gone.
+    def test_an_empty_media_folder_is_healthy_and_every_entry_is_gone(self) -> None:
+        # The folder exists and is readable. It holds nothing, so nothing is stored.
         self.seed()
         for letter in "BD":
             self._asset_path(asset(letter)).unlink()
             self._meta_path(asset(letter)).unlink()
-        self.refused()
+        self.assertEqual(os.listdir(self.cache), [])
+        response = self.client.post(REMOVE, headers=VALID)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"removed_assets": 4, "removed_jobs": 3})
+        self.assertEqual(self.library(), {})
+        self.assertEqual(len(self.job_ids("req_e")), 1, "Bob's entries are not the caller's")
+
+    def test_an_empty_media_folder_and_an_empty_library_has_nothing_to_remove(self) -> None:
+        self.assertEqual(os.listdir(self.cache), [])
+        response = self.client.post(REMOVE, headers=VALID)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"removed_assets": 0, "removed_jobs": 0})
 
     def test_a_folder_with_only_sidecars_and_scratch_files_removes_nothing(self) -> None:
         self.seed()
