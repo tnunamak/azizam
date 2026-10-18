@@ -188,3 +188,59 @@ def test_view_explains_why_saved_key_will_be_withheld(service):
     shown = service.view('review', OWNER)
     assert any(row['code'] == 'engine_credential_origin_mismatch' for row in shown['attention'])
     assert 'test-only-env-key' not in str(shown)
+
+
+def test_real_test_trace_does_not_return_hidden_header_values(service, monkeypatch):
+    hidden = 'test-hidden-trace-credential'
+    service.store.saved['config']['headers'] = [{'name': 'X-Token', 'value': hidden, 'secret': True}]
+    async def real_test(*args, **kwargs):
+        return {'ok': True, 'at': 123, 'seconds': .1,
+                'request': {'url': 'http://127.0.0.1:5051/v1/chat/completions',
+                            'headers': {'X-Token': hidden, 'X-Tenant': 'public'}}}
+    monkeypatch.setattr(engine_admin, 'run_real_test', real_test)
+    result = asyncio.run(service.test(OWNER, body(service)))
+    assert hidden not in str(result)
+    assert result['request']['headers']['X-Tenant'] == 'public'
+
+
+def test_saved_receipt_cannot_be_used_for_another_capability(service):
+    result = asyncio.run(service.test(OWNER, body(service)))
+    asyncio.run(service.update(OWNER, 'review', {
+        'disabled': True, 'values': body(service)['values'], 'tests': {'embeddings': result},
+    }, expected_generation=0))
+    assert not service.store.written.get('engine_tests')
+
+
+@pytest.mark.parametrize('operation', ['check', 'test'])
+def test_admin_probe_cannot_send_edited_saved_connection(service, monkeypatch, operation):
+    calls = []
+    async def outbound(*args, **kwargs):
+        calls.append('outbound')
+        return {'ok': True, 'at': 123, 'outcome': 'ok'}
+    monkeypatch.setattr(engine_admin, 'run_check' if operation == 'check' else 'run_real_test', outbound)
+    with pytest.raises((engine_admin.EngineRouteError, PermissionError)):
+        asyncio.run(getattr(service, operation)(SimpleNamespace(roles=('admin',)),
+                                              body(service, address='http://127.0.0.1:5052/v1')))
+    assert calls == []
+
+
+def test_unbound_legacy_test_is_not_saved_settings_proof(service):
+    service.store.saved['config']['engine_tests'] = {'chat': {'ok': True, 'at': 123, 'via': 'saved'}}
+    assert service.view('review', OWNER)['tests'] == {}
+    asyncio.run(service.update(OWNER, 'review', {
+        'disabled': True, 'values': body(service)['values'],
+    }, expected_generation=0))
+    assert not service.store.written.get('engine_tests')
+
+
+def test_command_arrays_are_editable_and_save_exact_arguments(service):
+    lifecycle = {'driver': 'command', 'managed': True,
+                 'driver_config': {'start': ['runner', '--port', '5051'], 'health_timeout_s': 120}}
+    service.store.saved['config']['lifecycle'] = lifecycle
+    service.store.saved['lifecycle'] = lifecycle
+    assert service.view('review', OWNER)['lifecycle_editable'] is True
+    argv = ['runner', 'with spaces', 'comma,value', '"quoted"', '']
+    asyncio.run(service.update(OWNER, 'review', {
+        'disabled': True, 'values': body(service, lifecycle_start=argv)['values'],
+    }, expected_generation=0))
+    assert service.store.written['lifecycle']['driver_config']['start'] == argv
