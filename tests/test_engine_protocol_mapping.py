@@ -221,3 +221,31 @@ def test_a_body_that_is_not_an_object_cannot_be_the_base() -> None:
     program = mapping.build([], base="passthrough", roots=mapping.REQUEST_ROOTS)
     with pytest.raises(MappingError):
         program.apply({"body": [1], "params": {}, "files": {}})
+
+
+def test_a_map_without_writes_shares_the_body_and_a_map_with_writes_copies_it() -> None:
+    body = {"a": {"b": [1]}, "model": "m"}
+    bare = mapping.build([], base="passthrough", roots=mapping.REQUEST_ROOTS)
+    assert bare.apply({"body": body, "params": {}, "files": {}}) is body
+    writing = mapping.build([{"set": {"to": "/x", "value": 1}}], base="passthrough", roots=mapping.REQUEST_ROOTS)
+    out = writing.apply({"body": body, "params": {}, "files": {}})
+    assert out is not body and out["a"] is not body["a"] and "x" not in body
+
+
+def test_a_copy_shares_a_container_only_when_no_rule_writes_below_it() -> None:
+    body = {"opts": {"a": [1, 2]}}
+    shared = mapping.build([{"copy": {"from": "/body/opts", "to": "/opts"}}], base="empty", roots=mapping.REQUEST_ROOTS)
+    assert shared.apply({"body": body, "params": {}, "files": {}})["opts"] is body["opts"]
+    for write in (
+        {"set": {"to": "/opts/extra", "value": 1}},
+        {"drop": {"path": "/opts/a"}},
+        {"default": {"to": "/opts/d", "value": 1}},
+        {"rename": {"from": "/opts/a", "to": "/opts/b"}},
+        {"clamp": {"path": "/opts/n", "min": 0}},
+        {"when": {"if": {"path": "/body/opts", "present": True}, "then": [{"set": {"to": "/opts/w", "value": 1}}]}},
+    ):
+        program = mapping.build([{"copy": {"from": "/body/opts", "to": "/opts"}}, write], base="empty", roots=mapping.REQUEST_ROOTS)
+        snapshot = json.dumps(body)
+        out = program.apply({"body": body, "params": {}, "files": {}})
+        assert out["opts"] is not body["opts"], write
+        assert json.dumps(body) == snapshot, write
