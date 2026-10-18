@@ -32,7 +32,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Callout, StateWord } from "@/components/product/status-ui";
 import { engineDefinitionsKey } from "../add-engine/add-engine-dialog";
-import { checkedWhen, clockTime, fieldOf, originOf, trimAddress } from "../add-engine/draft";
+import { checkedWhen, fieldOf, originOf, trimAddress } from "../add-engine/draft";
 import { AccessAnswer, AccessAsk, accessModels } from "../parts/access-answer";
 import { CallLine } from "../parts/call-line";
 import { CapabilityList, rowsFromCheck, type CapabilityRow, type TestState } from "../parts/capabilities";

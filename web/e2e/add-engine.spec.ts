@@ -49,7 +49,7 @@ for (const width of [1280, 390]) {
       await dialog.getByRole("button", { name: "Continue" }).click();
 
       await expect(dialog.getByRole("heading", { name: "Name and create" })).toBeVisible();
-      await dialog.getByLabel(/^Name/).fill(name);
+      await dialog.getByRole("textbox", { name: "Name", exact: true }).fill(name);
       // Who can use the models: the gateway's answer, shown before Create. The
       // fixture plans allow all chat models and the signed-in owner holds one.
       await expect(dialog.getByRole("heading", { name: "Who can use these models" })).toBeVisible();
@@ -94,13 +94,13 @@ for (const width of [1280, 390]) {
       await realTest.getByText("Request sent, with secrets hidden", { exact: true }).click();
       const trace = realTest.getByLabel("Request sent, with secrets hidden");
       await expect(trace).toContainText(`POST ${address}/chat/completions`);
-      await expect(trace).toContainText("Bearer [redacted]");
+      await expect(trace).toContainText("Authorization: [redacted]");
       await expect(trace).not.toContainText("sk-journey-local-key");
       await expect(trace).toContainText('"messages"');
       // The successful real test records its result in a separate registry write.
       // Complete that write before this journey edits the same record.
       expect((await storedTest).status()).toBe(200);
-      await page.getByLabel(/^Name/).fill(`${name} edited`);
+      await page.getByRole("textbox", { name: "Name", exact: true }).fill(`${name} edited`);
       const saved = page.waitForResponse(
         (response) => response.request().method() === "PATCH" && response.url().endsWith(`/admin/api/operator/services/${serviceId}`),
       );

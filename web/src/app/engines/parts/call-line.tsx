@@ -5,7 +5,7 @@ import type { EngineDefinition, EngineValues } from "@/lib/engines-api";
 import { cn } from "@/lib/cn";
 import { callLine } from "../add-engine/draft";
 
-/** "Azizam will call GET http://…/v1/models": the exact first request, live as the person types. */
+/** The first connection-check request, updated as the address changes. */
 export function CallLine({
   definition,
   values,

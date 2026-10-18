@@ -288,15 +288,15 @@ export function OfferingFacts({ v2 }: { v2: EngineRecordV2 | undefined }) {
                 ? selectionWords[o.selection.mode] ?? "The saved selection method is not explained."
                 : "How a request reaches it is not recorded."}
               {o.selection?.mode === "switch" && o.selection.switch?.call ? (
-                <> Operation used to switch models: {mono(o.selection.switch.call)}.</>
+                <> Request used to switch models: {mono(o.selection.switch.call)}.</>
               ) : null}
             </span>
             <Facts rows={[
-              ...(o.tasks ? [["Tasks and evidence", <ul>{o.tasks.map((task, index) => <li key={index}>{task.task}: {task.evidence === "declared" ? "declared in the saved settings" : task.evidence === "observed" ? "reported by a server check" : task.evidence === "tested" ? "verified by a test" : task.evidence}</li>)}</ul>] as [string, ReactNode]] : []),
-              ...(o.required_inputs != null ? [["Required inputs", <SavedFields value={o.required_inputs} />] as [string, ReactNode]] : []),
-              ...(o.options != null ? [["Options", <SavedFields value={o.options} />] as [string, ReactNode]] : []),
-              ...(o.start_profiles != null ? [["Start settings", <SavedFields value={o.start_profiles} />] as [string, ReactNode]] : []),
-              ...(o.adjustments != null ? [["Adjustments", <SavedFields value={o.adjustments} />] as [string, ReactNode]] : []),
+              ...(o.tasks ? [["Tasks and evidence", <ul key="tasks">{o.tasks.map((task, index) => <li key={index}>{task.task}: {task.evidence === "declared" ? "declared in the saved settings" : task.evidence === "observed" ? "reported by a server check" : task.evidence === "tested" ? "verified by a test" : task.evidence}</li>)}</ul>] as [string, ReactNode]] : []),
+              ...(o.required_inputs != null ? [["Required inputs", <SavedFields key="required_inputs" value={o.required_inputs} />] as [string, ReactNode]] : []),
+              ...(o.options != null ? [["Options", <SavedFields key="options" value={o.options} />] as [string, ReactNode]] : []),
+              ...(o.start_profiles != null ? [["Start settings", <SavedFields key="start_profiles" value={o.start_profiles} />] as [string, ReactNode]] : []),
+              ...(o.adjustments != null ? [["Adjustments", <SavedFields key="adjustments" value={o.adjustments} />] as [string, ReactNode]] : []),
               ...(o.inputs != null ? [["Inputs", <SavedFields key="inputs" value={o.inputs} />] as [string, ReactNode]] : []),
               ...(o.kind === "model" ? [["Loading", o.selection?.implicit_load === true ? "Loads when first requested." : o.selection?.implicit_load === false ? "Does not load automatically on first request." : "Whether this model loads on first request is unknown."] as [string, ReactNode]] : []),
             ]} />
@@ -344,7 +344,7 @@ export function ProcessFacts({
   }
   const apply = process?.profile_apply;
   if (apply) {
-    rows.push(["Saved file operation", mono(apply.kind)]);
+    rows.push(["How settings are applied", <span key="apply-kind">{apply.kind === "write_env_file_then_restart" ? "Configured to write an environment settings file and restart the server." : apply.kind === "none" ? "No settings file is applied." : "This page cannot explain this saved method."}<details><summary>Technical details</summary>{mono(apply.kind)}</details></span>]);
     if (apply.reload?.length) rows.push(["Reload", argv(apply.reload)]);
     if (apply.file) rows.push(["Settings file", <span key="file">
       {mono(apply.file)}

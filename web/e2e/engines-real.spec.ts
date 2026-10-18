@@ -81,7 +81,7 @@ test("real registry journey preserves disabled state and unknown config through 
   await expect(page.getByText("custom_operator_field", { exact: true })).toBeVisible();
   await expect(page.getByRole("textbox", { name: /JSON/ })).toHaveCount(0);
 
-  await page.getByLabel(/^Name/).fill("Renamed journey engine");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Renamed journey engine");
   await page.getByLabel(/^Address/).fill(`http://127.0.0.1:${enginePort}/v2`);
   const more = page.getByRole("region", { name: "What it offers", exact: true });
   await more.getByText("Add an adjustment").click();
@@ -187,6 +187,7 @@ for (const width of [1280, 390]) {
       const second = await to.boundingBox();
       expect(second!.y).toBeGreaterThan(first!.y + first!.height);
       expect(first!.width).toBeGreaterThan(200);
+      await page.screenshot({ path: "test-results/engine-contract-390-inputs.png" });
       const saveBar = page.getByRole("status").filter({ hasText: "You have unsaved changes." });
       await expect(saveBar).toHaveCSS("position", "static");
     }
@@ -206,6 +207,6 @@ for (const width of [1280, 390]) {
     await expect(page.getByTestId("offering-facts")).toContainText("prompt");
     await page.getByTestId("offering-facts").scrollIntoViewIfNeeded();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({ path: `test-results/engine-contract-${width}.png`, fullPage: true });
+    await page.screenshot({ path: `test-results/engine-contract-${width}.png` });
   });
 }
