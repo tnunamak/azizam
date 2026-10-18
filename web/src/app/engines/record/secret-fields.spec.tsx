@@ -67,6 +67,11 @@ it("env is a write-only input with configured metadata", () => {
     "password",
   );
 });
+it("can hide legacy header carriers when the saved dispatch does not use them", () => {
+  const drafts = secretDrafts({ config: { headers: [{ id: "ent_h", name: "X-Legacy", configured: true }] } });
+  render(<SecretFields drafts={drafts} onChange={() => {}} part="connection" disabled={false} excludeKinds={["headers"]} />);
+  expect(screen.queryByRole("group", { name: "Request headers" })).toBeNull();
+});
 it("cancels a secret-toggle edit by restoring the original argument", async () => {
   render(<Editor />);
   const user = userEvent.setup();

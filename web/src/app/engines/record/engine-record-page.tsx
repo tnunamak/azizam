@@ -35,6 +35,7 @@ import { Switch } from "@/components/ui/switch";
 import { Callout, StateWord } from "@/components/product/status-ui";
 import { engineDefinitionsKey } from "../add-engine/add-engine-dialog";
 import { checkedWhen, fieldOf, originOf, trimAddress } from "../add-engine/draft";
+import { protocolDescriptionsApi } from "@/lib/protocol-descriptions-api";
 import { AccessAnswer, AccessAsk, accessModels } from "../parts/access-answer";
 import { CallLine } from "../parts/call-line";
 import { CapabilityList, rowsFromCheck, type CapabilityRow, type TestState } from "../parts/capabilities";
@@ -263,11 +264,23 @@ function RecordForm({
   const settingsLocked = reason !== null;
   // Settings of the definition this record can't use (its protocol differs): never a control, never sent.
   const unsupported = view.unsupported_fields ?? {};
-  const mismatched = Object.keys(unsupported).length > 0;
+  const addressUnsupported = "address" in unsupported;
+  const [protocol, setProtocol] = useState<ProtocolDraft>(() => ({ dispatch: view.values.dispatch ?? "", protocol: view.values.protocol_description ?? "" }));
+  const nativeMode = protocol.dispatch === "protocol";
+  const protocolCatalog = useQuery({
+    queryKey: ["engineProtocolDescriptions"],
+    queryFn: protocolDescriptionsApi.list,
+    staleTime: 0,
+    enabled: nativeMode,
+  });
+  const selectedProtocol = protocolCatalog.data?.protocols.find((row) => row.id === protocol.protocol);
+  const protocolValid = !nativeMode || Boolean(protocolCatalog.isSuccess && !protocolCatalog.isFetching && !protocolCatalog.isError && selectedProtocol?.dispatch_supported && selectedProtocol.validation.valid);
+  const protocolDormantFields = nativeMode ? new Set(["headers", "path_prefix", "reply_timeout_s", "transforms"]) : null;
+  const mismatched = addressUnsupported;
   // Name and Enabled go through the plain service edit, which sends no definition and no values:
   // a full engine payload would carry settings this person or this record can't change.
-  const metadataOnly = settingsLocked || mismatched;
-  const allOptions = optionFields(definition).filter((f) => !(f.key in unsupported));
+  const metadataOnly = settingsLocked || mismatched || nativeMode;
+  const allOptions = optionFields(definition).filter((f) => !(f.key in unsupported) && !protocolDormantFields?.has(f.key));
   const connectionFields = allOptions.filter((f) => fieldPart(f) === "connection" && f.type !== "keyvalue");
   const offeringFields = allOptions.filter((f) => fieldPart(f) === "offerings");
   const processFields = allOptions.filter((f) => fieldPart(f) === "process" && !["lifecycle_start", "lifecycle_stop"].includes(f.key) && (f.key !== "lifecycle_mode" || view.values.lifecycle_mode === "managed"));
@@ -279,7 +292,6 @@ function RecordForm({
   const [viewedRevision] = useState(view.revision);
   const [options, setOptions] = useState<OptionValues>(() => optionValuesFrom(definition, view));
   const [headers, setHeaders] = useState<HeaderDraft[]>([]);
-  const [protocol, setProtocol] = useState<ProtocolDraft>(() => ({ dispatch: view.values.dispatch ?? "", protocol: view.values.protocol_description ?? "" }));
   const [secrets, setSecrets] = useState(() => secretDrafts(view.record, view.key));
   const commands = secretCommands(secrets);
   const commandProblem = secretProblem(secrets);
@@ -324,9 +336,10 @@ function RecordForm({
 
   function bodyValues(at = address): Record<string, unknown> {
     const values: Record<string, unknown> = { address: at.trim() };
-    if (protocol.dispatch !== (view.values.dispatch ?? "") || protocol.protocol !== (view.values.protocol_description ?? "")) { values.dispatch = protocol.dispatch; values.protocol_description = protocol.protocol; }
+    if (nativeMode || protocol.dispatch !== (view.values.dispatch ?? "") || protocol.protocol !== (view.values.protocol_description ?? "")) { values.dispatch = protocol.dispatch; values.protocol_description = protocol.protocol; }
     for (const field of optionFields(definition)) {
       if (field.key in unsupported) continue;
+      if (protocolDormantFields?.has(field.key)) continue;
       if (!offeringsEditable && fieldPart(field) === "offerings") continue;
       // Start and stop is the owner's; anyone else leaves the stored block as it is.
       if (field.owner_only && (!owner || !view.lifecycle_editable || locked)) continue;
@@ -376,13 +389,15 @@ function RecordForm({
   }, [saveError]);
 
   const addressChanged = trimAddress(address) !== trimAddress(saved.address);
+  const protocolChanged = protocol.dispatch !== (view.values.dispatch ?? "") || protocol.protocol !== (view.values.protocol_description ?? "");
+  const connectionChanged = addressChanged || protocolChanged;
   const keyStored = view.key.state === "configured";
   // The server withholds a stored key from another origin (resolve_key), and drops it on Save.
   const keyOrigin = view.key.origin || originOf(saved.address);
   const n2 = keyStored && originOf(address) !== keyOrigin;
   const fresh = session && session.address === trimAddress(address) && (!session.snapshot || session.snapshot === JSON.stringify({ values: bodyValues(), commands })) ? session : null;
   const freshPassed = Boolean(fresh && fresh.result.outcome !== "error");
-  const blocked = addressChanged && !freshPassed;
+  const blocked = connectionChanged && !freshPassed;
   const notStarted = view.check.status === "not_started" && !session;
   const needKey = view.check.reason === "needkey" && view.key.state === "none";
   const managed = options.lifecycle_mode === "managed";
@@ -463,7 +478,7 @@ function RecordForm({
       if (metadataOnly) {
         // Read-only settings still need the existing check before first use.
         // Check the saved connection without rebuilding any owner fields.
-        if (on && !locked && !mismatched && view.check.status === "not_started") {
+        if (on && !locked && !mismatched && !nativeMode && view.check.status === "not_started") {
           const result = await enginesApi.check({ definition: definition.definition, service_id: view.service_id, values: bodyValues() as never });
           const warning = result.findings.find((f) => f.severity === "warning");
           if (result.outcome === "error" || (warning && !acknowledge)) {
@@ -525,8 +540,8 @@ function RecordForm({
       }
       queryClient.setQueryData(queryKeys.serviceRegistry, registry);
       await onSaved(
-        options.keepOff
-          ? `Saved. “${name.trim()}” is off, and Azizam has not checked the new address. ${checkedWhen(managed)}`
+          options.keepOff
+          ? `Saved. “${name.trim()}” is off. ${protocolChanged ? "Protocol dispatch has not been checked from this page." : "Azizam has not checked the new address."}`
           : "Saved.",
       );
     } catch (error) {
@@ -543,6 +558,10 @@ function RecordForm({
 
   // ---- What it can do
   const rows: CapabilityRow[] = (() => {
+    if (nativeMode)
+      return definition.capabilities.map((c) => ticked.has(c.id)
+        ? { id: c.id, label: c.label, level: "declared" as const, evidence: "Declared for this engine. This page has not checked a dispatched request." }
+        : { id: c.id, label: c.label, level: "unchecked" as const });
     const fromSession = fresh?.result.capabilities;
     if (fromSession?.length) return rowsFromCheck(fromSession);
     const stored = view.check.capabilities;
@@ -566,14 +585,17 @@ function RecordForm({
       };
     });
   })().map((row) => {
+    if (nativeMode) return row;
     const t = currentTests[row.id];
     return t?.status === "done" && t.result.ok && row.level !== "declared"
       ? { ...row, level: "likely" as const, evidence: `A test of ${row.label.toLowerCase()}${t.result.model ? ` with ${t.result.model}` : ""} passed at ${new Date(t.result.at * 1000).toLocaleString()} using ${t.result.via === "saved" ? "saved" : "unsaved"} settings.`, why: undefined }
       : row;
   });
-  const shownTests = { ...(configurationSnapshot === initialConfiguration ? storedTests(view) : {}), ...currentTests };
+  const shownTests = nativeMode ? {} : { ...(configurationSnapshot === initialConfiguration ? storedTests(view) : {}), ...currentTests };
   const via = Object.values(currentTests).find((t) => t.status === "done");
-  const testNote =
+  const testNote = nativeMode
+    ? "Native protocol dispatch is not tested from this page."
+    :
     via?.status === "done"
       ? via.result.via === "saved"
           ? SAVED_TEST_NOTE
@@ -584,7 +606,8 @@ function RecordForm({
   const detail = (count: number) => `${count} ${count === 1 ? "model" : "models"} found. `;
   let checkLine: ReactNode;
   let checkButton = "Check again";
-  if (checking) checkLine = <><Loader2 aria-hidden="true" className="size-4 animate-spin" /> Checking…</>;
+  if (nativeMode) checkLine = "Protocol dispatch is selected. Static validation only; live request behavior is unknown.";
+  else if (checking) checkLine = <><Loader2 aria-hidden="true" className="size-4 animate-spin" /> Checking…</>;
   else if (fresh && fresh.result.outcome === "error") {
     const f = fresh.result.findings[0];
     checkLine = (
@@ -703,8 +726,10 @@ function RecordForm({
           <h1 className="text-title [overflow-wrap:anywhere]">{view.name}</h1>
           <div className="text-meta text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
             {view.enabled ? <StateWord tone="off" word="On" /> : <StateWord tone="off" word="Off" />}
-            <span data-testid="engine-health">{fresh ? fresh.result.outcome === "error" ? "Latest check failed" : fresh.result.outcome === "warning" ? "Latest check has a warning" : "Latest connection check passed" : view.check.checked_at && view.check.status === "ok" ? "Saved connection check passed" : view.check.checked_at && view.check.status === "failed" ? "Saved check failed" : "Unknown: no connection check result"}</span>
-            {offWord ? (
+            <span data-testid="engine-health">{nativeMode ? "Protocol dispatch; runtime status is unknown" : fresh ? fresh.result.outcome === "error" ? "Latest check failed" : fresh.result.outcome === "warning" ? "Latest check has a warning" : "Latest connection check passed" : view.check.checked_at && view.check.status === "ok" ? "Saved connection check passed" : view.check.checked_at && view.check.status === "failed" ? "Saved check failed" : "Unknown: no connection check result"}</span>
+              {nativeMode ? (
+                <span>{protocolValid ? "Installed protocol description is valid. Requests are not checked from this page." : "Choose a valid installed protocol description before saving."}</span>
+              ) : offWord ? (
               <span>
                 {view.check.reason === "needkey"
                   ? "Waiting for the owner to add a key"
@@ -793,7 +818,7 @@ function RecordForm({
                 )}
                 after={
                   <>
-                    <CallLine definition={definition} values={{ address, path_prefix: typeof options.path_prefix === "string" ? options.path_prefix : undefined }} />
+                    {!nativeMode && <CallLine definition={definition} values={{ address, path_prefix: typeof options.path_prefix === "string" ? options.path_prefix : undefined }} />}
                     {refusedField === "address" && saveCard(true)}
                     {n2 && (
                       <div role="alert" className="border-warning/40 bg-warning-tint/50 rounded-control flex flex-col gap-2 border p-3">
@@ -865,23 +890,25 @@ function RecordForm({
             <ConnectionFacts view={view} definition={definition} />
             <UnsupportedNote fields={fieldsOf("connection")} unsupported={unsupported} />
           </div>
-          <div className="flex flex-wrap items-center gap-3 border-t px-4 py-3">
-            <p data-testid="check-line" role="status" className="text-meta min-w-0 flex-1">
-              {checkLine}
-            </p>
-            <Button
-              type="button"
-              variant={blocked ? "default" : "outline"}
-              size="sm"
-              disabled={checking || locked || mismatched || (needKey && !owner && view.check.status === "not_started")}
-              onClick={() => void runCheck()}
-            >
-              <RefreshCw aria-hidden="true" />
-              {checkButton}
-            </Button>
-          </div>
-          {mismatched && <p className="text-meta text-muted-foreground px-4 pb-3">This protocol cannot be checked from this page yet.</p>}
-          {(checkFinding || checkError) && (
+          {nativeMode ? (
+            <p data-testid="check-line" role="status" className="text-meta border-t px-4 py-3">{checkLine}</p>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-3 border-t px-4 py-3">
+                <p data-testid="check-line" role="status" className="text-meta min-w-0 flex-1">{checkLine}</p>
+                <Button
+                  type="button"
+                  variant={blocked ? "default" : "outline"}
+                  size="sm"
+                  disabled={checking || locked || mismatched || (needKey && !owner && view.check.status === "not_started")}
+                  onClick={() => void runCheck()}
+                >
+                  <RefreshCw aria-hidden="true" />
+                  {checkButton}
+                </Button>
+              </div>
+              {mismatched && <p className="text-meta text-muted-foreground px-4 pb-3">This protocol cannot be checked from this page yet.</p>}
+              {(checkFinding || checkError) && (
             <div className="px-4 pb-4">
               {checkFinding ? (
                 <FindingCard
@@ -893,13 +920,15 @@ function RecordForm({
                 />
               ) : <Note tone="warn" role="alert">{`Azizam could not run the check. ${checkError}`}</Note>}
             </div>
+              )}
+            </>
           )}
         </div>
       </section>
 
       {publicDirty && <p className="text-meta text-muted-foreground">Save or discard other settings before editing secrets. Address changes must be saved before a key can be bound to the new origin.</p>}
       {commands.length > 0 && <p className="text-meta text-muted-foreground">Save or discard the secret changes before changing other settings. The secret batch is saved together.</p>}
-      <SecretFields drafts={secrets} onChange={setSecrets} part="connection" disabled={settingsLocked || publicDirty || saving} />
+      <SecretFields drafts={secrets} onChange={setSecrets} part="connection" excludeKinds={nativeMode ? ["headers"] : []} disabled={settingsLocked || publicDirty || saving} />
 
       <div className="bg-card rounded-panel border p-4"><ProtocolChoice value={protocol} onChange={setProtocol} disabled={settingsLocked || commands.length > 0 || saving} /></div>
 
@@ -935,7 +964,9 @@ function RecordForm({
                 <div>
                   <h3 id="engine-abilities" className="text-body scroll-mt-20 font-medium">What it can do</h3>
                   <p className="text-meta text-muted-foreground">
-                    {notStarted
+                    {nativeMode
+                      ? "Capabilities shown here are declared only. Protocol requests are not tested from this page."
+                      : notStarted
                       ? "Not known yet. Azizam looks the first time the engine starts, or when you press Check now."
                       : settingsLocked
                         ? "What is turned on. Run a test to check one request with the selected model."
@@ -954,7 +985,7 @@ function RecordForm({
                     })
                   }
                   tests={shownTests}
-                  onTest={locked || mismatched ? undefined : (id) => void runTest(id)}
+                  onTest={nativeMode || locked || mismatched ? undefined : (id) => void runTest(id)}
                   testNote={testNote}
                   storedNote={STORED_TEST_NOTE}
                   readOnly={settingsLocked || commands.length > 0 || saving}
@@ -964,7 +995,7 @@ function RecordForm({
               <div className="flex flex-col gap-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 id="engine-models" className="text-body scroll-mt-20 font-medium">Models</h3>
-                  {!settingsLocked && (
+                  {!settingsLocked && !nativeMode && (
                     <Button type="button" variant="outline" size="sm" disabled={checking} onClick={() => void runCheck(true)}>
                       <RefreshCw aria-hidden="true" />
                       Find new models
@@ -977,7 +1008,7 @@ function RecordForm({
                   onChange={setModels}
                   readOnly={settingsLocked || commands.length > 0 || saving}
                   error={refusedHere("models")}
-                  emptyText="No models are listed yet. Check the server to find them, or add a model by the name the server uses."
+                  emptyText={nativeMode ? "No models are listed yet. Add a model using the public name the server accepts." : "No models are listed yet. Check the server to find them, or add a model by the name the server uses."}
                 />
                 {modelsChanged ? (
                   <AccessAsk
@@ -1061,10 +1092,12 @@ function RecordForm({
       <section aria-labelledby="engine-checks" className="flex flex-col gap-2">
         <h2 id="engine-checks" className="text-heading scroll-mt-20">What Azizam can check</h2>
         <p className="text-meta text-muted-foreground">
-          What Azizam can see for itself. Anything it can’t see shows as unknown, never as fine.
+          {nativeMode
+            ? "This page does not check requests dispatched by an installed protocol description. The remaining entries are saved driver observations."
+            : "What Azizam can see for itself. Anything it can’t see shows as unknown, never as fine."}
         </p>
         {reason && !locked ? <LockedNote reason={reason} view={view} /> : !locked && <Note tone="lock">These checks are read-only here. This page has no editor for their settings.</Note>}
-        <ObservationList view={view} latestCheck={fresh?.result} />
+        <ObservationList view={view} latestCheck={nativeMode ? undefined : fresh?.result} hideConnectionCheck={nativeMode} />
       </section>
 
       <section aria-labelledby="engine-resources" className="flex flex-col gap-2">
@@ -1088,10 +1121,16 @@ function RecordForm({
 
       {addressProblem && <p role="alert" className="text-meta text-danger">{addressProblem}</p>}
       {commandProblem && <p role="alert" className="text-meta text-danger">{commandProblem}</p>}
-      {(dirty || addressChanged) && (
+      {(dirty || addressChanged || protocolChanged) && (
         <div role="status" className="bg-card rounded-panel shadow-overlay sm:sticky sm:bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 border px-4 py-3">
           <span className="text-meta">
-            {blocked ? "The address changed. Check it again before you save, or save and keep the engine off." : "You have unsaved changes."}
+            {blocked
+              ? nativeMode
+                ? "Protocol dispatch cannot be checked from this page. Save the connection and keep the engine off."
+                : protocolChanged
+                  ? "The connection changed. Check it again before you save, or save and keep the engine off."
+                  : "The address changed. Check it again before you save, or save and keep the engine off."
+              : "You have unsaved changes."}
             {n2 ? " Saving removes the old key from this engine." : ""}
           </span>
           <span className="flex flex-wrap gap-2">
@@ -1099,14 +1138,14 @@ function RecordForm({
               Discard
             </Button>
             {blocked && (
-              <Button type="button" variant="outline" size="md" disabled={saving || !!commandProblem || !!addressProblem} onClick={() => void save({ keepOff: true })}>
+              <Button type="button" variant="outline" size="md" disabled={saving || !protocolValid || !!commandProblem || !!addressProblem} onClick={() => void save({ keepOff: true })}>
                 Save and keep off
               </Button>
             )}
             <Button
               type="button"
               size="md"
-              disabled={!!commandProblem || !!addressProblem || (protocol.dispatch === "protocol" && !protocol.protocol) || blocked || saving || !name.trim() || cards.some((c) => cardProblem(c) !== null) || duplicateNames(models).size > 0}
+              disabled={!!commandProblem || !!addressProblem || !protocolValid || blocked || saving || !name.trim() || cards.some((c) => cardProblem(c) !== null) || duplicateNames(models).size > 0}
               onClick={() => void save()}
             >
               {saving && <Loader2 aria-hidden="true" className="animate-spin" />}

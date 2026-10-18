@@ -607,6 +607,20 @@ describe("saved contract facts acceptance", () => {
     expect(screen.getByTestId("connection-facts")).toHaveTextContent("embedding: PUT /embed");
     expect(screen.getByTestId("connection-facts")).toHaveTextContent("Draft edits do not change these destinations until saved.");
   });
+  it("describes protocol-dispatched destinations as native request routing", () => {
+    const view = engineView({ request_path: { mode: "protocol", source: "installed description", url: "http://127.0.0.1:8080/chat" } });
+    renderWithClient(<ConnectionFacts view={view} definition={{ ...definitions.definitions[0], fields: [] }} />);
+    expect(screen.getByTestId("connection-facts")).toHaveTextContent("Azizam dispatches the request through the installed protocol description.");
+  });
+  it("hides the legacy connection check while retaining native driver observations", () => {
+    const record = v2({ observations: { process_ready: { means: "ready", last: { ok: true, at: 123, detail: "process is ready", source: "driver status" } } } });
+    const view = engineView({ v2: record });
+    renderWithClient(<ObservationList view={view} latestCheck={checkFixture("oai_ok")} hideConnectionCheck />);
+    expect(screen.queryByText("Reaches the server")).toBeNull();
+    expect(screen.queryByText(/Latest unsaved connection check/)).toBeNull();
+    expect(screen.getByText("The server is up")).toBeVisible();
+    expect(screen.getByText(/Saved result: process is ready/)).toBeVisible();
+  });
   it("shows both credential destinations without an API key editor and keeps a missing destination unknown", () => {
     const record = v2();
     record.connection.credentials.inference = { secret_ref: "configured" };

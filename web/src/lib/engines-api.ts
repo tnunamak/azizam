@@ -310,7 +310,7 @@ export interface EngineView {
 
 export interface RequestPath {
   /** direct: the router calls the address. gateway_lifecycle: the gateway's start-and-stop hop calls it. */
-  mode: "direct" | "gateway_lifecycle";
+  mode: "direct" | "gateway_lifecycle" | "protocol";
   /** Where the URL comes from, in words. */
   source: string;
   /** Every saved capability destination resolved by the gateway. */

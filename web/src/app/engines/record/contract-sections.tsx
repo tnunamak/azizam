@@ -181,7 +181,11 @@ export function ConnectionFacts({
     {path?.operations?.length ? <ul>{path.operations.map((op, index) => <li key={index}>{op.capability}: {mono(`${op.method} ${op.url}`)}</li>)}</ul>
       : path?.url ? mono(path.url) : "The request destination is unknown. Azizam did not return it."}
     {path?.url && <span className="text-muted-foreground block">
-      {path.mode === "gateway_lifecycle" ? "Azizam starts the server when needed, then forwards the request to this address." : "Azizam sends requests directly to this address."}
+      {path.mode === "gateway_lifecycle"
+        ? "Azizam starts the server when needed, then forwards the request to this address."
+        : path.mode === "protocol"
+          ? "Azizam dispatches the request through the installed protocol description."
+          : "Azizam sends requests directly to this address."}
       {" "}From this engine’s saved connection settings.
     </span>}
     <span className="text-muted-foreground block">Draft edits do not change these destinations until saved.</span>
@@ -414,7 +418,7 @@ function howWords(o: ObservationV2): ReactNode {
 }
 
 /** What Azizam can check: each observation, how it looks and what it saw. Missing is unknown, never green. */
-export function ObservationList({ view, latestCheck }: { view: EngineView; latestCheck?: CheckResult | null }) {
+export function ObservationList({ view, latestCheck, hideConnectionCheck = false }: { view: EngineView; latestCheck?: CheckResult | null; hideConnectionCheck?: boolean }) {
   const observations = view.v2?.observations ?? {};
   const known = new Set(OBSERVATIONS.map(([key]) => key));
   const rows: [string, string, ObservationV2 | undefined][] = [
@@ -435,7 +439,7 @@ export function ObservationList({ view, latestCheck }: { view: EngineView; lates
       className="bg-card rounded-panel divide-y border"
       data-testid="observations"
     >
-      <li className="text-meta flex items-start gap-2 p-3">
+      {!hideConnectionCheck && <li className="text-meta flex items-start gap-2 p-3">
         <Evidence
           ok={
             view.check.checked_at && view.check.status === "ok"
@@ -460,8 +464,8 @@ export function ObservationList({ view, latestCheck }: { view: EngineView; lates
             )}
           </span>
         </span>
-      </li>
-      {latestCheck && <li className="text-meta p-3">
+      </li>}
+      {!hideConnectionCheck && latestCheck && <li className="text-meta p-3">
         Latest unsaved connection check: {latestCheck.reachable ? "reached the server" : "could not reach the server"}.
         {" "}<RelativeTime ts={latestCheck.checked_at} fallback="" />. Source: {mono(latestCheck.calls)}.
         {" "}This result does not replace the saved results below.

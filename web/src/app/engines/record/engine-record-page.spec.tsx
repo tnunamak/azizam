@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { enginesApi, type EngineView } from "@/lib/engines-api";
+import { api } from "@/lib/api";
+import { protocolDescriptionsApi } from "@/lib/protocol-descriptions-api";
 import { accessAnswer, check, definitions, engineView, renderWithClient, testResult } from "../__fixtures__/test-utils";
 import { clockTime } from "../add-engine/draft";
 import { EngineRecordPage } from "./engine-record-page";
@@ -90,6 +92,117 @@ describe("i: the engine record page", () => {
         tests: { chat: { ok: true, at: result.at, seconds: result.seconds, evidence_token: "server-issued" } },
       }),
     );
+  });
+});
+
+describe("native protocol honesty", () => {
+  const nativeCatalog = {
+    protocols: [{ id: "local-chat", title: "Local chat", executor: "http-v1", operations: ["chat"], source: "user" as const, dispatch_supported: true, validation: { valid: true as const, message: "Valid description." } }],
+    problems: [],
+  };
+
+  it("allows a standard check when an unrelated connection field is unsupported", async () => {
+    const nativeView = engineView({ unsupported_fields: { reply_timeout_s: "This field is unsupported." } });
+    vi.spyOn(enginesApi, "view").mockResolvedValue(nativeView);
+    const run = vi.spyOn(enginesApi, "check").mockResolvedValue(check("oai_ok"));
+    renderWithClient(<EngineRecordPage serviceId={nativeView.service_id} onBack={() => {}} onRemove={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not show legacy checks, tests, model discovery, headers, or old evidence for native dispatch", async () => {
+    vi.spyOn(protocolDescriptionsApi, "list").mockResolvedValue(nativeCatalog);
+    const nativeView = engineView({
+      values: { ...engineView().values, dispatch: "protocol", protocol_description: "local-chat" },
+      record: { ...engineView().record, config: { address: "http://192.168.1.50:8080/v1", headers: [{ id: "ent_legacy_header", name: "X-Legacy", configured: true }] } },
+    });
+    vi.spyOn(enginesApi, "view").mockResolvedValue(nativeView);
+    renderWithClient(<EngineRecordPage serviceId={nativeView.service_id} onBack={() => {}} onRemove={() => {}} />);
+    expect(await screen.findByRole("heading", { level: 1, name: nativeView.name })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Check (again|now)/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Run a real test/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Find new models" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Request headers" })).toBeNull();
+    expect(screen.getByTestId("engine-health")).toHaveTextContent("Protocol dispatch");
+    expect(screen.getByRole("group", { name: "What this server can do" })).toHaveTextContent("You chose it");
+    expect(screen.getByRole("group", { name: "What this server can do" })).not.toHaveTextContent("Likely");
+    expect(screen.getByText(/static validation only/i)).toBeVisible();
+    expect(screen.queryByText("Reaches the server")).toBeNull();
+  });
+
+  it("turns on a saved native protocol through metadata edit without a standard recheck", async () => {
+    vi.spyOn(protocolDescriptionsApi, "list").mockResolvedValue(nativeCatalog);
+    const nativeView = engineView({ enabled: false, check: { status: "not_started" }, values: { ...engineView().values, dispatch: "protocol", protocol_description: "local-chat" } });
+    vi.spyOn(enginesApi, "view").mockResolvedValue(nativeView);
+    const checkRun = vi.spyOn(enginesApi, "check");
+    const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
+    const engineUpdate = vi.spyOn(enginesApi, "update");
+    renderWithClient(<EngineRecordPage serviceId={nativeView.service_id} onBack={() => {}} onRemove={() => {}} />);
+    await userEvent.click(await screen.findByRole("switch", { name: "Enabled" }));
+    await waitFor(() => expect(edit).toHaveBeenCalledWith(nativeView.service_id, { enabled: true }));
+    expect(checkRun).not.toHaveBeenCalled();
+    expect(engineUpdate).not.toHaveBeenCalled();
+  });
+
+  it("requires an installed valid description and an explicit keep-off save when protocol dispatch changes", async () => {
+    vi.spyOn(protocolDescriptionsApi, "list").mockResolvedValue(nativeCatalog);
+    mount();
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText("Request dispatch"), "protocol");
+    const description = await screen.findByRole("combobox", { name: "Protocol description" });
+    await user.selectOptions(description, "local-chat");
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    const keepOff = screen.getByRole("button", { name: "Save and keep off" });
+    expect(keepOff).toBeEnabled();
+    const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
+    await user.click(keepOff);
+    await waitFor(() => expect(update).toHaveBeenCalledWith("garage-gpu", expect.objectContaining({ disabled: true })));
+    expect(update.mock.calls[0][1].values).toMatchObject({ dispatch: "protocol", protocol_description: "local-chat" });
+    for (const key of ["headers", "path_prefix", "reply_timeout_s", "transforms"]) expect(update.mock.calls[0][1].values).not.toHaveProperty(key);
+    expect(await screen.findByText(/Protocol dispatch has not been checked from this page/)).toBeVisible();
+  });
+
+  it("does not enable either save action for a missing native protocol id", async () => {
+    vi.spyOn(protocolDescriptionsApi, "list").mockResolvedValue({ protocols: [], problems: [] });
+    const nativeView = engineView({ enabled: false, values: { ...engineView().values, dispatch: "protocol", protocol_description: "missing" } });
+    vi.spyOn(enginesApi, "view").mockResolvedValue(nativeView);
+    renderWithClient(<EngineRecordPage serviceId={nativeView.service_id} onBack={() => {}} onRemove={() => {}} />);
+    await screen.findByText(/saved description is unavailable/i);
+    const address = await screen.findByLabelText("Address");
+    await userEvent.clear(address);
+    await userEvent.type(address, "http://192.168.1.51:8080/v1");
+    expect(screen.queryByRole("button", { name: /Check (again|now)/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save and keep off" })).toBeDisabled();
+  });
+
+  it("blocks protocol saves when the installed catalog cannot be loaded", async () => {
+    vi.spyOn(protocolDescriptionsApi, "list").mockRejectedValue(new Error("catalog unavailable"));
+    const nativeView = engineView({ enabled: false, values: { ...engineView().values, dispatch: "protocol", protocol_description: "local-chat" } });
+    vi.spyOn(enginesApi, "view").mockResolvedValue(nativeView);
+    renderWithClient(<EngineRecordPage serviceId={nativeView.service_id} onBack={() => {}} onRemove={() => {}} />);
+    expect(await screen.findByText("Protocol descriptions could not be loaded.")).toBeVisible();
+    const address = await screen.findByLabelText("Address");
+    await userEvent.clear(address);
+    await userEvent.type(address, "http://192.168.1.51:8080/v1");
+    expect(screen.getByRole("button", { name: "Save and keep off" })).toBeDisabled();
+  });
+
+  it("saves a native address change with the engine off and does not claim it was checked", async () => {
+    vi.spyOn(protocolDescriptionsApi, "list").mockResolvedValue(nativeCatalog);
+    const nativeView = engineView({ enabled: false, values: { ...engineView().values, dispatch: "protocol", protocol_description: "local-chat" } });
+    vi.spyOn(enginesApi, "view").mockResolvedValue(nativeView);
+    const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
+    const checkRun = vi.spyOn(enginesApi, "check");
+    renderWithClient(<EngineRecordPage serviceId={nativeView.service_id} onBack={() => {}} onRemove={() => {}} />);
+    const address = await screen.findByLabelText("Address");
+    await userEvent.clear(address);
+    await userEvent.type(address, "http://192.168.1.51:8080/v1");
+    expect(screen.queryByRole("button", { name: /Check (again|now)/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Save and keep off" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(nativeView.service_id, expect.objectContaining({ disabled: true })));
+    expect(checkRun).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Azizam has not checked the new address/)).toBeVisible();
   });
 });
 

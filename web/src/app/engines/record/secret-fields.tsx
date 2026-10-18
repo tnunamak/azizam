@@ -9,11 +9,13 @@ export function SecretFields({
   onChange,
   part,
   disabled,
+  excludeKinds = [],
 }: {
   drafts: SecretDraft[];
   onChange: (drafts: SecretDraft[]) => void;
   part: "connection" | "process" | "all";
   disabled: boolean;
+  excludeKinds?: SecretDraft["kind"][];
 }) {
   const change = (carrier: string, rows: SecretRow[]) =>
     onChange(drafts.map((d) => (d.carrier === carrier ? { ...d, rows } : d)));
@@ -22,10 +24,11 @@ export function SecretFields({
       {drafts
         .filter(
           (d) =>
-            part === "all" ||
-            (part === "connection"
-              ? ["headers", "url", "key"].includes(d.kind)
-              : ["env", "argv"].includes(d.kind)),
+            !excludeKinds.includes(d.kind) &&
+            (part === "all" ||
+              (part === "connection"
+                ? ["headers", "url", "key"].includes(d.kind)
+                : ["env", "argv"].includes(d.kind))),
         )
         .map((draft) => {
           const set = (key: string, patch: Partial<SecretRow>) =>
