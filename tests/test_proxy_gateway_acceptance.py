@@ -1689,7 +1689,7 @@ class TestFinishImageRouteReceiptPersistence(unittest.TestCase):
 
 
 class _StubRequest:
-    """Minimal Request-shaped stub for proxy_comfy_request."""
+    """Minimal Request-shaped stub for proxy_graph_image_request."""
 
     def __init__(self, body: Any):
         self._body = body
@@ -1730,7 +1730,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
-            response = await proxy.proxy_comfy_request(
+            response = await proxy.proxy_graph_image_request(
                 _StubRequest(body), access_context(), receipt=receipt
             )
         return receipt, response
@@ -1782,7 +1782,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
-            response = await proxy.proxy_comfy_request(
+            response = await proxy.proxy_graph_image_request(
                 _StubRequest({"prompt": "x", "model": "dall-e-3"}),
                 access_context(),
                 receipt=proxy.start_image_route_receipt(
@@ -1862,7 +1862,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
-            response = await proxy.proxy_comfy_request(
+            response = await proxy.proxy_graph_image_request(
                 _StubRequest(body), access_context(), receipt=receipt
             )
 

@@ -89,7 +89,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
             return self._ok()
 
         payload = self._payload(extensions={prompt_memory.NAMESPACE: {"mode": "forget"}})
-        with patch.object(proxy, "proxy_comfy_edit_request", fake_edit):
+        with patch.object(proxy, "proxy_graph_image_edit_request", fake_edit):
             assets = asyncio.run(self.runtime.execute(payload))
         self.assertEqual([asset["asset_id"] for asset in assets], [OUTPUT])
         self.assertEqual(seen["image"], PNG)
@@ -110,7 +110,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         admin_store.record_audit("media.asset.delete", actor_kind="user", actor_id=self.user["id"],
                                  target_kind="media_asset", target_id=SOURCE, path=self.admin)
         self.assertTrue(proxy.asset_cache_path(SOURCE).exists(), "a shared copy can outlive the delete")
-        with patch.object(proxy, "proxy_comfy_edit_request", fake_edit):
+        with patch.object(proxy, "proxy_graph_image_edit_request", fake_edit):
             with self.assertRaises(me_make.MakeBackendError) as raised:
                 asyncio.run(self.runtime.execute(self._payload()))
         self.assertEqual(raised.exception.http_status, 404)
@@ -122,7 +122,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         async def fake_edit(request, auth_context, receipt=None):
             raise AssertionError("another person's picture must never be read")
 
-        with patch.object(proxy, "proxy_comfy_edit_request", fake_edit):
+        with patch.object(proxy, "proxy_graph_image_edit_request", fake_edit):
             with self.assertRaises(me_make.MakeBackendError) as raised:
                 asyncio.run(self.runtime.execute(self._payload(source_asset_id=stranger_picture)))
         self.assertEqual(raised.exception.http_status, 404)
@@ -134,7 +134,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
             seen["body"] = await request.json()
             return self._ok()
 
-        with patch.object(proxy, "proxy_comfy_request", fake_generate):
+        with patch.object(proxy, "proxy_graph_image_request", fake_generate):
             assets = asyncio.run(self.runtime.execute(self._payload("image.generate")))
         self.assertEqual(assets[0]["asset_id"], OUTPUT)
         self.assertEqual(seen["body"], {"model": "image", "prompt": "private make prompt",
@@ -144,7 +144,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         async def fake_generate(request, auth_context, receipt=None):
             return self._ok()
         with patch.object(proxy, "proxy_image_request", fake_generate), patch.object(
-            proxy, "proxy_comfy_request", side_effect=AssertionError("bypassed neutral dispatch")
+            proxy, "proxy_graph_image_request", side_effect=AssertionError("bypassed neutral dispatch")
         ):
             assets = asyncio.run(self.runtime.execute(self._payload("image.generate")))
         self.assertEqual(assets[0]["asset_id"], OUTPUT)
@@ -170,7 +170,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
             return Response(content=json.dumps({"error": {"message": "cannot draw private make prompt"}}),
                             status_code=500, media_type="application/json")
 
-        with patch.object(proxy, "proxy_comfy_request", failing):
+        with patch.object(proxy, "proxy_graph_image_request", failing):
             with self.assertRaises(me_make.MakeBackendError) as raised:
                 asyncio.run(self.runtime.execute(self._payload("image.generate")))
         self.assertNotIn("private make prompt", raised.exception.public_message)
@@ -181,8 +181,8 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         # only visible as "the delegate never starts". Kills M-INV-make-worker-ignores-denial.
         denial = proxy.PolicyDecision(decision="denied", sources=("app_profile",),
                                       reasons=("images are off for this app",))
-        for intent, delegate in (("image.generate", "proxy_comfy_request"),
-                                 ("image.edit", "proxy_comfy_edit_request")):
+        for intent, delegate in (("image.generate", "proxy_graph_image_request"),
+                                 ("image.edit", "proxy_graph_image_edit_request")):
             started = []
 
             async def spy(request, auth_context, receipt=None, _started=started):
@@ -217,7 +217,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
             raise AssertionError("a refused make job never reaches the backend")
 
         self._admission(disabled_intents=["image.generate"])
-        with patch.object(proxy, "proxy_comfy_request", never):
+        with patch.object(proxy, "proxy_graph_image_request", never):
             with self.assertRaises(me_make.MakeBackendError) as raised:
                 asyncio.run(self.runtime.execute(self._payload("image.generate")))
         self.assertEqual(raised.exception.http_status, 503)
@@ -233,7 +233,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         async def fake_generate(request, auth_context, receipt=None):
             return self._ok()
 
-        with patch.object(proxy, "proxy_comfy_request", fake_generate):
+        with patch.object(proxy, "proxy_graph_image_request", fake_generate):
             assets = asyncio.run(self.runtime.execute(self._payload("image.generate")))
         self.assertEqual(assets[0]["asset_id"], OUTPUT)
 
@@ -247,7 +247,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
             refused = self.runtime.admission(intent)
             self.assertIsNotNone(refused, f"{intent} is image work")
             self.assertEqual(refused.status_code, 503)
-        with patch.object(proxy, "proxy_comfy_edit_request", never):
+        with patch.object(proxy, "proxy_graph_image_edit_request", never):
             with self.assertRaises(me_make.MakeBackendError) as raised:
                 asyncio.run(self.runtime.execute(self._payload("image.edit")))
         self.assertEqual(raised.exception.http_status, 503)
@@ -365,7 +365,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         async def main() -> int:
             busy = asyncio.Semaphore(1)
             with patch.object(proxy, "_image_media_job_semaphore", busy), \
-                    patch.object(proxy, "proxy_comfy_request", never):
+                    patch.object(proxy, "proxy_graph_image_request", never):
                 await busy.acquire()
                 self.runtime.schedule(job_id, me_make.run_job(job_id, runtime=self.runtime, jobs_path=jobs_db))
                 await asyncio.sleep(0)
@@ -409,7 +409,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         async def main() -> int:
             busy = asyncio.Semaphore(1)
             with patch.object(proxy, "_image_media_job_semaphore", busy), \
-                    patch.object(proxy, "proxy_comfy_request", never):
+                    patch.object(proxy, "proxy_graph_image_request", never):
                 await busy.acquire()
                 self.runtime.schedule(job_id, me_make.run_job(job_id, runtime=self.runtime, jobs_path=jobs_db))
                 await asyncio.sleep(0)
@@ -513,7 +513,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         async def main() -> bool | None:
             entered, release = asyncio.Event(), asyncio.Event()
             route = self._publishing_route(entered, release, stoppable=stoppable)
-            with patch.object(proxy, "proxy_comfy_request", route), \
+            with patch.object(proxy, "proxy_graph_image_request", route), \
                     patch.object(proxy, "_image_media_job_semaphore", asyncio.Semaphore(1)):
                 self.runtime.schedule(job_id, me_make.run_job(job_id, runtime=self.runtime,
                                                               jobs_path=media_jobs.DB_PATH))

@@ -74,12 +74,12 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
 
         idle = FakeClient(False)
         with patch.object(proxy.asyncio, "sleep", return_value=None):
-            self.assertTrue(asyncio.run(proxy._free_comfy_models_if_idle(idle)))
+            self.assertTrue(asyncio.run(proxy._free_graph_models_if_idle(idle)))
         self.assertEqual(len(idle.posts), 1)
         self.assertEqual(idle.posts[0][1], {"unload_models": True, "free_memory": True})
 
         busy = FakeClient(True)
-        self.assertFalse(asyncio.run(proxy._free_comfy_models_if_idle(busy)))
+        self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(busy)))
         self.assertEqual(busy.posts, [])
 
         class PendingClient(FakeClient):
@@ -87,7 +87,7 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
                 return FakeResponse({"queue_running": [], "queue_pending": [1]})
 
         pending = PendingClient(False)
-        self.assertFalse(asyncio.run(proxy._free_comfy_models_if_idle(pending)))
+        self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(pending)))
         self.assertEqual(pending.posts, [])
 
         class UnknownQueueClient(FakeClient):
@@ -95,8 +95,21 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
                 return FakeResponse({"queue_running": []})
 
         unknown = UnknownQueueClient(False)
-        self.assertFalse(asyncio.run(proxy._free_comfy_models_if_idle(unknown)))
+        self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(unknown)))
         self.assertEqual(unknown.posts, [])
+
+        class DroppedClient(FakeClient):
+            async def get(self, _url: str, **_kwargs: Any) -> FakeResponse:
+                raise proxy.httpx.ReadTimeout("slow")
+
+        import contextlib
+        import io
+
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(DroppedClient(False))))
+        # The log line names the httpx error, as it did before the call moved behind the adapter.
+        self.assertIn("model unload failed: ReadTimeout", printed.getvalue())
 
     def test_seeded_requests_get_stable_hashed_request_id(self) -> None:
         body = {
@@ -265,7 +278,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
                 media_type="application/json",
             )
 
-        with patch.object(proxy, "proxy_comfy_request", fake_proxy_comfy_request):
+        with patch.object(proxy, "proxy_graph_image_request", fake_proxy_comfy_request):
             await proxy._run_image_media_job(job_id)
 
         stored = media_jobs.get(job_id, audience="internal", path=self.db)
@@ -309,7 +322,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
                 media_type="application/json",
             )
 
-        with patch.object(proxy, "proxy_comfy_request", fake_proxy_comfy_request):
+        with patch.object(proxy, "proxy_graph_image_request", fake_proxy_comfy_request):
             await proxy._run_image_media_job(job_id)
 
         stored = media_jobs.get(job_id, audience="internal", path=self.db)

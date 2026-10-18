@@ -162,7 +162,7 @@ def test_multiline_sse_held_cr_does_not_end_event_early():
 
 def test_protocol_image_entry_is_neutral():
     import inspect
-    assert '_try_protocol_request' not in inspect.getsource(proxy.proxy_comfy_request)
+    assert '_try_protocol_request' not in inspect.getsource(proxy.proxy_graph_image_request)
     assert '_try_protocol_request' in inspect.getsource(proxy.proxy_image_request)
 
 
@@ -456,7 +456,7 @@ def test_session_make_uses_neutral_image_entry():
     import inspect
     source = inspect.getsource(proxy._SessionMakeRuntime.execute)
     assert 'proxy_image_request' in source
-    assert 'proxy_comfy_request' not in source
+    assert 'proxy_graph_image_request' not in source
 
 
 @pytest.mark.parametrize('value', [None, 5, 'abc'])

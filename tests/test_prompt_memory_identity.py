@@ -52,14 +52,14 @@ def test_same_app_other_person_can_read_media_but_not_video_prompt(tmp_path, mon
     client = _FakeVideoAsyncClient(history={"private": _succeeded_history_entry()})
     with patch.object(proxy.httpx, "AsyncClient", lambda **_kw: client):
         video_id = proxy._video_id_from_prompt_id("private")
-        own = asyncio.run(proxy.proxy_comfy_video_status(video_id, member_auth))
-        other = asyncio.run(proxy.proxy_comfy_video_status(video_id, owner_auth))
+        own = asyncio.run(proxy.proxy_graph_video_status(video_id, member_auth))
+        other = asyncio.run(proxy.proxy_graph_video_status(video_id, owner_auth))
     assert own.status_code == other.status_code == 200
     assert json.loads(own.body)["prompt"] == "member-secret-prompt"
     assert json.loads(other.body)["prompt"] is None
     with patch.object(proxy.httpx, "AsyncClient", lambda **_kw: client):
-        own_list = asyncio.run(proxy.proxy_comfy_video_list(_StubListRequest(), member_auth))
-        other_list = asyncio.run(proxy.proxy_comfy_video_list(_StubListRequest(), owner_auth))
+        own_list = asyncio.run(proxy.proxy_graph_video_list(_StubListRequest(), member_auth))
+        other_list = asyncio.run(proxy.proxy_graph_video_list(_StubListRequest(), owner_auth))
     assert json.loads(own_list.body)["data"][0]["prompt"] == "member-secret-prompt"
     assert json.loads(other_list.body)["data"][0]["prompt"] is None
 
@@ -226,7 +226,7 @@ def test_video_full_content_checks_creator_on_same_app(tmp_path, monkeypatch):
         "prompt": "video-full-secret", "workflow": "video-full-workflow-secret",
     })
     for auth, expected in ((member_auth, 200), (owner_auth, 403), (_auth(app["id"], None, "sha256:old"), 403)):
-        response = asyncio.run(proxy.proxy_comfy_video_content(
+        response = asyncio.run(proxy.proxy_graph_video_content(
             proxy._video_id_from_prompt_id("private"), auth, metadata_mode="full", index_library=False,
         ))
         assert response.status_code == expected, response.body
@@ -242,7 +242,7 @@ def test_video_full_content_checks_creator_on_same_app(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(proxy.media_metadata, "strip_metadata", lambda data, *_a, **_kw: b"clean-video")
     saved_before = prompt_memory.get("video_private", member["id"])
-    internal = asyncio.run(proxy.proxy_comfy_video_content(
+    internal = asyncio.run(proxy.proxy_graph_video_content(
         proxy._video_id_from_prompt_id("private"), member_auth, metadata_mode="none", index_library=False,
     ))
     assert internal.status_code == 200, internal.body
@@ -254,7 +254,7 @@ def test_video_full_content_checks_creator_on_same_app(tmp_path, monkeypatch):
     assert "asset_id" not in proxy._video_job_records["private"]
     proxy._begin_media_delivery(owner_auth)
     try:
-        response = asyncio.run(proxy.proxy_comfy_video_content(
+        response = asyncio.run(proxy.proxy_graph_video_content(
             proxy._video_id_from_prompt_id("private"), owner_auth, metadata_mode="none",
         ))
     finally:
