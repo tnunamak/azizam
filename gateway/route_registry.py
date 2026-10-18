@@ -6,18 +6,14 @@ import copy
 from collections.abc import Mapping
 from typing import Any
 
-from gateway import service_registry
+from gateway import frontend_mount, service_registry
 
 
-def protocol_frontend_records(
+def _stored_frontend_records(
     *,
-    registry: Mapping[str, Any] | None = None,
-    proxy_config: Mapping[str, Any] | None = None,
+    registry: Mapping[str, Any] | None,
+    seed_frontends: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
-    seed_frontends = service_registry.load_seed_catalogs(proxy_config or {}).get(
-        "protocol_frontends",
-        {},
-    )
     if isinstance(registry, Mapping) and isinstance(
         registry.get("protocol_frontends"),
         Mapping,
@@ -43,6 +39,27 @@ def protocol_frontend_records(
     return records
 
 
+def _shadows_a_builtin(record: Mapping[str, Any], seed_frontends: Mapping[str, Any]) -> bool:
+    """A stored record that is not the builtin, under a builtin's id. Builtins ship with the code."""
+    seed = seed_frontends.get(str(record.get("id") or ""))
+    return isinstance(seed, Mapping) and seed.get("source") == "builtin" and record.get("source") != "builtin"
+
+
+def protocol_frontend_records(
+    *,
+    registry: Mapping[str, Any] | None = None,
+    proxy_config: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    seed_frontends = service_registry.load_seed_catalogs(proxy_config or {}).get(
+        "protocol_frontends",
+        {},
+    )
+    return [
+        copy.deepcopy(dict(seed_frontends[str(record["id"])])) if _shadows_a_builtin(record, seed_frontends) else record
+        for record in _stored_frontend_records(registry=registry, seed_frontends=seed_frontends)
+    ]
+
+
 def mount_frontend_records(
     *,
     registry: Mapping[str, Any] | None = None,
@@ -54,14 +71,22 @@ def mount_frontend_records(
     seed: builtin frontends ship with the code and are not editable, so a database seeded before a
     row existed still mounts it. A builtin seed the stored registry lacks is added. A stored record
     that claims ``builtin`` for an id the seed does not hold is demoted to a package row, so the
-    claim never unlocks a privileged translator. Projections (aliases, policies) keep reading the
+    claim never unlocks a privileged translator. A stored record that is not a builtin but takes a
+    builtin's id is set aside (``mount_problem``): the seed mounts, and the record is reported. Projections (aliases, policies) keep reading the
     stored records, as they did before.
     """
     seed_frontends = service_registry.load_seed_catalogs(proxy_config or {}).get("protocol_frontends", {})
     records: list[dict[str, Any]] = []
     stored_ids: set[str] = set()
-    for record in protocol_frontend_records(registry=registry, proxy_config=proxy_config):
+    for record in _stored_frontend_records(registry=registry, seed_frontends=seed_frontends):
         frontend_id = str(record.get("id") or "")
+        if _shadows_a_builtin(record, seed_frontends):
+            # The builtin mounts from the seed. The stored record mounts nothing, and the Overview says why.
+            records.append({**record, frontend_mount.MOUNT_PROBLEM: (
+                f"{frontend_id} is a builtin frontend, so this stored record with its id is ignored; "
+                f"remove it or give it another id"
+            )})
+            continue
         stored_ids.add(frontend_id)
         seed = seed_frontends.get(frontend_id)
         if record.get("source") == "builtin":
@@ -202,3 +227,23 @@ def _methods(value: Any) -> list[str]:
         if method and method not in methods:
             methods.append(method)
     return methods
+
+
+def refuse_unmountable_frontends(before: Mapping[str, Any], after: Mapping[str, Any]) -> None:
+    """Raise ValueError when a frontend record written now takes a builtin's id or has a path the router rejects.
+
+    Only a record that is new or differs from the stored one is checked, so a registry written before
+    this rule still saves. The mount skips such a record all the same; this tells the writer.
+    """
+    builtin_ids = service_registry.builtin_frontend_ids()
+    old = before.get("protocol_frontends") if isinstance(before.get("protocol_frontends"), Mapping) else {}
+    for frontend_id, record in (after.get("protocol_frontends") or {}).items():
+        if not isinstance(record, Mapping) or old.get(frontend_id) == record:
+            continue
+        if frontend_id in builtin_ids and record.get("source") != "builtin":
+            raise ValueError(
+                f"protocol frontend {frontend_id!r} is a builtin frontend; a stored record cannot take its id"
+            )
+        problems = frontend_mount.unroutable_paths(record)
+        if problems:
+            raise ValueError(problems[0])

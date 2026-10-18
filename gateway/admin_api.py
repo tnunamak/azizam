@@ -52,6 +52,7 @@ __all__ = [
     "AdminStore",
     "access_model_summary",
     "derive_admin_health_projection",
+    "registry_not_applied_response",
     "derive_admin_attention",
     "create_admin_router",
 ]
@@ -1004,6 +1005,18 @@ class _RouteError(Exception):
 
 def _error_payload(code: str, message: str) -> dict[str, Any]:
     return {"error": {"code": code, "message": message}}
+
+
+def registry_not_applied_response(exc: Exception) -> JSONResponse:
+    """The answer to a registry save that was stored but did not take effect on the running gateway."""
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=_error_payload(
+            "registry_saved_not_applied",
+            f"The change was saved, but the running gateway could not apply it: {exc}. "
+            f"Reload the settings or restart the gateway.",
+        ),
+    )
 
 
 def _litellm_admin_error(exc: LiteLLMAdminError) -> JSONResponse:

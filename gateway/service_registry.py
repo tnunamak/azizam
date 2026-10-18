@@ -545,6 +545,15 @@ def apply_service_registry_to_config(
     return out
 
 
+def builtin_frontend_ids(proxy_config: Mapping[str, Any] | None = None) -> frozenset[str]:
+    """The ids of the protocol frontends that ship with the code. A stored record may not take one."""
+    seed = load_seed_catalogs(proxy_config or {}).get("protocol_frontends", {})
+    return frozenset(
+        str(frontend_id) for frontend_id, record in seed.items()
+        if isinstance(record, Mapping) and record.get("source") == "builtin"
+    )
+
+
 class ServiceRegistryConflict(ValueError):
     """Raised when imported registry records collide with existing ownership."""
 
@@ -580,6 +589,10 @@ def merge_imported_records(
         frontend_id = normalize_id(raw.get("id") or raw_id)
         if not frontend_id:
             continue
+        if frontend_id in builtin_frontend_ids():
+            raise ServiceRegistryConflict(
+                f"protocol_frontend {frontend_id!r} is a builtin frontend; a package cannot replace it"
+            )
         record = normalize_protocol_frontend(frontend_id, raw)
         _merge_imported_record(
             out["protocol_frontends"],

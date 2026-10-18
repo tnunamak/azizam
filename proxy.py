@@ -127,6 +127,7 @@ from gateway.admin_api import (
     AdminContext,
     _require_admin,
     create_admin_router,
+    registry_not_applied_response,
 )
 from gateway.settings_api import create_settings_router, instance_settings, prompt_memory_settings
 from gateway.activity_api import create_activity_router
@@ -168,6 +169,7 @@ from gateway.admin_runtime import (
     AdminAuthenticator,
     AdminSQLiteStore,
     OIDC_PROVIDER_FIELDS,
+    RegistryNotApplied,
     access_for_person,
     create_admin_service_account_key,
     identity_from_access_row,
@@ -12717,6 +12719,13 @@ async def lifespan(app: FastAPI):
 tls_context()
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+
+
+@app.exception_handler(RegistryNotApplied)
+async def _registry_not_applied_handler(_request: Request, exc: RegistryNotApplied) -> JSONResponse:
+    """An admin save that is stored but not live answers with that fact, not with a success."""
+    return registry_not_applied_response(exc)
+
 
 from gateway.api_reference import register_api_reference
 
