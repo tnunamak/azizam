@@ -1,0 +1,147 @@
+"""Regression contracts for partial availability and public executor parity."""
+import asyncio
+import copy
+import json
+import time
+from dataclasses import replace
+from pathlib import Path
+
+import httpx
+import pytest
+import yaml
+
+import proxy
+from gateway import receipt_store
+from gateway.engine_protocol import description, dispatch, executor, transport
+from gateway.engine_protocol.errors import ProtocolError
+from tests.test_engine_protocol_public import engine, chat, FIXTURE
+from tests.support.fake_upstream import HandlerTransport
+from tests.support.access import access_context
+
+
+def wire(monkeypatch, handler):
+    client = transport.HttpxTransport.for_tests(HandlerTransport(handler))
+    monkeypatch.setattr(executor, 'HttpxTransport', lambda: client)
+
+
+def test_one_unreachable_engine_does_not_remove_healthy_models(engine, monkeypatch):
+    bad = copy.deepcopy(engine.record)
+    bad['id'] = 'down'
+    bad['config']['connection']['address'] = 'http://down.test:9100'
+    engine.registry['services']['down'] = bad
+    original = engine.fake.__call__
+    def handler(request):
+        if request.url.host == 'down.test':
+            raise ProtocolError('socket internals /srv/private/config', code='transport_failed')
+        return original(request)
+    wire(monkeypatch, handler)
+    response = engine.client.get('/v1/models')
+    assert response.status_code == 200, response.text
+    assert 'prism-chat' in {r['id'] for r in response.json()['data']}
+    assert 'private' not in response.text
+
+
+def test_inventory_calls_are_concurrent_bounded_and_cached(engine, monkeypatch):
+    active = peak = calls = 0
+    original = dispatch.Runtime.invoke
+    async def invoke(self, op, body):
+        nonlocal active, peak, calls
+        calls += 1
+        active += 1
+        peak = max(peak, active)
+        try:
+            await asyncio.sleep(.05)
+            return await original(self, op, body)
+        finally:
+            active -= 1
+    monkeypatch.setattr(dispatch.Runtime, 'invoke', invoke)
+    for n in range(3):
+        row = copy.deepcopy(engine.record)
+        row['id'] = f'engine-{n}'
+        engine.registry['services'][row['id']] = row
+    async def go():
+        await proxy._protocol_models_payload(access_context())
+        await proxy._protocol_models_payload(access_context())
+    asyncio.run(go())
+    assert peak == 4
+    assert calls == 4
+
+
+def test_bad_description_disables_only_its_own_records(engine, monkeypatch, tmp_path):
+    (tmp_path/'prism.yml').write_text((FIXTURE/'prism.yml').read_text())
+    (tmp_path/'broken.yml').write_text('id: broken\n')
+    # Recover the real loader from the fixture's closure.
+    loader = description.load_registry.__closure__[0].cell_contents
+    monkeypatch.setattr(description, 'load_registry', lambda: loader(tmp_path))
+    assert chat(engine).status_code == 200
+    response = engine.client.get('/v1/models')
+    assert response.status_code == 200, response.text
+    assert 'prism-chat' in {r['id'] for r in response.json()['data']}
+    from gateway.admin_api import derive_admin_attention
+    attention = derive_admin_attention({'protocol_issues': description.registry_problems()})
+    assert any('broken.yml' in str(item) for item in attention)
+    assert str(tmp_path) not in json.dumps(attention)
+
+
+@pytest.mark.parametrize('op,payload', [('chat',{}), ('chat',{'choices':[{'message':None}]}),
+    ('embeddings', {'data':[None]}), ('embeddings', {'object':'list','data':[{'embedding':'oops'}]})])
+def test_bad_public_shape_returns_typed_502(engine, monkeypatch, op, payload):
+    data = yaml.safe_load((FIXTURE/'prism.yml').read_text())
+    data['operations'][op]['response'] = {'framing':'json'}
+    doc = description.parse_description(data, source='prism.yml')
+    monkeypatch.setattr(description, 'load_registry', lambda: {'prism':doc})
+    wire(monkeypatch, lambda r: httpx.Response(200, json=payload))
+    response = chat(engine) if op == 'chat' else engine.client.post('/v1/embeddings', json={'model':'prism-embed','input':'hi'})
+    assert response.status_code == 502, response.text
+    assert response.json()['error']['code'] == 'malformed_response'
+
+
+def test_public_errors_do_not_disclose_internal_paths_or_raw_text():
+    response = proxy._protocol_failure(ProtocolError('/srv/secret/file: raw transport failure', code='invalid_description'))
+    assert response.status_code == 502
+    assert b'/srv' not in response.body and b'raw transport' not in response.body
+    assert json.loads(response.body)['error']['code'] == 'invalid_description'
+
+
+def test_chat_receipt_has_legacy_stream_shape_and_limit_fields(engine):
+    response = chat(engine, stream=True, max_tokens=19)
+    assert response.status_code == 200
+    [row] = receipt_store.recent(path=receipt_store.DB_PATH)
+    assert row['intent'] == 'chat.completions'
+    assert row['stream'] is True
+    assert row['effective_output_limit'] == 19
+    assert row['metadata']['request_shape']
+    assert {'accepted','outer_egress'} <= row['metadata']['request_shape_stages'].keys()
+
+
+def test_unknown_chat_extension_matches_legacy_rejection(engine):
+    response = chat(engine, extensions={'unknown_input': True})
+    assert response.status_code == 400, response.text
+    assert not engine.fake.requests
+
+
+def test_embedding_dimensions_are_removed_upstream_and_normalized(engine):
+    response = engine.client.post('/v1/embeddings', json={'model':'prism-embed','input':'hi','dimensions':1})
+    assert response.status_code == 200, response.text
+    assert response.json()['data'][0]['embedding'] == [1.0]
+    assert b'dimensions' not in engine.fake.requests[-1].content
+
+
+def test_engine_description_is_loaded_outside_repo(engine, monkeypatch, tmp_path):
+    root = tmp_path/'user-protocols'
+    root.mkdir()
+    (root/'prism.yml').write_text((FIXTURE/'prism.yml').read_text())
+    loader = description.load_registry.__closure__[0].cell_contents
+    monkeypatch.setattr(description, 'load_registry', lambda: loader(root))
+    assert not root.is_relative_to(Path(proxy.__file__).parent)
+    assert chat(engine).status_code == 200
+    assert engine.client.get('/v1/models').status_code == 200
+
+
+def test_multiline_sse_held_cr_does_not_end_event_early():
+    from gateway.engine_protocol.framing import SseDecoder, SseEvent
+    decoder = SseDecoder()
+    assert decoder.feed(b'data: one\r') == []
+    assert decoder.feed(b'\ndata: two\r') == []
+    assert decoder.feed(b'\n\r') == []
+    assert decoder.feed(b'\n') == [SseEvent(None, b'one\ntwo')]
