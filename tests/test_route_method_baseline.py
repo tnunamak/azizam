@@ -25,6 +25,9 @@ baseline's paths and its own. Only these differences are allowed:
 * POST /me/api/media/remove-missing is new (Library "Remove missing items"): that
   method is its own route, and every other method answers as /me/api/media/{asset_id}
   did before (the sample path /me/api/media/sample);
+* POST /me/api/media/confirm-folder is new (Library "This is the right media folder"):
+  the owner's marker confirmation is its own route, and every other method answers as
+  /me/api/media/{asset_id} did before, as for remove-missing;
 * GET and HEAD with an HTML Accept on a first segment no route registers get
   the web app's 404 page (503 here: the sandbox has no web build). The same
   requests without HTML in Accept keep their r18 answer.
@@ -68,6 +71,8 @@ HOST_COMMANDS = "/admin/api/operator/host-commands"
 THUMBNAIL_PATH, THUMBNAIL_SIBLING = "/v1/assets/sample/thumbnail", "/v1/assets/sample/content"
 REMOVE_MISSING_PATH, REMOVE_MISSING_SIBLING = "/me/api/media/remove-missing", "/me/api/media/sample"
 REMOVE_MISSING_ROUTE = "/me/api/media/remove-missing remove_missing_media"
+CONFIRM_FOLDER_PATH = "/me/api/media/confirm-folder"
+CONFIRM_FOLDER_ROUTE = "/me/api/media/confirm-folder confirm_media_folder"
 
 
 SHARDS = 4
@@ -133,8 +138,8 @@ def _deliberate(key: str) -> str | None:
         return "new"
     if path == THUMBNAIL_PATH:
         return "thumbnail"
-    if path == REMOVE_MISSING_PATH:
-        return "remove_missing"
+    if path in (REMOVE_MISSING_PATH, CONFIRM_FOLDER_PATH):
+        return "media_folder"
     if path.startswith(MCP_OAUTH_PREFIXES):
         return "mcp_oauth"
     if _method in {"GET", "HEAD"} and ui_routes.first_segment(path) not in proxy.WEB_UI_ROUTE.registered_segments:
@@ -142,8 +147,12 @@ def _deliberate(key: str) -> str | None:
     return None
 
 
-def _remove_missing_sibling(key: str) -> str:
-    return key.replace(REMOVE_MISSING_PATH, REMOVE_MISSING_SIBLING)
+def _media_folder_path(key: str) -> str:
+    return CONFIRM_FOLDER_PATH if CONFIRM_FOLDER_PATH in key else REMOVE_MISSING_PATH
+
+
+def _media_folder_sibling(key: str) -> str:
+    return key.replace(_media_folder_path(key), REMOVE_MISSING_SIBLING)
 
 
 def _thumbnail_sibling(key: str) -> str:
@@ -213,9 +222,9 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
                 f"{m} /setup/console" for m in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS")}:
             continue
-        if kind == "remove_missing" and key not in old:
+        if kind == "media_folder" and key not in old:
             # POST is the new route itself and must say so; every other method answers as the sibling does.
-            expected = REMOVE_MISSING_ROUTE if _method_of(key) == "POST" else new.get(_remove_missing_sibling(key))
+            expected = (CONFIRM_FOLDER_ROUTE if CONFIRM_FOLDER_PATH in key else REMOVE_MISSING_ROUTE) if _method_of(key) == "POST" else new.get(_media_folder_sibling(key))
             if outcome == expected:
                 continue
         if kind == "thumbnail" and key not in old:
@@ -251,10 +260,10 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
             continue
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue
-        if kind == "remove_missing" and key not in old:
+        if kind == "media_folder" and key not in old:
             # A POST has a real handler, so it is never a live row; the others answer as the sibling did.
             assert _method_of(key) != "POST", key
-            if _same_as_sibling_or_needs_a_key(BASELINE["live"].get(_remove_missing_sibling(key)), new.get(key)):
+            if _same_as_sibling_or_needs_a_key(BASELINE["live"].get(_media_folder_sibling(key)), new.get(key)):
                 continue
         if kind == "html404" and _now_needs_a_key_any(old.get(key), new.get(key)):
             continue
