@@ -75,6 +75,7 @@ class ProcessDriver:
         self._last_use: dict[str, float] = {}
         self._active: dict[str, int] = {}
         self._idle_tasks: dict[str, asyncio.Task] = {}
+        self._unhealthy: set[str] = set()
 
     async def ensure_ready(self, svc: Mapping[str, Any], timeout_s: float) -> bool:
         if not self._commands_allowed() or os.name != "posix" or not Path("/proc").exists():
@@ -90,11 +91,17 @@ class ProcessDriver:
                 self._services[ident] = svc
                 ready = await self._ready(svc, float(cfg.get("ready_timeout_s", timeout_s)))
                 if ready:
+                    self._unhealthy.discard(ident)
                     self._schedule_idle(ident, svc)
-                else:
-                    await self._stop_async(svc, reset_budget=False)
-                return ready
-            if self._identity_matches(self._read_state(ident)):
+                    return True
+                # A failed probe on a live engine is a health fact, not a start
+                # failure. Requests in flight keep their process; only a drained
+                # engine is replaced, and the restart budget still applies.
+                self._unhealthy.add(ident)
+                if self._active.get(ident, 0) > 0:
+                    return False
+                await self._stop_async(svc, reset_budget=False)
+            elif self._identity_matches(self._read_state(ident)):
                 await self._stop_async(svc, reset_budget=False)
             address = (svc.get("connection") or {}).get("address") or f"http://{svc.get('host', '127.0.0.1')}:{port}"
             if self._port_in_use(urlsplit(address).hostname or "127.0.0.1", port):
@@ -120,11 +127,9 @@ class ProcessDriver:
                 return False
             self._write_state(ident, child.pid, start, port, argv)
             threading.Thread(target=self._copy_logs, args=(ident, child, cfg), daemon=True).start()
-            try:
-                ready = await self._ready(svc, float(cfg.get("ready_timeout_s", timeout_s)), ident)
-            except asyncio.CancelledError:
-                await self._stop_async(svc, reset_budget=False)
-                raise
+            # A waiter that gives up does not own the start. The process keeps
+            # running, and the next request probes it like any live engine.
+            ready = await self._ready(svc, float(cfg.get("ready_timeout_s", timeout_s)), ident)
             if not ready:
                 await self._stop_async(svc, reset_budget=False)
                 return False
