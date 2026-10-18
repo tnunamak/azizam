@@ -15,6 +15,7 @@ import pytest
 import httpx
 
 from gateway.engine_observations import ObservationReader
+from gateway.engine_control import EngineControlRuntime
 from gateway.engine_process import ProcessDriver
 from gateway.engine_residency import ResidencyController
 from gateway.engine_switch import SwitchController, SwitchUnavailable
@@ -297,6 +298,64 @@ def test_residency_deadline_includes_control_and_observation_wait():
     started = time.monotonic()
     assert run(controller.load(service)) is False
     assert time.monotonic() - started < 0.06
+
+
+def test_declared_http_switch_reaches_fake_peer_and_keeps_scope_locked():
+    selected = ["old"]
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        if request.url.path == "/select":
+            selected[0] = json.loads(request.content)["model"]
+            return httpx.Response(204)
+        if request.url.path == "/state":
+            return httpx.Response(200, json={"selected": selected[0], "ready": True})
+        return httpx.Response(404)
+
+    factory = observation_client(handler)
+    service = {
+        "id": "fixture", "connection": {"address": "http://fixture.test:18091"},
+        "offerings": [{"id": "old"}, {"id": "new"}],
+        "protocol_operations": {"select": {"method": "POST", "path": "/select"}},
+        "observations": {
+            "selected": {"http": {"path": "/state", "expect": 200, "select": "/selected"}},
+            "offering_ready": {"http": {"path": "/state", "expect": 200, "select": "/ready"}},
+        },
+    }
+    selection = {"mode": "switch", "switch": {"call": "select", "args": {"model": "new"},
+                 "observe_selected": "selected", "queue_wait_s": 0.01}}
+    runtime = EngineControlRuntime(service, drain=SwapDrain(),
+        lock_for=lambda _scope: lock, observations=ObservationReader(client_factory=factory),
+        client_factory=factory)
+    lock = asyncio.Lock()
+
+    async def scenario():
+        lease = await runtime.select("new", selection)
+        assert selected == ["new"]
+        assert lock.locked()
+        lease.release()
+        assert not lock.locked()
+
+    run(scenario())
+    assert calls == [("GET", "/state"), ("POST", "/select"),
+                     ("GET", "/state"), ("GET", "/state")]
+
+
+def test_control_operation_refuses_unallowlisted_file_path():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(204)
+
+    service = {"connection": {"address": "http://fixture.test:18091"},
+               "protocol_operations": {"load": {"method": "POST", "path": "/load"}}}
+    runtime = EngineControlRuntime(service, drain=SwapDrain(), lock_for=lambda _scope: asyncio.Lock(),
+                                   client_factory=observation_client(handler))
+    with pytest.raises(ValueError, match="allowlisted"):
+        run(runtime.invoke("load", {"file_path": "/other/model.gguf"}))
+    assert calls == []
 
 
 def test_observations_are_unknown_without_probe_and_inventory_is_not_residency():
