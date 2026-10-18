@@ -146,6 +146,13 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(receipt["app_id"], self.session_app["id"])
         self.assertEqual(receipt["app_profile"], self.other["id"])
         self.assertEqual(receipt["policy_decision"], "denied")
+        # The gateway refused, so the job says so; nothing upstream ran.
+        client = media_jobs.get(job_id, audience="client", path=self.jobs)
+        self.assertEqual(client["error"], "This workflow isn't in your access plan.")
+        self.assertEqual(client["error_category"], "authorization")
+        self.assertEqual(client["error_code"], "not_in_access_plan")
+        self.assertIs(client["retryable"], False)
+        self.assertIsNone(client["upstream_http_status"])
 
     async def test_full_workflow_id_and_short_name_run_the_same(self) -> None:
         context = self.mcp_context()
@@ -168,6 +175,8 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
         job = media_jobs.get(job_id, audience="internal", path=self.jobs)
         self.assertEqual(job["status"], media_jobs.STATUS_FAILED)
         self.assertEqual(self.backend_calls, 0)
+        self.assertEqual(job["error_category"], "authorization")
+        self.assertIs(job["retryable"], False)
 
     # -- every worker rebuilds the same caller ------------------------------
 
