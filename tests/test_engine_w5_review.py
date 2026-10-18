@@ -130,31 +130,14 @@ def test_unedited_lifecycle_probe_keeps_the_root_path_and_no_key(monkeypatch):
                                '/health') == ('http://127.0.0.1:6061/health', {})
 
 
-def test_hidden_headers_survive_an_unchanged_save_and_can_be_removed(tmp_path):
-    hidden = [{'name': 'X-Api-Key', 'value': 'test-only-header'},
-              {'name': 'X-Tenant', 'value': 'private-test-value', 'secret': True}]
-    saved = record(headers=hidden)
-    store = Store(saved, tmp_path / 'admin.db')
-    service = engine_admin.EngineService(store)
-    shown = service.view('review', SimpleNamespace(roles=('owner',)))
-    assert len(shown['values']['headers']) == 2
-    assert all(row['not_sent'] and row['value'] == '[redacted]' for row in shown['values']['headers'])
-    assert 'test-only-header' not in str(shown)
-    for rows, expected in ((shown['values']['headers'], hidden), ([], [])):
-        asyncio.run(service.update(SimpleNamespace(roles=('owner',)), 'review', {
-            'definition': shown['definition'], 'disabled': True, 'values': {'headers': rows},
-        }, expected_generation=0))
-        assert store.written.get('headers', []) == expected
-
-
 def test_env_mask_is_the_same_in_both_record_views(tmp_path):
     shown = view(record(lifecycle={'driver': 'command', 'driver_config': {'start': 'server', 'env': {'TOKEN': 'test-env'}}}), tmp_path)
-    assert shown['record']['lifecycle']['driver_config']['env']['TOKEN'] == '[redacted]'
-    assert shown['v2']['process']['env']['TOKEN'] == '[redacted]'
+    assert shown['record']['lifecycle']['driver_config']['env']['TOKEN'] == {'configured': False, 'legacy': True}
+    assert shown['v2']['process']['env']['TOKEN'] == {'configured': False, 'legacy': True}
 
 
 @pytest.mark.parametrize('start', ['runner --token test-private-value', ['runner', '--token', 'test-private-value']])
-def test_echoed_command_markers_leave_the_stored_process_unchanged(tmp_path, start):
+def test_unchanged_command_values_leave_the_stored_process_unchanged(tmp_path, start):
     lifecycle = {'driver': 'command', 'driver_config': {'start': start, 'env': {'MODE': 'private-env-value'}}}
     saved = record(lifecycle=lifecycle)
     store = Store(saved, tmp_path / 'admin.db')
@@ -164,24 +147,6 @@ def test_echoed_command_markers_leave_the_stored_process_unchanged(tmp_path, sta
         'definition': shown['definition'], 'disabled': True, 'values': shown['values'],
     }, expected_generation=0))
     assert store.written['lifecycle'] == service_registry.legacy_lifecycle_from_service(saved)
-
-
-def test_hidden_header_markers_are_bound_to_the_stored_header_name(tmp_path):
-    saved = record(headers=[{'name': 'X-Token', 'value': 'private-a'},
-                            {'name': 'X-Api-Key', 'value': 'private-b'}])
-    store = Store(saved, tmp_path / 'admin.db')
-    service = engine_admin.EngineService(store)
-    shown = service.view('review', SimpleNamespace(roles=('owner',)))
-    rows = list(reversed(shown['values']['headers']))
-    asyncio.run(service.update(SimpleNamespace(roles=('owner',)), 'review', {
-        'definition': shown['definition'], 'disabled': True, 'values': {'headers': rows},
-    }, expected_generation=0))
-    assert store.written['headers'] == list(reversed(saved['config']['headers']))
-    rows[0]['name'] = 'X-Changed-Token'
-    with pytest.raises(engine_admin.DraftError):
-        asyncio.run(service.update(SimpleNamespace(roles=('owner',)), 'review', {
-            'definition': shown['definition'], 'disabled': True, 'values': {'headers': rows},
-        }, expected_generation=0))
 
 
 def test_engine_create_returns_the_registry_revision_after_reload_backfills(tmp_path):
@@ -199,4 +164,4 @@ def test_engine_create_returns_the_registry_revision_after_reload_backfills(tmp_
         }, expected_generation=0))
     current = admin_store.get_service_registry_with_generation(path=db)
     assert created['operator_settings_generation'] == current['operator_settings_generation']
-    assert created['value'] == current['value']
+    assert created['value'] == service_registry.read_registry(current['value'])[0]

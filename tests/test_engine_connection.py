@@ -48,7 +48,7 @@ def test_plain_headers_cannot_override_credentials_or_http_framing(tmp_path):
         {"name": "Authorization", "value": "unbound"},
         {"name": "Host", "value": "other.invalid"},
         {"name": "X-Client", "value": "unbound-private-value", "secret": True},
-        {"name": "X-Workspace", "value": "tenant"},
+        {"name": "X-Workspace", "value": "tenant", "public": True},
     ]}, tmp_path)
     assert result.headers == {"content-type": "application/json", "x-workspace": "tenant"}
 

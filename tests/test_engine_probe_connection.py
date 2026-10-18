@@ -30,7 +30,7 @@ def _saved(origin: str = ORIGIN) -> dict:
     scheme, _, rest = origin.partition("://")
     host, _, port = rest.partition(":")
     return {"definition": "openai-compatible", "probe_with_inference_connection": True, "scheme": scheme, "host": host, "port": int(port), "base_path": "/provider/v1",
-            "headers": [{"name": "X-Tenant", "value": "family"}],
+            "headers": [{"name": "X-Tenant", "value": "family", "public": True}],
             "api_key_env": "PROBE_TEST_KEY", "credential_origin": origin}
 
 
