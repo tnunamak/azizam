@@ -41,7 +41,7 @@ from typing import Any, AsyncIterator, Callable, Mapping
 from urllib.parse import quote, quote_plus, urljoin, urlsplit
 
 from gateway.engine_protocol import framing, pointer
-from gateway.engine_protocol.assets import AssetStore
+from gateway.engine_protocol.assets import AssetStore, served_media_type
 from gateway.engine_protocol.budgets import Budgets
 from gateway.engine_protocol.description import (
     Operation, ProtocolDescription, RequestSpec, ResponseSpec, StreamSpec, Terminal,
@@ -63,6 +63,7 @@ _PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]*)\}")
 _ENCODED_SEPARATOR = re.compile(r"%(?:2f|5c)", re.IGNORECASE)  # a pre-encoded slash or backslash: some servers decode twice
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 _REDIRECTS = (301, 302, 303, 307, 308)
+_SNIFF_BYTES = 32
 _ENDED = frozenset({JobState.succeeded, JobState.failed, JobState.cancelled})
 
 
@@ -523,11 +524,26 @@ class HttpV1Executor:
         declared = response.headers.get("content-length")
         if declared and declared.isdigit() and int(declared) > limit:
             raise BudgetExceeded(budget, f"The engine's answer is larger than {limit} bytes.")
-        content_type = response.headers.get("content-type", "application/octet-stream")
+        chunks = response.chunks().__aiter__()
+        first: list[bytes] = []
+        head = b""
+        while len(head) < _SNIFF_BYTES:  # the claimed type is checked against the first bytes before anything is saved
+            try:
+                chunk = await chunks.__anext__()
+            except StopAsyncIteration:
+                break
+            first.append(chunk)
+            head += chunk
+        content_type = media_type_for(response.headers.get("content-type"), head)
 
         async def capped() -> AsyncIterator[bytes]:  # the cap holds whatever the store does with it
             seen = 0
-            async for chunk in response.chunks():
+            for chunk in first:
+                seen += len(chunk)
+                if seen > limit:
+                    raise BudgetExceeded(budget, f"The engine's answer is larger than {limit} bytes.")
+                yield chunk
+            async for chunk in chunks:
                 seen += len(chunk)
                 if seen > limit:
                     raise BudgetExceeded(budget, f"The engine's answer is larger than {limit} bytes.")
@@ -639,6 +655,16 @@ class HttpV1Executor:
                     raise TransportFailure("aborted", "The stream ended in the middle of an event.")
             finally:
                 await response.aclose()
+
+
+def media_type_for(declared: str | None, head: bytes) -> str:
+    served = served_media_type(declared, head)
+    if served is None:
+        raise MalformedResponse(
+            "The engine's answer is not an image, audio or video type Azizam serves, or its bytes do not match the type the engine named. "
+            "Azizam did not save it."
+        )
+    return served
 
 
 def _dump_json(value: Any, what: str) -> bytes:
