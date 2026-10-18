@@ -508,7 +508,7 @@ def test_the_critical_path_follows_pytest_when_it_is_slowest(world: World) -> No
     result = world.run(FAKE_PYTEST_SECONDS="2.5", FAKE_WEB_BUILD="sleep 0.5", FAKE_BROWSER_GATE="sleep 0.3")
     assert result.returncode == 0, result.stdout + result.stderr
     path = json.loads((world.receipts / "cost.json").read_text())["critical_path"]["steps"]
-    assert path == ["python-hermetic", "e2e-tree-unchanged", "cases", "policy"]
+    assert path == ["python-hermetic", "e2e-tree-unchanged", "journey-clock", "cases", "policy"]
 
 
 def test_the_critical_path_follows_the_web_build_when_it_is_slowest(world: World) -> None:
@@ -517,7 +517,7 @@ def test_the_critical_path_follows_the_web_build_when_it_is_slowest(world: World
     path = json.loads((world.receipts / "cost.json").read_text())["critical_path"]["steps"]
     assert path[:4] == ["web-npm-ci", "web-build", "e2e-venv", "e2e-browser"]
     assert path[4] in ("e2e-main", "e2e-live-data", "e2e-household")  # the three browser lanes tie
-    assert path[5:] == ["e2e-tree-unchanged", "cases", "policy"]
+    assert path[5:] == ["e2e-tree-unchanged", "journey-clock", "cases", "policy"]
 
 
 def test_the_cost_table_is_sorted_by_wall_clock(world: World) -> None:
