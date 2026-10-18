@@ -170,6 +170,7 @@ from gateway.admin_runtime import (
     runtime_identity_for_app_credential_hash,
     runtime_identity_for_session_app,
     runtime_identity_for_trusted_address,
+    runtime_identity_for_trusted_app,
     service_account_session_subject,
     session_admin_role_subject,
 )
@@ -20329,20 +20330,40 @@ def _media_job_content_preflight_response(auth_context: AuthContext) -> Response
     )
 
 
-def _auth_context_from_image_job_payload(payload: Mapping[str, Any]) -> AuthContext:
+_MEDIA_JOB_CALLER_GONE = "The account that asked for this job can no longer use the gateway."
+
+
+def _auth_context_from_image_job_payload(payload: Mapping[str, Any]) -> AuthContext | None:
+    """The caller a media job was accepted for, rebuilt from the admin store.
+
+    The worker runs as the same App, key name, plan and person as the request
+    that made the job. The plan is the one the App holds now, and a revoked
+    key, a disabled App or person, or a removed trusted address returns None:
+    the job must then fail, never run as someone else. A keyless caller's
+    ``key_hash`` is ``app:<app id>``: with a person it is that person's session
+    App (browser or MCP sign-in), without one an App trusted by client address.
+    The worker's own network position never counts.
+    """
     auth = payload.get("auth")
     if not isinstance(auth, Mapping):
-        return NO_AUTH_CONTEXT
+        return None
     key_hash = auth.get("key_hash")
     if not isinstance(key_hash, str) or not key_hash:
-        return NO_AUTH_CONTEXT
-    identity = runtime_identity_for_app_credential_hash(
-        key_hash,
-        path=ADMIN_STORE.path,
-    )
+        return None
+    app_id = str(auth.get("app_id") or "")
+    person_id = str(auth.get("person_id") or "")
+    if app_id and key_hash == f"app:{app_id}":
+        identity = (
+            runtime_identity_for_session_app(app_id, person_id, path=ADMIN_STORE.path) if person_id
+            else runtime_identity_for_trusted_app(app_id, path=ADMIN_STORE.path)
+        )
+    else:
+        identity = runtime_identity_for_app_credential_hash(key_hash, path=ADMIN_STORE.path)
     if identity is None or identity.denial:
-        return NO_AUTH_CONTEXT
-    return AuthContext(identity=identity)
+        return None
+    name = auth.get("name")
+    # The name is display only: an MCP sign-in shows its client ("ChatGPT (MCP)").
+    return AuthContext(identity=replace(identity, name=name) if isinstance(name, str) and name else identity)
 
 
 def _request_shim_from_image_job_payload(payload: Mapping[str, Any]) -> _JsonBodyRequestShim | None:
@@ -20446,6 +20467,9 @@ async def _run_image_media_job(job_id: str) -> None:
             return
 
         auth_context = _auth_context_from_image_job_payload(payload)
+        if auth_context is None:
+            _mark_image_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE)
+            return
         admission = _media_job_admission_response(
             "image.generate", count_queue=False, auth_context=auth_context,
         )
@@ -21114,6 +21138,9 @@ async def _run_audio_media_job(job_id: str) -> None:
             return
 
         auth_context = _auth_context_from_image_job_payload(payload)
+        if auth_context is None:
+            _mark_audio_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE)
+            return
         admission = _media_job_admission_response(
             str(job.get("intent") or "audio.generate"), count_queue=False, auth_context=auth_context,
         )
@@ -21588,6 +21615,9 @@ async def _run_video_media_job(job_id: str) -> None:
             return
 
         auth_context = _auth_context_from_image_job_payload(payload)
+        if auth_context is None:
+            _mark_video_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE)
+            return
         video_id = (job.get("metadata") or {}).get("upstream_video_id")
         if not video_id:
             # Admission is re-checked only before submitting new work; a job
@@ -22060,6 +22090,13 @@ async def gateway_image_generations_media_job(request: Request):
     if invalid_controls is not None:
         finish_image_route_receipt(receipt, invalid_controls)
         return invalid_controls
+    # A full workflow id names the same workflow as its short name; the job
+    # runs it by the short name the image route takes.
+    requested_name = body.get("model")
+    if isinstance(requested_name, str) and requested_name.startswith("image.generate."):
+        short_name = requested_name.removeprefix("image.generate.")
+        if _find_image_manifest("image.generate", short_name) is not None:
+            body = {**body, "model": short_name}
     request_id, request_hash, idempotency = _image_media_job_request_id(
         body=body,
         auth_context=auth_context,

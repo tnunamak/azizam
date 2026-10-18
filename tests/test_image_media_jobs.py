@@ -203,6 +203,12 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
             patch.object(proxy, "IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS", 0),
             patch.object(proxy, "_image_url_signing_secret", b"test-secret"),
             patch.object(proxy, "finish_image_route_receipt", lambda *_a, **_kw: None),
+            # The worker rebuilds the submitting App from its key, as in production.
+            patch.object(
+                proxy,
+                "runtime_identity_for_app_credential_hash",
+                lambda key_hash, **_kw: access_context().identity if key_hash == "sha256:test" else None,
+            ),
             patch.object(
                 proxy.ADMIN_STORE,
                 "operator_overrides",
