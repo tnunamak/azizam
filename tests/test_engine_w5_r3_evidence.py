@@ -182,12 +182,14 @@ def test_ready_timeout_can_change_without_editing_list_start(service):
     assert service.store.written['lifecycle']['driver_config']['health_timeout_s'] == 180
 
 
-def test_view_explains_why_saved_key_will_be_withheld(service):
-    service.store.saved['config'].update(api_key_env='W5_TEST_ENV_KEY', credential_origin='http://elsewhere.test:80')
+@pytest.mark.parametrize("origin", ["http://elsewhere.test:80", ""])
+def test_view_explains_why_saved_key_will_be_withheld(service, origin):
+    service.store.saved['config'].update(api_key_env='W5_TEST_ENV_KEY', credential_origin=origin)
     service.env = lambda name: 'test-only-env-key'
     shown = service.view('review', OWNER)
     assert any(row['code'] == 'engine_credential_origin_mismatch' for row in shown['attention'])
     assert 'test-only-env-key' not in str(shown)
+    assert shown['credential_destination'] == origin
 
 
 def test_real_test_trace_does_not_return_hidden_header_values(service, monkeypatch):
