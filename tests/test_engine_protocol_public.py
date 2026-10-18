@@ -312,3 +312,73 @@ def test_core_job_poll_keeps_typed_errors_and_retries_only_transient_failures(en
     else:
         assert response.status_code==200,response.text
         assert len(polls)==2
+
+
+@pytest.mark.parametrize('op',['images','models'])
+def test_malformed_upstream_collections_are_typed_failures(engine,monkeypatch,op):
+    from dataclasses import replace
+    import yaml
+    doc=yaml.safe_load((FIXTURE/'prism.yml').read_text())
+    name='images' if op=='images' else 'models'
+    doc['operations'][name]={'class':'generate' if op=='images' else 'inventory','request':{'method':'GET','path':'/broken'},'response':{'framing':'json'}}
+    parsed=description.parse_description(doc,source='prism.yml')
+    monkeypatch.setattr(description,'load_registry',lambda:{'prism':parsed})
+    wire=transport.HttpxTransport.for_tests(HandlerTransport(lambda r:httpx.Response(200,json={'data':[None]})))
+    monkeypatch.setattr(executor,'HttpxTransport',lambda:wire)
+    response=(engine.client.get('/v1/models') if op=='models' else engine.client.post('/v1/images/generations',json={'model':'prism-image','prompt':'blue'}))
+    assert response.status_code==502,response.text
+    assert response.json()['error']['code']=='malformed_response'
+
+
+@pytest.mark.parametrize('denial',['policy','admission'])
+def test_protocol_owned_denials_leave_a_terminal_receipt(engine,monkeypatch,denial):
+    import asyncio
+    from starlette.requests import Request
+    from tests.support.access import access_context
+    auth=access_context(plan_for(caps=('speech',))) if denial=='policy' else access_context()
+    if denial=='admission':
+        monkeypatch.setattr(proxy,'_effective_media_job_admission_cfg',lambda:{'disabled_intents':['chat.generate']})
+    request=Request({'type':'http','method':'POST','path':'/v1/chat/completions','headers':[], 'scheme':'http','server':('gateway.test',80),'query_string':b''})
+    response=asyncio.run(proxy._try_protocol_request(request,auth,'chat',body={'model':'prism-chat','messages':[]}))
+    assert response.status_code in {403,503},response.body
+    rows=receipt_store.recent(path=receipt_store.DB_PATH)
+    assert len(rows)==1 and rows[0]['status'] not in {'accepted','in_progress'},rows
+    assert not engine.fake.requests
+
+
+def test_failed_switch_is_a_typed_public_failure_with_terminal_receipt(engine):
+    switching(engine);engine.fake.fail_selection=True
+    response=chat(engine)
+    assert response.status_code==503
+    assert response.json()['error']['code']=='selection_unavailable'
+    rows=receipt_store.recent(path=receipt_store.DB_PATH)
+    assert len(rows)==1 and rows[0]['status']=='failed',rows
+
+
+def test_core_job_cancel_propagates_to_the_existing_worker_settler(engine,monkeypatch):
+    import asyncio
+    from starlette.requests import Request
+    from tests.support.access import access_context
+    from gateway.engine_protocol import dispatch
+    original=engine.fake.__call__;called=[]
+    def handler(request):
+        called.append((request.method,request.url.path))
+        if request.method=='GET' and request.url.path=='/prefix/api/v3/renders/job-1':
+            return httpx.Response(200,json={'phase':'WORKING'})
+        return original(request)
+    wire=transport.HttpxTransport.for_tests(HandlerTransport(handler))
+    monkeypatch.setattr(executor,'HttpxTransport',lambda:wire)
+    job=media_jobs.create(media_jobs.MediaJob(intent='image.generate',backend='prism-local'),path=media_jobs.DB_PATH)
+    media_jobs.update_status(job.job_id,'running',metadata_patch={'protocol_job':'job-1'},path=media_jobs.DB_PATH)
+    media_jobs.request_cancel(job.job_id,path=media_jobs.DB_PATH)
+    request=Request({'type':'http','method':'POST','path':'/v1/images/generations','headers':[], 'scheme':'http','server':('gateway.test',80),'query_string':b''})
+    auth=access_context();receipt=proxy.start_image_route_receipt('/v1/images/generations',auth);receipt.job_id=job.job_id
+    async def go():
+        token=proxy._ADMISSION_WORKER.set(True)
+        try:
+            with pytest.raises(media_jobs.CancellationPending):
+                await proxy._try_protocol_request(request,auth,'images',body={'model':'prism-image','prompt':'blue'},receipt=receipt)
+        finally:
+            proxy._ADMISSION_WORKER.reset(token)
+    asyncio.run(go())
+    assert ('DELETE','/prefix/api/v3/renders/job-1') in called
