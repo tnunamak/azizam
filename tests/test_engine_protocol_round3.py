@@ -6,6 +6,7 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -18,7 +19,6 @@ from gateway.engine_protocol import description, dispatch, executor, inventory, 
 from gateway.engine_protocol.errors import ProtocolError
 from tests.support.access import authenticated
 from tests.support.fake_upstream import HandlerTransport
-from tests.test_engine_protocol_executor import Chunks
 
 REGISTRY = Path(__file__).resolve().parent.parent / 'registry/protocols'
 OLLAMA = REGISTRY / 'ollama-native.yml'
@@ -324,8 +324,6 @@ def _receipt_projection(row):
 
 
 def test_L2_executor_stream_receipt_matches_the_legacy_receipt_for_the_same_request(monkeypatch, tmp_path):
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
     fixture = json.loads((Path(__file__).parent / 'fixtures/engine_protocol/live-shaped.json').read_text())
     fixture['services']['exec'] = {'id': 'exec', 'enabled': True, 'config': {
         'connection': {'transport': 'http', 'dispatch': 'protocol', 'protocol': 'openai-compatible',
