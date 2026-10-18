@@ -438,3 +438,19 @@ def test_cancellation_is_never_replaced_by_a_restore_failure():
     controller = SwitchController(drain=SwapDrain(), invoke=invoke, observe=observe)
     with pytest.raises(asyncio.CancelledError):
         run(controller.select(_SVC, "new", _selection(on_failure="restore")))
+
+
+def test_load_is_skipped_when_the_engine_already_reports_the_model_resident():
+    from gateway.engine_residency import ResidencyController
+
+    calls = []
+
+    async def invoke(op, _args):
+        calls.append(op)
+
+    async def observe(name):
+        return True if name == "resident" else None
+
+    controller = ResidencyController(invoke=invoke, observe=observe)
+    assert run(controller.load({"residency": {"load": {"op": "load"}}})) is True
+    assert calls == []
