@@ -3118,6 +3118,7 @@ export default function LibraryPage() {
           {canChooseOwner ? (
             <>
               <p>
+                This one-time check is for installs made before Azizam recorded its media folder.
                 Confirm this is the media folder once. Missing items can&apos;t be removed until you do.
                 {folder.state === "mismatch"
                   ? " This folder isn't the one Azizam recorded."
