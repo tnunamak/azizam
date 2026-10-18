@@ -17,6 +17,7 @@ from gateway.engine_protocol.executor import HttpV1Executor
 from gateway.engine_protocol.inline_tts import InlineTtsAdapter
 from gateway.engine_protocol.transport import HttpxTransport
 from gateway.engine_protocol.types import CanonicalRequest, Connection, Credential, JobRef, JobState, Timeouts
+from tests.support.fake_upstream import HandlerTransport
 
 BASE = "http://engine.test:8080"
 INTERFACE = ["health", "inventory", "invoke", "submit", "poll", "events", "cancel", "recover", "fetch_assets"]
@@ -28,7 +29,7 @@ def run(coro):
 
 def http_adapter(operations, handler, **extra):
     doc = {"protocol_version": 1, "id": "t", "executor": "http-v1", "operations": operations, **extra}
-    ex = HttpV1Executor(description.parse_description(doc, source="t.yml"), transport=HttpxTransport.for_tests(httpx.MockTransport(handler)), assets=MemoryAssetStore())
+    ex = HttpV1Executor(description.parse_description(doc, source="t.yml"), transport=HttpxTransport.for_tests(HandlerTransport(handler)), assets=MemoryAssetStore())
     return HttpV1Adapter(ex)
 
 
@@ -133,7 +134,7 @@ def test_inventory_lists_the_selected_ids() -> None:
 
 def test_the_seed_openai_description_lists_models_through_the_adapter() -> None:
     seed = description.load_registry()["openai-compatible"]
-    ex = HttpV1Executor(seed, transport=HttpxTransport.for_tests(httpx.MockTransport(lambda r: httpx.Response(200, json={"data": [{"id": "x"}]}))))
+    ex = HttpV1Executor(seed, transport=HttpxTransport.for_tests(HandlerTransport(lambda r: httpx.Response(200, json={"data": [{"id": "x"}]}))))
     assert run(HttpV1Adapter(ex).inventory(Connection(address=BASE))).ids == ("x",)
 
 
@@ -186,27 +187,8 @@ def test_invoke_takes_the_operation_name_apart_from_the_request() -> None:
 
 # --- the in-tree speech client, behind the interface ---------------------------------------------
 
-
-class _Capture:
-    """Stands in for httpx.AsyncClient the way the existing TTS tests do."""
-
-    instances: list = []
-
-    def __init__(self, *args, **kwargs) -> None:
-        self.kwargs = kwargs
-        self.posted: list = []
-        self.sent: list = []
-        _Capture.instances.append(self)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc) -> None:
-        return None
-
-    async def post(self, url, headers=None, content=None):
-        self.posted.append((url, dict(headers or {}), content))
-        return _Capture.reply
+SPEECH_HOST = "speech.fk.test:8880"
+SPEECH = f"http://{SPEECH_HOST}"
 
 
 def _speech(body=None, headers=None):
@@ -214,52 +196,58 @@ def _speech(body=None, headers=None):
                             headers=headers if headers is not None else {"authorization": "Bearer abc", "content-type": "application/json"})
 
 
-def test_speech_is_posted_exactly_as_the_proxy_always_did(monkeypatch) -> None:
-    _Capture.instances = []
-    _Capture.reply = httpx.Response(200, content=b"RIFFdata", headers={"content-type": "audio/wav"})
-    monkeypatch.setattr(httpx, "AsyncClient", _Capture)
-    conn = Connection(address="http://127.0.0.1:8880", timeouts=Timeouts(connect_s=10, first_byte_s=120, total_s=120))
+def _serve(fake_upstreams, handler) -> list:
+    """Answer the speech address through a real ``httpx.AsyncClient``; return the requests it saw."""
+    seen: list = []
+
+    def record(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return handler(request)
+    fake_upstreams.router.add_transport(SPEECH_HOST, HandlerTransport(record))
+    return seen
+
+
+def test_speech_is_posted_exactly_as_the_proxy_always_did(fake_upstreams) -> None:
+    seen = _serve(fake_upstreams, lambda r: httpx.Response(200, content=b"RIFFdata", headers={"content-type": "audio/wav"}))
+    conn = Connection(address=SPEECH, timeouts=Timeouts(connect_s=10, first_byte_s=120, total_s=120))
     request = _speech({"input": "héllo", "voice": "v", "model": "m"})
     reply = run(InlineTtsAdapter().invoke(conn, "speech.synthesize", request))
-    client = _Capture.instances[0]
-    assert client.kwargs == {"timeout": httpx.Timeout(120, connect=10)}
-    url, headers, content = client.posted[0]
-    assert url == "http://127.0.0.1:8880/v1/audio/speech"
-    assert headers == {"authorization": "Bearer abc", "content-type": "application/json"}
-    assert content == json.dumps({"input": "héllo", "voice": "v", "model": "m"}).encode()  # json.dumps defaults, not compact
+    sent = seen[0]
+    assert sent.extensions["timeout"] == {"connect": 10, "read": 120, "write": 120, "pool": 120}
+    assert (sent.method, str(sent.url)) == ("POST", f"{SPEECH}/v1/audio/speech")
+    assert (sent.headers["authorization"], sent.headers["content-type"]) == ("Bearer abc", "application/json")
+    assert sent.content == json.dumps({"input": "héllo", "voice": "v", "model": "m"}).encode()  # json.dumps defaults, not compact
     assert (reply.status, reply.raw, reply.headers["content-type"]) == (200, b"RIFFdata", "audio/wav")
 
 
-def test_a_body_the_caller_already_serialized_is_sent_untouched(monkeypatch) -> None:
-    _Capture.instances = []
-    _Capture.reply = httpx.Response(200, content=b"x")
-    monkeypatch.setattr(httpx, "AsyncClient", _Capture)
+def test_a_body_the_caller_already_serialized_is_sent_untouched(fake_upstreams) -> None:
+    seen = _serve(fake_upstreams, lambda r: httpx.Response(200, content=b"x"))
     raw = b'{"input":"compact"}'
-    run(InlineTtsAdapter().invoke(Connection(address="http://h:1"), "speech.synthesize", CanonicalRequest(op="x", raw_body=raw, headers={})))
-    assert _Capture.instances[0].posted[0][2] is raw
+    run(InlineTtsAdapter().invoke(Connection(address=SPEECH), "speech.synthesize", CanonicalRequest(op="x", raw_body=raw, headers={})))
+    assert seen[0].content == raw
 
 
-def test_speech_refusals_come_back_as_replies_and_transport_errors_as_typed_failures(monkeypatch) -> None:
-    _Capture.instances = []
-    _Capture.reply = httpx.Response(500, content=b"CUDA out of memory")
-    monkeypatch.setattr(httpx, "AsyncClient", _Capture)
-    conn = Connection(address="http://127.0.0.1:8880")
+def test_speech_refusals_come_back_as_replies_and_transport_errors_as_typed_failures(fake_upstreams) -> None:
+    errors: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if errors:
+            raise errors[0]
+        return httpx.Response(500, content=b"CUDA out of memory")
+    _serve(fake_upstreams, handler)
+    conn = Connection(address=SPEECH)
     reply = run(InlineTtsAdapter().invoke(conn, "speech.synthesize", _speech()))
     assert (reply.status, reply.raw) == (500, b"CUDA out of memory")
 
-    class Boom(_Capture):
-        async def post(self, url, headers=None, content=None):
-            raise self.error
-    monkeypatch.setattr(httpx, "AsyncClient", Boom)
     for error, kind in ((httpx.ReadTimeout("slow"), "timeout"), (httpx.ConnectTimeout("slow"), "timeout"),
                         (httpx.ConnectError("refused"), "unreachable"), (RuntimeError("odd"), "aborted")):
-        Boom.error = error
+        errors[:] = [error]
         with pytest.raises(TransportFailure) as raised:
             run(InlineTtsAdapter().invoke(conn, "speech.synthesize", _speech()))
         assert raised.value.kind == kind and str(raised.value) == str(error)
 
 
-def test_speech_streams_raw_chunks_and_closes_upstream(monkeypatch) -> None:
+def test_speech_streams_raw_chunks_and_closes_upstream(fake_upstreams) -> None:
     closed = []
 
     class Chunks(httpx.AsyncByteStream):
@@ -269,14 +257,10 @@ def test_speech_streams_raw_chunks_and_closes_upstream(monkeypatch) -> None:
 
         async def aclose(self):
             closed.append("upstream")
-
-    def handler(request):
-        return httpx.Response(200, stream=Chunks())
-    real = httpx.AsyncClient
-    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: real(transport=httpx.MockTransport(handler), **k))
+    _serve(fake_upstreams, lambda r: httpx.Response(200, stream=Chunks()))
 
     async def go():
-        reply = await InlineTtsAdapter().invoke(Connection(address="http://127.0.0.1:8880"), "speech.stream", _speech())
+        reply = await InlineTtsAdapter().invoke(Connection(address=SPEECH), "speech.stream", _speech())
         got = [chunk async for chunk in reply]
         await reply.aclose()
         return reply, got
@@ -284,10 +268,9 @@ def test_speech_streams_raw_chunks_and_closes_upstream(monkeypatch) -> None:
     assert reply.status == 200 and b"".join(got) == b"aabb" and closed == ["upstream"]
 
 
-def test_speech_stream_refusal_is_a_buffered_reply(monkeypatch) -> None:
-    real = httpx.AsyncClient
-    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: real(transport=httpx.MockTransport(lambda r: httpx.Response(503, content=b"busy", headers={"retry-after": "9"})), **k))
-    reply = run(InlineTtsAdapter().invoke(Connection(address="http://127.0.0.1:8880"), "speech.stream", _speech()))
+def test_speech_stream_refusal_is_a_buffered_reply(fake_upstreams) -> None:
+    _serve(fake_upstreams, lambda r: httpx.Response(503, content=b"busy", headers={"retry-after": "9"}))
+    reply = run(InlineTtsAdapter().invoke(Connection(address=SPEECH), "speech.stream", _speech()))
     assert (reply.status, reply.raw, reply.headers["retry-after"]) == (503, b"busy", "9")
 
 

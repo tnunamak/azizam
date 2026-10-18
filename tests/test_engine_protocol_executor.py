@@ -16,6 +16,7 @@ from gateway.engine_protocol.errors import (
     BudgetExceeded, MalformedResponse, MappingError, RedirectRefused, TransportFailure, UnknownOperation, UpstreamError,
 )
 from gateway.engine_protocol.types import CanonicalRequest, Connection, Credential, JobState, Timeouts
+from tests.support.fake_upstream import HandlerTransport
 
 BASE = "http://engine.test:8080"
 SECRET = "sk-test-SECRET-1234"
@@ -65,7 +66,7 @@ def make(operations, handler, *, auth=None, errors=None, budgets=None, assets=No
     fake = Fake(handler)
     ex = executor.HttpV1Executor(
         desc(operations, auth=auth, errors=errors, budgets=budgets),
-        transport=transport.HttpxTransport.for_tests(httpx.MockTransport(fake)),
+        transport=transport.HttpxTransport.for_tests(HandlerTransport(fake)),
         assets=assets or MemoryAssetStore(),
         **({"budgets": budgets} if budgets else {}),
     )
@@ -495,7 +496,7 @@ def test_the_total_time_budget_stops_a_silent_engine() -> None:
     async def silent(request: httpx.Request) -> httpx.Response:
         await asyncio.sleep(5)
         return httpx.Response(200, json={})
-    fake = httpx.MockTransport(silent)
+    fake = HandlerTransport(silent)
     ex = executor.HttpV1Executor(desc(MODELS), transport=transport.HttpxTransport.for_tests(fake), assets=MemoryAssetStore())
     with pytest.raises(TransportFailure) as raised:
         run(ex.invoke(conn(timeouts=Timeouts(connect_s=1, first_byte_s=1, total_s=0.2)), req("models")))
