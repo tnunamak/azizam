@@ -486,3 +486,62 @@ def test_full_registry_admin_write_rejects_paid_dispatch_before_persistence(engi
     with pytest.raises(ValueError, match='protocol dispatch does not enforce'):
         store.update_service_registry(data=value, actor=actor, expected_generation=0)
     assert admin_store.get_service_registry_with_generation(path=db) is None
+
+
+@pytest.mark.parametrize('operation', ['disable-old', 'disable-healthy', 'rename-healthy', 'full-save', 'full-disable-old'])
+def test_legacy_refused_record_allows_unrelated_writes_and_disable(engine, tmp_path, operation):
+    from gateway import admin_store
+    from gateway.admin_api import AdminContext, _validate_service_registry
+    from gateway.admin_runtime import AdminSQLiteStore
+    from tests.registry_test_helpers import write_service_registry_for_test
+    db = tmp_path/'legacy-writes.db'
+    admin_store.init_db(db)
+    stored = copy.deepcopy(engine.registry)
+    bad = copy.deepcopy(engine.record)
+    bad['id'] = 'old-lan'
+    bad['config']['connection']['address'] = 'http://192.168.1.5:11434'
+    stored['services']['old-lan'] = bad
+    seeded = write_service_registry_for_test(stored, path=db)
+    generation = seeded['operator_settings_generation']
+    store = AdminSQLiteStore(db)
+    actor = AdminContext('test-owner', roles=frozenset({'owner', 'admin'}))
+    if operation.startswith('disable-'):
+        sid = 'old-lan' if operation == 'disable-old' else 'prism-local'
+        store.set_service_enabled(service_id=sid, enabled=False, actor=actor, expected_generation=generation)
+    elif operation == 'rename-healthy':
+        store.update_service(service_id='prism-local', data={'name':'Renamed'}, actor=actor, expected_generation=generation)
+    else:
+        before = store.get_service_registry()
+        data = copy.deepcopy(before)
+        if operation == 'full-disable-old':
+            data['services']['old-lan']['enabled'] = False
+        else:
+            data['services']['prism-local']['name'] = 'Renamed'
+        validated = _validate_service_registry(data, before=before)
+        store.update_service_registry(data=validated, actor=actor, expected_generation=generation)
+    saved = store.get_service_registry()
+    assert saved['services']['old-lan']['config']['connection']['address'] == 'http://192.168.1.5:11434'
+    if operation in {'disable-old', 'full-disable-old'}:
+        assert saved['services']['old-lan']['enabled'] is False
+        # Disabling an old record must never grant permission to enable it again.
+        with pytest.raises(ValueError, match='old-lan'):
+            store.set_service_enabled(service_id='old-lan', enabled=True, actor=actor,
+                                      expected_generation=generation + 1)
+    elif operation == 'disable-healthy':
+        assert saved['services']['prism-local']['enabled'] is False
+    else:
+        assert saved['services']['prism-local']['name'] == 'Renamed'
+
+
+def test_legacy_refused_record_cannot_hide_new_paid_marker_or_edit(engine, tmp_path):
+    from gateway import service_registry
+    before = copy.deepcopy(engine.registry)
+    bad = copy.deepcopy(engine.record)
+    bad['id'] = 'old-lan'
+    bad['config']['connection']['address'] = 'http://192.168.1.5:11434'
+    before['services']['old-lan'] = bad
+    for record_id, field, value in [('old-lan','name','Renamed'), ('prism-local','paid_remote',True)]:
+        after = copy.deepcopy(before)
+        after['services'][record_id][field] = value
+        with pytest.raises(ValueError, match=record_id):
+            service_registry.validate_protocol_dispatch_registry(after, before=before)
