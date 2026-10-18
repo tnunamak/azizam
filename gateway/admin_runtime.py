@@ -993,7 +993,7 @@ class AdminSQLiteStore:
             # A lifecycle driver kept only on the record (not in its config) must
             # survive a partial edit: dropping it would count as removing a driver,
             # which only the owner may do.
-            existing_lifecycle = existing.get("lifecycle")
+            existing_lifecycle = service_registry.legacy_lifecycle_from_service(existing)
             if (
                 "lifecycle" not in form_base
                 and isinstance(existing_lifecycle, Mapping)

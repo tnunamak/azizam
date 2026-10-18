@@ -789,13 +789,10 @@ def merge_imported_records(
             "capability",
         )
 
-    # Imported services join the graph the registry already validated, so the
-    # combined result gets the same checks as a normalized registry.
-    _validate_model_policy_schema_markers(out["services"])
-    _validate_model_policy_graphs(out["services"])
-    _validate_public_alias_uniqueness(out["services"])
     out["updated_at"] = int(time.time())
-    return out
+    # Imported legacy records enter the current registry schema through the
+    # same lifecycle collapse and graph checks as operator-authored records.
+    return normalize_service_registry(out)
 
 
 def _merge_imported_record(
@@ -897,7 +894,9 @@ def service_from_backend_config(
     return record
 
 
-def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_version: int = 1) -> dict[str, Any]:
+def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_version: int | None = None) -> dict[str, Any]:
+    if schema_version is None:
+        schema_version = 2 if any(key in raw for key in ("process", "observations", "residency")) else 1
     source = str(raw.get("source") or "ui")
     if source not in SERVICE_SOURCES:
         source = "ui"
@@ -1383,6 +1382,9 @@ def carry_unnamed_record_fields(
     """
     if isinstance(existing.get("secret_refs"), Mapping):
         updated["secret_refs"] = {**copy.deepcopy(dict(existing["secret_refs"])), **updated.get("secret_refs", {})}
+    for field in ("process", "observations", "residency", "resources"):
+        if field in existing and field not in named:
+            updated[field] = copy.deepcopy(existing[field])
     if isinstance(existing.get("lifecycle"), Mapping) and "lifecycle" not in named:
         kept = copy.deepcopy(dict(existing["lifecycle"]))
         for form_key, block_key in _LIFECYCLE_FORM_KEYS.items():
