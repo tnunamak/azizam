@@ -157,6 +157,7 @@ def url(container: Mapping[str, Any], key: str) -> str:
     base = str(public or "")
     origin = secret_refs.origin_or_none(base)
     userinfo = resolve(_ref_of(held["userinfo"]), origin=origin) if held.get("userinfo") else None
+    params = record_carriers.query_chunks(held.get("params"), lambda ref: resolve(ref, origin=origin)) if "params" in held else None
     query = record_carriers.query_chunks(held.get("query"), lambda ref: resolve(ref, origin=origin)) if "query" in held else None
     fragment = None
     if isinstance(held.get("fragment"), Mapping):
@@ -167,6 +168,6 @@ def url(container: Mapping[str, Any], key: str) -> str:
             fragment = ""
         else:
             resolve(None)  # a fragment that is neither an entry nor an empty marker cannot be rebuilt
-    return record_carriers.join_url(base, userinfo=userinfo, query=query, fragment=fragment)
+    return record_carriers.join_url(base, userinfo=userinfo, query=query, fragment=fragment, params=params)
 
 

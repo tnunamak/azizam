@@ -729,3 +729,114 @@ def test_a_number_written_as_a_driver_key_is_moved_like_text(store):
     record["lifecycle"]["admin_key"] = 123456
     moved = _moved(record, store)
     assert secret_refs.is_secret_entry(moved["lifecycle"]["admin_key"]) and "123456" not in json.dumps(moved)
+
+
+# ---------------------------------------------------------------------------
+# L3: ;name=value path parameters are credentials like query values; a whole URL can be kept as one secret
+# ---------------------------------------------------------------------------
+
+from gateway import projection, secret_commands  # noqa: E402
+
+PARAM_URLS = [
+    "http://h.invalid:9/v1;token=R3PARAM", "http://h.invalid:9/a;x=R3ONE;y=R3TWO/b;z=R3THREE", "http://h.invalid:9/v1;",
+    "http://h.invalid:9/v1;;a=R3GAP", "http://h.invalid:9/v1;R3BARE", "http://h.invalid:9/v1;token=", "http://h.invalid:9/v1;a=R3A?c=d#e",
+    "/health;k=R3REL", "http://u:R3PW@h.invalid:9/v1;k=R3V?q=R3Q", "http://h.invalid:9/v1;=R3NONAME", "http://h.invalid:9/v1;a=R3B=R3C",
+    "h.invalid:9/v1;k=R3SCHEMELESS", "http://h.invalid:9/v1;k=R3V#frag;x=R3FRAG", "http://[::1]:9/v1;k=R3V6",
+]
+
+
+class _MemoryStore:
+    def __init__(self, monkeypatch):
+        self.values: dict[str, str] = {}
+        monkeypatch.setattr(runtime_secrets, "resolve", lambda ref, *, origin=None: self.values[ref])
+
+    def put(self, value, origin=None):
+        ref = secret_refs.new_ref()
+        self.values[ref] = value
+        return ref
+
+
+@pytest.mark.parametrize("url", PARAM_URLS)
+def test_a_url_with_path_parameters_is_stored_without_them_and_read_back_byte_for_byte(monkeypatch, url):
+    memory = _MemoryStore(monkeypatch)
+    container = {"base_url": url}
+    assert record_carriers.externalize_url(container, "base_url", memory.put) is True
+    seeds = [text for text in ("R3PARAM", "R3ONE", "R3TWO", "R3GAP", "R3BARE", "R3A", "R3REL", "R3V", "R3NONAME", "R3B", "R3C", "R3SCHEMELESS", "R3FRAG", "R3V6") if text in url]
+    assert not [seed for seed in seeds if seed in json.dumps(container)], container
+    assert runtime_secrets.url(container, "base_url") == url
+    again = copy.deepcopy(container)
+    assert record_carriers.externalize_url(again, "base_url", memory.put) is False and again == container
+    assert not [seed for seed in seeds if seed in projection.public_url(container["base_url"])]
+
+
+def test_a_legacy_inline_path_parameter_is_cut_from_the_public_form_of_a_url():
+    assert ";R3SHOWN" not in projection.public_url("http://h.invalid:9/v1;token=R3SHOWN")
+    assert "R3SHOWN" not in projection.public_url("/health;k=R3SHOWN?x=1")
+
+
+def test_new_path_parameters_replace_the_old_ones_when_the_url_changes(monkeypatch):
+    memory = _MemoryStore(monkeypatch)
+    container = {"base_url": "http://h.invalid:9/v1;token=R3OLD"}
+    record_carriers.externalize_url(container, "base_url", memory.put)
+    container["base_url"] = "http://h.invalid:9/v2;token=R3NEW;other=R3OTHER"
+    record_carriers.externalize_url(container, "base_url", memory.put)
+    assert "R3NEW" not in json.dumps(container) and "R3OTHER" not in json.dumps(container)
+    assert runtime_secrets.url(container, "base_url") == "http://h.invalid:9/v2;token=R3NEW;other=R3OTHER"
+
+
+def test_a_path_parameter_never_reaches_a_response_or_the_store_in_clear(gateway, host_isolated):
+    owner, _, _, _ = owner_and_admin(gateway)
+    empty_registry(gateway)
+    made = owner.post("/admin/api/operator/services", headers=_etag(owner),
+                      json={"name": "pp", "base_url": "http://pp.invalid:9/v1;token=R3ROUTE"})
+    assert made.status_code == 201, made.text
+    assert "R3ROUTE" not in made.text and "R3ROUTE" not in owner.get(REGISTRY).text
+    assert "R3ROUTE" not in json.dumps(stored(gateway))
+
+
+WHOLE = "https://hooks.invalid/services/T0/B0/R3WEBHOOKSECRET"
+
+
+def _whole(db, **command):
+    record = {"id": "e", "name": "e", "kind": "engine", "enabled": True, "capabilities": ["chat"],
+              "config": {"host": "hooks.invalid", "port": 443, "protocol": "openai-compatible", "base_url": "https://hooks.invalid/v1"}}
+    put = secret_refs.putter(db)
+    commands = secret_commands.parse_commands({"commands": [{"carrier": "config.base_url", "operation": "set_credentials", **command}]})
+    return secret_commands.apply_commands(record, commands, put)
+
+
+def test_a_whole_url_is_kept_as_one_secret_with_a_public_label(store):
+    record, outcome = _whole(store, url=WHOLE, whole=True, label="Alert webhook")
+    config = record["config"]
+    assert config["base_url"] == "" and len(outcome.created) == 1
+    assert "R3WEBHOOKSECRET" not in json.dumps(record)
+    assert config["base_url_entries"]["whole"]["label"] == "Alert webhook"
+    assert runtime_secrets.url(config, "base_url") == WHOLE
+    shown = projection.project("ServiceRecord", record).tree["config"]["base_url_entries"]["whole"]
+    assert shown["label"] == "Alert webhook" and shown["configured"] is True and "R3WEBHOOKSECRET" not in json.dumps(shown)
+
+
+def test_a_replaced_whole_url_retires_the_secret_it_replaces(store):
+    first, _ = _whole(store, url=WHOLE, whole=True, label="Alert webhook")
+    put = secret_refs.putter(store)
+    commands = secret_commands.parse_commands({"commands": [
+        {"carrier": "config.base_url", "operation": "set_credentials", "url": WHOLE + "-2", "whole": True, "label": "Alert webhook"}]})
+    second, outcome = secret_commands.apply_commands(first, commands, put)
+    assert outcome.retired == record_carriers.refs_in(first["config"]["base_url_entries"]) and len(outcome.created) == 1
+    assert second["config"]["base_url_entries"]["whole"]["secret_ref"] != first["config"]["base_url_entries"]["whole"]["secret_ref"]
+
+
+@pytest.mark.parametrize("command", [
+    {"url": WHOLE, "whole": True},
+    {"url": WHOLE, "whole": True, "label": ""},
+    {"url": WHOLE, "whole": True, "label": "x" * 200},
+    {"url": WHOLE, "whole": True, "label": "R3WEBHOOKSECRET"},
+    {"url": WHOLE, "whole": True, "label": "see https://elsewhere.invalid"},
+    {"url": WHOLE, "whole": True, "label": "tab\there"},
+    {"url": WHOLE, "label": "Alert webhook"},
+    {"url": WHOLE, "whole": "yes", "label": "Alert webhook"},
+])
+def test_a_whole_url_needs_a_label_that_does_not_repeat_the_url_and_a_label_needs_whole(store, command):
+    with pytest.raises(secret_commands.CommandError) as refused:
+        _whole(store, **command)
+    assert "R3WEBHOOKSECRET" not in refused.value.message

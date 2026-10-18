@@ -8,8 +8,11 @@ position does not mean "keep", and a value that is one of the marker texts is re
 The carriers are the ones ``gateway/record_carriers.py`` defines. A list of arguments is changed as a whole
 (``set``), where every item says what it is: a public ``literal``, a ``retain`` of an entry by id, or a new
 ``secret``; an entry the new list does not keep must be named in ``clear``, so nothing is dropped by omission.
-Every command is checked before anything is stored, a bad one stores nothing, and a failure after storing
-removes what this call stored. The error text is fixed: it never repeats a submitted value.
+A URL field changes with ``set_credentials`` (the credentials of the URL are stored beside it) or, when the secret sits
+in a place no rule can find (a path segment of a webhook address), with ``whole`` and a public ``label``: the whole URL
+is kept as one secret and a read shows the label. Every command is checked before anything is stored, a bad one stores
+nothing, and a failure after storing removes what this call stored. The error text is fixed: it never repeats a submitted
+value.
 
 This module is management-safe: it stores and deletes secrets and never decrypts one.
 """
@@ -35,7 +38,7 @@ _ALLOWED_KEYS = {
     "retain": {"carrier", "operation", "entry_id"},
     "clear": {"carrier", "operation", "entry_id"},
     "set": {"carrier", "operation", "items", "clear"},  # an item is a literal, a retain, a replace (same id) or a new secret
-    "set_credentials": {"carrier", "operation", "url"},
+    "set_credentials": {"carrier", "operation", "url", "whole", "label"},  # whole + label: the URL is one secret with a public name
     "clear_credentials": {"carrier", "operation"},
 }
 
@@ -362,6 +365,30 @@ def _scalar(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: O
     out.changed = True
 
 
+MAX_LABEL = 80
+
+
+def _whole_label(label: Any, url: str) -> str:
+    """The public name of a URL kept whole: short text that repeats no part of the URL (a path segment can be the secret)."""
+    from urllib.parse import urlsplit
+
+    if not isinstance(label, str) or not label.strip():
+        raise CommandError("invalid_label", "a URL kept whole needs a short label to show in its place")
+    label = label.strip()
+    if len(label) > MAX_LABEL or any(ord(ch) < 32 or ord(ch) == 127 for ch in label) or "://" in label:
+        raise CommandError("invalid_label", f"a label is short text of at most {MAX_LABEL} characters, without a URL or control characters")
+    try:
+        host = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        host = ""
+    public_words = {part for part in re.split(r"[.\-]+", host) if part}
+    lowered = label.lower()
+    for part in re.split(r"[/?#&=;:@\s]+", url):
+        if len(part) >= 4 and part.lower() not in public_words and part.lower() in lowered:
+            raise CommandError("invalid_label", "the label repeats a part of the URL; name what the URL is for instead")
+    return label
+
+
 def _url(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Outcome) -> None:
     parent, key = _parent(record, command["carrier"])
     secrets_key = key + record_carriers.SECRETS_SUFFIX
@@ -373,6 +400,19 @@ def _url(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Outc
     url = command.get("url")
     if not isinstance(url, str) or not url:
         raise CommandError("invalid_value", "a URL is required")
+    whole = command.get("whole")
+    if whole not in (None, True, False):
+        raise CommandError("invalid_command", "whole must be true or false")
+    if not whole and "label" in command:
+        raise CommandError("invalid_command", "a label belongs to a URL kept whole; send whole as true")
+    if whole:
+        label = _whole_label(command.get("label"), url)
+        ref = put(validate_value(url), None)
+        out.created.append(ref)
+        parent[key] = ""
+        parent[secrets_key] = {"whole": secret_refs.entry(ref, label=label)}
+        out.changed = True
+        return
     parent[key] = url
     before = len(out.created)
 

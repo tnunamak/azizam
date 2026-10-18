@@ -171,13 +171,72 @@ def url_containers(record: Mapping[str, Any]) -> Iterator[tuple[str, dict[str, A
 # ---------------------------------------------------------------------------
 
 
-def split_url(value: str) -> tuple[str, dict[str, Any]]:
+_PARAM = re.compile(r";([^;/]*)")
+
+
+def split_path_params(path: str) -> tuple[str, list[tuple[str, str | None]]]:
+    """A path without the values of its ``;name=value`` parameters, and the raw chunks it held, in order.
+
+    A parameter is read like a query chunk: ``name=value`` keeps ``;name`` in the path (the name is public), a bare word
+    (``;token123``) keeps a bare ``;`` because the word may be the credential itself, and an empty chunk (``;;``, a
+    trailing ``;``) is a gap. Every ``;`` of the path is one chunk, so ``_join_params`` gives back the same bytes.
+    """
+    chunks: list[tuple[str, str | None]] = []
+
+    def take(match: re.Match[str]) -> str:
+        text = match.group(1)
+        name, equals, value = text.partition("=")
+        if equals:
+            chunks.append((name, value))
+            return ";" + name
+        chunks.append((text, None))
+        return ";"
+
+    return _PARAM.sub(take, path), chunks
+
+
+def _params_held(path: str, entries: Any) -> bool:
+    """True when the ``;`` chunks of a public path are the ones ``entries`` already stands for (a second pass changes nothing)."""
+    texts = [match.group(1) for match in _PARAM.finditer(path)]
+    if not isinstance(entries, list) or len(entries) != len(texts):
+        return False
+    for text, entry in zip(texts, entries):
+        if not isinstance(entry, Mapping):
+            return False
+        expected = "" if entry.get("bare") or entry.get("gap") else str(entry.get("name") or "")
+        if text != expected:
+            return False
+    return True
+
+
+def _join_params(public: str, chunks: list[tuple[str, str | None]] | None) -> str:
+    """``public`` with the parameter chunks put back into the path, in order."""
+    if not chunks:
+        return public
+    start = public.find("/", public.index("://") + 3) if "://" in public else public.find("/")
+    if start < 0:
+        return public
+    remaining = iter(chunks)
+
+    def put_back(match: re.Match[str]) -> str:
+        chunk = next(remaining, None)
+        if chunk is None:
+            return match.group(0)
+        name, value = chunk
+        return f";{name}" if value is None else f";{name}={value}"
+
+    return public[:start] + _PARAM.sub(put_back, public[start:])
+
+
+def split_url(value: str, held_params: Any = None) -> tuple[str, dict[str, Any]]:
     """``(public form, credential parts)`` of a URL, an address with user info, or a path with a query.
 
-    The public form has no user info, no query and no fragment. The credential parts are
-    ``{"userinfo": "user:password", "query": [(name, value or None), ...], "fragment": text}``, each present only when
-    the URL had it; the query is the raw chunks of the string, in order. Raises ``AmbiguousUrl`` for text that cannot be read with confidence (an invalid port, a
-    bracket that does not close, a control character).
+    The public form has no user info, no query, no fragment and no path parameter values. The credential parts are
+    ``{"userinfo": "user:password", "params": [(name, value or None), ...], "query": [(name, value or None), ...],
+    "fragment": text}``, each present only when the URL had it; ``params`` and ``query`` are the raw chunks of the
+    string, in order. ``held_params`` are the parameter entries a stored record already has for this field: a public
+    path whose ``;`` chunks they stand for is not read again. Raises ``AmbiguousUrl`` for text that cannot be read with
+    confidence (an invalid port, a bracket that does not close, a control character).
     """
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
         raise AmbiguousUrl("a URL holds a control character")
@@ -196,6 +255,9 @@ def split_url(value: str) -> tuple[str, dict[str, Any]]:
     rest, hash_mark, fragment = rest.partition("#")
     rest, question, query = rest.partition("?")
     authority, slash, path = rest.partition("/")
+    if slash and ";" in path and not _params_held(path, held_params):
+        path, chunks = split_path_params(path)
+        parts["params"] = chunks
     if prefix or _looks_like_authority(authority):
         if "@" in authority:
             userinfo, _, host = authority.rpartition("@")
@@ -227,9 +289,9 @@ def _looks_like_authority(text: str) -> bool:
 
 
 def join_url(public: str, *, userinfo: str | None = None, query: list[tuple[str, str | None]] | None = None,
-             fragment: str | None = None) -> str:
+             fragment: str | None = None, params: list[tuple[str, str | None]] | None = None) -> str:
     """The URL that ``split_url`` took apart: the public form with its credential parts put back, byte for byte."""
-    out = public
+    out = _join_params(public, params)
     if userinfo:
         if "://" in out:
             scheme, _, rest = out.partition("://")
@@ -249,6 +311,8 @@ def url_entries(public: str, parts: Mapping[str, Any], put: Put) -> dict[str, An
     held: dict[str, Any] = {}
     if "userinfo" in parts:
         held["userinfo"] = secret_refs.entry(put(parts["userinfo"], origin))
+    if "params" in parts:
+        held["params"] = [_query_entry(name, item, put, origin) for name, item in parts["params"]]
     if "query" in parts:
         held["query"] = [_query_entry(name, item, put, origin) for name, item in parts["query"]]
     if "fragment" in parts:
@@ -316,8 +380,9 @@ def externalize_url(container: dict[str, Any], key: str, put: Put, *, reject_amb
     value = container.get(key)
     if not isinstance(value, str) or not value:
         return False
+    existing = container.get(key + SECRETS_SUFFIX)
     try:
-        public, parts = split_url(value)
+        public, parts = split_url(value, existing.get("params") if isinstance(existing, Mapping) else None)
     except AmbiguousUrl:
         if reject_ambiguous:
             raise
@@ -327,7 +392,6 @@ def externalize_url(container: dict[str, Any], key: str, put: Put, *, reject_amb
     if not parts:
         return False
     held = url_entries(public, parts, put)
-    existing = container.get(key + SECRETS_SUFFIX)
     container[key] = public
     container[key + SECRETS_SUFFIX] = {**(existing if isinstance(existing, Mapping) else {}), **held}
     return True
@@ -806,7 +870,7 @@ def _url_entries_malformed(held: Any) -> bool:
         elif part == "fragment":
             if not (entry(item) or marker(item, "empty")):
                 return True
-        elif part == "query":
+        elif part in ("query", "params"):
             if not isinstance(item, list) or not all(entry(chunk) or marker(chunk, "empty") or marker(chunk, "gap") for chunk in item):
                 return True
         else:
