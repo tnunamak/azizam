@@ -201,9 +201,20 @@ class SttChunkMergeTests(unittest.TestCase):
         self.assertTrue(all(0 < b - a <= 70 for a, b in segments))
 
     def test_silence_preferred_plan_rejects_excessive_work(self) -> None:
+        class BoundedScans(list):
+            scans = 0
+
+            def __iter__(self):
+                self.scans += 1
+                if self.scans > 3:
+                    raise AssertionError("Planner scanned beyond the segment budget")
+                return super().__iter__()
+
+        # A missing planning cap must fail this test before allocating a huge list.
+        silences = BoundedScans()
         with self.assertRaises(stt_chunking.SttResourceLimitExceeded):
             stt_chunking.plan_silence_preferred_segments(
-                duration_seconds=1321.62, silences=[], target_seconds=0.000001,
+                duration_seconds=1321.62, silences=silences, target_seconds=0.000001,
                 search_seconds=0.0000001, max_segments=3,
             )
 
