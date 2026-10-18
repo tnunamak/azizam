@@ -1747,7 +1747,8 @@ def credential_binding_changes(
 ) -> dict[str, list[str]]:
     """Services whose credential or credential host differs between two registries.
 
-    A service is listed when it gains or changes a credential reference, when it
+    A service is listed when it gains, changes or loses a credential reference
+    (a lost one leaves its secret in the store with no record that owns it), when it
     sets the base of the gateway's own internal key, when it already carries a
     credential and its origin moves, when its lifecycle driver is set, changed
     or removed (a driver runs commands or sends a stored key), when its
@@ -1762,6 +1763,8 @@ def credential_binding_changes(
         before = old.get(service_id) or {}
         refs, prior = credential_references(record), credential_references(before)
         reasons = [path for path, value in refs.items() if prior.get(path) != value]
+        # Taking a reference away detaches the secret it names and leaves it in the store with nothing to own it.
+        reasons += [path for path in prior if path not in refs]
         config = record.get("config") or {}
         before_config = before.get("config") or {}
         if config.get(LIFECYCLE_BASE_KEY) and config.get(LIFECYCLE_BASE_KEY) != before_config.get(LIFECYCLE_BASE_KEY):

@@ -278,3 +278,61 @@ def test_the_schema_12_migration_binds_the_driver_keys_of_an_existing_record_onc
     admin_store.init_db(path)  # a second start changes nothing
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key='service_registry'").fetchone()[0] == 2
+
+
+# ---------------------------------------------------------------------------
+# L1: an administrator detaches a credential and leaves its secret in the store
+# ---------------------------------------------------------------------------
+
+ENGINE_ORIGIN = "http://ek.invalid:9"
+
+
+def _engine_with_stored_key(gateway, owner):
+    """An engine record whose key sits in the store, bound to its host (as the owner's save leaves it)."""
+    empty_registry(gateway)
+    made = owner.post("/admin/api/operator/services", headers=_etag(owner), json={"name": "ek", "base_url": f"{ENGINE_ORIGIN}/v1"})
+    assert made.status_code in (200, 201), made.text
+    document = admin_store.get_service_registry_with_generation(path=gateway.path)["value"]
+    ref = secret_refs.store("R3-ENGINE-KEY-0001", db_path=gateway.path, origin=ENGINE_ORIGIN)
+    document["services"]["ek"]["config"]["api_key_secret_id"] = ref
+    document["services"]["ek"]["config"]["credential_origin"] = ENGINE_ORIGIN
+    document["services"]["ek"]["secret_refs"] = {"api_key": ref}
+    write_raw(gateway, document)
+    return ref
+
+
+DETACHES = {
+    "pop api_key_secret_id": lambda record: record["config"].pop("api_key_secret_id", None),
+    "empty api_key_secret_id": lambda record: record["config"].update(api_key_secret_id=""),
+    "null api_key_secret_id": lambda record: record["config"].update(api_key_secret_id=None),
+    "pop credential_origin": lambda record: record["config"].pop("credential_origin", None),
+    "empty secret_refs": lambda record: record.update(secret_refs={}),
+}
+
+
+@pytest.mark.parametrize("detach", sorted(DETACHES))
+def test_an_administrator_cannot_detach_a_credential_from_a_record(gateway, host_isolated, detach):
+    owner, _, _, admin = owner_and_admin(gateway)
+    ref = _engine_with_stored_key(gateway, owner)
+    held = copy.deepcopy(stored(gateway)["ek"])
+    refused = change(admin, lambda services: DETACHES[detach](services["ek"]))
+    assert refused.status_code == 403 and error_code(refused) == "owner_required", refused.text
+    assert stored(gateway)["ek"] == held
+    assert ref in secret_rows(gateway)
+
+
+def test_the_owner_can_detach_a_credential(gateway, host_isolated):
+    owner, _, _, _ = owner_and_admin(gateway)
+    _engine_with_stored_key(gateway, owner)
+    done = change(owner, lambda services: DETACHES["pop api_key_secret_id"](services["ek"]))
+    assert done.status_code == 200, done.text
+    assert "api_key_secret_id" not in stored(gateway)["ek"]["config"]
+
+
+def test_a_removed_credential_reference_is_a_binding_change():
+    before = {"services": {"ek": {"name": "ek", "config": {"base_url": f"{ENGINE_ORIGIN}/v1", "api_key_secret_id": "sref_" + "1" * 24,
+                                                           "credential_origin": ENGINE_ORIGIN}}}}
+    after = copy.deepcopy(before)
+    del after["services"]["ek"]["config"]["api_key_secret_id"]
+    assert "config.api_key_secret_id" in service_registry.credential_binding_changes(before, after)["ek"]
+    assert service_registry.credential_binding_changes(before, before) == {}
