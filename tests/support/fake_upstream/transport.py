@@ -148,11 +148,20 @@ class StreamingASGITransport(httpx.AsyncBaseTransport):
         )
 
 
+class HandlerTransport(httpx.MockTransport):
+    """Answer each request from a function ``(httpx.Request) -> httpx.Response`` (sync or async).
+
+    For a client that takes a transport, and, through ``HostRouter.add_transport``, for a real
+    ``httpx.AsyncClient`` that the code under test builds. A function may raise an ``httpx`` error to
+    stand for a transport fault.
+    """
+
+
 class HostRouter:
-    """Route ``host`` or ``host:port`` names to in-process ASGI apps."""
+    """Route ``host`` or ``host:port`` names to in-process ASGI apps or handler transports."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self._routes: dict[str, StreamingASGITransport] = {}
+        self._routes: dict[str, httpx.AsyncBaseTransport] = {}
         original = httpx.AsyncHTTPTransport.handle_async_request
         router = self
 
@@ -165,6 +174,9 @@ class HostRouter:
         monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", routed)
 
     def add(self, name: str, app: typing.Callable) -> None:
+        self.add_transport(name, StreamingASGITransport(app))
+
+    def add_transport(self, name: str, transport: httpx.AsyncBaseTransport) -> None:
         if name in self._routes:
             raise ValueError(f"{name!r} is already routed")
-        self._routes[name] = StreamingASGITransport(app)
+        self._routes[name] = transport

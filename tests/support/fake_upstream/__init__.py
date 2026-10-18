@@ -14,7 +14,7 @@ from .fixtures import FakeUpstreams, fake_upstreams, verify
 from .known_bug import KnownBug, expect_fixed
 from .protocols import PROTOCOLS
 from .scenario import Scenario, ScenarioError, load_scenario, scenario_from_data
-from .transport import HostRouter, StreamingASGITransport
+from .transport import HandlerTransport, HostRouter, StreamingASGITransport
 
 __all__ = [
     "PROTOCOLS",
@@ -22,6 +22,7 @@ __all__ = [
     "Deadlines",
     "FakeUpstream",
     "FakeUpstreams",
+    "HandlerTransport",
     "HostRouter",
     "KnownBug",
     "RecordedRequest",

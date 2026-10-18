@@ -14,3 +14,12 @@ builtin, discovered, or created in the UI.
 The managed LiteLLM substrate is the sole exception. Its gateway-derived
 endpoint/protocol fields are locked and it cannot be removed; its name, enabled
 state, and note remain editable.
+
+## Protocol descriptions
+
+`registry/protocols/*.yml` hold protocol descriptions: data that says how
+Azizam talks to a kind of engine (requests, body mappings, framing, auth,
+async jobs). `protocol.schema.json` is their closed schema; the loader is
+`gateway/engine_protocol/description.py`. The file name must equal the `id`.
+A description names no engine and no code. See
+`docs/design/ENGINE_PROTOCOL_EXECUTOR.md`.

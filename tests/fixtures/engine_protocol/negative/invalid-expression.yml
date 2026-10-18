@@ -1,0 +1,8 @@
+protocol_version: 1
+id: invalid-expression
+executor: http-v1
+operations:
+  chat:
+    class: generate
+    expression: "body.messages | map(.content)"
+    request: {method: POST, path: /c}

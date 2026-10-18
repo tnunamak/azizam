@@ -1,0 +1,6 @@
+POST /api/v3/renders
+GET /api/v3/renders/r-7
+GET /api/v3/renders/r-7
+GET /api/v3/renders/r-7
+GET /api/v3/renders/r-7/outputs/o1
+GET /api/v3/renders/r-7/outputs/o%202
