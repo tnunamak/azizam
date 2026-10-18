@@ -68,7 +68,7 @@ def _save_engine(db, address: str) -> None:
 def test_a_data_only_frontend_serves_chat_through_a_fake_engine_and_writes_a_receipt(
     fake_upstreams, monkeypatch, tmp_path,
 ):
-    engine = fake_upstreams.loopback(load_scenario("openai-compatible/chat-text", model="demo-chat"))
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/chat-text", model="demo-chat", content="reached"))
     db = use_admin_db(monkeypatch, tmp_path)
     fake_upstreams.router.add("router.fk.test", router_sidecar(proxy.ADMIN_STORE.get_service_registry))
     register_litellm(monkeypatch, db, "http://router.fk.test")
