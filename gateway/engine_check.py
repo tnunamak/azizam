@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import concurrent.futures
 import ipaddress
 import json
 import re
@@ -230,6 +231,38 @@ async def blocked_reason(url: str, *, resolve: Resolve | None = None, gateway_po
     return destination.reason or None
 
 
+def blocked_reason_blocking(url: str, *, resolve: Resolve | None = None, gateway_ports: Ports = GATEWAY_PORTS) -> str | None:
+    """``blocked_reason`` for code that is not async (a save in the admin store). It runs the lookup in its own thread."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(
+            lambda: asyncio.run(blocked_reason(url, resolve=resolve, gateway_ports=gateway_ports))
+        ).result()
+
+
+def static_blocked_reason(url: str, *, gateway_ports: Iterable[int] = GATEWAY_PORTS) -> str | None:
+    """The part of ``check_destination`` that needs no lookup: an address written in the URL.
+
+    A link-local or cloud settings address, or a gateway port on this computer. A name is not looked up
+    here; it is checked when it is used (``check_destination``) and when it is saved.
+    """
+    parts = urlsplit(url)
+    host = (parts.hostname or "").strip("[]")
+    if parts.scheme not in {"http", "https"} or not host:
+        return "The address must start with http:// or https://."
+    try:
+        address = plain_address(ipaddress.ip_address(host))
+    except ValueError:
+        address = None
+    if address is not None and (address in _METADATA_ADDRESSES or address.is_link_local):
+        return f"{host} is a link-local or cloud settings address. No engine answers there."
+    port = _port_of(parts)
+    if port in {int(value) for value in gateway_ports} and (
+        host.lower() == "localhost" or (address is not None and is_this_computer(address))
+    ):
+        return f"Port {port} on this computer is the gateway itself, so Azizam does not call it."
+    return None
+
+
 class _CheckedAddresses(httpcore.AsyncNetworkBackend):
     """Opens connections only to the addresses ``check_destination`` validated, for the one name it checked."""
 
@@ -258,7 +291,7 @@ class _CheckedAddresses(httpcore.AsyncNetworkBackend):
         await self._inner.sleep(seconds)
 
 
-def _checked_transport(destination: Destination) -> httpx.AsyncHTTPTransport:
+def checked_transport(destination: Destination) -> httpx.AsyncHTTPTransport:
     """An httpx transport whose sockets go only to the checked addresses.
 
     The URL keeps the name, so the Host header and the TLS server name (SNI and
@@ -273,6 +306,8 @@ def _checked_transport(destination: Destination) -> httpx.AsyncHTTPTransport:
         retries=0,
     )
     return transport
+
+
 
 
 class _Decoder:
@@ -335,7 +370,7 @@ def make_http_fetch(*, resolve: Resolve | None = None, gateway_ports: Ports = GA
                 sent = {k: v for k, v in headers.items() if k.lower() != "accept-encoding"}
                 sent["accept-encoding"] = "identity"
                 async with httpx.AsyncClient(
-                    transport=_checked_transport(destination), follow_redirects=False, trust_env=False,
+                    transport=checked_transport(destination), follow_redirects=False, trust_env=False,
                     timeout=httpx.Timeout(timeout_s),
                 ) as client, client.stream(method, url, headers=sent, content=content) as response:
                     answer.status = response.status_code
@@ -394,6 +429,9 @@ def _connect_failure(exc: BaseException) -> tuple[str, str]:
     if "ssl" in lowered or "certificate" in lowered:
         return "tls", text
     return "refused", text
+
+
+connect_failure = _connect_failure  # public name for gateway/engine_protocol/transport.py
 
 
 # ---------------------------------------------------------------------------

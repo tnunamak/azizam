@@ -29,7 +29,7 @@ from typing import Any
 
 import yaml
 
-from gateway import admin_store, engine_redaction
+from gateway import admin_store, engine_check, engine_redaction, native_lane
 from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
@@ -786,6 +786,15 @@ def apply_service_registry_to_config(
     return out
 
 
+def builtin_frontend_ids(proxy_config: Mapping[str, Any] | None = None) -> frozenset[str]:
+    """The ids of the protocol frontends that ship with the code. A stored record may not take one."""
+    seed = load_seed_catalogs(proxy_config or {}).get("protocol_frontends", {})
+    return frozenset(
+        str(frontend_id) for frontend_id, record in seed.items()
+        if isinstance(record, Mapping) and record.get("source") == "builtin"
+    )
+
+
 class ServiceRegistryConflict(ValueError):
     """Raised when imported registry records collide with existing ownership."""
 
@@ -821,6 +830,10 @@ def merge_imported_records(
         frontend_id = normalize_id(raw.get("id") or raw_id)
         if not frontend_id:
             continue
+        if frontend_id in builtin_frontend_ids():
+            raise ServiceRegistryConflict(
+                f"protocol_frontend {frontend_id!r} is a builtin frontend; a package cannot replace it"
+            )
         record = normalize_protocol_frontend(frontend_id, raw)
         _merge_imported_record(
             out["protocol_frontends"],
@@ -1111,6 +1124,27 @@ def validate_provider_native_passthrough_disabled(
         raise ValueError(
             f"remote provider {service_id!r} cannot enable native_passthrough"
         )
+    try:
+        native_lane.validate_native_block(config.get("native"))
+        native_lane.validate_connection(config.get("connection"))
+    except ValueError as error:
+        raise ValueError(f"service {service_id!r}: {error}") from error
+    if bool_from_config(config.get("native_passthrough"), False):
+        reason = engine_check.static_blocked_reason(native_host_url(config))
+        if reason:
+            raise ValueError(f"service {service_id!r}: native pass-through cannot reach its host. {reason}")
+
+
+def native_host_url(config: Mapping[str, Any]) -> str:
+    """Where the native lane sends a record's calls: its ``url``, else its base URL, else its host and port."""
+    explicit = str(config.get("url") or "").strip()
+    if explicit:
+        return explicit
+    host = str(config.get("host") or "").strip()
+    if ":" in host and not host.startswith("[") and not str(config.get("base_url") or config.get("api_base") or "").strip():
+        # An IPv6 address needs its brackets to be a URL host.
+        config = {**config, "host": f"[{host}]"}
+    return service_base_url(config)
 
 
 def is_remote_provider_config(config: Mapping[str, Any]) -> bool:
@@ -1258,9 +1292,29 @@ def _reads_process_command_lines(config: Mapping[str, Any]) -> bool:
     return isinstance(aux, Mapping) and aux.get("probe") == "process-cmdline"
 
 
-def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[str, str]:
-    url = service_base_url(config)
-    return (origin_of(url) or url, str(config.get(LIFECYCLE_BASE_KEY) or ""))
+def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[Any, ...]:
+    """Every address a credential of this record can be sent to, and every origin it is bound to.
+
+    The gateway dials the record's base URL (chat), its native URL (the native lane prefers ``url``)
+    and the address the form stores; a native credential goes only to the origin written beside it.
+    A change to any of these moves a key, so each has its own place in the fingerprint.
+    """
+    connection = config.get("connection") if isinstance(config.get("connection"), Mapping) else {}
+    credentials = connection.get("credentials") if isinstance(connection.get("credentials"), Mapping) else {}
+    bound = tuple(
+        (str(name), str(item.get("origin") or ""))
+        for name, item in sorted(credentials.items(), key=lambda pair: str(pair[0]))
+        if isinstance(item, Mapping)
+    )
+    addresses = (
+        service_base_url(config), native_host_url(config),
+        str(config.get("address") or "").strip(), str(connection.get("address") or "").strip(),
+    )
+    return (
+        tuple(origin_of(address) or address for address in addresses),
+        bound,
+        str(config.get(LIFECYCLE_BASE_KEY) or ""),
+    )
 
 
 def credential_binding_changes(
@@ -1314,11 +1368,19 @@ def bind_credential_origins(
         if record is None:
             continue
         config = record["config"]
-        if is_remote_provider_config(config) or not any(config.get(key) for key in CREDENTIAL_REFERENCE_KEYS):
+        if is_remote_provider_config(config):
             continue
-        origin = origin_of(str(config.get(LIFECYCLE_BASE_KEY) or "") or service_base_url(config))
-        if origin:
-            config["credential_origin"] = origin
+        if any(config.get(key) for key in CREDENTIAL_REFERENCE_KEYS):
+            origin = origin_of(str(config.get(LIFECYCLE_BASE_KEY) or "") or service_base_url(config))
+            if origin:
+                config["credential_origin"] = origin
+        # Each per-class native credential is bound to the host the native lane sends to.
+        connection = config.get("connection")
+        credentials = connection.get("credentials") if isinstance(connection, Mapping) else None
+        native_origin = origin_of(native_host_url(config))
+        for credential in credentials.values() if isinstance(credentials, Mapping) else ():
+            if native_origin and isinstance(credential, dict) and (credential.get("secret_env") or credential.get("secret_ref")):
+                credential["origin"] = native_origin
     return out
 
 

@@ -1,0 +1,13 @@
+protocol_version: 1
+id: invalid-poll-without-id
+executor: http-v1
+operations:
+  render:
+    class: generate
+    job:
+      submit: {request: {method: POST, path: /jobs}, id: /id}
+      poll:
+        request: {method: GET, path: /jobs}
+        status: {path: /s, states: {done: succeeded}}
+        interval_s: 1
+        max_wait_s: 10

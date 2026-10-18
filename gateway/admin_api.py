@@ -52,6 +52,7 @@ __all__ = [
     "AdminStore",
     "access_model_summary",
     "derive_admin_health_projection",
+    "registry_not_applied_response",
     "derive_admin_attention",
     "create_admin_router",
 ]
@@ -857,6 +858,18 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
                 target_kind="app", target_id=app_id, target_name=name,
             ))
 
+    for frontend in snapshot.get("frontends") or []:
+        if not isinstance(frontend, Mapping) or frontend.get("status") != "broken":
+            continue
+        name = str(frontend.get("name") or frontend.get("id") or "A frontend")
+        reasons = [str(error.get("message")) for error in frontend.get("errors") or [] if isinstance(error, Mapping)]
+        items.append(_attention_item(
+            kind="frontend", severity="problem",
+            title=f"{name} could not be mounted",
+            detail=(reasons[0] if reasons else "Its routes are not served.") + (
+                f" ({len(reasons) - 1} more)" if len(reasons) > 1 else ""),
+        ))
+
     current_health = snapshot.get("current_health")
     if isinstance(current_health, Mapping) and current_health.get("state") == "unavailable":
         items.append(_attention_item(
@@ -992,6 +1005,18 @@ class _RouteError(Exception):
 
 def _error_payload(code: str, message: str) -> dict[str, Any]:
     return {"error": {"code": code, "message": message}}
+
+
+def registry_not_applied_response(exc: Exception) -> JSONResponse:
+    """The answer to a registry save that was stored but did not take effect on the running gateway."""
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=_error_payload(
+            "registry_saved_not_applied",
+            f"The change was saved, but the running gateway could not apply it: {exc}. "
+            f"Reload the settings or restart the gateway.",
+        ),
+    )
 
 
 def _litellm_admin_error(exc: LiteLLMAdminError) -> JSONResponse:
@@ -1582,6 +1607,7 @@ def create_admin_router(
     litellm_key_client: LiteLLMKeyClient | None = None,
     known_model_names_getter: Callable[[], frozenset[str]] | None = None,
     engine_fetch: engine_check.Fetch | None = None,
+    frontend_status: Callable[[], list[dict[str, Any]]] | None = None,
     prefix: str = "/admin/api",
 ) -> APIRouter:
     """Build an admin-plane router.
@@ -1675,9 +1701,11 @@ def create_admin_router(
             observation_available=status_available,
             availability_evidence=status_snap.get("_availability_evidence") if isinstance(status_snap.get("_availability_evidence"), Mapping) else None,
         )
+        frontends = frontend_status() if frontend_status is not None else []
         attention = derive_admin_attention({
             "apps": apps,
             "credentials": credentials,
+            "frontends": frontends,
             "services": current_health["services"],
             "status": status_snap,
             "current_health": current_health,
@@ -1706,6 +1734,8 @@ def create_admin_router(
             },
             "attention": attention,
             "current_health": current_health,
+            # Every protocol frontend and whether its routes are mounted, broken (with why) or disabled.
+            "frontends": frontends,
         }
         return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
 
