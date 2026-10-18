@@ -854,53 +854,54 @@ def _holds_media(folder: Path) -> bool:
 def _adopt_fresh_folder(folder: Path, *, prompt_path: Path | None, path: Path | None) -> None:
     """Record this folder for a fresh Library: no entries in either store, no media file, no marker.
 
-    Anything else needs the owner's confirmation. Failing to write quietly leaves the
-    folder unconfirmed, which the Library shows as such. Only a fresh install opens
-    this connection; the steady state reads through the request's own connection.
+    Anything else needs the owner's confirmation. The refusals are checked before any
+    connection is opened, so an unconfirmed install that is not fresh pays nothing per read.
+    Failing to write quietly leaves the folder unconfirmed, which the Library shows as such.
     """
-    conn = _connect(path)
-    try:
-        _adopt_in(conn, folder, prompt_path=prompt_path, path=path)
-    finally:
-        conn.close()
-
-
-def _adopt_in(conn: sqlite3.Connection, folder: Path, *, prompt_path: Path | None, path: Path | None) -> None:
-    if os.path.lexists(folder / MEDIA_FOLDER_MARKER) or _has_library_entries(conn):
+    if os.path.lexists(folder / MEDIA_FOLDER_MARKER):
         return
-    if prompt_path is not None and Path(prompt_path) != Path(path or media_jobs.DB_PATH):
-        other = _connect(prompt_path)
-        try:
-            if _has_library_entries(other):
-                return
-        finally:
-            other.close()
     try:
         if _holds_media(folder):
             return
     except OSError:
         return
-    conn.execute("BEGIN IMMEDIATE")
+    with _read_connection(path) as conn:
+        if _has_library_entries(conn):
+            return
+    if prompt_path is not None and Path(prompt_path) != Path(path or media_jobs.DB_PATH):
+        with _read_connection(prompt_path) as other:
+            if _has_library_entries(other):
+                return
+    _record_fresh_folder(folder, path=path)
+
+
+def _record_fresh_folder(folder: Path, *, path: Path | None) -> None:
+    conn = _connect(path)
     try:
-        # The check repeats inside the write lock, so two first reads cannot both adopt.
-        if _recorded_volume(conn) is None and not os.path.lexists(folder / MEDIA_FOLDER_MARKER):
-            marker = _write_media_marker(folder, replace=False)
-            _remember_media_marker(conn, marker)
-            conn.commit()
-        else:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            # The checks repeat inside the write lock, so two first reads cannot both adopt.
+            if (_recorded_volume(conn) is None and not os.path.lexists(folder / MEDIA_FOLDER_MARKER)
+                    and not _has_library_entries(conn)):
+                marker = _write_media_marker(folder, replace=False)
+                _remember_media_marker(conn, marker)
+                conn.commit()
+            else:
+                conn.rollback()
+        except (OSError, ValueError):
             conn.rollback()
-    except (OSError, ValueError):
-        conn.rollback()
-    except BaseException:
-        conn.rollback()
-        raise
+        except BaseException:
+            conn.rollback()
+            raise
+    finally:
+        conn.close()
 
 
 def media_folder_state(
     folder: Path, *, path: Path | None = None, prompt_path: Path | None = None,
     expected: tuple[int, int] | None = None,
 ) -> str:
-    """"confirmed", "unconfirmed" (nothing recorded yet) or "mismatch" (recorded, but not on this folder).
+    """The folder's state: "confirmed", "unconfirmed" (nothing recorded yet) or "mismatch" (recorded, but not on this folder).
 
     A fresh Library adopts its folder here, on its first read. Ordinary media writes never
     reach this, and a recorded identity is never regenerated: an existing install or a moved
