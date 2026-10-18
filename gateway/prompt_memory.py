@@ -20,7 +20,7 @@ from typing import Any, Iterable, Iterator, Mapping
 
 import os
 
-from gateway import admin_store, media_jobs, media_metadata, request_connections
+from gateway import admin_store, directory_index, media_jobs, media_metadata, request_connections
 from gateway.sqlite_startup import connect
 from gateway.public_failure import PublicFailure
 
@@ -752,6 +752,11 @@ def _folder_identity(folder: Path, expected: tuple[int, int] | None = None) -> N
 
 
 def _read_media_marker(folder: Path) -> dict[str, Any] | None:
+    """The marker's value, None when there is no marker. Raises when a marker is there but not usable.
+
+    O_NOFOLLOW refuses a symlink rather than reading its target, and O_NONBLOCK stops a
+    FIFO from waiting for a writer before the regular-file check refuses it.
+    """
     try:
         fd = os.open(folder / MEDIA_FOLDER_MARKER, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
@@ -771,21 +776,43 @@ def _read_media_marker(folder: Path) -> dict[str, Any] | None:
 
 
 def _write_media_marker(folder: Path, *, replace: bool) -> dict[str, Any]:
+    """Write a new marker. ``replace`` is the owner's confirmation; otherwise nothing may already be there.
+
+    The owner's replacement goes through a scratch file and os.replace. The adoption
+    path creates the marker with O_EXCL instead of a hard link, so it works on
+    filesystems without hard links (FAT, exFAT, some SMB mounts). Either way, a
+    failed write leaves no marker behind.
+    """
     marker = {"volume_id": uuid.uuid4().hex, "created_at": int(time.time())}
-    scratch = folder / (MEDIA_FOLDER_MARKER + "." + uuid.uuid4().hex + ".tmp")
+    path = folder / MEDIA_FOLDER_MARKER
+    payload = json.dumps(marker).encode("utf-8")
+    if replace:
+        scratch = folder / (MEDIA_FOLDER_MARKER + "." + uuid.uuid4().hex + ".tmp")
+        try:
+            with scratch.open("xb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(scratch, path)
+        finally:
+            scratch.unlink(missing_ok=True)
+        return marker
+    # Raises FileExistsError when a marker appeared after the absence check; nothing is touched then.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
     try:
-        with scratch.open("x", encoding="utf-8") as stream:
-            json.dump(marker, stream)
-            stream.flush()
-            os.fsync(stream.fileno())
-        if replace:
-            os.replace(scratch, folder / MEDIA_FOLDER_MARKER)
-        else:
-            # Never overwrite a marker that appeared after the absence check.
-            os.link(scratch, folder / MEDIA_FOLDER_MARKER)
-    finally:
-        scratch.unlink(missing_ok=True)
+        os.write(fd, payload)
+        os.fsync(fd)
+    except BaseException:
+        os.close(fd)
+        path.unlink(missing_ok=True)
+        raise
+    os.close(fd)
     return marker
+
+
+def _recorded_volume(conn: sqlite3.Connection) -> str | None:
+    row = conn.execute("SELECT volume_id FROM media_volume_identity WHERE singleton=1").fetchone()
+    return row[0] if row is not None else None
 
 
 def _remember_media_marker(conn: sqlite3.Connection, marker: Mapping[str, Any]) -> None:
@@ -804,8 +831,9 @@ def _require_media_folder(
         marker = _read_media_marker(folder)
     except (OSError, ValueError, UnicodeError) as exc:
         raise PublicFailure("media_folder_unconfirmed", 503) from exc
-    recorded = conn.execute("SELECT volume_id FROM media_volume_identity WHERE singleton=1").fetchone()
-    if marker is None or recorded is None or marker["volume_id"] != recorded[0]:
+    recorded = _recorded_volume(conn)
+    # Nothing recorded means nothing to match: the owner confirms, never the removal.
+    if marker is None or recorded is None or marker["volume_id"] != recorded:
         raise PublicFailure("media_folder_unconfirmed", 503)
 
 
@@ -818,48 +846,73 @@ def _has_library_entries(conn: sqlite3.Connection) -> bool:
     return bool(has_jobs and conn.execute("SELECT 1 FROM media_jobs LIMIT 1").fetchone())
 
 
-def ensure_media_folder(
+def _holds_media(folder: Path) -> bool:
+    """Whether the folder holds a stored media file. Sidecars, scratch files and other names do not count."""
+    return any(directory_index.stored_digest(name) is not None for name in os.listdir(folder))
+
+
+def _adopt_fresh_folder(conn: sqlite3.Connection, folder: Path, *, prompt_path: Path | None,
+                        path: Path | None) -> None:
+    """Record this folder for a fresh Library: no entries in either store, no media file, no marker.
+
+    Anything else needs the owner's confirmation. Failing to write quietly leaves the
+    folder unconfirmed, which the Library shows as such.
+    """
+    if os.path.lexists(folder / MEDIA_FOLDER_MARKER) or _has_library_entries(conn):
+        return
+    if prompt_path is not None and Path(prompt_path) != Path(path or media_jobs.DB_PATH):
+        other = _connect(prompt_path)
+        try:
+            if _has_library_entries(other):
+                return
+        finally:
+            other.close()
+    try:
+        if _holds_media(folder):
+            return
+    except OSError:
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        # The check repeats inside the write lock, so two first reads cannot both adopt.
+        if _recorded_volume(conn) is None and not os.path.lexists(folder / MEDIA_FOLDER_MARKER):
+            marker = _write_media_marker(folder, replace=False)
+            _remember_media_marker(conn, marker)
+            conn.commit()
+        else:
+            conn.rollback()
+    except (OSError, ValueError):
+        conn.rollback()
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def media_folder_state(
     folder: Path, *, path: Path | None = None, prompt_path: Path | None = None,
     expected: tuple[int, int] | None = None,
-) -> None:
-    """Initialize only a fresh Library; ordinary media writes never call this.
+) -> str:
+    """"confirmed", "unconfirmed" (nothing recorded yet) or "mismatch" (recorded, but not on this folder).
 
-    A recorded identity is never regenerated automatically, even after all
-    entries have been removed. Existing installs and moves need the owner.
+    A fresh Library adopts its folder here, on its first read. Ordinary media writes never
+    reach this, and a recorded identity is never regenerated: an existing install or a moved
+    volume needs the owner's confirmation. Raises PublicFailure when the folder cannot be seen.
     """
     _folder_identity(folder, expected)
     conn = _connect(path)
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        recorded = conn.execute("SELECT 1 FROM media_volume_identity WHERE singleton=1").fetchone()
+        if _recorded_volume(conn) is None:
+            _adopt_fresh_folder(conn, folder, prompt_path=prompt_path, path=path)
+        recorded = _recorded_volume(conn)
+        try:
+            marker = _read_media_marker(folder)
+        except (OSError, ValueError, UnicodeError):
+            marker = None  # an unusable marker matches nothing
         if recorded is None:
-            populated = _has_library_entries(conn)
-            if prompt_path is not None and Path(prompt_path) != Path(path or media_jobs.DB_PATH):
-                other = _connect(prompt_path)
-                try:
-                    populated = populated or _has_library_entries(other)
-                finally:
-                    other.close()
-            # Orphan files/sidecars may still be Library entries without a job
-            # or retained prompt. Only a truly fresh folder is auto-adopted.
-            try:
-                populated = populated or any(name != MEDIA_FOLDER_MARKER for name in os.listdir(folder))
-            except OSError as exc:
-                raise PublicFailure("media_folder_unavailable", 503) from exc
-            if populated:
-                raise PublicFailure("media_folder_unconfirmed", 503)
-            try:
-                marker = _read_media_marker(folder)
-                if marker is None:
-                    marker = _write_media_marker(folder, replace=False)
-            except (OSError, ValueError, UnicodeError) as exc:
-                raise PublicFailure("media_folder_unconfirmed", 503) from exc
-            _remember_media_marker(conn, marker)
-        _require_media_folder(conn, folder, expected)
-        conn.commit()
-    except BaseException:
-        conn.rollback()
-        raise
+            return "unconfirmed"
+        if marker is None or marker["volume_id"] != recorded:
+            return "mismatch"
+        return "confirmed"
     finally:
         conn.close()
 
@@ -867,8 +920,8 @@ def ensure_media_folder(
 def confirm_media_folder(
     folder: Path, *, owner: bool, path: Path | None = None,
     expected: tuple[int, int] | None = None,
-) -> None:
-    """The owner explicitly adopts this folder. This action removes no entries."""
+) -> str:
+    """The owner explicitly adopts this folder and records its marker. Removes no entries. Returns the volume id."""
     if not owner:
         raise PublicFailure("media_folder_owner_required", 403)
     _folder_identity(folder, expected)
@@ -882,6 +935,7 @@ def confirm_media_folder(
         _remember_media_marker(conn, marker)
         _require_media_folder(conn, folder, expected)
         conn.commit()
+        return str(marker["volume_id"])
     except BaseException:
         conn.rollback()
         raise
@@ -902,9 +956,12 @@ def remove_missing_media(
 ) -> int:
     """Remove missing entries only while the recorded volume is present.
 
-    The volume is checked inside the write transaction before any deletion
-    and again before commit. A split prompt store joins the same transaction,
-    so a refusal or statement failure cannot leave just its prompts deleted.
+    The volume is checked before any deletion and again before commit, so a
+    refusal or a failed statement rolls back every store this touches. A split
+    prompt store is attached to the same connection, but both stores run in WAL
+    mode, and SQLite does not commit WAL databases atomically together. A crash
+    between the two commits can therefore keep the job rows and lose the
+    prompts' deletion, or the reverse.
     """
     if media_folder is None:
         raise PublicFailure("media_folder_unavailable", 503)

@@ -185,6 +185,11 @@ def create_me_media_router(
                 receipts_path=receipt_path,
                 prompt_memory_path=prompt_path,
             )
+            storage = asset_storage_provider() if asset_storage_provider is not None else None
+            result["media_folder"] = _media_folder_view(
+                actor, storage, admin_path=admin_path, jobs_path=jobs_path, receipts_path=receipt_path,
+                prompt_path=prompt_path,
+            )
             if scope.audit_everyone:
                 _audit_everyone(actor, "media.library.everyone", admin_path)
             return _json(result)
@@ -274,21 +279,45 @@ def create_me_media_router(
 
     @router.post("/media/confirm-folder", include_in_schema=False)
     def confirm_media_folder(request: Request) -> JSONResponse:
+        """The owner's one-time confirmation that this folder is the Library's media folder.
+
+        Refuses a folder that holds none of the Library's items while the Library has items: that is
+        an unmounted disk or the wrong folder. Removes nothing.
+        """
         try:
             session = session_provider(request)
             if session is not None and mutation_validator is not None:
                 action_error = mutation_validator(request, session)
                 if action_error is not None:
                     return action_error
-            actor = _actor_from_session(session, _resolve_path(admin_db_path))
+            admin_path = _resolve_path(admin_db_path)
+            jobs_path = _resolve_path(media_jobs_path)
+            actor = _actor_from_session(session, admin_path)
             if not actor.owner:
                 raise PublicFailure("media_folder_owner_required", 403)
             storage = asset_storage_provider() if asset_storage_provider is not None else None
             if storage is None or storage.folder is None:
                 raise PublicFailure("media_folder_unavailable", 503)
-            prompt_memory.confirm_media_folder(
-                storage.folder, owner=actor.owner, path=_resolve_path(media_jobs_path), expected=storage.identity,
+            stored, total = _folder_counts(storage, admin_path=admin_path, jobs_path=jobs_path,
+                                           receipts_path=_resolve_path(receipts_path))
+            if total and not stored:
+                raise PublicFailure("media_folder_no_matches", 409)
+            volume_id = prompt_memory.confirm_media_folder(
+                storage.folder, owner=actor.owner, path=jobs_path, expected=storage.identity,
             )
+            try:
+                admin_store.record_audit(
+                    "media.folder.confirm",
+                    actor_kind="user",
+                    actor_id=actor.user_id,
+                    actor_label=str(actor.user.get("email") or actor.user_id),
+                    target_kind="media_folder",
+                    target_id=volume_id,
+                    metadata={"library_items": total, "items_here": stored},
+                    path=admin_path,
+                )
+            except Exception:  # the confirmation is committed; the audit row is a record, not the change
+                logging.getLogger(__name__).exception("could not record the media folder confirmation")
             return _json({"confirmed": True})
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
@@ -326,9 +355,6 @@ def create_me_media_router(
             )
             if (plan.gone_assets or plan.job_ids) and not storage.digests:
                 raise PublicFailure("media_folder_unavailable", 503, copy="media_folder_empty")
-            prompt_memory.ensure_media_folder(
-                storage.folder, path=jobs_path, prompt_path=prompt_path, expected=storage.identity,
-            )
             if plan.gone_assets or plan.job_ids:
                 removed_jobs = prompt_memory.remove_missing_media(
                     actor.user_id, plan.gone_assets, plan.hides, plan.job_ids,
@@ -451,6 +477,44 @@ def create_storage_snapshot_provider(cache_dir: Path) -> StorageSnapshotProvider
         return StorageSnapshot(digests, cache_dir, (after.st_dev, after.st_ino))
 
     return snapshot
+
+
+def _media_folder_view(
+    actor: _Actor, storage: StorageSnapshot | None, *, admin_path: Path, jobs_path: Path, receipts_path: Path,
+    prompt_path: Path,
+) -> dict[str, Any] | None:
+    """The folder's confirmation state for the Library. Only the owner sees where the folder is and what it holds.
+
+    None when the folder cannot be seen: the Library's own read shows that failure.
+    """
+    if storage is None or storage.folder is None:
+        return None
+    try:
+        state = prompt_memory.media_folder_state(
+            storage.folder, path=jobs_path, prompt_path=prompt_path, expected=storage.identity,
+        )
+    except PublicFailure:
+        return None
+    if state == "confirmed" or not actor.owner:
+        return {"state": state}
+    stored, total = _folder_counts(storage, admin_path=admin_path, jobs_path=jobs_path, receipts_path=receipts_path)
+    return {"state": state, "path": str(storage.folder), "library_items": total, "items_here": stored}
+
+
+def _folder_counts(storage: StorageSnapshot, *, admin_path: Path, jobs_path: Path, receipts_path: Path) -> tuple[int, int]:
+    """(items whose file is in the folder, all Library items), across everyone, for the owner's confirmation.
+
+    The Library items are the assets the finished jobs name, less the ones a person deleted.
+    """
+    deleted = _audited_deletions(admin_path)
+    named: dict[str, None] = {}
+    for job, _receipt in _scoped_jobs(_MediaScope(app_ids=None), jobs_path=jobs_path, receipts_path=receipts_path):
+        for asset in _iter_job_assets(job):
+            asset_id = str(asset.get("asset_id") or asset.get("id") or "")
+            if asset_id and asset_id not in deleted:
+                named[asset_id] = None
+    stored = sum(1 for asset_id in named if _is_stored(asset_id, storage))
+    return stored, len(named)
 
 
 def _is_stored(asset_id: str, storage: StorageSnapshot) -> bool:
@@ -1213,17 +1277,24 @@ def _deleted_asset_ids(scope: _MediaScope, path: Path) -> set[str]:
         return set()
     deleted: set[str] = set()
     for user_id in scope.user_ids:
-        cursor: dict[str, Any] = {}
-        while True:
-            events = admin_store.list_audit(
-                actor_id=user_id, action_prefix="media.asset.delete",
-                limit=500, path=path, **cursor,
-            )
-            deleted.update(str(event["target_id"]) for event in events if event.get("target_id"))
-            if len(events) < 500:
-                break
-            last = events[-1]
-            cursor = {"before_created_at": last["created_at"], "before_id": last["id"]}
+        deleted |= _audited_deletions(path, actor_id=user_id)
+    return deleted
+
+
+def _audited_deletions(path: Path, *, actor_id: str | None = None) -> set[str]:
+    """Every asset a person deleted, read from the audit trail. Everyone's when no actor is named."""
+    deleted: set[str] = set()
+    cursor: dict[str, Any] = {}
+    while True:
+        events = admin_store.list_audit(
+            actor_id=actor_id, action_prefix="media.asset.delete",
+            limit=500, path=path, **cursor,
+        )
+        deleted.update(str(event["target_id"]) for event in events if event.get("target_id"))
+        if len(events) < 500:
+            break
+        last = events[-1]
+        cursor = {"before_created_at": last["created_at"], "before_id": last["id"]}
     return deleted
 
 
