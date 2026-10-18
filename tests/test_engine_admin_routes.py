@@ -389,7 +389,10 @@ def test_an_administrator_can_rename_an_engine_that_holds_a_key_and_start_comman
     after = _record(gateway, "keyed")
     assert after["name"] == "Garage GPU"
     assert after["config"]["api_key_secret_id"] == before["config"]["api_key_secret_id"]
-    assert after["lifecycle"] == before["lifecycle"]
+    # Schema v2 stores the legacy driver payload under process and keeps it
+    # unchanged when the owner edits only the name.
+    assert after["process"] == before["process"]
+    assert "lifecycle" not in after
 
 
 def test_an_older_record_keeps_its_key_reference_and_its_start_driver_through_the_page(gateway, fake_upstreams):

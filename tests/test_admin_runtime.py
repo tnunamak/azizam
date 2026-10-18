@@ -586,7 +586,7 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertEqual(
             self.store.get_service_registry(),
             {
-                "schema_version": 1,
+                "schema_version": 2,  # Engine record v2 is the fresh-registry contract.
                 "services": {},
                 "protocol_frontends": {},
                 "workflows": {},
@@ -1018,6 +1018,55 @@ class ServicePatchRoundTripTests(unittest.TestCase):
         self.assertNotIn("model_policy_schema_version", registry["services"]["legacy"]["config"])
         registry = self.store.update_service(service_id="legacy", data={"note": "edit"}, actor=self.ctx)
         self.assertNotIn("model_policy_schema_version", registry["services"]["legacy"]["config"])
+
+    def test_v2_partial_patch_preserves_process_and_observations(self) -> None:
+        seed = service_registry.build_service_registry_seed({"backends": {
+            "legacy": {"protocol": "openai-compatible", "host": "engine", "port": 18001,
+                       "lifecycle": {"driver": "command", "driver_config": {
+                           "start": ["start"], "stop": ["stop"]}}},
+        }})
+        seed["services"]["legacy"]["observations"] = {"inventory": {"means": "available"}}
+        seed["services"]["legacy"]["resources"] = {"gpu": {"enforced": False}}
+        write_service_registry_for_test(seed, path=self.db)
+        before = self.store.get_service_registry()["services"]["legacy"]
+        registry = self.store.update_service(service_id="legacy", data={"name": "Renamed"}, actor=self.ctx)
+        after = registry["services"]["legacy"]
+        self.assertEqual(after["name"], "Renamed")
+        for field in ("process", "observations", "residency", "resources"):
+            self.assertEqual(after[field], before[field])
+        self.assertNotIn("lifecycle", after)
+        self.assertNotIn("lifecycle", after["config"])
+
+    def test_v2_legacy_lifecycle_edit_changes_process(self) -> None:
+        seed = service_registry.build_service_registry_seed({"backends": {
+            "legacy": {"protocol": "openai-compatible", "host": "engine", "port": 18001,
+                       "lifecycle": {"driver": "command", "driver_config": {"start": ["old"]}}},
+        }})
+        write_service_registry_for_test(seed, path=self.db)
+        registry = self.store.update_service(
+            service_id="legacy", data={"lifecycle": {"driver": "command", "driver_config": {"start": ["new"]}}},
+            actor=self.ctx,
+        )
+        process = registry["services"]["legacy"]["process"]
+        self.assertEqual(process["start"], ["new"])
+        self.assertEqual(process["legacy_lifecycle"]["driver_config"]["start"], ["new"])
+
+    def test_v2_partial_lifecycle_fields_keep_unnamed_values(self) -> None:
+        backends = {name: {"protocol": "openai-compatible", "host": name, "port": 18001,
+                           "lifecycle": {"type": "systemd", "managed": True, "service_name": "old.service"}}
+                    for name in ("rename-unit", "keep-unit", "keep-managed")}
+        seed = service_registry.build_service_registry_seed({"backends": backends})
+        write_service_registry_for_test(seed, path=self.db)
+        cases = (
+            ("rename-unit", {"service_name": "new.service"}, {"type": "systemd", "managed": True, "service_name": "new.service"}),
+            ("keep-unit", {"managed": True}, {"type": "systemd", "managed": True, "service_name": "old.service"}),
+            ("keep-managed", {"lifecycle_type": "systemd"}, {"type": "systemd", "managed": True, "service_name": "old.service"}),
+        )
+        for service_id, patch, expected in cases:
+            with self.subTest(service_id=service_id):
+                registry = self.store.update_service(service_id=service_id, data=patch, actor=self.ctx)
+                lifecycle = registry["services"][service_id]["process"]["legacy_lifecycle"]
+                self.assertEqual({key: lifecycle[key] for key in expected}, expected)
 
     def _seed_embeddings(self) -> None:
         """Add the canonical 'embeddings' service from the spec example."""

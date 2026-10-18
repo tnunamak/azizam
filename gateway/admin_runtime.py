@@ -993,13 +993,13 @@ class AdminSQLiteStore:
             # A lifecycle driver kept only on the record (not in its config) must
             # survive a partial edit: dropping it would count as removing a driver,
             # which only the owner may do.
-            existing_lifecycle = existing.get("lifecycle")
-            if (
-                "lifecycle" not in form_base
-                and isinstance(existing_lifecycle, Mapping)
-                and existing_lifecycle.get("driver")
-            ):
-                form_base["lifecycle"] = copy.deepcopy(dict(existing_lifecycle))
+            existing_lifecycle = service_registry.legacy_lifecycle_from_service(existing)
+            if "lifecycle" not in form_base and existing_lifecycle:
+                kept_lifecycle = copy.deepcopy(dict(existing_lifecycle))
+                for form_key, block_key in service_registry._LIFECYCLE_FORM_KEYS.items():
+                    if form_key in data:
+                        kept_lifecycle[block_key] = data[form_key]
+                form_base["lifecycle"] = kept_lifecycle
             # Drop None values so they don't override defaults downstream, then
             # overlay the caller-supplied partial data.
             merged: dict[str, Any] = {
