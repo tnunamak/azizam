@@ -103,6 +103,7 @@ def test_engine_admin_exposes_v2_beside_existing_fields_and_uses_record_permissi
     record = _service()
     record["config"]["gateway_lifecycle"] = True
     record["config"]["headers"] = [{"name": "Authorization", "value": "test-secret-value"}]
+    record["config"]["api_key_secret_id"] = "test-secret-reference"
     assert not reaches_engine_directly("engine-a", record)
     view = engine_view(load_engine_catalog(), record, db_path=tmp_path / "admin.db")
     # The current form still gates fields it cannot apply; the v2 contract
@@ -110,6 +111,8 @@ def test_engine_admin_exposes_v2_beside_existing_fields_and_uses_record_permissi
     assert view["editable"] is False
     assert view["v2"]["editable"] is True
     assert view["v2"]["connection"]["headers"] == [{"name": "Authorization", "value": "configured"}]
+    assert view["v2"]["connection"]["credentials"]["inference"]["secret_ref"] == "configured"
+    assert "test-secret-reference" not in json.dumps(view["v2"])
     assert "legacy_lifecycle" not in (view["v2"]["process"] or {})
     assert "values" in view and "models" in view and "key" in view
 

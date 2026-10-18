@@ -25,6 +25,18 @@ from tests.test_gateway_api import _build_registry, _sample_capabilities
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "engine_contract_live_shapes.json"
+LIVE_KIND_SOURCE = {
+    "azizam": ("provider", "provisioned"), "comfyui": ("provider", "provisioned"),
+    "decisions": ("provider", "ui"), "decisions-quality": ("provider", "ui"),
+    "embeddings": ("provider", "provisioned"), "kobold": ("provider", "provisioned"),
+    "litellm": ("llm-substrate", "builtin"), "openrouter": ("provider", "ui"),
+    "realtime": ("provider", "ui"), "rerank": ("provider", "ui"),
+    "stt": ("provider", "provisioned"), "stt-canary": ("provider", "ui"),
+    "stt-diarize": ("provider", "ui"), "stt-nemotron": ("provider", "ui"),
+    "stt-parakeet-gpu": ("provider", "ui"), "tts": ("provider", "provisioned"),
+    "tts-chatterbox": ("provider", "ui"), "tts-kokoro": ("provider", "ui"),
+    "tts-supertonic": ("provider", "ui"), "typesafe": ("provider", "ui"),
+}
 
 
 def _digest(value: object) -> str:
@@ -35,6 +47,9 @@ def _digest(value: object) -> str:
 def test_live_registry_shapes_are_redacted_and_complete() -> None:
     shapes = json.loads(FIXTURE.read_text())
     assert len(shapes) == 20
+    assert set(shapes) == set(LIVE_KIND_SOURCE)
+    assert [source for _, source in LIVE_KIND_SOURCE.values()].count("ui") == 13
+    assert [source for _, source in LIVE_KIND_SOURCE.values()].count("provisioned") == 6
     assert {row["kind"] for row in shapes.values()} == {"<string>"}
     assert all("config" in row and "lifecycle" in row for row in shapes.values())
     assert sum("lifecycle" in row["config"] for row in shapes.values()) == 13
