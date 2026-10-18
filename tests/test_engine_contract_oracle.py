@@ -39,12 +39,12 @@ def test_live_registry_shapes_are_redacted_and_complete() -> None:
     assert "/home/" not in FIXTURE.read_text()
     assert "opk_" not in FIXTURE.read_text()
     assert "oak_" not in FIXTURE.read_text()
-    assert _digest(shapes) == "FILL_SHAPES"
+    assert _digest(shapes) == "b93eb7b8d52bc3e40e80fadd719d761e48147042ec18f1a3b27ea2db6ecd54d8"
 
 
 def test_runtime_backend_projection_is_frozen() -> None:
     projected = service_registry.runtime_backend_from_service(_service())
-    assert _digest(projected) == "FILL_RUNTIME"
+    assert _digest(projected) == "b8671053c0d25c24753abf0b10d0bc9a35512398cdea0a029a3b54cb64fe4bd3"
 
 
 def test_frontend_route_graph_is_frozen() -> None:
@@ -55,7 +55,7 @@ def test_frontend_route_graph_is_frozen() -> None:
                    for method in (getattr(route, "methods", None) or {"WEBSOCKET"})
                    if path.startswith(("/v1/", "/openai/", "/anthropic/", "/ollama/", "/sdapi/", "/mcp")))
     assert graph
-    assert _digest(graph) == "FILL_ROUTES"
+    assert _digest(graph) == "5d23367340519397b1cfa0c82fb4b4f6fac6f0e98059e6ab642dc879824b66ca"
 
 
 def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
@@ -78,11 +78,13 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     # The old web client consumes these fields; adding v2 beside them cannot
     # silently change their content.
     old_engine = {key: engine[key] for key in ("service_id", "definition", "name", "enabled", "locked", "editable", "values", "key", "capabilities", "models")}
-    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "FILL_CATALOG"
+    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "6e25e40c2b605c53754d60cad9778d45bcfa95a709ebbad270cb44412581528d"
 
 
 def test_litellm_compiler_and_current_are_frozen() -> None:
-    compiled = compile_litellm_config_from_registry({"services": {"engine-a": _service()}})
+    service = _service()
+    service["config"]["gateway_lifecycle"] = True
+    compiled = compile_litellm_config_from_registry({"services": {"engine-a": service}})
     names = [row["model_name"] for row in compiled["model_list"]]
     assert "current" in names and "current-fast" in names
     assert _digest(compiled) == "FILL_LITELLM"
