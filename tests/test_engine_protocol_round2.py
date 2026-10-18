@@ -441,7 +441,8 @@ def test_existing_refused_record_does_not_break_registry_read_or_healthy_engine(
     assert {'prism-local','old-lan'} <= loaded['services'].keys()
     assert 'old-lan' in service_registry.ensure_service_registry({}, path=db)['services']
     monkeypatch.setattr(proxy.ADMIN_STORE, 'get_service_registry', store.get_service_registry)
-    assert chat(engine).status_code == 200
+    # Both records deliberately share the same offering id; select the healthy engine explicitly.
+    assert chat(engine, model='prism-local/prism-chat').status_code == 200
     response = engine.client.get('/v1/models')
     assert response.status_code == 200, response.text
     assert 'prism-chat' in {item['id'] for item in response.json()['data']}
@@ -466,3 +467,22 @@ def test_invalid_membership_condition_is_a_description_problem(value):
     from gateway.engine_protocol.errors import DescriptionError
     with pytest.raises(DescriptionError):
         description.parse_description(doc, source='bad-membership.yml')
+
+
+@pytest.mark.parametrize('top_marker', [False, True])
+def test_full_registry_admin_write_rejects_paid_dispatch_before_persistence(engine, tmp_path, top_marker):
+    from gateway import admin_store
+    from gateway.admin_api import AdminContext, _validate_service_registry, _RouteError
+    from gateway.admin_runtime import AdminSQLiteStore
+    db = tmp_path/'save-boundary.db'
+    admin_store.init_db(db)
+    value = copy.deepcopy(engine.registry)
+    record = value['services']['prism-local']
+    (record if top_marker else record['config'])['paid_remote'] = True
+    with pytest.raises(_RouteError):
+        _validate_service_registry(value)
+    store = AdminSQLiteStore(db)
+    actor = AdminContext('test-owner', roles=frozenset({'owner','admin'}))
+    with pytest.raises(ValueError, match='protocol dispatch does not enforce'):
+        store.update_service_registry(data=value, actor=actor, expected_generation=0)
+    assert admin_store.get_service_registry_with_generation(path=db) is None
