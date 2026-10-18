@@ -292,7 +292,7 @@ def join_url(public: str, *, userinfo: str | None = None, query: list[tuple[str,
              fragment: str | None = None, params: list[tuple[str, str | None]] | None = None) -> str:
     """The URL that ``split_url`` took apart: the public form with its credential parts put back, byte for byte."""
     out = _join_params(public, params)
-    if userinfo:
+    if userinfo is not None:  # an empty user info is still an @ (``http://@host/``)
         if "://" in out:
             scheme, _, rest = out.partition("://")
             out = f"{scheme}://{userinfo}@{rest}"
@@ -310,7 +310,9 @@ def url_entries(public: str, parts: Mapping[str, Any], put: Put) -> dict[str, An
     origin = secret_refs.origin_or_none(public)
     held: dict[str, Any] = {}
     if "userinfo" in parts:
-        held["userinfo"] = secret_refs.entry(put(parts["userinfo"], origin))
+        # an empty user info holds nothing to store, but it is part of the bytes: it gets a marker like an empty fragment
+        held["userinfo"] = (secret_refs.entry(put(parts["userinfo"], origin)) if parts["userinfo"]
+                            else {"id": secret_refs.new_entry_id(), "empty": True})
     if "params" in parts:
         held["params"] = [_query_entry(name, item, put, origin) for name, item in parts["params"]]
     if "query" in parts:
@@ -886,10 +888,10 @@ def _url_entries_malformed(held: Any) -> bool:
         return isinstance(item, Mapping) and item.get(key) is True
 
     for part, item in held.items():
-        if part in ("userinfo", "whole"):
+        if part == "whole":
             if not entry(item):
                 return True
-        elif part == "fragment":
+        elif part in ("userinfo", "fragment"):
             if not (entry(item) or marker(item, "empty")):
                 return True
         elif part in ("query", "params"):

@@ -156,7 +156,15 @@ def url(container: Mapping[str, Any], key: str) -> str:
         return resolve(_ref_of(held["whole"]))
     base = str(public or "")
     origin = secret_refs.origin_or_none(base)
-    userinfo = resolve(_ref_of(held["userinfo"]), origin=origin) if held.get("userinfo") else None
+    userinfo = None
+    if held.get("userinfo"):
+        marker = held["userinfo"]
+        if secret_refs.is_secret_entry(marker):
+            userinfo = resolve(marker["secret_ref"], origin=origin)
+        elif isinstance(marker, Mapping) and marker.get("empty") is True:
+            userinfo = ""  # the address was written with an empty user info (``http://@host/``)
+        else:
+            resolve(None)  # neither an entry nor an empty marker: it cannot be rebuilt
     params = record_carriers.query_chunks(held.get("params"), lambda ref: resolve(ref, origin=origin)) if "params" in held else None
     query = record_carriers.query_chunks(held.get("query"), lambda ref: resolve(ref, origin=origin)) if "query" in held else None
     fragment = None

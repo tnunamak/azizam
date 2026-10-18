@@ -917,3 +917,29 @@ def test_an_error_about_a_left_out_record_does_not_quote_a_text_it_holds_in_a_pl
         "config": {"host": "10.0.0.9", "port": 8080, "note": TYPED, "models": TYPED}}}}
     cleaned = service_registry.registry_error_text(f"ValueError: could not convert string to float: '{TYPED}' in service 'bad'", registry)
     assert TYPED not in cleaned and "'bad'" in cleaned
+
+
+# ---------------------------------------------------------------------------
+# Nit: an address with an empty user info keeps its @ byte for byte
+# ---------------------------------------------------------------------------
+
+EMPTY_USERINFO_URLS = ["http://@h.invalid/", "http://@h.invalid", "@h.invalid", "http://@h.invalid:9/x?a=b#f", "https://@h.invalid/v1;k=R3EMPTYUI"]
+
+
+@pytest.mark.parametrize("url", EMPTY_USERINFO_URLS)
+def test_an_address_with_an_empty_user_info_is_read_back_byte_for_byte_and_stores_no_empty_secret(monkeypatch, url):
+    memory = _MemoryStore(monkeypatch)
+    container = {"base_url": url}
+    assert record_carriers.externalize_url(container, "base_url", lambda value, origin=None: memory.put(value, origin) if value else pytest.fail("an empty text was stored as a secret")) is True
+    assert runtime_secrets.url(container, "base_url") == url
+    again = copy.deepcopy(container)
+    assert record_carriers.externalize_url(again, "base_url", memory.put) is False and again == container
+    assert record_carriers.ingest_service({"id": "e", "config": {"base_url": url}}, None, lambda value, origin=None: memory.put(value, origin) if value else pytest.fail("an empty text was stored as a secret"))
+
+
+def test_a_package_source_url_with_path_parameters_is_cloned_with_them_and_the_clone_text_names_them_as_secrets():
+    source = {"type": "git", "url": "https://user:R3GITPASS@git.invalid/r.git;k=R3GITPARAM?t=R3GITQUERY"}
+    public, parts = record_carriers.split_url(source["url"])
+    assert "R3GIT" not in public
+    clone, secrets = extension_packages._clone_url({"url": public}, public, {"url": parts})
+    assert clone == source["url"] and {"R3GITPASS", "R3GITPARAM", "R3GITQUERY"} <= set(secrets)
