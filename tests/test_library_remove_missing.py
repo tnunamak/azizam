@@ -408,7 +408,7 @@ class RemoveMissingTests(unittest.TestCase):
         with self.failing_hide_reads(*[locked] * 20):
             response = self.client.get("/me/api/media")
         self.assertGreaterEqual(response.status_code, 500)
-        self.assertNotIn("assets", response.json())
+        self.assertNotIn(asset("C"), response.text)
         with self.assertRaises(sqlite3.OperationalError):
             with self.failing_hide_reads(*[locked] * 20):
                 media_jobs.hidden_assets([self.alice["id"]], path=self.jobs_db)
