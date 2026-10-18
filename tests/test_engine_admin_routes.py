@@ -422,7 +422,7 @@ def test_an_older_record_keeps_its_key_reference_and_its_start_driver_through_th
     after = _record(gateway, "older")
     assert after["config"]["api_key_env"] == "OLDER_KEY"
     assert after["lifecycle"]["driver"] == "systemd" and after["lifecycle"]["driver_config"] == lifecycle["driver_config"]
-    assert after["config"]["definition"] == "openai-compatible"
+    assert "definition" not in after["config"], "a rename preserves the inferred legacy record"
 
 
 def test_create_answers_with_the_new_engine_id(gateway, fake_upstreams):
@@ -834,7 +834,7 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
     service = registry["services"][service_id]
     if base_alias:
         service["config"][base_alias] = f"{old.base_url}/v1"
-        service["config"].update(api_key_env="OLD_HOP_TEST_KEY", credential_origin=engine_check.origin_of(old.base_url))
+        service["config"].update(api_key_ref="OLD_HOP_TEST_KEY", credential_origin=engine_check.origin_of(old.base_url))
     service["process"] = service_registry._v2_process(service.pop("lifecycle"))
     service["config"].pop("lifecycle", None)
     _put_registry(gateway, registry)
@@ -851,6 +851,8 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
     after = _record(gateway, service_id)
     assert after["process"] == before["process"]
     assert after["config"]["models"][0]["id"] == "offering"
+    if base_alias:
+        assert "api_key_ref" not in after["config"], "the replaced legacy key must not override the new stored key"
     rejected = _edit(owner, service_id, {"definition": definition, "disabled": True,
                                        "values": {"lifecycle_mode": "managed", "lifecycle_start": "another command"}})
     assert rejected.status_code == 400, rejected.text

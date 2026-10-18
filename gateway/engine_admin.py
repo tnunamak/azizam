@@ -52,14 +52,14 @@ from gateway.engine_check import (
 )
 from gateway.engine_definitions import EngineCatalog, EngineDefinitionError, load_engine_catalog
 from gateway.engine_connection import inference_base_url
-from gateway.litellm_substrate import CREDENTIAL_HEADER_RE, header_problem, routed_models
+from gateway.litellm_substrate import CREDENTIAL_HEADER_RE, SECRET_PLACEHOLDER, header_problem, routed_models
 
 # Record keys this module writes. Every other config key is the owner's and is
 # carried through an edit untouched ("Other settings").
 _KNOWN_CONFIG_KEYS = frozenset({
     "host", "port", "base_path", "scheme", "protocol", "native_passthrough", "transforms", "models",
     "definition", "definition_version", "address", "path_prefix",
-    "timeout", "headers", "api_key_secret_id", "api_key_env", "credential_origin",
+    "timeout", "headers", "api_key_secret_id", "api_key_env", "api_key_ref", "credential_origin",
     "engine_check", "engine_tests", "model_policy_schema_version",
     "name", "enabled", "capabilities", "role", "priority", "managed", "lifecycle",
 })
@@ -326,15 +326,17 @@ def _stored_key(record: Mapping[str, Any] | None, *, db_path: Path, env: Callabl
         return None, "none", ""
     config = record.get("config") or {}
     origin = str(config.get("credential_origin") or "")
+    name = str(config.get("api_key_env") or config.get("api_key_ref") or "").strip()
+    if not name and (record.get("secret_refs") or {}).get("api_key") == SECRET_PLACEHOLDER and not config.get("api_key_secret_id"):
+        name = "AZIZAM_DOWNSTREAM_API_KEY"
+    if name:
+        return env(name), "env", origin
     secret_id = str(config.get("api_key_secret_id") or "").strip()
     if secret_id:
         try:
             return secret_store.get_provider_secret(secret_id, db_path=db_path, expected_origin=origin or None), "stored", origin
         except Exception:  # noqa: BLE001 - an unreadable secret is "no key", never a crash
             return None, "stored", origin
-    name = str(config.get("api_key_env") or "").strip()
-    if name:
-        return env(name), "env", origin
     return None, "none", origin
 
 
@@ -348,7 +350,10 @@ def resolve_key(values: Mapping[str, Any], ctx: Any, *, record: Mapping[str, Any
         return KeyInput(pasted.strip(), "pasted")
     stored_config = (record or {}).get("config") or {}
     env_name = str(values.get("api_key_env") or "").strip()
-    if env_name and env_name != str(stored_config.get("api_key_env") or ""):
+    stored_env = stored_config.get("api_key_env") or stored_config.get("api_key_ref") or ""
+    if not stored_env and ((record or {}).get("secret_refs") or {}).get("api_key") == SECRET_PLACEHOLDER and not stored_config.get("api_key_secret_id"):
+        stored_env = "AZIZAM_DOWNSTREAM_API_KEY"
+    if env_name and env_name != str(stored_env):
         if not _is_owner(ctx):
             raise _owner_only("Only the owner can read a key from a server environment variable.")
         value = env(env_name)
@@ -519,6 +524,7 @@ def build_raw(
         raw.pop("engine_tests", None)
     raw.pop("api_key_secret_id", None)
     raw.pop("api_key_env", None)
+    raw.pop("api_key_ref", None)
     if secret_id:
         raw["api_key_secret_id"] = secret_id
     elif values.get("api_key_env"):
@@ -578,7 +584,10 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
                 prefix = "/" + str(config.get("path_prefix") or "").strip("/")
                 address = effective_base[:-len(prefix)] if prefix != "/" and effective_base.endswith(prefix) else effective_base
     values: dict[str, Any] = {"address": address}
-    values["api_key_env"] = config.get("api_key_env") or ""
+    env_name = config.get("api_key_env") or config.get("api_key_ref") or ""
+    if not env_name and (record.get("secret_refs") or {}).get("api_key") == SECRET_PLACEHOLDER and not config.get("api_key_secret_id"):
+        env_name = "AZIZAM_DOWNSTREAM_API_KEY"
+    values["api_key_env"] = env_name
     values["path_prefix"] = config.get("path_prefix") or ""
     values["reply_timeout_s"] = config.get("timeout") or _field_default(definition, "reply_timeout_s", 600)
     values["headers"] = [{"name": h.get("name"), "value": h.get("value", "")}
@@ -603,10 +612,10 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
               for m in model_rows(config.get("models"))]
     secret_id = str(config.get("api_key_secret_id") or "")
     key: dict[str, Any] = {"state": "none"}
-    if secret_id:
+    if env_name:
+        key = {"state": "configured", "source": "env", "env_name": env_name, "origin": config.get("credential_origin") or ""}
+    elif secret_id:
         key = {"state": "configured", "source": "stored", "origin": config.get("credential_origin") or ""}
-    elif config.get("api_key_env"):
-        key = {"state": "configured", "source": "env", "env_name": config["api_key_env"], "origin": config.get("credential_origin") or ""}
     caps = config.get("engine_capabilities")
     if not isinstance(caps, list):
         caps = _caps_from_record(catalog, definition, record)

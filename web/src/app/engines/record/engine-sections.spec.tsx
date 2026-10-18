@@ -124,6 +124,17 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("the six sections mirror the record", () => {
+  it("an owner rename saves metadata without rebuilding a legacy connection", async () => {
+    mount();
+    const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
+    const update = vi.spyOn(enginesApi, "update");
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Name"), "!");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(edit).toHaveBeenCalledWith("garage-gpu", { name: "garage-gpu!" }));
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("direct: shows the effective request path, the key's destination, the offering and an unknown observation", async () => {
     mount();
     await screen.findByRole("heading", { level: 1, name: "garage-gpu" });

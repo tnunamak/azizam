@@ -76,6 +76,8 @@ def test_missing_stored_key_is_a_connection_error_not_an_unauthenticated_request
     ({"config": {"api_key_env": "NAMED_TEST_KEY", "api_key_secret_id": "unused"}}, "NAMED_TEST_KEY"),
 ])
 def test_credential_references_have_the_same_precedence_as_direct_routing(tmp_path, references, expected_name):
+    from gateway import engine_admin
+    from gateway.engine_definitions import load_engine_catalog
     record = {"config": {"address": "http://server.invalid/v1", "credential_origin": "http://server.invalid:80",
                           **references.get("config", {})}, "secret_refs": references.get("secret_refs", {})}
     names = []
@@ -86,6 +88,13 @@ def test_credential_references_have_the_same_precedence_as_direct_routing(tmp_pa
                                   db_path=tmp_path / "admin.db", env=env)
     assert result.headers["authorization"] == "Bearer test-value"
     assert names == [expected_name]
+    view = engine_admin.engine_view(load_engine_catalog(), record, db_path=tmp_path / "admin.db")
+    assert view["key"]["source"] == "env"
+    assert view["key"]["env_name"] == expected_name
+    assert view["values"]["api_key_env"] == expected_name
+    assert engine_admin._stored_key(record, db_path=tmp_path / "admin.db", env=env) == (
+        "test-value", "env", "http://server.invalid:80",
+    )
 
 
 @pytest.mark.parametrize("references", [
