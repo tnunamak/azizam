@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-COPIED = ("scripts/ci-local", "scripts/low-priority", "scripts/ci/gate_cost.py", "scripts/ci/merge_cases.py", "scripts/ci/policy.py", "scripts/ci/prune_receipts.py", "scripts/ci/replay_scan.py", "scripts/ci/pi-unit", "scripts/ci/journey_clock.py")
+COPIED = ("scripts/ci/install_cached.py", "scripts/ci-local", "scripts/low-priority", "scripts/ci/gate_cost.py", "scripts/ci/merge_cases.py", "scripts/ci/policy.py", "scripts/ci/prune_receipts.py", "scripts/ci/replay_scan.py", "scripts/ci/pi-unit", "scripts/ci/journey_clock.py")
 
 STUBS = {
     # Tools on PATH.
@@ -52,7 +52,7 @@ if [[ $1 == vitest ]]; then
     "$PWD/tests/a.spec.ts" "${FAKE_VITEST_STATUS:-passed}" >> "$CASE_RECEIPTS_FILE"
   [[ ${FAKE_VITEST_STATUS:-passed} == passed ]]
 fi""",
-    "uv": """if [[ $1 == venv ]]; then for arg; do dir=$arg; done; mkdir -p "$dir/bin"; ln -sf /usr/bin/python3 "$dir/bin/python"; fi""",
+    "uv": """if [[ $1 == python ]]; then echo /usr/bin/python3; elif [[ $1 == venv ]]; then for arg; do dir=$arg; done; mkdir -p "$dir/bin"; ln -sf /usr/bin/python3 "$dir/bin/python"; fi""",
     "node": """if [[ $1 == --version ]]; then echo v0-fake
 elif [[ $1 == --test ]]; then
   printf '{"framework":"node","config":"","project":"","id":"%s","file":"%s","titles":["g"],"status":"passed","duration_ms":5}\\n' \\
@@ -103,6 +103,7 @@ fi
     "tests/compat/node/probe-gates.test.mjs": "",
     "integrations/pi/test/a.test.ts": "",
     "web/package.json": "{}\n",
+    "web/package-lock.json": "{}\n",
     "web/vitest.config.ts": "export default { test: { retry: 0 } };\n",
     "web/playwright.config.ts": "export default { retries: 0 };\n",
     "web/playwright.live-data.config.ts": "export default { retries: 0 };\n",
@@ -515,9 +516,9 @@ def test_the_critical_path_follows_the_web_build_when_it_is_slowest(world: World
     result = world.run(FAKE_WEB_BUILD="sleep 2.5", FAKE_BROWSER_GATE="sleep 0.3")
     assert result.returncode == 0, result.stdout + result.stderr
     path = json.loads((world.receipts / "cost.json").read_text())["critical_path"]["steps"]
-    assert path[:4] == ["web-npm-ci", "web-build", "e2e-venv", "e2e-browser"]
-    assert path[4] in ("e2e-main", "e2e-live-data", "e2e-household")  # the three browser lanes tie
-    assert path[5:] == ["e2e-tree-unchanged", "journey-clock", "cases", "policy"]
+    assert path[:2] == ["web-npm-ci", "web-build"]
+    assert path[2] in ("e2e-main", "e2e-live-data", "e2e-household")  # the three browser lanes tie
+    assert path[3:] == ["e2e-tree-unchanged", "journey-clock", "cases", "policy"]
 
 
 def test_the_cost_table_is_sorted_by_wall_clock(world: World) -> None:
@@ -677,3 +678,43 @@ def test_a_journey_with_no_browser_time_fails_the_gate(world: World) -> None:
     assert result.returncode == 1, result.stdout + result.stderr
     assert (world.receipts / "steps/journey-clock.tsv").read_text().split("\t")[1] == "1"
     assert "journey" not in json.loads((world.receipts / "cost.json").read_text())
+
+
+def test_target_without_signoff_runs_budget_comparison(world: World) -> None:
+    result = world.run("--target", "main")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (world.receipts / "base-budgets.toml").is_file()
+    assert not world.gh_log.exists()
+
+
+def test_dependencies_are_private_and_warm_runs_still_test(world: World) -> None:
+    first = world.run()
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert "cache miss: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
+    assert "cache miss: venv" in (world.receipts / "logs/e2e-venv.log").read_text()
+    cases = (world.receipts / "cases.jsonl").read_text()
+    second = world.run()
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "cache hit: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
+    assert "cache hit: venv" in (world.receipts / "logs/e2e-venv.log").read_text()
+    assert (world.receipts / "cases.jsonl").read_text() == cases
+    cache = world.home / "Documents/azizam/ci-cache"
+    assert not list(cache.glob("node-*/environment/.cache"))
+
+
+def test_cache_does_not_publish_failed_install(world: World) -> None:
+    npm = world.bin / "npm"
+    npm.write_text(npm.read_text().replace('mkdir -p node_modules/.bin', 'exit 41; mkdir -p node_modules/.bin'))
+    result = world.run()
+    assert result.returncode == 1
+    assert not list((world.home / "Documents/azizam/ci-cache").glob("node-*/complete"))
+
+
+def test_lockfile_change_invalidates_node_cache(world: World) -> None:
+    assert world.run().returncode == 0
+    (world.repo / "web/package-lock.json").write_text('{"changed": true}\n')
+    _git(world.repo, "add", "web/package-lock.json")
+    _git(world.repo, "commit", "-qm", "change dependency lock")
+    result = world.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "cache miss: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
