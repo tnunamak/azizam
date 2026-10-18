@@ -375,3 +375,85 @@ def test_L2_the_only_metadata_keys_that_differ_between_the_two_routes_are_the_do
     # The legacy route names its service as service_id, where the executor names the engine as engine_id.
     assert keys['executor_only'] == ['engine_id', 'offering_id', 'upstream_id']
     assert keys['legacy_only'] == ['service_id']
+
+
+# --- Probe rows kept as regressions: stream and embedding shapes, and inventory isolation ---------
+
+def _stream_chunk(**over):
+    chunk = {'id': 'c1', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'm',
+             'choices': [{'index': 0, 'delta': {'content': 'x'}, 'finish_reason': None}]}
+    chunk.update(over)
+    return chunk
+
+
+@pytest.mark.parametrize('label,payload,stream,intent', [
+    ('200 error object on a complete answer', {'error': {'message': 'boom', 'type': 'x'}}, False, 'chat'),
+    ('NaN in usage', json.loads('{"id":"c","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"x"},"finish_reason":"stop"}],"usage":{"prompt_tokens":NaN,"completion_tokens":1,"total_tokens":1}}'), False, 'chat'),
+    ('stream chunk without a finish key', _stream_chunk(choices=[{'index': 0, 'delta': {'content': 'a'}}]), True, 'chat'),
+    ('stream content that is a number', _stream_chunk(choices=[{'index': 0, 'delta': {'content': 1}, 'finish_reason': None}]), True, 'chat'),
+    ('stream error event', {'error': {'message': 'mid-stream'}}, True, 'chat'),
+    ('stream NaN created', json.dumps({'id': 'c', 'object': 'chat.completion.chunk', 'created': float('nan'), 'model': 'm', 'choices': []}).encode(), True, 'chat'),
+    ('embedding NaN', {'object': 'list', 'model': 'm', 'data': [{'object': 'embedding', 'index': 0, 'embedding': [float('nan')]}]}, False, 'embeddings'),
+    ('embedding beyond float range', {'object': 'list', 'model': 'm', 'data': [{'object': 'embedding', 'index': 0, 'embedding': [10 ** 400]}]}, False, 'embeddings'),
+    ('embedding with a boolean', {'object': 'list', 'model': 'm', 'data': [{'object': 'embedding', 'index': 0, 'embedding': [True]}]}, False, 'embeddings'),
+    ('embedding base64 of a partial float', {'object': 'list', 'model': 'm', 'data': [{'object': 'embedding', 'index': 0, 'embedding': 'AAAAA'}]}, False, 'embeddings'),
+])
+def test_probe_rows_shape_refusals_stay_refused(label, payload, stream, intent):
+    with pytest.raises(ProtocolError):
+        public_shape.validate(payload, intent, stream=stream)
+
+
+def _registry_of(n):
+    return {'services': {f'e{i}': record(f'e{i}', config={'offerings': [offering(i)]}) for i in range(n)}}
+
+
+def test_probe_forty_hanging_engines_share_one_listing_budget(monkeypatch, fresh_inventory, ollama_doc):
+    monkeypatch.setattr(description, 'load_registry', lambda directory=None: {'ollama-native': ollama_doc})
+
+    async def hang(self, op, body):
+        await asyncio.sleep(3600)
+    monkeypatch.setattr(dispatch.Runtime, 'invoke', hang)
+
+    async def timed():
+        started = time.perf_counter()
+        out = await inventory.models(_registry_of(40))
+        return time.perf_counter() - started, out
+    elapsed, out = asyncio.run(timed())
+    assert out == []
+    assert elapsed < inventory.LIST_TIMEOUT_S + 0.5, elapsed
+
+
+def test_probe_one_bad_engine_shape_is_isolated(monkeypatch, fresh_inventory, ollama_doc):
+    monkeypatch.setattr(description, 'load_registry', lambda directory=None: {'ollama-native': ollama_doc})
+
+    async def invoke(self, op, body):
+        if self.target.engine_id == 'e1':
+            return SimpleNamespace(body={'data': [{'id': 5}]}, asset=None)
+        return SimpleNamespace(body={'data': [{'id': f'm{self.target.engine_id[1:]}'}]}, asset=None)
+    monkeypatch.setattr(dispatch.Runtime, 'invoke', invoke)
+    out = asyncio.run(inventory.models(_registry_of(3)))
+    assert [item['id'] for item in out] == ['m0', 'm2']
+    assert [problem['engine_id'] for problem in inventory.problems()] == ['e1']
+
+
+def test_probe_engine_recovers_after_an_outage_and_the_cache_expires(monkeypatch, fresh_inventory, ollama_doc):
+    monkeypatch.setattr(description, 'load_registry', lambda directory=None: {'ollama-native': ollama_doc})
+    calls = {'down': False, 'n': 0}
+
+    async def invoke(self, op, body):
+        calls['n'] += 1
+        if calls['down']:
+            raise httpx.ConnectError('refused')
+        return SimpleNamespace(body={'data': [{'id': 'm0'}]}, asset=None)
+    monkeypatch.setattr(dispatch.Runtime, 'invoke', invoke)
+    registry = _registry_of(1)
+    asyncio.run(inventory.models(registry))
+    asyncio.run(inventory.models(registry))
+    assert calls['n'] == 1, 'a second listing within the TTL reuses the first'
+    calls['down'] = True
+    monkeypatch.setattr(inventory, 'CACHE_TTL_S', 0.0)
+    assert asyncio.run(inventory.models(registry)) == []
+    assert inventory.problems()
+    calls['down'] = False
+    assert [item['id'] for item in asyncio.run(inventory.models(registry))] == ['m0']
+    assert inventory.problems() == []
