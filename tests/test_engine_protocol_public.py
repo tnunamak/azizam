@@ -382,3 +382,30 @@ def test_core_job_cancel_propagates_to_the_existing_worker_settler(engine,monkey
             proxy._ADMISSION_WORKER.reset(token)
     asyncio.run(go())
     assert ('DELETE','/prefix/api/v3/renders/job-1') in called
+
+
+def test_unmapped_multiline_sse_retains_every_data_line(engine,monkeypatch):
+    import yaml
+    from tests.test_engine_protocol_executor import Chunks
+    data=yaml.safe_load((FIXTURE/'prism.yml').read_text())
+    stream=data['operations']['chat']['response']['stream'];stream.pop('map');stream['terminal']={'sentinel':'[DONE]'}
+    doc=description.parse_description(data,source='prism.yml')
+    monkeypatch.setattr(description,'load_registry',lambda:{'prism':doc})
+    raw=b'data: {"choices":\ndata: []}\n\ndata: [DONE]\n\n'
+    wire=transport.HttpxTransport.for_tests(HandlerTransport(lambda r:httpx.Response(200,stream=Chunks([raw]))))
+    monkeypatch.setattr(executor,'HttpxTransport',lambda:wire)
+    response=chat(engine,stream=True)
+    assert response.status_code==200,response.text
+    assert response.content==raw
+
+
+def test_queued_protocol_image_jobs_do_not_depend_on_other_engine_enablement(engine,monkeypatch):
+    from unittest.mock import Mock
+    job=media_jobs.create(media_jobs.MediaJob(intent='image.generate',backend='prism-local',metadata={'mode':'async_image_generation'}),path=media_jobs.DB_PATH)
+    monkeypatch.setattr(proxy,'COMFY_ENABLED',False)
+    monkeypatch.setattr(proxy,'IMAGE_MEDIA_JOB_RESUME_ON_START',True)
+    monkeypatch.setattr(proxy,'_has_image_media_job_payload',lambda _:True)
+    scheduled=Mock(return_value=True)
+    monkeypatch.setattr(proxy,'_schedule_image_media_job',scheduled)
+    assert proxy._resume_pending_image_media_jobs()==1
+    scheduled.assert_called_once_with(job.job_id)
