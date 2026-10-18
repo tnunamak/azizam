@@ -110,9 +110,8 @@ def test_a_new_row_for_an_existing_translator_mounts_its_handler_without_a_proxy
         }],
     }])
 
-    frontend_mount.mount(app, rows, proxy.FRONTEND_TRANSLATORS)
+    [route] = frontend_mount.mount(app, rows, proxy.FRONTEND_TRANSLATORS)
 
-    [route] = app.routes
     assert route.path == "/acme/anthropic/v1/messages"
     assert route.endpoint is proxy.anthropic_messages
     assert route.methods == {"POST"}
@@ -160,9 +159,8 @@ def test_the_same_path_with_another_method_is_a_different_key():
         {"methods": ["POST"], "canonical": "/x/v1/items", "intent": "chat.completions", "translator": "identity"},
         {"methods": ["GET"], "canonical": "/x/v1/items", "intent": "models.list", "translator": "identity"},
     )])
-    app = FastAPI()
-    frontend_mount.mount(app, rows, _translators())
-    assert sorted(sorted(route.methods) for route in app.routes) == [["GET"], ["POST"]]
+    created = frontend_mount.mount(FastAPI(), rows, _translators())
+    assert sorted(sorted(route.methods) for route in created) == [["GET"], ["POST"]]
 
 
 def test_an_unknown_translator_or_intent_is_refused():

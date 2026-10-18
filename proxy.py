@@ -70,6 +70,7 @@ import responses_translator
 from gateway import (
     admin_store,
     audio_media_jobs,
+    frontend_mount,
     media_jobs,
     me_prompt_memory,
     me_make,
@@ -13943,7 +13944,10 @@ app.include_router(
     )
 )
 
-voices_api.register_voice_routes(
+# Inbound frontends: owned modules register their own routes through this registry;
+# the route rows mount last, at the end of this file (gateway/frontend_mount.py).
+FRONTEND_TRANSLATORS = frontend_mount.Translators()
+FRONTEND_TRANSLATORS.register_owned("voices", lambda app: voices_api.register_voice_routes(
     app,
     voices_api.VoiceApiDeps(
         store=lambda: _voice_store(),
@@ -13958,7 +13962,7 @@ voices_api.register_voice_routes(
         compatible_engines=lambda: _custom_voice_engines(),
         quality_warn_below=lambda: float(_voice_settings().get("quality_warn_below", 0.45)),
     ),
-)
+))
 
 
 
@@ -14099,28 +14103,31 @@ MCP_OAUTH = mcp_oauth.McpOAuth(mcp_oauth.McpOAuthDeps(
     audit=_mcp_oauth_audit,
     mcp_path=MCP_PATH,
 ))
-if MCP_OAUTH_ENABLED:
-    MCP_OAUTH.register(app)
+def _mount_mcp(app: FastAPI) -> None:
+    if MCP_OAUTH_ENABLED:
+        MCP_OAUTH.register(app)
+    mcp_server.register_mcp_routes(
+        app,
+        mcp_server.McpDeps(
+            authenticate=lambda request, path: authenticate_request(request, path),
+            call=_mcp_dispatch_call,
+            catalog=_mcp_catalog,
+            aliases=lambda: _gateway_aliases_provider(),
+            visible=lambda _request, auth, entry: isinstance(auth, AuthContext) and _category_entry_visible(auth, entry),
+            store_asset=_mcp_store_asset,
+            read_asset=_mcp_read_asset,
+            public_base_url=lambda request: _public_base_url(request),
+            server_version=str((config.get("proxy") or {}).get("version") or "1"),
+            allowed_origins=_mcp_allowed_origins,
+            authorization_servers=lambda request: (
+                [MCP_OAUTH.issuer(request)] if MCP_OAUTH_ENABLED and MCP_OAUTH.available(request) else []),
+            scopes=(mcp_oauth.SCOPE,) if MCP_OAUTH_ENABLED else (),
+        ),
+        path=MCP_PATH,
+    )
 
-mcp_server.register_mcp_routes(
-    app,
-    mcp_server.McpDeps(
-        authenticate=lambda request, path: authenticate_request(request, path),
-        call=_mcp_dispatch_call,
-        catalog=_mcp_catalog,
-        aliases=lambda: _gateway_aliases_provider(),
-        visible=lambda _request, auth, entry: isinstance(auth, AuthContext) and _category_entry_visible(auth, entry),
-        store_asset=_mcp_store_asset,
-        read_asset=_mcp_read_asset,
-        public_base_url=lambda request: _public_base_url(request),
-        server_version=str((config.get("proxy") or {}).get("version") or "1"),
-        allowed_origins=_mcp_allowed_origins,
-        authorization_servers=lambda request: (
-            [MCP_OAUTH.issuer(request)] if MCP_OAUTH_ENABLED and MCP_OAUTH.available(request) else []),
-        scopes=(mcp_oauth.SCOPE,) if MCP_OAUTH_ENABLED else (),
-    ),
-    path=MCP_PATH,
-)
+
+FRONTEND_TRANSLATORS.register_owned("mcp", _mount_mcp)
 
 # System One facades use the existing registry lifecycle and profile evaluator.
 def _decision_catalog_authorized(auth: AuthContext, model: str, service: str | None) -> bool:
@@ -14287,7 +14294,7 @@ def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionRe
     receipt_store.record(receipt)
 
 
-decisions_api.register_decision_routes(
+FRONTEND_TRANSLATORS.register_owned("typesafe", lambda app: decisions_api.register_decision_routes(
     app, decisions_api.DecisionsApiDeps(
         authenticate=lambda request, path: authenticate_request(request, path),
         profile_for=_access_for_auth_context,
@@ -14296,10 +14303,10 @@ decisions_api.register_decision_routes(
         record_receipt=_record_decision_receipt,
         openai_decisions=_openai_decisions,
     ),
-)
+))
 
 # --- A1111 /sdapi/v1 subset for SillyTavern (gateway/a1111_api.py) ------------
-a1111_api.register_a1111_routes(
+FRONTEND_TRANSLATORS.register_owned("a1111", lambda app: a1111_api.register_a1111_routes(
     app,
     a1111_api.A1111Deps(
         authenticate=lambda request, path: authenticate_request(request, path),
@@ -14308,7 +14315,7 @@ a1111_api.register_a1111_routes(
         aliases=lambda: _gateway_aliases_provider(),
         owner_of=lambda auth: _asset_owner_key(auth if isinstance(auth, AuthContext) else None),
     ),
-)
+))
 
 # --- identity scene + likeness check (gateway/identity_api.py) ----------------
 IDENTITY_CFG = config.get("identity", {}) or {}
@@ -17557,10 +17564,6 @@ def _speech_engine_voices() -> dict[str, Any]:
     return out
 
 
-@app.get("/openai/v1/voices", openapi_extra=VOICES_LIST_OPENAPI)
-@app.get("/openai/v1/audio/voices", openapi_extra=VOICES_LIST_OPENAPI)
-@app.get("/v1/voices", openapi_extra=VOICES_LIST_OPENAPI)
-@app.get("/v1/audio/voices", openapi_extra=VOICES_LIST_OPENAPI)
 async def list_voices(request: Request):
     """Return available TTS voices (OpenAI-compatible names)."""
     canonical_path = "/v1/audio/voices" if request.url.path.endswith("/audio/voices") else "/v1/voices"
@@ -17605,8 +17608,6 @@ async def list_voices(request: Request):
     return await asyncio.to_thread(build_listing)
 
 
-@app.post("/openai/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)
-@app.post("/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)
 async def audio_speech(request: Request):
     """OpenAI-compatible TTS endpoint - routes to TTS backend with voice mapping."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/speech"))
@@ -17625,8 +17626,6 @@ async def audio_speech(request: Request):
     return media_ingestion.finish_response(receipt, response)
 
 
-@app.post("/openai/v1/audio/transcriptions", openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI)
-@app.post("/v1/audio/transcriptions", openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI)
 async def audio_transcriptions(request: Request):
     """OpenAI-compatible STT endpoint - routes to STT backend."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/transcriptions"))
@@ -17635,8 +17634,6 @@ async def audio_transcriptions(request: Request):
     return await _dispatch_selected_stt_route(request, auth_context, operation="transcriptions")
 
 
-@app.post("/openai/v1/audio/translations", openapi_extra=AUDIO_TRANSLATIONS_OPENAPI)
-@app.post("/v1/audio/translations", openapi_extra=AUDIO_TRANSLATIONS_OPENAPI)
 async def audio_translations(request: Request):
     """OpenAI-compatible audio translation endpoint, if the STT backend supports it."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/translations"))
@@ -17763,20 +17760,16 @@ async def _handle_rerank(request: Request, path: str) -> Response:
     return JSONResponse(payload, headers={"x-azizam-engine": resolution.engine or ""})
 
 
-@app.post("/openai/v1/rerank")
-@app.post("/v1/rerank")
 async def rerank_v1(request: Request):
     """Cohere, Jina and Voyage rerank."""
     return await _handle_rerank(request, "/v1/rerank")
 
 
-@app.post("/v2/rerank")
 async def rerank_v2(request: Request):
     """Cohere v2 rerank (no document echo unless asked)."""
     return await _handle_rerank(request, "/v2/rerank")
 
 
-@app.post("/rerank")
 async def rerank_root(request: Request):
     """Jina and TEI style root path."""
     return await _handle_rerank(request, "/rerank")
@@ -17857,8 +17850,6 @@ async def _handle_realtime(websocket: WebSocket) -> None:
     await realtime_proxy.relay(websocket, upstream)
 
 
-@app.websocket("/openai/v1/realtime")
-@app.websocket("/v1/realtime")
 async def realtime_v1(websocket: WebSocket):
     """OpenAI Realtime over WebSocket, served by the sibling speech-to-speech service."""
     await _handle_realtime(websocket)
@@ -22401,7 +22392,6 @@ async def gateway_image_generations_media_job(request: Request):
     return response
 
 
-@app.get("/gateway/v1/media/jobs/{job_id}/content")
 async def gateway_media_job_content(job_id: str, request: Request):
     """Return signed output asset handles for a completed gateway media job."""
     auth_context = _gateway_auth_context(
@@ -22504,8 +22494,6 @@ async def gateway_media_job_content(job_id: str, request: Request):
     )
 
 
-@app.post("/openai/v1/images/generations", openapi_extra=IMAGES_GENERATIONS_OPENAPI)
-@app.post("/v1/images/generations", openapi_extra=IMAGES_GENERATIONS_OPENAPI)
 async def images_generations(request: Request):
     """OpenAI-compatible image generation endpoint - routes to ComfyUI backend."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/generations"))
@@ -22526,8 +22514,6 @@ async def images_generations(request: Request):
     return response
 
 
-@app.post("/openai/v1/images/variations", openapi_extra=IMAGES_VARIATIONS_OPENAPI)
-@app.post("/v1/images/variations", openapi_extra=IMAGES_VARIATIONS_OPENAPI)
 async def images_variations(request: Request):
     """OpenAI-compatible image variations endpoint.
 
@@ -22553,8 +22539,6 @@ async def images_variations(request: Request):
     return response
 
 
-@app.post("/openai/v1/images/edits", openapi_extra=IMAGES_EDITS_OPENAPI)
-@app.post("/v1/images/edits", openapi_extra=IMAGES_EDITS_OPENAPI)
 async def images_edits(request: Request):
     """OpenAI-compatible image edit endpoint - routes to ComfyUI backend."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/edits"))
@@ -22575,8 +22559,6 @@ async def images_edits(request: Request):
     return response
 
 
-@app.get("/openai/v1/images/{image_id}/content", openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI, response_class=Response)
-@app.get("/v1/images/{image_id}/content", openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI, response_class=Response)
 async def images_content(image_id: str, request: Request):
     """Serve a cached image referenced by a signed URL.
 
@@ -22595,8 +22577,6 @@ async def images_content(image_id: str, request: Request):
     )
 
 
-@app.get("/openai/v1/assets/{asset_id}/content", openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI, response_class=Response)
-@app.get("/v1/assets/{asset_id}/content", openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI, response_class=Response)
 async def assets_content(asset_id: str, request: Request):
     """Serve a cached generated asset referenced by a signed URL."""
     return await asyncio.to_thread(
@@ -23053,8 +23033,6 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
     return await _execute_video_manifest_workflow(request, workflow_id, auth_context)
 
 
-@app.post("/openai/v1/videos", openapi_extra=VIDEOS_CREATE_OPENAPI)
-@app.post("/v1/videos", openapi_extra=VIDEOS_CREATE_OPENAPI)
 async def videos_create(request: Request):
     """Sora-shaped video generation submit. Returns {id, status: queued}."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos"))
@@ -23066,8 +23044,6 @@ async def videos_create(request: Request):
     return await proxy_comfy_video_create(request, auth_context)
 
 
-@app.get("/openai/v1/videos/{video_id}", openapi_extra=VIDEOS_STATUS_OPENAPI)
-@app.get("/v1/videos/{video_id}", openapi_extra=VIDEOS_STATUS_OPENAPI)
 async def videos_status(video_id: str, request: Request):
     """Poll a previously-submitted video job."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}"))
@@ -23079,8 +23055,6 @@ async def videos_status(video_id: str, request: Request):
     return await proxy_comfy_video_status(video_id, auth_context)
 
 
-@app.get("/openai/v1/videos/{video_id}/content", openapi_extra=VIDEOS_CONTENT_OPENAPI, response_class=Response)
-@app.get("/v1/videos/{video_id}/content", openapi_extra=VIDEOS_CONTENT_OPENAPI, response_class=Response)
 async def videos_content(video_id: str, request: Request):
     """Download the rendered mp4 once status=succeeded."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}/content"))
@@ -23103,8 +23077,6 @@ async def videos_content(video_id: str, request: Request):
     )
 
 
-@app.get("/openai/v1/videos", openapi_extra=VIDEOS_LIST_OPENAPI)
-@app.get("/v1/videos", openapi_extra=VIDEOS_LIST_OPENAPI)
 async def videos_list(request: Request):
     """List video jobs submitted via this route (limit/after/order)."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos"))
@@ -23119,8 +23091,6 @@ async def videos_list(request: Request):
     return await proxy_comfy_video_list(request, auth_context)
 
 
-@app.delete("/openai/v1/videos/{video_id}", openapi_extra=VIDEOS_DELETE_OPENAPI)
-@app.delete("/v1/videos/{video_id}", openapi_extra=VIDEOS_DELETE_OPENAPI)
 async def videos_delete(video_id: str, request: Request):
     """Delete a previously-submitted video job."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}"))
@@ -23135,8 +23105,6 @@ async def videos_delete(video_id: str, request: Request):
     return await proxy_comfy_video_delete(video_id, auth_context)
 
 
-@app.post("/openai/v1/videos/{video_id}/remix", openapi_extra=VIDEOS_REMIX_OPENAPI)
-@app.post("/v1/videos/{video_id}/remix", openapi_extra=VIDEOS_REMIX_OPENAPI)
 async def videos_remix(video_id: str, request: Request):
     """Remix a completed video with a new prompt (Bernini-R); 501 unless videos.remix_workflow is set."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}/remix"))
@@ -23148,8 +23116,6 @@ async def videos_remix(video_id: str, request: Request):
     return await proxy_comfy_video_remix(video_id, auth_context, request)
 
 
-@app.post("/openai/v1/videos/edits", openapi_extra=VIDEOS_EDIT_OPENAPI)
-@app.post("/v1/videos/edits", openapi_extra=VIDEOS_EDIT_OPENAPI)
 async def videos_edit(request: Request):
     """OpenAI video edit: prompt + uploaded or existing video -> new video job."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/edits"))
@@ -23161,8 +23127,6 @@ async def videos_edit(request: Request):
     return await proxy_comfy_video_edit(request, auth_context)
 
 
-@app.post("/openai/v1/videos/extensions", openapi_extra=VIDEOS_EXTEND_OPENAPI)
-@app.post("/v1/videos/extensions", openapi_extra=VIDEOS_EXTEND_OPENAPI)
 async def videos_extend(request: Request):
     """Sora-shaped video extension: source video + prompt -> source plus new footage."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/extensions"))
@@ -23704,8 +23668,6 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
         )
 
 
-@app.post("/openai/v1/audio/generate", openapi_extra=AUDIO_GENERATE_OPENAPI)
-@app.post("/v1/audio/generate", openapi_extra=AUDIO_GENERATE_OPENAPI)
 async def audio_generate(request: Request):
     """OpenAI-compatible audio generation endpoint."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/generate"))
@@ -23743,8 +23705,6 @@ def _audio_models_visible_to(auth_context: AuthContext) -> list[dict[str, Any]]:
     return models
 
 
-@app.get("/openai/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
-@app.get("/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
 async def audio_models(request: Request):
     """List available audio generation models."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/models"))
@@ -24460,9 +24420,6 @@ def _is_anthropic_sdk_request(request: Request) -> bool:
     return "anthropic-version" in request.headers
 
 
-@app.get("/openai/v1/models/{model_id:path}")
-@app.get("/anthropic/v1/models/{model_id:path}")
-@app.get("/v1/models/{model_id:path}")
 async def anthropic_model_retrieve(model_id: str, request: Request):
     """Retrieve one model. Anthropic shape for Anthropic SDKs, else OpenAI."""
     anthropic = (
@@ -24496,7 +24453,6 @@ async def anthropic_model_retrieve(model_id: str, request: Request):
     )
 
 
-@app.get("/anthropic/v1/models")
 async def anthropic_models(request: Request):
     """Anthropic-compatible model list projected from the gateway catalog."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/anthropic/v1/models"))
@@ -24527,8 +24483,6 @@ async def anthropic_models(request: Request):
     return response
 
 
-@app.get("/openai/v1/models")
-@app.get("/v1/models")
 async def list_models(request: Request):
     """OpenAI-compatible model list. Returns:
       1. LiteLLM's OpenAI-shaped LLM model catalog when the substrate is enabled
@@ -25474,8 +25428,6 @@ async def _read_json_object(request: Request) -> dict[str, Any] | Response:
     return body
 
 
-@app.post("/anthropic/v1/messages/count_tokens")
-@app.post("/v1/messages/count_tokens")
 async def anthropic_count_tokens(request: Request):
     """Anthropic Messages count_tokens-compatible estimator."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/anthropic/v1/messages/count_tokens"))
@@ -25513,8 +25465,6 @@ async def anthropic_count_tokens(request: Request):
     return _json_error_response(payload, status_code=200)
 
 
-@app.post("/anthropic/v1/messages")
-@app.post("/v1/messages")
 async def anthropic_messages(request: Request):
     """Anthropic Messages-compatible frontend over chat completions."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/v1/messages"))
@@ -25956,8 +25906,6 @@ async def _ollama_load_response(
     return _ollama_error_response(_ollama_model_not_found(model), status_code=404)
 
 
-@app.post("/ollama/api/chat")
-@app.post("/api/chat")
 async def ollama_chat(request: Request):
     """Ollama `/api/chat` frontend over chat completions."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/chat"))
@@ -26012,8 +25960,6 @@ async def ollama_chat(request: Request):
     )
 
 
-@app.post("/ollama/api/generate")
-@app.post("/api/generate")
 async def ollama_generate(request: Request):
     """Ollama `/api/generate` frontend over chat completions."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/generate"))
@@ -26070,8 +26016,6 @@ async def ollama_generate(request: Request):
     )
 
 
-@app.post("/ollama/api/embed")
-@app.post("/api/embed")
 async def ollama_embed(request: Request):
     """Ollama current `/api/embed` frontend over OpenAI embeddings."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/embed"))
@@ -26105,8 +26049,6 @@ async def ollama_embed(request: Request):
     )
 
 
-@app.post("/ollama/api/embeddings")
-@app.post("/api/embeddings")
 async def ollama_embeddings(request: Request):
     """Ollama legacy `/api/embeddings` frontend over OpenAI embeddings."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/embeddings"))
@@ -26140,8 +26082,6 @@ async def ollama_embeddings(request: Request):
     )
 
 
-@app.get("/ollama/api/tags")
-@app.get("/api/tags")
 async def ollama_tags(request: Request):
     """Ollama model-list frontend over the proxy's configured model catalog."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/api/tags"))
@@ -26169,8 +26109,6 @@ async def ollama_tags(request: Request):
     )
 
 
-@app.post("/ollama/api/show")
-@app.post("/api/show")
 async def ollama_show(request: Request):
     """Ollama `/api/show` projected from the gateway's visible LLM catalog."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/api/show"))
@@ -26201,8 +26139,6 @@ async def ollama_show(request: Request):
     return _ollama_error_response(f"model not found: {model}", status_code=404)
 
 
-@app.get("/ollama/api/ps")
-@app.get("/api/ps")
 async def ollama_ps(request: Request):
     """Ollama `/api/ps` projected from the gateway's currently loaded LLM."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/api/ps"))
@@ -26226,8 +26162,6 @@ async def ollama_ps(request: Request):
     )
 
 
-@app.get("/ollama/api/version")
-@app.get("/api/version")
 async def ollama_version(request: Request):
     """Ollama `/api/version` compatibility response."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/api/version"))
@@ -26269,8 +26203,6 @@ async def _ollama_unsupported_model_mutation(
     )
 
 
-@app.post("/ollama/api/create")
-@app.post("/api/create")
 async def ollama_create(request: Request):
     return await _ollama_unsupported_model_mutation(
         request,
@@ -26279,8 +26211,6 @@ async def ollama_create(request: Request):
     )
 
 
-@app.post("/ollama/api/copy")
-@app.post("/api/copy")
 async def ollama_copy(request: Request):
     return await _ollama_unsupported_model_mutation(
         request,
@@ -26289,8 +26219,6 @@ async def ollama_copy(request: Request):
     )
 
 
-@app.post("/ollama/api/pull")
-@app.post("/api/pull")
 async def ollama_pull(request: Request):
     return await _ollama_unsupported_model_mutation(
         request,
@@ -26299,8 +26227,6 @@ async def ollama_pull(request: Request):
     )
 
 
-@app.post("/ollama/api/push")
-@app.post("/api/push")
 async def ollama_push(request: Request):
     return await _ollama_unsupported_model_mutation(
         request,
@@ -26309,10 +26235,6 @@ async def ollama_push(request: Request):
     )
 
 
-@app.head("/ollama/api/blobs/{digest}")
-@app.head("/api/blobs/{digest}")
-@app.post("/ollama/api/blobs/{digest}")
-@app.post("/api/blobs/{digest}")
 async def ollama_blobs(digest: str, request: Request):
     # `ollama create` uploads files as blobs first. The gateway owns no model
     # files, so say so instead of a generic not-found.
@@ -26323,8 +26245,6 @@ async def ollama_blobs(digest: str, request: Request):
     )
 
 
-@app.delete("/ollama/api/delete")
-@app.delete("/api/delete")
 async def ollama_delete(request: Request):
     return await _ollama_unsupported_model_mutation(
         request,
@@ -26333,8 +26253,6 @@ async def ollama_delete(request: Request):
     )
 
 
-@app.post("/openai/v1/responses")
-@app.post("/v1/responses")
 async def create_response(request: Request):
     """Create a Response. Translates to Chat Completions and forwards."""
     route_auth = (await asyncio.to_thread(authenticate_runtime_request, request, "/v1/responses"))
@@ -26620,8 +26538,6 @@ async def create_response(request: Request):
         return _responses_error(f"Internal error: {error}", code="internal_error", status=500)
 
 
-@app.get("/openai/v1/responses/{response_id}")
-@app.get("/v1/responses/{response_id}")
 async def retrieve_response(response_id: str, request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
@@ -26653,8 +26569,6 @@ async def retrieve_response(response_id: str, request: Request):
     )
 
 
-@app.get("/openai/v1/responses/{response_id}/input_items")
-@app.get("/v1/responses/{response_id}/input_items")
 async def list_response_input_items(response_id: str, request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
@@ -26708,8 +26622,6 @@ async def list_response_input_items(response_id: str, request: Request):
     )
 
 
-@app.post("/openai/v1/responses/input_tokens")
-@app.post("/v1/responses/input_tokens")
 async def count_response_input_tokens(request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
@@ -26721,8 +26633,6 @@ async def count_response_input_tokens(request: Request):
     )
 
 
-@app.post("/openai/v1/responses/{response_id}/cancel")
-@app.post("/v1/responses/{response_id}/cancel")
 async def cancel_response(response_id: str, request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
@@ -26741,8 +26651,6 @@ async def cancel_response(response_id: str, request: Request):
     )
 
 
-@app.delete("/openai/v1/responses/{response_id}")
-@app.delete("/v1/responses/{response_id}")
 async def delete_response(response_id: str, request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
@@ -28645,22 +28553,16 @@ async def internal_litellm_local_chat_completions(backend: str, request: Request
     )
 
 
-@app.post("/openai/v1/chat/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
-@app.post("/v1/chat/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def chat_completions(request: Request):
     """OpenAI-compatible chat completions executed through LiteLLM."""
     return await _handle_openai_litellm_request(request, "/v1/chat/completions")
 
 
-@app.post("/openai/v1/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
-@app.post("/v1/completions", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def completions(request: Request):
     """OpenAI-compatible text completions executed through LiteLLM."""
     return await _handle_openai_litellm_request(request, "/v1/completions")
 
 
-@app.post("/openai/v1/embeddings", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
-@app.post("/v1/embeddings", openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI)
 async def embeddings(request: Request):
     """OpenAI-compatible embeddings executed through LiteLLM."""
     return await _handle_openai_litellm_request(request, "/v1/embeddings")
@@ -28682,76 +28584,26 @@ async def _openai_unsupported_api(request: Request, canonical_path: str, api_nam
     return _openai_unsupported_api_response(api_name)
 
 
-@app.api_route(
-    "/openai/v1/assistants{rest:path}",
-    methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-    include_in_schema=False,
-)
-@app.api_route(
-    "/v1/assistants{rest:path}",
-    methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-    include_in_schema=False,
-)
 async def openai_assistants_unsupported(request: Request, rest: str = "") -> Response:
     """OpenAI Assistants compatibility surface - explicitly unsupported."""
     return await _openai_unsupported_api(request, "/v1/assistants", "Assistants API")
 
 
-@app.api_route(
-    "/openai/v1/files{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
-@app.api_route(
-    "/v1/files{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
 async def openai_files_unsupported(request: Request, rest: str = "") -> Response:
     """OpenAI Files compatibility surface - explicitly unsupported."""
     return await _openai_unsupported_api(request, "/v1/files", "Files API")
 
 
-@app.api_route(
-    "/openai/v1/batches{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
-@app.api_route(
-    "/v1/batches{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
 async def openai_batches_unsupported(request: Request, rest: str = "") -> Response:
     """OpenAI Batches compatibility surface - explicitly unsupported."""
     return await _openai_unsupported_api(request, "/v1/batches", "Batches API")
 
 
-@app.api_route(
-    "/openai/v1/fine_tuning{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
-@app.api_route(
-    "/v1/fine_tuning{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
 async def openai_fine_tuning_unsupported(request: Request, rest: str = "") -> Response:
     """OpenAI Fine-tuning compatibility surface - explicitly unsupported."""
     return await _openai_unsupported_api(request, "/v1/fine_tuning", "Fine-tuning API")
 
 
-@app.api_route(
-    "/openai/v1/realtime{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
-@app.api_route(
-    "/v1/realtime{rest:path}",
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
 async def openai_realtime_unsupported(request: Request, rest: str = "") -> Response:
     """OpenAI Realtime compatibility surface - explicitly unsupported."""
     return await _openai_unsupported_api(request, "/v1/realtime", "Realtime API")
@@ -29059,7 +28911,6 @@ def _provider_native_visible(
     return decision.allowed
 
 
-@app.get("/gateway/v1/providers")
 async def provider_native_list(request: Request):
     """List provider-native lanes visible to this authenticated caller."""
     auth_context = _auth_context_from_scope(request)
@@ -29074,7 +28925,6 @@ async def provider_native_list(request: Request):
     }
 
 
-@app.get("/gateway/v1/providers/{provider}")
 async def provider_native_detail(request: Request, provider: str):
     """Describe one provider-native lane without forwarding to the provider."""
     provider_key = provider.strip().lower()
@@ -29097,11 +28947,6 @@ async def provider_native_detail(request: Request, provider: str):
     return _provider_native_summary(provider_key, target, _auth_context_from_scope(request))
 
 
-@app.api_route(
-    "/gateway/v1/providers/{provider}/{native_path:path}",
-    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    include_in_schema=False,
-)
 async def provider_native_request(
     request: Request,
     provider: str,
@@ -29267,6 +29112,106 @@ async def _ui_admin_page_guard(request: Request, name: str) -> Response | None:
             return_to=return_to,
         )
     return None
+
+
+# -----------------------------------------------------------------------------
+# Row-mounted translators. A row in registry/protocol_frontends.yml reaches only the
+# operations below: each one is a handler above, mounted with the route options it was
+# declared with. Owned modules mounted first, in the order they registered above.
+# -----------------------------------------------------------------------------
+Op = frontend_mount.Operation
+FRONTEND_TRANSLATORS.register("identity", {
+    "models.list": Op(list_models, frozenset({"GET"})),
+    "models.retrieve": Op(anthropic_model_retrieve, frozenset({"GET"})),
+    "voices.list": Op(list_voices, frozenset({"GET"}), openapi_extra=VOICES_LIST_OPENAPI),
+    "audio.speech": Op(audio_speech, frozenset({"POST"}), openapi_extra=AUDIO_SPEECH_OPENAPI,
+                       response_class=Response),
+    "audio.transcriptions": Op(audio_transcriptions, frozenset({"POST"}),
+                               openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI),
+    "audio.translations": Op(audio_translations, frozenset({"POST"}), openapi_extra=AUDIO_TRANSLATIONS_OPENAPI),
+    "audio.generate": Op(audio_generate, frozenset({"POST"}), openapi_extra=AUDIO_GENERATE_OPENAPI),
+    "audio.models": Op(audio_models, frozenset({"GET"}), openapi_extra=AUDIO_MODELS_OPENAPI),
+    "images.generate": Op(images_generations, frozenset({"POST"}), openapi_extra=IMAGES_GENERATIONS_OPENAPI),
+    "images.variations": Op(images_variations, frozenset({"POST"}), openapi_extra=IMAGES_VARIATIONS_OPENAPI),
+    "images.edit": Op(images_edits, frozenset({"POST"}), openapi_extra=IMAGES_EDITS_OPENAPI),
+    "images.content": Op(images_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
+                         response_class=Response),
+    "assets.content": Op(assets_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
+                         response_class=Response),
+    "videos.create": Op(videos_create, frozenset({"POST"}), openapi_extra=VIDEOS_CREATE_OPENAPI),
+    "videos.retrieve": Op(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI),
+    "videos.content": Op(videos_content, frozenset({"GET"}), openapi_extra=VIDEOS_CONTENT_OPENAPI,
+                         response_class=Response),
+    "videos.list": Op(videos_list, frozenset({"GET"}), openapi_extra=VIDEOS_LIST_OPENAPI),
+    "videos.delete": Op(videos_delete, frozenset({"DELETE"}), openapi_extra=VIDEOS_DELETE_OPENAPI),
+    "videos.remix": Op(videos_remix, frozenset({"POST"}), openapi_extra=VIDEOS_REMIX_OPENAPI),
+    "videos.edit": Op(videos_edit, frozenset({"POST"}), openapi_extra=VIDEOS_EDIT_OPENAPI),
+    "videos.extend": Op(videos_extend, frozenset({"POST"}), openapi_extra=VIDEOS_EXTEND_OPENAPI),
+    "rerank": Op(rerank_v1, frozenset({"POST"})),
+    "rerank.v2": Op(rerank_v2, frozenset({"POST"})),
+    "rerank.root": Op(rerank_root, frozenset({"POST"})),
+    "responses.create": Op(create_response, frozenset({"POST"})),
+    "responses.retrieve": Op(retrieve_response, frozenset({"GET"})),
+    "responses.input_items": Op(list_response_input_items, frozenset({"GET"})),
+    "responses.input_tokens": Op(count_response_input_tokens, frozenset({"POST"})),
+    "responses.cancel": Op(cancel_response, frozenset({"POST"})),
+    "responses.delete": Op(delete_response, frozenset({"DELETE"})),
+    "chat.completions": Op(chat_completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
+    "text.completions": Op(completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
+    "text.embeddings": Op(embeddings, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
+    "unsupported.assistants": Op(openai_assistants_unsupported,
+                                 frozenset({"GET", "POST", "PUT", "DELETE", "PATCH"}), include_in_schema=False),
+    "unsupported.files": Op(openai_files_unsupported, frozenset({"GET", "POST", "DELETE"}),
+                            include_in_schema=False),
+    "unsupported.batches": Op(openai_batches_unsupported, frozenset({"GET", "POST", "DELETE"}),
+                              include_in_schema=False),
+    "unsupported.fine_tuning": Op(openai_fine_tuning_unsupported, frozenset({"GET", "POST", "DELETE"}),
+                                  include_in_schema=False),
+    "unsupported.realtime": Op(openai_realtime_unsupported, frozenset({"GET", "POST", "DELETE"}),
+                               include_in_schema=False),
+})
+FRONTEND_TRANSLATORS.register("anthropic", {
+    "chat.completions": Op(anthropic_messages, frozenset({"POST"})),
+    "tokens.count": Op(anthropic_count_tokens, frozenset({"POST"})),
+    "models.list": Op(anthropic_models, frozenset({"GET"})),
+    "models.retrieve": Op(anthropic_model_retrieve, frozenset({"GET"})),
+})
+FRONTEND_TRANSLATORS.register("ollama", {
+    "chat.completions": Op(ollama_chat, frozenset({"POST"})),
+    "text.completions": Op(ollama_generate, frozenset({"POST"})),
+    "text.embeddings": Op(ollama_embed, frozenset({"POST"})),
+    "text.embeddings.prompt": Op(ollama_embeddings, frozenset({"POST"})),
+    "models.tags": Op(ollama_tags, frozenset({"GET"})),
+    "models.show": Op(ollama_show, frozenset({"POST"})),
+    "models.ps": Op(ollama_ps, frozenset({"GET"})),
+    "version": Op(ollama_version, frozenset({"GET"})),
+    "models.create": Op(ollama_create, frozenset({"POST"})),
+    "models.copy": Op(ollama_copy, frozenset({"POST"})),
+    "models.pull": Op(ollama_pull, frozenset({"POST"})),
+    "models.push": Op(ollama_push, frozenset({"POST"})),
+    "blobs": Op(ollama_blobs, frozenset({"HEAD", "POST"})),
+    "models.delete": Op(ollama_delete, frozenset({"DELETE"})),
+})
+FRONTEND_TRANSLATORS.register("realtime", {
+    "realtime.session": Op(realtime_v1, frozenset({"WEBSOCKET"})),
+})
+FRONTEND_TRANSLATORS.register("gateway", {
+    "media.job.content": Op(gateway_media_job_content, frozenset({"GET"})),
+})
+FRONTEND_TRANSLATORS.register("provider-native", {
+    "provider.list": Op(provider_native_list, frozenset({"GET"})),
+    "provider.detail": Op(provider_native_detail, frozenset({"GET"})),
+    "provider.native": Op(provider_native_request, frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}),
+                          include_in_schema=False),
+})
+FRONTEND_TRANSLATORS.mount_owned(app)
+frontend_mount.mount(
+    app,
+    frontend_mount.rows_from_frontends(
+        route_registry.protocol_frontend_records(registry=_PROTOCOL_ROUTE_REGISTRY, proxy_config=config),
+    ),
+    FRONTEND_TRANSLATORS,
+)
 
 
 # The web app: just before the catch-all, never a partial match (gateway/ui_routes.py).
