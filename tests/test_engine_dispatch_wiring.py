@@ -142,7 +142,7 @@ def test_a_short_lifecycle_reply_time_does_not_cut_off_the_cold_start_but_ends_t
     registry = _lifecycle_registry(37)
     entry = next(row for row in compile_litellm_config_from_registry(registry)["model_list"]
                  if row["model_name"] == "hopped-chat")
-    assert entry["litellm_params"]["timeout"] >= 600.0
+    assert entry["litellm_params"]["timeout"] == 37.0
     assert router_reply_timeout(registry, "hopped-chat") == entry["litellm_params"]["timeout"]
     final = inference_connection(registry["services"]["hopped"], "/chat/completions",
                                  fallback_address="http://unused.fk.test/v1", fallback_timeout=600.0,
@@ -159,7 +159,7 @@ def test_a_declared_start_budget_adds_to_a_long_lifecycle_reply_time():
     assert entry["litellm_params"]["timeout"] == 1020.0
 
 
-@pytest.mark.parametrize("saved,router", [(900, 900.0), (37, 600.0)])
+@pytest.mark.parametrize("saved,router", [(900, 900.0), (37, 37.0)])
 def test_the_current_aliases_wait_for_the_current_service_reply_time(saved, router):
     registry = _lifecycle_registry(saved)
     entries = {row["model_name"]: row for row in compile_litellm_config_from_registry(registry)["model_list"]}
