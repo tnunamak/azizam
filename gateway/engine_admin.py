@@ -1117,12 +1117,12 @@ class EngineService:
                 for field in ("priority", "role"):
                     if existing.get(field) is not None:
                         raw[field] = existing[field]
-                for key in ("protocol", "native_passthrough"):
+                for config_key in ("protocol", "native_passthrough"):
                     # How the gateway talks to an engine is set when it is added; an edit keeps it, set or unset.
-                    if key in old_config:
-                        raw[key] = copy.deepcopy(old_config[key])
+                    if config_key in old_config:
+                        raw[config_key] = copy.deepcopy(old_config[config_key])
                     else:
-                        raw.pop(key, None)
+                        raw.pop(config_key, None)
             kept_key = (
                 (secret_id and secret_id == old_config.get("api_key_secret_id"))
                 or (raw.get("api_key_env") and raw.get("api_key_env") == old_config.get("api_key_env"))
