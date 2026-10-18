@@ -13,12 +13,14 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 
 function controlledDeadlines(t: TestContext) {
 	const deadlines: { ms: number; controller: AbortController }[] = [];
+	const waiters: { count: number; resolve: () => void }[] = [];
 	t.mock.method(AbortSignal, "timeout", (ms: number) => {
 		const controller = new AbortController();
 		deadlines.push({ ms, controller });
+		for (const waiter of waiters) if (deadlines.length >= waiter.count) waiter.resolve();
 		return controller.signal;
 	});
-	return deadlines;
+	return { deadlines, waitForCount: (count: number) => deadlines.length >= count ? Promise.resolve() : new Promise<void>((resolve) => waiters.push({ count, resolve })) };
 }
 
 function deferred<T = void>() {
@@ -284,8 +286,8 @@ const stalledCredentials = {
 	delete: async () => {},
 };
 
-test("a stalled model store cannot starve discovery: the key still resolves and the fetch runs", { skip }, async (t) => {
-	const deadlines = controlledDeadlines(t);
+test("a stalled model store cannot starve discovery: the key still resolves and the fetch runs", { skip, timeout: 30_000 }, async (t) => {
+	const { deadlines } = controlledDeadlines(t);
 	const storeEntered = deferred();
 	const fetchEntered = deferred();
 	const store = await piAiStore({ read: () => { storeEntered.resolve(); return never(); } });
@@ -303,13 +305,13 @@ test("a stalled model store cannot starve discovery: the key still resolves and 
 		await pending;
 		assert.deepEqual(ids(provider.getModels()), ["chat-small", "coder"]);
 	} finally {
-		deadlines[0]?.controller.abort(new DOMException("test cleanup", "AbortError"));
+		for (const { controller } of deadlines) controller.abort(new DOMException("test cleanup", "AbortError"));
 		await pending;
 	}
 });
 
-test("a stalled credential store plus a valid AZIZAM_API_KEY still discovers models", { skip }, async (t) => {
-	const deadlines = controlledDeadlines(t);
+test("a stalled credential store plus a valid AZIZAM_API_KEY still discovers models", { skip, timeout: 30_000 }, async (t) => {
+	const { deadlines, waitForCount } = controlledDeadlines(t);
 	const lookupEntered = deferred();
 	const fetchEntered = deferred();
 	const credentials = { ...stalledCredentials, read: () => { lookupEntered.resolve(); return never(); } };
@@ -320,6 +322,9 @@ test("a stalled credential store plus a valid AZIZAM_API_KEY still discovers mod
 	const pending = provider.prefetch(models);
 	try {
 		await lookupEntered.promise;
+		assert.deepEqual(deadlines.map(({ ms }) => ms), [400, 100]);
+		deadlines[1].controller.abort(new DOMException("restore phase", "TimeoutError"));
+		await waitForCount(3);
 		assert.deepEqual(deadlines.map(({ ms }) => ms), [400, 100, 100]);
 		deadlines[2].controller.abort(new DOMException("credential phase", "TimeoutError"));
 		await fetchEntered.promise;
@@ -327,17 +332,16 @@ test("a stalled credential store plus a valid AZIZAM_API_KEY still discovers mod
 		await pending;
 		assert.deepEqual(ids(provider.getModels()), ["chat-small", "coder"]);
 	} finally {
-		deadlines[0]?.controller.abort(new DOMException("test cleanup", "AbortError"));
+		for (const { controller } of deadlines) controller.abort(new DOMException("test cleanup", "AbortError"));
 		await pending;
 	}
 });
 
-test("stalled model store and stalled credential store together still discover with the env key", { skip }, async (t) => {
-	const deadlines = controlledDeadlines(t);
-	const storeEntered = deferred();
+test("stalled model store and stalled credential store together still discover with the env key", { skip, timeout: 30_000 }, async (t) => {
+	const { deadlines, waitForCount } = controlledDeadlines(t);
 	const lookupEntered = deferred();
 	const fetchEntered = deferred();
-	const store = await piAiStore({ read: () => { storeEntered.resolve(); return never(); } });
+	const store = await piAiStore({ read: () => never() });
 	const credentials = { ...stalledCredentials, read: () => { lookupEntered.resolve(); return never(); } };
 	const { models, provider, calls } = await setup(() => {
 		fetchEntered.resolve();
@@ -345,10 +349,11 @@ test("stalled model store and stalled credential store together still discover w
 	}, { AZIZAM_API_KEY: "env-key-3" }, { store, credentials, prefetchTimeoutMs: 400 });
 	const pending = provider.prefetch(models);
 	try {
-		await storeEntered.promise;
+		await lookupEntered.promise;
 		assert.deepEqual(deadlines.map(({ ms }) => ms), [400, 100]);
 		deadlines[1].controller.abort(new DOMException("restore phase", "TimeoutError"));
-		await lookupEntered.promise;
+		await waitForCount(3);
+		assert.deepEqual(deadlines.map(({ ms }) => ms), [400, 100, 100]);
 		assert.equal(deadlines[1].controller.signal.aborted, true);
 		deadlines[2].controller.abort(new DOMException("credential phase", "TimeoutError"));
 		await fetchEntered.promise;
@@ -356,13 +361,13 @@ test("stalled model store and stalled credential store together still discover w
 		await pending;
 		assert.deepEqual(ids(provider.getModels()), ["chat-small", "coder"]);
 	} finally {
-		deadlines[0]?.controller.abort(new DOMException("test cleanup", "AbortError"));
+		for (const { controller } of deadlines) controller.abort(new DOMException("test cleanup", "AbortError"));
 		await pending;
 	}
 });
 
-test("a stalled credential store without an env key is bounded and does not fetch", { skip }, async (t) => {
-	const deadlines = controlledDeadlines(t);
+test("a stalled credential store without an env key is bounded and does not fetch", { skip, timeout: 30_000 }, async (t) => {
+	const { deadlines, waitForCount } = controlledDeadlines(t);
 	const lookupEntered = deferred();
 	const credentials = { ...stalledCredentials, read: () => { lookupEntered.resolve(); return never(); } };
 	const errors: string[] = [];
@@ -371,20 +376,24 @@ test("a stalled credential store without an env key is bounded and does not fetc
 	const pending = provider.prefetch(models);
 	try {
 		await lookupEntered.promise;
+		assert.deepEqual(deadlines.map(({ ms }) => ms), [300, 75]);
+		deadlines[1].controller.abort(new DOMException("restore phase", "TimeoutError"));
+		await waitForCount(3);
+		assert.deepEqual(deadlines.map(({ ms }) => ms), [300, 75, 75]);
 		deadlines.at(-1)!.controller.abort(new DOMException("credential phase", "TimeoutError"));
 		await pending;
 		assert.equal(calls.length, 0);
 		assert.match(errors[0], /Azizam credential lookup failed; no saved catalog/);
 	} finally {
-		deadlines[0]?.controller.abort(new DOMException("test cleanup", "AbortError"));
+		for (const { controller } of deadlines) controller.abort(new DOMException("test cleanup", "AbortError"));
 		await pending;
 	}
 });
 
-test("prefetch is bounded when the gateway never answers and reports the cache miss without debug", { skip }, async (t) => {
+test("prefetch is bounded when the gateway never answers and reports the cache miss without debug", { skip, timeout: 30_000 }, async (t) => {
 	const errors: string[] = [];
 	t.mock.method(console, "error", (message: string) => errors.push(message));
-	const deadlines = controlledDeadlines(t);
+	const { deadlines } = controlledDeadlines(t);
 	const fetchEntered = deferred();
 	const { models, provider, calls } = await setup(
 		(_url, init) => {
@@ -397,6 +406,7 @@ test("prefetch is bounded when the gateway never answers and reports the cache m
 	const pending = provider.prefetch(models);
 	try {
 		await fetchEntered.promise;
+		assert.deepEqual(deadlines.map(({ ms }) => ms), [300, 75, 75, 10_000]);
 		assert.deepEqual(calls, [{ url: "http://gw.test/v1/models", authorization: `Bearer ${KEY}` }]);
 		assert.equal(calls.length, 1);
 		assert.equal(deadlines[0].controller.signal.aborted, false);
@@ -408,7 +418,7 @@ test("prefetch is bounded when the gateway never answers and reports the cache m
 		assert.match(errors[0], /retry Pi/);
 		assert.ok(!errors[0].includes(KEY));
 	} finally {
-		deadlines[0]?.controller.abort(new DOMException("test cleanup", "AbortError"));
+		for (const { controller } of deadlines) controller.abort(new DOMException("test cleanup", "AbortError"));
 		await pending;
 	}
 });

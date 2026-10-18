@@ -26,9 +26,11 @@ const model = {
 
 function controlledBudgets(t: TestContext) {
 	const budgets: AbortController[] = [];
+	const durations: number[] = [];
 	let created!: () => void;
 	let createdPromise = new Promise<void>((resolve) => { created = resolve; });
-	t.mock.method(AbortSignal, "timeout", () => {
+	t.mock.method(AbortSignal, "timeout", (ms: number) => {
+		durations.push(ms);
 		const controller = new AbortController();
 		budgets.push(controller);
 		created();
@@ -37,6 +39,7 @@ function controlledBudgets(t: TestContext) {
 	});
 	return {
 		budgets,
+		durations,
 		async nextBudget(index: number) {
 			while (budgets.length <= index) await createdPromise;
 		},
@@ -72,7 +75,7 @@ test("orphaned lock from a crashed holder is reclaimed and the start completes w
 	assert.ok(!existsSync(lock), "lock released after use");
 });
 
-test("a lock refreshed by a live holder is never removed; the store degrades within budget and logs the lock path", async (t) => {
+test("a lock refreshed by a live holder is never removed; the store degrades within budget and logs the lock path", { timeout: 30_000 }, async (t) => {
 	const { path, lock } = freshDir("live");
 	const { child, ready } = holder(path, "refresh");
 	t.after(() => child.kill("SIGKILL"));
@@ -94,6 +97,7 @@ test("a lock refreshed by a live holder is never removed; the store degrades wit
 	await controlled.nextBudget(1);
 	controlled.budgets[1].abort(new DOMException("write lock budget", "TimeoutError"));
 	await write;
+	assert.deepEqual(controlled.durations, [1200, 1200]);
 	assert.ok(existsSync(lock), "live lock must survive");
 	assert.equal(readFileSync(path, "utf8"), "{}", "write is skipped while the live lock is held");
 	const lines = logged.mock.calls.map((call) => String(call.arguments[0])).filter((line) => line.includes(lock));
@@ -101,7 +105,7 @@ test("a lock refreshed by a live holder is never removed; the store degrades wit
 	assert.match(lines[0], /continuing without the saved catalog/);
 });
 
-test("a fresh orphan (holder just died) degrades within budget instead of blocking for the 30 s stale age", async (t) => {
+test("a fresh orphan (holder just died) degrades within budget instead of blocking for the 30 s stale age", { timeout: 30_000 }, async (t) => {
 	const { path, lock } = freshDir("fresh-orphan");
 	mkdirSync(lock);
 	const logged = mock.method(console, "error", () => {});
@@ -112,6 +116,7 @@ test("a fresh orphan (holder just died) degrades within budget instead of blocki
 		await controlled.nextBudget(0);
 		controlled.budgets[0].abort(new DOMException("fresh orphan lock budget", "TimeoutError"));
 		assert.equal(await read, undefined);
+		assert.deepEqual(controlled.durations, [800]);
 		assert.ok(existsSync(lock));
 		assert.ok(logged.mock.calls.some((call) => String(call.arguments[0]).includes(lock)));
 	} finally { logged.mock.restore(); }

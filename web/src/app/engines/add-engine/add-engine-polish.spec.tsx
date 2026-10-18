@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { enginesApi, type CheckResult } from "@/lib/engines-api";
 import { check, definitions, renderWithClient } from "../__fixtures__/test-utils";
@@ -122,8 +122,10 @@ describe("no fake progress while the check runs", () => {
     const dialog = await pickKind(user);
     await typeAddress(user, "http://192.168.1.50:8080/v1");
     vi.useFakeTimers();
-    const timedUser = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    await timedUser.click(within(dialog).getByRole("button", { name: "Continue" }));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
     const rows = within(dialog).getByRole("list", { name: "Check progress" });
     expect(within(dialog).getByText("Checking the server. This may take a few seconds.")).toBeVisible();
     await act(async () => {

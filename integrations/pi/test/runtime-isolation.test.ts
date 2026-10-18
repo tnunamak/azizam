@@ -12,7 +12,6 @@ after(() => rmSync(root, { recursive: true, force: true }));
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
 const runs = (name: string) => (existsSync(join(root, name)) ? readFileSync(join(root, name), "utf8").split("\n").filter(Boolean).length : 0);
-const settle = () => new Promise((resolve) => setTimeout(resolve, 500));
 
 /** A fresh agent dir where unrelated providers hold `!command` keys and azizam's key is a `models.json` command. */
 function agentDir(name: string): string {
@@ -41,10 +40,17 @@ async function boot(name: string, register: "scoped" | "pi-default") {
 		}) as unknown as typeof fetch,
 	});
 	const runtime = await ModelRuntime.create({ refreshOnCreate: false });
+	const refreshes: Promise<unknown>[] = [];
+	const refresh = runtime.refresh.bind(runtime);
+	(runtime as any).refresh = (...args: Parameters<typeof refresh>) => {
+		const pending = refresh(...args);
+		refreshes.push(pending);
+		return pending;
+	};
 	if (register === "scoped") registerProviderScoped(runtime, provider);
 	else runtime.registerNativeProvider(provider);
+	await Promise.all(refreshes);
 	await provider.prefetch(runtime);
-	await settle();
 	return { runtime, provider, auth };
 }
 
