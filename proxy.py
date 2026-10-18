@@ -29239,7 +29239,7 @@ async def _forward_provider_native(
     )
     native_operation = f"{request.method.upper()} {native_request_path}"
     # The provider route has no policy of its own: it reads the engine record's, as the lane does.
-    policy = native_policy if native_policy is not None else native_lane.policy_for(target["record"])
+    policy = native_policy if native_policy is not None else native_lane.policy_for(target.get("record") or {})
 
     def classify() -> tuple[native_lane.AllowEntry | None, Response | None]:
         return _classify_native_call(

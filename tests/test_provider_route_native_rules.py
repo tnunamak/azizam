@@ -87,7 +87,7 @@ def test_the_owner_can_make_the_same_call(fake_upstreams):
 @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH"])
 def test_a_write_the_record_does_not_declare_is_owner_only(fake_upstreams, method):
     engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
-    response = _call(method, f"{PROVIDER}/v1/chat/completions", "prov-write", engine.base_url)
+    response = _call(method, f"{PROVIDER}/v1/embeddings", "prov-write", engine.base_url)
     _denied(response, "native_owner_only")
     assert engine.requests == []
 
