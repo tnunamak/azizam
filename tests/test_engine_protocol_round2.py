@@ -158,3 +158,52 @@ def test_protocol_image_entry_is_neutral():
     import inspect
     assert '_try_protocol_request' not in inspect.getsource(proxy.proxy_comfy_request)
     assert '_try_protocol_request' in inspect.getsource(proxy.proxy_image_request)
+
+
+def test_inventory_timeout_leaves_healthy_results_and_status_issue(engine, monkeypatch):
+    from gateway.engine_protocol import inventory
+    monkeypatch.setattr(inventory, 'ENGINE_TIMEOUT_S', .04)
+    monkeypatch.setattr(inventory, 'LIST_TIMEOUT_S', .08)
+    original = dispatch.Runtime.invoke
+    async def invoke(self, op, body):
+        if self.target.engine_id == 'hung':
+            await asyncio.sleep(5)
+        return await original(self, op, body)
+    monkeypatch.setattr(dispatch.Runtime, 'invoke', invoke)
+    bad = copy.deepcopy(engine.record)
+    bad['id'] = 'hung'
+    engine.registry['services']['hung'] = bad
+    started = time.monotonic()
+    response = engine.client.get('/v1/models')
+    assert response.status_code == 200
+    assert time.monotonic() - started < 1
+    assert 'prism-chat' in {r['id'] for r in response.json()['data']}
+    assert any(row['engine_id'] == 'hung' for row in inventory.problems())
+
+
+def test_user_descriptions_override_seeds_and_reload_independently(monkeypatch, tmp_path):
+    seed = tmp_path/'seed'; user = tmp_path/'state'/'protocols'
+    seed.mkdir(); user.mkdir(parents=True)
+    text = (FIXTURE/'prism.yml').read_text()
+    (seed/'prism.yml').write_text(text)
+    (user/'prism.yml').write_text('id: prism\n')
+    monkeypatch.setattr(description, 'REGISTRY_DIR', seed)
+    monkeypatch.setenv('AZIZAM_PROTOCOLS_DIR', str(user))
+    assert 'prism' not in description.load_registry()
+    (user/'prism.yml').write_text(text)
+    assert 'prism' in description.load_registry()
+    assert not description.registry_problems()
+
+
+def test_invalid_first_stream_chunk_is_a_typed_502(engine, monkeypatch):
+    from tests.test_engine_protocol_executor import Chunks
+    data = yaml.safe_load((FIXTURE/'prism.yml').read_text())
+    stream = data['operations']['chat']['response']['stream']
+    stream.pop('map')
+    stream['terminal'] = {'sentinel':'[DONE]'}
+    doc = description.parse_description(data, source='prism.yml')
+    monkeypatch.setattr(description, 'load_registry', lambda: {'prism':doc})
+    wire(monkeypatch, lambda r: httpx.Response(200, stream=Chunks([b'data: {}\n\ndata: [DONE]\n\n'])))
+    response = chat(engine, stream=True)
+    assert response.status_code == 502
+    assert response.json()['error']['code'] == 'malformed_response'
