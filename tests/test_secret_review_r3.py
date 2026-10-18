@@ -336,3 +336,154 @@ def test_a_removed_credential_reference_is_a_binding_change():
     del after["services"]["ek"]["config"]["api_key_secret_id"]
     assert "config.api_key_secret_id" in service_registry.credential_binding_changes(before, after)["ek"]
     assert service_registry.credential_binding_changes(before, before) == {}
+
+
+# ---------------------------------------------------------------------------
+# L4: the credentials a migration moved out of a URL are put back where the URL is used
+# ---------------------------------------------------------------------------
+
+import httpx  # noqa: E402
+
+import proxy  # noqa: E402
+from gateway import decision_routing, record_carriers  # noqa: E402
+
+
+@pytest.fixture
+def store(tmp_path):
+    """A real secret store in a temporary database, which the runtime resolves from."""
+    path = tmp_path / "admin.db"
+    admin_store.init_db(path)
+    runtime_secrets.configure(path)
+    yield path
+    runtime_secrets.configure(None)
+
+
+def _moved(record, db):
+    moved, paths = record_carriers.externalize_service(record, secret_refs.putter(db))
+    assert paths
+    return moved
+
+
+def test_the_swap_requests_carry_the_query_credentials_stored_for_load_unload_and_verify(store, monkeypatch):
+    record = _driver_record()
+    record["lifecycle"]["driver_config"].update(
+        load_url="/load?token=R3LOADTOKEN", unload_url="/unload?token=R3UNLOADTOKEN", verify_endpoint="/v1/model?sig=R3VERIFYSIG")
+    for name in ("admin_key_env", "api_key_env"):
+        record["lifecycle"]["driver_config"].pop(name)
+    moved = _moved(record, store)
+    assert not [seed for seed in ("R3LOADTOKEN", "R3UNLOADTOKEN", "R3VERIFYSIG") if seed in json.dumps(moved)]
+    result, calls = _run_swap(monkeypatch, service_registry.runtime_backend_from_service(moved))
+    assert result is True
+    urls = [url for _, url, _ in calls]
+    assert any(url.endswith("/load?token=R3LOADTOKEN") for url in urls), urls
+    assert any(url.endswith("/unload?token=R3UNLOADTOKEN") for url in urls), urls
+
+
+def test_an_unreadable_stored_part_sends_nothing_and_never_falls_back_to_the_default_path(store, monkeypatch):
+    record = _driver_record()
+    record["lifecycle"]["driver_config"].update(load_url="/load?token=R3LOADTOKEN")
+    for name in ("admin_key_env", "api_key_env"):
+        record["lifecycle"]["driver_config"].pop(name)
+    moved = _moved(record, store)
+    secret_refs.delete(record_carriers.refs_in(moved["lifecycle"]["driver_config"]["load_url_entries"])[0], db_path=store)
+    result, calls = _run_swap(monkeypatch, service_registry.runtime_backend_from_service(moved))
+    assert result is False and calls == []
+
+
+def _answering(monkeypatch, *, client="AsyncClient"):
+    seen: list[str] = []
+
+    class Client(_Recorder):
+        async def _answer(self, method, url, **kwargs):
+            seen.append(str(url))
+            return await super()._answer(method, url, **kwargs)
+
+    monkeypatch.setattr(httpx, client, Client)
+    return seen
+
+
+def test_the_readiness_poll_carries_the_query_credentials_stored_for_the_health_endpoint(store, monkeypatch):
+    record = {"id": "e", "config": {"host": "good.invalid", "port": 9, "health_endpoint": "/ready?token=R3HEALTHTOKEN"},
+              "lifecycle": {"driver": "external"}}
+    backend = service_registry.runtime_backend_from_service(_moved(record, store))
+    assert "R3HEALTHTOKEN" not in json.dumps(backend)
+    seen = _answering(monkeypatch)
+    assert asyncio.run(lifecycle_drivers.ExternalDriver().ensure_ready(backend, 1.0)) is True
+    assert seen == ["http://good.invalid:9/ready?token=R3HEALTHTOKEN"]
+
+
+def test_the_resource_probe_url_carries_the_user_info_and_query_stored_for_the_health_endpoint(store):
+    record = {"id": "e", "config": {"host": "good.invalid", "port": 9, "health_endpoint": "http://user:R3PASS@good.invalid:9/health?k=R3QUERY"}}
+    moved = _moved(record, store)
+    assert "R3PASS" not in json.dumps(moved) and "R3QUERY" not in json.dumps(moved)
+    assert proxy._service_resource_probe_url(moved["config"]) == "http://user:R3PASS@good.invalid:9/health?k=R3QUERY"
+    relative = _moved({"id": "e", "config": {"host": "good.invalid", "port": 9, "health_endpoint": "/h?k=R3REL"}}, store)
+    assert proxy._service_resource_probe_url(relative["config"]) == "http://good.invalid:9/h?k=R3REL"
+    based = _moved({"id": "e", "config": {"base_url": "http://good.invalid:9/v1?key=R3BASE", "health_endpoint": "/health"}}, store)
+    assert "R3BASE" in proxy._service_resource_probe_url(based["config"])
+
+
+def test_the_resource_probe_url_is_empty_when_a_stored_part_cannot_be_read(store):
+    moved = _moved({"id": "e", "config": {"host": "good.invalid", "port": 9, "health_endpoint": "/h?k=R3GONE"}}, store)
+    secret_refs.delete(record_carriers.refs_in(moved["config"]["health_endpoint_entries"])[0], db_path=store)
+    assert proxy._service_resource_probe_url(moved["config"]) == ""
+
+
+def test_the_models_catalog_probe_and_the_context_window_probe_carry_their_stored_credentials(store, monkeypatch):
+    record = {"id": "e", "config": {"host": "good.invalid", "port": 9, "scheme": "http", "health_endpoint": "/ready?token=R3CATALOG",
+                                    "context_window_probe": {"endpoint": "/props?token=R3CONTEXT"}}}
+    moved = _moved(record, store)
+    assert proxy._runtime_health_endpoint(moved) == "http://good.invalid:9/ready?token=R3CATALOG"
+    monkeypatch.setitem(proxy.config, "backends", {"e": moved["config"]})
+    assert proxy._context_window_probe_endpoint("e") == "/props?token=R3CONTEXT"
+    secret_refs.delete(record_carriers.refs_in(moved["config"]["health_endpoint_entries"])[0], db_path=store)
+    assert proxy._runtime_health_endpoint(moved) is None
+
+
+def test_the_placement_probe_carries_the_query_credentials_stored_for_the_health_endpoint(store, monkeypatch):
+    moved = _moved({"id": "e", "config": {"host": "good.invalid", "port": 9, "health_endpoint": "/placement?token=R3PLACE"}}, store)
+    seen: list[str] = []
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get(self, url, **kwargs):
+            seen.append(url)
+            raise httpx.ConnectError("no engine runs in this test")
+
+    monkeypatch.setattr(httpx, "Client", Client)
+    runtime = decision_routing.DecisionRuntime(lambda: {"backends": {"e": moved["config"]}}, lambda *a, **k: None, lambda *a, **k: None)
+    runtime.observed_engine("e", fresh=True)
+    assert seen == ["http://good.invalid:9/placement?token=R3PLACE"]
+
+
+def test_the_observation_a_driver_health_endpoint_becomes_keeps_its_stored_query(store):
+    record = {"id": "e", "config": {"host": "good.invalid", "port": 9}, "lifecycle": {
+        "type": "http", "driver": "http-load-unload", "driver_config": {"load_url": "/load", "health_endpoint": "/ready?token=R3OBSERVED"}}}
+    moved = _moved(record, store)
+    v2 = service_registry.service_record_v2(moved, public=False)
+    http = v2["observations"]["process_ready"]["http"]
+    assert http["path"] == "/ready" and runtime_secrets.url(http, "path") == "/ready?token=R3OBSERVED"
+    assert "path_entries" not in service_registry.service_record_v2(moved)["observations"]["process_ready"]["http"]
+
+
+@pytest.mark.parametrize("value", [{"a": 1}, [1, 2], {"value": {"a": "R3SECRET"}}, ["R3SECRET"]])
+def test_a_write_refuses_a_mapping_or_a_list_as_an_environment_value(store, value):
+    record = {"id": "e", "config": {"host": "good.invalid", "port": 9}, "process": {"driver": "command", "env": {"MODE": value}}}
+    put = lambda text, origin=None: pytest.fail("a refused value must not be stored")  # noqa: E731
+    with pytest.raises(record_carriers.ValueRefused) as refused:
+        record_carriers.externalize_service(record, put, reject_ambiguous=True)
+    assert "R3SECRET" not in str(refused.value)
+
+
+def test_a_migration_still_keeps_a_stored_structured_environment_value_as_a_secret_never_inline(store):
+    record = {"id": "e", "config": {"host": "good.invalid", "port": 9}, "process": {"driver": "command", "env": {"MODE": {"a": "R3SECRET"}}}}
+    moved = _moved(record, store)
+    assert "R3SECRET" not in json.dumps(moved)

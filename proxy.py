@@ -194,6 +194,7 @@ from gateway.admin_runtime import (
 from gateway.api import create_gateway_router
 from gateway.request_source import note_connection, note_trusted_address
 from gateway.availability import availability_evidence_snapshot, project_capabilities
+from gateway.model_presentation import service_health_endpoint
 from gateway.models_catalog import (
     auth_contexts_from_user_snapshot,
     build_models_catalog,
@@ -3548,20 +3549,21 @@ def _service_resource_probe_config(service_id: str) -> Mapping[str, Any] | None:
 
 
 def _service_resource_probe_url(service_config: Mapping[str, Any]) -> str:
-    """Build a health URL from generic service transport fields."""
-    endpoint = str(service_config.get("health_endpoint") or "/health").strip() or "/health"
-    if endpoint.startswith(("http://", "https://")):
-        return endpoint
+    """Build a health URL from generic service transport fields.
 
-    env_name = str(service_config.get("base_url_env") or service_config.get("api_base_env") or "").strip()
-    env_base_url = str(get_env(env_name) or "").strip() if env_name else ""
-    base_url = str(
-        env_base_url
-        or service_config.get("base_url")
-        or service_config.get("api_base")
-        or service_config.get("default_base_url")
-        or ""
-    ).strip()
+    The stored credentials of the health endpoint and of the base URL (a query token, user info) are put back here, at
+    the moment of the probe; the record holds only references to them. An unreadable one gives no URL.
+    """
+    try:
+        endpoint = runtime_secrets.url(service_config, "health_endpoint").strip() or "/health"
+        if endpoint.startswith(("http://", "https://")):
+            return endpoint
+
+        env_name = str(service_config.get("base_url_env") or service_config.get("api_base_env") or "").strip()
+        env_base_url = str(get_env(env_name) or "").strip() if env_name else ""
+        base_url = (env_base_url or runtime_secrets.first_url(service_config)).strip()
+    except runtime_secrets.SecretUnavailable:
+        return ""
     if base_url:
         return f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
 
@@ -15685,6 +15687,21 @@ _HEALTH_EVIDENCE_TTL_S = 10.0
 _HEALTH_EVIDENCE_CACHE: dict[str, tuple[float, str, dict[str, Any]]] = {}
 
 
+def _runtime_health_endpoint(service: Mapping[str, Any]) -> str | None:
+    """The health URL of a service record with its stored credentials put back, resolved now (None when unreadable)."""
+    config = service.get("config")
+    merged = {**(config if isinstance(config, Mapping) else {}), **service}
+    try:
+        resolved = {
+            **merged,
+            "health_endpoint": runtime_secrets.url(merged, "health_endpoint"),
+            "base_url": runtime_secrets.first_url(merged, ("base_url",)),
+        }
+    except runtime_secrets.SecretUnavailable:
+        return None
+    return service_health_endpoint(resolved)
+
+
 async def _models_catalog_health_evidence(
     service_records: Mapping[str, Any],
     *,
@@ -15718,7 +15735,8 @@ async def _models_catalog_health_evidence(
             kept[service_id] = dict(hit[2])
     stale = [service_id for service_id in wanted if service_id not in kept]
     if stale:
-        probed = await probe_service_health(service_records, get_json=get_json, service_ids=stale)
+        probed = await probe_service_health(
+            service_records, get_json=get_json, service_ids=stale, endpoint_for=_runtime_health_endpoint)
         for service_id, evidence in probed.items():
             _HEALTH_EVIDENCE_CACHE[service_id] = (now, fingerprint(service_id), dict(evidence))
         kept.update(probed)
@@ -24211,7 +24229,10 @@ def _context_window_probe_endpoint(backend: str | None) -> str | None:
     """The service's ``context_window_probe.endpoint``, or None when it declares no probe."""
     cfg = (config.get("backends") or {}).get(backend) if backend else None
     probe = cfg.get("context_window_probe") if isinstance(cfg, Mapping) else None
-    endpoint = probe.get("endpoint") if isinstance(probe, Mapping) else None
+    try:
+        endpoint = runtime_secrets.url(probe, "endpoint") if isinstance(probe, Mapping) else None
+    except runtime_secrets.SecretUnavailable:
+        return None
     return endpoint if isinstance(endpoint, str) and endpoint.startswith("/") else None
 
 
@@ -24242,7 +24263,8 @@ async def _probed_context_window(backend: str) -> int | None:
             if value is None and isinstance(payload, Mapping):
                 value = _context_window_from_mapping(payload)
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] {endpoint}: could not read the context window of {backend!r}: {e}", flush=True)
+        # The URL can hold a stored credential, and an HTTP error names the URL: log the kind of failure only.
+        print(f"[proxy] could not read the context window of {backend!r} from its probe endpoint: {type(e).__name__}", flush=True)
 
     _MODEL_CONTEXT_CACHE[backend] = (now, value)
     return value

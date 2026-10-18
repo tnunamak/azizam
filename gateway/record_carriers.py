@@ -86,6 +86,16 @@ class UrlRefused(ValueError):
         self.path = path
 
 
+class ValueRefused(ValueError):
+    """A write put a mapping or a list where an environment value goes. The text names the place and never the value."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"{path} holds a mapping or a list; an environment value is text. Write it as text, or leave it out "
+            "(the gateway never passed a structured value to a process).")
+        self.path = path
+
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -408,6 +418,17 @@ def _entry_keeping_id(ref: str, previous: Any, **public: Any) -> dict[str, Any]:
     return entry
 
 
+def _env_is_structured(value: Any) -> bool:
+    """True for an environment value that is a non-empty mapping or list once a ``{"value": ...}`` wrapper is taken off.
+
+    The runtime never passed such a value to a process (it skipped it), so a write that names one is refused; a stored
+    one is kept by the migration as the text it would have been.
+    """
+    if isinstance(value, Mapping) and "value" in value:
+        value = value["value"]
+    return isinstance(value, (list, Mapping)) and bool(value)
+
+
 def _env_text(value: Any) -> str:
     """The text an environment value is stored as; nothing for a switch or an empty value."""
     if isinstance(value, Mapping) and "value" in value:
@@ -424,7 +445,8 @@ def externalize_service(record: Mapping[str, Any], put: Put, *, reject_ambiguous
     public). Environment: a legacy value, in whatever shape, becomes a secret value. Commands: an argument that follows
     a credential flag (or sits after ``=`` in one) becomes an entry, and a command line that holds one becomes an
     argument list. URLs: user info and query values move beside the field. A record with none of these comes back
-    equal to the one that went in. With ``reject_ambiguous`` a URL that cannot be read raises ``AmbiguousUrl``.
+    equal to the one that went in. With ``reject_ambiguous`` (a new write) a URL that cannot be read raises ``UrlRefused``
+    and an environment value that is a mapping or a list raises ``ValueRefused``.
     """
     out = copy.deepcopy(dict(record))
     moved: list[str] = []
@@ -477,6 +499,8 @@ def externalize_service(record: Mapping[str, Any], put: Put, *, reject_ambiguous
                     continue
                 if secret_refs.is_secret_entry(value) and "value" not in value:
                     continue
+                if reject_ambiguous and _env_is_structured(value):
+                    raise ValueRefused(f"{path}.env.{str(name)[:64]}")
                 text = _env_text(value)
                 if text:
                     env[name] = _entry_keeping_id(put(text, None), value)

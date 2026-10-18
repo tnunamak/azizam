@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from gateway import runtime_secrets
 from gateway.capabilities import Capability
 from gateway.decisions_api import DecisionDispatchResult, DecisionModel, DecisionsError
 from gateway.stable_aliases import AliasResolution, AliasUnavailableError, pattern_names, resolve_alias
@@ -74,13 +75,15 @@ class DecisionRuntime:
         service = self.config().get("backends", {}).get(service_id, {})
         engine = None
         try:
+            # The stored credentials of the health endpoint (a query token) are put back here, at the moment of the probe.
+            endpoint = runtime_secrets.url(service, "health_endpoint") or "/health"
             with httpx.Client(timeout=0.3, trust_env=False) as client:
-                response = client.get(f"http://{service['host']}:{service['port']}{service.get('health_endpoint', '/health')}")
+                response = client.get(f"http://{service['host']}:{service['port']}{endpoint}")
             if response.status_code == 200:
                 candidate = response.json().get("engine")
                 if candidate in {"gpu", "cpu"}:
                     engine = candidate
-        except (httpx.HTTPError, ValueError, KeyError, AttributeError):
+        except (httpx.HTTPError, ValueError, KeyError, AttributeError, runtime_secrets.SecretUnavailable):
             pass
         self.observed[service_id] = (time.monotonic(), engine)
         return engine

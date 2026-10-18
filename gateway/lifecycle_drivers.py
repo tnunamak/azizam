@@ -79,6 +79,14 @@ def _health_endpoint(driver_config: Mapping[str, Any], default: str) -> str:
         return default
 
 
+def _without_health_entries(svc: Mapping[str, Any], health_endpoint: str) -> dict:
+    """A copy of ``svc`` whose ``health_endpoint`` is already resolved, so ``_poll_health`` does not resolve it again."""
+    out = dict(svc)
+    out["health_endpoint"] = health_endpoint
+    out.pop("health_endpoint_entries", None)
+    return out
+
+
 class SwapRecoveryFailed(RuntimeError):
     """A swap failed, and putting back the activation the unit ran before failed too.
 
@@ -370,7 +378,7 @@ async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
     port = svc.get("port")
     if not port:
         return False
-    endpoint = svc.get("health_endpoint", "/health")
+    endpoint = _health_endpoint(svc, svc.get("health_endpoint", "/health"))
     url = f"http://{host}:{port}{endpoint}"
 
     loop = asyncio.get_running_loop()
@@ -1400,9 +1408,7 @@ class SystemdDriver:
     @staticmethod
     def _svc_with_health_endpoint(svc: Mapping[str, Any], health_ep: str) -> dict:
         """Return a copy of svc with health_endpoint set for _poll_health."""
-        d = dict(svc)
-        d["health_endpoint"] = health_ep
-        return d
+        return _without_health_entries(svc, health_ep)
 
     async def _run_systemctl(self, cmd: list[str]) -> bool:
         """Run a systemctl command. True on exit code 0; False on failure or timeout.
@@ -1487,20 +1493,22 @@ class HttpLoadUnloadDriver:
     async def ensure_ready(self, svc: Mapping[str, Any], timeout_s: float) -> bool:
         """Health-check only; load is handled by swap() for single-slot drivers."""
         dc = self._driver_config(svc)
-        verify_ep = dc.get("verify_endpoint", "/health")
-        svc_for_poll = dict(svc)
-        svc_for_poll["health_endpoint"] = verify_ep
-        return await _poll_health(svc_for_poll, min(timeout_s, 5.0))
+        verify_ep = self._path(dc, "verify_endpoint", "/health", fallback_on_unreadable=True)
+        return await _poll_health(_without_health_entries(svc, verify_ep), min(timeout_s, 5.0))
 
     def stop(self, svc: Mapping[str, Any]) -> None:
         """POST unload synchronously (best-effort)."""
         dc = self._driver_config(svc)
-        unload_url = dc.get("unload_url", "")
-        if not unload_url:
+        if not (dc.get("unload_url") or dc.get("unload_url_entries")):
             return
         base_url = self._base_url(svc)
         keys = self._credentials(svc, dc, base_url)
         if keys is None:
+            return
+        try:
+            unload_url = self._path(dc, "unload_url", "")
+        except runtime_secrets.SecretUnavailable:
+            print("[lifecycle] HttpLoadUnloadDriver.stop: the unload address could not be read; nothing was sent", flush=True)
             return
         admin_key, _api_key = keys
         admin_header = dc.get("admin_header", "x-admin-key")
@@ -1530,7 +1538,7 @@ class HttpLoadUnloadDriver:
 
     async def preflight(self, svc: Mapping[str, Any]) -> Optional[str]:
         dc = self._driver_config(svc)
-        if not dc.get("load_url"):
+        if not (dc.get("load_url") or dc.get("load_url_entries")):
             return "http-load-unload driver_config.load_url is required but not set"
         return None
 
@@ -1588,9 +1596,14 @@ class HttpLoadUnloadDriver:
             return False
         admin_key, api_key = keys
         admin_header = dc.get("admin_header", "x-admin-key")
-        load_url = dc.get("load_url", "/v1/model/load")
-        unload_url = dc.get("unload_url", "/v1/model/unload")
-        verify_ep = dc.get("verify_endpoint", "/v1/model")
+        try:
+            load_url = self._path(dc, "load_url", "/v1/model/load")
+            unload_url = self._path(dc, "unload_url", "/v1/model/unload")
+            verify_ep = self._path(dc, "verify_endpoint", "/v1/model")
+        except runtime_secrets.SecretUnavailable:
+            # Never fall back to the default path: it would send the admin key to an endpoint the owner did not name.
+            print("[lifecycle] HttpLoadUnloadDriver.swap: an address could not be read; nothing was sent", flush=True)
+            return False
         load_timeout = float(dc.get("load_timeout_s", self._DEFAULT_LOAD_TIMEOUT_S))
         success_marker = dc.get("success_marker", '"status":"finished"')
 
@@ -1715,6 +1728,20 @@ class HttpLoadUnloadDriver:
         if isinstance(lifecycle, Mapping):
             return lifecycle.get("driver_config") or {}
         return {}
+
+    @staticmethod
+    def _path(dc: Mapping[str, Any], key: str, default: str, *, fallback_on_unreadable: bool = False) -> str:
+        """A path of the driver config with the query credentials its record stores for it put back (resolved now).
+
+        Raises ``SecretUnavailable`` when a stored part cannot be read, unless ``fallback_on_unreadable`` (a
+        health check, which carries no key) asks for the default instead.
+        """
+        try:
+            return runtime_secrets.url(dc, key) or default
+        except runtime_secrets.SecretUnavailable:
+            if fallback_on_unreadable:
+                return default
+            raise
 
     @staticmethod
     def _base_url(svc: Mapping[str, Any]) -> str:

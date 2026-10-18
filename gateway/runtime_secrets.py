@@ -116,16 +116,25 @@ def scalar(container: Mapping[str, Any], key: str) -> str:
     return item if isinstance(item, str) else ""
 
 
+def first_url(config: Mapping[str, Any], keys: tuple[str, ...] = ("base_url", "api_base", "default_base_url")) -> str:
+    """The first of ``keys`` that a record sets, with its stored credentials put back, without a trailing slash.
+
+    Empty when none is set. A URL kept whole (``<key>_entries.whole``) leaves its public field empty and counts as set.
+    """
+    for key in keys:
+        raw = str(config.get(key) or "").strip()
+        held = config.get(key + record_carriers.SECRETS_SUFFIX)
+        if raw or (isinstance(held, Mapping) and isinstance(held.get("whole"), Mapping)):
+            return url({key: raw, key + record_carriers.SECRETS_SUFFIX: held}, key).rstrip("/")
+    return ""
+
+
 def service_url(config: Mapping[str, Any], keys: tuple[str, ...] = ("base_url", "api_base", "default_base_url")) -> str:
     """A record's endpoint with its stored credentials: the first of ``keys`` that holds a URL, joined, without a
     trailing slash; the record's host and port when none does."""
     from gateway.service_registry import service_base_url
 
-    for key in keys:
-        raw = str(config.get(key) or "").strip()
-        if raw:
-            return url({key: raw, key + record_carriers.SECRETS_SUFFIX: config.get(key + record_carriers.SECRETS_SUFFIX)}, key).rstrip("/")
-    return service_base_url(config)
+    return first_url(config, keys) or service_base_url(config)
 
 
 def url(container: Mapping[str, Any], key: str) -> str:

@@ -826,7 +826,12 @@ def service_record_v2(record: Mapping[str, Any], *, public: bool = True) -> dict
     if not observations and isinstance(lifecycle.get("driver_config"), Mapping):
         endpoint = lifecycle["driver_config"].get("health_endpoint")
         if endpoint:
-            observations["process_ready"] = {"http": {"path": endpoint, "expect": 200}}
+            probe: dict[str, Any] = {"path": endpoint, "expect": 200}
+            held = lifecycle["driver_config"].get("health_endpoint_entries")
+            if not public and held:
+                # The stored credentials of the probe path go with it; a public view shows none.
+                probe["path_entries"] = copy.deepcopy(held)
+            observations["process_ready"] = {"http": probe}
     residency = copy.deepcopy(record.get("residency")) if isinstance(record.get("residency"), Mapping) else {}
     if lifecycle.get("driver") == "http-load-unload":
         residency.setdefault("legacy_driver", "http-load-unload")
