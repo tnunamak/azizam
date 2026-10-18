@@ -31,6 +31,22 @@
       "type": "string",
       "pattern": "^(http-v1|adapter:[a-z][a-z0-9-]{0,63})$"
     },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60,
+      "description": "How messages name this engine to the caller. An adapter executor reads it, so no module spells an engine name."
+    },
+    "serves": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+      },
+      "description": "Capability tokens an engine record carries. An adapter executor uses them to answer for a record that names no protocol."
+    },
     "auth": {
       "type": "object",
       "additionalProperties": false,

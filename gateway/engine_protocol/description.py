@@ -169,6 +169,8 @@ class ProtocolDescription:
     auth: Mapping[str, AuthSpec] = field(default_factory=dict)
     errors: tuple[Advice, ...] = ()
     budgets: Budgets = DEFAULT_BUDGETS
+    serves: tuple[str, ...] = ()
+    label: str = ""
 
     @property
     def adapter_id(self) -> str | None:
@@ -308,12 +310,15 @@ class _Compiler:
             if spec.kind in ("header", "query") and not spec.name:
                 self.bad(f"auth.{cls}", f"kind '{spec.kind}' needs 'name'")
         advice = self._advice(doc.get("errors") or [])
+        if doc.get("serves") and not executor.startswith("adapter:"):
+            self.bad("serves", "only a reviewed adapter answers for a record that names no protocol; an http-v1 description is selected by name")
         operations = {name: self._operation(name, op, executor) for name, op in doc["operations"].items()}
         if self.problems:
             raise DescriptionError(self.source, self.problems)
         return ProtocolDescription(
             id=doc["id"], title=doc.get("title", doc["id"]), executor=executor, source=self.source,
             operations={k: v for k, v in operations.items() if v is not None}, auth=auth, errors=advice, budgets=self.budgets,
+            serves=tuple(doc.get("serves") or ()), label=str(doc.get("label") or ""),
         )
 
     def _advice(self, rows: list) -> tuple[Advice, ...]:

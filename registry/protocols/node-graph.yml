@@ -1,0 +1,29 @@
+# How Azizam talks to an engine that runs a graph of nodes submitted as one JSON prompt.
+#
+# This file is data. The wire is owned by the reviewed adapter `node-graph`
+# (gateway/engine_protocol/node_graph.py): graph patching, prompt submission,
+# history polling, file reads and the push channel are not expressible in the
+# http-v1 grammar. An adapter description lists operation names only. `label`
+# is how caller-facing messages name this engine; `serves` lists the capability
+# tokens for which this adapter answers when an engine record names no protocol.
+protocol_version: 1
+id: node-graph
+title: Node-graph prompt engine
+label: ComfyUI
+executor: adapter:node-graph
+serves: [images, videos, audio.generate]
+notes: >-
+  Operations: submit a prompt, read its history, read the queue, read an output
+  file, upload an input image, cancel, delete a history entry, read system
+  stats and free memory. A reviewed adapter owns every request.
+operations:
+  graph.submit: {class: generate}
+  graph.history: {class: inventory}
+  graph.history_page: {class: inventory}
+  graph.queue: {class: inventory}
+  graph.view: {class: inventory}
+  graph.upload: {class: generate}
+  graph.cancel: {class: control}
+  graph.delete_history: {class: control}
+  graph.stats: {class: inventory}
+  graph.free: {class: control}
