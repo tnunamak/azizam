@@ -2122,7 +2122,9 @@ describe("Library items whose files are gone", () => {
 
   test("an item from before Oct 11 says it was deleted and cannot be recovered", async () => {
     routeFetch((path) =>
-      path.startsWith("/me/api/media?") ? list([oldGone("old", "An old fox"), newGone("new", "A new owl")]) : undefined,
+      path.startsWith("/me/api/media?")
+        ? list([oldGone("old", "An old fox"), newGone("new", "A new owl")])
+        : path.includes("/download?") ? Response.json({}, { status: 404 }) : undefined,
     );
     renderLibrary();
     fireEvent.click(await screen.findByText("Show them"));

@@ -352,6 +352,8 @@ function validPayload(path: string, value: unknown): boolean {
   return false;
 }
 
+const REMOVE_MISSING_PATH = "/me/api/media/remove-missing";
+
 async function mediaRequest<T>(
   path: string,
   init: RequestInit = {},
@@ -371,7 +373,7 @@ async function mediaRequest<T>(
   } catch {
     throw new LibraryFailure(stage, "unreadable");
   }
-  if (init.method === "DELETE" ? !record(payload) : !validPayload(path, payload))
+  if (init.method === "DELETE" || path === REMOVE_MISSING_PATH ? !record(payload) : !validPayload(path, payload))
     throw new LibraryFailure(stage, "unreadable");
   // Missing model names remain unknown; string consumers receive an empty value.
   // Sizes and times come from free-form job metadata: a value that is not a
@@ -425,6 +427,17 @@ function usePreviewVisible() {
 /** Only a confirmed missing or expired file is "no longer stored". */
 function confirmedGone(reason?: string | null): boolean {
   return /missing or expired/i.test(reason?.replace(/[_-]+/g, " ") ?? "");
+}
+
+// The gateway deleted every generated file 24 hours after it was made until
+// 2026-10-11. A gone file made before the end of that day went that way.
+const AUTOMATIC_EXPIRY_ENDED_S = Date.UTC(2026, 9, 12) / 1000;
+
+/** What a confirmed-gone file's note says; older files were deleted and are not coming back. */
+function goneNote(asset: MediaAsset): string {
+  return typeof asset.created_at === "number" && asset.created_at < AUTOMATIC_EXPIRY_ENDED_S
+    ? "This file was deleted on or before Oct 11 and can’t be recovered."
+    : "This file is no longer stored.";
 }
 
 /**
@@ -2009,7 +2022,7 @@ function CreationViewer({
               {asset.available === false && !fileAvailable ? (
                 <p className="bg-muted rounded-control text-meta p-3">
                   {confirmedGone(asset.unavailable_reason)
-                    ? "This file is no longer stored."
+                    ? goneNote(asset)
                     : "This file is unavailable."}
                   {remains ? ` ${remains}` : ""}
                 </p>
@@ -2259,6 +2272,7 @@ export default function LibraryPage() {
   const [selected, setSelected] = useState<MediaAsset | null>(null);
   const [closedDeepLinkId, setClosedDeepLinkId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
+  const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const [deleteAnnouncement, setDeleteAnnouncement] = useState("");
   const [loadMoreRequest, setLoadMoreRequest] = useState<{ path: string; ids: Set<string>; pages: number } | null>(null);
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
@@ -2567,6 +2581,8 @@ export default function LibraryPage() {
     )?.owner_user_id;
     return Boolean(viewerUserId && ownerId && ownerId === viewerUserId);
   }
+  // Remove missing items clears the viewer's own entries, whoever is shown.
+  const ownGoneCount = goneAssets.filter(madeByViewer).length;
   function returnFocus(assetId: string) {
     // After a delete, the confirmation still holds focus; the page returns
     // focus once it closes (below).
@@ -2611,6 +2627,31 @@ export default function LibraryPage() {
       removedAssetIds.current.add(asset.asset_id);
       setDeleteAnnouncement("Deleted from your library.");
       closeAsset();
+      void queryClient.invalidateQueries({ queryKey: ["library"] });
+    },
+    onError: (error) => toast.error(failureCopy(error)),
+  });
+  const removeMissingMutation = useMutation({
+    mutationFn: async () => {
+      const session = await mediaRequest<{ csrf_token: string }>(
+        "/me/api/session",
+      );
+      return mediaRequest<{ removed_assets: number }>(
+        REMOVE_MISSING_PATH,
+        {
+          method: "POST",
+          headers: {
+            "x-azizam-user-action": "1",
+            "x-azizam-csrf": session.csrf_token,
+          },
+        },
+        "delete",
+      );
+    },
+    onSuccess: ({ removed_assets: removed }) => {
+      setDeleteAnnouncement(
+        `Removed ${removed} missing ${removed === 1 ? "item" : "items"} from your Library.`,
+      );
       void queryClient.invalidateQueries({ queryKey: ["library"] });
     },
     onError: (error) => toast.error(failureCopy(error)),
@@ -2974,13 +3015,24 @@ export default function LibraryPage() {
               {/* One explanation for owners and members alike. */}
               <span className="text-muted-foreground">Receipts remain.</span>
             </p>
-            <Button
-              variant="link"
-              className="h-auto min-h-6 min-w-6 px-0"
-              onClick={() => void refetch()}
-            >
-              Refresh library
-            </Button>
+            <div className="flex flex-wrap items-center gap-x-4">
+              {ownGoneCount > 0 ? (
+                <Button
+                  variant="link"
+                  className="h-auto min-h-6 min-w-6 px-0"
+                  onClick={() => setConfirmingRemoval(true)}
+                >
+                  Remove missing items
+                </Button>
+              ) : null}
+              <Button
+                variant="link"
+                className="h-auto min-h-6 min-w-6 px-0"
+                onClick={() => void refetch()}
+              >
+                Refresh library
+              </Button>
+            </div>
           </div>
           <details
             className="group mt-2"
@@ -3088,6 +3140,25 @@ export default function LibraryPage() {
           onReturnFocus={returnFocus}
         />
       ) : null}
+      <ConfirmDialog
+        open={confirmingRemoval}
+        onOpenChange={setConfirmingRemoval}
+        title={
+          hasNextPage
+            ? "Remove missing items?"
+            : `Remove ${ownGoneCount} missing ${ownGoneCount === 1 ? "item" : "items"}?`
+        }
+        description={
+          hasNextPage
+            ? "Removes your items whose files are gone, with their prompts, from your Library. Receipts and every stored file stay."
+            : "Removes them and their prompts from your Library. Receipts and every stored file stay."
+        }
+        confirmLabel="Remove"
+        onConfirm={async () => {
+          setDeleteAnnouncement("");
+          await removeMissingMutation.mutateAsync();
+        }}
+      />
       <ConfirmDialog
         open={Boolean(confirming)}
         onOpenChange={(open) => !open && setConfirming(null)}
