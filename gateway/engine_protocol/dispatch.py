@@ -5,7 +5,7 @@ before invocation. Selection uses the same transaction as other engine paths.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Mapping
 
 from gateway.engine_contract_view import connection_config, observations_config, offerings_config
@@ -85,16 +85,17 @@ class Runtime:
             if scheme:
                 value = value[len(scheme)+1:]
             credentials[cls] = Credential(value, header=spec.get('header'), scheme=spec.get('scheme'))
-        from dataclasses import replace
         self.connection = replace(connection_from_record({**connection, 'credentials': {}}, lambda ref: None),
                                   credentials=credentials)
         self.adapter = AdapterRegistry({target.description.id: target.description}, assets=assets,
                                        transport=transport).adapter_for(target.description.id)
 
+    def request(self, op: str, body: Mapping[str, Any]) -> CanonicalRequest:
+        return CanonicalRequest(op=op, body={**body, 'model': self.target.upstream},
+                                params={'model': self.target.upstream, 'offering': self.target.offering['id']})
+
     async def invoke(self, op: str, body: Mapping[str, Any]):
-        request = CanonicalRequest(op=op, body={**body, 'model':self.target.upstream},
-                                   params={'model':self.target.upstream, 'offering':self.target.offering['id']})
-        return await self.adapter.invoke(self.connection, op, request)
+        return await self.adapter.invoke(self.connection, op, self.request(op, body))
 
     async def lease(self, *, drain, lock_for, may_switch: bool = True):
         selection = self.target.offering.get('selection') or {}
@@ -120,21 +121,42 @@ class Runtime:
         async def observe(name):
             spec = service['observations'].get(name) or {}
             op = spec.get('op')
-            if not isinstance(op, str) or op not in self.target.description.operations:
+            adapter, connection = self.adapter, self.connection
+            if 'http' in spec:
+                http = spec['http']
+                selector = http.get('select', spec.get('select'))
+                if selector is None:
+                    return UNKNOWN
+                # Compile the documented HTTP observation into the same bounded
+                # grammar. No second HTTP client or credential path is needed.
+                observation = description.parse_description({
+                    'id': 'observation', 'protocol_version': 1, 'executor': 'http-v1',
+                    'auth': {cls: {'kind': auth.kind, **({'name': auth.name} if auth.name else {}),
+                                   **({'scheme': auth.scheme} if auth.scheme is not None else {})}
+                             for cls, auth in self.target.description.auth.items()},
+                    'operations': {'observe': {
+                        'class': 'inventory' if spec.get('credential_class') == 'inference' else 'control',
+                        'request': {'method': 'GET', 'path': http['path']},
+                        'response': {'framing': 'json', 'select': {'value': selector}}}},
+                }, source='engine observation', budgets=self.target.description.budgets)
+                adapter = AdapterRegistry({'observation': observation}).adapter_for('observation')
+                seconds = max(0.01, min(float(http.get('timeout_s', 2)), 30))
+                connection = replace(connection, timeouts=replace(connection.timeouts, total_s=seconds,
+                                       first_byte_s=min(seconds, connection.timeouts.first_byte_s)))
+                op = 'observe'
+            elif not isinstance(op, str) or op not in self.target.description.operations:
                 return UNKNOWN
             try:
-                reply = await self.adapter.invoke(self.connection, op, CanonicalRequest(op))
+                reply = await adapter.invoke(connection, op, CanonicalRequest(op))
                 if isinstance(reply, StreamReply):
                     await reply.aclose()
+                    return UNKNOWN
+                if reply.status != (spec.get('http') or {}).get('expect', 200):
                     return UNKNOWN
                 value = reply.selected.get('value')
                 return Observation(value is not None, value)
             except ProtocolError:
                 return UNKNOWN
 
-        if not may_switch:
-            previous = await observe((selection.get('switch') or {}).get('observe_selected'))
-            if not previous.known or previous.value != self.target.upstream:
-                raise SwitchUnavailable('The plan permits only the already selected offering.')
         return await SwitchController(drain=drain, invoke=invoke, observe=observe, lock_for=lock_for).select(
-            service, str(self.target.offering['id']), selection)
+            service, str(self.target.offering['id']), selection, may_switch=may_switch)

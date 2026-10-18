@@ -23,7 +23,7 @@ async def run(runtime, op, body, *, job_id):
                                 code='submission_unknown')
         media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
                                  metadata_patch={'protocol_submitting':True}, path=media_jobs.DB_PATH)
-        ref = await adapter.submit(conn, op, CanonicalRequest(op, body={**body,'model':runtime.target.upstream}))
+        ref = await adapter.submit(conn, op, runtime.request(op, body))
         media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
                                  metadata_patch={'protocol_job':ref.id}, path=media_jobs.DB_PATH)
     last_error = None
