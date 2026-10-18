@@ -21,8 +21,8 @@ from gateway.litellm_substrate import (
     litellm_provider_key_statuses,
     litellm_provider_model_lookup,
     secret_env_name_for_provider,
-    write_litellm_config_artifact,
 )
+from gateway.litellm_runtime import write_litellm_config_artifact
 
 
 def test_compiles_openai_compatible_local_service() -> None:
