@@ -545,7 +545,7 @@ def _agreed_lifecycle(service_id: str, record: Mapping[str, Any]) -> dict[str, A
 
 
 def _v2_process(lifecycle: Mapping[str, Any]) -> dict[str, Any] | None:
-    if not lifecycle or (not lifecycle.get("driver") and not lifecycle.get("managed")):
+    if not lifecycle:
         return None
     driver = str(lifecycle.get("driver") or "external")
     driver_config = lifecycle.get("driver_config") if isinstance(lifecycle.get("driver_config"), Mapping) else {}
