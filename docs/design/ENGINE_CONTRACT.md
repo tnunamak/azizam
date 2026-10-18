@@ -207,6 +207,28 @@ A frontend descriptor is data. It declares:
 Descriptors mount at boot and on reload, with collision checks and rollback
 when a reload fails.
 
+- **Mounting.** `gateway/frontend_mount.py` builds the table. Builtin rows are
+  placed first, so a package row can never take a path a builtin row holds. A
+  row that collides or names an unknown translator is skipped and logged, and
+  its frontend is reported as broken (`GET /admin/api/operator/frontends`, and
+  the Overview attention list); the gateway keeps serving. A reload builds the
+  new table before it publishes any config, then swaps it in one step at the
+  old rows' position. A build or swap that fails leaves the old config and
+  routes serving.
+- **Authentication.** The mount runs an authenticator before every operation
+  that does not check the caller itself, on any path prefix, so a row at
+  `/x/{provider}` gets a 401 without a key. The operations that check the
+  caller themselves (the OpenAI, Anthropic and Ollama handlers, which answer
+  in their own error shape, and the signed-content routes) are marked
+  `self_authenticates`; a new operation is authenticated by default.
+- **Who may mount what.** A package, UI or imported row may name only a
+  package-mountable translator (`identity`, `anthropic`, `ollama`). The
+  privileged translators (`provider-native`, `native`, `gateway`, `realtime`)
+  are reserved for builtin rows, which come from the seed that ships with the
+  code. A package is refused at review if a row names a privileged translator or
+  opens its path with a parameter; the mount checks again, and a stored row
+  that claims `builtin` for an id the seed does not hold is a package row.
+
 - **The data-only promise covers HTTP frontends** whose shapes fit identity or
   http-v1 mapping. In practice that means OpenAI-structured shapes, because
   the mapping has no loops. No surveyed gateway makes a new inbound shape pure
@@ -214,7 +236,17 @@ when a reload fails.
 - **Each frontend declares a `strictness`:** `exact` refuses any field it
   can't carry; `lenient` drops it and records it. Every translated response
   carries a loss report (dropped or approximated fields), both in the receipt
-  and in a response header.
+  and in a response header (`x-azizam-loss`).
+  - A row declares `carries`, the request fields its translator handles, as
+    paths: `options.temperature`, `messages[].role`. A name with no nested path
+    carries everything under it. `exact` also refuses a body that is not a JSON
+    object, and a nested field the translator flattens away.
+  - The builtin anthropic and ollama rows declare `carries` from their
+    translators' code, and stay `lenient`: clients send fields these
+    translators do not map, and a refusal would break them. The header names
+    them.
+  - A row with a multipart body declares `body: multipart`. It is not loss
+    checked, and a translated response says `unchecked` in its report.
 - **Other shapes** (new handshakes, WebSocket session protocols, signed
   webhooks) need a reviewed translator. A translator package becomes
   installable without a release once the trusted loader exists (section 7).
@@ -227,10 +259,30 @@ template, through `native.allow`.
 - A `generate` entry is plan-scoped.
 - A `control` entry (load, settings, restart, file paths) is owner-only and
   never implied by generation access.
-- Azizam forwards the request with the engine's own credential for that class.
-  It never forwards the client's auth or cookies.
-- Request and response bytes are capped. Redirects are refused or
-  origin-checked, and configured hosts are SSRF-checked.
+- Paths match exactly. An entry declares the query keys it allows (`query:
+  [limit]`); with none declared it takes no query string, and any other key,
+  or a repeated key, is refused. A `generate` entry also refuses a value that
+  looks like a file path (a slash, a backslash, `..`, `~`, a drive letter,
+  `file:`, a control character). A control entry's values pass.
+- Control wins over generate. A request that matches a control entry only once
+  letter case is folded is ambiguous and refused (`native_ambiguous_path`). An
+  engine whose paths are case-insensitive declares `native.case_insensitive:
+  true` and is matched case-folded.
+- `HEAD` is not an allowed method: the route does not serve it.
+- Azizam forwards the request with the engine's own credential for that class:
+  `connection.credentials.inference` for `generate`, `.control` for `control`,
+  each bound to the origin it was attached for. A class with no credential
+  sends none, and never the other class's. It never forwards the client's auth
+  or cookies, and it does not use the service record's single `auth_inject`
+  key. A credential that is not bound to the address it would go to is not
+  sent, and the call is refused.
+- Request and response bytes are capped. Redirects are refused. Configured
+  hosts are SSRF-checked with `gateway/engine_check.py`: the address as written
+  when the record is saved, the lookup result when it is saved and on every
+  request, and the request dials only the addresses just checked.
+- The engine's reply does not relay `Set-Cookie`, `Strict-Transport-Security`,
+  CORS, `WWW-Authenticate`, `Alt-Svc` or the other headers that belong to the
+  engine's origin.
 - The receipt records the operation and says "cost unknown" when usage can't be
   measured.
 - Remote providers have no native lane in this version. That is an intentional,
