@@ -657,7 +657,7 @@ def test_the_total_time_budget_stops_a_silent_engine() -> None:
 JOB = {"render": {"class": "generate", "job": {
     "submit": {"request": {"method": "POST", "path": "/jobs", "body": {"encoding": "json", "map": [{"copy": {"from": "/body/prompt", "to": "/spec/prompt"}}]}}, "id": "/job/id"},
     "poll": {"request": {"method": "GET", "path": "/jobs/{id}"}, "status": {"path": "/state", "states": {"queued": "pending", "busy": "running", "ok": "succeeded", "bad": "failed", "gone": "cancelled"}},
-             "error": "/error/message", "assets": "/files/*/name", "interval_s": 0.1, "max_wait_s": 5},
+             "error": "/error/message", "assets": "/files/*/name", "interval_s": 0.5, "max_wait_s": 5},
     "fetch": {"request": {"method": "GET", "path": "/jobs/{id}/files/{asset}"}},
     "cancel": {"request": {"method": "POST", "path": "/jobs/{id}/cancel"}},
 }}}
@@ -831,19 +831,19 @@ def timed_job_handler(states, stamps):
 
 def test_wait_polls_at_the_declared_interval_until_the_job_ends() -> None:
     stamps: list[float] = []
-    ex, _ = make(fast_job(0.1, 5), timed_job_handler([{"state": "queued"}, {"state": "busy"}, {"state": "ok", "files": []}], stamps))
+    ex, _ = make(fast_job(0.5, 5), timed_job_handler([{"state": "queued"}, {"state": "busy"}, {"state": "ok", "files": []}], stamps))
 
     async def go():
         ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
         return await ex.wait(conn(), ref)
     status = run(go())
     assert status.state is JobState.succeeded and len(stamps) == 3
-    assert min(b - a for a, b in zip(stamps, stamps[1:])) >= 0.09  # not faster than interval_s
+    assert min(b - a for a, b in zip(stamps, stamps[1:])) >= 0.49  # not faster than interval_s
 
 
 def test_wait_gives_up_at_max_wait_and_stops_polling() -> None:
     stamps: list[float] = []
-    ex, _ = make(fast_job(0.1, 1), timed_job_handler([{"state": "busy"}] * 1000, stamps))
+    ex, _ = make(fast_job(0.5, 1), timed_job_handler([{"state": "busy"}] * 1000, stamps))
 
     async def go():
         ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
@@ -853,7 +853,7 @@ def test_wait_gives_up_at_max_wait_and_stops_polling() -> None:
         return raised.value, time.perf_counter() - started
     error, elapsed = run(go())
     assert error.budget == "max_wait_s"
-    assert 0.9 <= elapsed < 2.0 and 5 <= len(stamps) <= 12
+    assert 0.9 <= elapsed < 2.0 and 2 <= len(stamps) <= 3
 
 
 def test_max_wait_also_bounds_a_poll_that_hangs() -> None:
@@ -862,7 +862,7 @@ def test_max_wait_also_bounds_a_poll_that_hangs() -> None:
             return httpx.Response(202, json={"job": {"id": 42}})
         await asyncio.sleep(5)
         return httpx.Response(200, json={"state": "busy"})
-    ex = executor.HttpV1Executor(desc(fast_job(0.1, 1)), transport=transport.HttpxTransport.for_tests(HandlerTransport(handler)), assets=MemoryAssetStore())
+    ex = executor.HttpV1Executor(desc(fast_job(0.5, 1)), transport=transport.HttpxTransport.for_tests(HandlerTransport(handler)), assets=MemoryAssetStore())
 
     async def go():
         ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
@@ -1019,7 +1019,7 @@ def test_answer_headers_and_a_job_failure_reason_never_hold_the_key() -> None:
     echo = {"x-echo": f"http://engine.test:8080/x?api_key={quote_plus(QKEY)}", "x-plus": quote_plus(QKEY), "x-plain": quote(QKEY)}
     ex, _ = make(QOPS, lambda r: httpx.Response(200, json={}, headers=echo), auth=QUERY_AUTH)
     clean(run(ex.invoke(qconn(), req("x"))).headers)
-    jobs = fast_job(0.1, 1)
+    jobs = fast_job(0.5, 1)
     ex, _ = make(jobs, job_handler([{"state": "bad", "error": {"message": f"failed: {QKEY}"}}]), auth=QUERY_AUTH)
 
     async def go():
@@ -1130,7 +1130,7 @@ def test_wait_retries_transient_errors_with_interval_and_deadline(failure, recov
         if failure == "transport":
             raise httpx.ConnectError("temporary")
         return httpx.Response(failure)
-    ex, _ = make(fast_job(0.1, 1), handler)
+    ex, _ = make(fast_job(0.5, 1), handler)
 
     async def go():
         ref = await ex.submit(conn(), req("render"))
@@ -1143,13 +1143,13 @@ def test_wait_retries_transient_errors_with_interval_and_deadline(failure, recov
     started = time.perf_counter()
     run(go())
     assert len(stamps) >= 2
-    assert all(b - a >= 0.09 for a, b in zip(stamps, stamps[1:]))
+    assert all(b - a >= 0.49 for a, b in zip(stamps, stamps[1:]))
     assert time.perf_counter() - started < 2
     assert all(t - started < 1.05 for t in stamps)
 
 
 def test_wait_does_not_retry_client_errors() -> None:
-    ex, fake = make(fast_job(0.1, 1), lambda r: httpx.Response(404) if r.method == "GET"
+    ex, fake = make(fast_job(0.5, 1), lambda r: httpx.Response(404) if r.method == "GET"
                     else httpx.Response(202, json={"job": {"id": 42}}))
 
     async def go():

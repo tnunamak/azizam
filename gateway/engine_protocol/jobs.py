@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 
 from gateway import media_jobs
-from gateway.engine_protocol.errors import BudgetExceeded, ProtocolError, TransportFailure, UpstreamError
+from gateway.engine_protocol.errors import BudgetExceeded, ProtocolError, TransportFailure, UpstreamError, retryable_poll_failure
 from gateway.engine_protocol.types import CanonicalRequest, JobRef, JobState
 
 
@@ -26,6 +26,7 @@ async def run(runtime, op, body, *, job_id):
         ref = await adapter.submit(conn, op, CanonicalRequest(op, body={**body,'model':runtime.target.upstream}))
         media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING,
                                  metadata_patch={'protocol_job':ref.id}, path=media_jobs.DB_PATH)
+    last_error = None
     try:
         async with asyncio.timeout(spec.poll.max_wait_s):
             while True:
@@ -35,9 +36,10 @@ async def run(runtime, op, body, *, job_id):
                     raise media_jobs.CancellationPending()
                 try:
                     status = await adapter.poll(conn, ref)
-                except (TransportFailure, UpstreamError) as exc:
-                    if isinstance(exc, UpstreamError) and exc.status < 500:
+                except (TransportFailure, UpstreamError, retryable_poll_failure) as exc:
+                    if not retryable_poll_failure(exc):
                         raise
+                    last_error = str(exc)
                     await asyncio.sleep(spec.poll.interval_s)
                     continue
                 if status.state == JobState.succeeded:
@@ -47,7 +49,7 @@ async def run(runtime, op, body, *, job_id):
                 await asyncio.sleep(spec.poll.interval_s)
     except TimeoutError:
         await adapter.cancel(conn, ref)
-        raise BudgetExceeded('max_wait_s', 'The upstream job exceeded its wait limit.') from None
+        raise BudgetExceeded('max_wait_s', 'The upstream job exceeded its wait limit.' + (f' Last poll failure: {last_error}' if last_error else '')) from None
     except asyncio.CancelledError:
         # A disconnected caller does not leave an untracked upstream running.
         await asyncio.shield(adapter.cancel(conn, ref))

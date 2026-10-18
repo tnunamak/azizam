@@ -474,7 +474,7 @@
             },
             "interval_s": {
               "type": "number",
-              "minimum": 0.05,
+              "minimum": 0.5,
               "maximum": 300
             },
             "max_wait_s": {

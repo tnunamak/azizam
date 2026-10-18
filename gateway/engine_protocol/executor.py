@@ -49,7 +49,7 @@ from gateway.engine_protocol.description import (
 )
 from gateway.engine_protocol.errors import (
     BudgetExceeded, MalformedResponse, MappingError, ProtocolError, RedirectRefused, TransportFailure, UnknownOperation,
-    UnsupportedByAdapter, UpstreamError,
+    UnsupportedByAdapter, UpstreamError, retryable_poll_failure,
 )
 from gateway.engine_protocol.mapping import json_key, same_json
 from gateway.engine_protocol.transport import HttpxTransport, Transport, WireRequest, WireResponse
@@ -201,26 +201,29 @@ class HttpV1Executor:
         interval, limit = op.job.poll.interval_s, op.job.poll.max_wait_s
         loop = asyncio.get_running_loop()
         deadline = loop.time() + limit
-        too_long = BudgetExceeded("max_wait_s", f"The job did not end within {limit:g} s.")
+        last_error = None
+
+        def too_long():
+            detail = f" Last poll failure: {last_error}" if last_error else ""
+            return BudgetExceeded("max_wait_s", f"The job did not end within {limit:g} s.{detail}")
         while True:
             if loop.time() >= deadline:
-                raise too_long
+                raise too_long()
             try:
                 async with asyncio.timeout_at(deadline):
                     status = await self.poll(conn, ref)
             except TimeoutError:
-                raise too_long from None
-            except TransportFailure:
-                pass
-            except UpstreamError as exc:
-                if not 500 <= exc.status < 600:
+                raise too_long() from None
+            except (TransportFailure, UpstreamError) as exc:
+                if not retryable_poll_failure(exc):
                     raise
+                last_error = _scrub(str(exc), _secrets(conn))
             else:
                 if status.state in _ENDED:
                     return status
             remaining = deadline - loop.time()
             if remaining <= 0:
-                raise too_long
+                raise too_long()
             await asyncio.sleep(min(interval, remaining))
 
     @_redacting
@@ -240,9 +243,13 @@ class HttpV1Executor:
         else:
             if status.state in _ENDED:
                 return
-        async with _total(conn, "The engine did not finish cancelling"):
-            wire = await self._exchange(conn, op.job.cancel, op, source, _secrets(conn))
-            await wire.aclose()
+        try:
+            async with _total(conn, "The engine did not finish cancelling"):
+                wire = await self._exchange(conn, op.job.cancel, op, source, _secrets(conn))
+                await wire.aclose()
+        except UpstreamError as exc:
+            if exc.status not in {404, 409, 410}:
+                raise
 
     @_redacting
     async def fetch_assets(self, conn: Connection, ref: JobRef, status: JobStatus) -> tuple[AssetRef, ...]:
@@ -323,7 +330,7 @@ class HttpV1Executor:
                 raise MappingError(f"The request needs the value '{match.group(1)}' for the path {spec.path}.")
             normalized = unicodedata.normalize("NFKC", value)
             if (normalized in (".", "..")
-                    or any(c in "/\\%;" or unicodedata.category(c) == "Cc" for c in normalized)
+                    or any(c in "/\\%;" or unicodedata.category(c) in {"Cc", "Cs"} for c in normalized)
                     or any(c != "." and "." in unicodedata.normalize("NFKC", c) for c in value)):
                 raise MappingError(f"The value '{match.group(1)}' is not a safe single path segment.")
             return quote(value, safe="")
@@ -483,7 +490,7 @@ class HttpV1Executor:
         finally:
             await response.aclose()
         body = _scrub_cut(bytes(raw), secrets_, _ERROR_BODY_CAP)
-        excerpt = _scrub_cut(" ".join(body.decode("utf-8", "replace").split()).encode(), secrets_, 160).decode("utf-8", "replace")
+        excerpt = _scrub_text_cut(" ".join(body.decode("utf-8", "replace").split()), secrets_, 160)
         row = self.description.advice_for(response.status)
         keep = {k: _scrub(v, secrets_) for k, v in response.headers.items() if k in ("retry-after", "content-type")}
         message = f"The engine answered {response.status}" + (f": {excerpt}" if excerpt else ".")
@@ -753,3 +760,15 @@ def _scrub_cut(data: bytes, secrets_: list[str], cap: int) -> bytes:
                 cut = min(cut, len(data) - size)
                 break
     return data[:cut]
+
+
+def _scrub_text_cut(value: str, secrets_: list[str], cap: int) -> str:
+    """Cap diagnostic characters after scrubbing, without a partial secret prefix."""
+    value = _scrub(value, secrets_)[:cap]
+    cut = len(value)
+    for secret in secrets_:
+        for size in range(min(len(secret) - 1, len(value)), 0, -1):
+            if value.endswith(secret[:size]):
+                cut = min(cut, len(value) - size)
+                break
+    return value[:cut]
