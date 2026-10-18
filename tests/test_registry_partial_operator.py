@@ -95,37 +95,27 @@ def test_the_service_registry_page_loads_and_shows_the_excluded_record_apart(liv
     assert set(body["service_registry"]["services"]) == {"good-engine"}
     [excluded] = body["excluded"]
     assert excluded["id"] == "bad-engine" and excluded["error"]
-    assert excluded["record"]["config"]["models"] == BAD["config"]["models"]  # what the operator needs to fix it
+    # What the operator needs to fix it: the record as stored, with only its secret slots hidden (decision D21).
+    assert excluded["parsed"] is True
+    assert excluded["record"]["config"]["models"] == BAD["config"]["models"]
+    assert excluded["record"]["config"]["host"] == "10.0.0.5"
 
 
 def test_an_excluded_record_never_shows_a_credential_it_holds(live, monkeypatch):
-    leaky = _service("leaky", models=["not a model record"], api_key="sk-live-should-never-be-shown")
+    # A header row written before decision D26 (an inline value) and a secret entry: neither value is shown.
+    leaky = _service("leaky", models=["not a model record"],
+                     headers=[{"name": "X-Vendor", "value": "sk-live-should-never-be-shown"},
+                              {"id": "ent_" + "a" * 16, "name": "X-Other", "secret_ref": "sref_" + "b" * 24}])
     client = _running_partial(live, monkeypatch, {"good-engine": GOOD, "leaky": leaky})
 
     response = client.get("/admin/api/operator/service-registry")
 
     assert response.status_code == 200
-    assert "sk-live-should-never-be-shown" not in response.text
-    assert [item["id"] for item in response.json()["excluded"]] == ["leaky"]
-
-
-def test_an_excluded_record_hides_a_secret_by_the_name_of_its_key(live, monkeypatch):
-    held = _service("held", models=["not a model record"], password="hunter2")
-    client = _running_partial(live, monkeypatch, {"good-engine": GOOD, "held": held})
-
-    shown = client.get("/admin/api/operator/service-registry").json()["excluded"][0]["record"]
-
-    assert shown["config"]["password"] == "[redacted]"
-    assert shown["config"]["host"] == "10.0.0.5"  # only the secret is hidden
-
-
-def test_an_excluded_record_hides_a_secret_by_its_shape_under_any_key(live, monkeypatch):
-    held = _service("held", models=["not a model record"], note="sk-live-abcdefghijklmnopqrstuvwxyz0123456789")
-    client = _running_partial(live, monkeypatch, {"good-engine": GOOD, "held": held})
-
-    shown = client.get("/admin/api/operator/service-registry").json()["excluded"][0]["record"]
-
-    assert shown["config"]["note"] == "[redacted]"
+    assert "sk-live-should-never-be-shown" not in response.text and "sref_" not in response.text
+    [item] = response.json()["excluded"]
+    assert item["id"] == "leaky" and item["parsed"] is True
+    assert item["record"]["config"]["headers"] == [{"name": "X-Vendor", "configured": False, "legacy": True},
+                                                   {"id": "ent_" + "a" * 16, "name": "X-Other", "configured": False}]
 
 
 def test_a_full_save_with_a_new_engine_keeps_the_excluded_record_in_the_store(live, monkeypatch):

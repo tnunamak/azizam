@@ -107,7 +107,9 @@ def test_an_admin_save_whose_overlay_fails_answers_500_registry_saved_not_applie
 
     assert response.status_code == 500, response.text
     assert response.json()["error"]["code"] == "registry_saved_not_applied"
-    assert "registry store unreadable" in response.json()["error"]["message"]
+    # The failure is named by its class, never by its text, which may quote what the reload read (decision D31).
+    assert "RuntimeError" in response.json()["error"]["message"]
+    assert "registry store unreadable" not in response.text
     assert proxy.config is config_before
 
 
@@ -177,7 +179,7 @@ def test_a_boot_with_one_bad_service_serves_the_others_and_names_the_one_it_left
 
     config, problem = _boot(live)
 
-    assert set(config["backends"]) == {"good-engine"}
+    assert set(config["backends"]) == {"good-engine", "litellm"}  # litellm: the backfill of the managed row runs on the part that validates
     assert problem["mode"] == "partial"
     assert set(problem["left_out"]) == {"bad-engine"}
     assert problem["left_out"]["bad-engine"]
@@ -197,7 +199,7 @@ def test_a_boot_after_a_refused_migration_serves_the_other_services_and_names_th
 
     config, problem = _boot(live)
 
-    assert set(config["backends"]) == {"good-engine"}
+    assert set(config["backends"]) == {"good-engine", "litellm"}
     assert problem["mode"] == "partial" and set(problem["left_out"]) == {"mixed-engine"}
     assert "keep one" in problem["left_out"]["mixed-engine"].lower()
     [item] = [i for i in derive_admin_attention({"registry_problem": problem}) if i["kind"] == "registry"]
@@ -349,7 +351,8 @@ def test_the_servable_part_keeps_every_record_that_validates_and_names_each_one_
     assert set(left_out) >= {"bad-engine"}
 
 
-def test_two_services_that_claim_one_public_alias_are_both_left_out():
+def test_two_services_that_claim_one_public_alias_leave_out_only_the_later_claimant():
+    """Decision D22: the claimant stored first keeps serving; the other is left out with the clash as its error."""
     def claiming(service_id):
         return _service(service_id, models=[_model("base"), _model("shared-alias", base="base")])
 
@@ -357,8 +360,8 @@ def test_two_services_that_claim_one_public_alias_are_both_left_out():
 
     part, left_out = service_registry.servable_part_of_registry(stored)
 
-    assert set(part["services"]) == {"good-engine"}
-    assert set(left_out) == {"one", "two"}
+    assert set(part["services"]) == {"good-engine", "one"}
+    assert set(left_out) == {"two"}
 
 
 def test_a_gateway_started_on_a_registry_with_one_bad_service_serves_the_rest(tmp_path):
@@ -394,18 +397,19 @@ def test_a_gateway_started_on_a_registry_with_one_bad_service_serves_the_rest(tm
 
     assert done.returncode == 0, done.stderr[-2000:]
     result = json.loads(next(line for line in done.stdout.splitlines() if line.startswith("RESULT"))[len("RESULT"):])
-    assert result["backends"] == ["good-engine"]
+    assert result["backends"] == ["good-engine", "litellm"]
     assert result["problem"]["mode"] == "partial" and set(result["problem"]["left_out"]) == {"bad-engine"}
     assert "bad-engine" in done.stdout  # the loud log line
 
 
-def test_a_failed_reload_after_a_partial_boot_keeps_the_partial_report(live, monkeypatch):
+def test_a_failed_reload_after_a_partial_boot_is_reported_as_stale_and_still_names_the_left_out_record(live, monkeypatch):
     partial = {"mode": "partial", "error": "bad", "left_out": {"bad-engine": "x"}, "served": 1}
     monkeypatch.setattr(proxy, "REGISTRY_APPLY_PROBLEM", partial, raising=False)
     with monkeypatch.context() as broken:
         broken.setattr(service_registry, "ensure_service_registry", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
         with pytest.raises(RuntimeError):
             proxy.reload_runtime_config()
-    assert proxy.REGISTRY_APPLY_PROBLEM == partial
+    assert proxy.REGISTRY_APPLY_PROBLEM["mode"] == "stale" and "down" in proxy.REGISTRY_APPLY_PROBLEM["error"]
+    assert proxy.REGISTRY_APPLY_PROBLEM["left_out"] == {"bad-engine": "x"}
     proxy.reload_runtime_config()
     assert proxy.REGISTRY_APPLY_PROBLEM is None
