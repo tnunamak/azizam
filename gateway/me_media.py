@@ -276,9 +276,10 @@ def create_me_media_router(
     def remove_missing_media(request: Request) -> JSONResponse:
         """Drop the caller's Library and job entries whose files are gone.
 
-        Refuses unless the media folder can be read and does not hold only stray files. A file counts as
-        gone only when nothing in the folder holds its digest, under any suffix.
-        Stored files and receipts are never touched.
+        Refuses when the media folder cannot be read. It also refuses when the folder holds no media file
+        and the caller has entries to drop: an empty folder is what an unmounted volume looks like, and
+        there every entry would read as gone. A file counts as gone only when nothing in the folder holds
+        its digest, under any suffix. Stored files and receipts are never touched.
         """
         try:
             session = session_provider(request)
@@ -303,6 +304,9 @@ def create_me_media_router(
                 ),
             )
             if plan.gone_assets or plan.job_ids:
+                # Nothing stored here: refuse rather than read every entry as gone.
+                if not storage.digests:
+                    raise PublicFailure("media_folder_unavailable", 503, copy="media_folder_empty")
                 if prompt_path != jobs_path:
                     for asset_id in plan.gone_assets:
                         prompt_memory.delete_asset_for_person(asset_id, actor.user_id, path=prompt_path)
@@ -404,10 +408,9 @@ StorageSnapshotProvider = Callable[[], "StorageSnapshot | None"]
 def create_storage_snapshot_provider(cache_dir: Path) -> StorageSnapshotProvider:
     """List the media folder, or return None when it cannot be seen.
 
-    None covers a folder that is missing, not a directory, unreadable, or holding
-    files but no media (only sidecars or scratch files). An existing, readable,
-    empty folder is healthy: nothing is stored, so there is nothing to protect.
-    A folder that cannot be seen must never be read as "everything is gone".
+    None covers a folder that is missing, not a directory, or unreadable. A folder that cannot be
+    seen must never be read as "everything is gone". A readable folder is listed even when it holds
+    no media file (empty, or only sidecars or scratch files): the removal decides what that means.
     """
 
     def snapshot() -> StorageSnapshot | None:
@@ -418,8 +421,6 @@ def create_storage_snapshot_provider(cache_dir: Path) -> StorageSnapshotProvider
         except OSError:
             return None
         digests = frozenset(digest for digest in map(directory_index.stored_digest, names) if digest is not None)
-        if names and not digests:
-            return None
         return StorageSnapshot(digests)
 
     return snapshot

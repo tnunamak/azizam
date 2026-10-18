@@ -73,6 +73,7 @@ _COPY: dict[str, tuple[str, str] | tuple[str, str, str]] = {
     "asset_unavailable": ("library", "This file is no longer available in the Library. "
                                      "Check a downloaded copy, or make it again."),
     "media_folder_unavailable": ("library", "Azizam can't see its media folder right now, so nothing was removed. Try again when the folder is back."),
+    "media_folder_empty": ("library", "Azizam's media folder is empty, which usually means it isn't mounted, so nothing was removed. Check the disk, then try again."),
     "prompt_not_accessible": ("library", "Only the person who made this can download it with its prompt, "
                                          "and only while the prompt is kept. Download it without the prompt."),
     "job_not_found": ("library", "This task isn't in your account. Return to the list and choose another task."),

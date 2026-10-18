@@ -74,9 +74,11 @@ clears the signed-in person's own entries whose file is gone:
 
 - It refuses, and changes nothing, unless the media folder is a readable
   directory. A folder that is missing, not a directory or unreadable looks the
-  same as every file being gone. A folder that holds files but no media (only
-  sidecars or scratch files) is also refused. A readable, empty folder is
-  healthy: nothing is stored, so every entry is gone.
+  same as every file being gone. A readable folder with no media file (empty,
+  or only sidecars or scratch files) looks the same as an unmounted volume, so
+  the removal refuses it whenever it would drop an entry. A person with no
+  entries gets a success that removes nothing. A readable folder with at least
+  one media file works as before.
 - A file is gone only when nothing in the folder holds its digest under any
   suffix (ComfyUI `gifs` and `images` outputs keep their own suffix). The check
   reads the folder, not the Library listing.
