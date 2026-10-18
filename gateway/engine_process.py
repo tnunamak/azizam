@@ -113,8 +113,10 @@ class ProcessDriver:
         self._unhealthy: set[str] = set()
 
     async def ensure_ready(self, svc: Mapping[str, Any], timeout_s: float) -> bool:
-        if not self._commands_allowed() or os.name != "posix" or not Path("/proc").exists():
+        if os.name != "posix" or not Path("/proc").exists():
             return False
+        # Off blocks new starts. An engine already running keeps serving.
+        allowed = self._commands_allowed()
         try:
             ident = _identifier(svc)
             cfg, argv, port = self._validated(svc)
@@ -133,11 +135,15 @@ class ProcessDriver:
                 # failure. Requests in flight keep their process; only a drained
                 # engine is replaced, and the restart budget still applies.
                 self._unhealthy.add(ident)
-                if self._active.get(ident, 0) > 0:
+                if self._active.get(ident, 0) > 0 or not allowed:
                     return False
                 await self._stop_async(svc, reset_budget=False)
+            elif not allowed:
+                return False
             elif self._identity_matches(self._read_state(ident)):
                 await self._stop_async(svc, reset_budget=False)
+            if not allowed:
+                return False
             address = (svc.get("connection") or {}).get("address") or f"http://{svc.get('host', '127.0.0.1')}:{port}"
             if self._port_in_use(urlsplit(address).hostname or "127.0.0.1", port):
                 return False
@@ -554,10 +560,6 @@ class ProcessDriver:
 
 
 def _operator_allows_commands() -> bool:
-    from gateway import admin_store
+    from gateway import host_commands
 
-    try:
-        setting = admin_store.get_operator_setting("allow_host_commands")
-        return bool(setting and setting.get("value", {}).get("enabled") is True)
-    except Exception:  # setting store unavailable: host execution stays off
-        return False
+    return host_commands.commands_allowed()

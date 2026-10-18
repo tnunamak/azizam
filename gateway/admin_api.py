@@ -2831,10 +2831,15 @@ def create_admin_router(
             return exc.as_response()
         except admin_store.SettingsConflictError:
             return settings_conflict()
-        response = JSONResponse({
+        result = {
             "enabled": record["value"]["enabled"],
             "revision": admin_store.operator_setting_revision(record),
-        })
+        }
+        if not result["enabled"]:
+            result["running_processes"] = "unchanged"
+            result["note"] = ("New starts are blocked. Processes Azizam already runs keep running "
+                              "until they are stopped or the gateway restarts.")
+        response = JSONResponse(result)
         response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
         return response
 

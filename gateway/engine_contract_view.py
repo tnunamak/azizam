@@ -9,21 +9,37 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
+def _legacy_lifecycle(service: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The pre-v2 ``lifecycle`` declaration as a process-shaped mapping."""
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    for lifecycle in (service.get("lifecycle"), config.get("lifecycle")):
+        if not isinstance(lifecycle, Mapping):
+            continue
+        driver = str(lifecycle.get("driver") or "external").strip().lower()
+        if driver in {"external", "none"}:
+            continue
+        driver_config = lifecycle.get("driver_config")
+        return {"driver": driver, **(driver_config if isinstance(driver_config, Mapping) else {})}
+    return {"driver": "none"}
+
+
 def process_config(service: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The process declaration, resolved the way the driver factory reads it.
+
+    A ``process`` mapping that names a driver is the v2 declaration. One that
+    names none leaves the legacy ``lifecycle`` in charge, so an existing
+    systemd or command record never silently falls back to External.
+    """
     process = service.get("process")
     if not isinstance(process, Mapping):
         config = service.get("config")
         process = config.get("process") if isinstance(config, Mapping) else None
-    if isinstance(process, Mapping):
+    if isinstance(process, Mapping) and str(process.get("driver") or "none").strip().lower() != "none":
         return process
-    lifecycle = service.get("lifecycle")
-    if not isinstance(lifecycle, Mapping):
-        return {"driver": "none"}
-    driver = str(lifecycle.get("driver") or "external").lower()
-    if driver == "external":
-        return {"driver": "none"}
-    config = lifecycle.get("driver_config")
-    return {"driver": driver, **(config if isinstance(config, Mapping) else {})}
+    legacy = _legacy_lifecycle(service)
+    if legacy.get("driver") == "none" and isinstance(process, Mapping):
+        return process
+    return legacy
 
 
 def observations_config(service: Mapping[str, Any]) -> Mapping[str, Any]:

@@ -1688,6 +1688,9 @@ ADMIN_SESSION_SIGNING_KEY = (
     else _admin_session_signing_key()
 )
 ADMIN_STORE = AdminSQLiteStore(ADMIN_DB_PATH)
+# The command permission is read from this live database, not the import-time default store.
+from gateway import host_commands
+host_commands.bind_admin_db(ADMIN_DB_PATH)
 # Wire in-process hot-reload: after every service-registry mutation the store
 # calls reload_runtime_config() so the new backend hosts take effect
 # immediately without a process restart.
@@ -12544,6 +12547,15 @@ async def _initialize_stores() -> None:
     await asyncio.to_thread(providers.recover_provider_spend, path=ADMIN_DB_PATH.parent / "provider_spend.db")
 
 
+def _migrate_host_command_permission() -> None:
+    """Decision D13: installs that already declare command lifecycles keep them working."""
+    registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
+    services = (registry or {}).get("services") or {}
+    host_commands.migrate_legacy_command_lifecycles(
+        ADMIN_DB_PATH, services or config.get("backends") or {}
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
@@ -12551,6 +12563,7 @@ async def lifespan(app: FastAPI):
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
     await asyncio.to_thread(_adopt_bootstrap_signin_lists)
+    await asyncio.to_thread(_migrate_host_command_permission)
     from gateway.lifecycle_drivers import _process_driver
     await asyncio.to_thread(_process_driver.recover, config.get("backends") or {})
     print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
