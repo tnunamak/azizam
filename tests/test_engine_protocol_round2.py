@@ -305,3 +305,18 @@ def test_malformed_tool_calls_and_encoded_embeddings_are_typed_502(engine, monke
     response = chat(engine) if op == 'chat' else engine.client.post('/v1/embeddings', json={'model':'prism-embed','input':'hi'})
     assert response.status_code == 502, response.text
     assert response.json()['error']['code'] == 'malformed_response'
+
+
+def test_streamed_tool_metadata_can_precede_function_arguments():
+    from gateway.engine_protocol.public_shape import validate
+    chunk = {'object':'chat.completion.chunk','id':'c','created':0,'model':'m','choices':[
+        {'index':0,'delta':{'tool_calls':[{'index':0,'id':'call-1','type':'function'}]},'finish_reason':None}]}
+    assert validate(chunk, 'chat', stream=True) == chunk
+
+
+def test_unrepresentable_embedding_number_is_a_typed_response_failure():
+    from gateway.engine_protocol.public_shape import validate
+    payload = {'object':'list','model':'m','data':[{'object':'embedding','index':0,'embedding':[10**400]}]}
+    with pytest.raises(ProtocolError) as raised:
+        validate(payload, 'embeddings')
+    assert raised.value.code == 'malformed_response'
