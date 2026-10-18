@@ -50,6 +50,16 @@ with the permission off, stale recipes are terminated. A one-time migration turn
 the permission on for installs that already declare command, process or systemd
 lifecycles and writes an audit entry that names them. New installs stay off.
 
+**Recovery when the schema 2 migration refuses a record.** The migration keeps a
+record's own `process` block whole. It refuses, with no change to the registry,
+a service that holds two sources that both run a command: a `process` block and
+a `lifecycle` block, or a top-level `process` block and a different
+`config.process` block. The message names the service and the two blocks. To
+recover, decide which block should run the engine, delete the other from the
+service record (in `admin.db` through the service registry API, or in the seed
+file), and start the gateway again. Two equal blocks need no action. The
+refusal message holds no command or environment value.
+
 **systemd `KillMode`.** When the gateway itself runs as a systemd unit with the
 default `KillMode=control-group`, stopping or restarting that unit kills every
 process in its cgroup, including the engines this driver started in their own

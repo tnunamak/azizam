@@ -234,7 +234,7 @@ Selected successful workflows are exercised separately.
 | `GET /admin/api/categories/revisions/{revision}` | owner-bearer | denied | `gateway.category_api.categories_revision`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `POST /admin/api/categories/revisions/{revision}/restore` | owner-bearer | denied | `gateway.category_api.categories_restore`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/categories/services` | owner-bearer | denied | `gateway.category_api.categories_services`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
-| `GET /admin/api/config/export` | owner-bearer | denied | `proxy.admin_config_export`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/config/export` | owner-bearer | denied | `proxy.admin_config_export`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `POST /admin/api/config/reload` | owner-bearer | denied | `proxy.admin_config_reload`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/credentials` | owner-bearer | denied | `gateway.admin_api.list_credentials`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `DELETE /admin/api/credentials/{credential_id}` | owner-bearer | denied | `gateway.admin_api.delete_credential`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |

@@ -613,8 +613,12 @@ def _v2_process(lifecycle: Mapping[str, Any]) -> dict[str, Any] | None:
     return process
 
 
-def service_record_v2(record: Mapping[str, Any]) -> dict[str, Any]:
-    """Return the additive v2.1 view of a legacy or migrated service record."""
+def service_record_v2(record: Mapping[str, Any], *, public: bool = True) -> dict[str, Any]:
+    """Return the additive v2.1 view of a legacy or migrated service record.
+
+    ``public`` hides the credential a scalar may hold (an address with a user name or a query token, a
+    probe path with a query token); migration reads the stored values with ``public=False``.
+    """
     service_id = str(record.get("id") or "")
     config = record.get("config") if isinstance(record.get("config"), Mapping) else {}
     system = is_litellm_service_record(service_id, record)
@@ -663,6 +667,9 @@ def service_record_v2(record: Mapping[str, Any]) -> dict[str, Any]:
         endpoint = lifecycle["driver_config"].get("health_endpoint")
         if endpoint:
             observations["process_ready"] = {"http": {"path": endpoint, "expect": 200}}
+    if public:
+        observations = engine_redaction.redact_config(observations)
+        address = engine_redaction.redact_text(address)
     residency = copy.deepcopy(record.get("residency")) if isinstance(record.get("residency"), Mapping) else {}
     if lifecycle.get("driver") == "http-load-unload":
         residency.setdefault("legacy_driver", "http-load-unload")
@@ -706,13 +713,23 @@ def _native_process(service_id: str, record: dict[str, Any], lifecycle: Mapping[
     Two sources that both run something are refused: Azizam does not guess which one the owner meant.
     """
     config = record.get("config") if isinstance(record.get("config"), dict) else {}
-    block = record.get("process") if isinstance(record.get("process"), Mapping) else config.get("process")
+    top, nested = record.get("process"), config.get("process")
+    block = top if isinstance(top, Mapping) else nested
+    if isinstance(top, Mapping) and isinstance(nested, Mapping) and top != nested and (
+            _declares_process(top) or _declares_process(nested)):
+        raise ValueError(
+            f"service {service_id!r} has both a process block and a config.process block, and they differ. "
+            "Azizam cannot tell which one you mean. Keep one: delete `process` or `config.process` "
+            "from the service, then save again."
+        )
     if not _declares_process(block):
         return None
     if "legacy_lifecycle" not in block and _declares_lifecycle(lifecycle):
+        where = "process" if isinstance(top, Mapping) else "config.process"
         raise ValueError(
-            f"service {service_id!r} has both a process block and a lifecycle that run commands; "
-            "remove one of them before retrying"
+            f"service {service_id!r} has both a process block and a lifecycle block that run commands "
+            f"(`{where}` and `lifecycle`), and Azizam cannot tell which one you mean. "
+            f"Keep one: delete `{where}` or delete `lifecycle` (and `config.lifecycle`), then save again."
         )
     return copy.deepcopy(dict(block))
 
@@ -728,8 +745,9 @@ def migrate_engine_records_v2(registry: dict[str, Any]) -> list[str]:
         if not isinstance(record, dict):
             continue
         lifecycle = _agreed_lifecycle(service_id, record)
-        observations = service_record_v2(record)["observations"]
-        residency = service_record_v2(record)["residency"]
+        stored_view = service_record_v2(record, public=False)
+        observations = stored_view["observations"]
+        residency = stored_view["residency"]
         native = _native_process(service_id, record, lifecycle)
         if native is not None:
             # The block is the owner's: keep every field. A legacy lifecycle wrapper the runtime

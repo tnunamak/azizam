@@ -93,7 +93,7 @@
   },
   "GET /admin/api/config/export": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
   },
   "POST /admin/api/config/reload": {
     "tag": "engines and providers",

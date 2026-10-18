@@ -17510,10 +17510,17 @@ async def admin_config_export(request: Request):
     The output is round-trippable: it matches the shape the existing
     seed-import path already understands.
 
-    Admin-auth required (same guard as all /admin/api/* routes).
+    Owner only: the export holds every stored start command and environment value
+    whole, so that it round-trips; the views an administrator reads hide them.
     """
     try:
-        (await asyncio.to_thread(ADMIN_AUTH, request))
+        ctx = await asyncio.to_thread(ADMIN_AUTH, request)
+        if "owner" not in ctx.roles:
+            return JSONResponse(
+                status_code=403,
+                content={"error": {"code": "owner_required", "message": "Owner role required"}},
+                headers={"Cache-Control": "no-store"},
+            )
     except AdminAuthError as exc:
         return Response(
             content=json.dumps({"error": {"code": exc.code, "message": exc.message}}),

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -13,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from gateway import admin_store, prompt_memory, receipt_store
 from gateway.admin_api import AdminAuth, AdminContext, _require_admin
+from gateway.engine_redaction import redact_config  # noqa: F401  (the engine view uses the same rule)
 
 INSTANCE_SETTING_KEY = "instance_presentation"
 PROMPT_MEMORY_SETTING_KEY = "prompt_memory"
@@ -64,36 +64,6 @@ def _has_pending_purge(value: Any) -> bool:
     elif isinstance(value, (list, tuple)):
         return any(_has_pending_purge(item) for item in value)
     return False
-
-
-def redact_config(value: Any) -> Any:
-    """Redact nested credentials and credential-bearing URLs in runtime data."""
-    if isinstance(value, Mapping):
-        return {
-            str(key): "<redacted>" if re.search(
-                r"secret|password|credential|key|token|authorization|cookie|headers", str(key), re.I
-            ) else redact_config(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [redact_config(item) for item in value]
-    if isinstance(value, str):
-        if re.search(r"\b(?:opk_|oak_|sk-)[A-Za-z0-9_-]+|^Bearer\s|^data:", value, re.I):
-            return "<redacted>"
-        if "://" in value:
-            try:
-                url = urlsplit(value)
-                if url.username or url.password or url.query or url.fragment:
-                    host = url.hostname or ""
-                    if ":" in host:
-                        host = f"[{host}]"
-                    return f"{url.scheme}://{host}" + (f":{url.port}" if url.port else "") + url.path
-            except ValueError:
-                return "<redacted>"
-        return value
-    if value is None or isinstance(value, (bool, int, float)):
-        return value
-    return "<not serializable>"
 
 
 def create_settings_router(*, auth: AdminAuth, admin_path: Path,

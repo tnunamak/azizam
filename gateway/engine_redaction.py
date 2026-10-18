@@ -21,7 +21,8 @@ from __future__ import annotations
 import copy
 import re
 import shlex
-from typing import Any, Iterable, Iterator, Mapping
+from urllib.parse import urlsplit
+from typing import Any, Iterable, Mapping
 
 from gateway.provenance import looks_like_credential
 
@@ -29,11 +30,21 @@ REDACTED = "[redacted]"
 
 # A flag or assignment name that names a credential, either case.
 _CREDENTIAL_NAME = re.compile(
-    r"token|secret|passw|bearer|credential|apikey|auth(?![a-z])|(?<![a-z])key|key(?![a-z])",
+    r"token|secret|passw|(?<![a-z])pass(?:phrase)?(?![a-z])|(?<![a-z])pwd|cookie|bearer|credential|apikey"
+    r"|auth(?![a-z])|(?<![a-z])key|key(?![a-z])",
     re.IGNORECASE,
 )
+# A header whose name looks like it carries a credential. Header values are plain
+# text in the registry and the router's config file, so a key never goes there.
+CREDENTIAL_HEADER_RE = re.compile(r"auth|key|token|secret|passw|cookie|session|credential|signature", re.IGNORECASE)
+# Text with the shape of a key, a bearer value or an inline data blob.
+_CREDENTIAL_TEXT = re.compile(r"\b(?:opk_|oak_|sk-)[A-Za-z0-9_-]+|^Bearer\s|^data:", re.IGNORECASE)
+# A key name whose value a settings view never shows.
+_CREDENTIAL_KEY = re.compile(r"secret|password|credential|key|token|authorization|cookie|headers", re.IGNORECASE)
 # Short flags that conventionally carry a key.
 _CREDENTIAL_SHORT_FLAGS = frozenset({"-k", "-K"})
+# Flags whose value is a credential when it is a ``user:password`` pair.
+_USER_FLAGS = frozenset({"-u", "--user"})
 
 _COMMAND_KEYS = ("start", "stop", "status")
 # The process fields the public view may show; any other field stays stored only.
@@ -58,20 +69,29 @@ def _secret_slots(argv: list[Any]) -> dict[int, str]:
             continue
         if "=" in arg:
             name, _, value = arg.partition("=")
-            if value and _CREDENTIAL_NAME.search(name):
+            if value and (_CREDENTIAL_NAME.search(name) or (name in _USER_FLAGS and ":" in value)):
                 slots[index] = "value"
                 continue
-        elif arg.startswith("-") and (arg in _CREDENTIAL_SHORT_FLAGS or _CREDENTIAL_NAME.search(arg)):
-            if index + 1 < len(argv) and isinstance(argv[index + 1], str) and not argv[index + 1].startswith("-"):
-                slots[index + 1] = "whole"
+        elif arg.startswith("-"):
+            following = argv[index + 1] if index + 1 < len(argv) else None
+            if isinstance(following, str) and not following.startswith("-"):
+                if arg in _CREDENTIAL_SHORT_FLAGS or _CREDENTIAL_NAME.search(arg) or (arg in _USER_FLAGS and ":" in following):
+                    slots[index + 1] = "whole"
         if index not in slots and looks_like_credential(arg):
             slots[index] = "whole"
     return slots
 
 
-def _secret_values(argv: list[Any]) -> list[str]:
-    slots = _secret_slots(argv)
-    return [argv[i] if mode == "whole" else argv[i].partition("=")[2] for i, mode in sorted(slots.items())]
+def _is_marker(arg: Any) -> bool:
+    return isinstance(arg, str) and (arg == REDACTED or arg.endswith("=" + REDACTED))
+
+
+def _slot_key(argv: list[Any], index: int, mode: str) -> str:
+    """The credential a slot belongs to: the name before ``=``, else the flag just before it, else ``""``."""
+    if mode == "value":
+        return argv[index].partition("=")[0]
+    previous = argv[index - 1] if index else None
+    return previous if isinstance(previous, str) and previous.startswith("-") and "=" not in previous else ""
 
 
 def redact_argv(argv: Iterable[Any]) -> list[Any]:
@@ -82,23 +102,34 @@ def redact_argv(argv: Iterable[Any]) -> list[Any]:
 
 
 def restore_argv(new: Iterable[Any], stored: Any) -> list[Any]:
-    values = iter(_secret_values(list(stored)) if isinstance(stored, list) else [])
-    out: list[Any] = []
-    for item in new:
-        if item == REDACTED:
-            out.append(_next_secret(values))
-        elif isinstance(item, str) and item.endswith("=" + REDACTED):
-            out.append(item[: -len(REDACTED)] + _next_secret(values))
-        else:
-            out.append(item)
+    """Put each marker's stored value back; a marker takes the value of the same flag.
+
+    A flag's occurrences pair in order with the stored occurrences of that flag, so removing or
+    reordering other arguments cannot give a marker another flag's secret.
+    """
+    new_argv = list(new)
+    stored_argv = list(stored) if isinstance(stored, list) else []
+    pool: dict[str, list[str]] = {}
+    for index, mode in sorted(_secret_slots(stored_argv).items()):
+        value = stored_argv[index] if mode == "whole" else stored_argv[index].partition("=")[2]
+        pool.setdefault(_slot_key(stored_argv, index, mode), []).append(value)
+    slots = _secret_slots(new_argv)
+    for index, arg in enumerate(new_argv):
+        if _is_marker(arg):
+            slots.setdefault(index, "value" if arg != REDACTED else "whole")
+    seen: dict[str, int] = {}
+    out = list(new_argv)
+    for index, mode in sorted(slots.items()):
+        key = _slot_key(new_argv, index, mode)
+        position = seen[key] = seen.get(key, -1) + 1
+        if not _is_marker(new_argv[index]):
+            continue
+        values = pool.get(key, [])
+        if position >= len(values):
+            raise ValueError(
+                f"a redacted value after {key or 'this position'!r} has no stored value to keep; type the value again")
+        out[index] = values[position] if mode == "whole" else new_argv[index][: -len(REDACTED)] + values[position]
     return out
-
-
-def _next_secret(values: Iterator[str]) -> str:
-    try:
-        return next(values)
-    except StopIteration:
-        raise ValueError("a redacted value has no stored value to keep; type the value again") from None
 
 
 def _tokens(text: str) -> list[str] | None:
@@ -257,4 +288,80 @@ def restore_registry(new: Mapping[str, Any], stored: Mapping[str, Any]) -> dict[
                     _restore_block(block, _stored_block(before, path))
         except ValueError as exc:
             raise ValueError(f"service {service_id!r}: {exc}") from None
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Scalars: a header value, an address, a probe path
+# ---------------------------------------------------------------------------
+
+
+def redact_text(value: str, marker: str = "<redacted>") -> str:
+    """A string without the credential it holds: key-shaped text becomes ``marker``; a URL loses its
+    user name, password, query and fragment; a path loses its query and fragment."""
+    if _CREDENTIAL_TEXT.search(value):
+        return marker
+    if "://" in value:
+        try:
+            url = urlsplit(value)
+            if url.username or url.password or url.query or url.fragment:
+                host = url.hostname or ""
+                if ":" in host:
+                    host = f"[{host}]"
+                return f"{url.scheme}://{host}" + (f":{url.port}" if url.port else "") + url.path
+        except ValueError:
+            return marker
+    elif value.startswith("/") and ("?" in value or "#" in value):
+        return value.split("?", 1)[0].split("#", 1)[0]
+    return value
+
+
+def redact_config(value: Any) -> Any:
+    """Redact nested credentials and credential-bearing URLs in runtime data.
+
+    The settings view and the engine view share this rule, so they agree on what a scalar may show.
+    """
+    if isinstance(value, Mapping):
+        return {str(key): "<redacted>" if _CREDENTIAL_KEY.search(str(key)) else redact_config(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [redact_config(item) for item in value]
+    if isinstance(value, str):
+        return redact_text(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return "<not serializable>"
+
+
+def _credential_header(row: Mapping[str, Any]) -> bool:
+    name = str(row.get("name") or "")
+    value = row.get("value")
+    return bool(CREDENTIAL_HEADER_RE.search(name)) or (
+        isinstance(value, str) and (looks_like_credential(value) or redact_text(value) != value))
+
+
+def redact_headers(rows: Any) -> Any:
+    """Header rows with the value of each credential row hidden; names and other values stay."""
+    if not isinstance(rows, list):
+        return rows
+    return [{**row, "value": REDACTED} if isinstance(row, Mapping) and "value" in row and _credential_header(row) else row
+            for row in rows]
+
+
+def restore_headers(new: Any, stored: Any) -> Any:
+    """Rows from a caller with each marker replaced by the stored value of the row of the same name.
+
+    A row renamed while it still holds the marker has no stored value to keep: it is dropped,
+    so the marker cannot carry a hidden value to another name.
+    """
+    if not isinstance(new, list):
+        return new
+    stored_by_name = {str(row.get("name")): row.get("value") for row in stored or ()
+                      if isinstance(row, Mapping) and "value" in row} if isinstance(stored, list) else {}
+    out = []
+    for row in new:
+        if isinstance(row, Mapping) and row.get("value") == REDACTED:
+            if str(row.get("name")) not in stored_by_name:
+                continue
+            row = {**row, "value": stored_by_name[str(row.get("name"))]}
+        out.append(row)
     return out

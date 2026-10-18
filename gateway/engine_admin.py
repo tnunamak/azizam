@@ -272,16 +272,23 @@ def _split_address(address: str, definition: Mapping[str, Any], prefix: str) -> 
     return out
 
 
+def _command_value(value: Any) -> Any:
+    """A command as stored: a list of arguments stays a list, a line is trimmed."""
+    if isinstance(value, list):
+        return list(value)
+    return str(value or "").strip()
+
+
 def lifecycle_block(values: Mapping[str, Any], definition: Mapping[str, Any]) -> dict[str, Any] | None:
     """The record's lifecycle block from the typed Start and stop fields; ``None`` for "leave it running"."""
     mode = str(values.get("lifecycle_mode") or _field_default(definition, "lifecycle_mode", "external"))
     if mode != "managed":
         return None
-    start = str(values.get("lifecycle_start") or "").strip()
+    start = _command_value(values.get("lifecycle_start"))
     if not start:
         raise DraftError("Type the command that starts the server.", field="lifecycle_start")
     driver_config: dict[str, Any] = {"start": start}
-    stop = str(values.get("lifecycle_stop") or "").strip()
+    stop = _command_value(values.get("lifecycle_stop"))
     if stop:
         driver_config["stop"] = stop
     driver_config["health_timeout_s"] = _number(values, "lifecycle_ready_s", 120, low=1, high=3600)
@@ -597,7 +604,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
             else:
                 prefix = "/" + str(config.get("path_prefix") or "").strip("/")
                 address = effective_base[:-len(prefix)] if prefix != "/" and effective_base.endswith(prefix) else effective_base
-    values: dict[str, Any] = {"address": address}
+    values: dict[str, Any] = {"address": engine_redaction.redact_text(address)}
     env_name = config.get("api_key_env") or config.get("api_key_ref") or ""
     if not env_name and (record.get("secret_refs") or {}).get("api_key") == SECRET_PLACEHOLDER and not config.get("api_key_secret_id"):
         env_name = "AZIZAM_DOWNSTREAM_API_KEY"
@@ -619,6 +626,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
             values["headers"].append({"name": name, "value": engine_redaction.REDACTED, "secret": True, "not_sent": True})
         else:
             values["headers"].append({"name": name, "value": value})
+    values["headers"] = engine_redaction.redact_headers(values["headers"])
     values["transforms"] = copy.deepcopy(config.get("transforms") or [])
     lifecycle = service_registry.legacy_lifecycle_from_service(record)
     driver_config = lifecycle.get("driver_config") or {}
@@ -701,7 +709,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     }
 
 
-def _restore_lifecycle_markers(values: dict[str, Any], shown: Mapping[str, Any], record: Mapping[str, Any]) -> dict[str, Any]:
+def _restore_lifecycle_markers(ctx: Any, values: dict[str, Any], shown: Mapping[str, Any], record: Mapping[str, Any]) -> dict[str, Any]:
     """Put the stored start and stop commands back behind the markers the page was shown.
 
     The page shows a command with its credential arguments hidden. A save that leaves every
@@ -716,7 +724,25 @@ def _restore_lifecycle_markers(values: dict[str, Any], shown: Mapping[str, Any],
         try:
             restored[field] = engine_redaction.restore_command(values.get(field), stored.get(source))
         except ValueError as exc:
+            if not _is_owner(ctx):
+                # The owner gate comes first: the answer must not say whether a secret sits at the marker.
+                raise _owner_only("Only the owner can change how Azizam starts and stops a server.") from None
             raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=field) from None
+    return restored
+
+
+def _restore_hidden_scalars(values: dict[str, Any], shown: Mapping[str, Any], stored_config: Mapping[str, Any]) -> dict[str, Any]:
+    """Put back what the page was not shown: a header value behind its marker, an address as shown.
+
+    A marker keeps the stored value of the header row of the same name; a row renamed with the marker
+    still in it is dropped. An address sent back unchanged is the stored address, not its hidden form.
+    """
+    restored = dict(values)
+    if isinstance(values.get("headers"), list):
+        restored["headers"] = engine_redaction.restore_headers(values["headers"], stored_config.get("headers"))
+    stored_address = str(stored_config.get("address") or service_registry.service_base_url(stored_config) or "")
+    if values.get("address") == shown.get("address") and stored_address:
+        restored["address"] = stored_address
     return restored
 
 
@@ -759,6 +785,16 @@ def redacted_record(record: Mapping[str, Any]) -> dict[str, Any]:
     out = _redact_record_value(out)
     if isinstance(out.get("secret_refs"), Mapping):
         out["secret_refs"] = {k: "configured" for k in out["secret_refs"]}
+    config = out.get("config")
+    if isinstance(config, dict):
+        if "headers" in config:
+            config["headers"] = engine_redaction.redact_headers(config["headers"])
+        if isinstance(config.get("address"), str):
+            config["address"] = engine_redaction.redact_text(config["address"])
+        if "observations" in config:
+            config["observations"] = engine_redaction.redact_config(config["observations"])
+    if "observations" in out:
+        out["observations"] = engine_redaction.redact_config(out["observations"])
     return engine_redaction.redact_service(out)
 
 
@@ -1068,7 +1104,9 @@ class EngineService:
         )
         if lifecycle_changed and not before["lifecycle_editable"]:
             raise DraftError("The stored process uses argument lists or a different driver. These text fields cannot edit it safely.", field="lifecycle_mode")
-        values = _restore_lifecycle_markers(values, before["values"], record)
+        values = _restore_lifecycle_markers(ctx, values, before["values"], record)
+        stored_config = record.get("config") or {}
+        values = _restore_hidden_scalars(values, before["values"], stored_config)
         if "api_key" not in values:
             values["api_key"] = SECRET_MASK if before["key"]["state"] == "configured" and before["key"].get("source") == "stored" else ""
         _header_credentials_are_the_owners(ctx, body.get("values"))
@@ -1083,7 +1121,8 @@ class EngineService:
             or (values.get("api_key") not in ("", SECRET_MASK, None))
             or clean.get("api_key_env") != (before["key"].get("env_name") or "")
             or clean.get("path_prefix", "") != (before["values"].get("path_prefix") or "")
-            or values.get("headers") != before["values"].get("headers")
+            or [(h["name"], h["value"]) for h in clean.get("headers") or ()]
+               != [(h["name"], h["value"]) for h in stored_config.get("headers") or () if isinstance(h, Mapping) and "value" in h]
             or body.get("recheck") is True
         )
         if moved:
