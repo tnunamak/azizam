@@ -29,7 +29,7 @@ import hmac
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
+from typing import Any, Awaitable, Callable, Iterable, Literal, Mapping, Protocol
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
@@ -2805,21 +2805,13 @@ def create_admin_router(
 
     @router.delete("/extensions/{package_id}")
     async def remove_extension_package(
-        request: Request, package_id: str
+        request: Request,
+        package_id: str,
+        mode: Literal["remove", "disable"] = "remove",
     ) -> JSONResponse:
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
-        # ``mode`` (remove or disable) comes from the query string. It is not a declared
-        # parameter, and the docstring is not used, because FastAPI puts both in the schema,
-        # which tests/test_route_graph_freeze.py and tests/fixtures/headless_openapi.json freeze.
-        mode = request.query_params.get("mode", "remove")
-        if mode not in ("remove", "disable"):
-            return _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_extension_package_mode",
-                "Use mode=remove or mode=disable.",
-            ).as_response()
         try:
             result = store.remove_extension_package(
                 package_id=package_id, actor=ctx, mode=mode,
