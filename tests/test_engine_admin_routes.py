@@ -332,14 +332,15 @@ def test_other_settings_are_kept_and_listed(gateway, fake_upstreams):
     assert _create(owner, {"definition": "openai-compatible", "name": "attic", "disabled": True,
                            "values": {"address": "http://attic.fk.test/v1"}}).status_code == 201
     registry = _registry(gateway)
-    registry["services"]["attic"]["config"].update(probe_interval_s=30, legacy_note="bought 2025")
+    registry["services"]["attic"]["config"].update(probe_interval_s=30, legacy_note="bought 2025", note="a classified key")
     _put_registry(gateway, registry)
     view = owner.get("/admin/api/engines/attic").json()["engine"]
-    assert view["other_settings"] == {"probe_interval_s": 30, "legacy_note": "bought 2025"}
+    # a key no type classifies is kept and never shown, only counted (decision D34); a classified one the form lacks is listed
+    assert view["other_settings"] == {"note": "a classified key"} and view["hidden_settings"] == 2
     assert _edit(owner, "attic", {"definition": "openai-compatible", "name": "Attic server", "disabled": True,
                                   "values": {}}).status_code == 200
     config = _record(gateway, "attic")["config"]
-    assert config["probe_interval_s"] == 30 and config["legacy_note"] == "bought 2025"
+    assert config["probe_interval_s"] == 30 and config["legacy_note"] == "bought 2025" and config["note"] == "a classified key"
 
 
 def test_the_check_route_persists_nothing(gateway, fake_upstreams):

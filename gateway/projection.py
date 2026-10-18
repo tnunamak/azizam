@@ -22,6 +22,7 @@ secret value is in a stored record to begin with (decision D26).
 
 from __future__ import annotations
 
+import copy
 import math
 import re
 from dataclasses import dataclass, field
@@ -33,6 +34,8 @@ MAX_DEPTH = 12
 MAX_NODES = 200_000
 MAX_TEXT = 8192
 MAX_KEY = 256
+# The key an object carries in a projection for the settings it hides: a count, never a name or a value.
+HIDDEN_KEY = "hidden_settings"
 
 
 class ProjectionViolation(RuntimeError):
@@ -76,6 +79,13 @@ class Seq(Policy):
 class Dict(Policy):
     value: Policy
     max_items: int = 5000
+
+
+@dataclass(frozen=True)
+class Alt(Policy):
+    """A field that has two shapes (a list of rows, or a mapping of name to row): the option for the value's shape."""
+
+    options: tuple[Policy, ...]
 
 
 @dataclass(frozen=True)
@@ -128,6 +138,15 @@ class Omit(Policy):
     pass
 
 
+@dataclass(frozen=True)
+class Hidden(Policy):
+    """Stored and never shown; the projection counts it (decision D34).
+
+    As the ``extras`` of an ``Obj`` it covers every key the type does not classify: those keys stay in storage
+    unchanged, no output carries one, and the object reports only how many there are (``HIDDEN_KEY``).
+    """
+
+
 STR = Scalar((str,))
 SHORT = Scalar((str,), 256)
 INT = Scalar((int,))
@@ -135,6 +154,7 @@ NUM = Scalar((int, float))
 BOOL = Scalar((bool,))
 ANY_SCALAR = Scalar((str, int, float, bool, type(None)))
 OMIT = Omit()
+HIDDEN = Hidden()
 INLINE_SECRET = InlineSecret()
 JSON = Json()
 CONFIGURED = Configured()
@@ -178,6 +198,7 @@ class Projection:
     dropped: list[str] = field(default_factory=list)
     shape_errors: list[str] = field(default_factory=list)
     entries: list[str] = field(default_factory=list)  # paths of the secret slots that hold something
+    hidden: list[str] = field(default_factory=list)  # paths of the settings no type classifies (D34); shown only as a count
 
 
 @dataclass
@@ -187,6 +208,7 @@ class _Walk:
     dropped: list[str] = field(default_factory=list)
     shape_errors: list[str] = field(default_factory=list)
     entries: list[str] = field(default_factory=list)
+    hidden: list[str] = field(default_factory=list)
 
     def spend(self) -> None:
         self.nodes += 1
@@ -308,9 +330,10 @@ def _argv(walk: _Walk, value: Any, path: str) -> Any:
         here = f"{path}[{index}]"
         walk.spend()
         if secret_refs.is_secret_entry(item):
-            prefix = item.get("prefix")
+            prefix, label = item.get("prefix"), item.get("label")
             out.append(_configured_entry(walk, item, item["secret_ref"], here,
-                                         prefix=prefix[:MAX_TEXT] if isinstance(prefix, str) and prefix else None))
+                                         prefix=prefix[:MAX_TEXT] if isinstance(prefix, str) and prefix else None,
+                                         label=label[:MAX_KEY] if isinstance(label, str) and label else None))
         elif _exact(item, (str,)):
             out.append(scrub_userinfo(item[:MAX_TEXT]))
         else:
@@ -369,7 +392,7 @@ def _project(policy: Policy, value: Any, walk: _Walk, path: str, depth: int) -> 
     walk.spend()
     if depth > MAX_DEPTH:
         return _shape(walk, path)
-    if isinstance(policy, Omit):
+    if isinstance(policy, (Omit, Hidden)):
         return OMITTED
     if value is None and not isinstance(policy, Scalar):
         return None
@@ -379,6 +402,13 @@ def _project(policy: Policy, value: Any, walk: _Walk, path: str, depth: int) -> 
         return scrub_userinfo(value[: policy.max_len]) if type(value) is str else value
     if isinstance(policy, Json):
         return _json(walk, value, path, depth)
+    if isinstance(policy, Alt):
+        shapes = {Seq: lambda v: isinstance(v, (list, tuple)), Dict: lambda v: isinstance(v, Mapping),
+                  Obj: lambda v: isinstance(v, Mapping), Scalar: lambda v: not isinstance(v, (Mapping, list, tuple))}
+        for option in policy.options:
+            if shapes[type(option)](value):
+                return _project(option, value, walk, path, depth)
+        return _shape(walk, path)
     if isinstance(policy, Configured):
         if type(value) is not str:
             return _shape(walk, path)
@@ -418,20 +448,29 @@ def _project(policy: Policy, value: Any, walk: _Walk, path: str, depth: int) -> 
         if not isinstance(value, Mapping):
             return _shape(walk, path)
         out: dict[str, Any] = {}
+        hidden_here = 0
         for key, item in value.items():
             here = _path(path, key)
             if type(key) is not str or len(key) > MAX_KEY:
                 walk.shape_errors.append(path)
                 continue
+            if key == HIDDEN_KEY and HIDDEN_KEY not in policy.fields and isinstance(policy.extras, Hidden):
+                continue  # the count a read shows: never stored from a write, never shown from storage
             field_policy = policy.fields.get(key)
             if field_policy is None:
                 if policy.extras is None:
                     walk.dropped.append(here)
                     continue
                 field_policy = policy.extras
+            if isinstance(field_policy, Hidden):
+                walk.hidden.append(here)
+                hidden_here += 1
+                continue
             projected = _project(field_policy, item, walk, here, depth + 1)
             if projected is not OMITTED:
                 out[key] = projected
+        if hidden_here:
+            out[HIDDEN_KEY] = hidden_here
         return out
     if isinstance(policy, Seq):
         if not isinstance(value, (list, tuple)) or len(value) > policy.max_items:
@@ -518,10 +557,42 @@ def project(type_name: str, value: Any, *, configured: Callable[[str], bool] | N
         raise ProjectionViolation("an unregistered projection type was asked for")
     walk = _Walk(configured=configured or secret_refs.configured)
     tree = _project(policy, value, walk, "", 0)
-    return Projection(None if tree is OMITTED else tree, walk.dropped, walk.shape_errors, walk.entries)
+    return Projection(None if tree is OMITTED else tree, walk.dropped, walk.shape_errors, walk.entries, walk.hidden)
 
 
 def project_policy(policy: Policy, value: Any, *, configured: Callable[[str], bool] | None = None) -> Projection:
     walk = _Walk(configured=configured or secret_refs.configured)
     tree = _project(policy, value, walk, "", 0)
-    return Projection(None if tree is OMITTED else tree, walk.dropped, walk.shape_errors, walk.entries)
+    return Projection(None if tree is OMITTED else tree, walk.dropped, walk.shape_errors, walk.entries, walk.hidden)
+
+
+def retain_hidden(policy: Policy, incoming: Any, stored: Any) -> None:
+    """Put back, into ``incoming``, every setting of ``stored`` that ``policy`` hides and ``incoming`` leaves out.
+
+    A read never shows a hidden setting (decision D34), so a write built from a read does not carry it; the
+    store keeps it unchanged. A hidden setting the write does name is the write's own and replaces the stored
+    one. The count a read shows (``HIDDEN_KEY``) is dropped from the write. Walks the typed objects and maps;
+    a list is never matched by position (its items only lose the count).
+    """
+    stored_map = stored if isinstance(stored, Mapping) else {}
+    if isinstance(policy, Alt):
+        for option in policy.options:
+            if isinstance(option, (Obj, Dict, Seq)):
+                retain_hidden(option, incoming, stored)
+    elif isinstance(policy, Seq):
+        for item in incoming if isinstance(incoming, list) else ():
+            retain_hidden(policy.item, item, None)
+    elif isinstance(policy, Dict):
+        for key, item in (incoming.items() if isinstance(incoming, dict) else ()):
+            retain_hidden(policy.value, item, stored_map.get(key))
+    elif isinstance(policy, Obj) and isinstance(incoming, dict):
+        if HIDDEN_KEY not in policy.fields and isinstance(policy.extras, Hidden):
+            incoming.pop(HIDDEN_KEY, None)
+        for key, item in stored_map.items():
+            field_policy = policy.fields.get(key, policy.extras)
+            if isinstance(field_policy, Hidden) and key not in incoming:
+                incoming[key] = copy.deepcopy(item)
+        for key, item in list(incoming.items()):
+            field_policy = policy.fields.get(key, policy.extras)
+            if field_policy is not None and not isinstance(field_policy, (Hidden, Omit)):
+                retain_hidden(field_policy, item, stored_map.get(key))

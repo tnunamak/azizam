@@ -174,9 +174,10 @@ resources:
     `add` (`name`, `value`, optional `public: true` for a header or variable that is
     not a secret), `replace` (`entry_id`, `value`), `rename` (`entry_id`, `name`; headers),
     `retain` (`entry_id`; no value; it checks the id exists), `clear` (`entry_id`),
-    `set` (a command: `items` in order, each `{"literal"}`, `{"retain": entry_id}` or
+    `set` (a command: `items` in order, each `{"literal"}`, `{"retain": entry_id}`,
+    `{"replace": entry_id, "secret": value, "prefix"?}` (a new value under the same id) or
     `{"secret": value, "prefix"?}`, and `clear`: every stored entry the list drops
-    must be named there), `set_credentials` (`url`) and `clear_credentials` (a URL
+    must be named there; a `literal` is public as declared, no flag name is read to guess otherwise), `set_credentials` (`url`) and `clear_credentials` (a URL
     field). Ids are server-issued (`ent_...`) and stable across reorder, rename and
     replace. A value that is one of the marker texts (`[redacted]`, `<redacted>`,
     `<configured>`), empty, not text, over 8 KiB or holding NUL is refused. Unknown
@@ -186,7 +187,7 @@ resources:
     Error codes: `invalid_commands`, `invalid_command`, `unknown_carrier`,
     `invalid_entry_id`, `duplicate_entry`, `unknown_entry`, `invalid_value`,
     `reserved_value`, `invalid_name`, `duplicate_name`, `unmentioned_entry`,
-    `credential_in_literal`, `carrier_unavailable`, `owner_required` (403),
+    `credential_header_public` (a header named like a credential cannot be `public`), `carrier_unavailable`, `owner_required` (403),
     `service_not_found` (404), `generation_mismatch` (412).
   - **Writing a whole record** (the registry `PUT`, `POST` and `PATCH` of a
     service, the engine page, the left-out record `PUT`). A carrier that holds
@@ -199,6 +200,17 @@ resources:
     already has entries, headers change only through the commands). The view shows a
     start or stop command that holds an entry as `null`. The key field keeps its
     mask for now (phase 2).
+    A reference slot that has no entry id (`config.api_key_secret_id`, `secret_refs`) is read as
+    `{"configured": true}` or as names; a write that sends back exactly what a read shows for the stored
+    value leaves it as it is (the same rule as for a carrier), and any other marker, mapping or reserved text there
+    is refused with fixed text. A URL is kept byte for byte, query string included (`?a=b+c`, `?a=`, `&&`, `%2f`);
+    one that holds a backslash, a control character or an invalid port is refused on a write (it would read as
+    another host to another client) and kept whole and private when a stored record has it. The URL fields are
+    every one the runtime reads as an address (`record_carriers.URL_FIELD_PATHS`, a model row's `url`). Inline input
+    that is a plain line or list of text, written before D26, is read by a rule: the value after `-H`, `--header`,
+    `-e`, `--env` or a credential flag is a secret; a line `shlex` cannot split is stored whole as one secret with a
+    public label; a header row is public only when it says `public: true` exactly and is not named like a
+    credential.
   - A record the registry leaves out goes through the same projection. One that
     parses into its type is listed with its error and its record and can be edited
     or removed on the Services page (`PUT` and `DELETE` under
@@ -207,15 +219,18 @@ resources:
     error, the fields that failed and the secret entries it holds. A service the
     schema 2 migration refused is such a record: its error is rebuilt from its
     blocks, and the owner keeps one block and drops `migration_refused`.
-  - **Config extras are public** (decision D28). `config` is a typed map: the fields the
-    engine type declares, the carriers above, and any other key as public JSON (an engine
-    definition can carry any setting). A secret goes in a carrier (a header, an environment
-    value, a command argument, a URL credential) or in the provider key route; a string, list
-    or mapping written under any other `config` key is public data, shown as written, whatever
-    the key is called. A field that is not a declared field of a *record type* (the engine
-    record, a header row, a package source, a provider view) is never shown. A header row has `id`, `name`, `secret_ref`, and for a row declared `public: true`
-    a `value`; any other field of a row is dropped. A record's id must equal the key it is
-    stored under, and two records may not end up with one id.
+  - **Config extras are stored and never shown** (decision D34, which replaces the D28 rule that made them public).
+    `config` is a typed map: the keys production code reads (`projection_types.CONFIG`, each classified as a plain
+    setting, a descriptor an operator authors as data, a URL, or a carrier) and nothing else. Any other key is kept in
+    storage unchanged and omitted from every management output; the object reports only how many settings it hides
+    (`hidden_settings`, "2 settings hidden: not classified"). A write built from a read does not carry them, so the
+    store keeps them; a write that names one replaces it. `tests/test_config_keys_are_classified.py` fails when
+    production code reads a `config` key that is not classified. A secret goes in a carrier (a header, an
+    environment value, a command argument, a URL credential) or in the provider key route. The same holds for the
+    `provenance`, `residency`, `resources`, `process` and `lifecycle` blocks, the observations, the sections of the
+    YAML file in the effective configuration, the package index and the overrides. A header row has `id`, `name`,
+    `secret_ref`, and for a row declared `public: true` (exactly `true`) a `value`; any other field of a row is
+    dropped. A record's id must equal the key it is stored under, and two records may not end up with one id.
   - **The router config** (decision D30). `GET /admin/api/operator/litellm-config`
     answers with a preview (a header's name with `<configured>`, an endpoint without
     credentials). The executable config is rendered only by `gateway/litellm_runtime.py`,

@@ -53,22 +53,26 @@ def test_a_field_the_type_does_not_name_is_forbidden_not_shown():
     shown = projection.project("ServiceRecord", _service(surprise="hello", process={"driver": "none", "undeclared": 1}),
                                configured=ALL_CONFIGURED)
     assert "surprise" not in shown.tree and "undeclared" not in shown.tree["process"]
-    assert {"surprise", "process.undeclared"} <= set(shown.dropped)
+    assert "surprise" in shown.dropped and "process.undeclared" in shown.hidden  # a type with hidden extras counts them (D34)
+    assert shown.tree["process"]["hidden_settings"] == 1
 
 
-def test_config_is_a_typed_map_whose_other_keys_are_public_json():
-    shown = projection.project("ServiceRecord", _service(config={"note": "hello", "nested": {"a": [1, 2.5, None, True]}}), configured=ALL_CONFIGURED)
-    assert shown.tree["config"]["note"] == "hello" and shown.tree["config"]["nested"] == {"a": [1, 2.5, None, True]}
+def test_config_is_a_typed_map_whose_other_keys_are_hidden_and_counted():
+    """Decision D34: a classified key is public data; any other key is stored, never shown, and only counted."""
+    shown = projection.project("ServiceRecord", _service(config={"note": "hello", "price": {"a": [1, 2.5, None, True]}, "nested": {"a": 1}}),
+                               configured=ALL_CONFIGURED)
+    assert shown.tree["config"]["note"] == "hello" and shown.tree["config"]["price"] == {"a": [1, 2.5, None, True]}
+    assert "nested" not in shown.tree["config"] and shown.tree["config"]["hidden_settings"] == 1
 
 
 def test_only_the_exact_json_types_are_accepted():
     class Text(str):
         pass
 
-    shown = projection.project("ServiceRecord", _service(config={"a": Text("x"), "b": float("nan"), "c": {1: "int key"}, "d": object()}),
+    shown = projection.project("ServiceRecord", _service(config={"note": Text("x"), "price": float("nan"), "aux": {1: "int key"}, "chunking": object()}),
                                configured=ALL_CONFIGURED)
-    assert "a" not in shown.tree["config"] or shown.tree["config"]["a"] == "x"
-    assert "b" not in shown.tree["config"] and "d" not in shown.tree["config"]
+    assert "note" not in shown.tree["config"] or shown.tree["config"]["note"] == "x"
+    assert "price" not in shown.tree["config"] and "chunking" not in shown.tree["config"]
     assert shown.shape_errors
 
 
@@ -152,7 +156,7 @@ def test_a_body_with_a_key_nobody_classified_is_refused_whole():
 def test_a_response_larger_than_the_budget_is_refused(monkeypatch):
     monkeypatch.setattr(projection, "MAX_NODES", 50)
     with pytest.raises(projection.ProjectionViolation):
-        projection.project("ServiceRecord", _service(config={"big": list(range(500))}), configured=ALL_CONFIGURED)
+        projection.project("ServiceRecord", _service(config={"price": list(range(500))}), configured=ALL_CONFIGURED)
 
 
 def test_a_left_out_record_that_parses_is_shown_through_its_type_and_one_that_does_not_only_as_its_error():

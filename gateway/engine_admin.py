@@ -90,7 +90,7 @@ class EngineRouteError(Exception):
         content: dict[str, Any] = {"error": error}
         if self.check is not None:
             content["check"] = dict(self.check)
-        return egress.plain_json_response(status_code=self.status_code, content=content, headers=self.headers)
+        return egress.plain_json_response(response_class="error", status_code=self.status_code, content=content, headers=self.headers)
 
 
 def _probe_limit(name: str, default: int) -> int:
@@ -613,7 +613,9 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         caps = _caps_from_record(catalog, definition, record)
     field_keys = {f["key"] for f in definition["fields"]}
     values = {k: v for k, v in values.items() if k in field_keys}
-    other = {k: v for k, v in config.items() if k not in _KNOWN_CONFIG_KEYS and k != "engine_capabilities"}
+    # ``config`` is the projection of the stored one: the keys no type classifies are not in it, only a count (D34).
+    hidden = config.get(projection.HIDDEN_KEY) if isinstance(config.get(projection.HIDDEN_KEY), int) else 0
+    other = {k: v for k, v in config.items() if k not in _KNOWN_CONFIG_KEYS and k not in ("engine_capabilities", projection.HIDDEN_KEY)}
     return {
         "service_id": record.get("id"),
         "definition": definition["definition"],
@@ -635,6 +637,7 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         "check": copy.deepcopy(config.get("engine_check") or {}),
         "calls": call_line(definition, values),
         "other_settings": copy.deepcopy(other),
+        "hidden_settings": hidden,
         "record": redacted_record(stored),
         "v2": service_registry.service_record_v2(stored),
     }
@@ -1148,7 +1151,7 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
             payload = await asyncio.to_thread(lambda: service.catalog().public())
         except EngineRouteError as exc:
             return exc.as_response()
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content=payload)
+        return egress.plain_json_response(response_class="engine_definitions", status_code=status.HTTP_200_OK, content=payload)
 
     @router.post("/engines/check")
     async def check_engine(request: Request) -> JSONResponse:
@@ -1165,7 +1168,7 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
             if hasattr(exc, "as_response"):
                 return exc.as_response()  # type: ignore[no-any-return]
             raise
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"check": result})
+        return egress.plain_json_response(response_class="engine_check", status_code=status.HTTP_200_OK, content={"check": result})
 
     @router.post("/engines/test")
     async def test_engine(request: Request) -> JSONResponse:
@@ -1182,7 +1185,7 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
             if hasattr(exc, "as_response"):
                 return exc.as_response()  # type: ignore[no-any-return]
             raise
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"test": result})
+        return egress.plain_json_response(response_class="engine_check", status_code=status.HTTP_200_OK, content={"test": result})
 
     @router.post("/engines/access")
     async def engine_access(request: Request) -> JSONResponse:
@@ -1198,7 +1201,7 @@ def register_engine_routes(router: APIRouter, *, service: EngineService, guard: 
             if hasattr(exc, "as_response"):
                 return exc.as_response()  # type: ignore[no-any-return]
             raise
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"access": result})
+        return egress.plain_json_response(response_class="engine_check", status_code=status.HTTP_200_OK, content={"access": result})
 
     @router.get("/engines/{service_id}")
     async def get_engine(service_id: str, request: Request) -> JSONResponse:
