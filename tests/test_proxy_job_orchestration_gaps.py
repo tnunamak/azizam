@@ -6,6 +6,7 @@ import pytest
 from fastapi import Response
 
 import proxy
+from tests.support.access import access_context  # noqa: E402
 from gateway import media_jobs, receipt_store
 from gateway.receipts import RouteReceipt
 
@@ -100,8 +101,8 @@ def test_video_existing_submission_settles_failures_and_deadline(
     spool = write_spool(job.job_id)
     monkeypatch.setattr(proxy, "_load_video_media_job_payload", lambda _: {})
     monkeypatch.setattr(proxy, "_request_shim_from_video_job_payload", lambda _: object())
-    monkeypatch.setattr(proxy, "_auth_context_from_image_job_payload",
-                        lambda _: proxy.NO_AUTH_CONTEXT)
+    # The worker checks its caller's plan before each poll: a caller whose plan allows video.
+    monkeypatch.setattr(proxy, "_auth_context_from_image_job_payload", lambda _: access_context())
     submit = AsyncMock(side_effect=AssertionError("resubmitted existing video"))
     status = AsyncMock(side_effect=[status_response,
                                     AssertionError("polled again after the outcome or deadline")])
@@ -128,7 +129,7 @@ def test_video_existing_submission_settles_failures_and_deadline(
 
     asyncio.run(scenario())
     submit.assert_not_awaited()
-    status.assert_awaited_once_with("video_fixture", proxy.NO_AUTH_CONTEXT)
+    status.assert_awaited_once_with("video_fixture", access_context())
     if mode == "content-error":
         content.assert_awaited_once()
     else:

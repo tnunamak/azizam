@@ -342,7 +342,8 @@ from gateway.openai_media_schemas import (
     VOICES_LIST_OPENAPI,
 )
 from gateway.policy import (
-    DENIED, NO_ACCESS, RULE_PROVIDER_UNAVAILABLE, DecidingRule, EffectiveAccess, PolicyDecision, evaluate,
+    CANNOT_START_MODEL, DENIED, NO_ACCESS, NO_ACCESS_PLAN, NOT_IN_ACCESS_PLAN, RULE_PROVIDER_UNAVAILABLE,
+    DecidingRule, EffectiveAccess, PolicyDecision, evaluate,
 )
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt, new_request_id
 from gateway.runtime_auth import (
@@ -1958,12 +1959,12 @@ def auth_error(message: str, status_code: int = 401, *, code: str | None = None)
     error: dict[str, Any] = {"message": message, "type": "access_error" if code else "authentication_error"}
     if code:
         error["code"] = code
-    return Response(
+    return _gateway_refusal(Response(
         content=json.dumps({"error": error}),
         status_code=status_code,
         media_type="application/json",
         headers={"WWW-Authenticate": "Bearer"} if status_code == 401 else {},
-    )
+    ), "authorization")
 
 
 def access_error(code: str) -> Response:
@@ -2085,7 +2086,8 @@ def _authenticate_mcp_access_token(request: Request, request_path: str, token: s
         return access_error(identity.denial)
     if identity.app_id:
         note_connection(identity.app_id, connection.grant_id)
-    return AuthContext(identity=replace(identity, name=f"{connection.client_name} (MCP)"))
+    return AuthContext(identity=replace(identity, name=f"{connection.client_name} (MCP)",
+                                        connection_id=connection.grant_id))
 
 
 def authenticate_runtime_request(request: Request, request_path: str) -> RuntimeRouteAuth | Response:
@@ -19943,7 +19945,9 @@ def _persist_image_media_job_payload(
                 "netloc": getattr(request.url, "netloc", "") or request.headers.get("host", "127.0.0.1")},
         "auth": {"name": identity.name if identity else None,
                  "key_hash": identity.key_hash if identity else None,
-                 "app_id": getattr(identity, "app_id", None), "person_id": _auth_person_id(auth_context)},
+                 "app_id": getattr(identity, "app_id", None), "person_id": _auth_person_id(auth_context),
+                 "connection_id": getattr(identity, "connection_id", None),
+                 "trusted_address": getattr(identity, "trusted_address", None)},
         "created_at": int(time.time()),
     })
 
@@ -20167,7 +20171,14 @@ _JOB_FAILURE_COPY = {
     "timeout": ("timeout", "The backend did not finish this job in time."),
     "safety": ("content_policy_violation", "The backend refused this job's content."),
 }
-_JOB_ERROR_CODE_RE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
+# Error codes a job may copy from a refusal: the gateway's own and the standard
+# OpenAI ones. Any other code, even a plain token, may carry words from a prompt
+# a backend echoed, so it becomes the category's default code.
+_JOB_KNOWN_ERROR_CODES = frozenset({
+    *ACCESS_ERROR_MESSAGES, NO_ACCESS_PLAN, NOT_IN_ACCESS_PLAN, CANNOT_START_MODEL,
+    "resource_admission_denied", "vram_exhausted", "model_not_found", "invalid_value", "unknown_parameter",
+    "invalid_prompt_mode", "unsupported_media_job_intent", "content_policy_violation", "rate_limit_exceeded",
+})
 
 
 def _gateway_refusal(response: Response, category: str) -> Response:
@@ -20185,12 +20196,12 @@ def _media_job_failure(response: Response) -> tuple[str, dict[str, Any]]:
     """The plain error sentence and typed facts (``media_jobs.ERROR_FIELDS``) of a failed attempt.
 
     Never backend error text, which may echo a prompt: the sentence is fixed
-    copy, and a backend's error code is kept only when it is a plain token.
+    copy, and an error code is kept only when it is one the gateway knows.
     """
     status = int(getattr(response, "status_code", 0) or 0)
     error = _image_response_json(response).get("error")
     code = error.get("code") if isinstance(error, Mapping) else None
-    code = code if isinstance(code, str) and _JOB_ERROR_CODE_RE.fullmatch(code) else None
+    code = code if isinstance(code, str) and code in _JOB_KNOWN_ERROR_CODES else None
     category = getattr(response, "gateway_refusal", None)
     if category is None:
         if code == "content_policy_violation":
@@ -20421,11 +20432,13 @@ def _auth_context_from_image_job_payload(payload: Mapping[str, Any]) -> AuthCont
 
     The worker runs as the same App, key name, plan and person as the request
     that made the job. The plan is the one the App holds now, and a revoked
-    key, a disabled App or person, or a removed trusted address returns None:
-    the job must then fail, never run as someone else. A keyless caller's
-    ``key_hash`` is ``app:<app id>``: with a person it is that person's session
-    App (browser or MCP sign-in), without one an App trusted by client address.
-    The worker's own network position never counts.
+    key, a disabled App or person, a revoked MCP connection, or a submitting
+    address no longer trusted for the App returns None: the job must then fail,
+    never run as someone else. A keyless caller's ``key_hash`` is
+    ``app:<app id>``: with a person it is that person's session App (browser or
+    MCP sign-in), without one an App trusted by client address. The worker's
+    own network position never counts. Workers call this again before each
+    step, so a change takes effect at the next one.
     """
     auth = payload.get("auth")
     if not isinstance(auth, Mapping):
@@ -20435,11 +20448,18 @@ def _auth_context_from_image_job_payload(payload: Mapping[str, Any]) -> AuthCont
         return None
     app_id = str(auth.get("app_id") or "")
     person_id = str(auth.get("person_id") or "")
+    connection_id = str(auth.get("connection_id") or "")
     if app_id and key_hash == f"app:{app_id}":
-        identity = (
-            runtime_identity_for_session_app(app_id, person_id, path=ADMIN_STORE.path) if person_id
-            else runtime_identity_for_trusted_app(app_id, path=ADMIN_STORE.path)
-        )
+        if person_id:
+            identity = runtime_identity_for_session_app(app_id, person_id, path=ADMIN_STORE.path)
+            # An MCP sign-in's work stops when its connection is revoked.
+            if identity is not None and connection_id:
+                if not (MCP_OAUTH_ENABLED and MCP_OAUTH.connection_active(connection_id, person_id)):
+                    return None
+                identity = replace(identity, connection_id=connection_id)
+        else:
+            identity = runtime_identity_for_trusted_app(app_id, str(auth.get("trusted_address") or ""),
+                                                        path=ADMIN_STORE.path)
     else:
         identity = runtime_identity_for_app_credential_hash(key_hash, path=ADMIN_STORE.path)
     if identity is None or identity.denial:
@@ -20590,6 +20610,13 @@ async def _run_image_media_job(job_id: str) -> None:
             if (current.get("metadata") or {}).get("cancel_requested_at"):
                 _mark_image_media_job_failed(job_id, "Cancellation was requested; the backend stop could not be confirmed")
                 return
+            if attempt > 1:
+                # A retry runs as the caller is now: a revoked key or connection
+                # stops it here, and a new plan is checked by the route.
+                auth_context = _auth_context_from_image_job_payload(payload)
+                if auth_context is None:
+                    _mark_image_media_job_failed(job_id, _MEDIA_JOB_CALLER_GONE, error_info=_MEDIA_JOB_CALLER_GONE_INFO)
+                    return
             receipt = start_image_route_receipt("/v1/images/generations", auth_context)
             receipt.job_id = job_id
             try:
@@ -21806,6 +21833,11 @@ async def _run_video_media_job(job_id: str) -> None:
             if current_job is None or current_job.get("status") in media_jobs.TERMINAL_STATUSES:
                 _delete_image_media_job_payload(job_id)
                 return
+            step = _video_media_job_step_auth(payload, current_job)
+            if isinstance(step, tuple):
+                _mark_video_media_job_failed(job_id, step[0], error_info=step[1])
+                return
+            auth_context = step
             status_response = await proxy_comfy_video_status(video_id, auth_context)
             status_code = int(getattr(status_response, "status_code", 0) or 0)
             if status_code >= 500:
@@ -21841,6 +21873,11 @@ async def _run_video_media_job(job_id: str) -> None:
             if status_value != "succeeded":
                 continue
 
+            step = _video_media_job_step_auth(payload, current_job)
+            if isinstance(step, tuple):
+                _mark_video_media_job_failed(job_id, step[0], error_info=step[1])
+                return
+            auth_context = step
             content_response = await proxy_comfy_video_content(video_id, auth_context, index_library=False, metadata_mode=provenance.METADATA_NONE)
             content_status = int(getattr(content_response, "status_code", 0) or 0)
             if not 200 <= content_status < 300:
@@ -21970,6 +22007,52 @@ def _resume_pending_video_media_jobs() -> int:
     return resumed
 
 
+def _video_job_policy_decision(auth_context: AuthContext, requested_model: Any, workflow_name: str) -> PolicyDecision:
+    """The plan check of a video job, at submit and before each later step."""
+    return evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol="openai.video",
+            intent=INTENT_VIDEO_GENERATE,
+            model=str(requested_model) if requested_model is not None else None,
+            workflow=f"video.generate.{workflow_name}",
+            backend="comfyui",
+            capability_exposure="default",
+            capability_trust_tier="stable",
+            capability_resource_tier="expensive",
+        ),
+    )
+
+
+def _video_media_job_step_auth(
+    payload: Mapping[str, Any], job: Mapping[str, Any],
+) -> AuthContext | tuple[str, dict[str, Any]]:
+    """The caller of a running video job, checked again before its next step.
+
+    The same identity rebuild and plan checks as at submit: a revoked key or
+    connection, or a plan that no longer allows the workflow, gives the
+    failure (message, typed facts) to record instead of an AuthContext.
+    """
+    auth_context = _auth_context_from_image_job_payload(payload)
+    if auth_context is None:
+        return _MEDIA_JOB_CALLER_GONE, dict(_MEDIA_JOB_CALLER_GONE_INFO)
+    body = payload.get("body") if isinstance(payload.get("body"), Mapping) else {}
+    requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
+    workflow_name = str(job.get("workflow") or "")
+    decision = _video_job_policy_decision(auth_context, requested_model, workflow_name)
+    if decision.denied:
+        return _media_job_failure(_policy_denied_response(decision))
+    target = _workflow_target_policy_decision(
+        auth_context,
+        requested=str(requested_model),
+        resolved=workflow_name,
+        extra_ids=(f"video.generate.{workflow_name}",),
+    )
+    if target is not None and target.denied:
+        return _media_job_failure(_policy_denied_response(target))
+    return auth_context
+
+
 async def _submit_video_media_job(
     *,
     request: Request,
@@ -21990,19 +22073,7 @@ async def _submit_video_media_job(
         return error_response
     assert workflow_name is not None
     requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
-    policy_decision = evaluate_and_apply(
-        auth_context.identity,
-        make_policy_request(
-            protocol="openai.video",
-            intent=INTENT_VIDEO_GENERATE,
-            model=str(requested_model) if requested_model is not None else None,
-            workflow=f"video.generate.{workflow_name}",
-            backend="comfyui",
-            capability_exposure="default",
-            capability_trust_tier="stable",
-            capability_resource_tier="expensive",
-        ),
-    )
+    policy_decision = _video_job_policy_decision(auth_context, requested_model, workflow_name)
     if policy_decision.denied:
         return _policy_denied_response(policy_decision)
     admission_response = _media_job_admission_response(INTENT_VIDEO_GENERATE, auth_context=auth_context)

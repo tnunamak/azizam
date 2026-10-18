@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from fastapi import Response
 import proxy
+from tests.support.access import access_context  # noqa: E402
 from gateway import media_jobs
 from tests.support.fake_upstream import fake_upstreams, load_scenario, scenario_from_data  # noqa: F401
 
@@ -39,7 +40,8 @@ def worker(tmp_path, monkeypatch, video_state):
     monkeypatch.setattr(proxy, "COMFY_VIDEO_TIMEOUT", 10)
     monkeypatch.setattr(proxy, "_load_video_media_job_payload", lambda _: {})
     monkeypatch.setattr(proxy, "_request_shim_from_video_job_payload", lambda _: object())
-    monkeypatch.setattr(proxy, "_auth_context_from_image_job_payload", lambda _: proxy.NO_AUTH_CONTEXT)
+    # The worker checks its caller's plan before each poll: a caller whose plan allows video.
+    monkeypatch.setattr(proxy, "_auth_context_from_image_job_payload", lambda _: access_context())
     dropped = Mock()
     for name in ("_delete_video_media_job_payload", "_delete_image_media_job_payload"):
         monkeypatch.setattr(proxy, name, dropped)
@@ -88,10 +90,10 @@ def test_poll_aliases_are_monotonic_capped_and_complete_once(worker, monkeypatch
     assert final["assets"][0]["filename"] == "render.webm"
     assert final["assets"][0]["media_type"] == "video/webm"
     worker.submit.assert_not_awaited()
-    content.assert_awaited_once_with("video_p", proxy.NO_AUTH_CONTEXT,
+    content.assert_awaited_once_with("video_p", access_context(),
         index_library=False, metadata_mode=proxy.provenance.METADATA_NONE)
     worker.stored.assert_called_once_with(
-        b"fixture video", kind="vid", suffix=".webm", owner_key_hash=None)
+        b"fixture video", kind="vid", suffix=".webm", owner_key_hash="app:app_test")
     events = media_jobs.events(worker.job.job_id, audience="internal", path=worker.db)
     assert [e["event_type"] for e in events].count("completed") == 1
     worker.dropped.assert_called_once_with(worker.job.job_id)
