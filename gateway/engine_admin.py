@@ -7,8 +7,8 @@ acknowledge, unless the engine is saved turned off.
 
 Keys: an owner pastes a key and it goes into the provider secret store, bound
 to the address it was entered for. It is write-only: the record holds a secret
-id, the view says "configured", and ``SECRET_MASK`` in a draft means "keep the
-stored key". A stored key is never sent to an address other than the one it
+id and the view shows configured metadata. Existing keys change through stable
+entry commands with a revision check. A stored key is never sent to an address other than the one it
 was stored for. Administrators may add keyless engines; attaching a key,
 reading an environment variable and lifecycle commands stay with the owner
 (r47).
@@ -625,11 +625,7 @@ def infer_definition(catalog: EngineCatalog, record: Mapping[str, Any]) -> str:
 
 
 def _projected_engine_record(stored: Mapping[str, Any]) -> dict[str, Any]:
-    record = projection.project("ServiceRecord", stored).tree or {}
-    config = record.get("config")
-    if isinstance(config, dict) and "connection" in config:
-        config["connection"] = projection.project("EngineConnection", config["connection"]).tree
-    return record
+    return projection.project("ServiceRecord", stored).tree or {}
 
 
 def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: Path,
@@ -708,7 +704,18 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
     }
     values = {k: v for k, v in values.items() if k in field_keys}
     values["address"] = address
-    connection = config.get("connection") if isinstance(config.get("connection"), Mapping) else {}
+    from gateway.engine_contract_view import connection_config
+
+    connection = projection.project("EngineConnection", connection_config(stored)).tree or {}
+    protocol_mode = connection.get("dispatch") == "protocol"
+    if protocol_mode:
+        address = str(connection.get("address") or "")
+        values["address"] = address
+        protocol_timeouts = connection.get("timeouts") or {}
+        effective_timeout = protocol_timeouts.get("total_s", 600)
+        timeout_source = "saved protocol connection" if "total_s" in protocol_timeouts else "protocol executor default"
+        for field in ("headers", "reply_timeout_s", "path_prefix", "transforms"):
+            unsupported_fields[field] = "Protocol dispatch uses its connection and installed description. This legacy setting is not used."
     values["dispatch"] = connection.get("dispatch") or ""
     values["protocol_description"] = connection.get("protocol") or ""
     hidden = config.get(projection.HIDDEN_KEY) if isinstance(config.get(projection.HIDDEN_KEY), int) else 0
@@ -716,13 +723,35 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
              if name not in _KNOWN_CONFIG_KEYS and name not in ("engine_capabilities", projection.HIDDEN_KEY)}
     request_base = inference_base_url(config)
     operations = []
-    for cap_id in caps if schema_matches else ():
+    protocol_attention = []
+    if protocol_mode:
+        from gateway.engine_protocol import description
+
+        doc = description.load_registry().get(connection.get("protocol"))
+        if doc is None or doc.executor != "http-v1":
+            protocol_attention.append({"code": "engine_protocol_unavailable",
+                                       "message": "The saved protocol description is unavailable. Choose an installed description."})
+        else:
+            for op in doc.operations.values():
+                requests = [("request", op.request)] if op.request is not None else []
+                if op.job is not None:
+                    requests = [("submit", op.job.submit.request), ("poll", op.job.poll.request),
+                                ("fetch", op.job.fetch), ("cancel", op.job.cancel)]
+                for phase, request in requests:
+                    if request is not None:
+                        operations.append({"capability": op.name, "method": request.method,
+                                           "url": join_url(address, request.path), "class": op.op_class, "phase": phase})
+    for cap_id in caps if schema_matches and not protocol_mode else ():
         route = (catalog.capability(cap_id) or {}).get("route") or {}
         if route.get("path"):
             operations.append({"capability": cap_id, "method": "POST", "url": join_url(request_base, route["path"])})
     fingerprint = _stored_evidence_binding(stored, db_path=db_path, env=env)
     v2 = service_registry.service_record_v2(stored)
     v2["connection"]["address"] = address
+    if protocol_mode:
+        v2["connection"] = {"transport": "http", "headers": [], "timeouts": {"total_s": effective_timeout},
+                            **copy.deepcopy(connection),
+                            "credentials": {"inference": None, "control": None, **(connection.get("credentials") or {})}}
     return {
         "service_id": record.get("id"),
         "definition": definition["definition"],
@@ -737,7 +766,7 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         "lifecycle_editable": lifecycle_editable,
         "values": values,
         "reply_timeout": {"seconds": effective_timeout, "source": timeout_source},
-        "attention": ([{"code": "engine_credential_unavailable",
+        "attention": protocol_attention + ([{"code": "engine_credential_unavailable",
                         "message": f"Key not available: {env_name} is not set"}] if env_name and not env(str(env_name)) else [])
                       + ([{"code": "engine_credential_unavailable", "message": "The stored key is unavailable. Replace it in Connection."}]
                          if secret_id and not env_name and key.get("availability") == "unavailable" else [])
@@ -751,12 +780,12 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
                   if isinstance(row, Mapping) and row.get("via") == "saved" and row.get("evidence_token")
                   and fingerprint is not None and row.get("view_fingerprint") == fingerprint},
         "check": copy.deepcopy(config.get("engine_check") or {}),
-        "calls": call_line(definition, values),
+        "calls": "" if protocol_mode else call_line(definition, values),
         "other_settings": copy.deepcopy(other),
         "hidden_settings": hidden,
         "record": redacted_record(stored),
         "v2": v2,
-        "request_path": {"mode": "gateway_lifecycle" if hop_routed else "direct", "source": "service record",
+        "request_path": {"mode": "protocol" if protocol_mode else "gateway_lifecycle" if hop_routed else "direct", "source": "service record",
                          "url": operations[0]["url"] if operations else "", "operations": operations},
         "credential_destination": (key.get("origin") or "") if key["state"] == "configured" else origin_of(address),
         "ignored_headers": [str(row.get("name") or "(unnamed)") for row in config.get("headers") or ()
@@ -890,6 +919,13 @@ def _admin_limits(ctx: Any, values: Mapping[str, Any], definition: Mapping[str, 
         raise _owner_only("Only the owner can change how Azizam starts and stops a server.")
 
 
+def _refuse_protocol_probe(values: Mapping[str, Any]) -> None:
+    if values.get("dispatch") == "protocol":
+        raise EngineRouteError(status.HTTP_400_BAD_REQUEST, "unsupported_protocol_probe",
+                               "The legacy connection check cannot execute a protocol description. Validate the installed description and save this engine off.",
+                               field="dispatch")
+
+
 class EngineService:
     """The create and edit steps. The store persists; the r47 rules are re-checked there."""
 
@@ -949,6 +985,7 @@ class EngineService:
             values = {**shown["values"], **values}
             if values.get("headers") == shown["values"].get("headers"):
                 values["headers"] = []
+        _refuse_protocol_probe(values)
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         if record is not None and not _is_owner(ctx):
@@ -980,6 +1017,7 @@ class EngineService:
             values = {**shown["values"], **values}
             if values.get("headers") == shown["values"].get("headers"):
                 values["headers"] = []
+        _refuse_protocol_probe(values)
         clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         stored_models = ((record or {}).get("config") or {}).get("models") or []
@@ -1123,6 +1161,8 @@ class EngineService:
         while service_id in (registry.get("services") or {}):
             service_id, n = f"{base_id}-{n}", n + 1
         disabled = bool(body.get("disabled"))
+        if not disabled:
+            _refuse_protocol_probe(clean)
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=None, db_path=self.db_path, env=self.env)
         check: dict[str, Any] | None = None
         if disabled:
@@ -1172,8 +1212,11 @@ class EngineService:
             if body.get("disabled"):
                 metadata["enabled"] = False
             return self.store.update_service(service_id=service_id, data=metadata, actor=ctx, expected_generation=expected_generation)
-        if before["unsupported_fields"]:
+        if "address" in before["unsupported_fields"]:
             raise DraftError("The stored protocol has no matching definition schema for this setting.", field=next(iter(sent), "models"))
+        for field, reason in before["unsupported_fields"].items():
+            if field in sent and sent[field] != before["values"].get(field):
+                raise DraftError(reason, field=field)
         values = {**before["values"], **sent}
         # What the page was shown for a header or a start and stop command is a read of entries, not text to save:
         # headers are changed only when the body names them, and the commands only when their text differs.
@@ -1225,6 +1268,7 @@ class EngineService:
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         check_summary = before["check"] or {}
         if connection_changed and not disabled:
+            _refuse_protocol_probe(clean)
             check = await run_check(catalog, definition, clean, key=key, fetch=self.fetch, existing=_existing_engines(registry, exclude=service_id),
                                     viewer_role="owner" if _is_owner(ctx) else "admin")
             # The check ran against the stored address; its report must not repeat what the page is not shown.

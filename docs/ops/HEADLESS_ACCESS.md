@@ -399,9 +399,10 @@ These routes require a browser session. An owner key does not replace that sessi
 After a reviewed route or schema change, commit the metadata and generator first.
 Run `scripts/run-hermetic-pytest.sh --python-script scripts/generate_headless_fixtures.py`
 and save its output in a private scratch file. Read the line prefixed
-`HEADLESS_OPENAPI_JSON=`, parse the JSON after the prefix, and write it to
-`tests/fixtures/headless_openapi.json` with sorted keys, two-space indentation and
-one final newline. Review that diff before committing it. The generator verifies
+`HEADLESS_OPENAPI_JSON=`, parse the JSON after the prefix, and compare it with
+`tests/fixtures/headless_openapi.json`. Replace only the reviewed operations,
+preserve the existing key order, and use two-space indentation with one final
+newline. Verify the resulting JSON equals the captured schema. The generator verifies
 the registered-route inventory and guide before capture; it does not add routes
 or decide their authorization.
 

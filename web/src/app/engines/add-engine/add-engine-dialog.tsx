@@ -43,6 +43,7 @@ import { addedMessage, fieldOf, keptOffMessage, looksLikeAddress, trimAddress } 
 import { ConnectionFields, SummaryLine, type ConnectionDraft, type FieldErrors } from "./step-address";
 import { StepKind } from "./step-kind";
 import { ProtocolChoice, type ProtocolDraft } from "../parts/protocol-choice";
+import { protocolDescriptionsApi } from "@/lib/protocol-descriptions-api";
 
 export const engineDefinitionsKey = ["engineDefinitions"] as const;
 
@@ -143,6 +144,8 @@ function Wizard({
   const [conn, setConn] = useState<ConnectionDraft>({ address: "", key: "", envOpen: false, envName: "" });
   const [protocol, setProtocol] = useState<ProtocolDraft>({ dispatch: "", protocol: "" });
   const [protocolError, setProtocolError] = useState<string | null>(null);
+  const protocolCatalog = useQuery({ queryKey: ["engineProtocolDescriptions"], queryFn: protocolDescriptionsApi.list, enabled: protocol.dispatch === "protocol" });
+  const validProtocol = !protocolCatalog.isFetching && !protocolCatalog.isError && protocolCatalog.data?.protocols.some((row) => row.id === protocol.protocol && row.dispatch_supported) === true;
   const [errors, setErrors] = useState<FieldErrors>({});
   const [check, setCheck] = useState<CheckResult | null>(null);
   const [finding, setFinding] = useState<Finding | null>(null);
@@ -225,9 +228,8 @@ function Wizard({
 
   function runCheck(draft = conn) {
     if (!def) return;
-    if (protocol.dispatch === "protocol" && !protocol.protocol) {
-      setProtocolError("Choose an installed protocol description before continuing.");
-      focusInvalid();
+    if (protocol.dispatch === "protocol") {
+      setProtocolError("Protocol descriptions are validated without contacting the engine. Add this engine off.");
       return;
     }
     const address = fieldOf(def, "address");
@@ -305,6 +307,7 @@ function Wizard({
 
   async function runTest(capability: string) {
     if (!def) return;
+    if (protocol.dispatch === "protocol") return;
     setTests((t) => ({ ...t, [capability]: { status: "running" } }));
     const label = def.capabilities.find((c) => c.id === capability)?.label.toLowerCase() ?? "";
     const offered = models.filter((m) => m.on);
@@ -359,7 +362,9 @@ function Wizard({
       const { registry, serviceId } = await enginesApi.create(body);
       onAdded({
         serviceId: serviceId || newServiceId(registry, before, finalName),
-        message: options.keepOff ? keptOffMessage(finalName, Boolean(options.needKey)) : addedMessage(finalName, tickedLabels()),
+        message: protocol.dispatch === "protocol"
+          ? `Added “${finalName}”, turned off. The description was validated without contacting the engine. Configure its offerings on the engine page before turning it on.`
+          : options.keepOff ? keptOffMessage(finalName, Boolean(options.needKey)) : addedMessage(finalName, tickedLabels()),
         registry,
       });
     } catch (error) {
@@ -474,6 +479,14 @@ function Wizard({
           }
         />
       );
+    else if (protocol.dispatch === "protocol")
+      footer = (
+        <FooterRow left={<BackButton onClick={back} />} right={
+          <Button type="button" size="md" disabled={creating || !looksLikeAddress(conn.address) || !validProtocol} onClick={() => void create({ keepOff: true })}>
+            Add protocol engine (off)
+          </Button>
+        } />
+      );
     else if (f?.severity === "warning")
       footer = (
         <FooterRow
@@ -526,7 +539,9 @@ function Wizard({
           }
         />
       );
-    const fine = f?.owner_note
+    const fine = protocol.dispatch === "protocol"
+      ? "Validation checks the installed description, without contacting the engine. Configure its offerings on the engine page before turning it on."
+      : f?.owner_note
       ? "“Add but keep off” saves the engine without a key and turned off. The owner adds the key later, then turns it on."
       : f && (f.keep_off || f.severity === "warning")
         ? "“Add but keep off” adds the engine turned off and skips the check. It shows as not checked yet, and Azizam checks it when you turn it on or press Check now."
@@ -541,7 +556,9 @@ function Wizard({
               Where is the server?
             </h3>
             <p className="text-meta text-muted-foreground mt-0.5">
-              Enter the server address and a key if it needs one. Azizam then looks at the server and fills in the rest.
+              {protocol.dispatch === "protocol"
+                ? "Enter the root address and a key if it needs one. The description supplies the request paths."
+                : "Enter the server address and a key if it needs one. Azizam then looks at the server and fills in the rest."}
             </p>
           </div>
         )}
@@ -568,6 +585,7 @@ function Wizard({
           onFixPath={fixPath}
           onOpenExisting={onOpenEngine}
           onRecheck={() => runCheck()}
+          protocolDispatch={protocol.dispatch === "protocol"}
         />
         <ProtocolChoice value={protocol} disabled={checking} onChange={(value) => {
           setProtocol(value);

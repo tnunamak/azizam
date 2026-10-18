@@ -257,3 +257,121 @@ def test_direct_router_resolves_credential_named_secret_headers_but_keeps_public
     assert engine_headers({'headers': [secret_row]}, resolve=lambda _: 'bad\r\nInjected: 1') == {}
     assert engine_headers({'headers': [{**secret_row, 'name': 'Host'}]}, resolve=lambda _: 'other.invalid') == {}
     assert engine_headers({'headers': [{**secret_row, 'name': 'Authorization'}], 'api_key_env': 'CANONICAL_KEY'}, resolve=lambda _: 'Bearer secondary') == {}
+
+
+def test_protocol_view_uses_declared_paths_and_separate_control_metadata(tmp_path, monkeypatch):
+    from gateway.engine_protocol import description
+    doc = description.ProtocolDescription(
+        id='native-test', title='Native test', executor='http-v1', source='test',
+        operations={
+            'chat': description.Operation('chat', 'generate', request=description.RequestSpec('POST', '/api/chat')),
+            'unload': description.Operation('unload', 'control', request=description.RequestSpec('DELETE', '/models/{model}')),
+        },
+    )
+    monkeypatch.setattr(description, 'load_registry', lambda: {doc.id: doc})
+    saved = record(connection={
+        'dispatch': 'protocol', 'protocol': doc.id, 'transport': 'http', 'address': 'http://127.0.0.1:8080/native',
+        'credentials': {'control': {'secret_ref': 'opaque-control-reference', 'origin': 'http://127.0.0.1:9090', 'header': 'X-Control'}},
+    })
+    shown = engine_admin.engine_view(load_engine_catalog(), saved, db_path=tmp_path / 'admin.db')
+    operations = shown['request_path']['operations']
+    assert [(row['capability'], row['method'], row['url']) for row in operations] == [
+        ('chat', 'POST', 'http://127.0.0.1:8080/native/api/chat'),
+        ('unload', 'DELETE', 'http://127.0.0.1:8080/native/models/{model}'),
+    ]
+    assert shown['v2']['connection']['protocol'] == doc.id
+    assert shown['v2']['connection']['address'] == 'http://127.0.0.1:8080/native'
+    assert shown['v2']['connection']['credentials']['control']['origin'] == 'http://127.0.0.1:9090'
+    assert shown['v2']['connection']['credentials']['control']['secret_ref'] == {'configured': False}
+    assert 'opaque-control-reference' not in str(shown)
+
+
+def test_missing_protocol_description_shows_no_guessed_destination(tmp_path, monkeypatch):
+    from gateway.engine_protocol import description
+    monkeypatch.setattr(description, 'load_registry', lambda: {})
+    saved = record(connection={'dispatch': 'protocol', 'protocol': 'missing-test', 'address': 'http://127.0.0.1:8080'})
+    shown = engine_admin.engine_view(load_engine_catalog(), saved, db_path=tmp_path / 'admin.db')
+    assert shown['request_path']['operations'] == [] and shown['request_path']['url'] == ''
+    assert any(item['code'] == 'engine_protocol_unavailable' for item in shown['attention'])
+    assert shown['v2']['connection']['credentials'] == {'inference': None, 'control': None}
+
+
+def test_shared_registry_projection_hides_connection_refs_and_echo_restores_exact_slot(tmp_path):
+    from gateway import projection, record_carriers, runtime_secrets
+    path = tmp_path / 'admin.db'
+    secret_store.put_provider_secret('connection-private-ref', 'connection-private-value', db_path=path)
+    saved = record(connection={'dispatch': 'protocol', 'protocol': 'openai-compatible', 'address': 'http://127.0.0.1:8080',
+                               'credentials': {'inference': {'secret_ref': 'connection-private-ref', 'origin': 'http://127.0.0.1:8080'}}})
+    runtime_secrets.configure(path)
+    try:
+        public = projection.project('ServiceRecord', saved).tree
+        assert 'connection-private-ref' not in str(public) and 'connection-private-value' not in str(public)
+        assert public['config']['connection']['credentials']['inference']['secret_ref'] == {'configured': True}
+        record_carriers.restore_echoed_record(public, saved)
+        assert public['config']['connection']['credentials']['inference']['secret_ref'] == 'connection-private-ref'
+        refused = copy.deepcopy(public)
+        refused['config']['connection']['credentials']['inference']['secret_ref'] = {'configured': False}
+        with pytest.raises(record_carriers.EchoRefused):
+            record_carriers.restore_echoed_record(refused, saved)
+    finally:
+        runtime_secrets.configure(None)
+
+
+def test_protocol_view_marks_legacy_inference_settings_as_unused(tmp_path):
+    saved = record(connection={'dispatch': 'protocol', 'protocol': 'openai-compatible', 'address': 'http://127.0.0.1:8080'},
+                   headers=[{'name': 'X-Public', 'value': 'legacy-value', 'public': True}], timeout=77,
+                   path_prefix='/old', transforms=['legacy-adjustment'])
+    shown = engine_admin.engine_view(load_engine_catalog(), saved, db_path=tmp_path / 'admin.db')
+    assert set(shown['unsupported_fields']) >= {'headers', 'reply_timeout_s', 'path_prefix', 'transforms'}
+    assert shown['record']['config']['timeout'] == 77
+    assert shown['reply_timeout']['seconds'] == 600
+    assert shown['calls'] == ''
+
+
+@pytest.mark.parametrize('operation,saved', [('check', False), ('test', False), ('check', True), ('test', True), ('create', False)])
+def test_legacy_probes_refuse_protocol_dispatch_before_network(tmp_path, monkeypatch, operation, saved):
+    import asyncio
+    from types import SimpleNamespace
+    from gateway.admin_runtime import AdminContext
+    async def forbidden(*args, **kwargs):
+        raise AssertionError('a legacy probe must not send traffic for a protocol description')
+    monkeypatch.setattr(engine_admin, 'run_check', forbidden)
+    monkeypatch.setattr(engine_admin, 'run_real_test', forbidden)
+    connection = {'dispatch': 'protocol', 'protocol': 'openai-compatible', 'address': 'http://127.0.0.1:8080'}
+    store = SimpleNamespace(path=tmp_path / 'admin.db', get_service_registry=lambda: {'services': {'editor': record(connection=connection)}} if saved else {'services': {}})
+    service = engine_admin.EngineService(store)
+    ctx = AdminContext(subject='owner', actor_kind='user', actor_id='owner', actor_label='Owner', roles=('owner',))
+    body = {'definition': 'openai-compatible', 'name': 'Editor', 'capability': 'chat',
+            'values': {} if saved else {'address': 'http://127.0.0.1:8080', 'dispatch': 'protocol', 'protocol_description': 'openai-compatible'}}
+    if saved:
+        body['service_id'] = 'editor'
+    with pytest.raises(engine_admin.EngineRouteError) as refused:
+        method = getattr(service, operation)
+        asyncio.run(method(ctx, body, **({'expected_generation': 0} if operation == 'create' else {})))
+    assert refused.value.code == 'unsupported_protocol_probe'
+
+
+def test_protocol_can_be_saved_off_and_changed_without_touching_unused_fields(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from gateway.admin_runtime import AdminContext
+    async def forbidden(*args, **kwargs):
+        raise AssertionError('saving off must not probe')
+    monkeypatch.setattr(engine_admin, 'run_check', forbidden)
+    saved = record(connection={'dispatch': 'protocol', 'protocol': 'openai-compatible', 'address': 'http://127.0.0.1:8080'}, timeout=77)
+    saved['enabled'] = False
+    registry = {'services': {}}
+    service = engine_admin.EngineService(SimpleNamespace(path=tmp_path / 'admin.db', get_service_registry=lambda: registry))
+    writes = []
+    def write(*args, **kwargs):
+        writes.append((args[3], kwargs))
+        return {'saved': True}
+    monkeypatch.setattr(service, '_write', write)
+    ctx = AdminContext(subject='owner', actor_kind='user', actor_id='owner', actor_label='Owner', roles=('owner',))
+    created = asyncio.run(service.create(ctx, {'definition': 'openai-compatible', 'name': 'Editor', 'disabled': True,
+        'values': {'address': 'http://127.0.0.1:8080', 'dispatch': 'protocol', 'protocol_description': 'openai-compatible'},
+        'models': [], 'capabilities': ['chat']}, expected_generation=0))
+    assert created['saved'] and writes[-1][1]['enabled'] is False
+    registry['services']['editor'] = saved
+    updated = asyncio.run(service.update(ctx, 'editor', {'values': {'protocol_description': 'ollama-native'}, 'disabled': True}, expected_generation=0))
+    assert updated['saved'] and writes[-1][0]['reply_timeout_s'] == 77

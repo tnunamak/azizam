@@ -251,8 +251,10 @@ resources:
     YAML file in the effective configuration, the package index and the overrides. A header row has `id`, `name`,
     `secret_ref`, and for a row declared `public: true` (exactly `true`) a `value`; any other field of a row is
     dropped. A record's id must equal the key it is stored under, and two records may not end up with one id.
-    The engine page also applies a typed connection projection: unknown nested
+    The shared record projection types the connection block: unknown nested
     fields are hidden and per-class credential references show configured metadata.
+    A whole-registry write preserves a credential reference only when the value at
+    that slot exactly matches its current configured projection and the revision matches.
   - **The router config** (decision D30). `GET /admin/api/operator/litellm-config`
     answers with a preview (a header's name with `<configured>`, an endpoint without
     credentials). The executable config is rendered only by `gateway/litellm_runtime.py`,
@@ -379,7 +381,15 @@ installed and has the `http-v1` executor, then writes
 Protocol endpoints must have no user info, query or fragment. The existing
 local-only dispatch validation still applies. For an opted-in engine without
 explicit offerings, the protocol lane derives request-field offerings from its
-stored model rows; it does not keep a second model list.
+stored model rows; it does not keep a second model list. The engine view shows
+the installed description's methods and path templates joined to this root,
+including job phases, and keeps inference and control credential metadata separate.
+An unavailable description shows attention and no guessed operation destination.
+Legacy header, path-prefix, reply-timeout and transform controls are read-only in
+this mode: protocol dispatch reads its connection block and installed description.
+The legacy Check and Test endpoints refuse protocol mode with
+`unsupported_protocol_probe` before traffic. The editor can validate the installed
+description and save the engine off; it does not claim a runtime probe passed.
 
 ## 5. Inbound frontends (how callers talk to Azizam) (F7)
 

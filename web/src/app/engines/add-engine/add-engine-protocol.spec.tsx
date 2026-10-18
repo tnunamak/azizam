@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { enginesApi } from "@/lib/engines-api";
 import { protocolDescriptionsApi } from "@/lib/protocol-descriptions-api";
 import {
-  check,
   definitions,
   renderWithClient,
 } from "../__fixtures__/test-utils";
@@ -35,23 +34,11 @@ beforeEach(() => {
 });
 
 describe("Add engine protocol dispatch", () => {
-  it("checks and creates with the selected installed protocol", async () => {
+  it("validates the installed description and creates it off without probing the definition", async () => {
     const user = userEvent.setup();
-    const result = check("oai_ok");
-    result.outcome = "error";
-    result.findings = [
-      {
-        code: "unreachable",
-        severity: "error",
-        field: "address",
-        title: "Could not reach the server",
-        what: "No reply.",
-        why: "Server is off.",
-        fix: "Start it or keep it off.",
-        keep_off: true,
-      },
-    ];
-    const runCheck = vi.spyOn(enginesApi, "check").mockResolvedValue(result);
+    const added = vi.fn();
+    const runCheck = vi.spyOn(enginesApi, "check");
+    const runTest = vi.spyOn(enginesApi, "test");
     const create = vi
       .spyOn(enginesApi, "create")
       .mockResolvedValue({
@@ -62,7 +49,7 @@ describe("Add engine protocol dispatch", () => {
       <AddEngineDialog
         open
         onOpenChange={() => undefined}
-        onAdded={() => undefined}
+        onAdded={added}
         onOpenEngine={() => undefined}
         checkRevealMs={0}
       />,
@@ -84,19 +71,13 @@ describe("Add engine protocol dispatch", () => {
       await screen.findByRole("combobox", { name: "Protocol description" }),
       "tiny",
     );
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-    expect(runCheck).toHaveBeenCalledWith(
-      expect.objectContaining({
-        values: expect.objectContaining({
-          dispatch: "protocol",
-          protocol_description: "tiny",
-        }),
-      }),
-      expect.any(AbortSignal),
-    );
-    await user.click(
-      await screen.findByRole("button", { name: "Add but keep off" }),
-    );
+    expect(screen.getByText("Valid description. 1 operation.")).toBeVisible();
+    expect(screen.getByText(/Configure its offerings on the engine page before turning it on/)).toBeVisible();
+    expect(screen.queryByTestId("call-line")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Add protocol engine (off)" }));
+    expect(runCheck).not.toHaveBeenCalled();
+    expect(runTest).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         disabled: true,
@@ -106,9 +87,11 @@ describe("Add engine protocol dispatch", () => {
         }),
       }),
     );
+    expect(added).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining("validated without contacting the engine") }));
+    expect(added.mock.calls[0][0].message).not.toMatch(/Check now|checks it when/);
   });
 
-  it("requires a description before checking an opted-in engine", async () => {
+  it("requires a valid installed description and address before adding an opted-in engine", async () => {
     const user = userEvent.setup();
     const runCheck = vi.spyOn(enginesApi, "check");
     renderWithClient(
@@ -133,12 +116,11 @@ describe("Add engine protocol dispatch", () => {
       screen.getByLabelText("Request dispatch"),
       "protocol",
     );
-    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByRole("button", { name: "Add protocol engine (off)" })).toBeDisabled();
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Protocol description" }), "tiny");
+    expect(screen.getByRole("button", { name: "Add protocol engine (off)" })).toBeEnabled();
+    await user.clear(screen.getByLabelText(/^Address/));
+    expect(screen.getByRole("button", { name: "Add protocol engine (off)" })).toBeDisabled();
     expect(runCheck).not.toHaveBeenCalled();
-    expect(
-      screen.getByText(
-        "Choose an installed protocol description before continuing.",
-      ),
-    ).toBeVisible();
   });
 });
