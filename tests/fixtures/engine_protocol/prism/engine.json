@@ -1,0 +1,83 @@
+{
+  "id": "prism-local",
+  "name": "Fictional engine",
+  "enabled": true,
+  "config": {
+    "connection": {
+      "transport": "http",
+      "dispatch": "protocol",
+      "protocol": "prism",
+      "address": "http://prism.test:9100/prefix",
+      "credentials": {},
+      "headers": [
+        {
+          "name": "X-Region",
+          "value": "test"
+        }
+      ],
+      "timeouts": {
+        "connect_s": 2,
+        "first_byte_s": 10,
+        "total_s": 30
+      }
+    },
+    "offerings": [
+      {
+        "id": "prism-chat",
+        "kind": "model",
+        "upstream": "text-v2",
+        "tasks": [
+          {
+            "task": "chat",
+            "evidence": "declared"
+          }
+        ],
+        "selection": {
+          "mode": "request_field"
+        }
+      },
+      {
+        "id": "prism-embed",
+        "kind": "model",
+        "upstream": "embed-v3",
+        "tasks": [
+          {
+            "task": "embeddings",
+            "evidence": "declared"
+          }
+        ],
+        "selection": {
+          "mode": "request_field"
+        }
+      },
+      {
+        "id": "prism-image",
+        "kind": "model",
+        "upstream": "render",
+        "tasks": [
+          {
+            "task": "image",
+            "evidence": "declared"
+          }
+        ],
+        "selection": {
+          "mode": "request_field"
+        }
+      },
+      {
+        "id": "prism-speech",
+        "kind": "model",
+        "upstream": "voice-v1",
+        "tasks": [
+          {
+            "task": "speech",
+            "evidence": "declared"
+          }
+        ],
+        "selection": {
+          "mode": "request_field"
+        }
+      }
+    ]
+  }
+}
