@@ -642,6 +642,15 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
     definition = catalog.definition(infer_definition(catalog, record))
     assert definition is not None
     address = str(config.get("address") or service_registry.service_base_url(config) or "")
+    effective_base = service_registry.service_base_url(config)
+    if address and effective_base:
+        proposed = _split_address(address, definition, str(config.get("path_prefix") or ""))
+        if comparable_address(service_registry.service_base_url(proposed)) != comparable_address(effective_base):
+            if definition["record"]["base_path"] != "from_address":
+                address = origin_of(effective_base)
+            else:
+                prefix = "/" + str(config.get("path_prefix") or "").strip("/")
+                address = effective_base[:-len(prefix)] if prefix != "/" and effective_base.endswith(prefix) else effective_base
     values: dict[str, Any] = {"address": address}
     env_name = config.get("api_key_env") or config.get("api_key_ref") or ""
     if not env_name and (stored.get("secret_refs") or {}).get("api_key") == SECRET_PLACEHOLDER and not stored_config.get("api_key_secret_id"):
@@ -1166,6 +1175,11 @@ class EngineService:
         if "headers" not in sent or sent["headers"] == before["values"].get("headers"):
             values["headers"] = []
         lifecycle_changed = any(_same_text(values.get(key)) != _same_text(before["values"].get(key)) for key in _LIFECYCLE_FIELDS)
+        if not before["lifecycle_editable"] and any(
+            _same_text(values.get(key)) != _same_text(before["values"].get(key))
+            for key in _LIFECYCLE_FIELDS if key != "lifecycle_ready_s"
+        ):
+            raise DraftError("The stored process uses a different driver. These lifecycle fields cannot edit it safely.", field="lifecycle_mode")
         stored_config = record.get("config") or {}
         _refuse_reserved_texts({key: value for key, value in values.items() if value != before["values"].get(key)})
         if "api_key" not in values:

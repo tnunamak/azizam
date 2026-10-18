@@ -395,7 +395,8 @@ describe("headers", () => {
     update.mockClear();
     await user.click(screen.getByRole("button", { name: "Add a header" }));
     const names = screen.getAllByLabelText("Header name");
-    await user.type(names[2], "X-New-Region");
+    await user.click(names[2]);
+    await user.paste("X-New-Region");
     await user.type(screen.getByLabelText("Value for X-New-Region"), "lan");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(commands).toHaveBeenCalled());

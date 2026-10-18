@@ -114,6 +114,12 @@ ENGINE_CONNECTION = register(Obj("EngineConnection", {
     "timeouts": Obj("EngineTimeouts", {"connect_s": NUM, "first_byte_s": NUM, "total_s": NUM}),
 }))
 
+OFFERING = Obj("Offering", {
+    "id": SHORT, "kind": SHORT, "upstream": ANY_SCALAR, "tasks": JSON, "inputs": JSON, "options": JSON,
+    "selection": JSON, "adjustments": JSON,
+    "start_profile": Obj("OfferingStartProfile", {"env": ENV}, extras=JSON),
+}, extras=HIDDEN)
+
 CONFIG = Obj("ServiceConfig", {
     "headers": HEADERS, "env": ENV, "process": PROCESS, "lifecycle": LIFECYCLE,
     "api_key_secret_id": CONFIGURED,
@@ -121,6 +127,7 @@ CONFIG = Obj("ServiceConfig", {
     **{key: ANY_SCALAR for key in CONFIG_SCALAR_KEYS},
     **{key: JSON for key in CONFIG_DESCRIPTOR_KEYS},
     "models": Alt((Seq(Alt((MODEL_ROW, ANY_SCALAR))), Dict(Alt((MODEL_ROW, ANY_SCALAR))))),
+    "offerings": seq(OFFERING),
     "auth": PROVIDER_AUTH, "native": NATIVE, "resources": RESOURCES, "residency": Alt((ANY_SCALAR, RESIDENCY)),
     "context_window_probe": Obj("ContextWindowProbe", {
         "endpoint": URL, "endpoint" + record_carriers.SECRETS_SUFFIX: URL_ENTRIES}, extras=HIDDEN),
@@ -137,6 +144,7 @@ SERVICE_RECORD_FIELDS_PROJECTED = {
     "id": STR, "name": STR, "kind": SHORT, "source": SHORT, "enabled": BOOL, "priority": INT, "role": SHORT,
     "capabilities": seq(SHORT), "config": CONFIG, "secret_refs": REF_MAP, "lifecycle": LIFECYCLE, "provenance": PROVENANCE,
     "process": PROCESS, "observations": mapping(OBSERVATION), "residency": RESIDENCY, "resources": RESOURCES, "editable": BOOL,
+    "offerings": seq(OFFERING),
     # Left by the schema 2 migration on a record it refused; the text is the gateway's own and is never shown.
     "migration_refused": OMIT,
 }

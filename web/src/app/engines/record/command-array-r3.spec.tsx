@@ -51,7 +51,7 @@ it("edits one literal argument and retains the secret by id without splitting co
   expect(within(screen.getByRole("group", { name: "lifecycle.driver_config start command" })).getByText("Configured")).toBeVisible();
   expect(screen.getByRole("textbox", { name: "lifecycle.driver_config stop command Argument 1" })).toHaveValue(stop[1]);
   await user.clear(argument);
-  await user.type(argument, "/models/new family, chat.bin");
+  await user.paste("/models/new family, chat.bin");
   await user.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(secretEntries).toHaveBeenCalled());
   expect(update).not.toHaveBeenCalled();

@@ -12,6 +12,8 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+
+from gateway import secret_commands
 from fastapi import APIRouter, FastAPI
 from fastapi.responses import JSONResponse
 
@@ -381,7 +383,7 @@ def test_a_draft_real_test_runs_from_the_gateway_against_the_draft_values(gatewa
     assert trace["method"] == sent.method
     assert trace["url"] == f"{fake.base_url}{sent.path}"
     assert trace["body"] == sent.json
-    assert trace["headers"]["Authorization"] == "[redacted]"
+    assert trace["headers"]["Authorization"] == "configured"
     assert trace["headers"]["content-type"] == sent.headers["content-type"]
     assert KEY not in tested.text
     assert "tested" not in _registry(gateway)["services"]
@@ -433,7 +435,8 @@ def test_an_older_record_keeps_its_key_reference_and_its_start_driver_through_th
     view = owner.get("/admin/api/engines/older").json()["engine"]
     assert view["inferred"] is True and view["definition"] == "openai-compatible"
     assert view["capabilities"] == ["chat"]
-    assert view["key"] == {"state": "configured", "source": "env", "env_name": "OLDER_KEY", "origin": "http://older.fk.test:80"}
+    assert view["key"] == {"state": "configured", "source": "env", "env_name": "OLDER_KEY", "origin": "http://older.fk.test:80",
+                           "entry_id": secret_commands.provider_key_entry_id(_record(gateway, "older")), "availability": "unavailable"}
     saved = _edit(owner, "older", {"definition": "openai-compatible", "name": "Older engine, renamed", "values": {}})
     assert saved.status_code == 200, saved.text
     after = _record(gateway, "older")
@@ -1023,13 +1026,14 @@ def test_page_masks_environment_values_and_ignored_credential_headers(gateway, f
     assert "test-private-header-value" not in response.text
     assert "test-explicit-secret-header-value" not in response.text
     view = response.json()["engine"]
-    assert view["v2"]["process"]["env"] == {"WORKSPACE": "[redacted]"}
+    assert view["v2"]["process"]["env"] == {"WORKSPACE": {"configured": False, "legacy": True}}
     assert view["values"]["headers"] == [
-        {"name": "Authorization", "value": "[redacted]", "secret": True, "not_sent": True},
-        {"name": "X-Client", "value": "[redacted]", "secret": True, "not_sent": True},
-        {"name": "X-Workspace", "value": "public-value"},
+        {"name": "Authorization", "configured": False, "legacy": True},
+        {"name": "X-Client", "configured": False, "legacy": True},
+        {"name": "X-Workspace", "configured": False, "legacy": True},
     ]
-    assert view["ignored_headers"] == ["Authorization", "X-Client"]
+    assert view["ignored_headers"] == []
+
 
 
 @pytest.mark.parametrize("location", ["record", "config"])

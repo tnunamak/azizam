@@ -1229,7 +1229,7 @@ def _migration_refusal_text(service_id: str, raw: Mapping[str, Any]) -> str:
 # and not classified there, so a new field cannot be added without deciding what it is.
 SERVICE_RECORD_FIELDS = (
     "id", "name", "kind", "source", "enabled", "priority", "role", "capabilities", "config", "secret_refs",
-    "lifecycle", "provenance", "process", "observations", "residency", "resources", "editable",
+    "lifecycle", "provenance", "process", "observations", "residency", "resources", "editable", "offerings",
 )
 
 
