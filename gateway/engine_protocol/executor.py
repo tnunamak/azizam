@@ -24,8 +24,8 @@ Rules it enforces on every call
   each chunk, and a stalled stream ends at the first-byte timeout.
 - Error texts never hold a credential.
 
-Overhead (measured by ``scripts/bench_engine_protocol.py``, recorded here)
-- see ``OVERHEAD`` below; refreshed by the benchmark script.
+Overhead: measured by ``scripts/bench_engine_protocol.py``; the numbers are in
+docs/design/ENGINE_PROTOCOL_EXECUTOR.md and ``tests/test_engine_protocol_overhead.py`` guards them.
 """
 
 from __future__ import annotations
@@ -60,8 +60,6 @@ _ERROR_BODY_CAP = 64 * 1024
 _PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]*)\}")
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 _REDIRECTS = (301, 302, 303, 307, 308)
-
-OVERHEAD = "not yet measured"
 
 
 def _origin(url: str) -> tuple[str, str, int]:

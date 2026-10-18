@@ -86,8 +86,9 @@ def hand_event(line: bytes) -> dict:
     return out
 
 
-def best(fn, number: int, repeat: int = 9) -> float:
-    """Microseconds per call, best of ``repeat`` runs of ``number`` calls."""
+def best(fn, number: int, repeat: int = 9, scale: float = 1.0) -> float:
+    """Microseconds per call, best of ``repeat`` runs of ``number`` calls (``scale`` shortens the runs)."""
+    number = max(1, int(number * scale))
     return min(timeit.repeat(fn, number=number, repeat=repeat)) / number * 1e6
 
 
@@ -110,10 +111,8 @@ class NullTransport:
         return Response()
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--json", action="store_true")
-    args = parser.parse_args()
+def measure(scale: float = 1.0) -> dict[str, dict[str, float]]:
+    """Time every case; ``scale`` below 1 shortens the runs (the tests use it), at the cost of noisier numbers."""
     desc = description.parse_description_text(ACME.read_text(), source="acme.yml")
     chat = desc.operations["chat"]
     req_program = chat.request.body.program
@@ -163,17 +162,24 @@ def main() -> None:
         asyncio.run(hand_whole_async())
 
     rows = {
-        "passthrough, no rules": (best(lambda: bare.apply(small_source), 100000), best(lambda: SMALL_BODY, 100000)),
-        "5 rules, hand-written shares containers": (best(lambda: small.apply(small_source), 50000), best(lambda: hand_small(SMALL_BODY), 50000)),
-        "5 rules, hand-written copies as it does": (best(lambda: small.apply(small_source), 50000), best(lambda: hand_small(SMALL_BODY, True), 50000)),
-        "request map (20 messages)": (best(lambda: req_program.apply(source), 20000), best(lambda: hand_request(BODY), 20000)),
-        "request map + JSON write": (best(lambda: dumps(req_program.apply(source)), 10000), best(lambda: dumps(hand_request(BODY)), 10000)),
-        "response map": (best(lambda: resp_program.apply(up_source), 50000), best(lambda: hand_response(UPSTREAM), 50000)),
-        "SSE event, parsed and mapped": (best(mapped_events, 20000) / n_events, best(hand_events, 20000) / n_events),
-        "SSE event, relayed unparsed": (best(relay_events, 50000) / n_events, best(relay_hand, 50000) / n_events),
-        "whole invoke (loop + stub transport)": (best(whole_executor, 500, 7), best(hand_whole, 500, 7)),
+        "passthrough, no rules": (best(lambda: bare.apply(small_source), 100000, scale=scale), best(lambda: SMALL_BODY, 100000, scale=scale)),
+        "5 rules, hand-written shares containers": (best(lambda: small.apply(small_source), 50000, scale=scale), best(lambda: hand_small(SMALL_BODY), 50000, scale=scale)),
+        "5 rules, hand-written copies as it does": (best(lambda: small.apply(small_source), 50000, scale=scale), best(lambda: hand_small(SMALL_BODY, True), 50000, scale=scale)),
+        "request map (20 messages)": (best(lambda: req_program.apply(source), 20000, scale=scale), best(lambda: hand_request(BODY), 20000, scale=scale)),
+        "request map + JSON write": (best(lambda: dumps(req_program.apply(source)), 10000, scale=scale), best(lambda: dumps(hand_request(BODY)), 10000, scale=scale)),
+        "response map": (best(lambda: resp_program.apply(up_source), 50000, scale=scale), best(lambda: hand_response(UPSTREAM), 50000, scale=scale)),
+        "SSE event, parsed and mapped": (best(mapped_events, 20000, scale=scale) / n_events, best(hand_events, 20000, scale=scale) / n_events),
+        "SSE event, relayed unparsed": (best(relay_events, 50000, scale=scale) / n_events, best(relay_hand, 50000, scale=scale) / n_events),
+        "whole invoke (loop + stub transport)": (best(whole_executor, 500, 7, scale=scale), best(hand_whole, 500, 7, scale=scale)),
     }
-    out = {name: {"executor_us": round(a, 3), "hand_written_us": round(b, 3), "ratio": round(a / b, 2)} for name, (a, b) in rows.items()}
+    return {name: {"executor_us": round(a, 3), "hand_written_us": round(b, 3), "ratio": round(a / b, 2)} for name, (a, b) in rows.items()}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+    out = measure()
     if args.json:
         print(json.dumps(out, indent=2))
         return

@@ -193,16 +193,17 @@ function written for the same mapping.
 
 | Case | Executor | Hand-written | Ratio |
 |---|---|---|---|
-| 5 rules over a passthrough copy, vs a hand-written function that copies as the executor does | ~2.6 µs | ~1.2 µs | ~2.1x |
-| The same 5 rules, vs a hand-written function that shares containers | ~2.6 µs | ~0.3 µs | ~7x |
-| Request map for a 20-message chat, with the JSON write that follows | ~13 µs | ~10 µs | ~1.3x |
-| One SSE event, decoded, parsed and mapped | ~6 µs | ~2.2 µs | ~2.8x |
-| One SSE event relayed unparsed | ~1.1 µs | ~0.13 µs | ~9x (about 1 µs absolute) |
+| 5 rules over a passthrough copy, vs a hand-written function that copies as the executor does | ~2.2 µs | ~0.9 µs | ~2.4x |
+| The same 5 rules, vs a hand-written function that shares containers | ~2.4 µs | ~0.3 µs | ~7x |
+| Request map for a 20-message chat, with the JSON write that follows | ~9.6 µs | ~7.9 µs | ~1.2x |
+| One SSE event, decoded, parsed and mapped | ~4.1 µs | ~1.7 µs | ~2.5x |
+| One SSE event relayed unparsed | ~0.8 µs | ~0.09 µs | ~8x (under 1 µs absolute) |
+| Whole `invoke` (event loop, mapping, JSON write and parse, stub transport) | ~153 µs | ~64 µs | ~2.4x |
 
 The isolated map step is above the 3x aim only against a hand-written function
 that does less work (it shares containers and skips the defensive copy). Where
 the comparison includes the work every request needs anyway (JSON write, parse)
-the ratio is 1.3x to 2.8x. The absolute cost is a few microseconds per request
+the ratio is 1.2x to 2.5x. The absolute cost is a few microseconds per request
 and per streamed event.
 
 ## Fixtures
