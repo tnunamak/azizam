@@ -1,5 +1,5 @@
 /* eslint-disable @next/next/no-img-element */
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Profiler } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -69,6 +69,13 @@ vi.mock("@/lib/product-api", () => ({
 }));
 
 vi.mock("sonner", () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}));
+
+vi.mock("@/lib/toast", () => ({
   toast: {
     error: vi.fn(),
     success: vi.fn(),

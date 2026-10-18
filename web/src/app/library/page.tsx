@@ -159,6 +159,15 @@ interface MediaResponse {
   next_cursor?: string | null;
   models?: string[];
   sources?: MediaSource[];
+  media_folder?: MediaFolderView | null;
+}
+
+// The folder's confirmation state. Only the owner receives where the folder is and what it holds.
+interface MediaFolderView {
+  state: "confirmed" | "unconfirmed" | "mismatch";
+  path?: string;
+  library_items?: number;
+  items_here?: number;
 }
 
 interface MediaSource {
@@ -285,7 +294,7 @@ function hasActiveFilters(filters: {
   );
 }
 
-type LibraryStage = "library" | "prepare" | "download" | "share" | "delete";
+type LibraryStage = "library" | "prepare" | "download" | "share" | "delete" | "folder";
 class LibraryFailure extends Error {
   constructor(
     readonly stage: LibraryStage,
@@ -303,13 +312,16 @@ class LibraryFailure extends Error {
               ? "The file couldn't be downloaded. Try again."
               : stage === "delete"
                 ? "We couldn't delete this creation. Try again."
-                : "This browser couldn't share the file. Use Download.");
+                : stage === "folder"
+                  ? "We couldn't confirm the media folder. Nothing was removed. Try again."
+                  : "This browser couldn't share the file. Use Download.");
   }
 }
+// The gateway's own sentence for a media folder failure, shown as it is.
 class MediaFolderFailure extends LibraryFailure {
-  constructor() {
-    super("delete", "gateway");
-    this.message = "Azizam can't confirm this is the right media folder, so nothing was removed. Ask the owner to check the disk and confirm this folder.";
+  constructor(message: string) {
+    super("folder", "gateway");
+    this.message = message;
   }
 }
 function failureCopy(error: unknown) {
@@ -336,6 +348,13 @@ function validAsset(value: unknown): boolean {
       ["id", "app_id", "person_id"].every((key) => value.source && record(value.source) &&
         (value.source[key] == null || typeof value.source[key] === "string"))));
 }
+function validMediaFolder(value: unknown): boolean {
+  return record(value) &&
+    (value.state === "confirmed" || value.state === "unconfirmed" || value.state === "mismatch") &&
+    (value.path == null || typeof value.path === "string") &&
+    (value.library_items == null || typeof value.library_items === "number") &&
+    (value.items_here == null || typeof value.items_here === "number");
+}
 function validPayload(path: string, value: unknown): boolean {
   if (!record(value)) return false;
   const route = path.split("?")[0];
@@ -346,6 +365,7 @@ function validPayload(path: string, value: unknown): boolean {
   if (route === "/me/api/media")
     return Array.isArray(value.assets) && value.assets.every(validAsset) &&
       (value.next_cursor == null || typeof value.next_cursor === "string") &&
+      (value.media_folder == null || validMediaFolder(value.media_folder)) &&
       (value.models == null || (Array.isArray(value.models) && value.models.every((model) => typeof model === "string"))) &&
       (value.sources == null || (Array.isArray(value.sources) && value.sources.every((source) =>
         record(source) && typeof source.id === "string" && typeof source.label === "string")));
@@ -375,11 +395,11 @@ async function mediaRequest<T>(
     throw new LibraryFailure(stage, "unknown");
   }
   if (!response.ok) {
-    if (path === REMOVE_MISSING_PATH) {
-      const failure: unknown = await response.json().catch(() => null);
-      if (record(failure) && record(failure.error) && failure.error.code === "media_folder_unconfirmed")
-        throw new MediaFolderFailure();
-    }
+    const failure: unknown = await response.json().catch(() => null);
+    const error = record(failure) && record(failure.error) ? failure.error : null;
+    if (error && typeof error.code === "string" && error.code.startsWith("media_folder_") &&
+        typeof error.message === "string")
+      throw new MediaFolderFailure(error.message);
     throw new LibraryFailure(stage, "gateway");
   }
   if (init.method === "DELETE" && response.status === 204) return undefined as T;
@@ -2284,7 +2304,6 @@ export default function LibraryPage() {
   const [closedDeepLinkId, setClosedDeepLinkId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
-  const [folderNeedsConfirmation, setFolderNeedsConfirmation] = useState(false);
   const [deleteAnnouncement, setDeleteAnnouncement] = useState("");
   const [loadMoreRequest, setLoadMoreRequest] = useState<{ path: string; ids: Set<string>; pages: number } | null>(null);
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
@@ -2485,6 +2504,8 @@ export default function LibraryPage() {
     () => assets.filter((asset) => asset.available === false),
     [assets],
   );
+  // The folder's state comes with the first page of the Library, which every read starts with.
+  const folder = mediaPages[0]?.media_folder ?? null;
   // The viewer's own media requests still running. They show only where the
   // viewer's own work belongs and when no filter they cannot answer is set.
   const runningMedia = useMemo(
@@ -2661,15 +2682,17 @@ export default function LibraryPage() {
       );
     },
     onSuccess: ({ removed_assets: removed }) => {
-      setFolderNeedsConfirmation(false);
       setDeleteAnnouncement(
         `Removed ${removed} missing ${removed === 1 ? "item" : "items"} from your Library.`,
       );
       void queryClient.invalidateQueries({ queryKey: ["library"] });
     },
     onError: (error) => {
-      setFolderNeedsConfirmation(error instanceof MediaFolderFailure);
-      if (error instanceof MediaFolderFailure) setConfirmingRemoval(false);
+      if (error instanceof MediaFolderFailure) {
+        setConfirmingRemoval(false);
+        // The folder's state is on the Library read, so the notice follows the server.
+        void queryClient.invalidateQueries({ queryKey: ["library"] });
+      }
       toast.error(failureCopy(error));
     },
   });
@@ -2682,11 +2705,11 @@ export default function LibraryPage() {
           "x-azizam-user-action": "1",
           "x-azizam-csrf": session.csrf_token,
         },
-      }, "delete");
+      }, "folder");
     },
     onSuccess: () => {
-      setFolderNeedsConfirmation(false);
       setDeleteAnnouncement("Media folder confirmed. Choose Remove missing items again when you are ready.");
+      void queryClient.invalidateQueries({ queryKey: ["library"] });
     },
     onError: (error) => toast.error(failureCopy(error)),
   });
@@ -3087,21 +3110,37 @@ export default function LibraryPage() {
           </details>
         </section>
       ) : null}
-      {folderNeedsConfirmation ? (
-        <div role="alert" className="border-border rounded-panel text-meta mt-4 space-y-2 border p-3">
-          <p>Azizam can&apos;t confirm this is the right media folder, so nothing was removed. Ask the owner to check the disk and confirm this folder.</p>
+      {folder && folder.state !== "confirmed" ? (
+        <section
+          aria-label="Media folder"
+          className="border-border rounded-panel text-meta mt-4 space-y-2 border p-3"
+        >
           {canChooseOwner ? (
             <>
-              <p>Check that the original media disk is mounted before confirming. This allows missing entries to be removed on your next attempt.</p>
+              <p>
+                Confirm this is the media folder once. Missing items can&apos;t be removed until you do.
+                {folder.state === "mismatch"
+                  ? " This folder isn't the one Azizam recorded."
+                  : ""}
+              </p>
+              <p>
+                <code>{folder.path}</code>
+              </p>
+              <p>{`${folder.items_here ?? 0} of ${folder.library_items ?? 0} Library items have their files here.`}</p>
+              {(folder.library_items ?? 0) > 0 && !folder.items_here ? (
+                <p>None of the Library&apos;s items have their files in this folder, so Azizam can&apos;t confirm it. Check that the media disk is mounted, then try again.</p>
+              ) : null}
               <Button
-                disabled={confirmFolderMutation.isPending}
+                disabled={confirmFolderMutation.isPending || (!!folder.library_items && !folder.items_here)}
                 onClick={() => confirmFolderMutation.mutate()}
               >
                 This is the right media folder
               </Button>
             </>
-          ) : null}
-        </div>
+          ) : (
+            <p>Azizam&apos;s media folder needs the owner to confirm it once. Until then, missing items can&apos;t be removed.</p>
+          )}
+        </section>
       ) : null}
       {updating ? (
         <p role="status" className="text-muted-foreground text-meta mt-3">
