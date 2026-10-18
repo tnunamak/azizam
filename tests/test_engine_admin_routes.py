@@ -799,8 +799,13 @@ def test_invalid_probe_limit_configuration_keeps_safe_defaults(monkeypatch, inva
         assert engine_admin._probe_limit(name, default) == default
 
 
-@pytest.mark.parametrize("service_id,definition", [("workshop", "openai-compatible"), ("second-engine", "own-model-list")])
-def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstreams, monkeypatch, service_id, definition):
+@pytest.mark.parametrize("service_id,definition,base_alias", [
+    ("workshop", "openai-compatible", None), ("second-engine", "own-model-list", None),
+    ("base-alias", "openai-compatible", "base_url"),
+    ("api-alias", "openai-compatible", "api_base"),
+    ("default-alias", "openai-compatible", "default_base_url"),
+])
+def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstreams, monkeypatch, service_id, definition, base_alias):
     """An owner edit drives the final HTTP hop, including its real client timeout."""
     from unittest.mock import AsyncMock
     import proxy
@@ -827,6 +832,8 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
         "lifecycle": {"driver": "process", "driver_config": {"start": ["server"], "port": {"fixed": 1234}}},
     }, source="ui")
     service = registry["services"][service_id]
+    if base_alias:
+        service["config"][base_alias] = f"{old.base_url}/v1"
     service["process"] = service_registry._v2_process(service.pop("lifecycle"))
     service["config"].pop("lifecycle", None)
     _put_registry(gateway, registry)
