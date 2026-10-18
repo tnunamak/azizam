@@ -7,7 +7,7 @@ values of the adapter interface, and nothing else: no policy, no engine names.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 import httpx
@@ -40,38 +40,34 @@ def supplied(**options: Any) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class WireReply(Reply):
-    """A ``Reply`` that also answers ``json()`` and ``text`` the way the older client's response did.
+    """A ``Reply`` that also answers ``json()`` and ``read_text()`` the way the older client's response did.
 
-    ``body`` holds the parsed JSON when the operation expects JSON. A body that does not parse leaves ``body`` empty and
-    ``json()`` raises the parse error at the call, as the response object did.
+    Nothing is parsed or decoded until it is asked for, so an answer is read at the same call, with the same errors, as
+    before: ``json()`` raises the parse error where it is called. ``body`` stays empty. ``text`` is the response text of
+    a non-200 answer when the operation was built to report it; ``read_text()`` returns it, or reads the response's
+    text (which honours the charset it declares) on demand.
     """
 
     text: str | None = None
-    json_error: Exception | None = None
+    source: Any = field(default=None, repr=False, compare=False)
 
     def json(self) -> Any:
-        if self.json_error is not None:
-            raise self.json_error
-        return self.body
+        return self.source.json()
+
+    def read_text(self) -> str:
+        return self.text if self.text is not None else self.source.text
 
 
-def reply_from(response: Any, *, parse_json: bool = True, want_text: bool = False) -> WireReply:
+def reply_from(response: Any, *, want_text: bool = False) -> WireReply:
     """The typed reply for a response.
 
-    Reads only ``status_code``, ``headers``, ``content`` and, on request, ``json()`` and (for a non-200 answer) ``text``.
+    Reads only ``status_code``, ``headers`` and ``content`` now; ``json()`` and ``read_text()`` read the response when
+    asked. With ``want_text`` the text of a non-200 answer is read now, as the older error paths did.
     """
-    body: Any = None
-    json_error: Exception | None = None
-    if parse_json:
-        try:
-            body = response.json()
-        except Exception as error:  # noqa: BLE001 - the same error is raised again, at the call that asks for it
-            json_error = error
     return WireReply(
         status=response.status_code,
         headers=lower_headers(getattr(response, "headers", None)),
-        body=body,
         raw=getattr(response, "content", None),
         text=response.text if want_text and response.status_code != 200 else None,
-        json_error=json_error,
+        source=response,
     )

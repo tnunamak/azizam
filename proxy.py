@@ -5570,7 +5570,7 @@ async def _free_graph_models_if_idle(client: httpx.AsyncClient) -> bool:
         await asyncio.sleep(1.0)
         return True
     except (TransportFailure, ValueError, TypeError) as exc:
-        print(f"[proxy] {_graph_adapter().label} model unload failed: {type(exc).__name__}", flush=True)
+        print(f"[proxy] {_graph_adapter().label} model unload failed: {type(exc.__cause__ or exc).__name__}", flush=True)
         return False
 
 
@@ -9451,7 +9451,7 @@ async def _graph_ws_listener(stop_event: asyncio.Event) -> None:
 
     while not stop_event.is_set():
         try:
-            async with contextlib.aclosing(adapter.watch(conn, COMFY_CLIENT_ID, on_open=opened)) as events:
+            async with contextlib.aclosing(adapter.watch(conn, COMFY_CLIENT_ID, on_open=opened, stop=stop_event.is_set)) as events:
                 async for evt in events:
                     if stop_event.is_set():
                         break
@@ -9663,10 +9663,8 @@ def _graph_video_unavailable_response() -> Response:
 
 
 def _graph_reply_text(reply: Any) -> str:
-    """The body of an upload or submit answer as text. The reply keeps text for refusals; a 200 body is decoded here."""
-    if reply.text is not None:
-        return reply.text
-    return (reply.raw or b"").decode("utf-8", "replace")
+    """The body of an upload or submit answer as text, decoded by the charset the answer declares."""
+    return reply.read_text()
 
 
 def _job_status_from_history(job: dict) -> tuple[str, int]:

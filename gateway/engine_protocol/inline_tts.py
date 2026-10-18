@@ -75,8 +75,7 @@ class InlineTtsAdapter:
         if op not in OPERATIONS:
             raise UnknownOperation(f"The speech adapter has no operation '{op}'.")
         if op in _JSON_ROUTES:
-            return await self._posted_json(f"{conn.address}{_JSON_ROUTES[op]}", request.body, conn,
-                                           parse_json=op == "speech.voice_check")
+            return await self._posted_json(f"{conn.address}{_JSON_ROUTES[op]}", request.body, conn)
         url = f"{conn.address}{SPEECH_PATH}"
         body = request.raw_body if request.raw_body is not None else json.dumps(request.body).encode()
         headers = request.headers
@@ -86,13 +85,13 @@ class InlineTtsAdapter:
         return await self._streamed(url, headers, body, timeout)
 
     @staticmethod
-    async def _posted_json(url: str, payload: Any, conn: Connection, *, parse_json: bool) -> Reply:
+    async def _posted_json(url: str, payload: Any, conn: Connection) -> Reply:
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)) as client:
                 resp = await client.post(url, json=payload)
         except httpx.HTTPError as error:
             raise failure(error) from error
-        return reply_from(resp, parse_json=parse_json)
+        return reply_from(resp)
 
     @staticmethod
     async def _buffered(url: str, headers: Any, body: bytes, timeout: httpx.Timeout) -> Reply:

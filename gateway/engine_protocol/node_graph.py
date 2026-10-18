@@ -233,7 +233,7 @@ def decode_output(handle: str) -> dict[str, Any]:
         decoded = json.loads(handle)
     except ValueError as error:
         raise MalformedResponse("An output handle is not one this adapter issued.") from error
-    if not isinstance(decoded, dict) or not decoded.get("filename"):
+    if not isinstance(decoded, dict):
         raise MalformedResponse("An output handle is not one this adapter issued.")
     return decoded
 
@@ -253,12 +253,12 @@ class GraphSession:
     def _url(self, path: str) -> str:
         return f"{self.conn.address}{path}"
 
-    async def _send(self, call: Any, path: str, *, parse_json: bool = True, want_text: bool = False, **kwargs: Any) -> WireReply:
+    async def _send(self, call: Any, path: str, *, want_text: bool = False, **kwargs: Any) -> WireReply:
         try:
             response = await call(self._url(path), **kwargs)
         except httpx.HTTPError as error:
             raise failure(error) from error
-        return reply_from(response, parse_json=parse_json, want_text=want_text)
+        return reply_from(response, want_text=want_text)
 
     async def submit(self, payload: Mapping[str, Any], *, headers: Any = UNSET, timeout: Any = UNSET) -> WireReply:
         return await self._send(self.client.post, "/prompt", want_text=True, **supplied(headers=headers, json=payload, timeout=timeout))
@@ -273,7 +273,7 @@ class GraphSession:
         return await self._send(self.client.get, "/queue", **supplied(headers=headers, timeout=timeout))
 
     async def view(self, params: Mapping[str, Any], *, headers: Any = UNSET) -> WireReply:
-        return await self._send(self.client.get, "/view", parse_json=False, **supplied(headers=headers, params=params))
+        return await self._send(self.client.get, "/view", **supplied(headers=headers, params=params))
 
     @asynccontextmanager
     async def view_stream(self, params: Mapping[str, Any], *, headers: Any = UNSET) -> AsyncIterator[Any]:
@@ -288,11 +288,11 @@ class GraphSession:
         return await self._send(self.client.post, "/upload/image", want_text=True, **supplied(headers=headers, files=files))
 
     async def cancel(self, prompt_id: str, *, headers: Any = UNSET, timeout: Any = UNSET) -> WireReply:
-        return await self._send(self.client.post, f"/api/jobs/{prompt_id}/cancel", parse_json=False,
+        return await self._send(self.client.post, f"/api/jobs/{prompt_id}/cancel",
                                 **supplied(headers=headers, timeout=timeout))
 
     async def delete_history(self, prompt_ids: Sequence[str], *, headers: Any = UNSET) -> WireReply:
-        return await self._send(self.client.post, "/history", parse_json=False,
+        return await self._send(self.client.post, "/history",
                                 **supplied(headers=headers, json={"delete": list(prompt_ids)}))
 
     async def object_info(self, class_type: str | None = None) -> WireReply:
@@ -303,7 +303,7 @@ class GraphSession:
         return await self._send(self.client.get, "/system_stats", **supplied(timeout=timeout))
 
     async def free(self, body: Mapping[str, Any], *, timeout: Any = UNSET) -> WireReply:
-        return await self._send(self.client.post, "/free", parse_json=False, **supplied(json=body, timeout=timeout))
+        return await self._send(self.client.post, "/free", **supplied(json=body, timeout=timeout))
 
 
 def _headers_of(request: CanonicalRequest) -> Any:
@@ -436,13 +436,17 @@ class NodeGraphAdapter:
         """One handle per output file, in node order, naming the kind of output it came from."""
         handles: list[str] = []
         for node_output in ((job or {}).get("outputs", {}) or {}).values():
+            if not isinstance(node_output, Mapping):
+                continue
             for key in OUTPUT_KEYS:
                 if key in node_output:
-                    handles.extend(encode_output(key, entry) for entry in node_output[key])
+                    handles.extend(encode_output(key, entry) for entry in node_output[key] if isinstance(entry, Mapping))
         return tuple(handles)
 
     async def events(self, conn: Connection, ref: JobRef, *, client_id: str | None = None) -> AsyncIterator[JobEvent]:
         async for event in self.watch(conn, client_id):
+            if not isinstance(event, dict):
+                continue
             data = event.get("data") or {}
             if data.get("prompt_id") != ref.id:
                 continue
@@ -453,11 +457,14 @@ class NodeGraphAdapter:
                     return
 
     async def watch(self, conn: Connection, client_id: str | None = None, *,
-                    on_open: Callable[[str], None] | None = None) -> AsyncIterator[dict[str, Any]]:
-        """The engine's push channel as decoded events, for one connection's lifetime. Raises when it drops.
+                    on_open: Callable[[str], None] | None = None,
+                    stop: Callable[[], bool] | None = None) -> AsyncIterator[Any]:
+        """The engine's push channel as decoded JSON frames, for one connection's lifetime. Raises when it drops.
 
-        Binary frames (previews) are skipped and text frames that are not JSON objects are ignored. ``on_open`` is
-        called with the channel's URL once it is open, before any event, so a caller can say it is connected.
+        Binary frames (previews) are skipped and text frames that are not JSON are ignored; a JSON frame is passed on
+        whatever it holds, and the caller decides what a frame that is not an object means. ``on_open`` is called with
+        the channel's URL once it is open, before any frame, so a caller can say it is connected. ``stop`` is asked
+        after every frame, binary ones included, and ends the channel when it answers true.
         """
         try:
             from websockets.asyncio.client import connect as ws_connect
@@ -469,14 +476,15 @@ class NodeGraphAdapter:
             if on_open is not None:
                 on_open(url)
             async for raw in socket:
+                if stop is not None and stop():
+                    break
                 if isinstance(raw, (bytes, bytearray)):
                     continue
                 try:
                     event = json.loads(raw)
                 except Exception:  # noqa: BLE001 - a frame that is not JSON says nothing
                     continue
-                if isinstance(event, dict):
-                    yield event
+                yield event
 
     async def cancel(self, conn: Connection, ref: JobRef, *, headers: Any = UNSET, session: GraphSession | None = None,
                      timeout: Any = CONTROL_TIMEOUT_S) -> None:
@@ -493,11 +501,17 @@ class NodeGraphAdapter:
             if status.state is not JobState.pending:
                 return status
             reply = await use.queue(headers=headers)
-        if reply.status != 200 or not isinstance(reply.body, dict):
+        if reply.status != 200:
             return None
-        if ref.id in queue_prompt_ids(reply.body.get("queue_running")):
+        try:
+            queue = reply.json()
+        except ValueError:
+            return None
+        if not isinstance(queue, dict):
+            return None
+        if ref.id in queue_prompt_ids(queue.get("queue_running")):
             return JobStatus(ref, JobState.running)
-        if ref.id in queue_prompt_ids(reply.body.get("queue_pending")):
+        if ref.id in queue_prompt_ids(queue.get("queue_pending")):
             return JobStatus(ref, JobState.pending)
         return None
 

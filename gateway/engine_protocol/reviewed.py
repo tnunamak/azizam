@@ -15,6 +15,9 @@ only place their ids are written next to their code.
 
 from __future__ import annotations
 
+import threading
+import time
+from pathlib import Path
 from typing import Any, Mapping
 
 from gateway.engine_protocol import description
@@ -23,13 +26,17 @@ from gateway.engine_protocol.errors import ProtocolError
 
 _FACTORIES: dict[str, AdapterFactory] = {}
 _BUILT: dict[tuple[str, int], tuple[Any, EngineAdapter]] = {}
+_MEMO: dict[tuple[Path | None, str], tuple[float, Mapping[str, description.ProtocolDescription]]] = {}
+_LOCK = threading.Lock()
+_REGISTRY_TTL_S = 1.0
 
 
 def register(adapter_id: str, factory: AdapterFactory) -> None:
     """Register (or replace) the reviewed factory for ``adapter:<adapter_id>``."""
-    _FACTORIES[adapter_id] = factory
-    for key in [key for key in _BUILT if key[0] == adapter_id]:
-        del _BUILT[key]
+    with _LOCK:
+        _FACTORIES[adapter_id] = factory
+        for key in [key for key in _BUILT if key[0] == adapter_id]:
+            _BUILT.pop(key, None)
 
 
 def _inline_tts(_doc: Any) -> EngineAdapter:
@@ -77,6 +84,30 @@ def _adapter_description(documents: Mapping[str, description.ProtocolDescription
     return None
 
 
+def _documents(directory: Path | None) -> Mapping[str, description.ProtocolDescription]:
+    """The loaded descriptions, kept for ``_REGISTRY_TTL_S`` so a hot loop does not stat the registry on every call."""
+    now = time.monotonic()
+    key = (directory, str(description.user_directory()) if directory is None else "")
+    with _LOCK:
+        memo = _MEMO.get(key)
+        if memo is not None and now - memo[0] < _REGISTRY_TTL_S:
+            return memo[1]
+    loaded = description.load_registry() if directory is None else description.load_registry(directory)
+    with _LOCK:
+        _MEMO[key] = (now, loaded)
+    return loaded
+
+
+def _candidates(record: Mapping[str, Any], capability: str) -> list[description.ProtocolDescription]:
+    """The adapter descriptions that may answer: the active registry's first, then the shipped one as the floor."""
+    found: list[description.ProtocolDescription] = []
+    for directory in (None, description.REGISTRY_DIR):
+        doc = _adapter_description(_documents(directory), record, capability)
+        if doc is not None and all(doc is not other for other in found):
+            found.append(doc)
+    return found
+
+
 def protocol_for_backend(record: Mapping[str, Any], capability: str) -> description.ProtocolDescription:
     """The adapter protocol description that serves ``capability`` for ``record``.
 
@@ -84,27 +115,40 @@ def protocol_for_backend(record: Mapping[str, Any], capability: str) -> descript
     record selects, but it cannot take the media routes down, so when the active registry holds no adapter for the
     capability the shipped one answers.
     """
-    found = _adapter_description(description.load_registry(), record, capability)
-    if found is None:
-        found = _adapter_description(description.load_registry(description.REGISTRY_DIR), record, capability)
-    if found is None:
+    found = _candidates(record, capability)
+    if not found:
         raise ProtocolError(f"No reviewed adapter is registered for '{capability}'.", code="adapter_not_registered")
-    return found
+    return found[0]
 
 
-def adapter_for_backend(record: Mapping[str, Any], capability: str) -> EngineAdapter:
-    """The reviewed adapter a backend record selects for ``capability`` (cached per description)."""
-    doc = protocol_for_backend(record, capability)
+def _build(doc: description.ProtocolDescription) -> EngineAdapter:
     adapter_id = doc.adapter_id or ""
-    cached = _BUILT.get((adapter_id, id(doc)))
-    if cached is not None:
-        return cached[1]
-    factories = {**_BUILTIN_FACTORIES, **_FACTORIES}
+    with _LOCK:
+        cached = _BUILT.get((adapter_id, id(doc)))
+        if cached is not None:
+            return cached[1]
+        factories = {**_BUILTIN_FACTORIES, **_FACTORIES}
     registry = AdapterRegistry({doc.id: doc})
     for known, factory in factories.items():
         registry.register(known, factory)
     built = registry.adapter_for(doc.id)
-    for key in [key for key in _BUILT if key[0] == adapter_id]:
-        del _BUILT[key]
-    _BUILT[(adapter_id, id(doc))] = (doc, built)
+    with _LOCK:
+        for key in [key for key in _BUILT if key[0] == adapter_id]:
+            _BUILT.pop(key, None)
+        _BUILT[(adapter_id, id(doc))] = (doc, built)
     return built
+
+
+def adapter_for_backend(record: Mapping[str, Any], capability: str) -> EngineAdapter:
+    """The reviewed adapter a backend record selects for ``capability`` (cached per description).
+
+    A description that names an adapter nobody registered, or one of another interface version, is skipped for the
+    next candidate, ending at the shipped description.
+    """
+    refusal: ProtocolError | None = None
+    for doc in _candidates(record, capability):
+        try:
+            return _build(doc)
+        except ProtocolError as error:
+            refusal = error
+    raise refusal or ProtocolError(f"No reviewed adapter is registered for '{capability}'.", code="adapter_not_registered")
