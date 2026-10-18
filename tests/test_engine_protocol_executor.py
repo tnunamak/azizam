@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from typing import Any
+from urllib.parse import quote, quote_plus
 
 import httpx
 import pytest
@@ -918,6 +920,118 @@ def test_fetch_asset_count_is_bounded() -> None:
         return await ex.poll(conn(), ref)
     with pytest.raises(BudgetExceeded):
         run(go())
+
+
+# --- query-auth keys never reach a log, an error, a preview or a receipt ---------------------------
+
+QKEY = "k/ey+with space&=é-1234"
+FORMS = [QKEY, quote(QKEY), quote(QKEY, safe=""), quote_plus(QKEY)]
+QUERY_AUTH = {"inference": {"kind": "query", "name": "api_key"}}
+QOPS = {"x": {"class": "generate", "request": {"method": "GET", "path": "/x"}, "response": {"framing": "json"}},
+        "s": {"class": "generate", "request": {"method": "GET", "path": "/s"}, "response": {"framing": "sse"}}}
+
+
+def qconn(**kw: Any) -> Connection:
+    return conn(credentials={"inference": Credential(QKEY)}, **kw)
+
+
+def clean(*texts: Any) -> None:
+    for text in texts:
+        for form in FORMS:
+            assert form not in str(text), (form, str(text))
+
+
+def test_a_query_key_is_sent_encoded_and_the_preview_never_shows_it_in_any_form() -> None:
+    ex, fake = make(QOPS, lambda r: httpx.Response(200, json={}), auth=QUERY_AUTH)
+    shown = run(ex.preview(qconn(), req("x")))
+    clean(json.dumps(shown))
+    assert "api_key=" in shown["url"]
+    run(ex.invoke(qconn(), req("x")))
+    assert fake.requests[0].url.params["api_key"] == QKEY  # the real request does carry it
+
+
+def test_a_short_query_key_is_masked_in_the_preview_too() -> None:
+    ex, _ = make(QOPS, lambda r: httpx.Response(200, json={}), auth=QUERY_AUTH)
+    shown = run(ex.preview(conn(credentials={"inference": Credential("abc")}), req("x")))
+    assert "abc" not in shown["url"] and "api_key=" in shown["url"]
+
+
+def test_an_engine_that_echoes_the_url_cannot_put_the_key_in_an_error() -> None:
+    def handler(r: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text=f"bad request: {r.url}", headers={"x-trace": str(r.url), "content-type": "text/plain"})
+    ex, _ = make(QOPS, handler, auth=QUERY_AUTH)
+    with pytest.raises(UpstreamError) as raised:
+        run(ex.invoke(qconn(), req("x")))
+    error = raised.value
+    clean(error, error.body.decode(), error.headers, error.advice, repr(error.args))
+
+
+def test_a_redirect_refusal_never_holds_the_key() -> None:
+    ex, _ = make(QOPS, lambda r: httpx.Response(302, headers={"location": f"http://evil.test/x?api_key={quote(QKEY)}"}), auth=QUERY_AUTH)
+    with pytest.raises(RedirectRefused) as raised:
+        run(ex.invoke(qconn(), req("x")))
+    clean(raised.value)
+
+
+class Breaking:
+    """A transport that fails the way a real one may: with the whole URL in the message."""
+
+    def __init__(self, error) -> None:
+        self.error = error
+
+    async def send(self, request, timeouts):
+        raise self.error(request.url)
+
+
+@pytest.mark.parametrize("error", [
+    lambda url: TransportFailure("aborted", f"The connection to {url} broke"),
+    lambda url: RuntimeError(f"unexpected failure for {url}"),
+    lambda url: httpx.InvalidURL(f"Invalid URL {url}"),
+])
+def test_a_transport_failure_never_holds_the_key_and_is_typed(error) -> None:
+    ex = executor.HttpV1Executor(desc(QOPS, auth=QUERY_AUTH), transport=Breaking(error), assets=MemoryAssetStore())
+    with pytest.raises(TransportFailure) as raised:
+        run(ex.invoke(qconn(), req("x")))
+    exc: BaseException | None = raised.value
+    while exc is not None:  # also what a log would print from the chain
+        clean(exc, repr(exc))
+        exc = exc.__cause__ or exc.__context__
+
+
+def test_a_stream_that_breaks_midway_never_holds_the_key() -> None:
+    class Broken(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"data: {}\n\n"
+            raise httpx.ReadError(f"broken at http://engine.test:8080/s?api_key={quote(QKEY)}")
+
+        async def aclose(self) -> None:
+            pass
+    ex, _ = make(QOPS, lambda r: httpx.Response(200, stream=Broken()), auth=QUERY_AUTH)
+    with pytest.raises(TransportFailure) as raised:
+        collect(run(ex.invoke(qconn(), req("s"))))
+    clean(raised.value, repr(raised.value))
+
+
+def test_answer_headers_and_a_job_failure_reason_never_hold_the_key() -> None:
+    echo = {"x-echo": f"http://engine.test:8080/x?api_key={quote_plus(QKEY)}", "location-hint": QKEY}
+    ex, _ = make(QOPS, lambda r: httpx.Response(200, json={}, headers=echo), auth=QUERY_AUTH)
+    clean(run(ex.invoke(qconn(), req("x"))).headers)
+    jobs = fast_job(0.1, 1)
+    ex, _ = make(jobs, job_handler([{"state": "bad", "error": {"message": f"failed: {QKEY}"}}]), auth=QUERY_AUTH)
+
+    async def go():
+        ref = await ex.submit(qconn(), req("render", {"prompt": "x"}))
+        return await ex.poll(qconn(), ref)
+    clean(run(go()).detail)
+
+
+def test_the_http_client_log_never_holds_the_key(caplog) -> None:
+    ex, _ = make(QOPS, lambda r: httpx.Response(200, json={}), auth=QUERY_AUTH)
+    with caplog.at_level(logging.DEBUG):
+        run(ex.invoke(qconn(), req("x")))
+    assert any(record.name == "httpx" for record in caplog.records)  # the client does log each request
+    for record in caplog.records:
+        clean(record.getMessage(), record.args)
 
 
 # --- preview, terminals ----------------------------------------------------------------------
