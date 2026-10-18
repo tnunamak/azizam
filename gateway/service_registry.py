@@ -46,6 +46,9 @@ PROTOCOL_FRONTEND_SOURCES = frozenset({"builtin", "ui", "provisioned", "imported
 DATA_OBJECT_SOURCES = frozenset({"builtin", "ui", "provisioned", "discovered", "imported"})
 DEFAULT_CATALOG_DIR = Path(__file__).resolve().parent.parent / "registry"
 REMOTE_PROVIDER_TYPES = frozenset({"remote", "paid-remote", "cloud"})
+# Protocol dispatch accepts only these classes. Any other provider type or cost class is refused,
+# so a new paid or remote name fails closed rather than needing its own entry here.
+LOCAL_PROVIDER_CLASSES = frozenset({"local", "free-local"})
 ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _SECRET_HINTS = (
@@ -1050,10 +1053,12 @@ def validate_protocol_dispatch_registry(
             continue
         old = previous.get(service_id)
         if isinstance(old, Mapping):
-            if service == old:
+            # Compare what would be stored. A client may echo a stored row with defaults the
+            # normalizer adds (enabled, editable, provenance); that echo is not a change.
+            if _same_stored_row(service_id, service, old):
                 continue
-            disabled = dict(old, enabled=False)
-            if bool_from_config(old.get("enabled"), True) and service == disabled:
+            if bool_from_config(old.get("enabled"), True) and _same_stored_row(
+                    service_id, service, dict(old, enabled=False)):
                 continue
         try:
             validate_protocol_dispatch_local_only(service)
@@ -1061,25 +1066,56 @@ def validate_protocol_dispatch_registry(
             raise ValueError(f"service {service_id!r}: {exc}") from exc
 
 
+def _same_stored_row(service_id: str, left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    try:
+        return normalize_service_record(service_id, left) == normalize_service_record(service_id, right)
+    except (TypeError, ValueError):
+        return dict(left) == dict(right)
+
+
+def _paid_remote_or_substrate(source: Mapping[str, Any]) -> bool:
+    """True when one level of a record (record, config, connection or offering) names a paid, remote or substrate target."""
+    for key in ("provider_type", "cost_class"):
+        value = str(source.get(key) or "").strip().lower()
+        if value and value not in LOCAL_PROVIDER_CLASSES:
+            return True
+    if any(bool_from_config(source.get(key), False) for key in ("paid_remote", "remote_provider")):
+        return True
+    if any(str(source.get(key) or "").strip().lower() == "remote" for key in ("locality", "placement")):
+        return True
+    if str(source.get("execution_substrate") or "").strip().lower() == "litellm":
+        return True
+    return str(source.get("kind") or "").strip().lower() in {"litellm", "llm-substrate"}
+
+
+def _unsafe_address(address: str) -> bool:
+    """Userinfo, backslashes and control or space characters make parsers disagree about the host."""
+    return any(char in address for char in "@\\") or any(char.isspace() or ord(char) < 32 for char in address)
+
+
 def validate_protocol_dispatch_local_only(service: Mapping[str, Any]) -> None:
     """Protocol dispatch lacks paid-provider controls; accept only proven local addresses.
 
-    This intentionally narrow rule does not resolve DNS: LAN and container names
-    remain unknown. Placement labels cannot override the connection's address.
+    Every level of the record is checked: the record, its config, each connection and each
+    offering. Any paid, remote or substrate marker refuses it, and so does any provider type
+    or cost class outside LOCAL_PROVIDER_CLASSES. The connection's address must classify as
+    loopback, with no userinfo. This intentionally narrow rule does not resolve DNS: LAN and
+    container names remain unknown. Placement labels cannot override the connection's address.
+    Dispatch calls the same check at request time.
     """
     config = service.get("config")
-    sources = (service, config if isinstance(config, Mapping) else {})
-    connections = [source.get("connection") for source in sources]
-    opted = [connection for connection in connections
-             if isinstance(connection, Mapping) and connection.get("dispatch") == "protocol"]
+    config = config if isinstance(config, Mapping) else {}
+    connections = [source for source in (service.get("connection"), config.get("connection")) if isinstance(source, Mapping)]
+    opted = [connection for connection in connections if connection.get("dispatch") == "protocol"]
     if not opted:
         return
     reason = ("protocol dispatch does not enforce paid-provider access or spend limits; "
               "use the existing provider route")
-    if any(is_remote_provider_config(source) for source in sources):
+    offerings = service.get("offerings") if isinstance(service.get("offerings"), list) else config.get("offerings")
+    levels = [service, config, *connections, *(item for item in offerings or [] if isinstance(item, Mapping))]
+    if any(_paid_remote_or_substrate(level) for level in levels):
         raise ValueError(reason)
-    if any(str(source.get(key) or "").strip().lower() == "remote"
-           for source in sources for key in ("locality", "placement")):
+    if is_litellm_service_record(service.get("id"), service):
         raise ValueError(reason)
     # Import lazily: presentation also imports registry classifiers. Reuse its
     # address classifier with only the actual target, never placement metadata
@@ -1088,7 +1124,8 @@ def validate_protocol_dispatch_local_only(service: Mapping[str, Any]) -> None:
 
     for connection in opted:
         address = connection.get("address")
-        if not isinstance(address, str) or model_locality({"base_url": address}, None) != "local":
+        if (not isinstance(address, str) or _unsafe_address(address)
+                or model_locality({"base_url": address}, None) != "local"):
             raise ValueError(reason)
 
 
