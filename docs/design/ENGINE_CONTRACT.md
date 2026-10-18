@@ -12,7 +12,7 @@ those documents stands, including its routing resolution (section 3 here).
 Identity: docs/PRODUCT_STRATEGY.md "Identity". Extension rules:
 docs/EXTENSION_ARCHITECTURE.md. Evidence (divan, local-ai-gateway/): gateways
 4eccb54, local runners 8ccad98, platform lifecycle e927fa5, community setups
-aa87d59, media stacks c603498, model picks 95c470a, media delivery d627bf2. Code
+aa87d59, media stacks c603498, model picks 95c470a, media delivery d627bf2, declarative adapters 5d1bed8. Code
 audit: ~/Documents/azizam/engine-contract/reality-audit.md.
 
 ## 1. Model and scope
@@ -178,7 +178,12 @@ load, unload and so on), `auth`, `errors` (advice rows) and an `executor`.
   grammar. It is proven by a second-engine fixture for each pattern.
 - **`executor: adapter:<id>`** is a reviewed adapter, for anything outside
   http-v1: graph patching (ComfyUI), framed or socket protocols (Wyoming),
-  chunked speech-to-text merge, novel stateful streams. The in-tree ComfyUI,
+  chunked speech-to-text merge, novel stateful streams. Divan 5d1bed8 names
+  the five things measured outside the roughly 24 HTTP primitives: request
+  signing (for example AWS SigV4), results held in object storage,
+  binary-tail framing, WebSocket protocol translation, and engines whose HTTP
+  surface is user code. Mapping cost stays within about 3x a hand-written
+  mapping. JSONata and CEL-class languages (375x to 1,158x) are not used. The in-tree ComfyUI,
   STT and TTS clients become adapters behind one interface.
 - **The adapter interface is versioned:** `health`, `inventory`,
   `invoke(op, canonical_request)`, and for jobs `submit`, `poll` or `events`,
