@@ -86,6 +86,7 @@ it.each(["path", "header", "model"])("discarding tested draft %s changes leaves 
   await user.click(screen.getByRole("button", { name: "Run a real test for Chat" }));
   expect(await screen.findByText(/Tested your unsaved changes/)).toBeVisible();
   expect(run).toHaveBeenCalledTimes(1);
+  expect(run.mock.calls[0][0]).toMatchObject({ models: expect.any(Array) });
   await user.click(screen.getByRole("button", { name: "Discard" }));
   expect(screen.queryByLabelText("Real test of Chat")).toBeNull();
   expect(update).not.toHaveBeenCalled();
