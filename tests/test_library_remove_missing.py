@@ -160,7 +160,7 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503, response.text)
         error = response.json()["error"]
         self.assertEqual(error["code"], "media_folder_unavailable")
-        self.assertEqual(error["message"], "Azizam can't see its media folder right now, so nothing was removed.")
+        self.assertEqual(error["message"], "Azizam can't see its media folder right now, so nothing was removed. Try again when the folder is back.")
         self.assert_nothing_changed()
 
     def test_a_missing_media_folder_removes_nothing(self) -> None:
