@@ -28358,6 +28358,7 @@ def _protocol_failure(error: ProtocolError) -> Response:
         "unknown_protocol": "The selected engine protocol description is unavailable.",
         "ambiguous_model": "The model names more than one offering. Use engine/id.",
         "engine_disabled": "The selected engine is disabled.",
+        "protocol_dispatch_refused": "Protocol dispatch does not enforce paid-provider access or spend limits. Use the existing provider route.",
     }
     message = messages.get(code, "The engine protocol request failed. Check Status or gateway logs.")
     headers = {}

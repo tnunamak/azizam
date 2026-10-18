@@ -56,6 +56,12 @@ def resolve(registry: Mapping[str, Any], model: Any, op: str) -> Target | None:
     engine_id, service, offering = matches[0]
     if service.get('enabled', True) is False:
         raise ProtocolError('The selected engine is disabled.', code='engine_disabled')
+    from gateway.service_registry import validate_protocol_dispatch_local_only
+    try:
+        validate_protocol_dispatch_local_only(service)
+    except ValueError:
+        raise ProtocolError('Protocol dispatch requires a local engine without paid-provider billing.',
+                            code='protocol_dispatch_refused') from None
     protocol_id = connection_config(service).get('protocol')
     doc = description.load_registry().get(protocol_id)
     if doc is None or doc.executor != 'http-v1':

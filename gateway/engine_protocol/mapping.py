@@ -248,7 +248,7 @@ def _compile_rule(rule: Any, ctx: _Ctx, place: str, depth: int) -> Step | None:
             ctx.bad(ctx.place, f"more than {ctx.budgets.max_rules} rules in one map")
         return None
     if not isinstance(rule, dict) or len(rule) != 1:
-        ctx.bad(place, "a rule is an object with exactly one key (copy, rename, set, default, drop, enum, clamp, stringify or when)")
+        ctx.bad(place, "a rule is an object with exactly one key (copy, rename, set, default, drop, enum, clamp, stringify, when or each)")
         return None
     kind, spec = next(iter(rule.items()))
     if kind not in _RULE_KEYS:

@@ -71,6 +71,8 @@ async def models(registry: Mapping) -> list[dict]:
             return copy.deepcopy(cached[1])
         try:
             async with asyncio.timeout(ENGINE_TIMEOUT_S):
+                from gateway.service_registry import validate_protocol_dispatch_local_only
+                validate_protocol_dispatch_local_only(service)
                 runtime = await asyncio.to_thread(dispatch.Runtime, dispatch.Target(engine_id, service, offerings[0], doc))
                 reply = await runtime.invoke('models', {})
                 if isinstance(reply, StreamReply):
