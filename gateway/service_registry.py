@@ -549,10 +549,21 @@ def _v2_process(lifecycle: Mapping[str, Any]) -> dict[str, Any] | None:
         return None
     driver = str(lifecycle.get("driver") or "external")
     driver_config = lifecycle.get("driver_config") if isinstance(lifecycle.get("driver_config"), Mapping) else {}
-    process: dict[str, Any] = {"driver": "none" if driver == "external" else "command" if driver == "systemd" else driver}
+    driver_map = {"none": "none", "external": "none", "http-load-unload": "none", "command": "command",
+                  "systemd": "command", "docker": "command", "process": "process"}
+    process: dict[str, Any] = {"driver": driver_map.get(driver, "none")}
+    if driver in {"docker", "http-load-unload"} or driver not in driver_map:
+        process["legacy_driver"] = driver
+        process["needs_owner_conversion"] = True
     for key in ("start", "stop", "status", "env", "cwd"):
         if key in driver_config:
-            process[key] = copy.deepcopy(driver_config[key])
+            value = driver_config[key]
+            if key in {"start", "stop", "status"} and (
+                not isinstance(value, list) or not all(isinstance(arg, str) for arg in value)
+            ):
+                process["needs_owner_conversion"] = True
+            else:
+                process[key] = copy.deepcopy(value)
     if driver == "systemd":
         unit = driver_config.get("unit")
         scope = ["--user"] if driver_config.get("scope") == "user" else []
@@ -614,7 +625,11 @@ def service_record_v2(record: Mapping[str, Any]) -> dict[str, Any]:
         if endpoint:
             observations["process_ready"] = {"http": {"path": endpoint, "expect": 200}}
     residency = copy.deepcopy(record.get("residency")) if isinstance(record.get("residency"), Mapping) else {}
-    resources = copy.deepcopy(record.get("resources")) if isinstance(record.get("resources"), Mapping) else {}
+    if lifecycle.get("driver") == "http-load-unload":
+        residency.setdefault("legacy_driver", "http-load-unload")
+        residency.setdefault("needs_owner_conversion", True)
+    raw_resources = record.get("resources") if isinstance(record.get("resources"), Mapping) else config.get("resources")
+    resources = copy.deepcopy(dict(raw_resources)) if isinstance(raw_resources, Mapping) else {}
     return {"schema_version": ENGINE_RECORD_VIEW_VERSION, "id": service_id, "name": record.get("name") or service_id,
             "enabled": bool(record.get("enabled", True)), "record_type": "system" if system else "engine",
             "derived": system, "editable": bool(record.get("editable", not system)) and not system,
