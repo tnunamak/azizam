@@ -500,7 +500,7 @@ function RecordForm({
     setSaveError(null);
     try {
       let registry: ServiceRegistry;
-      if (settingsLocked || (mismatched && nameOnly)) registry = await api.services.edit(view.service_id, { name: name.trim() });
+      if (settingsLocked || nameOnly) registry = await api.services.edit(view.service_id, { name: name.trim() });
       else {
         const body = saveBody();
         if (options.keepOff) body.disabled = true;

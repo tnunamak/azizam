@@ -9,7 +9,7 @@ from typing import Any
 
 from gateway import secret_store, service_registry
 from gateway.engine_check import join_url
-from gateway.litellm_substrate import _engine_request_settings
+from gateway.litellm_substrate import SECRET_PLACEHOLDER, _engine_request_settings
 
 
 class InferenceConnectionError(ValueError):
@@ -52,7 +52,11 @@ def inference_connection(
     origin = service_registry.origin_of(base)
     if origin and config.get("credential_origin") == origin:
         key = None
-        if config.get("api_key_secret_id"):
+        env_name = config.get("api_key_env") or config.get("api_key_ref")
+        secret_refs = (record or {}).get("secret_refs") or {}
+        if env_name:
+            key = env(str(env_name))
+        elif config.get("api_key_secret_id"):
             try:
                 key = secret_store.get_provider_secret(
                     str(config["api_key_secret_id"]), db_path=db_path, expected_origin=origin,
@@ -61,9 +65,10 @@ def inference_connection(
                 # Missing key files, unreadable ciphertext and stale references
                 # all stop dispatch, without exposing secret-store details.
                 raise InferenceConnectionError("The engine credential is unavailable. Re-enter it in Connection.") from None
-        elif config.get("api_key_env"):
-            key = env(str(config["api_key_env"]))
-        if (config.get("api_key_secret_id") or config.get("api_key_env")) and not key:
+        elif secret_refs.get("api_key") == SECRET_PLACEHOLDER:
+            env_name = "AZIZAM_DOWNSTREAM_API_KEY"
+            key = env(env_name)
+        if (config.get("api_key_secret_id") or env_name) and not key:
             raise InferenceConnectionError("The engine credential is unavailable. Re-enter it in Connection.")
         if key:
             headers["authorization"] = f"Bearer {key}"

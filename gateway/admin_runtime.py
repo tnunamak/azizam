@@ -824,19 +824,20 @@ class AdminSQLiteStore:
                     old_config, new_config = dict(previous.get("config") or {}), dict(record.get("config") or {})
                     # The legacy PATCH form fills model_group from id. That
                     # representation change grants no new offering or route.
-                    for config_values in (old_config, new_config):
+                    for config_values, service in ((old_config, previous), (new_config, record)):
                         if isinstance(config_values.get("models"), (list, tuple)):
                             config_values["models"] = service_registry._form_models_to_config(config_values["models"])
+                        config_values["lifecycle"] = service_registry.legacy_lifecycle_from_service(service)
                     defaults = {"base_path": "/v1", "scheme": "http", "timeout": 600,
-                                "headers": [], "models": [], "transforms": []}
-                    for section, keys in {
-                        "connection": ("address", "host", "port", "scheme", "base_path", "path_prefix", "protocol", "timeout", "headers",
-                                       "base_url", "api_base", "default_base_url", "gateway_lifecycle", "gateway_backend"),
-                        "offerings": ("models", "transforms"),
-                    }.items():
-                        if any((old_config.get(key) or defaults.get(key)) != (new_config.get(key) or defaults.get(key))
-                               for key in keys):
-                            raise PermissionError(f"Only the owner can change service {section}.")
+                                "headers": [], "models": [], "transforms": [], "role": "required", "managed": False}
+                    metadata_keys = {"name", "enabled", "note"}
+                    keys = (old_config.keys() | new_config.keys()) - metadata_keys
+                    if any((old_config.get(key) or defaults.get(key)) != (new_config.get(key) or defaults.get(key))
+                           for key in keys):
+                        raise PermissionError("Only the owner can change service settings.")
+                    for field in ("capabilities", "priority", "role", "kind", "resources", "secret_refs"):
+                        if previous.get(field) != record.get(field):
+                            raise PermissionError(f"Only the owner can change service {field}.")
                 for field in ("connection", "process", "protocol_operations", "control_file_roots",
                               "offerings", "residency", "observations", "credentials"):
                     # Migration writes empty blocks; an empty block grants nothing.
@@ -1009,6 +1010,24 @@ class AdminSQLiteStore:
         sid = service_registry.normalize_id(service_id)
         current_registry = self.get_service_registry()
         existing = (current_registry.get("services") or {}).get(sid)
+        if existing is not None and set(data) <= {"name", "enabled", "note"}:
+            # A metadata save must not rebuild a connection through a legacy
+            # form, which can discard URL aliases or custom protocol paths.
+            registry = copy.deepcopy(current_registry)
+            record = registry["services"][sid]
+            for field, value in data.items():
+                if field == "enabled":
+                    value = service_registry.bool_from_config(value, True)
+                else:
+                    value = str(value).strip()
+                if field != "note":
+                    record[field] = value
+                if field == "note" or field in record.get("config", {}):
+                    record.setdefault("config", {})[field] = value
+            return self._persist_service_registry(
+                registry, action="operator.service.updated", actor=actor,
+                service_id=sid, expected_generation=expected_generation,
+            )
         if existing is not None and not service_registry.is_litellm_service_record(
             sid, existing
         ):

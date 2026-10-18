@@ -52,7 +52,7 @@ from gateway.engine_check import (
 )
 from gateway.engine_definitions import EngineCatalog, EngineDefinitionError, load_engine_catalog
 from gateway.engine_connection import inference_base_url
-from gateway.litellm_substrate import CREDENTIAL_HEADER_RE, header_problem, reaches_engine_directly, routed_models
+from gateway.litellm_substrate import CREDENTIAL_HEADER_RE, header_problem, routed_models
 
 # Record keys this module writes. Every other config key is the owner's and is
 # carried through an edit untouched ("Other settings").
@@ -470,6 +470,10 @@ def build_raw(
         record_caps = list(record_capabilities)
     has = {f["key"] for f in definition["fields"]}
     raw: dict[str, Any] = {key: copy.deepcopy(value) for key, value in (keep or {}).items()}
+    # The definition writes one host/port/path connection. Older URL aliases
+    # must not override it after an owner saves a different address.
+    for alias in ("base_url", "api_base", "default_base_url"):
+        raw.pop(alias, None)
     raw.update(_split_address(values["address"], definition, (values.get("path_prefix") or "") if "path_prefix" in has else ""))
     raw.update({
         "name": name,
@@ -968,7 +972,7 @@ class EngineService:
         before = engine_view(catalog, record, db_path=self.db_path)
         definition = _definition(catalog, body.get("definition") or before["definition"])
         submitted = body.get("values") if isinstance(body.get("values"), Mapping) else {}
-        if not _is_owner(ctx) and not submitted and not any(key in body for key in ("models", "capabilities", "tests")) and not body.get("recheck"):
+        if not submitted and not any(key in body for key in ("models", "capabilities", "tests")) and not body.get("recheck"):
             metadata = {key: body[key] for key in ("name", "enabled") if key in body}
             if body.get("disabled"):
                 metadata["enabled"] = False

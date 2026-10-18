@@ -68,3 +68,34 @@ def test_missing_stored_key_is_a_connection_error_not_an_unauthenticated_request
     with pytest.raises(InferenceConnectionError, match="credential is unavailable"):
         connection({"address": "http://server.invalid/v1", "api_key_secret_id": "missing",
                     "credential_origin": "http://server.invalid:80"}, tmp_path)
+
+
+@pytest.mark.parametrize("references,expected_name", [
+    ({"config": {"api_key_ref": "NAMED_TEST_KEY"}}, "NAMED_TEST_KEY"),
+    ({"secret_refs": {"api_key": "<external-secret>"}}, "AZIZAM_DOWNSTREAM_API_KEY"),
+    ({"config": {"api_key_env": "NAMED_TEST_KEY", "api_key_secret_id": "unused"}}, "NAMED_TEST_KEY"),
+])
+def test_credential_references_have_the_same_precedence_as_direct_routing(tmp_path, references, expected_name):
+    record = {"config": {"address": "http://server.invalid/v1", "credential_origin": "http://server.invalid:80",
+                          **references.get("config", {})}, "secret_refs": references.get("secret_refs", {})}
+    names = []
+    def env(name):
+        names.append(name)
+        return "test-value"
+    result = inference_connection(record, "/chat/completions", fallback_address="", fallback_timeout=99,
+                                  db_path=tmp_path / "admin.db", env=env)
+    assert result.headers["authorization"] == "Bearer test-value"
+    assert names == [expected_name]
+
+
+@pytest.mark.parametrize("references", [
+    {"config": {"api_key_ref": "MISSING_TEST_KEY"}},
+    {"secret_refs": {"api_key": "<external-secret>"}},
+])
+def test_missing_legacy_credentials_stop_the_request(tmp_path, references):
+    from gateway.engine_connection import InferenceConnectionError
+    record = {"config": {"address": "http://server.invalid/v1", "credential_origin": "http://server.invalid:80",
+                          **references.get("config", {})}, "secret_refs": references.get("secret_refs", {})}
+    with pytest.raises(InferenceConnectionError, match="credential is unavailable"):
+        inference_connection(record, "/chat/completions", fallback_address="", fallback_timeout=99,
+                             db_path=tmp_path / "admin.db", env=lambda name: None)

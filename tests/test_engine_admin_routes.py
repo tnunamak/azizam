@@ -818,7 +818,7 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
         "provenance": {"source": "hand-written", "reference": "ENGINE_CONTRACT section 9: edits drive the effective request"},
         "exchanges": [{"id": "chat", "match": {
             "method": "POST", "path": request_path,
-            "headers": {"x-workspace": "new-value", "authorization": {"$absent": True}, "cookie": {"$absent": True}},
+            "headers": {"x-workspace": "new-value", "authorization": f"Bearer {KEY}" if base_alias else {"$absent": True}, "cookie": {"$absent": True}},
             "json": {"model": "new-upstream"},
         }, "response": {"status": 200, "json": {"choices": [{"message": {"content": "edited"}}]}}}],
     }), host="new-hop.fk.test")
@@ -834,6 +834,7 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
     service = registry["services"][service_id]
     if base_alias:
         service["config"][base_alias] = f"{old.base_url}/v1"
+        service["config"].update(api_key_env="OLD_HOP_TEST_KEY", credential_origin=engine_check.origin_of(old.base_url))
     service["process"] = service_registry._v2_process(service.pop("lifecycle"))
     service["config"].pop("lifecycle", None)
     _put_registry(gateway, registry)
@@ -842,6 +843,7 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
         "definition": definition, "disabled": True,
         "values": {"address": f"{upstream.base_url}/provider" if definition == "openai-compatible" else upstream.base_url,
                    **({"path_prefix": "/v1"} if definition == "openai-compatible" else {}), "reply_timeout_s": 37,
+                   **({"api_key": KEY, "api_key_env": ""} if base_alias else {}),
                    "headers": [{"name": "X-Workspace", "value": "new-value"}]},
         "models": [{"id": "new-upstream", "public_name": "hop-chat"}],
     })
@@ -883,6 +885,48 @@ def test_admin_api_hop_connection_edit_reaches_fake_upstream(gateway, fake_upstr
     assert refused.status_code == 503, refused.text
     assert refused.json()["error"]["code"] == "engine_credential_unavailable"
     assert len(upstream.requests) == 1
+
+
+@pytest.mark.parametrize("administrator", [False, True])
+@pytest.mark.parametrize("definition", ["openai-compatible", "own-model-list"])
+def test_metadata_save_preserves_the_connection_and_process(gateway, fake_upstreams, administrator, definition):
+    owner, _, _, admin = owner_and_admin(gateway)
+    fake = _silent(fake_upstreams, "metadata-path.fk.test")
+    assert _create(owner, {"definition": definition, "name": "metadata-path", "disabled": True,
+                           "values": {"address": fake.base_url}}).status_code == 201
+    registry = _registry(gateway)
+    registry["services"]["metadata-path"]["config"].update(
+        base_path="/custom/v1", api_base=f"{fake.base_url}/custom/v1",
+    )
+    _put_registry(gateway, registry)
+    before = _record(gateway, "metadata-path")
+    result = _edit(admin if administrator else owner, "metadata-path", {"name": "Renamed", "note": "Updated"})
+    assert result.status_code == 200, result.text
+    after = _record(gateway, "metadata-path")
+    assert after["name"] == "Renamed"
+    assert after["config"]["note"] == "Updated"
+    assert after["config"]["base_path"] == before["config"]["base_path"]
+    assert after["config"]["api_base"] == before["config"]["api_base"]
+    assert after["process"] == before["process"]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("native_passthrough", True), ("litellm_provider", "other"),
+    ("provider_adapter", "other"), ("gateway_lifecycle_base_url", ""),
+    ("capabilities", ["chat", "openai"]),
+])
+def test_administrator_cannot_change_other_routing_fields(gateway, fake_upstreams, field, value):
+    owner, _, _, admin = owner_and_admin(gateway)
+    fake = _silent(fake_upstreams, "guard-routing.fk.test")
+    assert _create(owner, {"definition": "openai-compatible", "name": "guard-routing", "disabled": True,
+                           "values": {"address": fake.base_url}}).status_code == 201
+    registry = _registry(gateway)
+    registry["services"]["guard-routing"]["config"]["gateway_lifecycle_base_url"] = "http://internal.invalid/local"
+    _put_registry(gateway, registry)
+    before = _record(gateway, "guard-routing")
+    result = _edit(admin, "guard-routing", {field: value})
+    assert result.status_code == 403, result.text
+    assert _record(gateway, "guard-routing") == before
 
 
 @pytest.mark.parametrize("body", [
