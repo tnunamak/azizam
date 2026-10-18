@@ -325,7 +325,8 @@ The Python key includes uv configuration files and interpreter build settings.
 The npm key includes effective npm configuration and the complete Git tree when
 a dependency has an install hook, since hooks can read arbitrary project files.
 Root install hooks, workspaces and local dependencies bypass the npm cache because they can read arbitrary source.
-Keys contain hashes; configuration and environment values are never logged.
+Per-call tracing IDs are removed from the installer environment before keying or
+execution. Keys contain hashes; configuration and environment values are never logged.
 
 A key lock serializes population. An install failure publishes no completed entry.
 Only a complete entry whose file contents, modes and symlink targets match its

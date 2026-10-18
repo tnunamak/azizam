@@ -72,6 +72,8 @@ def prune(root: Path, kind: str, current: Path) -> None:
 
 
 def install(kind: str, destination: Path) -> None:
+    # Tool-call tracing is execution metadata, not an installer input.
+    os.environ.pop("CODEX_TOOL_CALL_ID", None)
     root = Path(os.environ.get("AZIZAM_CI_CACHE", str(Path.home() / "Documents/azizam/ci-cache")))
     # Exclude only the gate's per-invocation bookkeeping. Keep build flags,
     # npm/uv settings, HOME, PATH and tool-specific environment in the key.

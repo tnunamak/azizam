@@ -688,12 +688,12 @@ def test_target_without_signoff_runs_budget_comparison(world: World) -> None:
 
 
 def test_dependencies_are_private_and_warm_runs_still_test(world: World) -> None:
-    first = world.run()
+    first = world.run(CODEX_TOOL_CALL_ID="first-invocation")
     assert first.returncode == 0, first.stdout + first.stderr
     assert "cache miss: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
     assert "cache miss: venv" in (world.receipts / "logs/e2e-venv.log").read_text()
     cases = (world.receipts / "cases.jsonl").read_text()
-    second = world.run()
+    second = world.run(CODEX_TOOL_CALL_ID="second-invocation")
     assert second.returncode == 0, second.stdout + second.stderr
     assert "cache hit: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
     assert "cache hit: venv" in (world.receipts / "logs/e2e-venv.log").read_text()
