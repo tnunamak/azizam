@@ -29271,7 +29271,7 @@ FRONTEND_TRANSLATORS.mount_owned(app)
 frontend_mount.mount(
     app,
     frontend_mount.rows_from_frontends(
-        route_registry.protocol_frontend_records(registry=_PROTOCOL_ROUTE_REGISTRY, proxy_config=config),
+        route_registry.mount_frontend_records(registry=_PROTOCOL_ROUTE_REGISTRY, proxy_config=config),
     ),
     FRONTEND_TRANSLATORS,
 )
