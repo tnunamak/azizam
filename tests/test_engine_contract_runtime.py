@@ -18,6 +18,7 @@ from gateway.engine_process import ProcessDriver
 from gateway.engine_residency import ResidencyController
 from gateway.engine_switch import SwitchController, SwitchUnavailable
 from gateway.swap_drain import SwapDrain
+from tests.support.fake_upstream.observation_client import observation_client
 
 
 def run(coro):
@@ -214,8 +215,7 @@ def test_http_observation_uses_expected_status_and_json_pointer():
         seen.append((request.method, str(request.url)))
         return httpx.Response(200, json={"data": [{"id": "a"}, {"id": "b"}], "resident": False})
 
-    client_type = httpx.AsyncClient
-    reader = ObservationReader()
+    reader = ObservationReader(client_factory=observation_client(handler))
     svc = {"connection": {"address": "http://fixture.test:18091"}, "observations": {
         "inventory": {"http": {"path": "/v1/models", "expect": 200, "select": "/data/*/id"},
                       "means": "available"},
@@ -224,13 +224,9 @@ def test_http_observation_uses_expected_status_and_json_pointer():
     }}
 
     async def scenario():
-        from unittest.mock import patch
-
-        with patch("gateway.engine_observations.httpx.AsyncClient", side_effect=lambda **kw:
-                   client_type(transport=httpx.MockTransport(handler), follow_redirects=False)):
-            assert (await reader.read(svc, "inventory")).value == ["a", "b"]
-            assert (await reader.read(svc, "resident")).value is False
-            assert (await reader.read(svc, "selected")).known is False
+        assert (await reader.read(svc, "inventory")).value == ["a", "b"]
+        assert (await reader.read(svc, "resident")).value is False
+        assert (await reader.read(svc, "selected")).known is False
 
     run(scenario())
     assert seen == [("GET", "http://fixture.test:18091/v1/models"),
