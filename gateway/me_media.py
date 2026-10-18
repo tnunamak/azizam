@@ -13,6 +13,7 @@ import json
 import logging
 import math
 import os
+import re
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -300,8 +301,8 @@ def create_me_media_router(
             storage = asset_storage_provider() if asset_storage_provider is not None else None
             if storage is None or storage.folder is None:
                 raise PublicFailure("media_folder_unavailable", 503)
-            stored, total = _folder_counts(storage, admin_path=admin_path, jobs_path=jobs_path,
-                                           receipts_path=_resolve_path(receipts_path))
+            stored, total, _uncheckable = _folder_counts(storage, admin_path=admin_path, jobs_path=jobs_path,
+                                                         receipts_path=_resolve_path(receipts_path))
             if total and not stored:
                 raise PublicFailure("media_folder_no_matches", 409)
             volume_id = prompt_memory.confirm_media_folder(
@@ -499,14 +500,25 @@ def _media_folder_view(
         return None
     if state == "confirmed" or not actor.owner:
         return {"state": state}
-    stored, total = _folder_counts(storage, admin_path=admin_path, jobs_path=jobs_path, receipts_path=receipts_path)
-    return {"state": state, "path": str(storage.folder), "library_items": total, "items_here": stored}
+    stored, total, uncheckable = _folder_counts(storage, admin_path=admin_path, jobs_path=jobs_path,
+                                                receipts_path=receipts_path)
+    return {
+        "state": state, "path": str(storage.folder), "library_items": total, "items_here": stored,
+        "uncheckable_items": uncheckable,
+    }
 
 
-def _folder_counts(storage: StorageSnapshot, *, admin_path: Path, jobs_path: Path, receipts_path: Path) -> tuple[int, int]:
-    """(items whose file is in the folder, all Library items), across everyone, for the owner's confirmation.
+_HEX_DIGEST = re.compile(r"[0-9a-fA-F]{64}")
 
-    The Library items are the assets the finished jobs name, less the ones a person deleted.
+
+def _folder_counts(
+    storage: StorageSnapshot, *, admin_path: Path, jobs_path: Path, receipts_path: Path,
+) -> tuple[int, int, int]:
+    """(items whose file is in the folder, checkable Library items, uncheckable Library items), across everyone.
+
+    The Library items are the assets the finished jobs name, less the ones a person deleted. An id whose
+    digest is not 64 hex characters cannot be matched to a file, so it is in neither count; the caller
+    reports it apart, and a Library with only such ids is unverifiable rather than present.
     """
     deleted = _audited_deletions(admin_path)
     named: dict[str, None] = {}
@@ -515,16 +527,26 @@ def _folder_counts(storage: StorageSnapshot, *, admin_path: Path, jobs_path: Pat
             asset_id = str(asset.get("asset_id") or asset.get("id") or "")
             if asset_id and asset_id not in deleted:
                 named[asset_id] = None
-    stored = sum(1 for asset_id in named if _is_stored(asset_id, storage))
-    return stored, len(named)
+    checkable = [asset_id for asset_id in named if _is_checkable(asset_id)]
+    stored = sum(1 for asset_id in checkable if _digest_of(asset_id) in storage.digests)
+    return stored, len(checkable), len(named) - len(checkable)
+
+
+def _is_checkable(asset_id: str) -> bool:
+    return _HEX_DIGEST.fullmatch(_digest_of(asset_id)) is not None
+
+
+def _digest_of(asset_id: str) -> str:
+    return asset_id.split("_", 1)[1] if isinstance(asset_id, str) and "_" in asset_id else ""
 
 
 def _is_stored(asset_id: str, storage: StorageSnapshot) -> bool:
     """Whether a file holds the asset's bytes. An id that cannot be checked counts as stored.
 
-    A set lookup in the one listing; the folder is not scanned again for each asset.
+    A set lookup in the one listing; the folder is not scanned again for each asset. Removal uses this,
+    so an id that cannot be checked is never removed.
     """
-    digest = asset_id.split("_", 1)[1] if isinstance(asset_id, str) and "_" in asset_id else ""
+    digest = _digest_of(asset_id)
     return len(digest) != 64 or digest in storage.digests
 
 

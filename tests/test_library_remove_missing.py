@@ -250,6 +250,7 @@ class RemoveMissingTests(unittest.TestCase):
         self.current_user = self.owner
         self.assertEqual(self.media_folder(), {
             "state": "unconfirmed", "path": str(self.cache), "library_items": 5, "items_here": 2,
+            "uncheckable_items": 0,
         })
 
     def test_a_member_is_told_only_the_state(self) -> None:
