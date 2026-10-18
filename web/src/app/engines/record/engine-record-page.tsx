@@ -184,7 +184,8 @@ export function EngineRecordPage({
           view={engine}
           definition={definition}
           onRefresh={async () => {
-            await refetchEngine();
+            const refreshed = await refetchEngine();
+            return refreshed.data?.revision;
           }}
           onSaved={async (message) => {
             await refetchEngine();
@@ -251,7 +252,7 @@ function RecordForm({
 }: {
   view: EngineView;
   definition: EngineDefinition;
-  onRefresh: () => Promise<void>;
+  onRefresh: () => Promise<string | undefined>;
   onSaved: (message: string) => Promise<void>;
   onDiscard: () => Promise<void>;
   onRemove: () => void;
@@ -293,6 +294,8 @@ function RecordForm({
 
   const [name, setName] = useState(view.name);
   const [address, setAddress] = useState(saved.address);
+  // Background refetches do not authorize an old secret draft against a newer registry.
+  const [draftRevision, setDraftRevision] = useState(view.revision);
   const [options, setOptions] = useState<OptionValues>(() => optionValuesFrom(definition, view));
   const [headers, setHeaders] = useState<HeaderDraft[]>([]);
   const [secrets, setSecrets] = useState(() => secretDrafts(view.record, view.key));
@@ -463,7 +466,7 @@ function RecordForm({
             tests: { [capability]: { ok: true, at: result.at, seconds: result.seconds, evidence_token: result.evidence_token } },
           });
           queryClient.setQueryData(queryKeys.serviceRegistry, registry);
-          await onRefresh();
+          setDraftRevision(await onRefresh());
         } catch {
           // The page still shows the pass; it is not stored.
         }
@@ -502,7 +505,7 @@ function RecordForm({
             : { definition: definition.definition, enabled: on },
         );
       queryClient.setQueryData(queryKeys.serviceRegistry, registry);
-      await onRefresh();
+      setDraftRevision(await onRefresh());
     } catch (error) {
       const refused = checkFromError(error);
       if (refused) {
@@ -533,7 +536,7 @@ function RecordForm({
       let registry: ServiceRegistry;
       if (commandProblem || addressProblem) throw new Error(commandProblem || addressProblem || "");
       if (commands.length && publicDirty) throw new Error("Save secret changes separately from other settings. Save or discard one group first.");
-      if (commands.length) registry = await enginesApi.secretEntries(view.service_id, commands, view.revision);
+      if (commands.length) registry = await enginesApi.secretEntries(view.service_id, commands, draftRevision);
       else if (settingsLocked || nameOnly) registry = await api.services.edit(view.service_id, { name: name.trim() });
       else {
         const body = saveBody();
