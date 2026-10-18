@@ -28546,7 +28546,8 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
     closes_chat = op == "chat" and owns_receipt
     if op == "chat":
         receipt.metadata["request_shape"] = request_shape_fields(body)
-        receipt.metadata["request_shape"]["body_bytes"] = request_body_byte_count(await request.body())
+        # The same measure the legacy route records: the JSON it hands on, not the bytes it received.
+        receipt.metadata["request_shape"]["body_bytes"] = request_body_byte_count(json.dumps(backend_body).encode("utf-8"))
         record_request_shape_stage(receipt.metadata, "accepted", body)
         record_request_shape_stage(receipt.metadata, "outer_egress", backend_body)
     receipt.metadata.update({"execution_backend":"http-v1", "engine_id":target.engine_id,

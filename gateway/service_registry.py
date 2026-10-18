@@ -1070,8 +1070,18 @@ def validate_protocol_dispatch_registry(
             raise ValueError(f"service {service_id!r}: {exc}") from exc
 
 
+# Top-level keys the normalizer stores (or defaults). Any other top-level key is policy-relevant
+# raw data that normalization drops, so a change to it is a change, never a normalized no-op.
+_NORMALIZED_ROW_KEYS = frozenset({
+    "id", "name", "kind", "source", "enabled", "priority", "role", "capabilities", "config", "secret_refs",
+    "lifecycle", "provenance", "process", "observations", "residency", "resources", "editable",
+})
+
+
 def _same_stored_row(service_id: str, left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
     """Whether two rows store the same thing. Secret checks are skipped: a refused legacy row must still compare."""
+    if any(left.get(key) != right.get(key) for key in (set(left) | set(right)) - _NORMALIZED_ROW_KEYS):
+        return False
     try:
         return (normalize_service_record(service_id, left, check_secrets=False)
                 == normalize_service_record(service_id, right, check_secrets=False))
