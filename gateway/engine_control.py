@@ -76,11 +76,19 @@ class EngineControlRuntime:
         if not isinstance(roots, list) or any(not isinstance(root, str) for root in roots):
             raise ValueError("invalid control file roots")
         allowed = [Path(root).expanduser().resolve() for root in roots]
-        for key, value in args.items():
-            if key in {"file", "file_path", "path"} and isinstance(value, str):
+        def inspect(value: Any) -> None:
+            if isinstance(value, Mapping):
+                for item in value.values():
+                    inspect(item)
+            elif isinstance(value, list):
+                for item in value:
+                    inspect(item)
+            elif isinstance(value, str) and Path(value).is_absolute():
                 path = Path(value).expanduser().resolve()
                 if not any(path.is_relative_to(root) for root in allowed):
                     raise ValueError("control file path is outside owner allowlisted roots")
+
+        inspect(args)
 
     async def select(self, offering_id: str, selection: Mapping[str, Any], *,
                      on_acquired=None, on_release=None):
