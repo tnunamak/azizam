@@ -44,7 +44,7 @@ from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.availability import availability_evidence_snapshot, project_service
 from gateway.model_presentation import service_presentation, starts_on_demand
 from gateway.backends.litellm_admin import LiteLLMAdminError
-from gateway import admin_catalog, admin_store, engine_admin, engine_check, egress, extension_packages, projection_types, secret_commands, service_registry
+from gateway import admin_catalog, admin_store, engine_admin, engine_check, egress, extension_packages, projection, projection_types, record_carriers, secret_commands, service_registry
 
 __all__ = [
     "AdminAuthError",
@@ -1478,10 +1478,45 @@ def _validate_media_job_admission_overrides(
     }
 
 
+def scrub_probe_result(result: Mapping[str, Any]) -> dict[str, Any]:
+    """What a connection test reports, without the credentials of the address it was given.
+
+    The probe reports the address it called. That address may hold user info or a query token the caller typed, so it
+    is shown in its public form, and the same parts are removed from every text of the report (a transport error
+    quotes the address it failed on).
+    """
+    out = dict(result)
+    address = out.get("url") if isinstance(out.get("url"), str) else ""
+    out = projection.scrub_value(out, projection.url_secret_parts(address))
+    if isinstance(out.get("url"), str):
+        out["url"] = projection.public_url(out["url"])
+    return out
+
+
+def _body_secret_texts(body: Any) -> list[str]:
+    """The secret texts a service form holds (user info and query values of its address, inline carriers), longest first."""
+    if not isinstance(body, Mapping):
+        return []
+    texts: list[str] = []
+    try:
+        raw = service_registry.service_form_to_raw({**body, "name": body.get("name") or "probe"})
+    except Exception:  # noqa: BLE001 - a form that does not convert has nothing this walk can name
+        raw = {}
+    for source in (body, raw):
+        for key in ("base_url", "host", "health_endpoint", "url"):
+            value = source.get(key)
+            if isinstance(value, str):
+                texts.extend(projection.url_secret_parts(value if "://" in value else f"//{value}"))
+    for source in (body, raw):
+        texts.extend(record_carriers.legacy_secret_texts({"config": dict(source), **{k: v for k, v in source.items() if k in ("process", "lifecycle")}}))
+    return sorted(set(texts), key=len, reverse=True)
+
+
 def _validate_service_registry(
     payload: Mapping[str, Any], *, before: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     try:
+        payload = record_carriers.restore_echoed_registry(payload, before)  # a read written back unchanged (decision D27)
         service_registry.validate_protocol_dispatch_registry(payload, before=before)
         return service_registry.normalize_service_registry(payload)
     except Exception as exc:  # noqa: BLE001
@@ -1740,7 +1775,7 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="session",
             status_code=status.HTTP_200_OK,
             content={
                 "actor": {
@@ -1835,7 +1870,7 @@ def create_admin_router(
             # The stored records that do not validate and so are left out, each with its error.
             "registry_excluded": registry_excluded,
         }
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content=payload)
+        return egress.plain_json_response(response_class="overview", status_code=status.HTTP_200_OK, content=payload)
 
     @router.get("/status")
     async def status_payload(request: Request) -> JSONResponse:
@@ -1867,7 +1902,7 @@ def create_admin_router(
             )
 
         projected["current_health"] = await asyncio.to_thread(project_health)
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="status",
             status_code=status.HTTP_200_OK,
             content={"status": projected},
             headers={"cache-control": "no-store"},
@@ -1878,7 +1913,7 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="people",
             status_code=status.HTTP_200_OK,
             content={"users": list(store.list_users())},
         )
@@ -1888,7 +1923,7 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="apps",
             status_code=status.HTTP_200_OK,
             content={"apps": list(store.list_apps())},
         )
@@ -1919,7 +1954,7 @@ def create_admin_router(
                 "invalid_app",
                 str(exc),
             ).as_response()
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="apps",
             status_code=status.HTTP_201_CREATED, content={"app": record}
         )
 
@@ -1958,7 +1993,7 @@ def create_admin_router(
                 "app_not_found",
                 f"app {app_id!r} not found",
             ).as_response()
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="apps",
             status_code=status.HTTP_200_OK, content={"app": record}
         )
 
@@ -1977,7 +2012,7 @@ def create_admin_router(
                 "app_not_found",
                 f"app {app_id!r} not found",
             ).as_response()
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="apps",
             status_code=status.HTTP_200_OK, content={"app": record}
         )
 
@@ -2003,7 +2038,7 @@ def create_admin_router(
                 "app_not_found",
                 f"app {app_id!r} not found",
             ).as_response()
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="apps",
             status_code=status.HTTP_200_OK, content={"app": record}
         )
 
@@ -2020,7 +2055,7 @@ def create_admin_router(
         entries = store.list_trusted_addresses(app_id=app_id)
         if entries is None:
             return _app_not_found(app_id)
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"trusted_addresses": entries})
+        return egress.plain_json_response(response_class="trusted_addresses", status_code=status.HTTP_200_OK, content={"trusted_addresses": entries})
 
     @router.post("/apps/{app_id}/trusted-addresses")
     async def add_trusted_address(app_id: str, request: Request) -> JSONResponse:
@@ -2043,7 +2078,7 @@ def create_admin_router(
             ).as_response()
         if record is None:
             return _app_not_found(app_id)
-        return egress.plain_json_response(status_code=status.HTTP_201_CREATED, content={"trusted_address": record})
+        return egress.plain_json_response(response_class="trusted_addresses", status_code=status.HTTP_201_CREATED, content={"trusted_address": record})
 
     @router.delete("/apps/{app_id}/trusted-addresses/{entry_id}")
     def delete_trusted_address(app_id: str, entry_id: str, request: Request) -> JSONResponse:
@@ -2058,14 +2093,14 @@ def create_admin_router(
             return _RouteError(
                 status.HTTP_404_NOT_FOUND, "trusted_address_not_found", "That trusted address was not found.",
             ).as_response()
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"trusted_address": record})
+        return egress.plain_json_response(response_class="trusted_addresses", status_code=status.HTTP_200_OK, content={"trusted_address": record})
 
     @router.get("/access-plans")
     def list_access_plans(request: Request) -> JSONResponse:
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="access_plans",
             status_code=status.HTTP_200_OK,
             content={"access_plans": list(store.list_access_plans())},
         )
@@ -2080,7 +2115,7 @@ def create_admin_router(
                 store.get_service_registry()
             )
         except Exception:  # A failed projection must never look like no choices.
-            return egress.plain_json_response(
+            return egress.plain_json_response(response_class="error",
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={
                     "error": {
@@ -2089,7 +2124,7 @@ def create_admin_router(
                     }
                 },
             )
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content=contract)
+        return egress.plain_json_response(response_class="access_plan_choices", status_code=status.HTTP_200_OK, content=contract)
 
     def _plan_write_error(exc: ValueError) -> JSONResponse:
         msg = str(exc)
@@ -2119,7 +2154,7 @@ def create_admin_router(
             return exc.as_response()
         except ValueError as exc:
             return _plan_write_error(exc)
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="access_plans",
             status_code=status.HTTP_201_CREATED, content={"access_plan": record}
         )
 
@@ -2133,7 +2168,7 @@ def create_admin_router(
             return _RouteError(
                 status.HTTP_404_NOT_FOUND, "access_plan_not_found", "Access plan not found.",
             ).as_response()
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"access_plan": record})
+        return egress.plain_json_response(response_class="access_plans", status_code=status.HTTP_200_OK, content={"access_plan": record})
 
     @router.put("/access-plans/{plan_id}")
     async def update_access_plan(plan_id: str, request: Request) -> JSONResponse:
@@ -2153,7 +2188,7 @@ def create_admin_router(
             return _RouteError(
                 status.HTTP_404_NOT_FOUND, "access_plan_not_found", "Access plan not found.",
             ).as_response()
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"access_plan": record})
+        return egress.plain_json_response(response_class="access_plans", status_code=status.HTTP_200_OK, content={"access_plan": record})
 
     @router.delete("/access-plans/{plan_id}")
     def delete_access_plan(plan_id: str, request: Request) -> JSONResponse:
@@ -2170,7 +2205,7 @@ def create_admin_router(
             return _RouteError(
                 status.HTTP_404_NOT_FOUND, "access_plan_not_found", "Access plan not found.",
             ).as_response()
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"access_plan": record})
+        return egress.plain_json_response(response_class="access_plans", status_code=status.HTTP_200_OK, content={"access_plan": record})
 
     @router.post("/apps/{app_id}/keys")
     async def create_key(app_id: str, request: Request) -> JSONResponse:
@@ -2199,7 +2234,7 @@ def create_admin_router(
             ).as_response()
         # The store is allowed (and expected) to return a one-time ``api_key``
         # here. List/read endpoints scrub it.
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="credentials",
             status_code=status.HTTP_201_CREATED, content={"credential": record}
         )
 
@@ -2250,7 +2285,7 @@ def create_admin_router(
                 "invalid_admin_key",
                 str(exc),
             ).as_response()
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="credentials",
             status_code=status.HTTP_201_CREATED, content={"credential": record}
         )
 
@@ -2264,7 +2299,7 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="credentials",
             status_code=status.HTTP_200_OK,
             content={
                 "credentials": _scrub_credentials(store.list_credentials())
@@ -2293,7 +2328,7 @@ def create_admin_router(
                 "credential_not_found",
                 f"credential {credential_id!r} not found",
             ).as_response()
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="credentials",
             status_code=status.HTTP_200_OK,
             content={"credential": _scrub_credential(record)},
         )
@@ -2319,7 +2354,7 @@ def create_admin_router(
                 "credential_not_found",
                 f"credential {credential_id!r} not found",
             ).as_response()
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="credentials",
             status_code=status.HTTP_200_OK,
             content={"credential": _scrub_credential(record)},
         )
@@ -2368,7 +2403,7 @@ def create_admin_router(
                 "invalid_operator_override",
                 str(exc),
             ).as_response()
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="overrides",
             status_code=status.HTTP_200_OK,
             content={"service_availability": record},
         )
@@ -2528,9 +2563,12 @@ def create_admin_router(
             return _excluded_error(exc)
         return _registry_response(record)
 
-    def _service_op_error(exc: ValueError) -> JSONResponse:
-        """Map a registry-op ValueError to the right operator-facing status."""
-        msg = str(exc)
+    def _service_op_error(exc: ValueError, body: Any = None) -> JSONResponse:
+        """Map a registry-op ValueError to the right operator-facing status.
+
+        The text is cleaned of the secret parts of the form that caused it (an address with user info, a header value).
+        """
+        msg = projection.scrub_text(str(exc)[:600], _body_secret_texts(body))
         if "not found" in msg:
             code, http = "service_not_found", status.HTTP_404_NOT_FOUND
         elif "already exists" in msg:
@@ -2546,6 +2584,7 @@ def create_admin_router(
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        body: Any = None
         try:
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
@@ -2574,7 +2613,7 @@ def create_admin_router(
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
         except ValueError as exc:
-            return _service_op_error(exc)
+            return _service_op_error(exc, body)
         return _registry_response(record, response_status=status.HTTP_201_CREATED)
 
     @router.patch("/operator/services/{service_id}")
@@ -2582,6 +2621,7 @@ def create_admin_router(
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        body: Any = None
         try:
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
@@ -2615,7 +2655,7 @@ def create_admin_router(
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
         except ValueError as exc:
-            return _service_op_error(exc)
+            return _service_op_error(exc, body)
         return _registry_response(record)
 
     @router.delete("/operator/services/{service_id}")
@@ -2713,7 +2753,7 @@ def create_admin_router(
         port = raw.get("port")
         path = str(raw.get("health_endpoint") or (str(raw.get("base_path") or "/v1").rstrip("/") + "/models"))
         result = await service_probe(host, port, path)
-        return egress.plain_json_response(status_code=status.HTTP_200_OK, content={"probe": dict(result)})
+        return egress.plain_json_response(response_class="probe", status_code=status.HTTP_200_OK, content={"probe": scrub_probe_result(result)})
 
     @router.post("/operator/services/detect-models")
     async def detect_service_models(request: Request) -> JSONResponse:
@@ -2740,9 +2780,9 @@ def create_admin_router(
         base = str(raw.get("base_path") or "/v1").rstrip("/")
         models_path = base + "/models"
         try:
-            result = await service_probe(host, port, models_path)
+            result = scrub_probe_result(await service_probe(host, port, models_path))
             if not result.get("ok"):
-                return egress.plain_json_response(
+                return egress.plain_json_response(response_class="probe",
                     status_code=status.HTTP_200_OK,
                     content={
                         "detected": {
@@ -2772,12 +2812,12 @@ def create_admin_router(
                             models.append(mid)
                     elif isinstance(item, str):
                         models.append(item)
-            return egress.plain_json_response(
+            return egress.plain_json_response(response_class="probe",
                 status_code=status.HTTP_200_OK,
                 content={"detected": {"models": models, "ok": True, "error": ""}},
             )
         except Exception as exc:  # noqa: BLE001
-            return egress.plain_json_response(
+            return egress.plain_json_response(response_class="probe",
                 status_code=status.HTTP_200_OK,
                 content={
                     "detected": {
@@ -2833,7 +2873,7 @@ def create_admin_router(
             keys = await client.list_keys()
         except LiteLLMAdminError as exc:
             return _litellm_admin_error(exc)
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="keys",
             status_code=status.HTTP_200_OK,
             content={"keys": [_redact_litellm_key(k) for k in keys]},
         )
@@ -2864,7 +2904,7 @@ def create_admin_router(
             return _litellm_admin_error(exc)
         # The secret ``key`` is returned exactly once (reveal-once); the panel
         # shows it to the operator and never persists it.
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="keys",
             status_code=status.HTTP_201_CREATED,
             content={"key": created},
         )
@@ -2888,7 +2928,7 @@ def create_admin_router(
             return exc.as_response()
         except LiteLLMAdminError as exc:
             return _litellm_admin_error(exc)
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="keys",
             status_code=status.HTTP_200_OK,
             content={"deleted": result},
         )
@@ -2933,6 +2973,8 @@ def create_admin_router(
             return exc.as_response()
         except PermissionError as exc:
             return _owner_required(exc)
+        except ValueError as exc:
+            return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_extension_package_source", str(exc)).as_response()
         return egress.projected_response(
             status_code=status.HTTP_200_OK,
             content={"review": review},
@@ -3042,7 +3084,7 @@ def create_admin_router(
             "enabled": bool(record and record["value"].get("enabled") is True),
             "revision": admin_store.operator_setting_revision(record),
             "label": "Allow Azizam to run commands on this computer",
-        })
+        }, response_class="switch")
         response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
         response.headers["Cache-Control"] = "no-store"
         return response
@@ -3083,7 +3125,7 @@ def create_admin_router(
             result["running_processes"] = "unchanged"
             result["note"] = ("New starts are blocked. Processes Azizam already runs keep running "
                               "until they are stopped or the gateway restarts.")
-        response = egress.plain_json_response(result)
+        response = egress.plain_json_response(result, response_class="switch")
         response.headers["ETag"] = f'"{admin_store.operator_setting_revision(record)}"'
         return response
 
@@ -3112,7 +3154,7 @@ def create_admin_router(
                 "invalid_operator_override",
                 str(exc),
             ).as_response()
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="overrides",
             status_code=status.HTTP_200_OK,
             content={"media_job_admission": {k: v for k, v in record.items() if k != "revision"}, "revision": record["revision"]},
         )
@@ -3163,7 +3205,7 @@ def create_admin_router(
                     before_created_at = int(parts[0])
                     before_id = parts[1]
                 except (ValueError, TypeError):
-                    return egress.plain_json_response(
+                    return egress.plain_json_response(response_class="error",
                         status_code=status.HTTP_400_BAD_REQUEST,
                         content={
                             "error": {
@@ -3173,7 +3215,7 @@ def create_admin_router(
                         },
                     )
             else:
-                return egress.plain_json_response(
+                return egress.plain_json_response(response_class="error",
                     status_code=status.HTTP_400_BAD_REQUEST,
                     content={
                         "error": {
@@ -3193,7 +3235,7 @@ def create_admin_router(
             before_id=before_id,
             **page_filters,
         )
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="activity",
             status_code=status.HTTP_200_OK,
             content={
                 "records": [_safe_audit_record(row) for row in page["records"]],
@@ -3219,7 +3261,7 @@ def create_admin_router(
                 "audit_event_not_found",
                 "Audit event not found.",
             ).as_response()
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="activity",
             status_code=status.HTTP_200_OK,
             content={"event": _safe_audit_record(record)},
         )
@@ -3265,7 +3307,7 @@ def create_admin_router(
         except _RouteError as exc:
             return exc.as_response()
         decision = evaluate(access, policy_request)
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="plan_preview",
             status_code=status.HTTP_200_OK,
             content={"plan_ids": list(access.plan_ids), "decision": _decision_payload(decision)},
         )
@@ -3303,7 +3345,7 @@ def create_admin_router(
         except Exception:  # A failed preview must never look like a plan that allows nothing.
             return _RouteError(status.HTTP_503_SERVICE_UNAVAILABLE, "access_preview_unavailable",
                                "What this plan can use could not be read.").as_response()
-        return egress.plain_json_response(
+        return egress.plain_json_response(response_class="plan_preview",
             status_code=status.HTTP_200_OK,
             content={"plan_ids": list(access.plan_ids), **preview},
         )

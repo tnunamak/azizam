@@ -78,6 +78,12 @@ def gateway(tmp_path, monkeypatch):
     receipts = tmp_path / "receipts.db"
     receipt_store.init_db(receipts)
     monkeypatch.setattr(receipt_store, "DB_PATH", receipts)
+    # The media jobs store is the process default unless a test owns one: without its own, the routes that read jobs
+    # (``/me/api/workflows`` among them) failed on a missing table whenever no earlier test had created the default store,
+    # and so never reached the work this guard looks for. Which tests had left it behind decided whether the guard did anything.
+    jobs = tmp_path / "media_jobs.db"
+    proxy.media_jobs.init_db(jobs)
+    monkeypatch.setattr(proxy.media_jobs, "DB_PATH", jobs)
     responses = tmp_path / "responses.db"
     proxy.responses_store.init_db(responses)
     monkeypatch.setattr(proxy.responses_store, "DB_PATH", responses)
@@ -230,6 +236,22 @@ def test_every_get_route_leaves_the_loop_free(gateway, route):
     with _loop_thread_work(loop_calls):
         asyncio.run(call())
     assert not loop_calls, f"{route} ran blocking work on the event loop:\n" + "\n".join(sorted(set(loop_calls)))
+
+
+def test_the_workflows_catalog_guard_exercises_the_handler_whatever_ran_before(gateway):
+    """The probe is only worth anything if the route answers: a 500 from a missing table passes it by doing nothing."""
+    loop_calls: list[str] = []
+
+    async def call() -> tuple[int, str]:
+        transport = httpx.ASGITransport(app=proxy.app, client=("127.0.0.1", 50000), raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t", cookies=gateway["cookies"], timeout=20) as client:
+            answer = await client.get("/me/api/workflows", headers=gateway["bearer"])
+            return answer.status_code, answer.text
+
+    with _loop_thread_work(loop_calls):
+        status_code, text = asyncio.run(call())
+    assert status_code == 200, text
+    assert not loop_calls, "the workflows catalog ran blocking work on the event loop:\n" + "\n".join(sorted(set(loop_calls)))
 
 
 def test_startup_initializes_the_stores_in_parallel_off_the_loop():

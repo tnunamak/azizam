@@ -438,6 +438,22 @@ def _overlay_service_registry(raw_config: Mapping[str, Any]) -> dict[str, Any]:
 REGISTRY_APPLY_PROBLEM: dict[str, Any] | None = None
 
 
+def _failure_text(error: BaseException) -> str:
+    """``Type: text`` of a failure while applying the stored registry, without any value a stored record holds inline.
+
+    The text of an exception may quote what a record held, so it is cleaned the way a boot failure is
+    (``service_registry.registry_error_text``); when the store cannot be read it is cleaned of URL user info only.
+    """
+    text = f"{type(error).__name__}: {error}"
+    try:
+        stored = admin_store.get_service_registry_with_generation(path=ADMIN_DB_PATH)
+        if stored is not None:
+            return service_registry.registry_error_text(text, stored["value"])[:300]
+    except Exception:  # noqa: BLE001 - an unreadable store has no values to name
+        pass
+    return projection.scrub_text(text)[:300]
+
+
 def _partial_runtime_config(
     raw_config: Mapping[str, Any], failure: str, *, require_exclusions: bool,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -478,14 +494,14 @@ def _boot_effective_runtime_config(raw_config: Mapping[str, Any]) -> tuple[dict[
     try:
         return _load_effective_runtime_config(raw_config), None
     except Exception as error:  # noqa: BLE001 - boot continues, degraded and loud
-        failure = f"{type(error).__name__}: {error}"[:300]
+        failure = _failure_text(error)
     try:
         effective, problem = _partial_runtime_config(raw_config, failure, require_exclusions=False)
     except Exception as partial_error:  # noqa: BLE001
         effective = service_registry.apply_service_registry_to_config(raw_config, {"services": {}})
         problem = {
             "mode": "empty", "left_out": {}, "served": 0,
-            "error": f"{failure} (and the stored services could not be read: {type(partial_error).__name__}: {partial_error})"[:500],
+            "error": f"{failure} (and the stored services could not be read: {_failure_text(partial_error)})"[:500],
         }
     print(
         "[proxy] ERROR: the stored service registry could not be applied, so the gateway is starting "
@@ -1109,9 +1125,9 @@ def reload_runtime_config() -> dict:
                 REGISTRY_APPLY_PROBLEM = {
                     "mode": "stale", "left_out": dict(kept) if isinstance(kept, Mapping) else {},
                     "served": len(config.get("backends") or {}),
-                    "error": f"{type(error).__name__}: {error}"[:300],
+                    "error": _failure_text(error),
                 }
-            print(f"[proxy] ERROR: runtime config reload failed; the previous config is still serving: {error}", flush=True)
+            print(f"[proxy] ERROR: runtime config reload failed; the previous config is still serving: {_failure_text(error)}", flush=True)
             raise
         REGISTRY_APPLY_PROBLEM = problem
         return updates
@@ -1127,7 +1143,7 @@ def _runtime_config_for_reload() -> tuple[dict[str, Any], dict[str, Any] | None]
     try:
         return _load_effective_runtime_config(_bootstrap_config), None
     except Exception as strict_error:  # noqa: BLE001
-        failure = f"{type(strict_error).__name__}: {strict_error}"[:300]
+        failure = _failure_text(strict_error)
         try:
             partial = _partial_runtime_config(_bootstrap_config, failure, require_exclusions=True)
         except Exception:  # noqa: BLE001 - not a matter of the records: keep what is running
@@ -13740,7 +13756,8 @@ async def _capabilities_availability_evidence(
         status_payload = {"backends": [], "generated_at": int(time.time())}
         probe_ids = visible
     status_payload = await _status_payload_with_service_rows(status_payload, service_records, probe_ids)
-    return _runtime_availability_evidence(service_records, status_payload=status_payload)
+    # It reads the receipt store: off the event loop, as the other callers do.
+    return await asyncio.to_thread(_runtime_availability_evidence, service_records, status_payload=status_payload)
 
 
 def _cached_status_payload_for_availability() -> Mapping[str, Any]:
@@ -17377,24 +17394,33 @@ async def admin_config_reload(request: Request):
         return ctx
     try:
         updates = reload_runtime_config()
+        def public(value: Any) -> Any:
+            # a host constant is an address: shown without user info, query or fragment
+            if isinstance(value, str):
+                return projection.public_url(value)
+            if isinstance(value, Mapping):
+                return {str(key): public(item) for key, item in value.items()}
+            return None
         return JSONResponse(
             status_code=200,
             content={
                 "reloaded": True,
                 "backends": {
-                    "llm_hosts": updates["LLM_BACKEND_HOSTS"],
-                    "kobold": updates["KOBOLD_HOST"],
-                    "tts": updates["TTS_HOST"],
-                    "stt": updates["STT_HOST"],
-                    "embeddings": updates["EMBEDDINGS_HOST"],
-                    "comfyui": updates["COMFY_HOST"],
+                    "llm_hosts": public(updates["LLM_BACKEND_HOSTS"]),
+                    "kobold": public(updates["KOBOLD_HOST"]),
+                    "tts": public(updates["TTS_HOST"]),
+                    "stt": public(updates["STT_HOST"]),
+                    "embeddings": public(updates["EMBEDDINGS_HOST"]),
+                    "comfyui": public(updates["COMFY_HOST"]),
                 },
             },
         )
     except Exception as exc:  # noqa: BLE001
+        # The text of a failure may quote a value a record holds; the cleaned text is on the Overview (REGISTRY_APPLY_PROBLEM).
         return JSONResponse(
             status_code=500,
-            content={"error": {"code": "reload_failed", "message": str(exc)}},
+            content={"error": {"code": "reload_failed", "message": "The runtime configuration could not be reloaded; "
+                                                                   "the previous configuration is still serving. The Overview says why."}},
         )
 
 

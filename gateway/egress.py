@@ -38,6 +38,10 @@ from gateway.projection import ProjectionViolation, scrub_text
 RECEIPT_KEY = "azizam.egress.approved"
 MANAGEMENT_KEY = "azizam.egress.management"
 MANAGEMENT_PREFIXES = ("/admin/api",)
+# The paths the gate holds. ``/auth/api`` (sign-in, invitations) is not a management plane, so its routes need no inventory,
+# but the framework's own 404, 405, 422 and 500 answers there get the fixed envelopes too: the default 422 quotes the
+# request body (an invitation's fields) back to whoever sent it, or to whoever a proxy shows the answer to.
+GATED_PREFIXES = (*MANAGEMENT_PREFIXES, "/auth/api")
 MAX_BODY = 16 * 1024 * 1024
 
 # Admin routers that have not moved to ``ManagementRoute`` yet, each with its reason. The gate still gives their
@@ -49,7 +53,59 @@ UNMANAGED_ADMIN_MODULES: dict[str, str] = {
     "gateway.accounts_api": "accounts: no service record content (phase 2)",
     "gateway.home_api": "the home page data: no service record content (phase 2)",
     "gateway.activity_api": "activity: no service record content (phase 2)",
-    "proxy": "the status and drain routes defined in the gateway module: no service record content (phase 2)",
+}
+
+# The admin routes the gateway module defines itself (``proxy.py``), one entry per route and method, each with its
+# reason. A route added there without an entry fails ``verify_and_freeze``: the exemption is for these routes, not for
+# the module.
+UNMANAGED_ADMIN_ROUTES: dict[tuple[str, str], str] = {
+    ("POST", "/admin/api/config/reload"): "reloads the runtime config and answers with fixed text and public host addresses (phase 2)",
+    ("GET", "/admin/api/drain"): "the draining flag and its reason: no service record content (phase 2)",
+    ("POST", "/admin/api/drain"): "sets the draining flag: no service record content (phase 2)",
+    ("GET", "/admin/api/config/export"): "owner-only YAML of the registry as the projection shows it, never a secret value "
+                                         "(tests/test_config_export_owner_only.py; phase 2: move to ManagementRoute)",
+}
+
+# The signed-in person's own routes (``/me/api``). They are not behind the gate yet (phase 2); each is listed with why it
+# holds no service record content, and a route added without an entry fails ``verify_and_freeze``.
+ME_API_PREFIX = "/me/api"
+UNMANAGED_ME_ROUTES: dict[tuple[str, str], str] = {
+    ("POST", "/me/api/access-request"): "the signed-in person's own apps, keys, receipts and session: no service record content",
+    ("GET", "/me/api/activity"): "the signed-in person's own apps, keys, receipts and session: no service record content",
+    ("POST", "/me/api/apps"): "the signed-in person's own apps, keys, receipts and session: no service record content",
+    ("DELETE", "/me/api/apps/{app_id}"): "the signed-in person's own apps, keys, receipts and session: no service record content",
+    ("POST", "/me/api/apps/{app_id}/keys"): "the signed-in person's own apps, keys, receipts and session: no service record content",
+    ("POST", "/me/api/connection-test"): "the signed-in person's home page and connection test: no service record content",
+    ("DELETE", "/me/api/credentials/{credential_id}"): "the signed-in person's own apps, keys, receipts and session: no service record content",
+    ("GET", "/me/api/credentials/{credential_id}/access"): "the signed-in person's own apps, keys, receipts and session: no service record content",
+    ("POST", "/me/api/credentials/{credential_id}/revoke"): "the signed-in person's own apps, keys, receipts and session: no service record content",
+    ("GET", "/me/api/home"): "the signed-in person's home page and connection test: no service record content",
+    ("GET", "/me/api/jobs"): "the person's own media, jobs and usage: no service record content",
+    ("GET", "/me/api/jobs/{job_id}"): "the person's own media, jobs and usage: no service record content",
+    ("GET", "/me/api/make/jobs"): "the person's own make jobs: no service record content",
+    ("POST", "/me/api/make/jobs"): "the person's own make jobs: no service record content",
+    ("GET", "/me/api/make/jobs/{job_id}"): "the person's own make jobs: no service record content",
+    ("POST", "/me/api/make/jobs/{job_id}/cancel"): "the person's own make jobs: no service record content",
+    ("GET", "/me/api/mcp/connections"): "the person's own MCP connections and consent requests: no service record content",
+    ("POST", "/me/api/mcp/connections/{grant_id}/revoke"): "the person's own MCP connections and consent requests: no service record content",
+    ("GET", "/me/api/mcp/requests/{request_id}"): "the person's own MCP connections and consent requests: no service record content",
+    ("POST", "/me/api/mcp/requests/{request_id}"): "the person's own MCP connections and consent requests: no service record content",
+    ("GET", "/me/api/media"): "the person's own media, jobs and usage: no service record content",
+    ("POST", "/me/api/media/confirm-folder"): "the person's own media, jobs and usage: no service record content",
+    ("POST", "/me/api/media/remove-missing"): "the person's own media, jobs and usage: no service record content",
+    ("DELETE", "/me/api/media/{asset_id}"): "the person's own media, jobs and usage: no service record content",
+    ("GET", "/me/api/media/{asset_id}"): "the person's own media, jobs and usage: no service record content",
+    ("GET", "/me/api/media/{asset_id}/download"): "the person's own media, jobs and usage: no service record content",
+    ("GET", "/me/api/models/catalog"): "the model names the person may use: no service record content",
+    ("GET", "/me/api/prompt-memory"): "the person's own prompt memory: no service record content",
+    ("PUT", "/me/api/prompt-memory"): "the person's own prompt memory: no service record content",
+    ("DELETE", "/me/api/prompt-memory/prompts"): "the person's own prompt memory: no service record content",
+    ("GET", "/me/api/receipts/{request_id}"): "the signed-in person's own apps, keys, receipts and session: no service record content",
+    ("GET", "/me/api/session"): "the signed-in person's own apps, keys, receipts and session: no service record content",
+    ("GET", "/me/api/status"): "the signed-in person's home page and connection test: no service record content",
+    ("POST", "/me/api/try-key"): "the signed-in person's own apps, keys, receipts and session: no service record content",
+    ("GET", "/me/api/usage/summary"): "the person's own media, jobs and usage: no service record content",
+    ("GET", "/me/api/workflows"): "the workflow names the person may use: no service record content",
 }
 
 _FIXED = {
@@ -99,12 +155,56 @@ def projected_response(content: Mapping[str, Any], *, status_code: int = 200, he
                              headers=dict(headers or {}))
 
 
-def plain_json_response(content: Any, *, status_code: int = 200, headers: Mapping[str, str] | None = None) -> PlainResponse:
-    """JSON that carries no record content (an app list, a count, an acknowledgement).
+# The classes of response that carry no record content, and the top-level keys each may hold. A route names its class;
+# it is the class that decides, so a new key in a plain body (``providers``, once a list of records) is refused until
+# someone says what it holds, rather than allowed because its name was not on a list of record keys. A class whose
+# value is None is open (its keys are the route family's own, such as an access-plan editor's choices) and still
+# refuses every key that names record content. A record-bearing class is not registered here: it has a projection
+# type (``projection_types.BODY_KEYS``) and goes through ``projected_response``.
+PLAIN_RESPONSE_CLASSES: dict[str, frozenset[str] | None] = {
+    "session": frozenset({"actor"}),
+    "overview": frozenset({"actor", "access_model", "counts", "attention", "current_health", "frontends", "registry_apply",
+                           "registry_excluded"}),
+    "status": frozenset({"status"}),
+    "people": frozenset({"users"}),
+    "apps": frozenset({"apps", "app"}),
+    "trusted_addresses": frozenset({"trusted_addresses", "trusted_address"}),
+    "access_plans": frozenset({"access_plans", "access_plan"}),
+    "access_plan_choices": None,
+    "plan_preview": None,
+    "credentials": frozenset({"credential", "credentials"}),
+    "overrides": frozenset({"service_availability", "media_job_admission", "revision"}),
+    "switch": frozenset({"enabled", "revision", "label", "running_processes", "note"}),
+    "probe": frozenset({"probe", "detected"}),
+    "keys": frozenset({"keys", "key", "deleted"}),
+    "activity": frozenset({"records", "next_cursor", "automated_count", "event"}),
+    "error": frozenset({"error", "check"}),
+    "engine_definitions": frozenset({"format_version", "definitions", "real_tests"}),
+    "engine_check": frozenset({"check", "test", "access"}),
+    "provider_catalog": frozenset({"providers"}),
+    "provider_reconciliation": frozenset({"reconciliations", "reconciliation"}),
+    "provider_probe": frozenset({"ok", "reachable", "checked_at", "models", "partial", "message"}),
+    "acknowledgement": frozenset({"ok", "count", "deleted", "note", "revision"}),
+}
 
-    A body with a key that names record content is refused: it must go through ``projected_response``.
+
+def plain_json_response(content: Any, *, response_class: str, status_code: int = 200,
+                        headers: Mapping[str, str] | None = None) -> PlainResponse:
+    """JSON of a registered plain class: a body that carries no record content (an app list, a count, an acknowledgement).
+
+    ``response_class`` names the class (``PLAIN_RESPONSE_CLASSES``). A class that is not registered, a top-level key the
+    class does not hold, or (for an open class) a key that names record content is refused at once: a body that holds
+    records must be built with ``projected_response``.
     """
-    if isinstance(content, Mapping) and any(key in projection_types.BODY_KEYS for key in content):
+    if response_class not in PLAIN_RESPONSE_CLASSES:
+        raise ProjectionViolation("a plain response must name a registered response class")
+    allowed = PLAIN_RESPONSE_CLASSES[response_class]
+    keys = list(content) if isinstance(content, Mapping) else []
+    if allowed is not None and not isinstance(content, Mapping):
+        raise ProjectionViolation("a plain response of this class is a mapping")
+    if allowed is not None and any(key not in allowed for key in keys):
+        raise ProjectionViolation("a plain response holds a key its class does not")
+    if allowed is None and any(key in projection_types.BODY_KEYS for key in keys):
         raise ProjectionViolation("a body that carries record content must be built with projected_response")
     return PlainResponse(content=content, status_code=status_code, headers=dict(headers or {}))
 
@@ -170,7 +270,8 @@ def _routes(app: Any) -> Iterable[tuple[str, Any]]:
 
 
 def verify_and_freeze(app: Any) -> frozenset[tuple[str, str]]:
-    """Fail for an admin route that is not a ``ManagementRoute`` and not an inventoried exception; freeze the table.
+    """Fail for an admin route that is not a ``ManagementRoute`` and not an inventoried exception, and for a ``/me/api`` route
+    that is not inventoried; freeze the table.
 
     The error names the route and module only. Returns the frozen set of management ``(method, path)`` pairs.
     """
@@ -188,8 +289,16 @@ def verify_and_freeze(app: Any) -> frozenset[tuple[str, str]]:
         # The gateway module may be loaded under another name (a test loads proxy.py as ``proxy_under_test``): the file decides.
         if module not in UNMANAGED_ADMIN_MODULES and getattr(getattr(endpoint, "__code__", None), "co_filename", "").endswith("/proxy.py"):
             module = "proxy"
-        if module not in UNMANAGED_ADMIN_MODULES:
+        if module == "proxy":
+            if not methods or any((method, path) not in UNMANAGED_ADMIN_ROUTES for method in methods if method != "HEAD"):
+                unregistered.append(f"{','.join(methods) or 'WS'} {path} ({module})")
+        elif module not in UNMANAGED_ADMIN_MODULES:
             unregistered.append(f"{','.join(methods) or 'WS'} {path} ({module})")
+    for path, route in _routes(app):
+        if path == ME_API_PREFIX or path.startswith(ME_API_PREFIX + "/"):
+            methods = sorted(getattr(route, "methods", None) or ())
+            if not methods or any((method, path) not in UNMANAGED_ME_ROUTES for method in methods if method != "HEAD"):
+                unregistered.append(f"{','.join(methods) or 'WS'} {path} (/me/api route without an inventory entry)")
     if unregistered:
         raise RuntimeError("admin routes that are neither management routes nor inventoried exceptions: " + "; ".join(unregistered))
     frozen = frozenset(managed)
@@ -229,7 +338,7 @@ def _framework_shaped(start: Message, body: bytes) -> bool:
 class EgressGate:
     """Buffer a management response until its bytes are admitted; give framework errors a fixed envelope."""
 
-    def __init__(self, app: ASGIApp, *, prefixes: tuple[str, ...] = MANAGEMENT_PREFIXES, max_body: int = MAX_BODY) -> None:
+    def __init__(self, app: ASGIApp, *, prefixes: tuple[str, ...] = GATED_PREFIXES, max_body: int = MAX_BODY) -> None:
         self.app, self.prefixes, self.max_body = app, prefixes, max_body
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
