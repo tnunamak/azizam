@@ -372,5 +372,6 @@ def test_L2_the_only_metadata_keys_that_differ_between_the_two_routes_are_the_do
     # Documented: the executor names the engine and offering it ran (ENGINE_PROTOCOL_EXECUTOR.md, receipts).
     # Both routes write execution_backend; only its value differs.
     keys = _stream_receipt_metadata_keys(monkeypatch, tmp_path)
+    # The legacy route names its service as service_id, where the executor names the engine as engine_id.
     assert keys['executor_only'] == ['engine_id', 'offering_id', 'upstream_id']
-    assert keys['legacy_only'] == []
+    assert keys['legacy_only'] == ['service_id']
