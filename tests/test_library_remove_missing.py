@@ -364,13 +364,12 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(second.status_code, 200, second.text)
         self.assertIsNone(second.json()["media_folder"])
 
-    def test_an_unconfirmed_folder_that_holds_media_opens_no_connection_on_a_read(self) -> None:
+    def test_an_unconfirmed_folder_that_holds_media_is_refused_before_the_library_is_read(self) -> None:
         self.unconfirm_folder()
         (self.cache / ("a" * 64 + ".png")).write_bytes(b"media")
-        self.media_folder()  # warm the request path once, then count what a read opens
-        with patch.object(prompt_memory, "_connect", wraps=prompt_memory._connect) as opened:
+        with patch.object(prompt_memory, "_has_library_entries", wraps=prompt_memory._has_library_entries) as read:
             self.assertEqual(self.media_folder(), {"state": "unconfirmed"})
-        opened.assert_not_called()
+        read.assert_not_called()
 
     def test_an_ordinary_media_write_never_creates_the_marker(self) -> None:
         self.unconfirm_folder()
