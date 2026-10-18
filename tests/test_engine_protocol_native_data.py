@@ -15,7 +15,7 @@ def handler(request):
     p = request.url.path
     if p == '/api/chat':
         b = json.loads(request.content)
-        if b.get('stream'):
+        if b.get('stream', True) is not False:
             return httpx.Response(200, stream=Chunks([b'{"model":"llama3","message":{"role":"assistant","content":"Hi"},"done":false}\n', b'{"model":"llama3","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop"}\n']))
         return httpx.Response(200, json={'model': 'llama3', 'message': {'role': 'assistant', 'content': 'Hi'}, 'done': True, 'done_reason': 'stop', 'prompt_eval_count': 3, 'eval_count': 1})
     if p == '/api/tags':
@@ -78,3 +78,9 @@ def test_native_embedding_arrays_are_wrapped_and_dimensions_apply(ol):
     truncated = ol.post('/v1/embeddings', json={'model':'nomic','input':'hi','dimensions':1})
     assert truncated.status_code == 200, truncated.text
     assert truncated.json()['data'][0]['embedding'] == [1.0]
+
+
+def test_native_null_stream_uses_the_non_streaming_public_contract(ol):
+    response = ol.post('/v1/chat/completions', json={'model':'llama3','messages':[],'stream':None})
+    assert response.status_code == 200, response.text
+    assert response.json()['object'] == 'chat.completion'

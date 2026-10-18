@@ -456,3 +456,13 @@ def test_session_make_uses_neutral_image_entry():
     source = inspect.getsource(proxy._SessionMakeRuntime.execute)
     assert 'proxy_image_request' in source
     assert 'proxy_comfy_request' not in source
+
+
+@pytest.mark.parametrize('value', [None, 5, 'abc'])
+def test_invalid_membership_condition_is_a_description_problem(value):
+    doc = yaml.safe_load((FIXTURE/'prism.yml').read_text())
+    doc['operations']['chat']['request']['body']['map'] = [
+        {'when':{'if':{'path':'/body/model','in':value},'then':[]}}]
+    from gateway.engine_protocol.errors import DescriptionError
+    with pytest.raises(DescriptionError):
+        description.parse_description(doc, source='bad-membership.yml')
