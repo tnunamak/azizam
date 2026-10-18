@@ -1377,6 +1377,7 @@ async def _ensure_target(
     target ready, so no other swap can land between the two.
     """
     from gateway.lifecycle_drivers import driver_for_service, supports_swap, SwapContext
+    from gateway.engine_contract_view import process_config
 
     bcfg = (config.get("backends") or {}).get(backend) or {}
     # The legacy backend projection keys records by id; owned-process state
@@ -1386,12 +1387,14 @@ async def _ensure_target(
     ):
         bcfg = {**bcfg, "id": backend}
     driver = driver_for_service(backend, config.get("backends"))
+    owned_process = process_config(bcfg).get("driver") == "process"
 
     # Non-swap driver, or no model requested → just make the backend ready.
     if not (supports_swap(driver) and model):
         # A service that declares a start budget (driver_config.health_timeout_s: engines that load
         # a model in 30-60 s) gets it; the 5 s default only covers services that declare none.
-        declared = ((bcfg.get("lifecycle") or {}).get("driver_config") or {}).get("health_timeout_s")
+        declared = (process_config(bcfg).get("ready_timeout_s") if owned_process else
+                    ((bcfg.get("lifecycle") or {}).get("driver_config") or {}).get("health_timeout_s"))
         try:
             budget = max(HEALTH_CHECK_TIMEOUT, float(declared)) if declared is not None else HEALTH_CHECK_TIMEOUT
         except (TypeError, ValueError):
@@ -1406,7 +1409,11 @@ async def _ensure_target(
         if not take_lease:
             return True, None
         async with swap_lock_for(backend):
-            return True, _swap_drain.lease(backend)
+            if owned_process:
+                driver.request_started(bcfg)
+            return True, _swap_drain.lease(
+                backend, on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None
+            )
 
     # The driver builds + prechecks its own activation from driver_config. On a
     # precheck failure (e.g. a missing GGUF/aux file) it returns None.
@@ -1463,7 +1470,10 @@ async def _ensure_target_leased(
     target ready, so it always covers the target this request asked for.
     Raises SwapDeferred.
     """
-    if not _swap_drain_settings().enabled:
+    from gateway.engine_contract_view import process_config
+
+    bcfg = (config.get("backends") or {}).get(backend) or {}
+    if not _swap_drain_settings().enabled and process_config(bcfg).get("driver") != "process":
         ready = await ensure_target(backend, activation.model, activation.mmproj, profile=activation.profile)
         return ready, None
     return await _ensure_target(
