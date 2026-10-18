@@ -17,6 +17,9 @@ from gateway import engine_admin, service_registry
 from gateway.api import create_gateway_router
 from gateway.engine_definitions import load_engine_catalog
 from gateway.litellm_substrate import compile_litellm_config_from_registry
+from gateway.receipts import RouteReceipt
+from gateway.runtime_auth import evaluate_and_apply, make_policy_request
+from tests.support.access import identity, plan_for
 from tests.test_engine_contract_v2 import _service
 from tests.test_gateway_api import _build_registry, _sample_capabilities
 
@@ -88,3 +91,13 @@ def test_litellm_compiler_and_current_are_frozen() -> None:
     names = [row["model_name"] for row in compiled["model_list"]]
     assert "current" in names and "current-fast" in names
     assert _digest(compiled) == "837dc6e043ab9d7cf2dfa0ac0916e662c48db9d73bd25aa0999aade926f77dd7"
+
+
+def test_policy_denial_receipt_is_frozen() -> None:
+    receipt = RouteReceipt(protocol="openai.images", intent="image.generate", request_id="req_contract",
+                           path="/v1/images/generations")
+    decision = evaluate_and_apply(identity(plan_for("chat-only", caps=("chat",))),
+                                  make_policy_request(intent="image.generate", model="example"), receipt)
+    assert decision.decision == "denied"
+    receipt.finish("denied", latency_ms=0, now_ms=1_700_000_000_000)
+    assert _digest({audience: receipt.to_dict(audience) for audience in ("client", "admin")}) == "FILL_DENIAL"
