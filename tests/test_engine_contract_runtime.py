@@ -492,6 +492,23 @@ def test_control_credential_is_bound_to_connection_origin():
         assert get_secret.call_count == 1
 
 
+def test_control_runtime_reads_nested_registry_projection():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        return httpx.Response(204)
+
+    service = {"config": {
+        "connection": {"address": "http://fixture.test:18091"},
+        "protocol_operations": {"wake": {"method": "POST", "path": "/wake"}},
+    }}
+    runtime = EngineControlRuntime(service, drain=SwapDrain(), lock_for=lambda _scope: asyncio.Lock(),
+                                   client_factory=observation_client(handler))
+    run(runtime.invoke("wake", {}))
+    assert calls == [("POST", "/wake")]
+
+
 def test_observations_are_unknown_without_probe_and_inventory_is_not_residency():
     reader = ObservationReader()
     assert run(reader.read({"connection": {"address": "http://127.0.0.1:1"}}, "resident")).known is False
