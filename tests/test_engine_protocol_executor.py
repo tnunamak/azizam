@@ -16,7 +16,7 @@ from gateway.engine_protocol.budgets import Budgets
 from gateway.engine_protocol.errors import (
     BudgetExceeded, MalformedResponse, MappingError, RedirectRefused, TransportFailure, UnknownOperation, UpstreamError,
 )
-from gateway.engine_protocol.types import CanonicalRequest, Connection, Credential, JobState, Timeouts
+from gateway.engine_protocol.types import AssetRef, CanonicalRequest, Connection, Credential, JobState, Timeouts
 from tests.support.fake_upstream import HandlerTransport
 
 BASE = "http://engine.test:8080"
@@ -587,6 +587,34 @@ def test_a_very_deep_params_value_cannot_crash_the_request() -> None:
     ex, fake = make(ops, lambda r: httpx.Response(200, json={}))
     with pytest.raises((BudgetExceeded, MappingError)):
         run(ex.invoke(conn(), req("get", params={"q": deep_dict(5000)})))
+    assert fake.requests == []
+
+
+ASSET = AssetRef("a1", "text/plain", 3, "f.txt")
+
+
+@pytest.mark.parametrize("rule", [
+    {"copy": {"from": "/files/f", "to": "/file"}},
+    {"stringify": {"from": "/files/f", "to": "/file"}},
+    {"copy": {"from": "/files", "to": "/all"}},
+])
+def test_an_asset_copied_into_a_json_body_is_a_typed_mapping_error(rule: dict) -> None:
+    ops = {"up": {"class": "generate", "request": {"method": "POST", "path": "/v1/up", "body": {"encoding": "json", "map": [rule]}}, "response": {"framing": "json"}}}
+    ex, fake = make(ops, lambda r: httpx.Response(200, json={}))
+    with pytest.raises(MappingError):
+        run(ex.invoke(conn(), req("up", files={"f": ASSET})))
+    assert fake.requests == []
+
+
+def test_a_value_json_cannot_write_is_a_typed_mapping_error_in_a_body_and_in_a_json_part() -> None:
+    ops = {"up": {"class": "generate", "request": {"method": "POST", "path": "/v1/up", "body": {"encoding": "json"}}, "response": {"framing": "json"}},
+           "form": {"class": "generate", "request": {"method": "POST", "path": "/v1/form", "body": {"encoding": "multipart", "parts": [
+               {"name": "opts", "kind": "json", "from": "/body/opts"}]}}, "response": {"framing": "json"}}}
+    ex, fake = make(ops, lambda r: httpx.Response(200, json={}))
+    with pytest.raises(MappingError):
+        run(ex.invoke(conn(), req("up", {(1, 2): "tuple key"})))
+    with pytest.raises(MappingError):
+        run(ex.invoke(conn(), req("form", {"opts": {(1, 2): "tuple key"}})))
     assert fake.requests == []
 
 
