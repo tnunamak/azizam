@@ -81,6 +81,12 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `DELETE` | `/mcp` | unsupported | 405; stateless POST transport only | [gateway/mcp_server.py](../gateway/mcp_server.py) `mcp_no_stream` |
 | `GET` | `/mcp` | unsupported | 405; stateless POST transport only | [gateway/mcp_server.py](../gateway/mcp_server.py) `mcp_no_stream` |
 | `POST` | `/mcp` | partial | Protocol subset or configured-backend feature; see vendor facades | [gateway/mcp_server.py](../gateway/mcp_server.py) `mcp_post` |
+| `DELETE` | `/native/{engine_id}/{native_path:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `native_engine_request` |
+| `GET` | `/native/{engine_id}/{native_path:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `native_engine_request` |
+| `OPTIONS` | `/native/{engine_id}/{native_path:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `native_engine_request` |
+| `PATCH` | `/native/{engine_id}/{native_path:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `native_engine_request` |
+| `POST` | `/native/{engine_id}/{native_path:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `native_engine_request` |
+| `PUT` | `/native/{engine_id}/{native_path:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `native_engine_request` |
 | `GET` | `/oauth/authorize` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `authorize` |
 | `OPTIONS` | `/oauth/register` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `preflight` |
 | `POST` | `/oauth/register` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_oauth.py](../gateway/mcp_oauth.py) `register_client` |
