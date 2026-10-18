@@ -14,7 +14,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Mapping
 from urllib.parse import urlsplit
 
 CREDENTIAL_HEADER = re.compile(r"auth|cookie|token|secret|key|credential|password|session", re.IGNORECASE)
-_HEADER_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9-]{0,63}$")
+_HEADER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9-]{0,63}")  # used with fullmatch: "$" would accept a trailing newline
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ class Connection:
         if parts.query or parts.fragment:
             raise ValueError("The engine address must not hold a query or fragment.")
         for name in self.headers:
-            if not _HEADER_NAME.match(name) or CREDENTIAL_HEADER.search(name):
+            if not _HEADER_NAME.fullmatch(name) or CREDENTIAL_HEADER.search(name):
                 raise ValueError(f"'{name}' cannot be an ordinary header here: credential-like headers are stored as credentials.")
 
 

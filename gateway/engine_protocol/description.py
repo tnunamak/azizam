@@ -37,8 +37,8 @@ _CODE_NAMES = frozenset({
 _CREDENTIAL_HEADER = re.compile(r"auth|cookie|token|secret|key|credential|password|session", re.IGNORECASE)
 _TRANSPORT_HEADERS = frozenset({"host", "content-length", "transfer-encoding", "connection", "content-type", "accept-encoding", "upgrade", "te"})
 _PLACEHOLDER = re.compile(r"\{([^{}]*)\}")
-_PLACEHOLDER_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
-_PATH_CHARS = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$")
+_PLACEHOLDER_NAME = re.compile(r"[a-z][a-z0-9_]{0,31}")  # these are used with fullmatch: "$" would accept a trailing newline
+_PATH_CHARS = re.compile(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*")
 
 
 # ---------------------------------------------------------------------------
@@ -349,11 +349,11 @@ class _Compiler:
     def _path(self, path: str, place: str) -> tuple[str, ...]:
         names: list[str] = []
         for raw in _PLACEHOLDER.findall(path):
-            if not _PLACEHOLDER_NAME.match(raw):
+            if not _PLACEHOLDER_NAME.fullmatch(raw):
                 self.bad(place, f"placeholder {{{raw}}} must be a plain lower-case name")
             names.append(raw)
         bare = _PLACEHOLDER.sub("x", path)
-        if not path.startswith("/") or "//" in path or not _PATH_CHARS.match(bare):
+        if not path.startswith("/") or "//" in path or not _PATH_CHARS.fullmatch(bare):
             self.bad(place, f"path {path!r} must be a relative path that starts with / (no host, query, fragment, space or backslash)")
         elif any(segment in (".", "..") for segment in bare.split("/")):
             self.bad(place, f"path {path!r} must not hold . or .. segments")
