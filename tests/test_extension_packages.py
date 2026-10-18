@@ -988,6 +988,26 @@ def test_package_lifecycle_refuses_reference_from_surviving_record():
         change_package_lifecycle(index, registry, "pkg")
 
 
+def test_package_lifecycle_refuses_an_edited_row_that_still_names_a_removed_record():
+    # The operator's edit survives the removal as a detached row, so its reference would dangle.
+    import pytest
+    from gateway.extension_packages import change_package_lifecycle
+    index, registry = _lifecycle_fixture()
+    registry["services"]["services-one"].update({"name": "edited by the operator", "backend": "workflows-one"})
+    with pytest.raises(ValueError, match="services/services-one"):
+        change_package_lifecycle(index, registry, "pkg")
+
+
+def test_package_lifecycle_detaches_an_edited_row_that_names_only_its_own_model():
+    from gateway.extension_packages import change_package_lifecycle
+    index, registry = _lifecycle_fixture()
+    own = {"models": [{"id": "own-model"}]}
+    registry["services"]["services-one"].update({"name": "edited", "config": own})
+    _, rows, affected = change_package_lifecycle(index, registry, "pkg")
+    assert rows["services"]["services-one"]["config"] == own
+    assert {"kind": "services", "id": "services-one", "action": "detached"} in affected
+
+
 def _installed_lifecycle_store(tmp_path, monkeypatch):
     from gateway import admin_store
     from gateway.admin_api import AdminContext
