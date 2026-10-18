@@ -198,15 +198,18 @@ def test_an_administrator_cannot_set_the_internal_key_base_of_a_service(gateway)
     assert "evil" not in _services(gateway)
 
 
-def test_an_administrator_can_still_manage_a_local_engine_service(gateway):
+def test_an_administrator_can_add_a_keyless_service_but_only_edit_its_metadata(gateway):
     _, _, _, admin = owner_and_admin(gateway)
     created = admin.post("/admin/api/operator/services", headers={**csrf_for(admin), "If-Match": _etag(admin)},
                          json=_service_body())
     assert created.status_code == 201, created.text
     patched = admin.patch("/admin/api/operator/services/engine", headers={**csrf_for(admin), "If-Match": _etag(admin)},
                           json={"host": "192.168.1.61", "note": "moved"})
-    assert patched.status_code == 200, patched.text
-    assert _services(gateway)["engine"]["config"]["host"] == "192.168.1.61"
+    assert patched.status_code == 403, patched.text
+    renamed = admin.patch("/admin/api/operator/services/engine", headers={**csrf_for(admin), "If-Match": _etag(admin)},
+                          json={"note": "reviewed"})
+    assert renamed.status_code == 200, renamed.text
+    assert _services(gateway)["engine"]["config"]["note"] == "reviewed"
 
 
 def test_an_administrator_cannot_attach_a_credential_to_an_existing_service_by_edit(gateway):

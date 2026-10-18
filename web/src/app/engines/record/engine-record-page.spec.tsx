@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { api } from "@/lib/api";
 import { enginesApi, type EngineView } from "@/lib/engines-api";
 import { accessAnswer, check, definitions, engineView, renderWithClient, testResult } from "../__fixtures__/test-utils";
 import { clockTime } from "../add-engine/draft";
@@ -37,9 +36,11 @@ describe("i: the engine record page", () => {
     const jump = screen.getByRole("navigation", { name: "On this page" });
     expect(within(jump).getAllByRole("link").map((a) => a.textContent)).toEqual([
       "Connection",
-      "What it can do",
-      "Models",
-      "More options",
+      "What it offers",
+      "How it runs",
+      "What Azizam can check",
+      "Resources",
+      "Stored record",
     ]);
     expect(screen.getByText("Ready")).toBeVisible();
     expect(screen.getByText(/^Last checked/)).toBeVisible();
@@ -59,7 +60,7 @@ describe("i: the engine record page", () => {
   it("keeps the stored record read-only and lists other settings", async () => {
     const user = userEvent.setup();
     mount();
-    await user.click(await screen.findByText("Technical details", { selector: "summary" }));
+    await user.click(await screen.findByRole("heading", { name: "Stored record" }));
     const pre = await screen.findByLabelText("Stored record, read only");
     expect(pre.tagName).toBe("PRE");
     expect(pre).toHaveTextContent('"api_key_secret_id": "configured"');
@@ -93,7 +94,7 @@ describe("who can use the models", () => {
   it("shows the saved answer under the models list, and does not ask the route while the list is unchanged", async () => {
     mount();
     const heading = await screen.findByRole("heading", { name: "Who can use these models" });
-    const models = screen.getByRole("heading", { level: 2, name: "Models" }).closest("section") as HTMLElement;
+    const models = screen.getByRole("heading", { level: 2, name: "What it offers" }).closest("section") as HTMLElement;
     expect(models).toContainElement(heading);
     expect(within(models).getByText(view.access.sentence)).toBeVisible();
     expect(within(models).getByRole("link", { name: "Family" })).toHaveAttribute("href", expect.stringMatching(/^\/people\/?\?plan=plan_family$/));
@@ -241,17 +242,11 @@ describe("N2: editing the address", () => {
     expect(screen.queryByText("You have unsaved changes.")).toBeNull();
   });
 
-  it("an administrator is told only the owner can enter the key again", async () => {
+  it("an administrator cannot change the address, so no new-address key warning appears", async () => {
     viewer.current = { ...viewer.current, role: "admin" };
-    const user = userEvent.setup();
     mount();
-    const address = await screen.findByLabelText("Address");
-    await user.clear(address);
-    await user.type(address, "http://192.168.1.51:8080/v1");
-    expect(
-      screen.getByText("Your saved key won’t be sent to a new address. Only the owner can enter it again. Keep the old address, or ask the owner."),
-    ).toBeVisible();
-    expect(screen.getByText("Not sent to the new address")).toBeVisible();
+    expect(await screen.findByLabelText("Address")).toBeDisabled();
+    expect(screen.getByText("Only the owner can replace the key.")).toBeVisible();
     expect(screen.queryByPlaceholderText("Paste the key again")).toBeNull();
   });
 });
@@ -279,57 +274,6 @@ describe("kept-off engines", () => {
   });
 });
 
-describe("an engine the router does not call at its own address", () => {
-  const reason = "The model router sends this engine’s models somewhere else, so changing its address here would do nothing.";
-
-  it("shows the settings read-only with the reason, and no inputs for them", async () => {
-    mount({ editable: false, not_editable_reason: reason });
-    expect(await screen.findByText(reason)).toBeVisible();
-    expect(screen.queryByLabelText("Address")).toBeNull();
-    expect(screen.getByText("http://192.168.1.50:8080/v1")).toBeVisible();
-    expect(screen.queryByRole("button", { name: /Replace key|Add a key|Check again|Check now|Detect models again/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Run a real test/ })).toBeNull();
-    expect(screen.queryByRole("checkbox")).toBeNull();
-    expect(screen.queryByLabelText("Public name")).toBeNull();
-    expect(screen.queryByText("More options", { selector: "summary span" })).toBeNull();
-    expect(screen.getByLabelText("Name")).toBeEnabled();
-    expect(screen.getByRole("switch", { name: "Enabled" })).toBeEnabled();
-    // The models, their state, and who can use them are still shown.
-    expect(screen.getByText("qwen3-32b-instruct-q4_k_m")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Who can use these models" })).toBeVisible();
-    expect(screen.getByText(view.access.sentence)).toBeVisible();
-    expect(enginesApi.access).not.toHaveBeenCalled();
-  });
-
-  it("renames with a plain edit that names no definition and no values", async () => {
-    const user = userEvent.setup();
-    mount({ editable: false, not_editable_reason: reason });
-    const edit = vi.spyOn(api.services, "edit").mockImplementation(async () => {
-      view = { ...view, name: "garage" };
-      return registry;
-    });
-    const update = vi.spyOn(enginesApi, "update");
-    const name = await screen.findByLabelText("Name");
-    await user.clear(name);
-    await user.type(name, "garage");
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(edit).toHaveBeenCalledWith("garage-gpu", { name: "garage" }));
-    expect(edit.mock.calls[0][1]).not.toHaveProperty("definition");
-    expect(edit.mock.calls[0][1]).not.toHaveProperty("values");
-    expect(update).not.toHaveBeenCalled();
-    expect(await screen.findByRole("heading", { level: 1, name: "garage" })).toBeVisible();
-  });
-
-  it("turns on and off with a plain edit", async () => {
-    const user = userEvent.setup();
-    mount({ editable: false, not_editable_reason: reason });
-    const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
-    await user.click(await screen.findByRole("switch", { name: "Enabled" }));
-    await waitFor(() => expect(edit).toHaveBeenCalledWith("garage-gpu", { enabled: false }));
-    expect(edit.mock.calls[0][1]).not.toHaveProperty("definition");
-  });
-});
-
 describe("headers", () => {
   it("are plain text rows with no secret toggle, for the owner and for an administrator", async () => {
     const headers = [
@@ -349,11 +293,12 @@ describe("headers", () => {
     viewer.current = { ...viewer.current, role: "admin" };
     mount({ values: { ...engineView().values, headers } });
     await screen.findByText("More options", { selector: "summary span" });
-    for (const value of screen.getAllByLabelText("Value")) expect(value).toBeEnabled();
+    // An administrator reads them; only the owner changes the connection.
+    for (const value of screen.getAllByLabelText("Value")) expect(value).toBeDisabled();
     expect(screen.queryByRole("button", { name: /^Replace X-/ })).toBeNull();
   });
 
-  it("saving an untouched page sends the headers and adjustments back unchanged; a new header has no secret flag", async () => {
+  it("a timeout edit preserves headers and adjustments; a new header has no secret flag", async () => {
     const user = userEvent.setup();
     const transforms = [
       "reasoning-effort-final-chat",
@@ -365,6 +310,9 @@ describe("headers", () => {
     mount({ values: { ...engineView().values, headers, transforms } });
     const name = await screen.findByLabelText("Name");
     await user.type(name, "!");
+    await user.click(screen.getByText("More options", { selector: "summary span" }));
+    await user.clear(screen.getByLabelText("Time to wait for a reply"));
+    await user.type(screen.getByLabelText("Time to wait for a reply"), "300");
     const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(update).toHaveBeenCalled());

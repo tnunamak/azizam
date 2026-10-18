@@ -7,7 +7,7 @@
  */
 import { useId, type ReactNode } from "react";
 import { Check, CircleCheck, CircleHelp, CircleX, Circle, Lock, Loader2, type LucideIcon } from "lucide-react";
-import type { CapabilityLevel, CheckedCapability, StoredTest, TestResult } from "@/lib/engines-api";
+import type { CapabilityLevel, CheckedCapability, SentRequest, StoredTest, TestResult } from "@/lib/engines-api";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -155,6 +155,7 @@ export function TestResultBlock({
           ))}
         </dl>
       )}
+      {test.status === "done" && test.result.request && <RequestTrace request={test.result.request} />}
       <p className="text-meta text-muted-foreground mt-2">{note}</p>
       <Button type="button" variant="ghost" size="sm" className="mt-1" disabled={disabled} onClick={onTestAgain}>
         Test again
@@ -314,5 +315,33 @@ export function CapabilityLegend() {
         </div>
       ))}
     </div>
+  );
+}
+
+/** Exactly what the test sent: method, URL, headers (the key hidden by the gateway), body and time limit. */
+export function RequestTrace({ request }: { request: SentRequest }) {
+  const headers = Object.entries(request.headers ?? {});
+  const body =
+    request.body === undefined || request.body === null
+      ? ""
+      : typeof request.body === "string"
+        ? request.body
+        : JSON.stringify(request.body, null, 2);
+  return (
+    <details className="text-meta mt-2">
+      <summary className="text-link cursor-pointer max-sm:min-h-11">Exact request sent</summary>
+      <pre
+        tabIndex={0}
+        aria-label="Exact request sent"
+        className="bg-muted rounded-control mt-1 max-h-72 overflow-auto p-2 font-mono whitespace-pre-wrap [overflow-wrap:anywhere]"
+      >
+        {[
+          `${request.method} ${request.url}`,
+          ...headers.map(([name, value]) => `${name}: ${value}`),
+          ...(body ? ["", body] : []),
+        ].join("\n")}
+      </pre>
+      {request.timeout_s !== undefined && <p className="text-muted-foreground mt-1">Waits up to {request.timeout_s} seconds for the reply.</p>}
+    </details>
   );
 }

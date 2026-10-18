@@ -202,3 +202,9 @@ identified the job recovery and polling commits that touched this journey.
 The release traces supplied the decisive evidence: the browser fixtures
 missed playback renewal and query parameters on job polls. No CLI friction
 in this use; source reads and trace inspection were still necessary.
+
+## 2026-10-18 — engine contract W5
+
+- `ds recent` found the integration-base commits and engine runtime files.
+- `ds recent --limit 3` failed with `unknown flag`; plain `ds recent` worked.
+- A focused `ds find 'lifecycle hop forwarding'` started a full 2,327-file index. That startup cost was too high for this lookup, so source inspection remained necessary.

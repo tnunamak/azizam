@@ -3,13 +3,15 @@
 /**
  * More options: one collapsed section that opens by itself when anything in
  * it differs from the definition's defaults. Small headings inside, one per
- * field group the definition lists. Typed forms only.
+ * field group the definition lists. Typed forms only. FieldGroups draws the
+ * same groups open, for the sections that own them (adjustments, start and stop).
  */
 import { useId, type ReactNode } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import type { EngineDefinition, EngineField, HeaderRow } from "@/lib/engines-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/cn";
 import { CallLine } from "../parts/call-line";
 import { FormField, NativeSelect, Note, OwnerOnlyTag, Tag } from "../parts/form";
 import { transformsFromCards, type AdjustmentCard } from "./adjustments";
@@ -45,9 +47,15 @@ function defaultText(field: EngineField): string {
 }
 
 /** How many settings differ from the definition's defaults. */
-export function changedCount(definition: EngineDefinition, values: OptionValues, headers: HeaderDraft[], cards: AdjustmentCard[]): number {
+export function changedCount(
+  definition: EngineDefinition,
+  values: OptionValues,
+  headers: HeaderDraft[],
+  cards: AdjustmentCard[],
+  fields: EngineField[] = optionFields(definition),
+): number {
   let n = 0;
-  for (const field of optionFields(definition)) {
+  for (const field of fields) {
     if (field.show_if) continue;
     if (field.type === "keyvalue") n += headers.length ? 1 : 0;
     else if (field.items === "transform") {
@@ -70,23 +78,10 @@ function visible(field: EngineField, values: OptionValues): boolean {
   return !field.show_if || values[field.show_if.field] === String(field.show_if.equals);
 }
 
-export function MoreOptions({
-  definition,
-  values,
-  onValues,
-  headers,
-  onHeaders,
-  cards,
-  onCards,
-  owner,
-  lifecycleEditable,
-  locked,
-  address,
-  open,
-  onOpenChange,
-  errors = {},
-}: {
+interface GroupProps {
   definition: EngineDefinition;
+  /** The fields to draw; More options defaults to every advanced field. */
+  fields?: EngineField[];
   values: OptionValues;
   onValues: (patch: OptionValues) => void;
   headers: HeaderDraft[];
@@ -95,22 +90,26 @@ export function MoreOptions({
   onCards: (cards: AdjustmentCard[]) => void;
   owner: boolean;
   lifecycleEditable: boolean;
+  /** The fields show but cannot change. */
   locked: boolean;
+  /** Why an owner-only group can't change, when it can't. */
+  lockText?: string;
   address: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
   /** Messages from the server, by field key. The first field named takes focus. */
   errors?: Record<string, string>;
-}) {
-  const fields = optionFields(definition);
-  const groups: { name: string; fields: EngineField[] }[] = [];
-  for (const field of fields) {
-    const group = groups.find((g) => g.name === field.group);
-    if (group) group.fields.push(field);
-    else groups.push({ name: field.group as string, fields: [field] });
-  }
-  const n = changedCount(definition, values, headers, cards);
+}
 
+export function MoreOptions({
+  open,
+  onOpenChange,
+  ...props
+}: GroupProps & {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const fields = props.fields ?? optionFields(props.definition);
+  const n = changedCount(props.definition, props.values, props.headers, props.cards, fields);
+  if (!fields.length) return null;
   return (
     <details
       id="engine-more"
@@ -122,7 +121,38 @@ export function MoreOptions({
         <span className="text-heading">More options</span>
         {n ? <Tag tone="changed">{n} changed from default</Tag> : <Tag>All defaults</Tag>}
       </summary>
-      <div className="flex flex-col divide-y border-t">
+      <FieldGroups {...props} fields={fields} className="border-t" />
+    </details>
+  );
+}
+
+/** The definition's field groups, each under its own small heading. */
+export function FieldGroups({
+  definition,
+  fields: given,
+  values,
+  onValues,
+  headers,
+  onHeaders,
+  cards,
+  onCards,
+  owner,
+  lifecycleEditable,
+  locked,
+  lockText,
+  address,
+  errors = {},
+  className,
+}: GroupProps & { className?: string }) {
+  const fields = given ?? optionFields(definition);
+  const groups: { name: string; fields: EngineField[] }[] = [];
+  for (const field of fields) {
+    const group = groups.find((g) => g.name === field.group);
+    if (group) group.fields.push(field);
+    else groups.push({ name: field.group as string, fields: [field] });
+  }
+  return (
+    <div className={cn("flex flex-col divide-y", className)}>
         {groups.map((group) => {
           const ownerOnly = group.fields.some((f) => f.owner_only);
           const id = `engine-group-${group.name.toLowerCase().replace(/[^a-z]+/g, "-")}`;
@@ -143,6 +173,7 @@ export function MoreOptions({
                 owner={owner}
                 lifecycleEditable={lifecycleEditable}
                 locked={locked}
+                lockText={lockText}
                 address={address}
                 definition={definition}
                 errors={errors}
@@ -150,8 +181,7 @@ export function MoreOptions({
             </section>
           );
         })}
-      </div>
-    </details>
+    </div>
   );
 }
 
@@ -166,6 +196,7 @@ function GroupBody({
   owner,
   lifecycleEditable,
   locked,
+  lockText,
   address,
   definition,
   errors,
@@ -180,13 +211,23 @@ function GroupBody({
   owner: boolean;
   lifecycleEditable: boolean;
   locked: boolean;
+  lockText?: string;
   address: string;
   definition: EngineDefinition;
   errors: Record<string, string>;
 }) {
   const ownerOnly = group.some((f) => f.owner_only);
   if (ownerOnly)
-    return <OwnerOnlyGroup fields={group} values={values} onValues={onValues} editable={owner && lifecycleEditable && !locked} errors={errors} />;
+    return (
+      <OwnerOnlyGroup
+        fields={group}
+        values={values}
+        onValues={onValues}
+        editable={owner && lifecycleEditable && !locked}
+        lockText={lockText ?? "Only the owner can change this."}
+        errors={errors}
+      />
+    );
   const out: ReactNode[] = [];
   const plain: EngineField[] = [];
   for (const field of group) {
@@ -299,12 +340,14 @@ function OwnerOnlyGroup({
   values,
   onValues,
   editable,
+  lockText,
   errors,
 }: {
   fields: EngineField[];
   values: OptionValues;
   onValues: (patch: OptionValues) => void;
   editable: boolean;
+  lockText: string;
   errors: Record<string, string>;
 }) {
   const mode = fields.find((f) => f.type === "select");
@@ -315,7 +358,7 @@ function OwnerOnlyGroup({
       <>
         <p className="text-meta text-muted-foreground">Only needed when Azizam should start this server itself.</p>
         <Note tone="lock">
-          Only the owner can change this.{" "}
+          {lockText}{" "}
           {managed ? "Azizam starts and stops this server with the commands below." : "Azizam leaves this server running."}
         </Note>
         {managed && (

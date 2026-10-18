@@ -77,6 +77,31 @@ for (const width of [1280, 390]) {
       await expect(page.getByText(/^Usable by:/)).toBeVisible();
       await expect(page.getByRole("link", { name: "Access plans" })).toBeVisible();
 
+      // The record page exposes all six contract sections. A real save is
+      // followed by a reload so local form state cannot make this pass.
+      for (const section of ["Connection", "What it offers", "How it runs", "What Azizam can check", "Resources", "Stored record"]) {
+        await expect(page.getByRole("heading", { name: section, exact: true })).toBeVisible();
+      }
+      await expect(page.getByTestId("connection-facts")).toContainText(`${address}/chat/completions`);
+      await page.getByRole("button", { name: "Run a real test for Chat" }).click();
+      const realTest = page.getByRole("status", { name: "Real test of Chat" });
+      await expect(realTest).toBeVisible();
+      await realTest.getByText("Exact request sent", { exact: true }).click();
+      const trace = realTest.getByLabel("Exact request sent");
+      await expect(trace).toContainText(`POST ${address}/chat/completions`);
+      await expect(trace).toContainText("Bearer [redacted]");
+      await expect(trace).not.toContainText("sk-journey-local-key");
+      await expect(trace).toContainText('"messages"');
+      await page.getByLabel(/^Name/).fill(`${name} edited`);
+      const saved = page.waitForResponse(
+        (response) => response.request().method() === "PATCH" && response.url().endsWith(`/admin/api/operator/services/${serviceId}`),
+      );
+      await page.getByRole("button", { name: "Save changes" }).click();
+      expect((await saved).status()).toBe(200);
+      await page.reload();
+      await expect(page.getByRole("heading", { level: 1, name: `${name} edited` })).toBeVisible();
+      await expect(page.getByTestId("connection-facts")).toContainText(`${address}/chat/completions`);
+
       // N2: an edited address never gets the saved key, and the page says so before Save.
       await page.getByLabel(/^Address/).fill(`http://127.0.0.1:${enginePort + 5}/v1`);
       await expect(page.getByText("Your saved key won’t be sent to a new address. Re-enter it, or keep the old address.")).toBeVisible();

@@ -40,6 +40,8 @@ export interface EngineField {
   default_from?: string;
   advanced?: boolean;
   owner_only?: boolean;
+  /** The part of the engine record the field belongs to. Without it the page infers it. */
+  part?: "connection" | "offerings" | "process";
   secondary_of?: string;
   unit?: "seconds" | "minutes" | "tokens";
   items?: "transform" | "text";
@@ -153,6 +155,17 @@ export interface TestResult {
   key_sent: boolean;
   key_withheld: boolean;
   finding?: { what: string; why: string; fix: string; raw: string };
+  /** Exactly what the test sent. The gateway hides the key in the headers. */
+  request?: SentRequest;
+}
+
+/** One request as the gateway sent it: the trace a test shows. */
+export interface SentRequest {
+  method: string;
+  url: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+  timeout_s?: number;
 }
 
 /** One request adjustment as stored: a named built-in or one of the six primitives. */
@@ -237,9 +250,8 @@ export interface EngineView {
   /** The gateway runs this engine itself; only name and Enabled change. */
   locked: boolean;
   lifecycle_editable: boolean;
-  /** False when the model router does not call this engine at its own address: settings are read-only. */
-  editable: boolean;
-  not_editable_reason: string;
+  /** False only for the system record (the managed substrate). */
+  editable?: boolean;
   values: EngineValues;
   key: { state: "none" | "configured"; source?: "stored" | "env"; env_name?: string; origin?: string };
   capabilities: string[];
@@ -263,6 +275,97 @@ export interface EngineView {
   other_settings: Record<string, unknown>;
   /** The stored record, secrets shown as "configured". */
   record: Record<string, unknown>;
+  /** The engine record as the engine contract reads it (docs/design/ENGINE_CONTRACT.md section 2). */
+  v2?: EngineRecordV2;
+  /** Where an inference request goes, as the gateway resolves it from this record. */
+  request_path?: RequestPath;
+  /**
+   * Definition settings this record can't use, by field key, with the reason. The page shows
+   * none of them as an editable control and does not send them on Save.
+   */
+  unsupported_fields?: Record<string, string>;
+  /** False when the capabilities and models can't be edited for this record; the page shows the offerings read-only. */
+  can_edit_offerings?: boolean;
+  offering_edit_reason?: string | null;
+  /** The origin a saved key is sent to. Nowhere else gets it. */
+  credential_destination?: string | { origin?: string } | null;
+  ignored_headers?: string[];
+}
+
+export interface RequestPath {
+  /** direct: the router calls the address. gateway_lifecycle: the gateway's start-and-stop hop calls it. */
+  mode: "direct" | "gateway_lifecycle";
+  /** Where the URL comes from, in words. */
+  source: string;
+  /** The effective chat URL. */
+  url: string;
+}
+
+/** One observation: how Azizam looks, and, once it has looked, what it saw. */
+export interface ObservationV2 {
+  http?: { path?: string; expect?: number; select?: string };
+  means?: string;
+  /** The last result, when the gateway reports one. Missing means unknown, never green. */
+  last?: { ok: boolean; at?: number; detail?: string };
+  [extra: string]: unknown;
+}
+
+export interface OfferingV2 {
+  id: string;
+  kind: "model" | "workflow";
+  upstream?: string | null;
+  tasks?: { task: string; evidence: string }[];
+  selection?: {
+    mode: "request_field" | "switch" | "whole_graph";
+    switch?: { call?: string; observe_selected?: string; [extra: string]: unknown };
+    implicit_load?: boolean | "unknown";
+  };
+  adjustments?: TransformRow[];
+  [extra: string]: unknown;
+}
+
+export interface ProcessV2 {
+  driver: "none" | "command" | "process";
+  start?: string[];
+  stop?: string[];
+  status?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  port?: { fixed?: number; reserved?: boolean };
+  profile_apply?: { kind: string; file?: string; reload?: string[]; restore?: string };
+  legacy_driver?: string;
+  needs_owner_conversion?: boolean;
+  [extra: string]: unknown;
+}
+
+export interface EngineRecordV2 {
+  schema_version: number;
+  id: string;
+  name: string;
+  enabled: boolean;
+  record_type: "engine" | "system";
+  /** True for the system record: its values come from aliases and offerings. */
+  derived: boolean;
+  editable: boolean;
+  provenance: { source: string; package?: string | null };
+  connection: {
+    transport: string;
+    address: string;
+    protocol: string | null;
+    credentials: {
+      inference: { secret_ref?: string | null; env?: string | null; origin?: string; header?: string; scheme?: string } | null;
+      control: unknown;
+    };
+    headers: { name: string; value: string }[];
+    timeouts: { connect_s?: number; first_byte_s?: number; total_s?: number };
+  };
+  offerings: OfferingV2[];
+  /** The offering a switch-mode engine has selected now, when the gateway reports it. */
+  selected_offering?: string | null;
+  process: ProcessV2 | null;
+  observations: Record<string, ObservationV2>;
+  residency: Record<string, unknown>;
+  resources: Record<string, unknown>;
 }
 
 export interface CreateEngineBody {

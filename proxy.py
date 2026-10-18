@@ -103,6 +103,7 @@ from gateway import rerank as rerank_api
 from gateway import stable_aliases
 from gateway import model_metadata
 from gateway import engine_check
+from gateway.engine_connection import InferenceConnectionError, inference_connection
 from gateway import speech_stream
 from gateway.engine_protocol import inline_tts as tts_adapter
 from gateway.engine_protocol.errors import TransportFailure
@@ -1192,6 +1193,45 @@ def _backend_base_url(backend: str) -> str:
     return f"http://{cfg.get('host', '127.0.0.1')}:{cfg.get('port')}"
 
 
+def _engine_probe(backend: str, endpoint: str) -> tuple[str, dict[str, str]] | None:
+    """The URL and headers of a GET at one of a service's own probe endpoints.
+
+    Reads the saved record, as the final inference hop does, so an owner edit
+    to the address, prefix, headers or credential reaches the probe too. A
+    service with no saved record keeps the legacy ``http://host:port`` root.
+    See ``engine_read_request`` for the path and credential rules.
+    """
+    from gateway.lifecycle_drivers import engine_read_request
+
+    record = (ADMIN_STORE.get_service_registry().get("services") or {}).get(backend) or {}
+    return engine_read_request(
+        {**record, "config": record.get("config") or {}}, endpoint,
+        fallback_root=_backend_base_url(backend), db_path=ADMIN_DB_PATH,
+    )
+
+
+def _engine_probe_json_sync(backend: str, endpoint: str, timeout: float) -> Any:
+    """The JSON a service returns at a probe endpoint, or None. Redirects are not followed."""
+    probe = _engine_probe(backend, endpoint)
+    if probe is None:
+        return None
+    url, headers = probe
+    with httpx.Client(timeout=timeout, verify=tls_context(), follow_redirects=False) as client:
+        resp = client.get(url, headers=headers)
+    return resp.json() if resp.status_code == 200 else None
+
+
+async def _engine_probe_json(backend: str, endpoint: str, timeout: float) -> Any:
+    """The async form of ``_engine_probe_json_sync``."""
+    probe = _engine_probe(backend, endpoint)
+    if probe is None:
+        return None
+    url, headers = probe
+    async with httpx.AsyncClient(timeout=timeout, verify=tls_context(), follow_redirects=False) as client:
+        resp = await client.get(url, headers=headers)
+    return resp.json() if resp.status_code == 200 else None
+
+
 def _backend_reports_loaded_model_as_path(backend: str) -> bool:
     """True if the service record declares ``loaded_model_identity: path``.
 
@@ -1270,8 +1310,6 @@ def _seed_loaded_state(backend: str) -> None:
     is cold (startup or TTL expiry) — synchronous but cheap relative to a model
     swap.
     """
-    import urllib.request as _urlreq
-
     state_type = ((config.get("backends") or {}).get(backend) or {}).get("state_type", "llama_cpp")
     strategy = _BACKEND_STATE_STRATEGIES.get(state_type)
 
@@ -1280,9 +1318,8 @@ def _seed_loaded_state(backend: str) -> None:
 
     if strategy:
         try:
-            url = f"{_backend_base_url(backend)}{strategy['endpoint']}"
-            with _urlreq.urlopen(url, timeout=2) as resp:
-                data = json.loads(resp.read())
+            data = _engine_probe_json_sync(backend, strategy["endpoint"], 2.0)
+            if isinstance(data, dict):
                 model = _resolve_dot_path(data, strategy["model_key"])
         except Exception:
             pass  # server not up yet, or wrong endpoint — state stays None
@@ -3118,24 +3155,22 @@ async def _activate_prepared_litellm_local_target(
     )
 
 
-async def get_served_model_id(base_url: str) -> str:
-    """The first model id an OpenAI-compatible server lists at ``base_url``."""
+async def served_model_id_for_backend(backend: str) -> str:
+    """The first model id a service lists at its own ``/v1/models``, through its saved connection."""
     try:
-        async with httpx.AsyncClient(verify=tls_context()) as client:
-            resp = await client.get(f"{base_url}/v1/models", timeout=HEALTH_CHECK_TIMEOUT)
-            if resp.status_code != 200:
-                return ""
-            data = resp.json().get("data", [])
-            if data and isinstance(data[0], dict):
-                return data[0].get("id") or ""
+        payload = await _engine_probe_json(backend, "/v1/models", HEALTH_CHECK_TIMEOUT)
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        if data and isinstance(data[0], dict):
+            return data[0].get("id") or ""
     except Exception:
         pass
     return ""
 
 
 async def effective_llm_model_for_host(target_host: str) -> str:
-    if any(_backend_base_url(backend) == target_host for backend in _path_identity_backends()):
-        return await get_served_model_id(target_host)
+    for backend in _path_identity_backends():
+        if _backend_base_url(backend) == target_host:
+            return await served_model_id_for_backend(backend)
     return ""
 
 
@@ -3160,7 +3195,7 @@ async def current_llm_model_for_backend(backend: str) -> str:
         loaded_path = currently_loaded_model(backend)
         if not loaded_path:
             return ""
-        loaded_id = await get_served_model_id(_backend_base_url(backend))
+        loaded_id = await served_model_id_for_backend(backend)
         return loaded_id or os.path.basename(loaded_path) or loaded_path
 
     host = LLM_BACKEND_HOSTS.get(backend)
@@ -3172,11 +3207,7 @@ async def current_llm_model_for_backend(backend: str) -> str:
     if not strategy:
         return ""
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0), verify=tls_context()) as client:
-            resp = await client.get(f"{host}{strategy['endpoint']}")
-        if resp.status_code != 200:
-            return ""
-        data = resp.json()
+        data = await _engine_probe_json(backend, str(strategy["endpoint"]), 2.0)
         if not isinstance(data, dict):
             return ""
         return _resolve_dot_path(data, str(strategy["model_key"])) or ""
@@ -3354,9 +3385,25 @@ async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
 
 
 async def _probe_service_resource_fact(bcfg: Mapping[str, Any]) -> dict[str, Any]:
-    url = _service_resource_probe_url(bcfg)
-    if not url:
+    from gateway.lifecycle_drivers import engine_read_request
+
+    probe_config = dict(bcfg)
+    env_name = str(bcfg.get("base_url_env") or bcfg.get("api_base_env") or "").strip()
+    env_base = str(get_env(env_name) or "").strip() if env_name else ""
+    if env_base:
+        probe_config["base_url"] = env_base
+    endpoint = str(bcfg.get("health_endpoint") or "/health").strip() or "/health"
+    absolute = endpoint.startswith(("http://", "https://"))
+    if absolute:
+        # Check the key against the health destination so an origin different
+        # from its approved inference origin cannot receive it.
+        probe_config["base_url"] = endpoint
+    probe = engine_read_request(probe_config, "" if absolute else endpoint)
+    if probe is None:
         return {"status": "unknown"}
+    url, headers = probe
+    if absolute:
+        url = endpoint
     try:
         timeout = float(bcfg.get("timeout") or HEALTH_CHECK_TIMEOUT)
     except (TypeError, ValueError):
@@ -3366,7 +3413,7 @@ async def _probe_service_resource_fact(bcfg: Mapping[str, Any]) -> dict[str, Any
     timeout = min(timeout, HEALTH_CHECK_TIMEOUT)
     try:
         async with httpx.AsyncClient(verify=tls_context()) as client:
-            resp = await client.get(url, timeout=timeout)
+            resp = await client.get(url, timeout=timeout, **({"headers": headers} if headers else {}))
             if 200 <= resp.status_code < 300:
                 return {"status": "available"}
             if resp.status_code in {502, 503, 504}:
@@ -3393,6 +3440,8 @@ def _service_resource_probe_config(service_id: str) -> Mapping[str, Any] | None:
         return None
     scfg = service.get("config")
     if isinstance(scfg, Mapping):
+        if service.get("secret_refs"):
+            return {**scfg, "secret_refs": copy.deepcopy(service["secret_refs"])}
         return scfg
     return None
 
@@ -23994,10 +24043,8 @@ async def _probed_context_window(backend: str) -> int | None:
 
     value: int | None = None
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0), verify=tls_context()) as client:
-            resp = await client.get(f"{_backend_base_url(backend)}{endpoint}")
-        if resp.status_code == 200:
-            payload = resp.json()
+        payload = await _engine_probe_json(backend, endpoint, 2.0)
+        if payload is not None:
             data = payload.get("data") if isinstance(payload, Mapping) else None
             if isinstance(data, list):
                 for item in data:
@@ -27633,7 +27680,16 @@ async def _forward_current_loaded_openai_request(
                 owner.report(status="failed", reason="failed")
                 return policy_error
             query = backend_query_string(request.url.query)
-            url = f"{target.host}{request_path}"
+            record = (ADMIN_STORE.get_service_registry().get("services") or {}).get(target.backend)
+            try:
+                connection = inference_connection(
+                    record, request_path.removeprefix("/v1"), fallback_address=f"{target.host}/v1",
+                    fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
+                )
+            except InferenceConnectionError as exc:
+                owner.report(status="failed", reason="configuration_error")
+                return openai_error_response(str(exc), status_code=503, code="engine_credential_unavailable")
+            url = connection.url
             if query:
                 url = f"{url}?{query}"
 
@@ -27645,6 +27701,8 @@ async def _forward_current_loaded_openai_request(
             )
             headers.setdefault("content-type", "application/json")
             headers.setdefault("accept", "application/json")
+            headers = {name.lower(): value for name, value in headers.items()}
+            headers.update(connection.headers)
 
             if execution_body is None:
                 execution_body = json.dumps(body).encode()
@@ -27653,7 +27711,7 @@ async def _forward_current_loaded_openai_request(
                 url=url,
                 headers=headers,
                 body=execution_body,
-                read_timeout=UPSTREAM_READ_TIMEOUT,
+                read_timeout=connection.read_timeout,
             )
 
             record_request_shape_stage(
@@ -28500,12 +28558,26 @@ async def _forward_internal_litellm_local_upstream(
         return admission
 
     body["model"] = activation.backend_model or target_model
+    # Read the saved service, not the boot-time host table: an owner edit
+    # changes the final hop even while the model router retains its hop URL.
+    record = (ADMIN_STORE.get_service_registry().get("services") or {}).get(backend)
+    try:
+        connection = inference_connection(
+            record, "/chat/completions", fallback_address=f"{upstream_base}/v1",
+            fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
+        )
+    except InferenceConnectionError as exc:
+        _record_internal_hop_receipt(
+            request_path="/v1/chat/completions", parent_request_id=_internal_request_id_from_headers(request.headers),
+            body=body, status_code=503, terminal_reason="configuration_error",
+        )
+        return openai_error_response(str(exc), status_code=503, code="engine_credential_unavailable")
     execution_request = LlmExecutionRequest(
         method="POST",
-        url=f"{upstream_base}/v1/chat/completions",
-        headers={"content-type": "application/json"},
+        url=connection.url,
+        headers=connection.headers,
         body=json.dumps(body).encode("utf-8"),
-        read_timeout=UPSTREAM_READ_TIMEOUT,
+        read_timeout=connection.read_timeout,
     )
 
     # This route runs behind LiteLLM's own httpx client, not the original

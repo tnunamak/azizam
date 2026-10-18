@@ -46,26 +46,27 @@ from gateway.engine_check import (
     make_http_fetch,
     normalize_address,
     origin_of,
+    join_url,
     run_check,
     run_real_test,
 )
 from gateway.engine_definitions import EngineCatalog, EngineDefinitionError, load_engine_catalog
-from gateway.litellm_substrate import CREDENTIAL_HEADER_RE, header_problem, reaches_engine_directly, routed_models
+from gateway.engine_connection import inference_base_url
+from gateway.litellm_substrate import CREDENTIAL_HEADER_RE, SECRET_PLACEHOLDER, header_problem, routed_models
 
 # Record keys this module writes. Every other config key is the owner's and is
 # carried through an edit untouched ("Other settings").
 _KNOWN_CONFIG_KEYS = frozenset({
     "host", "port", "base_path", "scheme", "protocol", "native_passthrough", "transforms", "models",
     "definition", "definition_version", "address", "path_prefix",
-    "timeout", "headers", "api_key_secret_id", "api_key_env", "credential_origin",
+    "timeout", "headers", "api_key_secret_id", "api_key_env", "api_key_ref", "credential_origin",
     "engine_check", "engine_tests", "model_policy_schema_version",
     "name", "enabled", "capabilities", "role", "priority", "managed", "lifecycle",
 })
 _RECORD_KEYS = frozenset({"id", "name", "kind", "source", "enabled", "priority", "role", "capabilities", "config",
                           "secret_refs", "lifecycle", "process", "observations", "residency", "resources",
+                          "connection", "offerings", "protocol_operations", "control_file_roots",
                           "provenance", "editable"})
-NOT_EDITABLE_HERE = ("This page can’t change how Azizam reaches this engine yet: its settings come from the gateway’s "
-                     "own setup. You can still rename it and turn it on or off.")
 # An engine lists at most this many models in one access question.
 MAX_ACCESS_MODELS = 500
 _LIFECYCLE_FIELDS = ("lifecycle_mode", "lifecycle_start", "lifecycle_stop", "lifecycle_ready_s")
@@ -326,15 +327,17 @@ def _stored_key(record: Mapping[str, Any] | None, *, db_path: Path, env: Callabl
         return None, "none", ""
     config = record.get("config") or {}
     origin = str(config.get("credential_origin") or "")
+    name = str(config.get("api_key_env") or config.get("api_key_ref") or "").strip()
+    if not name and (record.get("secret_refs") or {}).get("api_key") == SECRET_PLACEHOLDER and not config.get("api_key_secret_id"):
+        name = "AZIZAM_DOWNSTREAM_API_KEY"
+    if name:
+        return env(name), "env", origin
     secret_id = str(config.get("api_key_secret_id") or "").strip()
     if secret_id:
         try:
             return secret_store.get_provider_secret(secret_id, db_path=db_path, expected_origin=origin or None), "stored", origin
         except Exception:  # noqa: BLE001 - an unreadable secret is "no key", never a crash
             return None, "stored", origin
-    name = str(config.get("api_key_env") or "").strip()
-    if name:
-        return env(name), "env", origin
     return None, "none", origin
 
 
@@ -348,7 +351,10 @@ def resolve_key(values: Mapping[str, Any], ctx: Any, *, record: Mapping[str, Any
         return KeyInput(pasted.strip(), "pasted")
     stored_config = (record or {}).get("config") or {}
     env_name = str(values.get("api_key_env") or "").strip()
-    if env_name and env_name != str(stored_config.get("api_key_env") or ""):
+    stored_env = stored_config.get("api_key_env") or stored_config.get("api_key_ref") or ""
+    if not stored_env and ((record or {}).get("secret_refs") or {}).get("api_key") == SECRET_PLACEHOLDER and not stored_config.get("api_key_secret_id"):
+        stored_env = "AZIZAM_DOWNSTREAM_API_KEY"
+    if env_name and env_name != str(stored_env):
         if not _is_owner(ctx):
             raise _owner_only("Only the owner can read a key from a server environment variable.")
         value = env(env_name)
@@ -407,7 +413,7 @@ def _models_config(definition: Mapping[str, Any], values: Mapping[str, Any], mod
             raise DraftError(f"Two models use the public name “{public}”. Each needs its own.", field="models")
         taken.add(public)
         item = stored_row(upstream, public)
-        item.pop("id", None)
+        # A public name or upstream edit does not create a new offering.
         item.update(model_group=public, upstream_model=upstream)
         window = row.get("context_window")
         if window not in (None, ""):
@@ -470,6 +476,10 @@ def build_raw(
         record_caps = list(record_capabilities)
     has = {f["key"] for f in definition["fields"]}
     raw: dict[str, Any] = {key: copy.deepcopy(value) for key, value in (keep or {}).items()}
+    # The definition writes one host/port/path connection. Older URL aliases
+    # must not override it after an owner saves a different address.
+    for alias in ("base_url", "api_base", "default_base_url"):
+        raw.pop(alias, None)
     raw.update(_split_address(values["address"], definition, (values.get("path_prefix") or "") if "path_prefix" in has else ""))
     raw.update({
         "name": name,
@@ -515,6 +525,7 @@ def build_raw(
         raw.pop("engine_tests", None)
     raw.pop("api_key_secret_id", None)
     raw.pop("api_key_env", None)
+    raw.pop("api_key_ref", None)
     if secret_id:
         raw["api_key_secret_id"] = secret_id
     elif values.get("api_key_env"):
@@ -564,12 +575,25 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     definition = catalog.definition(infer_definition(catalog, record))
     assert definition is not None
     address = str(config.get("address") or service_registry.service_base_url(config) or "")
+    effective_base = service_registry.service_base_url(config)
+    if address and effective_base:
+        projected = _split_address(address, definition, str(config.get("path_prefix") or ""))
+        if comparable_address(service_registry.service_base_url(projected)) != comparable_address(effective_base):
+            if definition["record"]["base_path"] != "from_address":
+                address = origin_of(effective_base)
+            else:
+                prefix = "/" + str(config.get("path_prefix") or "").strip("/")
+                address = effective_base[:-len(prefix)] if prefix != "/" and effective_base.endswith(prefix) else effective_base
     values: dict[str, Any] = {"address": address}
-    values["api_key_env"] = config.get("api_key_env") or ""
+    env_name = config.get("api_key_env") or config.get("api_key_ref") or ""
+    if not env_name and (record.get("secret_refs") or {}).get("api_key") == SECRET_PLACEHOLDER and not config.get("api_key_secret_id"):
+        env_name = "AZIZAM_DOWNSTREAM_API_KEY"
+    values["api_key_env"] = env_name
     values["path_prefix"] = config.get("path_prefix") or ""
     values["reply_timeout_s"] = config.get("timeout") or _field_default(definition, "reply_timeout_s", 600)
     values["headers"] = [{"name": h.get("name"), "value": h.get("value", "")}
-                         for h in config.get("headers") or () if isinstance(h, Mapping) and "value" in h]
+                         for h in config.get("headers") or () if isinstance(h, Mapping) and "value" in h
+                         and not h.get("secret") and not header_problem(str(h.get("name") or ""), str(h["value"]))]
     values["transforms"] = copy.deepcopy(config.get("transforms") or [])
     lifecycle = service_registry.legacy_lifecycle_from_service(record)
     driver_config = lifecycle.get("driver_config") or {}
@@ -579,8 +603,11 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
                       lifecycle_ready_s=driver_config.get("health_timeout_s", 120))
     else:
         values["lifecycle_mode"] = "external"
-    lifecycle_editable = lifecycle.get("driver") in (None, "", "command", "external")
-    editable = reaches_engine_directly(str(record.get("id") or ""), record)
+    lifecycle_editable = lifecycle.get("driver") in (None, "", "command", "external") and not any(
+        isinstance(driver_config.get(key), list) for key in ("start", "stop")
+    )
+    locked = service_registry.is_litellm_service_record(record.get("id"), record)
+    editable = not locked
     model_use = (config.get("engine_check") or {}).get("model_use") or {}
     models = [{"id": m.get("upstream_model"), "public_name": m.get("model_group") or m.get("id"),
                "context_window": m.get("context_window"), "enabled": m.get("enabled", True),
@@ -588,17 +615,36 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
               for m in model_rows(config.get("models"))]
     secret_id = str(config.get("api_key_secret_id") or "")
     key: dict[str, Any] = {"state": "none"}
-    if secret_id:
+    if env_name:
+        key = {"state": "configured", "source": "env", "env_name": env_name, "origin": config.get("credential_origin") or ""}
+    elif secret_id:
         key = {"state": "configured", "source": "stored", "origin": config.get("credential_origin") or ""}
-    elif config.get("api_key_env"):
-        key = {"state": "configured", "source": "env", "env_name": config["api_key_env"], "origin": config.get("credential_origin") or ""}
     caps = config.get("engine_capabilities")
     if not isinstance(caps, list):
         caps = _caps_from_record(catalog, definition, record)
     field_keys = {f["key"] for f in definition["fields"]}
+    schema_matches = not config.get("protocol") or config["protocol"] == definition["record"]["protocol"]
+    declared_offerings = isinstance(record.get("offerings"), list) or isinstance(config.get("offerings"), list)
+    unsupported_fields = {} if schema_matches else {
+        key: "The stored protocol has no matching definition schema, so this page cannot edit this setting safely."
+        for key in field_keys
+    }
     values = {k: v for k, v in values.items() if k in field_keys}
     other = {k: v for k, v in config.items() if k not in _KNOWN_CONFIG_KEYS and k != "engine_capabilities"}
     other = engine_redaction.redact_service({"config": other})["config"]
+    request_base = inference_base_url(config)
+    hop_routed = bool(config.get("gateway_lifecycle") or any(
+        row.get("gateway_lifecycle") for row in model_rows(config.get("models"))
+    ))
+    operations = []
+    for cap_id in caps if schema_matches else ():
+        route = (catalog.capability(cap_id) or {}).get("route") or {}
+        if route.get("path"):
+            base = request_base
+            operations.append({"capability": cap_id, "method": "POST", "url": join_url(base, route["path"])})
+    v2 = service_registry.service_record_v2(record)
+    v2["connection"]["address"] = address
+    v2 = _redact_record_value(v2)
     return {
         "service_id": record.get("id"),
         "definition": definition["definition"],
@@ -606,11 +652,8 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "inferred": not config.get("definition"),
         "name": record.get("name"),
         "enabled": bool(record.get("enabled", True)),
-        "locked": service_registry.is_litellm_service_record(record.get("id"), record),
-        # False when the model router does not call this engine at its own address: the page would
-        # save settings the gateway does not use, so it shows them and changes only name and on/off.
+        "locked": locked,
         "editable": editable,
-        "not_editable_reason": "" if editable else NOT_EDITABLE_HERE,
         "lifecycle_editable": lifecycle_editable,
         "values": values,
         "key": key,
@@ -619,9 +662,17 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "tests": copy.deepcopy(config.get("engine_tests") or {}),
         "check": copy.deepcopy(config.get("engine_check") or {}),
         "calls": call_line(definition, values),
-        "other_settings": copy.deepcopy(other),
+        "other_settings": _redact_record_value(other),
         "record": redacted_record(record),
-        "v2": service_registry.service_record_v2(record),
+        "v2": v2,
+        "request_path": {"mode": "gateway_lifecycle" if hop_routed else "direct", "source": "service record",
+                         "url": operations[0]["url"] if operations else "", "operations": operations},
+        "credential_destination": key.get("origin") or origin_of(address),
+        "ignored_headers": [str(row.get("name") or "(unnamed)") for row in config.get("headers") or ()
+                            if isinstance(row, Mapping) and (row.get("secret") or header_problem(str(row.get("name") or ""), str(row.get("value") or "")))],
+        "unsupported_fields": unsupported_fields,
+        "can_edit_offerings": schema_matches and not declared_offerings,
+        "offering_edit_reason": "These offerings declare selection or workflow settings that the model-list editor cannot preserve. They are shown as stored." if declared_offerings else None,
     }
 
 
@@ -656,27 +707,31 @@ def _caps_from_record(catalog: EngineCatalog, definition: Mapping[str, Any], rec
     return out
 
 
+def _redact_record_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        masked = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if lowered == "env" and isinstance(item, Mapping):
+                masked[key] = {name: "configured" for name in item}
+            elif lowered.endswith("_secret_id") or lowered in ("api_key", "secret_ref"):
+                masked[key] = "configured" if item else item
+            elif lowered == "value" and "name" in value and (value.get("secret") or header_problem(str(value.get("name") or ""), str(item))):
+                masked[key] = "configured"
+            else:
+                masked[key] = _redact_record_value(item)
+        return masked
+    if isinstance(value, list):
+        return [_redact_record_value(item) for item in value]
+    return value
+
+
 def redacted_record(record: Mapping[str, Any]) -> dict[str, Any]:
-    """The stored record as the page shows it: secret ids and references masked, never a value."""
+    """The stored record as the page shows it, with references and environment values masked."""
     out = copy.deepcopy({k: v for k, v in record.items() if k in _RECORD_KEYS})
     if "lifecycle" not in out:
         out["lifecycle"] = copy.deepcopy(dict(service_registry.legacy_lifecycle_from_service(record)))
-
-    def mask(value: Any) -> Any:
-        if isinstance(value, Mapping):
-            masked = {}
-            for key, item in value.items():
-                lowered = str(key).lower()
-                if lowered.endswith("_secret_id") or lowered == "api_key":
-                    masked[key] = "configured"
-                else:
-                    masked[key] = mask(item)
-            return masked
-        if isinstance(value, list):
-            return [mask(item) for item in value]
-        return value
-
-    out = mask(out)
+    out = _redact_record_value(out)
     if isinstance(out.get("secret_refs"), Mapping):
         out["secret_refs"] = {k: "configured" for k in out["secret_refs"]}
     return engine_redaction.redact_service(out)
@@ -955,11 +1010,37 @@ class EngineService:
             raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
         if service_registry.is_litellm_service_record(service_id, record):
             raise EngineRouteError(status.HTTP_403_FORBIDDEN, "service_not_editable", "Azizam runs this engine itself. Only its name and Enabled can change.")
-        if not reaches_engine_directly(service_id, record):
-            raise EngineRouteError(status.HTTP_409_CONFLICT, "engine_not_editable_here", NOT_EDITABLE_HERE)
         before = engine_view(catalog, record, db_path=self.db_path)
         definition = _definition(catalog, body.get("definition") or before["definition"])
+        submitted = body.get("values") if isinstance(body.get("values"), Mapping) else {}
+        if before.get("offering_edit_reason"):
+            offering_keys = {field["key"] for field in definition["fields"] if field.get("items") == "transform"
+                             or (not field.get("advanced") and field.get("type") in ("multiselect", "number"))}
+            if "models" in body or "capabilities" in body or any(
+                key in submitted and submitted[key] != before["values"].get(key) for key in offering_keys
+            ):
+                raise DraftError(before["offering_edit_reason"], field="models")
+        if not submitted and not any(key in body for key in ("models", "capabilities", "tests")) and not body.get("recheck"):
+            metadata = {key: body[key] for key in ("name", "enabled") if key in body}
+            if body.get("disabled"):
+                metadata["enabled"] = False
+            return self.store.update_service(service_id=service_id, data=metadata, actor=ctx, expected_generation=expected_generation)
+        if before["unsupported_fields"]:
+            if submitted or "models" in body or "capabilities" in body:
+                field = next(iter(submitted), "models" if "models" in body else "capabilities")
+                raise DraftError("The stored protocol has no matching definition schema for this setting.", field=field)
+            metadata = {key: body[key] for key in ("name", "enabled") if key in body}
+            if body.get("disabled"):
+                metadata["enabled"] = False
+            return self.store.update_service(service_id=service_id, data=metadata, actor=ctx, expected_generation=expected_generation)
         values = {**before["values"], **(body.get("values") if isinstance(body.get("values"), Mapping) else {})}
+        lifecycle_changed = any(
+            _same_text(values.get(key, _field_default(definition, key, "")))
+            != _same_text(before["values"].get(key, _field_default(definition, key, "")))
+            for key in _LIFECYCLE_FIELDS
+        )
+        if lifecycle_changed and not before["lifecycle_editable"]:
+            raise DraftError("The stored process uses argument lists or a different driver. These text fields cannot edit it safely.", field="lifecycle_mode")
         values = _restore_lifecycle_markers(values, before["values"], record)
         if "api_key" not in values:
             values["api_key"] = SECRET_MASK if before["key"]["state"] == "configured" and before["key"].get("source") == "stored" else ""
@@ -1014,8 +1095,7 @@ class EngineService:
                            expected_generation=expected_generation, action="update", keep=keep,
                            extra_capabilities=extra_capabilities,
                            record_capabilities=None if capabilities_sent else list(record.get("capabilities") or ()),
-                           keep_lifecycle=all(str(values.get(k, "")) == str(before["values"].get(k, ""))
-                                              for k in _LIFECYCLE_FIELDS),
+                           keep_lifecycle=not lifecycle_changed,
                            key_dropped=bool(
                                key.withheld
                                and values.get("api_key") in ("", SECRET_MASK, None)
@@ -1059,12 +1139,12 @@ class EngineService:
                 for field in ("priority", "role"):
                     if existing.get(field) is not None:
                         raw[field] = existing[field]
-                for key in ("protocol", "native_passthrough"):
+                for config_key in ("protocol", "native_passthrough"):
                     # How the gateway talks to an engine is set when it is added; an edit keeps it, set or unset.
-                    if key in old_config:
-                        raw[key] = copy.deepcopy(old_config[key])
+                    if config_key in old_config:
+                        raw[config_key] = copy.deepcopy(old_config[config_key])
                     else:
-                        raw.pop(key, None)
+                        raw.pop(config_key, None)
             kept_key = (
                 (secret_id and secret_id == old_config.get("api_key_secret_id"))
                 or (raw.get("api_key_env") and raw.get("api_key_env") == old_config.get("api_key_env"))
@@ -1088,7 +1168,8 @@ class EngineService:
                     if extra in old_driver_config and old_lifecycle.get("driver") == "command":
                         raw["lifecycle"]["driver_config"].setdefault(extra, copy.deepcopy(old_driver_config[extra]))
             record = self.store.write_engine(service_id=service_id, raw=raw, actor=ctx, expected_generation=expected_generation,
-                                             replace=existing is not None, existing=existing)
+                                             replace=existing is not None, existing=existing,
+                                             drop_inference_secret_ref=key_dropped or key.source == "pasted" or bool(values.get("api_key_env")))
         except BaseException:
             for secret_id_written in written:
                 try:

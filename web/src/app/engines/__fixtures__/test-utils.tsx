@@ -59,7 +59,6 @@ export function engineView(over: Partial<EngineView> = {}): EngineView {
     locked: false,
     lifecycle_editable: true,
     editable: true,
-    not_editable_reason: "",
     values: {
       address: "http://192.168.1.50:8080/v1",
       path_prefix: "",

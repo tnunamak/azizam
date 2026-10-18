@@ -817,12 +817,10 @@ class AdminSQLiteStore:
     ) -> dict[str, Any]:
         """Normalize a registry about to be written; keep credential changes for the owner.
 
-        A credential reference names a secret the gateway holds, and the host of
-        its record decides where that secret is sent. An administrator may manage
-        services, but may not attach a credential to one, nor move a service that
-        carries one, nor give one a lifecycle driver (a driver runs commands or sends a
-        stored key to the record's host). When the owner does, the host the key is for
-        is recorded with it.
+        Administrators may add keyless external services and edit metadata.
+        Existing connection, offering and lifecycle settings belong to the
+        owner, whether or not a key is attached. The owner also binds each key
+        to the origin that may receive it.
         """
         value = service_registry.normalize_service_registry(registry)
         before = self.get_service_registry()
@@ -830,12 +828,30 @@ class AdminSQLiteStore:
             old_services = before.get("services") or {}
             for service_id, record in (value.get("services") or {}).items():
                 previous = old_services.get(service_id) or {}
+                if previous:
+                    old_config, new_config = dict(previous.get("config") or {}), dict(record.get("config") or {})
+                    # The legacy PATCH form fills model_group from id. That
+                    # representation change grants no new offering or route.
+                    for config_values, service in ((old_config, previous), (new_config, record)):
+                        if isinstance(config_values.get("models"), (list, tuple)):
+                            config_values["models"] = service_registry._form_models_to_config(config_values["models"])
+                        config_values["lifecycle"] = service_registry.legacy_lifecycle_from_service(service)
+                    defaults = {"base_path": "/v1", "scheme": "http", "timeout": 600,
+                                "headers": [], "models": [], "transforms": [], "role": "required", "managed": False}
+                    metadata_keys = {"name", "enabled", "note"}
+                    keys = (old_config.keys() | new_config.keys()) - metadata_keys
+                    if any((old_config.get(key) or defaults.get(key)) != (new_config.get(key) or defaults.get(key))
+                           for key in keys):
+                        raise PermissionError("Only the owner can change service settings.")
+                    for field in ("capabilities", "priority", "role", "kind", "resources", "secret_refs"):
+                        if previous.get(field) != record.get(field):
+                            raise PermissionError(f"Only the owner can change service {field}.")
                 for field in ("connection", "process", "protocol_operations", "control_file_roots",
-                              "offerings", "residency", "observations"):
+                              "offerings", "residency", "observations", "credentials"):
                     # Migration writes empty blocks; an empty block grants nothing.
                     old_value = (previous.get(field) or None, (previous.get("config") or {}).get(field) or None)
                     new_value = (record.get(field) or None, (record.get("config") or {}).get(field) or None)
-                    if field == "process":
+                    if field == "process" and not previous:
                         # Migration turns an external lifecycle into a process that
                         # runs nothing; lifecycle_driver_changed below judges whether
                         # a top-level process controls the host.
@@ -989,6 +1005,7 @@ class AdminSQLiteStore:
     def write_engine(
         self, *, service_id: str, raw: Mapping[str, Any], actor: AdminContext,
         expected_generation: int, replace: bool, existing: Mapping[str, Any] | None = None,
+        drop_inference_secret_ref: bool = False,
     ) -> dict[str, Any]:
         """Create or replace one service from an engine definition's record (gateway/engine_admin.py).
 
@@ -998,10 +1015,24 @@ class AdminSQLiteStore:
         registry, record = service_registry.upsert_service_in_registry(
             self.get_service_registry(), service_id=service_id, raw=raw, source="ui", replace=replace,
         )
+        if isinstance(raw.get("lifecycle"), Mapping):
+            record["process"] = service_registry._v2_process(raw["lifecycle"])
         if existing is not None:
-            for field in ("kind", "provenance"):
+            for field in ("kind", "provenance", "secret_refs", "resources", "offerings"):
                 if field in existing:
                     record[field] = copy.deepcopy(existing[field])
+            if drop_inference_secret_ref:
+                # A replaced or withheld inference key cannot survive as a
+                # legacy placeholder and get rebound to the edited origin.
+                record.get("secret_refs", {}).pop("api_key", None)
+            # Rebuilding a connection must not discard the process identity,
+            # its observation contracts, or residency policy. A lifecycle edit
+            # deliberately rebuilds these blocks through migration instead.
+            old_lifecycle = service_registry.legacy_lifecycle_from_service(existing)
+            if raw.get("lifecycle") == old_lifecycle:
+                for field in ("process", "observations", "residency"):
+                    if field in existing:
+                        record[field] = copy.deepcopy(existing[field])
         return self._persist_service_registry(
             registry,
             action="operator.service.updated" if replace else "operator.service.added",
@@ -1022,6 +1053,24 @@ class AdminSQLiteStore:
         sid = service_registry.normalize_id(service_id)
         current_registry = self.get_service_registry()
         existing = (current_registry.get("services") or {}).get(sid)
+        if existing is not None and set(data) <= {"name", "enabled", "note"}:
+            # A metadata save must not rebuild a connection through a legacy
+            # form, which can discard URL aliases or custom protocol paths.
+            registry = copy.deepcopy(current_registry)
+            record = registry["services"][sid]
+            for field, value in data.items():
+                if field == "enabled":
+                    value = service_registry.bool_from_config(value, True)
+                else:
+                    value = str(value).strip()
+                if field != "note":
+                    record[field] = value
+                if field == "note" or field in record.get("config", {}):
+                    record.setdefault("config", {})[field] = value
+            return self._persist_service_registry(
+                registry, action="operator.service.updated", actor=actor,
+                service_id=sid, expected_generation=expected_generation,
+            )
         if existing is not None and not service_registry.is_litellm_service_record(
             sid, existing
         ):
