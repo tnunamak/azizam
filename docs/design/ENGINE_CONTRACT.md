@@ -204,7 +204,8 @@ Core applies access plans and admission, finalizes receipts, and owns durable
 media jobs, idempotency, cancellation settlement and asset access. Queued image
 jobs use this same dispatch. Startup keeps the existing fail-closed policy for
 uncertain running work rather than resubmitting it. Text completions,
-transcription, graph workflows and other existing paths are not migrated here.
+transcription, graph workflows and other existing paths keep their dispatch;
+W6b moves their clients behind reviewed adapters (above), not onto `http-v1`.
 See [Add an HTTP engine as data](../guides/ADD_HTTP_ENGINE_AS_DATA.md).
 
 - **`executor: adapter:<id>`** is a reviewed adapter, for anything outside
@@ -224,13 +225,48 @@ See [Add an HTTP engine as data](../guides/ADD_HTTP_ENGINE_AS_DATA.md).
   evidence and the open decision are in
   [ENGINE_PROTOCOL_EXECUTOR.md](ENGINE_PROTOCOL_EXECUTOR.md#w6a-round-3-absolute-each-measurement).
   JSONata and CEL-class languages (375x to 1,158x) are not used. The in-tree ComfyUI,
-  STT and TTS clients become adapters behind one interface.
+  speech and transcription clients are reviewed adapters behind one interface
+  (W6b, below).
 - **The adapter interface is versioned:** `health`, `inventory`,
   `invoke(op, canonical_request)`, and for jobs `submit`, `poll` or `events`,
   `cancel`, `recover` and `fetch_assets`.
 - **Core owns the durable job state machine** (F8): idempotency keys, retry
   boundaries, event order, asset lifetime and access, and receipt
   finalization. Adapters return typed result, job, event or asset references.
+- **Reviewed in-tree adapters (W6b).** Three protocol descriptions in
+  `registry/protocols/` say `executor: adapter:<id>` and list operation names
+  only; the adapter owns the wire.
+
+  | Adapter id | Module | Serves | Owns |
+  |---|---|---|---|
+  | `node-graph` | `gateway/engine_protocol/node_graph.py` | `images`, `videos`, `audio.generate` | submit a graph prompt, read its history and queue, read output files, upload input images, cancel, delete history, system stats and memory release, the push channel; the readers of the engine's answers (execution errors, queue position, output files); node-class inspection and graph validation (`node_info.py`, `node_ui_graph.py`, `node_catalog.py`, `node_validation.py`) |
+  | `inline-tts` | `gateway/engine_protocol/inline_tts.py` | `speech` | buffered and streamed speech, voice check, voice design |
+  | `chunked-stt` | `gateway/engine_protocol/chunked_stt.py` | `transcriptions` | the multipart transcription request, the bounded and classified answer, the event-stream relay, the 16 kHz preparation, and the chunk plan, chunk posts and merge |
+
+  **How a record selects one.** The record's `protocol` (or
+  `connection.protocol`) names a protocol description. When that description
+  says `executor: adapter:<id>`, the factory registered under `<id>` builds the
+  adapter (`gateway/engine_protocol/reviewed.py`). A record that names no
+  adapter protocol is answered by the adapter whose description lists the
+  route's capability in `serves`, so records stored before the field existed
+  keep working with no migration. Core never branches on what the engine is.
+  The shipped descriptions are the floor: an operator file that is invalid, or
+  that replaces one with an `http-v1` description, cannot take the media
+  routes away. A caller-facing message that names the engine takes the name
+  from the description's `label`, and a workflow manifest's engine key from its
+  `binding`; both are data.
+
+  **What stays in core.** Admission, access plans, receipts, media jobs and
+  assets, idempotency, the video progress records and their phase heuristics,
+  deadlines, cancellation signalling and cleanup ownership. An adapter returns
+  typed replies and failures (`WireReply`, `StreamReply`, `TransportFailure`,
+  `UpstreamError`); core decides what a failure means to the caller.
+
+  **Not behind an adapter yet.** The host-process VRAM probe and the PID
+  lookup (host knowledge, not the wire), the status page's own reads of the
+  engine, the long-video graph builders that carry graph node names
+  (`video_extend*.py`, `video_subject.py`, `video_extensions.py`), and the
+  capability tables that key on the backend id. The ratchet still counts them.
 
 ## 5. Inbound frontends (how callers talk to Azizam) (F7)
 
