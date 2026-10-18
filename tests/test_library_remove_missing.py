@@ -570,15 +570,16 @@ class RemoveMissingTests(unittest.TestCase):
         self.assert_nothing_changed()
 
     def test_an_empty_media_folder_and_an_empty_library_has_nothing_to_remove(self) -> None:
-        # Simulate the first remove-missing on a fresh install.
+        # A fresh install is adopted on its first Library read, not by a removal.
         (self.cache / ".azizam-media").unlink()
         with sqlite3.connect(self.jobs_db) as conn:
             conn.execute("DELETE FROM media_volume_identity")
         self.assertEqual(os.listdir(self.cache), [])
+        self.assertEqual(self.media_folder(), {"state": "confirmed"})
+        marker = json.loads((self.cache / ".azizam-media").read_text())
         response = self.client.post(REMOVE, headers=VALID)
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json(), {"removed_assets": 0, "removed_jobs": 0})
-        marker = json.loads((self.cache / ".azizam-media").read_text())
         self.assertRegex(marker["volume_id"], r"^[0-9a-f]{32}$")
         self.assertGreater(marker["created_at"], 0)
         with sqlite3.connect(self.jobs_db) as conn:
