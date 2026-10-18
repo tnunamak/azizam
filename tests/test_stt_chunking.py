@@ -219,12 +219,21 @@ class SttChunkMergeTests(unittest.TestCase):
                     raise AssertionError("Planner scanned beyond the segment budget")
                 return super().__iter__()
 
-        # A missing planning cap must fail this test before allocating a huge list.
+        self.assertEqual(stt_chunking.plan_silence_preferred_segments(
+            duration_seconds=125, silences=[], target_seconds=30,
+            search_seconds=10, max_segments=4,
+        ), [(0.0, 30), (30, 60), (60, 90), (90, 125)])
+        with self.assertRaises(stt_chunking.SttResourceLimitExceeded):
+            stt_chunking.plan_silence_preferred_segments(
+                duration_seconds=125, silences=[], target_seconds=30,
+                search_seconds=10, max_segments=3,
+            )
+        # Bound scan count and total possible cuts if the planning cap regresses.
         silences = BoundedScans()
         with self.assertRaises(stt_chunking.SttResourceLimitExceeded):
             stt_chunking.plan_silence_preferred_segments(
-                duration_seconds=1321.62, silences=silences, target_seconds=0.000001,
-                search_seconds=0.0000001, max_segments=3,
+                duration_seconds=1321.62, silences=silences, target_seconds=0.01,
+                search_seconds=0.001, max_segments=3,
             )
 
     def test_sdk_exact_usage_null_integer_and_optional_detail_contracts(self) -> None:
