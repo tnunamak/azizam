@@ -153,3 +153,61 @@ so the test's `closed` list was empty. Counts: 11676 passed, 1 failed, 3 skipped
 1 xfailed (11681 items), 3524 passing subtests. Raw receipts are retained in
 `~/Documents/azizam/gate-speed-evidence/r2/exploratory/`. This failed run is not
 counted as a passing final verification.
+
+### Final parallel verification
+
+Both runs tested `abce87fe7d495f6503b373cedd8db63fd7454425`, with the command
+`HEAVY_PRIORITY=1 ~/Documents/azizam/tools/heavy scripts/ci-local --force --target main --port 18100`.
+No signoff was requested or posted. Each admission checked load below 48 and
+that no other `ci-local` was running. Admission loads were 27.02 and 27.18;
+load later rose into the 40s and above 48 during the second run.
+
+| Run | Verdict | Elapsed s | Critical path s | Step wall sum s | Receipt CPU s | Largest step RSS MB |
+|---|---|---:|---:|---:|---:|---:|
+| verified-1 | PASS | 279 | 276.30 | 598.34 | 1104.63 | 1348.1 |
+| verified-2 | FAIL | 299 | 297.00 | 655.09 | 1108.70 | 1138.7 |
+
+Both critical paths were:
+`web-npm-ci > web-unit > e2e-main > e2e-tree-unchanged > journey-clock > cases > policy`.
+CPU/RSS retain the measurement limits described above; Docker work and concurrent
+host memory are not included. These two runs on r67 do not create another paired
+baseline. They cannot isolate the cache's contribution from host contention.
+
+| Run | Node cache | Node setup s | Browser venv s | Vitest step s | Polling case ms (15 s limit) | Source guard ms (15 s limit) | Maximum remaining case ms |
+|---|---|---:|---:|---:|---:|---:|---:|
+| verified-1 | miss | 18.17 | 0.29 | 64.67 | 4175.739 | 2656.621 | 2249.232 |
+| verified-2 | hit | 16.93 | 1.12 | 79.16 | 4225.700 | 4189.919 | 2290.310 |
+
+The two cases above already specify 15000 ms in `try-image-run.spec.tsx:121`
+and `model-voice-discovery-guard.spec.ts:196`; neither timeout was changed.
+Every remaining case took at most 2290.310 ms across both runs, below the
+4000 ms threshold for serializing work to protect the default 5 s limit.
+Parallel scheduling is retained. Both runs passed all 2676 Vitest cases.
+The Node key was identical across the miss and hit. No venv snapshot is used.
+
+The logical case inventory is identical across both runs: 11681 pytest items,
+2676 Vitest cases, 460 Playwright cases and 87 Node cases. The first run passed
+all 20 steps: 11677 pytest passes, 3 allowed skips, 1 allowed expected failure,
+and 3524 passing subtests. The second passed 19 steps; only `python-hermetic`
+failed. All browser cases, native and Compose journeys, conformance, policy and
+cache regression cases passed. The exact case/outcome comparison found one
+changed outcome:
+`test_engine_contract_runtime.py::test_process_readiness_probe_respects_total_deadline`.
+It completed in 69.076 ms against its unchanged 60 ms wall-clock assertion.
+This test and the earlier inventory-deadline failure are unchanged from main
+r67. They remain observed timing failures; a passing run does not fix them.
+No assertion, skip, retry policy or timeout was weakened. These results do not
+establish a consistently green release gate under contention.
+
+The focused cache/gate suite passed 43 tests. The serialized scheduling diagnostic
+and inventory-deadline check passed 44 focused tests. Regression checks cover an
+unrelated variable and changing session labels leaving a warm key unchanged,
+`npm_config_registry` changing the key, existing destinations retaining their
+contents on refusal, mode 0700, a custom root whose uid does not match the caller,
+failed-install cleanup, damaged snapshots and eviction locks. The foreign-owner
+regression injects a mismatching caller uid; it does not require chown privileges.
+
+Raw final logs and full reports are saved under
+`~/Documents/azizam/gate-speed-evidence/r2/verified-{1,2}/`, with adjacent
+`verified-{1,2}.log`, `comparison-final.json` and `compare-final.py`.
+The final receipt commit changes documentation only after the tested SHA.
