@@ -15,6 +15,7 @@ from typing import Any, Mapping
 
 from gateway import admin_store
 from gateway import receipt_store
+from gateway.receipt_context import person_label, receipt_context
 from gateway.admin_oidc import AdminSession
 from gateway.admin_runtime import app_key_prompt_memory, generate_app_api_key
 from gateway.runtime_auth import hash_api_key
@@ -319,6 +320,9 @@ def get_user_receipt(
 ) -> dict[str, Any]:
     """Return one client-safe receipt visible to the signed-in user.
 
+    It carries the person, App and time the Activity list shows
+    (``receipt_context``).
+
     Owners can open the same instance-scoped receipts shown on Home and each
     access is audited. Members stay limited to their own Apps; receipts for
     other Apps or no App are reported as not found so existence is not disclosed.
@@ -344,11 +348,20 @@ def get_user_receipt(
     if not owner and (not receipt_app_id or receipt_app_id not in owned_app_ids):
         raise not_found
 
-    detail = receipt_store.get(
+    found = receipt_store.get_with_created_at(
         request_id, audience="client", path=receipts_path
     )
-    if detail is None:
+    if found is None:
         raise not_found
+    detail, created_at = found
+    app = admin_store.get_app(receipt_app_id, path=path) if receipt_app_id else None
+    app = app or {}
+    person = admin_store.get_user(str(app["owner_user_id"]), path=path) if app.get("owner_user_id") else None
+    context = receipt_context(
+        detail, created_at, app=app,
+        person_labels={person["id"]: person_label(person)} if person else {},
+    )
+    detail = {**detail, **{key: context[key] for key in ("created_at", "person_label", "app_label")}}
     if owner:
         admin_store.record_audit(
             "receipt.detail.instance",

@@ -1152,6 +1152,14 @@
     "schema": false
   },
   {
+    "method": "POST",
+    "path": "/me/api/media/remove-missing",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_media.remove_missing_media",
+    "schema": false
+  },
+  {
     "method": "DELETE",
     "path": "/me/api/media/{asset_id}",
     "auth": "session-only",

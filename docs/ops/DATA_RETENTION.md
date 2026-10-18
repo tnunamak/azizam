@@ -64,6 +64,32 @@ The API records an audit entry that hides the item from that person's Library.
 The everyone view does not apply those per-person hiding entries.
 This endpoint does not itself delete job or receipt rows.
 
+Until 2026-10-11 11:59:31 CDT the gateway deleted every generated file 24 hours
+after its last write (the cache eviction loop in `proxy.py`). A file made before
+2026-10-10 11:59:31 CDT (24 hours earlier) is the newest one that loop could have
+deleted. Library items made before then often have a record and no file. The Library says so, with the
+cutoff in the viewer's time zone and "can't be recovered". Remove missing items
+(`POST /me/api/media/remove-missing`, after a confirmation in the Library)
+clears the signed-in person's own entries whose file is gone:
+
+- It refuses, and changes nothing, unless the media folder is a readable
+  directory. A folder that is missing, not a directory or unreadable looks the
+  same as every file being gone. A readable folder with no media file (empty,
+  or only sidecars or scratch files) looks the same as an unmounted volume, so
+  the removal refuses it whenever it would drop an entry. A person with no
+  entries gets a success that removes nothing. A readable folder with at least
+  one media file works as before.
+- A file is gone only when nothing in the folder holds its digest under any
+  suffix (ComfyUI `gifs` and `images` outputs keep their own suffix). The check
+  reads the folder, not the Library listing.
+- A finished job entry is deleted only when every asset its record names is
+  gone. Otherwise each gone asset is hidden as that job made it
+  (`media_hidden_assets`), so the same bytes made again by a later job are listed.
+- Prompts, hides and job deletions commit together in the media-jobs database or
+  not at all. It never deletes a stored file or a receipt.
+- Removing a person's account deletes their hide rows with their prompts, in one
+  transaction.
+
 A quarantine uses a new private `<database>.broken-<time>-<unique-id>/`
 directory on the same filesystem. If any rename fails, startup raises and the
 `<database>.quarantine-pending` marker remains. The original files may be split

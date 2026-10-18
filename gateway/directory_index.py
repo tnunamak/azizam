@@ -55,3 +55,21 @@ def forget(directory: Path | None = None) -> None:
             _NAMES.clear()
         else:
             _NAMES.pop(str(directory), None)
+
+
+def stored_digest(name: str) -> str | None:
+    """The 64-character digest a cache file name belongs to, or None for a sidecar, scratch or other file.
+
+    A stored media file is ``<digest><suffix>`` with whatever suffix the output kept: ComfyUI
+    ``gifs`` and ``images`` outputs are .gif or .webp files whatever the asset kind. Sidecars
+    (``.meta.json``) and half-written files (``.tmp``) are not stored media.
+    """
+    digest, dot, suffix = name.partition(".")
+    if len(digest) != 64 or not dot or not suffix or name.endswith((".meta.json", ".tmp")):
+        return None
+    return digest
+
+
+def stored_name(names: "frozenset[str] | list[str] | tuple[str, ...]", digest: str) -> str | None:
+    """The file in ``names`` that holds ``digest``'s bytes, or None."""
+    return min((name for name in names if stored_digest(name) == digest), default=None)
