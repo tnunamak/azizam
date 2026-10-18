@@ -202,7 +202,9 @@ def test_only_the_reviewed_translators_authenticate_themselves_and_only_three_ar
     assert {"provider-native", "native"} <= ids
     for translator_id in ids:
         operations = translators.operations(translator_id)
-        assert operations
+        if not operations:  # an owned translator: a module that registers its own paths
+            assert not translators.package_mountable(translator_id)
+            continue
         for intent, operation in operations.items():
             assert operation.self_authenticates is (translator_id in SELF_AUTHENTICATING), (translator_id, intent)
         assert translators.package_mountable(translator_id) is (translator_id in PACKAGE_MOUNTABLE), translator_id
