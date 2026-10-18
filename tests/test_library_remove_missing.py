@@ -30,13 +30,16 @@ def asset(letter: str) -> str:
 class RemoveMissingTests(unittest.TestCase):
     def setUp(self) -> None:
         base.MeMediaRouterTests.setUp(self)
+        self.client = self.make_client(self._asset_path)
+
+    def make_client(self, asset_path_resolver) -> TestClient:
         # The route reads the media folder through this provider; without it, it refuses.
         app = FastAPI()
         app.include_router(me_media.create_me_media_router(
             session_provider=self._session,
             mutation_validator=self._mutation_validator,
             signed_url_builder=lambda request, asset_id, mode: f"http://testserver/v1/assets/{asset_id}/content?md={mode}&sig=test",
-            asset_path_resolver=self._asset_path,
+            asset_path_resolver=asset_path_resolver,
             asset_media_type_resolver=lambda asset_id, path: "image/png",
             asset_deleter=self._delete_unshared,
             asset_catalog_provider=self._catalog,
@@ -47,7 +50,7 @@ class RemoveMissingTests(unittest.TestCase):
             receipts_path=self.receipts_db,
             prompt_memory_path=self.prompt_db,
         ))
-        self.client = TestClient(app, raise_server_exceptions=False)
+        return TestClient(app, raise_server_exceptions=False)
 
     tearDown = base.MeMediaRouterTests.tearDown
     _session, _mutation_validator = base.MeMediaRouterTests._session, base.MeMediaRouterTests._mutation_validator
@@ -230,6 +233,33 @@ class RemoveMissingTests(unittest.TestCase):
         (self.cache / ("A" * 64 + ".bin")).write_bytes(b"unknown suffix")
         self.assertEqual(self.client.post(REMOVE, headers=VALID).json(), {"removed_assets": 1, "removed_jobs": 0})
         self.assertEqual(len(self.job_ids("req_a")), 1)
+
+    def test_the_media_folder_is_listed_once_however_many_files_are_gone(self) -> None:
+        """Each gone asset used to rescan the whole folder: 13 ms each at 66k names."""
+        self.seed()
+        for index in range(20):
+            self._receipt(self.app_a["id"], f"req_many{index}")
+            self._job(f"req_many{index}", "img_" + f"{index + 16:02x}" * 32)
+        probes: list[str] = []
+
+        def resolver(asset_id):
+            probes.append(asset_id)
+            return self._asset_path(asset_id)
+
+        client = self.make_client(resolver)
+        real_listdir = os.listdir
+        listings: list[object] = []
+
+        def counting_listdir(path="."):
+            listings.append(path)
+            return real_listdir(path)
+
+        with patch("gateway.me_media.os.listdir", counting_listdir):
+            response = client.post(REMOVE, headers=VALID)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"removed_assets": 22, "removed_jobs": 21})
+        self.assertEqual(probes, [], "presence comes from the one listing, not a lookup per asset")
+        self.assertEqual([str(path) for path in listings], [str(self.cache)])
 
     # --- a job goes only when every file it names is gone -------------------------------
 
