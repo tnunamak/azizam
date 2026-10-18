@@ -264,7 +264,7 @@ from gateway.toolcall_detection import (
 from gateway.discovery import WorkflowRegistry
 from gateway.video_limits import limits_for_workflow, video_limits
 from gateway.workflow_openapi import augment_openapi as _augment_workflow_openapi
-from gateway.workflow_openapi import workflow_catalog, workflow_inputs_schema
+from gateway.workflow_openapi import advertised_inputs_schema, workflow_catalog
 from gateway.discovery_metadata import (
     build_gateway_discovery_metadata,
     build_llms_txt,
@@ -13998,7 +13998,7 @@ def _mcp_catalog() -> list[dict[str, Any]]:
     records = GATEWAY_WORKFLOW_REGISTRY.records()
     by_id = {record.id: record for record in records}
     entries = workflow_catalog(records, _gateway_aliases_provider())
-    return [{**entry, "inputs": workflow_inputs_schema(by_id[entry["id"]])} for entry in entries]
+    return [{**entry, "inputs": advertised_inputs_schema(by_id[entry["id"]])} for entry in entries]
 
 
 def _mcp_store_asset(request: Request, auth: Any, content: bytes, kind: str, suffix: str) -> dict[str, Any]:

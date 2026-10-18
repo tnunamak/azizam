@@ -50,20 +50,25 @@ class WorkflowOpenApiTests(unittest.TestCase):
         self.assertEqual(self.registry.errors, [])
         self.assertGreaterEqual(len(self.registry.records()), 24)
 
+    def owned_by_routes(self, workflow_id: str) -> set[str]:
+        """Inputs a route of the workflow sets itself, from the catalog's own field map."""
+        execution = self.catalog[workflow_id]["execution"]
+        return {name for route in (execution["sync"], execution["async"]) if route
+                for name, where in route["fields"].items() if where["in"] == "none"}
+
     def test_every_manifest_has_typed_inputs(self) -> None:
         for record in self.registry.records():
             with self.subTest(workflow=record.id):
                 self.assertIn(record.id, self.catalog)
                 schema = self.schema_of(record.id)
-                self.assertEqual(
-                    sorted(schema["properties"]), sorted(record.manifest["inputs"])
-                )
+                owned = self.owned_by_routes(record.id)
+                settable = {n: s for n, s in record.manifest["inputs"].items() if n not in owned}
+                # A route-set input is never advertised; every other manifest input is.
+                self.assertEqual(sorted(schema["properties"]), sorted(settable))
                 self.assertIs(schema["additionalProperties"], False)
-                wanted = sorted(
-                    n for n, s in record.manifest["inputs"].items() if s.get("required")
-                )
+                wanted = sorted(n for n, s in settable.items() if s.get("required"))
                 self.assertEqual(sorted(schema.get("required", [])), wanted)
-                for name, spec in record.manifest["inputs"].items():
+                for name, spec in settable.items():
                     prop = schema["properties"][name]
                     if spec["type"] == "asset":
                         self.assertTrue(prop["x-azizam-asset"])
@@ -190,7 +195,10 @@ class WorkflowOpenApiTests(unittest.TestCase):
         """A request built from the catalog's field map validates against the schema."""
         for record in self.registry.records():
             sample = {}
+            owned = self.owned_by_routes(record.id)
             for name, spec in record.manifest["inputs"].items():
+                if name in owned:
+                    continue
                 if spec["type"] == "asset":
                     if spec.get("required"):
                         sample[name] = "data:image/png;base64,AAAA"
