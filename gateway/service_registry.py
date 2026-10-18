@@ -535,25 +535,24 @@ def runtime_backend_from_service(service: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _agreed_lifecycle(service_id: str, record: Mapping[str, Any]) -> dict[str, Any]:
-    """Top-level wins; a nested copy may fill gaps but may not disagree."""
-    top = record.get("lifecycle")
+    """Use the old normalized runtime block; reject any divergent nested copy."""
     config = record.get("config")
     nested = config.get("lifecycle") if isinstance(config, Mapping) else None
-    top = dict(top) if isinstance(top, Mapping) else {}
     nested = dict(nested) if isinstance(nested, Mapping) else {}
+    top = normalize_service_record(service_id, record, schema_version=1)["lifecycle"]
 
-    def merge(dst: dict[str, Any], src: Mapping[str, Any], path: str) -> None:
+    def check(dst: Mapping[str, Any], src: Mapping[str, Any], path: str) -> None:
         for key, value in src.items():
-            if key not in dst:
-                dst[key] = copy.deepcopy(value)
-            elif isinstance(dst[key], dict) and isinstance(value, Mapping):
-                merge(dst[key], value, f"{path}.{key}")
-            elif dst[key] != value:
-                raise ValueError(f"service {service_id!r} lifecycle {path}.{key} conflict between lifecycle and config.lifecycle")
+            if key in dst and isinstance(dst[key], Mapping) and isinstance(value, Mapping):
+                check(dst[key], value, f"{path}.{key}")
+            elif key not in dst or dst[key] != value:
+                raise ValueError(
+                    f"service {service_id!r} lifecycle {path}.{key} conflict between lifecycle and "
+                    "config.lifecycle; remove the conflicting nested copy before retrying"
+                )
 
-    out = copy.deepcopy(top)
-    merge(out, nested, "lifecycle")
-    return out
+    check(top, nested, "lifecycle")
+    return top
 
 
 def legacy_lifecycle_from_service(record: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -1149,6 +1148,13 @@ def _driven_lifecycle_blocks(record: Mapping[str, Any]) -> frozenset[str]:
     Looks at the record's ``lifecycle`` block and at the copy the form path keeps
     in ``config``. Blocks that name no driver (or ``external``) are left out.
     """
+    process = record.get("process")
+    if isinstance(process, Mapping):
+        legacy = process.get("legacy_lifecycle")
+        controls_host = _is_driven(process) or _is_driven(legacy) or any(
+            key in process for key in ("start", "stop", "status", "profile_apply", "env", "cwd")
+        )
+        return frozenset({json.dumps(process, sort_keys=True, default=str)}) if controls_host else frozenset()
     config = record.get("config")
     blocks = [record.get("lifecycle"), config.get("lifecycle") if isinstance(config, Mapping) else None]
     return frozenset(json.dumps(block, sort_keys=True, default=str) for block in blocks if _is_driven(block))
@@ -1382,7 +1388,10 @@ def carry_unnamed_record_fields(
     """
     if isinstance(existing.get("secret_refs"), Mapping):
         updated["secret_refs"] = {**copy.deepcopy(dict(existing["secret_refs"])), **updated.get("secret_refs", {})}
+    lifecycle_named = "lifecycle" in named or any(key in named for key in _LIFECYCLE_FORM_KEYS)
     for field in ("process", "observations", "residency", "resources"):
+        if lifecycle_named and field in ("process", "observations", "residency"):
+            continue
         if field in existing and field not in named:
             updated[field] = copy.deepcopy(existing[field])
     if isinstance(existing.get("lifecycle"), Mapping) and "lifecycle" not in named:

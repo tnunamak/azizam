@@ -62,7 +62,8 @@ _KNOWN_CONFIG_KEYS = frozenset({
     "name", "enabled", "capabilities", "role", "priority", "managed", "lifecycle",
 })
 _RECORD_KEYS = frozenset({"id", "name", "kind", "source", "enabled", "priority", "role", "capabilities", "config",
-                          "secret_refs", "lifecycle", "provenance", "editable"})
+                          "secret_refs", "lifecycle", "process", "observations", "residency", "resources",
+                          "provenance", "editable"})
 NOT_EDITABLE_HERE = ("This page can’t change how Azizam reaches this engine yet: its settings come from the gateway’s "
                      "own setup. You can still rename it and turn it on or off.")
 # An engine lists at most this many models in one access question.
@@ -637,6 +638,8 @@ def _caps_from_record(catalog: EngineCatalog, definition: Mapping[str, Any], rec
 def redacted_record(record: Mapping[str, Any]) -> dict[str, Any]:
     """The stored record as the page shows it: secret ids and references masked, never a value."""
     out = copy.deepcopy({k: v for k, v in record.items() if k in _RECORD_KEYS})
+    if "lifecycle" not in out:
+        out["lifecycle"] = copy.deepcopy(dict(service_registry.legacy_lifecycle_from_service(record)))
 
     def mask(value: Any) -> Any:
         if isinstance(value, Mapping):
