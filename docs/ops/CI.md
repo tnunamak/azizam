@@ -17,9 +17,9 @@ were still stored.
 
 - `scripts/ci-local` runs the same four jobs as `.github/workflows/ci.yml`
   (web check, Python tests, fresh instance, production UI journey) on HEAD,
-  in clean detached worktrees with private dependencies from the installed
-  cache described below. Cache misses use `npm ci` and the hashed Python lock;
-  the fresh-instance and hermetic Python tiers always install clean environments.
+  in clean detached worktrees with private Node dependencies from the installed
+  cache described below. Cache misses use `npm ci`. All Python environments
+  install from the hashed lock and retain uv's download cache.
 - It writes receipts to `~/.tmp/azizam-ci-receipts/<tree>/`: `run.tsv`
   (SHA, seed, layout), `steps.tsv` (step, exit code, whole seconds, wall
   seconds, CPU seconds (user plus system), peak RSS kB), `cost.json` (totals,
@@ -354,7 +354,7 @@ and policy checks remain in the gate.
 `--target main` also selects the local `origin/main` budget comparison without
 posting signoff. Signoff still requires `--signoff --force` and remote checks.
 
-The measured speedup is roughly 15-25%, mostly from browser scheduling. The
+Round 1 observed roughly 15-25% speedup, mostly from browser scheduling. The
 sample contains one baseline, four initial after runs and later verification,
 including a 350 s warm run. These are shared-host observations, not a controlled
 causal estimate. See [the dated receipts](../verification/CI_GATE_SPEED_RECEIPTS.md)

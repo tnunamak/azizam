@@ -1,6 +1,9 @@
 # Gate speed receipts
 
-## Gate speed measurements, 2026-10-18
+## Round 1 measurements, 2026-10-18
+
+This section records the implementation at the time. Round 2 below supersedes
+its environment-key policy and venv snapshots.
 
 The baseline is `5f9a825f`. Two cold and two warm installed-cache runs on
 `3ba8b6ca` kept every gate step. All four passed. Cold means empty installed
@@ -124,3 +127,29 @@ population 4.294 s, validated snapshot hit 1.683 s, fresh `uv venv` plus
 `uv pip sync --require-hashes` 0.125 s. The snapshot cache was removed because
 its restore was slower. Node snapshots remain. No disk-space preflight is claimed.
 Raw comparison logs: `~/Documents/azizam/gate-speed-evidence/r2/venv-benchmark/`.
+
+The exploratory gate on `3a0ffe6d` started at load 11.19 with no other gate.
+It took 323 s with a 321.04 s critical path. All 2676 Vitest cases passed in
+79.78 s; the slowest case was 4184.263 ms (`try-image-run.spec.tsx`, connection
+drops while polling). Reading that case shows an existing 15 s timeout, not the
+default 5 s timeout. Every other case was at most 2776.326 ms, so no case was
+within one second of its applicable limit. No timeout was changed.
+
+A serialized diagnostic on `626a4805` passed all 20 steps in 300 s with a
+297.90 s critical path. Vitest took 50.89 s; the 15 s polling case took
+4075.643 ms and every other case was at most 2862.347 ms. The diagnostic was
+based on initially comparing all cases against the default 5 s limit. Because
+the four-second case explicitly allows 15 s (two real 2 s polling intervals),
+that comparison did not establish a timeout risk. Parallel scheduling was
+restored before final verification. Its full receipts and logs remain under
+`~/Documents/azizam/gate-speed-evidence/r2/serialized-diagnostic/` and the
+adjacent `serialized-diagnostic.log`. Final verification runs below use the
+parallel schedule.
+
+That exploratory gate failed one newly merged main test:
+`test_engine_protocol_round2.py::test_total_inventory_deadline_reports_cancelled_engines`.
+The 30 ms total inventory deadline expired before the mocked invocation began,
+so the test's `closed` list was empty. Counts: 11676 passed, 1 failed, 3 skipped,
+1 xfailed (11681 items), 3524 passing subtests. Raw receipts are retained in
+`~/Documents/azizam/gate-speed-evidence/r2/exploratory/`. This failed run is not
+counted as a passing final verification.
