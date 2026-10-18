@@ -715,7 +715,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "v2": v2,
         "request_path": {"mode": "gateway_lifecycle" if hop_routed else "direct", "source": "service record",
                          "url": operations[0]["url"] if operations else "", "operations": operations},
-        "credential_destination": engine_redaction.redact_text(key.get("origin") or origin_of(address)),
+        "credential_destination": engine_redaction.redact_text((key.get("origin") or "") if key["state"] == "configured" else origin_of(address)),
         "ignored_headers": [str(row.get("name") or "(unnamed)") for row in config.get("headers") or ()
                             if isinstance(row, Mapping) and (row.get("secret") or header_problem(str(row.get("name") or ""), str(row.get("value") or "")))],
         "unsupported_fields": unsupported_fields,

@@ -9,7 +9,7 @@ vi.mock("@/components/shell/session", () => ({
   useViewer: () => ({ authenticated: true, name: "Owner", email: null, role: "owner", admin: true }),
 }));
 
-const start = ["/opt/engine/bin/serve", "--model", "/models/family, chat.bin"];
+const start = ["/opt/engine/bin/serve", "--model", "/models/family, chat.bin", "--token", "[redacted]"];
 const stop = ["/opt/engine/bin/stop", "family chat"];
 
 beforeEach(() => {
@@ -43,13 +43,14 @@ it("edits one start argument and sends start and stop as arrays without splittin
   const update = mount();
   const argument = await screen.findByRole("textbox", { name: "Start command argument 3" });
   expect(argument).toHaveValue(start[2]);
+  expect(screen.getByRole("textbox", { name: "Start command argument 5" })).toHaveValue("[redacted]");
   expect(screen.getByRole("textbox", { name: "Stop command argument 2" })).toHaveValue(stop[1]);
   await user.clear(argument);
   await user.type(argument, "/models/new family, chat.bin");
   await user.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(update).toHaveBeenCalled());
   expect(update.mock.calls[0][1].values).toMatchObject({
-    lifecycle_start: [start[0], start[1], "/models/new family, chat.bin"], lifecycle_stop: stop,
+    lifecycle_start: [start[0], start[1], "/models/new family, chat.bin", ...start.slice(3)], lifecycle_stop: stop,
   });
 });
 

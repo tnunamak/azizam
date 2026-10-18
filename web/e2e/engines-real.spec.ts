@@ -160,7 +160,7 @@ for (const width of [1280, 390]) {
     const id = (await created.json()).service_id;
     const seed = await read();
     const record = seed.value.services[id];
-    const start = ["runner", "--model", "/models/family, chat.bin"];
+    const start = ["runner", "--model", "/models/family, chat.bin", "--token", "isolated-command-key"];
     const stop = ["stop-runner", "family chat"];
     record.lifecycle = { driver: "command", driver_config: { start, stop, health_timeout_s: 120 } };
     record.process = { driver: "command", start, stop, legacy_lifecycle: record.lifecycle };
@@ -175,6 +175,7 @@ for (const width of [1280, 390]) {
     await expect(page.getByTestId("engine-health")).toContainText("Unknown");
     const arg = page.getByRole("textbox", { name: "Start command argument 3" });
     await expect(arg).toHaveValue(start[2]);
+    await expect(page.getByRole("textbox", { name: "Start command argument 5" })).toHaveValue("[redacted]");
     await arg.fill("/models/new family, chat.bin");
     const from = page.getByLabel("Field name (row 1)");
     const to = page.getByLabel("Rename to (row 1)");
@@ -193,7 +194,7 @@ for (const width of [1280, 390]) {
     await page.getByRole("button", { name: "Save changes", exact: true }).click();
     expect((await saved).status()).toBe(200);
     const after = (await read()).value.services[id];
-    expect(after.process.start).toEqual([start[0], start[1], "/models/new family, chat.bin"]);
+    expect(after.process.start).toEqual([start[0], start[1], "/models/new family, chat.bin", "--token", "[redacted]"]);
     expect(after.process.stop).toEqual(stop);
     await page.reload();
     await expect(page.getByRole("textbox", { name: "Start command argument 3" })).toHaveValue("/models/new family, chat.bin");
