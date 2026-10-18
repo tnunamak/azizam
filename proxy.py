@@ -21145,10 +21145,10 @@ def _media_job_admission_response(
     resource_class = _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT.get(intent, "media")
     service_reasons_list: list[str] = []
     if not COMFY_ENABLED:
-        service_reasons_list.append("ComfyUI media backend disabled")
+        service_reasons_list.append(f"{_graph_adapter().label} media backend disabled")
     if service_blocked or service_degraded:
         reason = str(service_override.get("reason") or "").strip()
-        service_reasons_list.append(reason or f"ComfyUI operator mode: {override_state}")
+        service_reasons_list.append(reason or f"{_graph_adapter().label} operator mode: {override_state}")
     max_queue_depth = _optional_int_config(admission_cfg, "max_queue_depth") if count_queue else None
     service_retry_after = (
         _optional_int_config(service_override, "retry_after_seconds")
@@ -22889,6 +22889,11 @@ def _signed_asset_content_response(
     )
 
 
+# The key under a workflow manifest's ``bindings`` that holds the graph engine's artifact: protocol data, read once
+# (catalog listings read it per workflow record).
+_GRAPH_BINDING = _graph_adapter().binding
+
+
 async def _execute_video_manifest_workflow(request: Request, workflow_id: str, auth_context: AuthContext) -> Response:
     """Run an upload-driven video-edit manifest and return its rendered asset."""
     record = GATEWAY_WORKFLOW_REGISTRY.get(workflow_id)
@@ -22909,11 +22914,12 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
     )
     if admission is not None:
         return admission
-    binding = (record.manifest.get("bindings") or {}).get("comfyui")
+    adapter = _graph_adapter("videos")
+    binding = (record.manifest.get("bindings") or {}).get(_GRAPH_BINDING)
     artifact = binding.get("workflow") if isinstance(binding, Mapping) else None
     if not isinstance(artifact, str):
         return Response(
-            content=json.dumps({"error": {"message": "Workflow has no ComfyUI binding", "type": "api_error"}}),
+            content=json.dumps({"error": {"message": f"Workflow has no {adapter.label} binding", "type": "api_error"}}),
             status_code=501, media_type="application/json",
         )
     workflow_path = Path(__file__).parent / artifact
@@ -22987,20 +22993,18 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
 
     headers = configured_downstream_headers(auth_context, "comfyui")
     async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+        graph = _graph(client, "videos")
         for input_name, (filename, raw_bytes, content_type) in asset_uploads.items():
-            upload = await client.post(
-                f"{COMFY_HOST}/upload/image", headers=headers,
-                files={"image": (filename, raw_bytes, content_type)},
-            )
-            uploaded_name = upload.json().get("name") if upload.status_code == 200 else None
+            upload = await graph.upload({"image": (filename, raw_bytes, content_type)}, headers=headers)
+            uploaded_name = upload.json().get("name") if upload.status == 200 else None
             if not uploaded_name:
                 return Response(
-                    content=json.dumps({"error": {"message": f"ComfyUI upload failed for {input_name}", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": f"{adapter.label} upload failed for {input_name}", "type": "api_error"}}),
                     status_code=502, media_type="application/json",
                 )
             validation.accepted[input_name] = uploaded_name
         workflow = bind_backend_request(
-            record.manifest, "comfyui", workflow_template, validation.accepted
+            record.manifest, _GRAPH_BINDING, workflow_template, validation.accepted
         ).request
 
         async def submit_and_collect() -> tuple[dict[str, Any] | None, Response | None]:
@@ -23010,11 +23014,8 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
             )
             if admission is not None:
                 return None, admission
-            submitted = await client.post(
-                f"{COMFY_HOST}/prompt", headers=headers,
-                json=_build_graph_submit_payload(workflow),
-            )
-            if submitted.status_code != 200:
+            submitted = await graph.submit(_build_graph_submit_payload(workflow), headers=headers)
+            if submitted.status != 200:
                 return None, Response(
                     content=json.dumps({"error": {"message": submitted.text[:500], "type": "api_error"}}),
                     status_code=502, media_type="application/json",
@@ -23022,13 +23023,13 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
             prompt_id = submitted.json().get("prompt_id")
             if not prompt_id:
                 return None, Response(
-                    content=json.dumps({"error": {"message": "ComfyUI returned no prompt_id", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": f"{adapter.label} returned no prompt_id", "type": "api_error"}}),
                     status_code=502, media_type="application/json",
                 )
             for _ in range(COMFY_TIMEOUT * 2):
                 await asyncio.sleep(0.5)
-                history = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers)
-                job = history.json().get(prompt_id) if history.status_code == 200 else None
+                history = await graph.history(prompt_id, headers=headers)
+                job = history.json().get(prompt_id) if history.status == 200 else None
                 if not isinstance(job, Mapping):
                     continue
                 error_message = _graph_error_message(job)
@@ -23061,15 +23062,15 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         params = {"filename": file_info["filename"], "type": file_info["type"]}
         if file_info.get("subfolder"):
             params["subfolder"] = file_info["subfolder"]
-        rendered = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
-        if rendered.status_code != 200:
+        rendered = await graph.view(params, headers=headers)
+        if rendered.status != 200:
             return Response(
-                content=json.dumps({"error": {"message": "ComfyUI could not read the rendered video", "type": "api_error"}}),
+                content=json.dumps({"error": {"message": f"{adapter.label} could not read the rendered video", "type": "api_error"}}),
                 status_code=502, media_type="application/json",
             )
         suffix = Path(file_info["filename"]).suffix.lower()
         media_type = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska"}.get(suffix, "application/octet-stream")
-        rendered_bytes = rendered.content
+        rendered_bytes = rendered.raw
         try:
             if media_delivery.current_mode() == provenance.METADATA_NONE:
                 rendered_bytes = await asyncio.to_thread(
@@ -23110,7 +23111,7 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
     if isinstance(auth_context, Response):
         return auth_context
     if not COMFY_ENABLED:
-        return Response(status_code=503, content=json.dumps({"error": {"message": "ComfyUI media backend is disabled", "type": "service_unavailable"}}), media_type="application/json")
+        return Response(status_code=503, content=json.dumps({"error": {"message": f"{_graph_adapter('videos').label} media backend is disabled", "type": "service_unavailable"}}), media_type="application/json")
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/gateway/v1/workflows/{workflow_id}/run"))
     if policy_response is not None:
         return policy_response
@@ -23281,7 +23282,7 @@ def _load_audio_workflow_file(workflow_cfg: dict):
     errors = validate_comfyui_workflow_graph(workflow)
     if errors:
         print(
-            f"[proxy] invalid audio ComfyUI workflow {p}: {'; '.join(errors)}",
+            f"[proxy] invalid audio {_graph_adapter('audio.generate').label} workflow {p}: {'; '.join(errors)}",
             flush=True,
         )
         return None
@@ -23349,10 +23350,10 @@ def _load_audio_workflow_manifest(workflow_name: str) -> dict[str, Any] | None:
         bindings = record.manifest.get("bindings")
         if not isinstance(bindings, Mapping):
             continue
-        comfy = bindings.get("comfyui")
-        if not isinstance(comfy, Mapping):
+        graph_binding = bindings.get(_GRAPH_BINDING)
+        if not isinstance(graph_binding, Mapping):
             continue
-        artifact = comfy.get("workflow")
+        artifact = graph_binding.get("workflow")
         if isinstance(artifact, str) and Path(artifact).stem == workflow_name:
             return copy.deepcopy(dict(record.manifest))
     return None
@@ -23393,8 +23394,9 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             status_code=503,
             media_type="application/json"
         )
+    adapter = _graph_adapter("audio.generate")
     service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
-        service_label="ComfyUI",))
+        service_label=adapter.label,))
     if service_response is not None:
         return service_response
     try:
@@ -23591,7 +23593,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             extension_result = bind_audio_workflow_extensions(
                 body,
                 manifest,
-                "comfyui",
+                _GRAPH_BINDING,
                 workflow,
             )
         except (ExtensionError, ManifestError) as e:
@@ -23610,20 +23612,20 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
     headers = configured_downstream_headers(auth_context, "comfyui")
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+            graph = _graph(client, "audio.generate")
             admission = _dispatch_admission_response(
                 "audio.generate", auth_context=auth_context, service_id="comfyui",
                 service_available=COMFY_ENABLED, resource_class="audio", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
                 return admission
-            resp = await client.post(
-                f"{COMFY_HOST}/prompt",
+            resp = await graph.submit(
+                _build_graph_submit_payload(workflow, client_id=COMFY_CLIENT_ID),
                 headers=headers,
-                json=_build_graph_submit_payload(workflow, client_id=COMFY_CLIENT_ID),
             )
-            if resp.status_code != 200:
+            if resp.status != 200:
                 return Response(
-                    content=json.dumps({"error": {"message": f"ComfyUI error: {resp.text[:500]}", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": f"{adapter.label} error: {resp.text[:500]}", "type": "api_error"}}),
                     status_code=502,
                     media_type="application/json"
                 )
@@ -23641,8 +23643,8 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             # Wait for completion (simple polling)
             for _ in range(600):  # 10 min max
                 await asyncio.sleep(2)
-                history_resp = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers)
-                if history_resp.status_code != 200:
+                history_resp = await graph.history(prompt_id, headers=headers)
+                if history_resp.status != 200:
                     continue
                 history = history_resp.json()
                 if prompt_id not in history:
@@ -23657,10 +23659,10 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                         params = {"filename": file_info["filename"], "type": file_info.get("type", "output")}
                         if file_info.get("subfolder"):
                             params["subfolder"] = file_info["subfolder"]
-                        audio_resp = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
-                        if audio_resp.status_code == 200:
+                        audio_resp = await graph.view(params, headers=headers)
+                        if audio_resp.status == 200:
                             content_type = audio_resp.headers.get("content-type", "audio/wav")
-                            audio_bytes = audio_resp.content
+                            audio_bytes = audio_resp.raw
                             peak_db = workflow_cfg.get("normalize_peak_db")
                             if peak_db is not None:
                                 audio_bytes = await asyncio.to_thread(
@@ -23717,7 +23719,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                         media_type="application/json"
                     )
                 elif status == "error":
-                    err_msg = "ComfyUI generation failed"
+                    err_msg = f"{adapter.label} generation failed"
                     for tag, payload in (status_obj.get("messages") or []):
                         if tag == "execution_error" and isinstance(payload, dict):
                             err_msg = _graph_error_message({"status": {"messages": [["execution_error", payload]]}})
@@ -23733,15 +23735,21 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                 status_code=504,
                 media_type="application/json"
             )
-    except httpx.TimeoutException:
+    except TransportFailure as e:
+        if e.kind == "timeout":
+            return Response(
+                content=json.dumps({"error": {"message": f"{adapter.label} request timeout", "type": "api_error"}}),
+                status_code=504,
+                media_type="application/json"
+            )
+        if e.kind == "unreachable":
+            return Response(
+                content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection()), "type": "api_error"}}),
+                status_code=502,
+                media_type="application/json"
+            )
         return Response(
-            content=json.dumps({"error": {"message": "ComfyUI request timeout", "type": "api_error"}}),
-            status_code=504,
-            media_type="application/json"
-        )
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
+            content=json.dumps({"error": {"message": f"Audio proxy error: {str(e)}", "type": "api_error"}}),
             status_code=502,
             media_type="application/json"
         )
@@ -24076,8 +24084,8 @@ def _workflow_public_model_id(manifest: Mapping[str, Any]) -> str | None:
     if model_id:
         return model_id
     bindings = manifest.get("bindings") if isinstance(manifest.get("bindings"), Mapping) else {}
-    comfy = bindings.get("comfyui") if isinstance(bindings.get("comfyui"), Mapping) else {}
-    artifact = comfy.get("workflow")
+    graph_binding = bindings.get(_GRAPH_BINDING) if isinstance(bindings.get(_GRAPH_BINDING), Mapping) else {}
+    artifact = graph_binding.get("workflow")
     if not isinstance(artifact, str) or not artifact:
         return None
     return Path(artifact).stem or None
@@ -24294,17 +24302,17 @@ def _build_workflow_model_entries(
         bindings = record.manifest.get("bindings")
         if not isinstance(bindings, dict):
             continue
-        backend = "comfyui"
+        backend = _GRAPH_BINDING
         model_id = _gateway_image_model_id(record.manifest)
         workflow_artifact = ""
         if model_id:
             backend = "gateway"
             workflow_artifact = str(record.source_path) if record.source_path else ""
         else:
-            comfy = bindings.get("comfyui")
-            if not isinstance(comfy, dict):
+            graph_binding = bindings.get(_GRAPH_BINDING)
+            if not isinstance(graph_binding, dict):
                 continue
-            artifact = comfy.get("workflow")
+            artifact = graph_binding.get("workflow")
             if not isinstance(artifact, str) or not artifact:
                 continue
             workflow_artifact = artifact
