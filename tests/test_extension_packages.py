@@ -1115,6 +1115,7 @@ def test_an_index_from_before_the_digests_is_migrated_once_and_keeps_its_matchin
 
 
 def test_the_digest_migration_leaves_no_raw_record_bytes_in_admin_db_or_its_wal(tmp_path):
+    import sqlite3
     from gateway import admin_store
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
@@ -1129,17 +1130,18 @@ def test_the_digest_migration_leaves_no_raw_record_bytes_in_admin_db_or_its_wal(
         "installed_records": {"services": {"old-service": record}},
     }}, "sources": [], "updated_at": 1}
     admin_store.put_operator_setting(EXTENSION_PACKAGE_INDEX_SETTING_KEY, legacy, path=db)
-    assert marker.encode() in db.read_bytes() or any(
-        marker.encode() in candidate.read_bytes()
-        for candidate in tmp_path.iterdir() if candidate.name.startswith("admin.db")
-    )
 
-    admin_store.init_db(db)
-
-    for candidate in tmp_path.iterdir():
-        if candidate.name.startswith("admin.db"):
-            assert marker.encode() not in candidate.read_bytes(), candidate.name
-
+    # Inspect the files while the migration's connection is still open: a crash in this window
+    # leaves whatever the rewrite left on disk, and closing the connection would checkpoint it away.
+    conn = sqlite3.connect(str(db))
+    try:
+        admin_store._apply_pragmas(conn)
+        admin_store._migrate_extension_package_digests(conn)
+        for candidate in tmp_path.iterdir():
+            if candidate.name.startswith("admin.db"):
+                assert marker.encode() not in candidate.read_bytes(), candidate.name
+    finally:
+        conn.close()
 
 def _plan_naming_the_package_service(store_path, name: str):
     from gateway import admin_store
