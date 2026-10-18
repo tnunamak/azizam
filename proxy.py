@@ -13622,8 +13622,8 @@ async def _security_headers_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def _gateway_auth_middleware(request: Request, call_next):
-    """Gate gateway-native discovery/receipt APIs behind the proxy key layer."""
-    if request.url.path.startswith("/gateway/v1"):
+    """Gate gateway-native discovery/receipt APIs, and the per-engine native lane, behind the proxy key layer."""
+    if request.url.path.startswith(("/gateway/v1", "/native/")):
         auth_context = (await asyncio.to_thread(authenticate_request, request, request.url.path))
         if isinstance(auth_context, Response):
             return auth_context
