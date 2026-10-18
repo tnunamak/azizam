@@ -9,6 +9,7 @@ engine, reads the receipt, and removes the route again.
 from __future__ import annotations
 
 import asyncio
+import copy
 from contextlib import contextmanager
 
 import pytest
@@ -127,6 +128,29 @@ def test_every_row_in_the_seed_registry_names_an_operation_the_translators_serve
     assert rows
     for row in rows:
         proxy.FRONTEND_TRANSLATORS.operation(row.translator, row.intent)
+
+
+def test_a_database_seeded_before_a_row_existed_still_mounts_every_row():
+    """An install keeps the frontend records it was seeded with. Builtin rows come from the seed, so a
+    stored record without translators, or a builtin frontend added after the seed, still mounts."""
+    seed = route_registry.protocol_frontend_records(proxy_config=proxy.config)
+    older = []
+    for record in seed:
+        if record["id"] == "native":
+            continue  # a builtin frontend the stored registry was seeded before
+        record = copy.deepcopy(record)
+        for item in record.get("registered_routes") or []:
+            item.pop("translator", None)
+            item.pop("intent", None)
+        older.append(record)
+    stored = {"protocol_frontends": {record["id"]: record for record in older}}
+
+    expected = frontend_mount.rows_from_frontends(seed)
+    mounted = frontend_mount.rows_from_frontends(
+        route_registry.mount_frontend_records(registry=stored, proxy_config=proxy.config),
+    )
+    assert expected
+    assert mounted == expected
 
 
 # --- the mount table's own rules, on a bare app -------------------------------------------
