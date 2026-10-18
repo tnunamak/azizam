@@ -277,6 +277,9 @@ class HttpV1Executor:
 
     async def _build(self, conn: Connection, spec: RequestSpec, op: Operation, source: Mapping[str, Any]) -> WireRequest:
         budgets = self.budgets
+        for place in ("body", "params"):  # first, and without recursion: mapping and JSON writing walk these values
+            if pointer.depth_exceeds(source[place], budgets.max_json_depth):
+                raise BudgetExceeded("max_json_depth", f"The request {place} nests deeper than {budgets.max_json_depth}.")
         path = self._expand_path(spec, source["params"])
         auth = self.description.auth.get("control" if op.op_class == "control" else "inference")
         credential = conn.credentials.get("control" if op.op_class == "control" else "inference")

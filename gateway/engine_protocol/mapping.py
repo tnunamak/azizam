@@ -153,11 +153,15 @@ class Program:
             body = source["body"]
             if type(body) is not dict:
                 raise MappingError("A passthrough map needs the body to be a JSON object.")
-            out: dict = _clone(body) if self._writes else body
-        else:
-            out = {}
-        for step in self._steps:
-            step(source, out)
+        try:  # the executor checks depth before it maps; this is the net for a caller that does not
+            if self._passthrough:
+                out: dict = _clone(body) if self._writes else body
+            else:
+                out = {}
+            for step in self._steps:
+                step(source, out)
+        except RecursionError:
+            raise BudgetExceeded("max_json_depth", "A mapped value nests too deep.") from None
         if time.perf_counter() - started > self._mapping_s:
             raise BudgetExceeded("mapping_s", f"A mapping took longer than {self._mapping_s:g} s.")
         return out
