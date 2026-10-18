@@ -86,6 +86,21 @@ def test_v2_migration_refuses_conflicting_copies_without_partial_change() -> Non
     assert registry == before
 
 
+def test_v2_migration_preserves_external_and_system_runtime_wrappers() -> None:
+    ordinary = _service()
+    ordinary["lifecycle"] = {"type": "external", "managed": False, "service_name": ""}
+    ordinary["config"]["lifecycle"] = "external"
+    system = copy.deepcopy(ordinary)
+    system.update(id="litellm", kind="llm-substrate", source="builtin", editable=False)
+    system["lifecycle"]["service_name"] = "managed-sidecar"
+    original = {"engine-a": ordinary, "litellm": system}
+    before = {key: service_registry.runtime_backend_from_service(row) for key, row in original.items()}
+    registry = {"schema_version": 1, "services": copy.deepcopy(original)}
+    service_registry.migrate_engine_records_v2(registry)
+    after = {key: service_registry.runtime_backend_from_service(row) for key, row in registry["services"].items()}
+    assert after == before
+
+
 def test_admin_schema_migration_refuses_conflict_atomically(tmp_path: Path) -> None:
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
