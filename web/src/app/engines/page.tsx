@@ -76,8 +76,12 @@ function keptOffWords(service: Service): string | null {
     | undefined;
   if (service.enabled || check?.status !== "not_started") return null;
   if (check.reason === "needkey") return "Waiting for the owner to add a key";
-  const lifecycle = (service as { lifecycle?: { driver?: string } }).lifecycle;
-  return lifecycle?.driver === "command"
+  const record = service as Service & {
+    process?: { driver?: string; legacy_lifecycle?: { driver?: string } };
+    lifecycle?: { driver?: string };
+  };
+  const driver = record.process?.legacy_lifecycle?.driver ?? record.process?.driver ?? record.lifecycle?.driver;
+  return driver === "command"
     ? "Not started; checked on first start"
     : "Not checked yet; checked when you turn it on or press Check now";
 }

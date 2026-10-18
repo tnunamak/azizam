@@ -1149,15 +1149,17 @@ def _driven_lifecycle_blocks(record: Mapping[str, Any]) -> frozenset[str]:
     in ``config``. Blocks that name no driver (or ``external``) are left out.
     """
     process = record.get("process")
+    config = record.get("config")
+    blocks = [record.get("lifecycle"), config.get("lifecycle") if isinstance(config, Mapping) else None]
+    driven = {json.dumps(block, sort_keys=True, default=str) for block in blocks if _is_driven(block)}
     if isinstance(process, Mapping):
         legacy = process.get("legacy_lifecycle")
         controls_host = _is_driven(process) or _is_driven(legacy) or any(
             key in process for key in ("start", "stop", "status", "profile_apply", "env", "cwd")
         )
-        return frozenset({json.dumps(process, sort_keys=True, default=str)}) if controls_host else frozenset()
-    config = record.get("config")
-    blocks = [record.get("lifecycle"), config.get("lifecycle") if isinstance(config, Mapping) else None]
-    return frozenset(json.dumps(block, sort_keys=True, default=str) for block in blocks if _is_driven(block))
+        if controls_host:
+            driven.add(json.dumps(process, sort_keys=True, default=str))
+    return frozenset(driven)
 
 
 def _is_driven(block: Any) -> bool:
