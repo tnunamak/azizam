@@ -1122,8 +1122,7 @@ class EngineService:
                            extra_capabilities=extra_capabilities,
                            record_capabilities=None if capabilities_sent else list(record.get("capabilities") or ()),
                            keep_lifecycle=not lifecycle_changed,
-                           keep_timeout=(clean.get("reply_timeout_s") == before["values"].get("reply_timeout_s")
-                                         or not values.get("reply_timeout_s") and not before["values"].get("reply_timeout_s")),
+                           keep_timeout=_same_text(values.get("reply_timeout_s")) == _same_text(before["values"].get("reply_timeout_s")),
                            key_dropped=bool(
                                key.withheld
                                and values.get("api_key") in ("", SECRET_MASK, None)
