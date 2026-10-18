@@ -25,6 +25,9 @@ baseline's paths and its own. Only these differences are allowed:
 * POST /me/api/media/remove-missing is new (Library "Remove missing items"): that
   method is its own route, and every other method answers as /me/api/media/{asset_id}
   did before (the sample path /me/api/media/sample);
+* POST /me/api/media/confirm-folder is new (Library "This is the right media folder"):
+  the owner's marker confirmation is its own route, and every other method answers as
+  /me/api/media/{asset_id} did before, as for remove-missing;
 * GET and HEAD with an HTML Accept on a first segment no route registers get
   the web app's 404 page (503 here: the sandbox has no web build). The same
   requests without HTML in Accept keep their r18 answer.

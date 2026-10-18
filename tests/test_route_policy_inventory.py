@@ -693,6 +693,7 @@ _METADATA_CONTRACT = {
     ("GET", "/me/api/media"): _OWN_RECORDS,
     ("GET", "/me/api/usage/summary"): _OWN_RECORDS,
     ("POST", "/me/api/media/remove-missing"): "removes only the caller's own entries whose files are gone; runs no model",
+    ("POST", "/me/api/media/confirm-folder"): "owner only; writes the media folder marker and removes nothing; runs no model",
 }
 
 
