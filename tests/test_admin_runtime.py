@@ -586,7 +586,7 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertEqual(
             self.store.get_service_registry(),
             {
-                "schema_version": 1,
+                "schema_version": 2,  # Engine record v2 is the fresh-registry contract.
                 "services": {},
                 "protocol_frontends": {},
                 "workflows": {},
