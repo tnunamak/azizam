@@ -52,6 +52,16 @@ class SseDecoder:
         self._buf = rest + held
         return events
 
+    def finish(self) -> list[SseEvent]:
+        """Events the end of the stream completes: a held CR is a line ending, so ``data: a\\r\\r`` is whole.
+
+        Bytes of an event with no blank line after it stay held (``pending`` is then true): that stream was cut.
+        """
+        if not self._buf.endswith(b"\r"):
+            return []
+        held, self._buf = self._buf[:-1], b""
+        return self.feed(held + b"\n")
+
     @staticmethod
     def _parse(block: bytes) -> SseEvent | None:
         if block[:6] == b"data: " and b"\n" not in block:  # the usual event: one data line

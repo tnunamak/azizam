@@ -512,6 +512,34 @@ class HttpV1Executor:
         has_terminal = terminal is not None
         mapped_source: dict[str, Any] = {"body": None, "status": response.status, "headers": dict(response.headers),
                                          "params": request.params, "event": None}
+        def handle(item: Any) -> tuple[bool, Any, bool]:
+            """For one decoded event: (deliver it, what to deliver, it ends the stream)."""
+            data, name = (item.data, item.event) if sse else (item, None)
+            if sentinel is not None and data == sentinel:
+                return False, None, True
+            if end_event is not None and name == end_event:
+                return False, None, True
+            if not parse:
+                return True, data, False
+            if not data:
+                return False, None, False
+            try:
+                obj = json.loads(data)
+            except RecursionError:
+                raise BudgetExceeded("max_json_depth", "A stream event nests too deep.") from None
+            except ValueError:
+                raise MalformedResponse("A stream event is not JSON.") from None
+            last = False
+            if end_path is not None:
+                found = pointer.get(obj, end_path)
+                last = found is not MISSING and same_json(found, end_value)
+            value: Any = data
+            if program is not None:
+                mapped_source["body"] = obj
+                mapped_source["event"] = name
+                value = program.apply(mapped_source)
+            return True, value, last
+
         loop = asyncio.get_running_loop()
         total = 0
         finished = False
@@ -523,56 +551,20 @@ class HttpV1Executor:
                 if loop.time() > deadline:
                     raise TransportFailure("timeout", "The stream ran past the total time allowed.")
                 for item in decoder.feed(chunk):
-                    data, name = (item.data, item.event) if sse else (item, None)
-                    if sentinel is not None and data == sentinel:
-                        finished = True
-                        break
-                    if end_event is not None and name == end_event:
-                        finished = True
-                        break
-                    last = False
-                    value: Any = data
-                    if parse:
-                        if not data:
-                            continue
-                        try:
-                            obj = json.loads(data)
-                        except RecursionError:
-                            raise BudgetExceeded("max_json_depth", "A stream event nests too deep.") from None
-                        except ValueError:
-                            raise MalformedResponse("A stream event is not JSON.") from None
-                        if end_path is not None:
-                            found = pointer.get(obj, end_path)
-                            last = found is not MISSING and same_json(found, end_value)
-                        if program is not None:
-                            mapped_source["body"] = obj
-                            mapped_source["event"] = name
-                            value = program.apply(mapped_source)
-                    yield value
-                    if last:
-                        finished = True
+                    deliver, value, finished = handle(item)
+                    if deliver:
+                        yield value
+                    if finished:
                         break
                 if finished:
                     break
             else:
-                if not sse:
-                    for line in decoder.finish():
-                        if parse:
-                            try:
-                                obj = json.loads(line)
-                            except ValueError:
-                                raise MalformedResponse("A stream event is not JSON.") from None
-                            if end_path is not None:
-                                found = pointer.get(obj, end_path)
-                                if found is not MISSING and same_json(found, end_value):
-                                    finished = True
-                            if program is not None:
-                                mapped_source["body"] = obj
-                                yield program.apply(mapped_source)
-                            else:
-                                yield line
-                        else:
-                            yield line
+                for item in decoder.finish():  # the end of the stream completes a held CR, or an NDJSON line with no newline
+                    deliver, value, finished = handle(item)
+                    if deliver:
+                        yield value
+                    if finished:
+                        break
             if has_terminal and not finished:
                 raise TransportFailure("aborted", "The stream ended before the engine's final event.")
             if not has_terminal and sse and decoder.pending():
