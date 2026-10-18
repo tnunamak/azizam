@@ -151,7 +151,26 @@ resources:
     moment an engine request is sent, a process or command starts, the router
     config is written, or a package is cloned; an architecture test lists the
     modules that import it. Schema 11 moves what older records held, once and
-    idempotently; a registry with nothing inline is not touched.
+    idempotently; a registry with nothing inline is not touched. Each reader of a
+    stored URL (the driver's load, unload and verify paths, the readiness poll, the
+    resource, catalog, placement and context-window probes, the process-ready
+    observation) puts the stored query and user info back when it sends the
+    request; a part that cannot be read stops the request, and no reader falls back to
+    a default path. Every runtime lookup that fails does so as `SecretUnavailable`
+    (a missing row, another origin, damaged bytes, a malformed entry), never as a
+    `KeyError`.
+  - **Where a key goes** (owner-only). A record that holds a credential (a stored
+    key, an environment variable name, a driver's admin or API key) sends it only to
+    the origin its owner bound it to (`config.credential_origin`, and
+    `config.driver_credential_origin` for a lifecycle driver). The fingerprint that
+    decides whether a save moves a key holds the origin of every address a
+    credential path dials: `base_url`, `api_base` and `default_base_url` each on its own, the native
+    URL, the address the form stores, and the host and port (with scheme) the
+    lifecycle driver dials. The driver takes its address from the same function
+    (`service_registry.lifecycle_dial_url`), so what it dials is always covered, and it sends nothing,
+    and logs that, when that origin is not the bound one. Taking a credential
+    reference away (`api_key_secret_id`, `secret_refs`, a driver key) is an owner
+    change as well. Admin schema 12 binds the driver keys of records that exist.
   - **What a read shows** (decision D28). Every management response is built from
     a registered projection type (`gateway/projection_types.py`): each field is
     classified once as public data, a reference to the store, a carrier of
@@ -161,8 +180,9 @@ resources:
     is `{"id", "name", "configured"}`; an environment value is
     `{NAME: {"id", "configured"}}`; a command is a list of public literals
     (strings) and `{"id", "configured", "prefix"?}`; a URL field is its public form
-    (no user info, no query) beside `<field>_entries`
-    (`{"userinfo": {...}, "query": [{"id", "name", "configured"}], "fragment": {...}}`);
+    (no user info, no query, no path-parameter values) beside `<field>_entries`
+    (`{"userinfo": {...}, "params": [{"id", "name", "configured"}], "query": [{"id", "name", "configured"}], "fragment": {...}}`;
+    a URL kept whole shows `{"whole": {"id", "label", "configured"}}`);
     a stored provider key is `{"configured": bool}`. A value the type does not
     expect (text where a mapping belongs) is left out and reported, never shown.
   - **How a secret changes** (decision D27). Never by a marker, an empty string,
@@ -177,7 +197,8 @@ resources:
     `set` (a command: `items` in order, each `{"literal"}`, `{"retain": entry_id}`,
     `{"replace": entry_id, "secret": value, "prefix"?}` (a new value under the same id) or
     `{"secret": value, "prefix"?}`, and `clear`: every stored entry the list drops
-    must be named there; a `literal` is public as declared, no flag name is read to guess otherwise), `set_credentials` (`url`) and `clear_credentials` (a URL
+    must be named there; a `literal` is public as declared, no flag name is read to guess otherwise), `set_credentials` (`url`; or `url`, `whole: true` and a `label` to keep a
+    URL whose secret sits in its path as one secret, shown by its label) and `clear_credentials` (a URL
     field). Ids are server-issued (`ent_...`) and stable across reorder, rename and
     replace. A value that is one of the marker texts (`[redacted]`, `<redacted>`,
     `<configured>`), empty, not text, over 8 KiB or holding NUL is refused. Unknown
@@ -187,7 +208,7 @@ resources:
     Error codes: `invalid_commands`, `invalid_command`, `unknown_carrier`,
     `invalid_entry_id`, `duplicate_entry`, `unknown_entry`, `invalid_value`,
     `reserved_value`, `invalid_name`, `duplicate_name`, `unmentioned_entry`,
-    `credential_header_public` (a header named like a credential cannot be `public`), `carrier_unavailable`, `owner_required` (403),
+    `credential_header_public` (a header named like a credential cannot be `public`), `invalid_label` (a URL kept whole needs a short label that repeats no part of the URL), `carrier_unavailable`, `owner_required` (403),
     `service_not_found` (404), `generation_mismatch` (412).
   - **Writing a whole record** (the registry `PUT`, `POST` and `PATCH` of a
     service, the engine page, the left-out record `PUT`). A carrier that holds
@@ -203,7 +224,10 @@ resources:
     A reference slot that has no entry id (`config.api_key_secret_id`, `secret_refs`) is read as
     `{"configured": true}` or as names; a write that sends back exactly what a read shows for the stored
     value leaves it as it is (the same rule as for a carrier), and any other marker, mapping or reserved text there
-    is refused with fixed text. A URL is kept byte for byte, query string included (`?a=b+c`, `?a=`, `&&`, `%2f`);
+    is refused with fixed text. What a read shows for an entry (`{"id", "configured"}` with no reference) written
+    where no stored entry has that id, and a `<field>_entries` part that is not an entry or an empty or gap marker,
+    are refused too, as is a mapping or a list where an environment value goes (the runtime never passed one on).
+    A URL is kept byte for byte, query string, `;name=value` path parameters and an empty user info (`http://@host/`) included (`?a=b+c`, `?a=`, `&&`, `%2f`);
     one that holds a backslash, a control character or an invalid port is refused on a write (it would read as
     another host to another client) and kept whole and private when a stored record has it. The URL fields are
     every one the runtime reads as an address (`record_carriers.URL_FIELD_PATHS`, a model row's `url`). Inline input
