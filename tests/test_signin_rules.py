@@ -247,7 +247,7 @@ def test_the_migration_converts_the_live_shaped_lists_into_rules(tmp_path):
     assert setting(path, "signin_status") == {
         "notice": "removed_owner_rule",
         "database_lists": ["admin_emails", "admin_groups", "admin_roles", "allowed_email_domains"]}
-    assert admin_store.schema_version(path) == admin_store.SCHEMA_VERSION == 9
+    assert admin_store.schema_version(path) == admin_store.SCHEMA_VERSION == 10
 
 
 def test_the_migration_removes_the_old_lists_and_keeps_the_rest_of_the_provider_setting(tmp_path):
@@ -366,15 +366,15 @@ def test_the_migration_is_idempotent_and_never_overwrites_rules_the_owner_saved(
     assert admin_store.list_admin_roles(include_revoked=True, path=path) == grants_before
     # The second run found nothing to do, so it recorded nothing but its own summary.
     assert len(admin_store.list_audit(limit=500, path=path)) <= audit_before + 1
-    assert admin_store.schema_version(path) == 9
+    assert admin_store.schema_version(path) == 10
 
 
-def test_a_fresh_database_starts_at_schema_9_with_no_rules_and_nothing_migrated(tmp_path):
+def test_a_fresh_database_starts_at_schema_10_with_no_rules_and_nothing_migrated(tmp_path):
     path = tmp_path / "fresh.db"
 
     admin_store.init_db(path)
 
-    assert admin_store.schema_version(path) == 9
+    assert admin_store.schema_version(path) == 10
     assert setting(path, "signin_rules") is None      # an absent document means: deny by default
     with sqlite3.connect(path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -383,12 +383,12 @@ def test_a_fresh_database_starts_at_schema_9_with_no_rules_and_nothing_migrated(
     assert signin_admin.load_rules(path).rules == () and signin_admin.load_rules(path).fallback == "closed"
 
 
-def test_a_schema_7_database_reaches_9_and_both_migrations_run_once(tmp_path):
+def test_a_schema_7_database_reaches_10_and_all_migrations_run_once(tmp_path):
     path, _, simon = legacy_database(tmp_path, version=7)
 
     admin_store.init_db(path)
 
-    assert admin_store.schema_version(path) == 9
+    assert admin_store.schema_version(path) == 10
     assert setting(path, "signin_rules")["rules"][0]["values"] == ["/Trusted"]
     assert [g["provenance"] for g in admin_store.list_admin_roles(
         subject_kind="user", subject_id=simon["id"], path=path)] == ["oidc"]
@@ -398,7 +398,7 @@ def test_a_database_newer_than_the_code_is_refused(tmp_path):
     path = tmp_path / "newer.db"
     admin_store.init_db(path)
     with sqlite3.connect(path) as conn:
-        conn.execute("UPDATE schema_version SET version = 10")
+        conn.execute("UPDATE schema_version SET version = 11")
     with pytest.raises(sqlite3.DatabaseError):
         admin_store.init_db(path)
 

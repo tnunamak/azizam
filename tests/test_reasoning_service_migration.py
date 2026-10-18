@@ -88,7 +88,7 @@ def assert_upstream_bytes_equal(tmp_path, old_registry, service_id, stream, effo
     first = snapshot(db)
     admin_store.init_db(db)
     assert snapshot(db) == first
-    assert first[1] == 8
+    assert first[1] == 9  # Schema 10 also writes the engine-record v2 projection once.
     new_registry = json.loads(first[0])
     body = {"model": "current", "messages": [{"role": "user", "content": "héllo"}], "stream": stream}
     if effort != "absent":
@@ -234,14 +234,19 @@ def test_migration_scope_generation_and_opt_out(tmp_path):
     admin_store.init_db(db)
     raw, generation = snapshot(db)
     migrated = json.loads(raw)
-    # One bump for the reasoning rows, one for the credential origin of the remote record (schema 8).
-    assert generation == 9
+    # Reasoning rows, credential origin (schema 8), then engine-record v2 (schema 10).
+    assert generation == 10
     assert migrated["services"]["remote"]["config"].pop("credential_origin").startswith("http")
     for key in changes:
         expected = copy.deepcopy(original["services"][key])
         if key in {"local", "completion-only", "already"}:
             expected["config"]["transforms"].append("reasoning-effort-final-chat")
-        assert migrated["services"][key] == expected
+        actual = copy.deepcopy(migrated["services"][key])
+        for field in ("process", "observations", "residency"):
+            actual.pop(field, None)
+        expected.pop("lifecycle", None)
+        expected["config"].pop("lifecycle", None)
+        assert actual == expected
     migrated["services"]["local"]["config"]["transforms"] = []
     with sqlite3.connect(db) as conn:
         conn.execute("UPDATE operator_settings SET value_json=? WHERE key='service_registry'", (json.dumps(migrated),))
@@ -345,7 +350,7 @@ def test_migration_rolls_back_registry_generation_and_version_together(tmp_path)
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 4
         conn.execute("DROP TRIGGER reject_migration")
     admin_store.init_db(db)
-    assert snapshot(db)[1] == before[1] + 1
+    assert snapshot(db)[1] == before[1] + 2  # Reasoning attachment and engine-record v2.
 
 
 def test_attached_translation_reads_updated_runtime_budgets():

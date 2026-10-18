@@ -39,7 +39,7 @@ def test_live_registry_shapes_are_redacted_and_complete() -> None:
     assert all("config" in row and "lifecycle" in row for row in shapes.values())
     assert sum("lifecycle" in row["config"] for row in shapes.values()) == 13
     assert "http://" not in FIXTURE.read_text()
-    assert "/home/" not in FIXTURE.read_text()
+    assert "home/" not in FIXTURE.read_text()
     assert "opk_" not in FIXTURE.read_text()
     assert "oak_" not in FIXTURE.read_text()
     assert _digest(shapes) == "b93eb7b8d52bc3e40e80fadd719d761e48147042ec18f1a3b27ea2db6ecd54d8"
