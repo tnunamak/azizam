@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from gateway import admin_store, receipt_store, sqlite_startup
 from gateway.admin_api import AdminAuth, _require_admin
+from gateway.receipt_context import person_label, receipt_context
 
 
 def create_activity_router(
@@ -36,8 +37,7 @@ def create_activity_router(
         if denied is not None:
             return denied
         users = admin_store.list_users(path=admin_path)
-        people = [{"id": row["id"], "label": row.get("display_name") or row.get("email") or "Gateway member"}
-                  for row in users]
+        people = [{"id": row["id"], "label": person_label(row)} for row in users]
         labels = {person["id"]: person["label"] for person in people}
         apps = {row["id"]: row for row in admin_store.list_apps(path=admin_path)}
         sources = _sources(apps)
@@ -79,13 +79,8 @@ def create_activity_router(
             row = receipt_store.get(id, audience="admin", path=receipts_path)
             if row is None:
                 continue
-            app = apps.get(row.get("app_id"), {})
-            owner = app.get("owner_user_id")
-            source_info = _receipt_source(row, app)
-            records.append({"receipt": row, "created_at": timestamp,
-                            "person_label": labels.get(owner, "Unattributed request"),
-                            "app_label": app.get("name") or source_info["label"],
-                            "source": source_info})
+            records.append({"receipt": row, **receipt_context(
+                row, timestamp, app=apps.get(row.get("app_id"), {}), person_labels=labels)})
         cursor = None
         if len(rows) > limit:
             last_request_id, last_created_at = rows[limit - 1]
@@ -106,21 +101,3 @@ def _sources(apps: dict[str, dict]) -> list[dict]:
             "owner_user_id": app.get("owner_user_id"),
         })
     return rows
-
-
-def _receipt_source(receipt: dict, app: dict) -> dict:
-    app_id = receipt.get("app_id")
-    if isinstance(app_id, str) and app_id:
-        return {
-            "id": f"app:{app_id}",
-            "kind": "app",
-            "label": str(app.get("name") or receipt.get("api_key_name") or "App"),
-            "app_id": app_id,
-        }
-    return {
-        "id": "local-network",
-        "kind": "local-network",
-        "label": str(receipt.get("source_label") or "Local network · no key"),
-        "app_id": None,
-        "client_hint": receipt.get("client_hint") if isinstance(receipt.get("client_hint"), str) else None,
-    }

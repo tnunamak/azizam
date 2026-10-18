@@ -12,7 +12,7 @@ from starlette.requests import Request
 
 from gateway import admin_runtime, admin_store
 from gateway.admin_api import AdminAuthError, AdminContext, create_admin_router
-from gateway.admin_runtime import AdminSQLiteStore
+from gateway.admin_runtime import AdminSQLiteStore, RegistryNotApplied
 
 
 OWNER = AdminContext(subject="fixture-owner", roles=frozenset({"owner"}))
@@ -168,10 +168,12 @@ def test_registry_post_commit_failure_contract(
             )
         assert effects == ["artifact"]
     else:
-        result = store.update_service_registry(
-            data=empty_registry(), actor=OWNER, expected_generation=0
-        )
-        assert result["operator_settings_generation"] == 1
+        # The change is stored; the caller is told the running gateway did not take it.
+        with pytest.raises(RegistryNotApplied, match="injected reload failure") as raised:
+            store.update_service_registry(
+                data=empty_registry(), actor=OWNER, expected_generation=0
+            )
+        assert raised.value.record["operator_settings_generation"] == 1
         assert effects == ["artifact", "reload"]
         assert "on_service_registry_changed" in capsys.readouterr().out
 

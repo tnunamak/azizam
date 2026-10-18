@@ -23,7 +23,7 @@ import yaml
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
 from gateway.manifests import ManifestError, manifest_identity, validate_manifest
-from gateway import service_registry
+from gateway import frontend_mount, service_registry
 
 
 MANIFEST_NAME = "extension.yml"
@@ -474,6 +474,7 @@ def review_local_directory_package(package_dir: str | Path) -> dict[str, Any]:
         record = _load_referenced_object(root, raw_ref, "protocol_frontend", errors, hash_files)
         if isinstance(record, Mapping):
             _check_code_bearing_adapter(record, "protocol_frontends", errors)
+            errors.extend(f"{raw_ref}: {problem}" for problem in frontend_mount.package_row_problems(record))
             protocol_frontends.append(_normalize_protocol_frontend(record))
 
     for raw_ref in _object_refs(objects.get("capabilities"), "objects.capabilities", errors):

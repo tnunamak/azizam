@@ -32,6 +32,11 @@ import { useModelName } from "@/lib/use-model-name";
 import { technicalModelDetails } from "@/lib/model-name";
 import { useViewer } from "@/components/shell/session";
 
+/** The workflow a job-submission receipt ran; those receipts carry no model. */
+export function receiptWorkflow(receipt: Pick<Receipt, "requested_workflow" | "resolved_workflow">): string | null {
+  return receipt.resolved_workflow || receipt.requested_workflow || null;
+}
+
 const requestRowLayout = "flex min-h-(--row-2) w-full min-w-0 items-center gap-3 px-4 py-2 text-left max-sm:min-h-(--row-phone-2)";
 
 type Receipt = {
@@ -39,6 +44,8 @@ type Receipt = {
   intent?: string;
   requested_model?: string;
   resolved_model?: string;
+  requested_workflow?: string;
+  resolved_workflow?: string;
   status?: string;
   latency_ms?: number | null;
   path?: string;
@@ -467,6 +474,8 @@ export function Requests() {
                                     "",
                                 )}
                               </>
+                            ) : receiptWorkflow(row.receipt) ? (
+                              <>{" · "}{receiptWorkflow(row.receipt)}</>
                             ) : null}
                           </p>
                         </div>
@@ -566,6 +575,7 @@ export function RequestReceiptSheet({ record, onOpenChange, title, description, 
   const served = record?.receipt.resolved_model;
   // A name that points at a model (`fast` -> `default-fast`) is the normal case. The
   // banner is for a model that took over: the gateway recorded a fallback.
+  const workflow = record ? receiptWorkflow(record.receipt) : null;
   const different = Boolean(requested && served && requested !== served);
   const fallbackReasons = record?.receipt.fallback_reasons;
   const fellBack = different && (Boolean(record?.receipt.fallback_model) || (Array.isArray(fallbackReasons) && fallbackReasons.length > 0));
@@ -612,7 +622,8 @@ export function RequestReceiptSheet({ record, onOpenChange, title, description, 
                     ] : different ? [
                       ["Name used", nameModel(requested!)],
                       ["Model", nameModel(served!)],
-                    ] : [["Model", served || requested ? nameModel((served || requested)!) : "Model not recorded"]]),
+                    ] : served || requested ? [["Model", nameModel((served || requested)!)]]
+                      : workflow ? [["Workflow", workflow]] : [["Model", "Model not recorded"]]),
                   ].filter(([, value]) => value != null && value !== "").map(([label, value]) => (
                     <div key={label}>
                       <dt className="text-muted-foreground">{label}</dt>

@@ -125,6 +125,9 @@ function seed(state: State) {
       },
     }),
   );
+  routes.set("/admin/api/operator/host-commands", () => ({
+    json: { enabled: false, revision: "0" },
+  }));
   routes.set(
     "/admin/api/extensions",
     reply({
@@ -240,9 +243,38 @@ const SECTIONS = [
   "Prompts",
   "Receipts",
   "Media admission",
+  "Computer commands",
   "Extensions",
   "Advanced",
 ];
+
+describe("computer command permission", () => {
+  it("shows the effect before an owner saves the opt-in with a revision", async () => {
+    seed("seeded");
+    routes.set("/admin/api/operator/host-commands", (request) =>
+      request.method === "PUT"
+        ? { json: { enabled: true, revision: "1" } }
+        : { json: { enabled: false, revision: "0" } },
+    );
+    mount();
+    const { user, section } = await editSection("Computer commands");
+    await user.click(within(section).getByRole("switch", { name: "Allow Azizam to run commands on this computer" }));
+    expect(within(section).getByRole("status")).toHaveTextContent("configured engines may start processes");
+    await user.click(within(section).getByRole("button", { name: "Save computer command setting" }));
+    await waitFor(() => expect(sent("PUT", "/admin/api/operator/host-commands")).toEqual([
+      { method: "PUT", path: "/admin/api/operator/host-commands", body: { enabled: true }, ifMatch: "0" },
+    ]));
+  });
+
+  it("shows the setting but does not give administrators a write control", async () => {
+    seed("seeded");
+    mocks.role = "admin";
+    mount();
+    const { section } = await editSection("Computer commands");
+    expect(within(section).getByText("Only the owner can change this.")).toBeVisible();
+    expect(within(section).queryByRole("switch")).not.toBeInTheDocument();
+  });
+});
 
 describe("settings page states", () => {
   it("shows every section with the saved values and only opens an editor on Edit (seeded)", async () => {

@@ -117,7 +117,9 @@ class SttChunkMigrationTests(unittest.TestCase):
             self.assertEqual(upgraded["services"]["stt-canary"]["config"]["transforms"],
                              [{"kind": "drop-params", "phase": "response", "drop": ["timing"]}])
             self.assertNotIn("transforms", upgraded["services"]["tts"]["config"])
-            self.assertEqual((generation, admin_store.schema_version(db)), (8, admin_store.SCHEMA_VERSION))
+            # Schema 10's engine-record v2 migration is a second registry write
+            # after the schema 6 response-transform attachment.
+            self.assertEqual((generation, admin_store.schema_version(db)), (9, admin_store.SCHEMA_VERSION))
             # The operator removes the row; a restart does not restore it.
             upgraded["services"]["stt-canary"]["config"]["transforms"] = []
             with sqlite3.connect(db) as conn:

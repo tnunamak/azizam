@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from gateway import receipt_store
+from gateway import receipt_store, service_registry
 from gateway.capabilities import Capability, resolve_capability_targets
 from gateway.discovery import WorkflowRecord
 from gateway.model_presentation import starts_on_demand
@@ -530,9 +530,7 @@ def _is_configured(service: Mapping[str, Any]) -> bool:
 
 def _is_idle_startable(service: Mapping[str, Any]) -> bool:
     config = service.get("config") if isinstance(service.get("config"), Mapping) else service
-    lifecycle = service.get("lifecycle")
-    if not isinstance(lifecycle, Mapping) and isinstance(config, Mapping):
-        lifecycle = config.get("lifecycle")
+    lifecycle = service_registry.legacy_lifecycle_from_service(service)
     if isinstance(lifecycle, Mapping):
         driver = str(lifecycle.get("driver") or lifecycle.get("type") or "external").strip().lower()
         if driver and driver != "external":
