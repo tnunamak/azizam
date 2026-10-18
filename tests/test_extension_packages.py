@@ -1112,3 +1112,64 @@ def test_an_index_from_before_the_digests_is_migrated_once_and_keeps_its_matchin
     assert "localhost:9998" not in json.dumps(once)
     entry = once["packages"]["old"]["installed_records"]["services"]["old-service"]
     assert entry == {"kind": "services", "id": "old-service", "sha256": installed_record_digest(record)}
+
+
+def _plan_naming_the_package_service(store_path, name: str):
+    from gateway import admin_store
+    from gateway.access_plans import plan_to_document
+    from tests.support.access import plan_for
+    return admin_store.create_access_plan(
+        plan_to_document(plan_for(name, engines=["lifecycle-service"], operations=["chat"])),
+        path=store_path,
+    )
+
+
+def test_a_plan_saved_between_the_removal_read_and_write_is_seen_by_the_removal(tmp_path, monkeypatch):
+    # Deterministic interleaving: a plan lands after the removal has read its inputs and before it writes.
+    import pytest
+    from gateway import admin_store
+    store, actor, _source, _installed = _installed_lifecycle_store(tmp_path, monkeypatch)
+    real_write = admin_store.write_service_registry_and_setting_with_audits
+    landed = []
+
+    def write_after_a_plan_lands(*args, **kwargs):
+        if not landed:
+            landed.append(_plan_naming_the_package_service(store.path, "plan_race"))
+        return real_write(*args, **kwargs)
+
+    monkeypatch.setattr(admin_store, "write_service_registry_and_setting_with_audits", write_after_a_plan_lands)
+
+    with pytest.raises(ValueError, match="access plan plan_race"):
+        store.remove_extension_package(package_id="lifecycle", actor=actor)
+
+    assert landed, "the interleaving must have run"
+    assert "lifecycle" in store.get_extension_package_index()["packages"]
+    assert "lifecycle-service" in store.get_service_registry()["services"]
+
+
+def test_a_plan_save_waits_for_a_removal_in_its_transaction(tmp_path, monkeypatch):
+    # Regression guard: the removal holds the write lock from its plan check to its commit.
+    import threading
+    from gateway import admin_store
+    store, actor, _source, _installed = _installed_lifecycle_store(tmp_path, monkeypatch)
+    real_registry_write = admin_store.write_service_registry_in_transaction
+    inside, release = threading.Event(), threading.Event()
+
+    def paused_registry_write(*args, **kwargs):
+        inside.set()
+        assert release.wait(10)
+        return real_registry_write(*args, **kwargs)
+
+    monkeypatch.setattr(admin_store, "write_service_registry_in_transaction", paused_registry_write)
+    remover = threading.Thread(target=lambda: store.remove_extension_package(package_id="lifecycle", actor=actor))
+    saved = threading.Event()
+    saver = threading.Thread(target=lambda: (_plan_naming_the_package_service(store.path, "plan_late"), saved.set()))
+    remover.start()
+    assert inside.wait(10)
+    saver.start()
+    assert not saved.wait(0.5), "a plan save must wait for the removal's transaction"
+    release.set()
+    remover.join(10)
+    saver.join(10)
+    assert saved.is_set()
+    assert "lifecycle" not in store.get_extension_package_index()["packages"]
