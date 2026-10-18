@@ -1,0 +1,163 @@
+{
+  "model_list": [
+    {
+      "model_name": "nomic-embed-text-v1.5",
+      "litellm_params": {
+        "model": "openai/nomic-embed-text-v1.5.f16.gguf",
+        "api_base": "http://127.0.0.1:5061/v1",
+        "timeout": 120.0,
+        "api_key": "sk-local"
+      }
+    },
+    {
+      "model_name": "default",
+      "litellm_params": {
+        "model": "openai/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+        "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+        "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"
+      },
+      "model_info": {
+        "gateway_lifecycle": true,
+        "gateway_backend": "kobold",
+        "gateway_upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+      }
+    },
+    {
+      "model_name": "coder",
+      "litellm_params": {
+        "model": "openai/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+        "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+        "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"
+      },
+      "model_info": {
+        "gateway_lifecycle": true,
+        "gateway_backend": "kobold",
+        "gateway_upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+      }
+    },
+    {
+      "model_name": "coder-q5",
+      "litellm_params": {
+        "model": "openai/coder-q5",
+        "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+        "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"
+      },
+      "model_info": {
+        "gateway_lifecycle": true,
+        "gateway_backend": "kobold",
+        "gateway_upstream_model": "coder-q5"
+      }
+    },
+    {
+      "model_name": "coder-q8",
+      "litellm_params": {
+        "model": "openai/coder-q8",
+        "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+        "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"
+      },
+      "model_info": {
+        "gateway_lifecycle": true,
+        "gateway_backend": "kobold",
+        "gateway_upstream_model": "coder-q8"
+      }
+    },
+    {
+      "model_name": "coder-unchained",
+      "litellm_params": {
+        "model": "openai/coder-unchained",
+        "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+        "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"
+      },
+      "model_info": {
+        "gateway_lifecycle": true,
+        "gateway_backend": "kobold",
+        "gateway_upstream_model": "coder-unchained"
+      }
+    },
+    {
+      "model_name": "default-fast",
+      "litellm_params": {
+        "model": "openai/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+        "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+        "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"
+      },
+      "model_info": {
+        "gateway_lifecycle": true,
+        "gateway_backend": "kobold",
+        "gateway_upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+      }
+    },
+    {
+      "model_name": "current",
+      "litellm_params": {
+        "model": "openai/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+        "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+        "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"
+      },
+      "model_info": {
+        "gateway_lifecycle": true,
+        "gateway_backend": "kobold",
+        "gateway_upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+      }
+    },
+    {
+      "model_name": "current-fast",
+      "litellm_params": {
+        "model": "openai/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+        "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+        "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"
+      },
+      "model_info": {
+        "gateway_lifecycle": true,
+        "gateway_backend": "kobold",
+        "gateway_upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+      }
+    },
+    {
+      "model_name": "rp",
+      "litellm_params": {
+        "model": "openai/rp",
+        "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
+        "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"
+      },
+      "model_info": {
+        "gateway_lifecycle": true,
+        "gateway_backend": "kobold",
+        "gateway_upstream_model": "rp"
+      }
+    },
+    {
+      "model_name": "current",
+      "litellm_params": {
+        "model": "openai/current",
+        "api_base": "http://127.0.0.1:5000/internal/litellm/current/v1",
+        "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"
+      },
+      "model_info": {
+        "gateway_current_loaded": true,
+        "gateway_current_loaded_fast": false,
+        "gateway_lifecycle": true
+      }
+    },
+    {
+      "model_name": "current-fast",
+      "litellm_params": {
+        "model": "openai/current-fast",
+        "api_base": "http://127.0.0.1:5000/internal/litellm/current/v1",
+        "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"
+      },
+      "model_info": {
+        "gateway_current_loaded": true,
+        "gateway_current_loaded_fast": true,
+        "gateway_lifecycle": true
+      }
+    }
+  ],
+  "litellm_settings": {
+    "drop_params": true
+  },
+  "general_settings": {
+    "litellm_key_header_name": "X-Litellm-Key",
+    "forward_client_headers_to_llm_api": true
+  }
+}
