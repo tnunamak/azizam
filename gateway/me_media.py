@@ -269,6 +269,64 @@ def create_me_media_router(
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
 
+    @router.post("/media/remove-missing", include_in_schema=False)
+    def remove_missing_media(request: Request) -> JSONResponse:
+        """Drop the caller's Library and job entries whose files are gone.
+
+        Stored files and receipts are never touched.
+        """
+        try:
+            session = session_provider(request)
+            if session is not None and mutation_validator is not None:
+                action_error = mutation_validator(request, session)
+                if action_error is not None:
+                    return action_error
+            admin_path = _resolve_path(admin_db_path)
+            jobs_path = _resolve_path(media_jobs_path)
+            prompt_path = _resolve_path(prompt_memory_path)
+            actor = _actor_from_session(session, admin_path)
+            entries = _media_entries(
+                request=request,
+                scope=_member_media_scope(actor.user_id, admin_path),
+                signed_url_builder=signed_url_builder,
+                asset_path_resolver=asset_path_resolver,
+                asset_media_type_resolver=asset_media_type_resolver,
+                asset_catalog_provider=asset_catalog_provider,
+                asset_metadata_reader=asset_metadata_reader,
+                admin_db_path=admin_path,
+                media_jobs_path=jobs_path,
+                receipts_path=_resolve_path(receipts_path),
+                prompt_memory_path=prompt_path,
+            )
+            gone = {
+                entry.asset_id: entry for entry in entries
+                if not _file_is_stored(asset_path_resolver(entry.asset_id))
+            }
+            for entry in gone.values():
+                prompt_memory.delete_asset_for_person(entry.asset_id, actor.user_id, path=prompt_path)
+                admin_store.record_audit(
+                    "media.asset.delete",
+                    actor_kind="user",
+                    actor_id=actor.user_id,
+                    actor_label=str(actor.user.get("email") or actor.user_id),
+                    target_kind="media_asset",
+                    target_id=entry.asset_id,
+                    metadata={"physical_removed": False, "job_id": entry.job_id, "reason": "file_missing"},
+                    path=admin_path,
+                )
+            # A job entry goes only when every file it made is gone.
+            made_by_job: dict[str, list[str]] = {}
+            for entry in entries:
+                if entry.job_id:
+                    made_by_job.setdefault(entry.job_id, []).append(entry.asset_id)
+            removed_jobs = media_jobs.delete_succeeded(
+                [job_id for job_id, ids in made_by_job.items() if all(asset_id in gone for asset_id in ids)],
+                path=jobs_path,
+            )
+            return _json({"removed_assets": len(gone), "removed_jobs": removed_jobs})
+        except (PublicFailure, UserPortalError) as exc:
+            return _error_response(exc)
+
     @router.get("/media/{asset_id}/download", include_in_schema=False)
     def media_download(asset_id: str, request: Request) -> JSONResponse:
         try:
@@ -703,6 +761,7 @@ class _Entry:
     prompt: str | None
     source_id: str | None
     build: Callable[[bool], dict[str, Any]]
+    job_id: str | None = None
 
     @property
     def sort_key(self) -> tuple[int, str]:
@@ -772,6 +831,7 @@ def _media_entries(
                 workflow=_workflow_for_asset(asset, job, receipt),
                 prompt=prompt_record.get("prompt_text") if prompt_record else None,
                 source_id=_source_id(job_source),
+                job_id=job.get("job_id"),
                 build=partial(
                     _build_job_item, asset_id=asset_id, asset=asset, job=job, receipt=receipt,
                     created_at=created_at, prompt_record=prompt_record, source=job_source, request=request,
@@ -858,7 +918,7 @@ def _build_job_item(
     if makers and len(makers) == 1:
         user = admin_store.get_user(makers[0], path=admin_db_path)
         source = {**source, "label": str((user or {}).get("display_name") or (user or {}).get("email") or "Unknown maker"), "person_id": makers[0]}
-    available = bool(path is not None and path.is_file())
+    available = _file_is_stored(path)
     return {
         "asset_id": asset_id,
         "id": asset_id,
@@ -1304,6 +1364,10 @@ def _asset_created_at(
     if isinstance(accepted_ms, int):
         return accepted_ms // 1000
     return None
+
+
+def _file_is_stored(path: Path | None) -> bool:
+    return path is not None and path.is_file()
 
 
 def _file_modified_at(path: Path | None) -> int | None:

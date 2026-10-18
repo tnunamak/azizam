@@ -716,6 +716,37 @@ def _clear_prompt_derivatives(job: MediaJob) -> None:
         job.parent_request_id = None
 
 
+def delete_succeeded(job_ids: Iterable[str], *, path: Path = DB_PATH) -> int:
+    """Delete finished jobs and their events; receipts are not touched.
+
+    A job that has not succeeded stays, whatever the ids say. Returns how many
+    jobs were deleted.
+    """
+    ids = sorted({job_id for job_id in job_ids if job_id})
+    deleted = 0
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                marks = ",".join("?" for _ in chunk)
+                done = [row[0] for row in conn.execute(
+                    f"SELECT job_id FROM media_jobs WHERE status=? AND job_id IN ({marks})",
+                    [STATUS_SUCCEEDED, *chunk],
+                )]
+                if not done:
+                    continue
+                marks = ",".join("?" for _ in done)
+                conn.execute(f"DELETE FROM media_job_events WHERE job_id IN ({marks})", done)
+                conn.execute(f"DELETE FROM media_jobs WHERE job_id IN ({marks})", done)
+                deleted += len(done)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return deleted
+
+
 def erase_prompt_derivatives(owner_keys: set[str], *, before: int, path: Path = DB_PATH) -> int:
     """Forget body hashes and seeded dedupe IDs, retaining the jobs and media.
 
