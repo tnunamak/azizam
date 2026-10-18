@@ -47,6 +47,11 @@
       },
       "description": "Capability tokens an engine record carries. An adapter executor uses them to answer for a record that names no protocol."
     },
+    "binding": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "description": "The key under a workflow manifest's bindings that holds this engine's artifact. An adapter executor reads it, so no module spells an engine name."
+    },
     "auth": {
       "type": "object",
       "additionalProperties": false,

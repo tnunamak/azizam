@@ -171,6 +171,7 @@ class ProtocolDescription:
     budgets: Budgets = DEFAULT_BUDGETS
     serves: tuple[str, ...] = ()
     label: str = ""
+    binding: str = ""
 
     @property
     def adapter_id(self) -> str | None:
@@ -319,6 +320,7 @@ class _Compiler:
             id=doc["id"], title=doc.get("title", doc["id"]), executor=executor, source=self.source,
             operations={k: v for k, v in operations.items() if v is not None}, auth=auth, errors=advice, budgets=self.budgets,
             serves=tuple(doc.get("serves") or ()), label=str(doc.get("label") or ""),
+            binding=str(doc.get("binding") or ""),
         )
 
     def _advice(self, rows: list) -> tuple[Advice, ...]:

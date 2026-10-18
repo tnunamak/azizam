@@ -492,3 +492,23 @@ def test_serves_and_label_are_validated_data() -> None:
                    "operations": {"op": {"class": "generate"}}}
     parsed = description.parse_description(adapter_doc, source="y.yml")
     assert (parsed.serves, parsed.label) == (("a.b",), "Thing")
+
+
+def test_binding_names_the_manifest_bindings_key_as_validated_data() -> None:
+    adapter_doc = {"protocol_version": 1, "id": "y", "executor": "adapter:y", "binding": "graph_engine",
+                   "operations": {"op": {"class": "generate"}}}
+    assert description.parse_description(adapter_doc, source="y.yml").binding == "graph_engine"
+    unbound = {key: value for key, value in adapter_doc.items() if key != "binding"}
+    assert description.parse_description(unbound, source="y.yml").binding == ""
+    for bad in ("", "Has Space", 7):
+        with pytest.raises(ProtocolError) as raised:
+            description.parse_description({**adapter_doc, "binding": bad}, source="y.yml")
+        assert "binding" in str(raised.value)
+
+
+def test_the_adapter_reads_its_manifest_binding_key_from_the_description() -> None:
+    doc = description.load_registry()["node-graph"]
+    assert doc.binding
+    assert NodeGraphAdapter(doc).binding == doc.binding
+    assert reviewed.adapter_for_backend({}, "audio.generate").binding == doc.binding
+    assert NodeGraphAdapter().binding == ""

@@ -315,6 +315,8 @@ class NodeGraphAdapter:
 
     def __init__(self, description: ProtocolDescription | None = None, *, assets: AssetStore | None = None) -> None:
         self.label = (description.label if description is not None else "") or _DEFAULT_LABEL
+        # The key under a workflow manifest's ``bindings`` that holds this engine's graph ("" when the description names none).
+        self.binding = description.binding if description is not None else ""
         self._assets = assets
 
     # --- sessions ---------------------------------------------------------------------------
