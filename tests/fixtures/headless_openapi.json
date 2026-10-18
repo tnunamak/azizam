@@ -5254,26 +5254,29 @@
     },
     "/admin/api/config/export": {
       "get": {
-        "description": "Export the canonical YAML reproducing the running gateway's service registry.\n\nReturns clean YAML containing every service's connection, capabilities,\nmodels, priority, role, and lifecycle \u2014 everything an operator would commit\nto reproduce this gateway.  Ephemeral runtime state (health history,\nlast_used_at, probed windows, live VRAM) is excluded.\n\nThe output is round-trippable: it matches the shape the existing\nseed-import path already understands.\n\nAdmin-auth required (same guard as all /admin/api/* routes).\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "summary": "Admin Config Export",
+        "description": "Export the canonical YAML reproducing the running gateway's service registry.\n\nReturns clean YAML containing every service's connection, capabilities,\nmodels, priority, role, and lifecycle \u2014 everything an operator would commit\nto reproduce this gateway.  Ephemeral runtime state (health history,\nlast_used_at, probed windows, live VRAM) is excluded.\n\nThe output is round-trippable: it matches the shape the existing\nseed-import path already understands.\n\nOwner only. It holds the public configuration and, for each secret, a configured entry; it never holds a\nsecret value (decision D26), so it cannot restore a secret.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_config_export",
-        "parameters": [],
         "responses": {
           "200": {
+            "description": "Canonical configuration YAML",
             "content": {
               "text/plain": {
                 "schema": {
                   "type": "string"
                 }
               }
-            },
-            "description": "Canonical configuration YAML"
+            }
           },
           "401": {
+            "description": "Authentication or role denied",
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "object",
                   "properties": {
                     "error": {
+                      "type": "object",
                       "properties": {
                         "code": {
                           "type": "string"
@@ -5281,22 +5284,22 @@
                         "message": {
                           "type": "string"
                         }
-                      },
-                      "type": "object"
+                      }
                     }
-                  },
-                  "type": "object"
+                  }
                 }
               }
-            },
-            "description": "Authentication or role denied"
+            }
           },
           "403": {
+            "description": "Authentication or role denied",
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "object",
                   "properties": {
                     "error": {
+                      "type": "object",
                       "properties": {
                         "code": {
                           "type": "string"
@@ -5304,26 +5307,23 @@
                         "message": {
                           "type": "string"
                         }
-                      },
-                      "type": "object"
+                      }
                     }
-                  },
-                  "type": "object"
+                  }
                 }
               }
-            },
-            "description": "Authentication or role denied"
+            }
           }
         },
+        "tags": [
+          "settings"
+        ],
         "security": [
           {
             "OwnerBearer": []
           }
         ],
-        "summary": "Admin Config Export",
-        "tags": [
-          "settings"
-        ]
+        "parameters": []
       }
     },
     "/admin/api/config/reload": {
@@ -28280,6 +28280,320 @@
           }
         },
         "summary": "Rerank V2"
+      }
+    },
+    "/admin/api/operator/service-registry/excluded/{section}/{record_id}": {
+      "put": {
+        "tags": [
+          "engines and providers"
+        ],
+        "summary": "Fix Excluded Record",
+        "description": "Save an edited copy of a record the registry leaves out. Its secret entries come back as read or are left out.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_put_admin_api_operator_service_registry_excluded_section_record_id",
+        "parameters": [
+          {
+            "name": "section",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Section"
+            }
+          },
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Record Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or role denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authentication or role denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "engines and providers"
+        ],
+        "summary": "Remove Excluded Record",
+        "description": "Drop a record the registry leaves out.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_delete_admin_api_operator_service_registry_excluded_section_record_id",
+        "parameters": [
+          {
+            "name": "section",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Section"
+            }
+          },
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Record Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or role denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authentication or role denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          }
+        ]
+      }
+    },
+    "/admin/api/operator/services/{service_id}/secret-entries": {
+      "post": {
+        "tags": [
+          "engines and providers"
+        ],
+        "summary": "Change Secret Entries",
+        "description": "Change the secret entries of a service by explicit commands (retain, replace, clear, add, rename, set).\n\nThe response is the registry as ``GET /operator/service-registry`` answers it: a secret shows as a\nconfigured entry with its id, never as a value. See ``gateway/secret_commands.py`` for the commands.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to change a secret. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_post_admin_api_operator_services_service_id_secret_entries",
+        "parameters": [
+          {
+            "name": "service_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Service Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication or role denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Authentication or role denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
       }
     }
   },

@@ -144,6 +144,12 @@ const sharedErrorCases: Array<{
     message: "The gateway is limiting requests. Wait before trying again.",
     recovery: "retry",
   },
+  {
+    label: "registry_saved_not_applied",
+    error: { code: "registry_saved_not_applied", status: 500 },
+    message: "Your change is saved, but the gateway is still running the previous settings. Open Status and choose Apply again.",
+    recovery: "retry",
+  },
   ...[500, 503, 599].map((status) => ({
     label: `HTTP ${status}`,
     error: { status },

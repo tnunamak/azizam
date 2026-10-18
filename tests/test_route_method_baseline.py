@@ -22,6 +22,9 @@ baseline's paths and its own. Only these differences are allowed:
   the catch-all or a 405;
 * /admin/api/operator/host-commands is the new owner-only command permission
   (tests/test_admin_owner_holes_round4.py covers its write boundary);
+* POST /admin/api/operator/services/{id}/secret-entries (the owner's secret commands, D27) and
+  PUT and DELETE /admin/api/operator/service-registry/excluded/{section}/{id} (fix or remove a record the registry
+  leaves out) are new owner routes (tests/test_secret_commands.py, tests/test_excluded_records.py);
 * POST /me/api/media/remove-missing is new (Library "Remove missing items"): that
   method is its own route, and every other method answers as /me/api/media/{asset_id}
   did before (the sample path /me/api/media/sample);
@@ -68,6 +71,7 @@ MCP_OAUTH_PREFIXES = ("/.well-known/oauth-authorization-server", "/oauth", "/me/
 ENGINE_PATHS = ("/admin/api/engine-definitions", "/admin/api/engines/")
 DELETED_PRESETS = "/admin/api/operator/service-presets"
 HOST_COMMANDS = "/admin/api/operator/host-commands"
+LEFT_OUT_PATHS = ("/admin/api/operator/service-registry/excluded/",)
 THUMBNAIL_PATH, THUMBNAIL_SIBLING = "/v1/assets/sample/thumbnail", "/v1/assets/sample/content"
 REMOVE_MISSING_PATH, REMOVE_MISSING_SIBLING = "/me/api/media/remove-missing", "/me/api/media/sample"
 REMOVE_MISSING_ROUTE = "/me/api/media/remove-missing remove_missing_media"
@@ -128,6 +132,8 @@ def _deliberate(key: str) -> str | None:
         return "engines"  # Add engine (gateway/engine_admin.py) replaced the preset list
     if path == HOST_COMMANDS:
         return "host_commands"
+    if re.fullmatch(r"/admin/api/operator/services/[^/]+/secret-entries", path) or path.startswith(LEFT_OUT_PATHS):
+        return "secret_entries"  # decisions D27 and D22: the secret commands, and the records the registry leaves out
     if ui_routes.classify(path) is not None:
         return "ui"
     if path in DELETED_PATHS or ui_routes.first_segment(path) in DELETED_SEGMENTS:
@@ -217,6 +223,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new Add engine routes, or the deleted preset list falling through
         if kind == "host_commands" and key not in old:
             continue  # new owner command permission route
+        if kind == "secret_entries" and key not in old:
+            continue  # new owner routes (the secret commands, and the records the registry leaves out)
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
@@ -256,7 +264,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines", "host_commands", "native"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines", "host_commands", "secret_entries", "native"}:
             continue
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue

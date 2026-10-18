@@ -87,6 +87,12 @@ export function errorCopy(
       "The gateway is limiting requests. Wait before trying again.",
       "retry",
     );
+  // The write is stored; only the live reload failed, so the owner re-applies.
+  if (code === "registry_saved_not_applied")
+    return result(
+      "Your change is saved, but the gateway is still running the previous settings. Open Status and choose Apply again.",
+      "retry",
+    );
   if (status !== null && status >= 500)
     return result("The gateway could not complete this request.", "retry");
   if (error instanceof TypeError || code === "network_unavailable")

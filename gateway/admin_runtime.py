@@ -22,12 +22,12 @@ import json
 import time
 import sqlite3
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import Any, Iterable, Mapping
 
 from fastapi import Request, status
 
-from gateway import admin_store, engine_check, extension_packages, route_registry, secret_store, service_registry, trusted_addresses
+from gateway import admin_store, engine_check, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
 from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
@@ -41,7 +41,7 @@ from gateway.admin_oidc import (
 )
 from gateway.access_plans import PERSON, PlanError, plan_from_document, plan_summary
 from gateway.policy import EffectiveAccess
-from gateway.litellm_substrate import write_litellm_config_artifact
+from gateway.litellm_runtime import write_litellm_config_artifact  # a privileged write to a restricted file, never a response
 from gateway.provider_admin import (
     provider_admin_setting_from_store,
     provider_admin_setting_to_store,
@@ -790,6 +790,136 @@ class AdminSQLiteStore:
             }
         return registry
 
+    def get_service_registry_exclusions(self) -> list[service_registry.ExcludedRecord]:
+        """The stored records ``get_service_registry`` leaves out because they do not validate, each with why."""
+        return service_registry.load_service_registry_exclusions(path=self.path)
+
+    def _excluded_service(self, service_id: str) -> service_registry.ExcludedRecord | None:
+        wanted = service_registry.normalize_id(service_id)
+        return next((item for item in self.get_service_registry_exclusions()
+                     if item.section == "services" and item.id == wanted), None)
+
+    def _excluded_record(self, section: str, record_id: str) -> service_registry.ExcludedRecord | None:
+        wanted = service_registry.normalize_id(record_id)
+        return next((item for item in self.get_service_registry_exclusions()
+                     if item.section == section and item.id == wanted), None)
+
+    def replace_excluded_record(
+        self, *, section: str, record_id: str, record: Any, actor: AdminContext, expected_generation: int,
+    ) -> dict[str, Any]:
+        """Fix a record the registry leaves out by saving an edited copy of what a read shows.
+
+        A carrier of the stored record that holds secret entries must come back as read (or be left out) and is
+        kept; inline input becomes new entries, which only the owner may add. A record that could not be parsed
+        is replaced whole, and the entries it held are deleted. The result must validate with the rest of the
+        registry, or the save is refused with the reason and nothing is stored.
+        """
+        held = self._excluded_record(section, record_id)
+        if held is None:
+            raise ValueError(f"{dict(service_registry._SECTIONS).get(section, section)} {record_id!r} not found among the records left out")
+        created: list[str] = []
+        if section == "services" and isinstance(record, Mapping):
+            # A record that could not be parsed holds no entries a write must keep: it is replaced whole.
+            stored = held.record if projection_types.record_parses(section, held.record) else None
+            try:
+                record = copy.deepcopy(dict(record))
+                record_carriers.restore_echoed_record(record, stored)
+            except record_carriers.EchoRefused as error:
+                raise ValueError(str(error)) from None
+            probe = lambda value, origin=None: secret_refs.new_ref()  # noqa: E731 - a dry run: nothing is stored
+            try:
+                _, moved = record_carriers.ingest_service(record, stored, probe)
+            except record_carriers.CarrierLocked as error:
+                raise ValueError(str(error)) from None
+            if moved and "owner" not in actor.roles:
+                raise PermissionError("Only the owner can add a secret.")
+
+            def put(value: str, origin: str | None = None) -> str:
+                ref = secret_refs.store(value, db_path=self.path, origin=origin)
+                created.append(ref)
+                return ref
+
+            record, _ = record_carriers.ingest_service(record, stored, put)
+        try:
+            if section == "services" and isinstance(record, Mapping) and service_registry.is_litellm_service_record(held.id, record):
+                raise ValueError(f"service {held.id!r} is a managed substrate; remove it and the gateway restores its own")
+            candidate = copy.deepcopy(self.get_service_registry())
+            candidate[section] = {**(candidate.get(section) or {}), held.key: record}
+            try:
+                registry = service_registry.normalize_service_registry(candidate)
+            except ValueError as error:
+                raise ValueError(projection.scrub_text(str(error)[:600], record_carriers.legacy_secret_texts(record))) from None
+            saved = self._persist_service_registry(
+                registry,
+                action="operator.service.updated",
+                actor=actor,
+                service_id=held.id,
+                expected_generation=expected_generation,
+                extra={"left_out_fixed": section},
+                removing={(section, held.id)},
+                ingest=False,
+            )
+        except RegistryNotApplied:
+            self._discard_secrets(sorted(set(record_carriers.refs_in(held.record)) - set(record_carriers.refs_in(record))))
+            raise
+        except BaseException:
+            self._discard_secrets(created)
+            raise
+        self._discard_secrets(sorted(set(record_carriers.refs_in(held.record)) - set(record_carriers.refs_in(record))))
+        return saved
+
+    def remove_excluded_record(
+        self, *, section: str, record_id: str, actor: AdminContext, expected_generation: int,
+    ) -> dict[str, Any]:
+        """Drop a record the registry leaves out, and the secret entries it held. Nothing else changes."""
+        held = self._excluded_record(section, record_id)
+        if held is None:
+            raise ValueError(f"{dict(service_registry._SECTIONS).get(section, section)} {record_id!r} not found among the records left out")
+        try:
+            saved = self._persist_service_registry(
+                self.get_service_registry(),
+                action="operator.service.removed",
+                actor=actor,
+                service_id=held.id,
+                expected_generation=expected_generation,
+                extra={"left_out_removed": section},
+                removing={(section, held.id)},
+                ingest=False,
+            )
+        except RegistryNotApplied:
+            self._discard_secrets(record_carriers.refs_in(held.record))
+            raise
+        self._discard_secrets(record_carriers.refs_in(held.record))
+        return saved
+
+    def _with_excluded_records(
+        self, value: Mapping[str, Any], *, removing: Collection[tuple[str, str]] = (),
+    ) -> tuple[dict[str, Any], list[service_registry.ExcludedRecord]]:
+        """The document to store for ``value``, and the excluded records it carries along.
+
+        ``value`` holds the records that validate. A stored record that does not is neither fixed nor
+        removed by a save that does not name it, so it goes back into the document exactly as it was
+        stored. It is dropped only when the caller removes it (``removing``: section and id) or replaces
+        it with a record of the same id.
+        """
+        document = dict(value)
+        kept: list[service_registry.ExcludedRecord] = []
+        for item in self.get_service_registry_exclusions():
+            if (item.section, item.id) in removing:
+                continue
+            section = dict(document.get(item.section) or {})
+            if any(service_registry.normalize_id((row.get("id") if isinstance(row, Mapping) else None) or key) == item.id
+                   for key, row in section.items()):
+                continue  # the caller replaced it with a record that validates
+            if item.key in section:
+                raise ValueError(
+                    f"{dict(service_registry._SECTIONS)[item.section]} {item.id!r} is left out of the registry and stored under "
+                    f"the key {item.key!r}, which this save uses; fix or remove {item.id!r} first")
+            section[item.key] = item.record
+            document[item.section] = section
+            kept.append(item)
+        return document, kept
+
     def get_provider_admin_state(self) -> dict[str, Any]:
         return provider_admin_setting_from_store(path=self.path)
 
@@ -877,13 +1007,75 @@ class AdminSQLiteStore:
             if reason:
                 raise ValueError(f"service {service_id!r}: native pass-through cannot reach its host. {reason}")
 
+    def _ingest_carriers(self, registry: Mapping[str, Any], actor: AdminContext) -> tuple[dict[str, Any], list[str], list[str]]:
+        """The registry to store for a write, the references it created, and the ones it no longer holds (decision D27).
+
+        A carrier that holds secret entries is kept exactly (a write must send it back as read or leave it out);
+        inline input (a header value, an environment value, a command argument after a credential flag, URL user
+        info) becomes a new secret entry, and only the owner may add one. The caller deletes ``created`` when the
+        write fails and ``retired`` once it has committed.
+        """
+        stored = self.get_service_registry()
+        stored_services = stored.get("services") or {}
+        out = copy.deepcopy(dict(registry))
+        services = out.get("services") if isinstance(out.get("services"), dict) else {}
+        probe = lambda value, origin=None: secret_refs.new_ref()  # noqa: E731 - a dry run: nothing is stored
+        for service_id, record in services.items():
+            try:
+                _, moved = record_carriers.ingest_service(record, stored_services.get(service_id), probe)
+            except record_carriers.CarrierLocked as error:
+                raise ValueError(str(error)) from None
+            if moved and "owner" not in actor.roles:
+                raise PermissionError("Only the owner can add a secret.")
+        created: list[str] = []
+
+        def put(value: str, origin: str | None = None) -> str:
+            ref = secret_refs.store(value, db_path=self.path, origin=origin)
+            created.append(ref)
+            return ref
+
+        try:
+            for service_id, record in list(services.items()):
+                services[service_id], _ = record_carriers.ingest_service(record, stored_services.get(service_id), put)
+        except BaseException:
+            self._discard_secrets(created)
+            raise
+        retired = sorted(set(record_carriers.refs_in(stored_services)) - set(record_carriers.refs_in(services)))
+        return out, created, retired
+
+    def _discard_secrets(self, refs: Iterable[str]) -> None:
+        for ref in refs:
+            try:
+                secret_refs.delete(ref, db_path=self.path)
+            except Exception:  # noqa: BLE001 - an orphan is unreadable and harmless; the write's own result stands
+                pass
+
     def update_service_registry(
         self, *, data: Mapping[str, Any], actor: AdminContext,
         expected_generation: int,
     ) -> dict[str, Any]:
-        value = self._settle_credential_bindings(data, actor)
+        data, created, retired = self._ingest_carriers(data, actor)
+        try:
+            value = self._settle_credential_bindings(data, actor)
+        except BaseException:
+            self._discard_secrets(created)
+            raise
+        document, excluded = self._with_excluded_records(value)
+        try:
+            record = self._write_registry_for_update(document, value, actor, expected_generation)
+        except BaseException:
+            self._discard_secrets(created)
+            raise
+        self._discard_secrets(retired)
+        record = {**record, "value": value, "excluded": excluded}
+        self.write_litellm_config(value)
+        self._fire_registry_changed(record)
+        return record
+
+    def _write_registry_for_update(self, document: Mapping[str, Any], value: Mapping[str, Any], actor: AdminContext,
+                                   expected_generation: int) -> dict[str, Any]:
         record = admin_store.write_service_registry_with_audit(
-            value,
+            document,
             expected_generation=expected_generation,
             updated_by=actor.subject,
             audit_action="operator.service_registry.update",
@@ -900,8 +1092,6 @@ class AdminSQLiteStore:
             },
             path=self.path,
         )
-        self.write_litellm_config(record["value"])
-        self._fire_registry_changed(record)
         return record
 
     # -- single-service CRUD -------------------------------------------------
@@ -939,10 +1129,36 @@ class AdminSQLiteStore:
         service_id: str,
         expected_generation: int,
         extra: Mapping[str, Any] | None = None,
+        removing: Collection[tuple[str, str]] = (),
+        ingest: bool = True,
     ) -> dict[str, Any]:
-        value = self._settle_credential_bindings(registry, actor)
+        created: list[str] = []
+        retired: list[str] = []
+        if ingest:
+            # Carriers first: what a read showed is put back as stored before the rules that compare with the stored record.
+            registry, created, retired = self._ingest_carriers(registry, actor)
+        try:
+            value = self._settle_credential_bindings(registry, actor)
+        except BaseException:
+            self._discard_secrets(created)
+            raise
+        document, excluded = self._with_excluded_records(value, removing=removing)
+        try:
+            record = self._write_registry_for_persist(document, value, action, actor, service_id, expected_generation, extra)
+        except BaseException:
+            self._discard_secrets(created)
+            raise
+        self._discard_secrets(retired)
+        # The returned record is what the gateway uses: the records that validate. The excluded ones are listed beside it.
+        record = {**record, "value": value, "excluded": excluded}
+        self.write_litellm_config(value)
+        self._fire_registry_changed(record)
+        return record
+
+    def _write_registry_for_persist(self, document: Mapping[str, Any], value: Mapping[str, Any], action: str, actor: AdminContext,
+                                    service_id: str, expected_generation: int, extra: Mapping[str, Any] | None) -> dict[str, Any]:
         record = admin_store.write_service_registry_with_audit(
-            value,
+            document,
             expected_generation=expected_generation,
             updated_by=actor.subject,
             audit_action=action,
@@ -956,8 +1172,6 @@ class AdminSQLiteStore:
             },
             path=self.path,
         )
-        self.write_litellm_config(record["value"])
-        self._fire_registry_changed(record)
         return record
 
     def add_service(
@@ -968,6 +1182,7 @@ class AdminSQLiteStore:
             data.get("id") or data.get("name")
         )
         raw = service_registry.service_form_to_raw(data)
+        self._refuse_excluded_id(service_id)
         current_registry = self.get_service_registry()
         if service_id not in current_registry.get("services", {}) and raw.get("models"):
             # Newly authored model mappings use the current schema. Existing
@@ -987,6 +1202,14 @@ class AdminSQLiteStore:
             expected_generation=expected_generation,
         )
 
+    def _refuse_excluded_id(self, service_id: str) -> None:
+        """Adding a service under the id of one that is left out would replace it without the operator saying so."""
+        held = self._excluded_service(service_id)
+        if held is not None:
+            raise ValueError(
+                f"service {held.id!r} already exists but is left out of the registry ({held.error}); "
+                "fix it or remove it first")
+
     def write_engine(
         self, *, service_id: str, raw: Mapping[str, Any], actor: AdminContext,
         expected_generation: int, replace: bool, existing: Mapping[str, Any] | None = None,
@@ -996,13 +1219,19 @@ class AdminSQLiteStore:
         ``raw`` is the whole record, already built and checked; the credential and
         lifecycle rules for administrators are applied here as for every write.
         """
+        if not replace:
+            self._refuse_excluded_id(service_id)
         registry, record = service_registry.upsert_service_in_registry(
             self.get_service_registry(), service_id=service_id, raw=raw, source="ui", replace=replace,
         )
         if existing is not None:
-            for field in ("kind", "provenance"):
-                if field in existing:
-                    record[field] = copy.deepcopy(existing[field])
+            # An edit through the engine page names the engine's own settings. Everything else the record holds (its
+            # process and observations, its residency and resources, its secret references, its kind and provenance)
+            # stays as stored, secret entries included.
+            named = {key: True for key in raw if key in ("process", "observations", "residency", "resources")}
+            if "lifecycle" in raw and raw["lifecycle"] != dict(service_registry.legacy_lifecycle_from_service(existing)):
+                named["lifecycle"] = True  # a lifecycle the page changed; one it sent back as stored is not a change
+            service_registry.carry_unnamed_record_fields(existing, record, named=named)
         return self._persist_service_registry(
             registry,
             action="operator.service.updated" if replace else "operator.service.added",
@@ -1023,10 +1252,14 @@ class AdminSQLiteStore:
         sid = service_registry.normalize_id(service_id)
         current_registry = self.get_service_registry()
         existing = (current_registry.get("services") or {}).get(sid)
+        left_out = self._excluded_service(sid) if existing is None else None
+        if left_out is not None and isinstance(left_out.record, Mapping):
+            # The way to fix a record that is left out: edit it, starting from what is stored.
+            existing = left_out.record
         if existing is not None and not service_registry.is_litellm_service_record(
             sid, existing
         ):
-            existing_config = existing.get("config") or {}
+            existing_config = existing.get("config") if isinstance(existing.get("config"), Mapping) else {}
             # H1 (honesty law): start from ALL top-level record fields and EVERY
             # config key so that unmodeled/unknown fields are never silently
             # dropped by a partial PATCH.  The explicit caller-supplied data
@@ -1070,7 +1303,7 @@ class AdminSQLiteStore:
             service_id=service_id,
             raw=raw,
             source="ui",
-            replace=True,
+            replace=left_out is None,  # a record that is left out is not in the registry yet: this edit adds it back
         )
         if existing is not None and not service_registry.is_litellm_service_record(sid, existing):
             service_registry.carry_unnamed_record_fields(existing, record, named=data)
@@ -1086,21 +1319,76 @@ class AdminSQLiteStore:
         self, *, service_id: str, actor: AdminContext,
         expected_generation: int,
     ) -> dict[str, Any]:
-        registry = service_registry.remove_service_from_registry(
-            self.get_service_registry(), service_id
-        )
+        sid = service_registry.normalize_id(service_id)
+        current = self.get_service_registry()
+        if sid not in (current.get("services") or {}) and self._excluded_service(sid) is not None:
+            # A service that is left out has nothing in the registry to remove; the save drops the stored record.
+            registry, removing = current, {("services", sid)}
+        else:
+            registry, removing = service_registry.remove_service_from_registry(current, service_id), set()
         return self._persist_service_registry(
             registry,
             action="operator.service.removed",
             actor=actor,
-            service_id=service_registry.normalize_id(service_id),
+            service_id=sid,
             expected_generation=expected_generation,
+            removing=removing,
         )
+
+    def apply_secret_commands(
+        self, *, service_id: str, commands: list[dict[str, Any]], actor: AdminContext, expected_generation: int,
+    ) -> dict[str, Any]:
+        """Change the secret entries of one service by explicit commands (decision D27).
+
+        Only the owner changes a secret. The new secrets are stored first, the record is saved with the registry
+        generation check, and the secrets this call replaced or cleared are deleted after the save; a failure
+        deletes the ones this call stored. ``retain`` commands only check that the entry exists.
+        """
+        sid = service_registry.normalize_id(service_id)
+        if any(command["operation"] != "retain" for command in commands) and "owner" not in actor.roles:
+            raise PermissionError("Only the owner can change a secret.")
+        with secret_store.provider_mutation_lock(self.path):
+            registry = self.get_service_registry()
+            record = (registry.get("services") or {}).get(sid)
+            if record is None:
+                raise ValueError(f"service {sid!r} not found")
+            put = secret_refs.putter(self.path)
+            try:
+                new_record, outcome = secret_commands.apply_commands(record, commands, put)
+            except secret_commands.CommandError as error:
+                for ref in getattr(error, "created", ()):
+                    secret_refs.delete(ref, db_path=self.path)
+                raise
+            if not outcome.changed:
+                return {**(admin_store.get_service_registry_with_generation(path=self.path) or {}), "value": registry,
+                        "excluded": self.get_service_registry_exclusions()}
+            registry["services"][sid] = new_record
+            try:
+                saved = self._persist_service_registry(
+                    registry, action="operator.service.secret_entries", actor=actor, service_id=sid,
+                    expected_generation=expected_generation, ingest=False,
+                    extra={"entries_added": len(outcome.created), "entries_retired": len(outcome.retired)})
+            except BaseException as error:
+                if not isinstance(error, RegistryNotApplied):
+                    for ref in outcome.created:
+                        secret_refs.delete(ref, db_path=self.path)
+                    raise
+                saved = None
+                pending = error
+            for ref in outcome.retired:
+                secret_refs.delete(ref, db_path=self.path)
+            if saved is None:
+                raise pending
+            return saved
 
     def set_service_enabled(
         self, *, service_id: str, enabled: bool, actor: AdminContext,
         expected_generation: int,
     ) -> dict[str, Any]:
+        if service_registry.normalize_id(service_id) not in (self.get_service_registry().get("services") or {}):
+            held = self._excluded_service(service_id)
+            if held is not None:
+                raise ValueError(f"service {held.id!r} is left out of the registry ({held.error}); fix it or remove it first")
         registry = service_registry.set_service_enabled(
             self.get_service_registry(), service_id, enabled
         )
@@ -1121,11 +1409,37 @@ class AdminSQLiteStore:
         value = record["value"] if record is not None else {}
         return extension_packages.normalize_extension_package_index(value)
 
+    @staticmethod
+    def _split_package_source(source: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+        """A package source with the credentials of its URLs taken out: the public source, and the credential parts by key.
+
+        The parts live in memory for the one clone that needs them; ``enable`` stores them as entries. Any field that is
+        not one of the source's own (a token, a password, a header) is dropped from the public source here; ``enable``
+        keeps each as an entry of its own (``record_carriers.source_extras``), and nothing reads it back.
+        """
+        try:
+            record_carriers.source_extras(source)
+        except ValueError as error:
+            raise ValueError(str(error)) from None
+        public = {key: value for key, value in source.items() if key in record_carriers.PACKAGE_SOURCE_PUBLIC_KEYS}
+        credentials: dict[str, dict[str, Any]] = {}
+        for key in record_carriers.PACKAGE_SOURCE_URL_KEYS:
+            value = public.get(key)
+            if isinstance(value, str) and "://" in value:
+                try:
+                    stripped, parts = record_carriers.split_url(value.strip())
+                except record_carriers.AmbiguousUrl:
+                    raise ValueError("that package source URL cannot be read") from None
+                if parts:
+                    public[key], credentials[key] = stripped, parts
+        return public, credentials
+
     def validate_extension_package_source(
         self, *, source: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
-        self._require_owner_for_host_source(source, actor)
-        return extension_packages.validate_extension_package_source(source)
+        public, credentials = self._split_package_source(source)
+        self._require_owner_for_host_source(public, actor)
+        return extension_packages.validate_extension_package_source(public, credentials=credentials)
 
     @staticmethod
     def _require_owner_for_host_source(source: Mapping[str, Any], actor: AdminContext) -> None:
@@ -1138,10 +1452,13 @@ class AdminSQLiteStore:
         self, *, source: Mapping[str, Any], actor: AdminContext,
         expected_generation: int,
     ) -> dict[str, Any]:
+        extras = record_carriers.source_extras(source)
+        source, credentials = self._split_package_source(source)
         self._require_owner_for_host_source(source, actor)
         review = extension_packages.validate_extension_package_source(
             source,
             install_root=self.path.parent / "extensions" / "installed",
+            credentials=credentials,
         )
         if not review.get("ok"):
             return {
@@ -1172,66 +1489,100 @@ class AdminSQLiteStore:
         )
         # A package is data the administrator picked, not the owner: it gets the
         # same credential and lifecycle checks as a registry edit.
-        registry = self._settle_credential_bindings(registry, actor)
+        registry, ingested, retired = self._ingest_carriers(registry, actor)
+        try:
+            registry = self._settle_credential_bindings(registry, actor)
+        except BaseException:
+            self._discard_secrets(ingested)
+            raise
         package_index = extension_packages.merge_package_index(
             self.get_extension_package_index(),
             review,
             source=source,
         )
+        created: list[str] = []
+
+        def put(value: str, origin: str | None = None) -> str:
+            ref = secret_refs.store(value, db_path=self.path, origin=origin)
+            created.append(ref)
+            return ref
+
+        try:
+            for key, parts in credentials.items():
+                entries = record_carriers.url_entries(str(source[key]), parts, put)
+                for held in record_carriers.package_sources(package_index):
+                    if held.get(key) == source[key] and not held.get(key + record_carriers.SECRETS_SUFFIX):
+                        held[key + record_carriers.SECRETS_SUFFIX] = copy.deepcopy(entries)
+            if extras:
+                held_extras = {key: secret_refs.entry(put(text, None)) for key, text in extras.items()}
+                for held in record_carriers.package_sources(package_index):
+                    if all(held.get(key) == source[key] for key in ("url", "repo_url", "path", "directory", "repo", "repository") if key in source):
+                        held[record_carriers.SOURCE_EXTRA_ENTRIES] = copy.deepcopy(held_extras)
+        except BaseException:
+            self._discard_secrets([*created, *ingested])
+            raise
         package_id = str((review.get("package") or {}).get("id") or "")
         # The snapshot keeps a digest of each normalized record the package wrote, not a copy.
+        # They are digested in the form the registry stores them (references, not secrets), under the gateway's own key.
         package_index["packages"][package_id].update(extension_packages.installed_records_proof({
             kind: {record_id: registry[kind][record_id] for record_id in imported[kind]}
             for kind in sorted(extension_packages.DATA_OBJECT_KINDS)
-        }))
+        }, key=record_integrity.install_key(self.path)))
         # Registry, package index and both audit facts commit together: a
         # failure at any step leaves the generation and every row unchanged.
-        registry_record, index_record = admin_store.write_service_registry_and_setting_with_audits(
-            registry,
-            expected_generation=expected_generation,
-            updated_by=actor.subject,
-            setting_key=EXTENSION_PACKAGE_INDEX_SETTING_KEY,
-            setting_value=package_index,
-            audits=[
-                {
-                    "action": "operator.service_registry.update",
-                    "actor_kind": actor.actor_kind,
-                    "actor_id": actor.audit_actor_id,
-                    "actor_label": actor.actor_label,
-                    "target_kind": "operator_setting",
-                    "target_id": SERVICE_REGISTRY_SETTING_KEY,
-                    "metadata": {
-                        "service_count": len(registry.get("services") or {}),
-                        "protocol_frontend_count": len(registry.get("protocol_frontends") or {}),
-                        "workflow_count": len(registry.get("workflows") or {}),
-                        "capability_count": len(registry.get("capabilities") or {}),
+        document, excluded = self._with_excluded_records(registry)
+        try:
+            registry_record, index_record = admin_store.write_service_registry_and_setting_with_audits(
+                document,
+                expected_generation=expected_generation,
+                updated_by=actor.subject,
+                setting_key=EXTENSION_PACKAGE_INDEX_SETTING_KEY,
+                setting_value=package_index,
+                audits=[
+                    {
+                        "action": "operator.service_registry.update",
+                        "actor_kind": actor.actor_kind,
+                        "actor_id": actor.audit_actor_id,
+                        "actor_label": actor.actor_label,
+                        "target_kind": "operator_setting",
+                        "target_id": SERVICE_REGISTRY_SETTING_KEY,
+                        "metadata": {
+                            "service_count": len(registry.get("services") or {}),
+                            "protocol_frontend_count": len(registry.get("protocol_frontends") or {}),
+                            "workflow_count": len(registry.get("workflows") or {}),
+                            "capability_count": len(registry.get("capabilities") or {}),
+                        },
                     },
-                },
-                {
-                    "action": "operator.extension_package.enable",
-                    "actor_kind": actor.actor_kind,
-                    "actor_id": actor.audit_actor_id,
-                    "actor_label": actor.actor_label,
-                    "target_kind": "extension_package",
-                    "target_id": package_id,
-                    "metadata": {
-                        "service_count": len(imported["services"]),
-                        "protocol_frontend_count": len(imported["protocol_frontends"]),
-                        "workflow_count": len(imported["workflows"]),
-                        "capability_count": len(imported["capabilities"]),
-                        "package_hash": review.get("package_hash"),
+                    {
+                        "action": "operator.extension_package.enable",
+                        "actor_kind": actor.actor_kind,
+                        "actor_id": actor.audit_actor_id,
+                        "actor_label": actor.actor_label,
+                        "target_kind": "extension_package",
+                        "target_id": package_id,
+                        "metadata": {
+                            "service_count": len(imported["services"]),
+                            "protocol_frontend_count": len(imported["protocol_frontends"]),
+                            "workflow_count": len(imported["workflows"]),
+                            "capability_count": len(imported["capabilities"]),
+                            "package_hash": review.get("package_hash"),
+                        },
                     },
-                },
-            ],
-            path=self.path,
-        )
-        # The artifact and reload observe the committed registry.
-        self.write_litellm_config(registry_record["value"])
+                ],
+                path=self.path,
+            )
+        except BaseException:
+            self._discard_secrets([*created, *ingested])
+            raise
+        self._discard_secrets(retired)
+        # The artifact and reload observe the committed registry: the records that validate.
+        registry_record = {**registry_record, "value": registry, "excluded": excluded}
+        self.write_litellm_config(registry)
         self._fire_registry_changed(registry_record)
         return {
             "extension_package": (index_record["value"].get("packages") or {}).get(package_id),
             "review": review,
-            "service_registry": registry_record["value"],
+            "service_registry": registry,
             "operator_settings_generation": registry_record[
                 "operator_settings_generation"
             ],
@@ -1263,7 +1614,7 @@ class AdminSQLiteStore:
         index = self.get_extension_package_index()
         try:
             package_index, next_registry, affected = extension_packages.change_package_lifecycle(
-                index, registry, package_id, mode=mode,
+                index, registry, package_id, mode=mode, key=self._install_key(index),
             )
         except KeyError as exc:
             raise ValueError(str(exc)) from exc
@@ -1277,7 +1628,8 @@ class AdminSQLiteStore:
                 f"access plan {plan['name']}": plan["plan"]
                 for plan in admin_store.list_access_plans_in(conn)
             }
-            extension_packages.change_package_lifecycle(index, registry, package_id, mode=mode, references=references)
+            extension_packages.change_package_lifecycle(
+                index, registry, package_id, mode=mode, references=references, key=self._install_key(index))
 
         registry_record, index_record = admin_store.write_service_registry_and_setting_with_audits(
             next_registry,
@@ -1297,6 +1649,14 @@ class AdminSQLiteStore:
             }],
             path=self.path,
         )
+        # What a removal took out of the registry and the index no longer needs its secrets: the entries of the removed
+        # records and of the package's own source. A record the package left (detached, kept) keeps its entries.
+        gone = [registry[item["kind"]][item["id"]] for item in affected
+                if item["action"] == "removed" and isinstance((registry.get(item["kind"]) or {}).get(item["id"]), Mapping)]
+        gone_refs = {ref for record in gone for ref in record_carriers.refs_in(record)}
+        gone_refs |= set(record_carriers.refs_in((index["packages"].get(package_id) or {}).get("source")))
+        still_used = set(record_carriers.refs_in(next_registry)) | set(record_carriers.refs_in(index_record["value"]))
+        self._discard_secrets(sorted(gone_refs - still_used))
         self.write_litellm_config(registry_record["value"])
         self._fire_registry_changed(registry_record)
         return {
@@ -1306,6 +1666,16 @@ class AdminSQLiteStore:
             "operator_settings_generation": registry_record["operator_settings_generation"],
             "affected_records": affected,
         }
+
+    def _install_key(self, index: Mapping[str, Any]) -> bytes | None:
+        """The key of the install proofs, when the index holds a keyed proof (a store with none is not given a key file)."""
+        keyed = any(
+            isinstance(entry, Mapping) and "mac" in entry
+            for package in (index.get("packages") or {}).values() if isinstance(package, Mapping)
+            for records in (package.get("installed_records") or {}).values() if isinstance(records, Mapping)
+            for entry in records.values()
+        )
+        return record_integrity.install_key(self.path) if keyed else None
 
     def get_oidc_config_setting(self) -> dict[str, Any] | None:
         """Return the DB-stored OIDC provider config with secrets redacted.

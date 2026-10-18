@@ -17,6 +17,7 @@ import {
 import { CompactTouchTargets } from "@/components/ui/compact-touch-targets";
 import { groupEngines, humanCapabilities } from "./engine-groups";
 import { AddEngineDialog } from "./add-engine/add-engine-dialog";
+import { LeftOutRecords } from "./left-out-records";
 import { EngineRecordPage } from "./record/engine-record-page";
 import { ErrorState } from "@/components/product/error-state";
 import { useViewer } from "@/components/shell/session";
@@ -604,6 +605,10 @@ function EnginesContents() {
             </div>
           )}
         </section>
+        <LeftOutRecords
+          records={registryData?.excluded ?? []}
+          onChanged={updateRegistry}
+        />
       </div>
       <AddEngineDialog
         open={addOpen}

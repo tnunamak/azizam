@@ -1,0 +1,1960 @@
+{
+ "schema_version": 2,
+ "services": {
+  "azizam": {
+   "capabilities": [],
+   "config": {
+    "description": "Access the available AI tools.",
+    "display_name": "Azizam",
+    "health_endpoint": "/health",
+    "host": "127.0.0.1",
+    "managed": false,
+    "name": "azizam (self)",
+    "native_passthrough": false,
+    "port": 5000,
+    "role": "required"
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "azizam",
+   "kind": "provider",
+   "lifecycle": {
+    "managed": false,
+    "service_name": "",
+    "type": "external"
+   },
+   "name": "azizam (self)",
+   "observations": {},
+   "priority": 100,
+   "process": {
+    "driver": "none",
+    "legacy_lifecycle": {
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    }
+   },
+   "provenance": {
+    "seed": "proxy_config.yml:backends.azizam",
+    "seed_hash": "a2df999e56969000396fa64773c147b4ef78d0236ab608016ed4090830731feb"
+   },
+   "residency": {},
+   "role": "required",
+   "secret_refs": {},
+   "source": "provisioned"
+  },
+  "comfyui": {
+   "capabilities": [
+    "images",
+    "generations",
+    "videos"
+   ],
+   "config": {
+    "capabilities": [
+     "images",
+     "generations",
+     "videos"
+    ],
+    "default_model": "krea2-turbo",
+    "description": "Create images and videos from your ideas.",
+    "display_name": "Image and video creation",
+    "health_endpoint": "/system_stats",
+    "health_success_path": "system",
+    "host": "127.0.0.1",
+    "managed": false,
+    "name": "ComfyUI (Image + Video Generation)",
+    "native_passthrough": true,
+    "port": 7890,
+    "role": "required",
+    "timeout": 300,
+    "video_timeout": 1800,
+    "video_workflows_dir": "./workflows",
+    "vram_budget_key": "GPU0_COMFYUI",
+    "workflows_dir": "./workflows/images"
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "comfyui",
+   "kind": "provider",
+   "lifecycle": {
+    "managed": false,
+    "service_name": "",
+    "type": "external"
+   },
+   "name": "ComfyUI (Image + Video Generation)",
+   "observations": {},
+   "priority": 100,
+   "process": {
+    "driver": "none",
+    "legacy_lifecycle": {
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    }
+   },
+   "provenance": {
+    "seed": "proxy_config.yml:backends.comfyui",
+    "seed_hash": "ea8f9b4644ce44e3d2c8536181bd861f0ce98fa830f041f0a016acbf78d9367b"
+   },
+   "residency": {},
+   "role": "required",
+   "secret_refs": {},
+   "source": "provisioned"
+  },
+  "decisions": {
+   "capabilities": [
+    "decisions"
+   ],
+   "config": {
+    "capabilities": [
+     "decisions"
+    ],
+    "default_model": "decider-2b-v11",
+    "health_endpoint": "/health",
+    "host": "127.0.0.1",
+    "managed": false,
+    "name": "Local decisions",
+    "note": "On-demand CPU decision service (observed about 2.9 GiB RSS for narrow readouts, up to 5.84 GiB for 255-option full-vocab readout); configurable CUDA placement with CPU startup fallback.",
+    "placement": "cpu",
+    "port": 8023,
+    "priority": 200,
+    "residency": "on_demand",
+    "role": "standby",
+    "timeout": 120
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "decisions",
+   "kind": "provider",
+   "name": "Local decisions",
+   "observations": {
+    "process_ready": {
+     "http": {
+      "expect": 200,
+      "path": "/health"
+     }
+    }
+   },
+   "priority": 200,
+   "process": {
+    "driver": "command",
+    "legacy_lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "health_endpoint": "/health",
+      "health_timeout_s": 90,
+      "scope": "user",
+      "unit": "decider.service"
+     },
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    },
+    "start": [
+     "systemctl",
+     "--user",
+     "start",
+     "decider.service"
+    ],
+    "status": [
+     "systemctl",
+     "--user",
+     "is-active",
+     "decider.service"
+    ],
+    "stop": [
+     "systemctl",
+     "--user",
+     "stop",
+     "decider.service"
+    ]
+   },
+   "provenance": {},
+   "residency": {},
+   "role": "standby",
+   "secret_refs": {},
+   "source": "ui"
+  },
+  "decisions-quality": {
+   "capabilities": [
+    "decisions"
+   ],
+   "config": {
+    "capabilities": [
+     "decisions"
+    ],
+    "default_model": "decider-4b-v2.1",
+    "health_endpoint": "/health",
+    "host": "127.0.0.1",
+    "managed": false,
+    "name": "Local quality decisions",
+    "note": "Opt-in CPU decision service (4B memory budget is unmeasured; unit starts at 10G); exits after 10 minutes idle.",
+    "placement": "cpu",
+    "port": 8025,
+    "priority": 200,
+    "residency": "on_demand",
+    "role": "standby",
+    "timeout": 120
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "decisions-quality",
+   "kind": "provider",
+   "name": "Local quality decisions",
+   "observations": {
+    "process_ready": {
+     "http": {
+      "expect": 200,
+      "path": "/health"
+     }
+    }
+   },
+   "priority": 200,
+   "process": {
+    "driver": "command",
+    "legacy_lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "health_endpoint": "/health",
+      "health_timeout_s": 90,
+      "scope": "user",
+      "unit": "decider-quality.service"
+     },
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    },
+    "start": [
+     "systemctl",
+     "--user",
+     "start",
+     "decider-quality.service"
+    ],
+    "status": [
+     "systemctl",
+     "--user",
+     "is-active",
+     "decider-quality.service"
+    ],
+    "stop": [
+     "systemctl",
+     "--user",
+     "stop",
+     "decider-quality.service"
+    ]
+   },
+   "provenance": {},
+   "residency": {},
+   "role": "standby",
+   "secret_refs": {},
+   "source": "ui"
+  },
+  "embeddings": {
+   "capabilities": [
+    "openai",
+    "embeddings"
+   ],
+   "config": {
+    "base_path": "/v1",
+    "capabilities": [
+     "openai",
+     "embeddings"
+    ],
+    "description": "Represent text for semantic search and comparison.",
+    "display_name": "Nomic text embeddings",
+    "health_endpoint": "/health",
+    "host": "127.0.0.1",
+    "managed": false,
+    "model_id": "nomic-embed-text-v1.5",
+    "models": [
+     {
+      "id": "nomic-embed-text-v1.5",
+      "model_group": "nomic-embed-text-v1.5",
+      "upstream_model": "nomic-embed-text-v1.5.f16.gguf"
+     }
+    ],
+    "name": "nomic-embed-text-v1.5 CPU",
+    "native_passthrough": true,
+    "note": "CPU-only llama-server embedding backend; no GPU budget claim.",
+    "port": 5061,
+    "protocol": "openai-compatible",
+    "resources": {
+     "duration_class": "interactive",
+     "gpu_required": false,
+     "max_parallel": 4,
+     "vram_gb_estimate": 0
+    },
+    "role": "required",
+    "timeout": 120
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "embeddings",
+   "kind": "provider",
+   "lifecycle": {
+    "managed": false,
+    "service_name": "",
+    "type": "external"
+   },
+   "name": "nomic-embed-text-v1.5 CPU",
+   "observations": {},
+   "priority": 100,
+   "process": {
+    "driver": "none",
+    "legacy_lifecycle": {
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    }
+   },
+   "provenance": {
+    "seed": "proxy_config.yml:backends.embeddings",
+    "seed_hash": "7dfb67c9f5a381b72669f10755be8cf71946d9780b5f00ee31ec3ba0bfb9a028"
+   },
+   "residency": {},
+   "role": "required",
+   "secret_refs": {},
+   "source": "provisioned"
+  },
+  "kobold": {
+   "capabilities": [
+    "openai",
+    "chat",
+    "completions"
+   ],
+   "config": {
+    "aux": {
+     "flag": "--mmproj",
+     "grants_input_modalities": [
+      "image"
+     ],
+     "probe": "process-cmdline",
+     "process": "llama-server"
+    },
+    "base_path": "/v1",
+    "capabilities": [
+     "openai",
+     "chat",
+     "completions"
+    ],
+    "context_window_probe": {
+     "endpoint": "/v1/models"
+    },
+    "description": "Chat, write, reason, and work with code.",
+    "display_name": "Local chat",
+    "enabled": true,
+    "gateway_lifecycle": true,
+    "health_endpoint": "/v1/models",
+    "host": "127.0.0.1",
+    "lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "activation_env_keys": {
+       "aux": "LLAMA_BEE_MMPROJ",
+       "model": "LLAMA_BEE_MODEL"
+      },
+      "activation_profiles": {
+       "kv-q5-q4": {
+        "LLAMA_BEE_CTK": "q5_0",
+        "LLAMA_BEE_CTV": "q4_1",
+        "LLAMA_BEE_CTX": 202752,
+        "LLAMA_BEE_DRAFT_CTK": "q5_0",
+        "LLAMA_BEE_DRAFT_CTV": "q4_1"
+       },
+       "kv-q5-q4-rp": {
+        "LLAMA_BEE_CTK": "q5_0",
+        "LLAMA_BEE_CTV": "q4_1",
+        "LLAMA_BEE_CTX": 217088,
+        "LLAMA_BEE_DRAFT_CTK": "q5_0",
+        "LLAMA_BEE_DRAFT_CTV": "q4_1"
+       },
+       "kv-q8": {
+        "LLAMA_BEE_CTK": "q8_0",
+        "LLAMA_BEE_CTV": "q8_0",
+        "LLAMA_BEE_CTX": 145408
+       }
+      },
+      "activation_requires_absolute_path": true,
+      "dropin": "95-activation.conf",
+      "health_endpoint": "/v1/models",
+      "health_timeout_s": 180,
+      "precheck": "gguf_path",
+      "scope": "user",
+      "swap_strategy": "dropin-env-restart",
+      "unit": "llama-bee.service"
+     }
+    },
+    "loaded_model_identity": "path",
+    "managed": false,
+    "model_policy_schema_version": 1,
+    "models": [
+     {
+      "activation_mmproj": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf",
+      "activation_model": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+      "activation_profile": "kv-q5-q4",
+      "context_window": 202752,
+      "id": "default",
+      "model_group": "default",
+      "model_metadata": {
+       "input_modalities": [
+        "text",
+        "image"
+       ],
+       "tags": [
+        "reasoning",
+        "tool-use",
+        "vision"
+       ]
+      },
+      "transforms": [
+       {
+        "from": "max_completion_tokens",
+        "kind": "param-map",
+        "only_if_destination_absent": true,
+        "to": "max_tokens"
+       },
+       {
+        "kind": "default-params",
+        "set": {
+         "max_tokens": 16384
+        }
+       }
+      ],
+      "upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+     },
+     {
+      "activation_mmproj": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf",
+      "activation_model": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+      "activation_profile": "kv-q5-q4",
+      "context_window": 202752,
+      "id": "coder",
+      "model_group": "coder",
+      "model_metadata": {
+       "input_modalities": [
+        "text",
+        "image"
+       ],
+       "tags": [
+        "reasoning",
+        "tool-use",
+        "vision"
+       ]
+      },
+      "upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+     },
+     {
+      "activation_mmproj": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf",
+      "activation_model": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+      "activation_profile": "kv-q5-q4",
+      "backend_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+      "base_model_id": "coder",
+      "context_window": 202752,
+      "id": "coder-q5",
+      "model_group": "coder-q5",
+      "model_metadata": {
+       "input_modalities": [
+        "text",
+        "image"
+       ],
+       "tags": [
+        "reasoning",
+        "tool-use",
+        "vision"
+       ]
+      },
+      "upstream_model": "coder-q5"
+     },
+     {
+      "activation_mmproj": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf",
+      "activation_model": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+      "activation_profile": "kv-q8",
+      "backend_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+      "base_model_id": "coder",
+      "context_window": 145408,
+      "id": "coder-q8",
+      "model_group": "coder-q8",
+      "model_metadata": {
+       "input_modalities": [
+        "text",
+        "image"
+       ],
+       "tags": [
+        "reasoning",
+        "tool-use",
+        "vision"
+       ]
+      },
+      "upstream_model": "coder-q8"
+     },
+     {
+      "activation_mmproj": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf",
+      "activation_model": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+      "activation_profile": "kv-q5-q4",
+      "base_model_id": "default",
+      "context_window": 202752,
+      "id": "default-fast",
+      "model_group": "default-fast",
+      "model_metadata": {
+       "input_modalities": [
+        "text",
+        "image"
+       ],
+       "tags": [
+        "tool-use",
+        "vision"
+       ]
+      },
+      "policy_overlay": [
+       {
+        "kind": "default-params",
+        "set": {
+         "reasoning_effort": "none"
+        }
+       }
+      ],
+      "upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+     },
+     {
+      "base_model_id": "default",
+      "id": "current",
+      "model_group": "current",
+      "model_metadata": {
+       "input_modalities": [
+        "text",
+        "image"
+       ],
+       "tags": [
+        "reasoning",
+        "tool-use",
+        "vision"
+       ]
+      },
+      "upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+     },
+     {
+      "base_model_id": "default",
+      "id": "current-fast",
+      "model_group": "current-fast",
+      "model_metadata": {
+       "input_modalities": [
+        "text",
+        "image"
+       ],
+       "tags": [
+        "tool-use",
+        "vision"
+       ]
+      },
+      "policy_overlay": [
+       {
+        "kind": "default-params",
+        "set": {
+         "reasoning_effort": "none"
+        }
+       }
+      ],
+      "upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+     },
+     {
+      "activation_mmproj": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf",
+      "activation_model": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+      "activation_profile": "kv-q5-q4",
+      "backend_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+      "context_window": 202752,
+      "id": "rp",
+      "model_group": "rp",
+      "model_metadata": {
+       "input_modalities": [
+        "text",
+        "image"
+       ],
+       "tags": [
+        "reasoning",
+        "tool-use",
+        "vision"
+       ]
+      },
+      "upstream_model": "rp"
+     },
+     {
+      "activation_mmproj": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf",
+      "activation_model": "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+      "activation_profile": "kv-q5-q4",
+      "backend_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+      "context_window": 202752,
+      "id": "coder-unchained",
+      "model_group": "coder-unchained",
+      "model_metadata": {
+       "input_modalities": [
+        "text",
+        "image"
+       ],
+       "tags": [
+        "reasoning",
+        "tool-use",
+        "vision"
+       ]
+      },
+      "upstream_model": "coder-unchained"
+     }
+    ],
+    "name": "Local llama.cpp server (official; Bee rollback available)",
+    "native_passthrough": true,
+    "port": 5051,
+    "priority": 100,
+    "protocol": "openai-compatible",
+    "role": "required",
+    "state_type": "llama_cpp",
+    "transforms": [
+     "reasoning-effort-final-chat"
+    ],
+    "vram_budget_key": "GPU1_LLM"
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "kobold",
+   "kind": "provider",
+   "lifecycle": {
+    "driver": "systemd",
+    "driver_config": {
+     "activation_env_keys": {
+      "aux": "LLAMA_BEE_MMPROJ",
+      "model": "LLAMA_BEE_MODEL"
+     },
+     "activation_profiles": {
+      "kv-q5-q4": {
+       "LLAMA_BEE_CTK": "q5_0",
+       "LLAMA_BEE_CTV": "q4_1",
+       "LLAMA_BEE_CTX": 202752,
+       "LLAMA_BEE_DRAFT_CTK": "q5_0",
+       "LLAMA_BEE_DRAFT_CTV": "q4_1"
+      },
+      "kv-q5-q4-rp": {
+       "LLAMA_BEE_CTK": "q5_0",
+       "LLAMA_BEE_CTV": "q4_1",
+       "LLAMA_BEE_CTX": 217088,
+       "LLAMA_BEE_DRAFT_CTK": "q5_0",
+       "LLAMA_BEE_DRAFT_CTV": "q4_1"
+      },
+      "kv-q8": {
+       "LLAMA_BEE_CTK": "q8_0",
+       "LLAMA_BEE_CTV": "q8_0",
+       "LLAMA_BEE_CTX": 145408
+      }
+     },
+     "activation_requires_absolute_path": true,
+     "dropin": "95-activation.conf",
+     "health_endpoint": "/v1/models",
+     "health_timeout_s": 180,
+     "precheck": "gguf_path",
+     "scope": "user",
+     "swap_strategy": "dropin-env-restart",
+     "unit": "llama-bee.service"
+    },
+    "managed": false,
+    "service_name": "",
+    "type": "external"
+   },
+   "name": "Local llama.cpp server (official; Bee rollback available)",
+   "observations": {
+    "process_ready": {
+     "http": {
+      "expect": 200,
+      "path": "/v1/models"
+     }
+    }
+   },
+   "priority": 100,
+   "process": {
+    "driver": "command",
+    "legacy_lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "activation_env_keys": {
+       "aux": "LLAMA_BEE_MMPROJ",
+       "model": "LLAMA_BEE_MODEL"
+      },
+      "activation_profiles": {
+       "kv-q5-q4": {
+        "LLAMA_BEE_CTK": "q5_0",
+        "LLAMA_BEE_CTV": "q4_1",
+        "LLAMA_BEE_CTX": 202752,
+        "LLAMA_BEE_DRAFT_CTK": "q5_0",
+        "LLAMA_BEE_DRAFT_CTV": "q4_1"
+       },
+       "kv-q5-q4-rp": {
+        "LLAMA_BEE_CTK": "q5_0",
+        "LLAMA_BEE_CTV": "q4_1",
+        "LLAMA_BEE_CTX": 217088,
+        "LLAMA_BEE_DRAFT_CTK": "q5_0",
+        "LLAMA_BEE_DRAFT_CTV": "q4_1"
+       },
+       "kv-q8": {
+        "LLAMA_BEE_CTK": "q8_0",
+        "LLAMA_BEE_CTV": "q8_0",
+        "LLAMA_BEE_CTX": 145408
+       }
+      },
+      "activation_requires_absolute_path": true,
+      "dropin": "95-activation.conf",
+      "health_endpoint": "/v1/models",
+      "health_timeout_s": 180,
+      "precheck": "gguf_path",
+      "scope": "user",
+      "swap_strategy": "dropin-env-restart",
+      "unit": "local-llm.service"
+     },
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    },
+    "profile_apply": {
+     "file": "95-activation.conf",
+     "kind": "write_env_file_then_restart",
+     "reload": [
+      "systemctl",
+      "--user",
+      "daemon-reload"
+     ],
+     "restore": "on_failure"
+    },
+    "start": [
+     "systemctl",
+     "--user",
+     "start",
+     "local-llm.service"
+    ],
+    "status": [
+     "systemctl",
+     "--user",
+     "is-active",
+     "local-llm.service"
+    ],
+    "stop": [
+     "systemctl",
+     "--user",
+     "stop",
+     "local-llm.service"
+    ]
+   },
+   "provenance": {
+    "seed": "proxy_config.yml:backends.kobold",
+    "seed_hash": "fd964a57232b5415416fe75b290bdffdc0c3706206bdac216fe2026bc6b3bdf7"
+   },
+   "residency": {},
+   "role": "required",
+   "secret_refs": {},
+   "source": "provisioned"
+  },
+  "litellm": {
+   "capabilities": [
+    "llm.execution"
+   ],
+   "config": {
+    "api_key_env": "AZIZAM_LITELLM_API_KEY",
+    "base_url_env": "AZIZAM_LITELLM_BASE_URL",
+    "config_path": "litellm.config.yaml",
+    "credential_origin": "http://127.0.0.1:4011",
+    "default_base_url": "http://127.0.0.1:4011",
+    "execution_substrate": "litellm",
+    "health_endpoint": "/health/liveliness",
+    "protocol": "litellm"
+   },
+   "editable": false,
+   "enabled": true,
+   "id": "litellm",
+   "kind": "llm-substrate",
+   "lifecycle": {
+    "managed": false,
+    "service_name": "litellm",
+    "type": "external"
+   },
+   "name": "LiteLLM",
+   "observations": {},
+   "priority": 10,
+   "process": {
+    "driver": "none",
+    "legacy_lifecycle": {
+     "managed": false,
+     "service_name": "litellm",
+     "type": "external"
+    }
+   },
+   "provenance": {},
+   "residency": {},
+   "role": "required",
+   "secret_refs": {},
+   "source": "builtin"
+  },
+  "openrouter": {
+   "capabilities": [
+    "openai"
+   ],
+   "config": {
+    "api_key_secret_id": "provider:openrouter:api_key",
+    "auth": {
+     "header": "Authorization",
+     "prefix": "Bearer"
+    },
+    "auth_test": {
+     "method": "GET",
+     "path": "/key"
+    },
+    "base_path": "/api/v1",
+    "base_url": "https://openrouter.ai/api/v1",
+    "billing_dimensions": [
+     "prompt_tokens",
+     "completion_tokens"
+    ],
+    "capabilities": [
+     "openai"
+    ],
+    "cost_class": "paid-remote",
+    "credential_origin": "https://openrouter.ai:443",
+    "docs_url": "https://openrouter.ai/docs",
+    "enabled": true,
+    "generation_stats": {
+     "cost_path": [
+      "data",
+      "total_cost"
+     ],
+     "id_param": "id",
+     "path": "/generation"
+    },
+    "host": "openrouter.ai",
+    "id": "openrouter",
+    "key_url": "https://openrouter.ai/settings/keys",
+    "kind": "provider",
+    "litellm_provider": "openrouter",
+    "managed": false,
+    "model_listing": {
+     "id_path": "id",
+     "items_path": "data",
+     "method": "GET",
+     "name_path": "name",
+     "path": "/models",
+     "prices": {
+      "cache_read_input_usd_per_million_tokens": {
+       "path": "pricing.input_cache_read",
+       "scale": "1000000"
+      },
+      "input_usd_per_million_tokens": {
+       "path": "pricing.prompt",
+       "scale": "1000000"
+      },
+      "output_usd_per_million_tokens": {
+       "path": "pricing.completion",
+       "scale": "1000000"
+      }
+     },
+     "pricing_path": "pricing"
+    },
+    "model_policy_schema_version": 1,
+    "models": [
+     {
+      "enabled": true,
+      "id": "openrouter/openai/gpt-4.1-nano",
+      "model_group": "openrouter/openai/gpt-4.1-nano",
+      "name": "OpenAI: GPT-4.1 Nano",
+      "upstream_model": "openai/gpt-4.1-nano"
+     }
+    ],
+    "name": "OpenRouter",
+    "preset_id": "openrouter",
+    "price": {
+     "models": {
+      "openrouter/openai/gpt-4.1-nano": {
+       "cache_read_input_usd_per_million_tokens": "0.025000000",
+       "input_usd_per_million_tokens": "0.1000000",
+       "output_usd_per_million_tokens": "0.4000000"
+      }
+     }
+    },
+    "protocol": "openai-compatible",
+    "protocols": [
+     "openai-chat"
+    ],
+    "provider_id": "openrouter",
+    "provider_type": "paid-remote",
+    "recommendations": [
+     {
+      "id": "provider_key_credit_limit",
+      "message": "Set an OpenRouter key credit limit equal to the gateway cap when supported.",
+      "url": "https://openrouter.ai/docs/guides/best-practices/spend-controls"
+     }
+    ],
+    "remote_provider": true,
+    "role": "required"
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "openrouter",
+   "kind": "provider",
+   "name": "OpenRouter",
+   "observations": {},
+   "priority": 100,
+   "process": {
+    "driver": "none",
+    "legacy_lifecycle": {
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    }
+   },
+   "provenance": {},
+   "residency": {},
+   "role": "required",
+   "secret_refs": {
+    "credential_origin": "<external-secret>"
+   },
+   "source": "ui"
+  },
+  "realtime": {
+   "capabilities": [
+    "realtime"
+   ],
+   "config": {
+    "capabilities": [
+     "realtime"
+    ],
+    "health_endpoint": "/v1/pool",
+    "host": "127.0.0.1",
+    "managed": false,
+    "name": "speech-to-speech",
+    "note": "OpenAI Realtime (WebSocket) served by Hugging Face speech-to-speech on CPU (Silero VAD, Smart Turn). Its STT, LLM and TTS slots call this gateway's own routes. Started by the gateway lifecycle driver; the gateway relays /v1/realtime to it.",
+    "port": 8022,
+    "priority": 200,
+    "role": "standby",
+    "timeout": 120
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "realtime",
+   "kind": "provider",
+   "name": "speech-to-speech",
+   "observations": {
+    "process_ready": {
+     "http": {
+      "expect": 200,
+      "path": "/v1/pool"
+     }
+    }
+   },
+   "priority": 200,
+   "process": {
+    "driver": "command",
+    "legacy_lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "health_endpoint": "/v1/pool",
+      "health_timeout_s": 120,
+      "scope": "user",
+      "unit": "speech-to-speech.service"
+     },
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    },
+    "start": [
+     "systemctl",
+     "--user",
+     "start",
+     "speech-to-speech.service"
+    ],
+    "status": [
+     "systemctl",
+     "--user",
+     "is-active",
+     "speech-to-speech.service"
+    ],
+    "stop": [
+     "systemctl",
+     "--user",
+     "stop",
+     "speech-to-speech.service"
+    ]
+   },
+   "provenance": {},
+   "residency": {},
+   "role": "standby",
+   "secret_refs": {},
+   "source": "ui"
+  },
+  "rerank": {
+   "capabilities": [
+    "rerank"
+   ],
+   "config": {
+    "capabilities": [
+     "rerank"
+    ],
+    "default_model": "qwen3-reranker-0.6b",
+    "health_endpoint": "/health",
+    "host": "127.0.0.1",
+    "managed": false,
+    "name": "rerank-cpu",
+    "note": "On-demand CPU reranker (llama-server --rerank, Qwen3-Reranker-0.6B); about 1 GB RAM while running, exits after 10 min idle, started by the gateway lifecycle driver. Never a GPU.",
+    "port": 8018,
+    "priority": 200,
+    "role": "standby",
+    "timeout": 120
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "rerank",
+   "kind": "provider",
+   "name": "rerank-cpu",
+   "observations": {
+    "process_ready": {
+     "http": {
+      "expect": 200,
+      "path": "/health"
+     }
+    }
+   },
+   "priority": 200,
+   "process": {
+    "driver": "command",
+    "legacy_lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "health_endpoint": "/health",
+      "health_timeout_s": 90,
+      "scope": "user",
+      "unit": "rerank-cpu.service"
+     },
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    },
+    "start": [
+     "systemctl",
+     "--user",
+     "start",
+     "rerank-cpu.service"
+    ],
+    "status": [
+     "systemctl",
+     "--user",
+     "is-active",
+     "rerank-cpu.service"
+    ],
+    "stop": [
+     "systemctl",
+     "--user",
+     "stop",
+     "rerank-cpu.service"
+    ]
+   },
+   "provenance": {},
+   "residency": {},
+   "role": "standby",
+   "secret_refs": {},
+   "source": "ui"
+  },
+  "stt": {
+   "capabilities": [
+    "audio",
+    "transcriptions"
+   ],
+   "config": {
+    "base_path": "/v1",
+    "capabilities": [
+     "audio",
+     "transcriptions"
+    ],
+    "chunking": {
+     "backend_timeout_seconds": 180,
+     "deadline_seconds": 360,
+     "enabled": true,
+     "global_concurrency": 2,
+     "max_channels": 2,
+     "max_decoded_bytes": 1073741824,
+     "max_duration_seconds": 14400,
+     "max_field_bytes": 65536,
+     "max_fields": 100,
+     "max_files": 8,
+     "max_input_bytes": 536870912,
+     "max_media_output_bytes": 8388608,
+     "max_response_bytes": 16777216,
+     "max_sample_rate": 48000,
+     "max_segments": 16,
+     "min_free_bytes": 67108864,
+     "setup_failure_policy": "passthrough",
+     "silence_min_seconds": 0.5,
+     "silence_noise_db": "-30dB",
+     "silence_search_seconds": 120,
+     "spool_dir": "data/stt-spool",
+     "target_seconds": 150,
+     "threshold_seconds": 180
+    },
+    "default_model": "parakeet-tdt-0.6b-v3",
+    "description": "Turn recorded speech into text.",
+    "display_name": "Parakeet transcription",
+    "enabled": true,
+    "health_endpoint": "/health",
+    "host": "127.0.0.1",
+    "managed": false,
+    "name": "parakeet-stt",
+    "native_passthrough": true,
+    "port": 5092,
+    "priority": 100,
+    "role": "required",
+    "timeout": 120,
+    "transforms": [
+     {
+      "drop": [
+       "timing"
+      ],
+      "kind": "drop-params",
+      "phase": "response"
+     }
+    ]
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "stt",
+   "kind": "provider",
+   "lifecycle": {
+    "managed": false,
+    "service_name": "",
+    "type": "external"
+   },
+   "name": "parakeet-stt",
+   "observations": {},
+   "priority": 100,
+   "process": {
+    "driver": "none",
+    "legacy_lifecycle": {
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    }
+   },
+   "provenance": {
+    "seed": "proxy_config.yml:backends.stt",
+    "seed_hash": "40f7f2b85c79e4f5d7ecc4d17165239e732f1b3f3ef2b4994d7c746010e1e663"
+   },
+   "residency": {},
+   "role": "required",
+   "secret_refs": {},
+   "source": "provisioned"
+  },
+  "stt-canary": {
+   "capabilities": [
+    "audio",
+    "transcriptions"
+   ],
+   "config": {
+    "base_path": "/v1",
+    "capabilities": [
+     "audio",
+     "transcriptions"
+    ],
+    "chunking": {
+     "backend_timeout_seconds": 180,
+     "deadline_seconds": 360,
+     "enabled": true,
+     "max_duration_seconds": 3600,
+     "max_segments": 64,
+     "silence_search_seconds": 40,
+     "spool_dir": "data/stt-spool",
+     "target_seconds": 120,
+     "threshold_seconds": 200
+    },
+    "default_model": "canary-180m-flash",
+    "enabled": true,
+    "health_endpoint": "/health",
+    "host": "127.0.0.1",
+    "id": "stt-canary",
+    "managed": false,
+    "name": "canary-stt",
+    "native_passthrough": true,
+    "note": "On-demand audio.cpp Canary 180M Flash ASR on GPU0; started by the gateway lifecycle driver.",
+    "port": 8013,
+    "priority": 200,
+    "role": "standby",
+    "timeout": 120,
+    "transforms": [
+     {
+      "drop": [
+       "timing"
+      ],
+      "kind": "drop-params",
+      "phase": "response"
+     }
+    ]
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "stt-canary",
+   "kind": "provider",
+   "name": "canary-stt",
+   "observations": {
+    "process_ready": {
+     "http": {
+      "expect": 200,
+      "path": "/health"
+     }
+    }
+   },
+   "priority": 200,
+   "process": {
+    "driver": "command",
+    "legacy_lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "health_endpoint": "/health",
+      "health_timeout_s": 90,
+      "scope": "user",
+      "unit": "canary-stt.service"
+     },
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    },
+    "start": [
+     "systemctl",
+     "--user",
+     "start",
+     "canary-stt.service"
+    ],
+    "status": [
+     "systemctl",
+     "--user",
+     "is-active",
+     "canary-stt.service"
+    ],
+    "stop": [
+     "systemctl",
+     "--user",
+     "stop",
+     "canary-stt.service"
+    ]
+   },
+   "provenance": {},
+   "residency": {},
+   "role": "standby",
+   "secret_refs": {},
+   "source": "ui"
+  },
+  "stt-diarize": {
+   "capabilities": [
+    "audio",
+    "transcriptions"
+   ],
+   "config": {
+    "base_path": "/v1",
+    "capabilities": [
+     "audio",
+     "transcriptions"
+    ],
+    "chunking": {
+     "backend_timeout_seconds": 1800,
+     "deadline_seconds": 2400,
+     "enabled": false,
+     "max_duration_seconds": 14400,
+     "max_field_bytes": 8388608,
+     "spool_dir": "data/stt-spool"
+    },
+    "default_model": "nemotron-3-diarization",
+    "enabled": true,
+    "health_endpoint": "/health",
+    "host": "127.0.0.1",
+    "id": "stt-diarize",
+    "managed": false,
+    "name": "diarize-stt",
+    "native_passthrough": true,
+    "note": "On-demand CPU diarization (Nemotron 3 Diarization) plus Parakeet words, gpt-4o-transcribe-diarize shape; started by the gateway lifecycle driver.",
+    "port": 8014,
+    "priority": 200,
+    "role": "standby",
+    "timeout": 1800,
+    "transforms": [
+     {
+      "drop": [
+       "timing"
+      ],
+      "kind": "drop-params",
+      "phase": "response"
+     }
+    ]
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "stt-diarize",
+   "kind": "provider",
+   "name": "diarize-stt",
+   "observations": {
+    "process_ready": {
+     "http": {
+      "expect": 200,
+      "path": "/health"
+     }
+    }
+   },
+   "priority": 200,
+   "process": {
+    "driver": "command",
+    "legacy_lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "health_endpoint": "/health",
+      "health_timeout_s": 120,
+      "scope": "user",
+      "unit": "diarize-stt.service"
+     },
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    },
+    "start": [
+     "systemctl",
+     "--user",
+     "start",
+     "diarize-stt.service"
+    ],
+    "status": [
+     "systemctl",
+     "--user",
+     "is-active",
+     "diarize-stt.service"
+    ],
+    "stop": [
+     "systemctl",
+     "--user",
+     "stop",
+     "diarize-stt.service"
+    ]
+   },
+   "provenance": {},
+   "residency": {},
+   "role": "standby",
+   "secret_refs": {},
+   "source": "ui"
+  },
+  "stt-nemotron": {
+   "capabilities": [
+    "audio",
+    "transcriptions"
+   ],
+   "config": {
+    "base_path": "/v1",
+    "capabilities": [
+     "audio",
+     "transcriptions"
+    ],
+    "chunking": {
+     "backend_timeout_seconds": 180,
+     "deadline_seconds": 360,
+     "enabled": true,
+     "max_duration_seconds": 3600,
+     "max_segments": 64,
+     "silence_search_seconds": 30,
+     "spool_dir": "data/stt-spool",
+     "target_seconds": 60,
+     "threshold_seconds": 110
+    },
+    "default_model": "nemotron-3.5-asr-streaming-0.6b",
+    "enabled": true,
+    "health_endpoint": "/health",
+    "host": "127.0.0.1",
+    "id": "stt-nemotron",
+    "managed": false,
+    "name": "nemotron-stt",
+    "native_passthrough": true,
+    "note": "audio.cpp Nemotron 3.5 streaming ASR on GPU0, the realtime speech-to-text engine; always warm: starts at boot, keeps its model loaded and never unloads it when idle. The gateway lifecycle driver starts it only if it was stopped.",
+    "port": 8012,
+    "priority": 200,
+    "role": "standby",
+    "timeout": 120,
+    "transforms": [
+     {
+      "drop": [
+       "timing"
+      ],
+      "kind": "drop-params",
+      "phase": "response"
+     }
+    ]
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "stt-nemotron",
+   "kind": "provider",
+   "name": "nemotron-stt",
+   "observations": {
+    "process_ready": {
+     "http": {
+      "expect": 200,
+      "path": "/health"
+     }
+    }
+   },
+   "priority": 200,
+   "process": {
+    "driver": "command",
+    "legacy_lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "health_endpoint": "/health",
+      "health_timeout_s": 90,
+      "scope": "user",
+      "unit": "nemotron-stt.service"
+     },
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    },
+    "start": [
+     "systemctl",
+     "--user",
+     "start",
+     "nemotron-stt.service"
+    ],
+    "status": [
+     "systemctl",
+     "--user",
+     "is-active",
+     "nemotron-stt.service"
+    ],
+    "stop": [
+     "systemctl",
+     "--user",
+     "stop",
+     "nemotron-stt.service"
+    ]
+   },
+   "provenance": {},
+   "residency": {},
+   "role": "standby",
+   "secret_refs": {},
+   "source": "ui"
+  },
+  "stt-parakeet-gpu": {
+   "capabilities": [
+    "audio",
+    "transcriptions"
+   ],
+   "config": {
+    "base_path": "/v1",
+    "capabilities": [
+     "audio",
+     "transcriptions"
+    ],
+    "chunking": {
+     "backend_timeout_seconds": 180,
+     "deadline_seconds": 360,
+     "enabled": true,
+     "max_duration_seconds": 3600,
+     "max_segments": 128,
+     "silence_search_seconds": 10,
+     "spool_dir": "data/stt-spool",
+     "target_seconds": 30,
+     "threshold_seconds": 40
+    },
+    "default_model": "parakeet-tdt-0.6b-v3",
+    "enabled": true,
+    "health_endpoint": "/health",
+    "host": "127.0.0.1",
+    "id": "stt-parakeet-gpu",
+    "managed": false,
+    "name": "parakeet-gpu-stt",
+    "native_passthrough": true,
+    "note": "On-demand audio.cpp Parakeet TDT 0.6B v3 (q8) on GPU0: CPU-Parakeet accuracy at 5-9x the speed; weights unload after 5 min idle; started by the gateway lifecycle driver.",
+    "port": 8017,
+    "priority": 200,
+    "role": "standby",
+    "timeout": 120,
+    "transforms": [
+     {
+      "drop": [
+       "timing"
+      ],
+      "kind": "drop-params",
+      "phase": "response"
+     }
+    ]
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "stt-parakeet-gpu",
+   "kind": "provider",
+   "name": "parakeet-gpu-stt",
+   "observations": {
+    "process_ready": {
+     "http": {
+      "expect": 200,
+      "path": "/health"
+     }
+    }
+   },
+   "priority": 200,
+   "process": {
+    "driver": "command",
+    "legacy_lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "health_endpoint": "/health",
+      "health_timeout_s": 90,
+      "scope": "user",
+      "unit": "parakeet-gpu-stt.service"
+     },
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    },
+    "start": [
+     "systemctl",
+     "--user",
+     "start",
+     "parakeet-gpu-stt.service"
+    ],
+    "status": [
+     "systemctl",
+     "--user",
+     "is-active",
+     "parakeet-gpu-stt.service"
+    ],
+    "stop": [
+     "systemctl",
+     "--user",
+     "stop",
+     "parakeet-gpu-stt.service"
+    ]
+   },
+   "provenance": {},
+   "residency": {},
+   "role": "standby",
+   "secret_refs": {},
+   "source": "ui"
+  },
+  "tts": {
+   "capabilities": [
+    "audio",
+    "speech"
+   ],
+   "config": {
+    "base_path": "/v1",
+    "capabilities": [
+     "audio",
+     "speech"
+    ],
+    "description": "Turn text into speech with a consistent voice.",
+    "display_name": "OmniVoice speech",
+    "enabled": true,
+    "health_endpoint": "/health",
+    "host": "127.0.0.1",
+    "lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "health_endpoint": "/health",
+      "health_timeout_s": 150,
+      "scope": "user",
+      "unit": "omnivoice-tts.service"
+     }
+    },
+    "managed": false,
+    "name": "omnivoice-tts",
+    "native_passthrough": true,
+    "note": "OmniVoice, the fallback speech engine; on demand: exits after 5 min idle (frees 2-4 GB of GPU0, more after long texts), started by the gateway lifecycle driver.",
+    "port": 8002,
+    "priority": 100,
+    "role": "standby",
+    "timeout": 86400
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "tts",
+   "kind": "provider",
+   "lifecycle": {
+    "driver": "systemd",
+    "driver_config": {
+     "health_endpoint": "/health",
+     "health_timeout_s": 150,
+     "scope": "user",
+     "unit": "omnivoice-tts.service"
+    },
+    "managed": false,
+    "service_name": "",
+    "type": "external"
+   },
+   "name": "omnivoice-tts",
+   "observations": {
+    "process_ready": {
+     "http": {
+      "expect": 200,
+      "path": "/health"
+     }
+    }
+   },
+   "priority": 100,
+   "process": {
+    "driver": "command",
+    "legacy_lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "health_endpoint": "/health",
+      "health_timeout_s": 150,
+      "scope": "user",
+      "unit": "omnivoice-tts.service"
+     },
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    },
+    "start": [
+     "systemctl",
+     "--user",
+     "start",
+     "omnivoice-tts.service"
+    ],
+    "status": [
+     "systemctl",
+     "--user",
+     "is-active",
+     "omnivoice-tts.service"
+    ],
+    "stop": [
+     "systemctl",
+     "--user",
+     "stop",
+     "omnivoice-tts.service"
+    ]
+   },
+   "provenance": {
+    "seed": "proxy_config.yml:backends.tts",
+    "seed_hash": "74948ae44cad46bd7099648f1358abb6c6b1aecb0b4bcb6562f849bc2dfcc801"
+   },
+   "residency": {},
+   "role": "standby",
+   "secret_refs": {},
+   "source": "provisioned"
+  },
+  "tts-chatterbox": {
+   "capabilities": [
+    "audio",
+    "speech"
+   ],
+   "config": {
+    "base_path": "/v1",
+    "capabilities": [
+     "audio",
+     "speech"
+    ],
+    "enabled": true,
+    "health_endpoint": "/health",
+    "host": "127.0.0.1",
+    "id": "tts-chatterbox",
+    "managed": false,
+    "name": "chatterbox-tts",
+    "native_passthrough": true,
+    "note": "Chatterbox Turbo (Python) voice-cloning TTS on GPU0. Temporarily disabled since 2026-10-08 to free GPU0 memory for the desktop; the unit is stopped. When enabled again it is on demand, keeps its weights loaded while running (no idle unload or exit), and is started by the gateway lifecycle driver.",
+    "port": 8015,
+    "priority": 200,
+    "role": "standby",
+    "timeout": 120
+   },
+   "editable": true,
+   "enabled": false,
+   "id": "tts-chatterbox",
+   "kind": "provider",
+   "name": "chatterbox-tts",
+   "observations": {
+    "process_ready": {
+     "http": {
+      "expect": 200,
+      "path": "/health"
+     }
+    }
+   },
+   "priority": 200,
+   "process": {
+    "driver": "command",
+    "legacy_lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "health_endpoint": "/health",
+      "health_timeout_s": 90,
+      "scope": "user",
+      "unit": "chatterbox-tts.service"
+     },
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    },
+    "start": [
+     "systemctl",
+     "--user",
+     "start",
+     "chatterbox-tts.service"
+    ],
+    "status": [
+     "systemctl",
+     "--user",
+     "is-active",
+     "chatterbox-tts.service"
+    ],
+    "stop": [
+     "systemctl",
+     "--user",
+     "stop",
+     "chatterbox-tts.service"
+    ]
+   },
+   "provenance": {},
+   "residency": {},
+   "role": "standby",
+   "secret_refs": {},
+   "source": "ui"
+  },
+  "tts-kokoro": {
+   "capabilities": [
+    "audio",
+    "speech"
+   ],
+   "config": {
+    "base_path": "/v1",
+    "capabilities": [
+     "audio",
+     "speech"
+    ],
+    "enabled": true,
+    "health_endpoint": "/health",
+    "host": "127.0.0.1",
+    "id": "tts-kokoro",
+    "managed": false,
+    "name": "kokoro-tts",
+    "native_passthrough": true,
+    "note": "On-demand Kokoro-82M Python TTS on GPU0; started by the gateway lifecycle driver.",
+    "port": 8011,
+    "priority": 200,
+    "role": "standby",
+    "timeout": 120
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "tts-kokoro",
+   "kind": "provider",
+   "name": "kokoro-tts",
+   "observations": {
+    "process_ready": {
+     "http": {
+      "expect": 200,
+      "path": "/health"
+     }
+    }
+   },
+   "priority": 200,
+   "process": {
+    "driver": "command",
+    "legacy_lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "health_endpoint": "/health",
+      "health_timeout_s": 90,
+      "scope": "user",
+      "unit": "kokoro-tts.service"
+     },
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    },
+    "start": [
+     "systemctl",
+     "--user",
+     "start",
+     "kokoro-tts.service"
+    ],
+    "status": [
+     "systemctl",
+     "--user",
+     "is-active",
+     "kokoro-tts.service"
+    ],
+    "stop": [
+     "systemctl",
+     "--user",
+     "stop",
+     "kokoro-tts.service"
+    ]
+   },
+   "provenance": {},
+   "residency": {},
+   "role": "standby",
+   "secret_refs": {},
+   "source": "ui"
+  },
+  "tts-supertonic": {
+   "capabilities": [
+    "audio",
+    "speech"
+   ],
+   "config": {
+    "base_path": "/v1",
+    "capabilities": [
+     "audio",
+     "speech"
+    ],
+    "enabled": true,
+    "health_endpoint": "/health",
+    "host": "127.0.0.1",
+    "id": "tts-supertonic",
+    "managed": false,
+    "name": "supertonic-tts",
+    "native_passthrough": true,
+    "note": "audio.cpp Supertonic realtime TTS on GPU0, the default speech engine; always warm: starts at boot, keeps its model loaded and never unloads it when idle. The gateway lifecycle driver starts it only if it was stopped.",
+    "port": 8010,
+    "priority": 200,
+    "role": "standby",
+    "timeout": 120
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "tts-supertonic",
+   "kind": "provider",
+   "name": "supertonic-tts",
+   "observations": {
+    "process_ready": {
+     "http": {
+      "expect": 200,
+      "path": "/health"
+     }
+    }
+   },
+   "priority": 200,
+   "process": {
+    "driver": "command",
+    "legacy_lifecycle": {
+     "driver": "systemd",
+     "driver_config": {
+      "health_endpoint": "/health",
+      "health_timeout_s": 90,
+      "scope": "user",
+      "unit": "supertonic-tts.service"
+     },
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    },
+    "start": [
+     "systemctl",
+     "--user",
+     "start",
+     "supertonic-tts.service"
+    ],
+    "status": [
+     "systemctl",
+     "--user",
+     "is-active",
+     "supertonic-tts.service"
+    ],
+    "stop": [
+     "systemctl",
+     "--user",
+     "stop",
+     "supertonic-tts.service"
+    ]
+   },
+   "provenance": {},
+   "residency": {},
+   "role": "standby",
+   "secret_refs": {},
+   "source": "ui"
+  },
+  "typesafe": {
+   "capabilities": [
+    "typesafe-systemone"
+   ],
+   "config": {
+    "api_key_secret_id": "provider:typesafe:api_key",
+    "auth": {
+     "header": "Authorization",
+     "prefix": "Bearer"
+    },
+    "auth_test": {},
+    "base_path": "/v1",
+    "base_url": "https://api.typesafe.ai/v1",
+    "billing_dimensions": [
+     "decisions",
+     "input_tokens",
+     "output_tokens"
+    ],
+    "capabilities": [
+     "typesafe-systemone"
+    ],
+    "cost_class": "paid-remote",
+    "credential_origin": "https://api.typesafe.ai:443",
+    "docs_url": "https://docs.typesafe.ai",
+    "enabled": true,
+    "host": "api.typesafe.ai",
+    "id": "typesafe",
+    "key_url": "https://app.typesafe.ai/settings/api-keys",
+    "kind": "provider",
+    "litellm_provider": "openai",
+    "managed": false,
+    "model_listing": {
+     "id_path": "name",
+     "items_path": "models",
+     "method": "GET",
+     "name_path": "name",
+     "path": "/models",
+     "prices": {}
+    },
+    "model_policy_schema_version": 1,
+    "models": [
+     {
+      "enabled": true,
+      "id": "typesafe/jev-latest",
+      "model_group": "typesafe/jev-latest",
+      "upstream_model": "jev-latest"
+     }
+    ],
+    "name": "TypeSafe",
+    "preset_id": "typesafe",
+    "price": {
+     "models": {
+      "jev-1.13.0": {
+       "input_usd_per_million_tokens": "0.042",
+       "output_usd_per_million_tokens": "0"
+      },
+      "typesafe/jev-latest": {
+       "input_usd_per_million_tokens": "0.042",
+       "output_usd_per_million_tokens": "0"
+      }
+     }
+    },
+    "priority": 100,
+    "protocol": "typesafe-systemone",
+    "protocols": [
+     "typesafe-systemone"
+    ],
+    "provider_id": "typesafe",
+    "provider_type": "paid-remote",
+    "recommendations": [],
+    "remote_provider": true,
+    "role": "required"
+   },
+   "editable": true,
+   "enabled": true,
+   "id": "typesafe",
+   "kind": "provider",
+   "name": "TypeSafe",
+   "observations": {},
+   "priority": 100,
+   "process": {
+    "driver": "none",
+    "legacy_lifecycle": {
+     "managed": false,
+     "service_name": "",
+     "type": "external"
+    }
+   },
+   "provenance": {},
+   "residency": {},
+   "role": "required",
+   "secret_refs": {},
+   "source": "ui"
+  }
+ }
+}

@@ -237,3 +237,79 @@ def test_the_response_headers_that_belong_to_the_engine_are_not_relayed():
         "server": "engine/1", "x-powered-by": "x",
     })
     assert kept == {"content-type": "application/json", "x-engine": "1"}
+
+
+# --- round 4: key shape for an undeclared call, double encoding, and the unlisted-reads switch -------------
+
+def _undeclared(klass: str = "generate") -> native_lane.AllowEntry:
+    return native_lane.AllowEntry("GET", "/v1/models", klass, any_query=True)
+
+
+@pytest.mark.parametrize("query", ["/etc/passwd", "..%2F..%2Fkeys", "a%2Fb=1", "~root", "C:\\x", "a b", "x\x00y"])
+def test_an_undeclared_call_refuses_a_query_key_that_is_not_a_plain_key_name(query):
+    assert native_lane.query_problem(_undeclared(), query)[0] == "native_query_not_allowed"
+
+
+def test_an_undeclared_call_still_passes_ordinary_keys_and_repeats():
+    assert native_lane.query_problem(_undeclared(), "limit=5&limit=6&filter[kind]=a&v1.2=x&flag") is None
+
+
+@pytest.mark.parametrize("value", ["%252Fetc%252Fpasswd", "a%255Cb", "%252e%252e%252fx", "x%252Fy", "%252F", "..%252f"])
+def test_a_generate_value_that_still_holds_an_encoded_path_character_after_one_decode_is_refused(value):
+    entry = _entry(query=["model"])
+    assert native_lane.query_problem(entry, f"model={value}")[0] == "native_query_value_refused"
+    assert native_lane.query_problem(_undeclared(), f"model={value}")[0] == "native_query_value_refused"
+
+
+def test_a_value_with_an_encoded_percent_sign_that_names_no_path_character_still_passes():
+    entry = _entry(query=["q"])
+    assert native_lane.query_problem(entry, "q=100%25") is None
+    assert native_lane.query_problem(entry, "q=50%2525") is None  # decodes to 50%25: a percent sign and digits
+
+
+def test_a_control_entry_passes_a_double_encoded_value():
+    entry = _entry(klass="control", query=["file"])
+    assert native_lane.query_problem(entry, "file=%252Fmodels%252Fa.gguf") is None
+
+
+def test_unlisted_reads_default_to_allow_and_read_into_the_policy():
+    assert native_lane.policy_for({"native": {"allow": []}}).unlisted_reads == "allow"
+    assert native_lane.policy_for({}).unlisted_reads == "allow"
+    assert native_lane.policy_for({"native": {"unlisted_reads": "deny"}}).unlisted_reads == "deny"
+
+
+@pytest.mark.parametrize("value", ["block", "", None, True, 1, ["deny"]])
+def test_an_unlisted_reads_value_that_is_not_allow_or_deny_is_refused(value):
+    with pytest.raises(ValueError, match="unlisted_reads"):
+        native_lane.validate_native_block({"unlisted_reads": value})
+
+
+def test_a_record_with_a_bad_unlisted_reads_value_allows_nothing():
+    policy = native_lane.policy_for({"native": {"unlisted_reads": "sometimes", "allow": RECORD["native"]["allow"]}})
+    assert policy.allow == ()
+
+
+def test_the_provider_route_treats_an_unlisted_read_as_generate_when_reads_are_allowed():
+    policy = native_lane.policy_for({"native": {"allow": RECORD["native"]["allow"]}})
+    entry = native_lane.provider_route_resolution(policy, "GET", "/v1/other").entry
+    assert entry is not None and entry.klass == native_lane.GENERATE
+
+
+def test_the_provider_route_refuses_an_unlisted_read_when_reads_are_denied():
+    policy = native_lane.policy_for({"native": {"unlisted_reads": "deny", "allow": RECORD["native"]["allow"]}})
+    assert native_lane.provider_route_resolution(policy, "GET", "/v1/other").entry is None
+    assert native_lane.provider_route_resolution(policy, "HEAD", "/v1/other").entry is None
+
+
+def test_a_listed_read_still_resolves_when_unlisted_reads_are_denied():
+    policy = native_lane.policy_for({"native": {"unlisted_reads": "deny", "allow": [
+        {"method": "GET", "path": "/v1/models", "class": "generate"},
+        {"method": "GET", "path": "/admin/shutdown", "class": "control"},
+    ]}})
+    assert native_lane.provider_route_resolution(policy, "GET", "/v1/models").entry.klass == native_lane.GENERATE
+    assert native_lane.provider_route_resolution(policy, "GET", "/admin/shutdown").entry.klass == native_lane.CONTROL
+
+
+def test_denying_unlisted_reads_leaves_an_unlisted_write_a_control_call():
+    policy = native_lane.policy_for({"native": {"unlisted_reads": "deny"}})
+    assert native_lane.provider_route_resolution(policy, "POST", "/v1/x").entry.klass == native_lane.CONTROL

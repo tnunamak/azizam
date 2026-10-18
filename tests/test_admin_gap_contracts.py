@@ -253,6 +253,6 @@ def test_detect_models_exception_is_structured_and_does_not_persist():
         )
     assert response.status_code == 200
     assert response.json() == {
-        "detected": {"models": [], "ok": False, "error": "fixture timeout"}
+        "detected": {"models": [], "ok": False, "error": "The model list could not be read (TimeoutError)."}
     }
     assert calls == [("example.invalid", 8000, "/v1/models")]

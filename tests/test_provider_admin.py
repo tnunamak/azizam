@@ -570,8 +570,10 @@ class ProviderAdminApiTests(unittest.TestCase):
         )
 
         self.assertEqual(first.status_code, 200)
-        self.assertEqual(first.json()["key_status"]["suffix"], "4f2a")
-        self.assertEqual(second.json()["key_status"]["suffix"], "beef")
+        # Nothing of a key is shown, not even its last characters (decision D26).
+        self.assertEqual(first.json()["key_status"]["state"], "set")
+        self.assertNotIn("suffix", first.json()["key_status"])
+        self.assertEqual(second.json()["key_status"]["state"], "set")
         self.assertEqual(deleted.json()["key_status"]["state"], "missing")
         self.assertNotIn("sk-test", first.text + second.text + deleted.text)
 

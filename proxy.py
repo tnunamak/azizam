@@ -89,7 +89,7 @@ from gateway import (
     video_media_jobs,
     voice_design,
 )
-from gateway import secret_store
+from gateway import secret_store, runtime_secrets, projection
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
 from gateway.http_tls import tls_context
 from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
@@ -315,12 +315,12 @@ from gateway.image_output import (
     parse_quality,
     quality_steps_from_manifest,
 )
+from gateway.litellm_runtime import write_litellm_config_artifact
 from gateway.litellm_substrate import (
     engine_headers,
     litellm_known_model_names,
     router_reply_timeout,
     litellm_public_model_records,
-    write_litellm_config_artifact,
 )
 from gateway.manifests import (
     ManifestError,
@@ -408,7 +408,7 @@ ADMIN_DB_PATH = _configured_admin_db_path(admin_cfg)
 
 
 def _load_effective_runtime_config(raw_config: Mapping[str, Any]) -> dict[str, Any]:
-    """Overlay DB-owned service registry onto bootstrap config."""
+    """Overlay DB-owned service registry onto bootstrap config. Raises when the registry cannot be applied."""
     effective = _overlay_service_registry(raw_config)
     if isinstance(effective, dict):
         stable_aliases.fold_workflow_aliases(effective)
@@ -416,22 +416,101 @@ def _load_effective_runtime_config(raw_config: Mapping[str, Any]) -> dict[str, A
 
 
 def _overlay_service_registry(raw_config: Mapping[str, Any]) -> dict[str, Any]:
+    """The bootstrap config with its ``backends`` replaced by the stored registry's.
+
+    Any failure raises: the caller decides what keeps serving. This never answers with the bootstrap
+    file's backends in place of the registry, which would put config the registry never described live.
+    """
+    admin_store.init_db(ADMIN_DB_PATH)
+    registry = service_registry.ensure_service_registry(
+        raw_config,
+        path=ADMIN_DB_PATH,
+        actor="startup",
+    )
+    _write_litellm_config_artifact(registry)
+    return service_registry.apply_service_registry_to_config(raw_config, registry)
+
+
+# What the Overview reports when the stored registry is not what is running (None when it is):
+# {"mode": "partial" | "empty" | "stale", "error": str, "left_out": {service id: reason}, "served": int}.
+# "partial" and "empty" are a boot that could not apply the whole registry; "stale" is a reload that
+# failed, so the running config is the one before the change.
+REGISTRY_APPLY_PROBLEM: dict[str, Any] | None = None
+
+
+def _failure_text(error: BaseException) -> str:
+    """``Type: text`` of a failure while applying the stored registry, without any value a stored record holds inline.
+
+    The text of an exception may quote what a record held, so it is cleaned the way a boot failure is
+    (``service_registry.registry_error_text``); when the store cannot be read it is cleaned of URL user info only.
+    """
+    text = f"{type(error).__name__}: {error}"
     try:
-        admin_store.init_db(ADMIN_DB_PATH)
-        registry = service_registry.ensure_service_registry(
-            raw_config,
-            path=ADMIN_DB_PATH,
-            actor="startup",
-        )
-        _write_litellm_config_artifact(registry)
-        return service_registry.apply_service_registry_to_config(raw_config, registry)
-    except Exception as e:  # noqa: BLE001
-        print(
-            "[proxy] WARNING: service registry unavailable; "
-            f"falling back to bootstrap config for this process: {e}",
-            flush=True,
-        )
-        return copy.deepcopy(dict(raw_config))
+        stored = admin_store.get_service_registry_with_generation(path=ADMIN_DB_PATH)
+        if stored is not None:
+            return service_registry.registry_error_text(text, stored["value"])[:300]
+    except Exception:  # noqa: BLE001 - an unreadable store has no values to name
+        pass
+    return projection.scrub_text(text)[:300]
+
+
+def _partial_runtime_config(
+    raw_config: Mapping[str, Any], failure: str, *, require_exclusions: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The config for the stored services that validate, and the ``partial`` problem that says what was left out.
+
+    Raises when the store cannot be read, or (``require_exclusions``) when no stored record is left out, which
+    means the failure was not the records': the caller then keeps what it had. The LiteLLM config file is not
+    written: a partial registry must not overwrite what the running LiteLLM reloads.
+    """
+    stored = admin_store.get_service_registry_with_generation(path=ADMIN_DB_PATH)
+    if stored is None:
+        raise LookupError("no stored service registry")
+    registry, left_out = service_registry.servable_registry_with_backfill(stored["value"], proxy_config=raw_config)
+    if require_exclusions and not left_out:
+        raise LookupError("no stored record is left out")
+    failure = service_registry.registry_error_text(failure, stored["value"])  # the cause may repeat a value a record holds
+    effective = service_registry.apply_service_registry_to_config(raw_config, registry)
+    stable_aliases.fold_workflow_aliases(effective)
+    return effective, {"mode": "partial", "error": failure, "left_out": left_out, "served": len(registry["services"])}
+
+
+def _log_left_out(left_out: Mapping[str, str]) -> None:
+    for name, reason in left_out.items():
+        kind, _, record_id = name.partition(":")
+        label = f"{kind} {record_id!r}" if kind in ("frontend", "workflow", "capability") and record_id else f"service {name!r}"
+        print(f"[proxy] ERROR: {label} left out of the running config: {reason}", flush=True)
+
+
+def _boot_effective_runtime_config(raw_config: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The config to boot with, and the problem to report (None when the registry applied whole).
+
+    When the stored registry cannot be applied, boot does not fall back to the bootstrap file's
+    backends. It serves the stored services that validate on their own (``partial``), and when the store
+    cannot be read at all it serves no registry backends (``empty``). Either way the failure is logged
+    here and reported on the Overview. The LiteLLM config file is left as it is: a partial registry must
+    not overwrite what the running LiteLLM reloads.
+    """
+    try:
+        return _load_effective_runtime_config(raw_config), None
+    except Exception as error:  # noqa: BLE001 - boot continues, degraded and loud
+        failure = _failure_text(error)
+    try:
+        effective, problem = _partial_runtime_config(raw_config, failure, require_exclusions=False)
+    except Exception as partial_error:  # noqa: BLE001
+        effective = service_registry.apply_service_registry_to_config(raw_config, {"services": {}})
+        problem = {
+            "mode": "empty", "left_out": {}, "served": 0,
+            "error": f"{failure} (and the stored services could not be read: {_failure_text(partial_error)})"[:500],
+        }
+    print(
+        "[proxy] ERROR: the stored service registry could not be applied, so the gateway is starting "
+        + ("with the stored services that validate" if problem["mode"] == "partial" else "with NO registry backends")
+        + f". Cause: {problem['error']}",
+        flush=True,
+    )
+    _log_left_out(problem["left_out"])
+    return effective, problem
 
 
 def _write_litellm_config_artifact(registry: Mapping[str, Any]) -> None:
@@ -449,7 +528,7 @@ def _write_litellm_config_artifact(registry: Mapping[str, Any]) -> None:
         print(f"[proxy] WARNING: LiteLLM config generation failed: {e}", flush=True)
 
 
-config = _load_effective_runtime_config(config)
+config, REGISTRY_APPLY_PROBLEM = _boot_effective_runtime_config(config)
 auth_cfg = config.get("auth", {})
 admin_cfg = config.get("admin", {}) or {}
 
@@ -1002,22 +1081,82 @@ def _prepare_frontend_mounts(effective_cfg: Mapping[str, Any]):
     return mounts.prepare(route_registry.mount_frontend_records(registry=registry, proxy_config=effective_cfg))
 
 
+# One reload at a time. Two saves close together would otherwise each read the registry, then publish in
+# either order, and the config that stays live could be the older read. Under the lock each reload reads
+# the registry after the one before it has published, so the last one to run is the one that matches the store.
+# Reloads start in two places: the async admin routes, on the event loop, and the sync ones (DELETE of a
+# service, for one), in a worker thread. A loop-side reload waits for a worker's, which is one reload long
+# and never waits on the loop, so it cannot deadlock. An RLock lets a reload that calls itself through the
+# admin store pass.
+_RELOAD_LOCK = threading.RLock()
+
+
 def reload_runtime_config() -> dict:
     """Re-derive all backend constants from the current DB service registry.
 
     Atomically reassigns every module-level name that was originally computed
     from config["backends"] at import time.  Safe to call from any thread:
-    each name assignment is a single reference swap under the GIL.
+    reloads run one at a time, and each name assignment is a single reference
+    swap under the GIL.
 
     Returns the dict of updated names → new values (for logging / tests).
+
+    A stored registry with records that do not validate applies the ones that do,
+    as a restart would, and the Overview lists the rest (``partial``). Any other
+    failure (the store cannot be read, a route cannot be built) raises and leaves
+    the old config, constants and routes serving; the Overview reports it as
+    ``stale`` until a reload succeeds. A reload never falls back to the bootstrap
+    file.
 
     Note: the LiteLLM subprocess config file is NOT reloaded here — that
     requires a separate litellm restart.  Native-routed and capability-routed
     requests see the new registry immediately.
     """
-    # Re-overlay the service registry onto the bootstrap YAML config.
-    new_cfg = _load_effective_runtime_config(_bootstrap_config)
+    global REGISTRY_APPLY_PROBLEM
+    with _RELOAD_LOCK:
+        try:
+            new_cfg, problem = _runtime_config_for_reload()
+            updates = _publish_runtime_config(new_cfg)
+        except Exception as error:  # noqa: BLE001 - reported, then re-raised for the caller
+            # A boot that served only part of the registry still has those records left out: the failure is
+            # reported as stale, with its own error, and the list of what is left out stays.
+            if not (isinstance(REGISTRY_APPLY_PROBLEM, Mapping) and REGISTRY_APPLY_PROBLEM.get("mode") == "empty"):
+                kept = REGISTRY_APPLY_PROBLEM.get("left_out") if isinstance(REGISTRY_APPLY_PROBLEM, Mapping) else None
+                REGISTRY_APPLY_PROBLEM = {
+                    "mode": "stale", "left_out": dict(kept) if isinstance(kept, Mapping) else {},
+                    "served": len(config.get("backends") or {}),
+                    "error": _failure_text(error),
+                }
+            print(f"[proxy] ERROR: runtime config reload failed; the previous config is still serving: {_failure_text(error)}", flush=True)
+            raise
+        REGISTRY_APPLY_PROBLEM = problem
+        return updates
 
+
+def _runtime_config_for_reload() -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The registry's config for a reload, and the problem to report (None when the registry applied whole).
+
+    A stored registry with records that do not validate applies the ones that do, as a restart would, so an
+    edit to a good service is live while the bad record waits for the operator. A failure that is not the
+    records' (the store cannot be read, a route cannot be built) raises and the old config stays.
+    """
+    try:
+        return _load_effective_runtime_config(_bootstrap_config), None
+    except Exception as strict_error:  # noqa: BLE001
+        failure = _failure_text(strict_error)
+        try:
+            partial = _partial_runtime_config(_bootstrap_config, failure, require_exclusions=True)
+        except Exception:  # noqa: BLE001 - not a matter of the records: keep what is running
+            partial = None
+        if partial is None:
+            raise strict_error from None
+    print(f"[proxy] ERROR: the stored service registry is only partly valid, so the reload applies the stored "
+          f"services that validate. Cause: {partial[1]['error']}", flush=True)
+    _log_left_out(partial[1]["left_out"])
+    return partial
+
+
+def _publish_runtime_config(new_cfg: dict[str, Any]) -> dict:
     # Derive every backend constant from the candidate BEFORE publishing
     # anything: a bad config must raise here and leave the old config and
     # constants serving, never a new config paired with old constants.
@@ -1722,6 +1861,8 @@ def _load_admin_oidc_config():
 
 
 ADMIN_DB_PATH = _admin_db_path()
+from gateway import secret_refs  # noqa: E402 - secret references resolve against this database
+secret_refs.use_database_of(lambda: ADMIN_DB_PATH)
 ADMIN_OIDC_CONFIG = _load_admin_oidc_config()
 ADMIN_OIDC_STATES: dict[str, StateRecord] = {}
 from gateway.oidc_jwks import JWKSCache
@@ -2655,12 +2796,18 @@ def resolve_stable_alias(
     """Resolve through ``model_aliases``; raises AliasUnavailableError."""
     if isinstance(requested_model, str):
         provider_id, separator, _ = requested_model.partition("/")
-        if (
-            separator
-            and providers.canonical_provider_id(provider_id)
-            in providers.provider_refs(ADMIN_STORE.get_service_registry())
-        ):
-            return None
+        if separator:
+            if providers.canonical_provider_id(provider_id) in providers.provider_refs(ADMIN_STORE.get_service_registry()):
+                return None
+            # Only a prefix that is no known provider is looked up among the services the registry leaves out.
+            left_out = next((item for item in ADMIN_STORE.get_service_registry_exclusions()
+                             if item.section == "services" and item.id == service_registry.normalize_id(provider_id)), None)
+            if left_out is not None:
+                raise stable_aliases.AliasUnavailableError(
+                    f"Service {left_out.id!r} is left out of the gateway's registry because it does not validate "
+                    f"({left_out.error}). The operator can fix or remove it under Services.",
+                    code="model_not_deployed", details={"service": left_out.id},
+                )
     return stable_aliases.resolve_alias(
         config.get("model_aliases"),
         operation,
@@ -12872,10 +13019,21 @@ WEB_UI_DIR = Path(__file__).resolve().parent / "web" / "out"
 
 from gateway import ui_routes
 
-_PROTOCOL_ROUTE_REGISTRY = (
-    service_registry.load_service_registry(path=ADMIN_DB_PATH)
-    or service_registry.build_service_registry_seed(config)
-)
+def _stored_registry_for_boot() -> dict[str, Any] | None:
+    """The stored registry for a reader that runs at import: the records that validate (the read leaves out the rest).
+
+    A store that cannot be read at all raises, unless the boot already reported it (the ``empty`` mode):
+    then the bundled routes mount and nothing stored does.
+    """
+    try:
+        return service_registry.load_service_registry(path=ADMIN_DB_PATH)
+    except Exception:  # noqa: BLE001
+        if REGISTRY_APPLY_PROBLEM is None:
+            raise
+        return None
+
+
+_PROTOCOL_ROUTE_REGISTRY = _stored_registry_for_boot() or service_registry.build_service_registry_seed(config)
 CANONICAL_PROTOCOL_ROUTE_ALIASES: tuple[dict[str, object], ...] = (
     route_registry.canonical_protocol_route_aliases(
         registry=_PROTOCOL_ROUTE_REGISTRY,
@@ -12889,12 +13047,16 @@ _MANIFEST_WORKFLOWS_DIR = Path(__file__).resolve().parent / "manifests" / "workf
 def _load_gateway_workflow_registry() -> WorkflowRegistry:
     try:
         registry = WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR)
-        admin_registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
-        if admin_registry is not None:
-            for record in service_registry.workflow_records_from_registry(admin_registry):
-                if registry.get(record.id) is not None:
-                    continue
-                registry.add_manifest(record.manifest, source_path=record.source_path)
+        try:
+            # Stored workflows are read record by record; a registry that cannot be read at all costs only them.
+            admin_registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
+            if admin_registry is not None:
+                for record in service_registry.workflow_records_from_registry(admin_registry):
+                    if registry.get(record.id) is not None:
+                        continue
+                    registry.add_manifest(record.manifest, source_path=record.source_path)
+        except Exception as e:  # noqa: BLE001
+            print(f"[proxy] Stored workflows unavailable; the bundled ones are kept: {e}", flush=True)
         if registry.errors:
             print(
                 f"[proxy] Gateway workflow registry loaded with {len(registry.errors)} error(s)",
@@ -13594,7 +13756,8 @@ async def _capabilities_availability_evidence(
         status_payload = {"backends": [], "generated_at": int(time.time())}
         probe_ids = visible
     status_payload = await _status_payload_with_service_rows(status_payload, service_records, probe_ids)
-    return _runtime_availability_evidence(service_records, status_payload=status_payload)
+    # It reads the receipt store: off the event loop, as the other callers do.
+    return await asyncio.to_thread(_runtime_availability_evidence, service_records, status_payload=status_payload)
 
 
 def _cached_status_payload_for_availability() -> Mapping[str, Any]:
@@ -15258,6 +15421,7 @@ app.include_router(
         # Add engine never calls the gateway itself: its default ports and the one it listens on.
         engine_fetch=engine_check.make_http_fetch(gateway_ports=_engine_check_self_ports),
         frontend_status=lambda: FRONTEND_MOUNTS.status(),
+        registry_problem=lambda: REGISTRY_APPLY_PROBLEM,
     )
 )
 
@@ -17230,24 +17394,33 @@ async def admin_config_reload(request: Request):
         return ctx
     try:
         updates = reload_runtime_config()
+        def public(value: Any) -> Any:
+            # a host constant is an address: shown without user info, query or fragment
+            if isinstance(value, str):
+                return projection.public_url(value)
+            if isinstance(value, Mapping):
+                return {str(key): public(item) for key, item in value.items()}
+            return None
         return JSONResponse(
             status_code=200,
             content={
                 "reloaded": True,
                 "backends": {
-                    "llm_hosts": updates["LLM_BACKEND_HOSTS"],
-                    "kobold": updates["KOBOLD_HOST"],
-                    "tts": updates["TTS_HOST"],
-                    "stt": updates["STT_HOST"],
-                    "embeddings": updates["EMBEDDINGS_HOST"],
-                    "comfyui": updates["COMFY_HOST"],
+                    "llm_hosts": public(updates["LLM_BACKEND_HOSTS"]),
+                    "kobold": public(updates["KOBOLD_HOST"]),
+                    "tts": public(updates["TTS_HOST"]),
+                    "stt": public(updates["STT_HOST"]),
+                    "embeddings": public(updates["EMBEDDINGS_HOST"]),
+                    "comfyui": public(updates["COMFY_HOST"]),
                 },
             },
         )
     except Exception as exc:  # noqa: BLE001
+        # The text of a failure may quote a value a record holds; the cleaned text is on the Overview (REGISTRY_APPLY_PROBLEM).
         return JSONResponse(
             status_code=500,
-            content={"error": {"code": "reload_failed", "message": str(exc)}},
+            content={"error": {"code": "reload_failed", "message": "The runtime configuration could not be reloaded; "
+                                                                   "the previous configuration is still serving. The Overview says why."}},
         )
 
 
@@ -17447,8 +17620,11 @@ def _build_config_export_yaml() -> str:
             continue
         services_export[svc_id] = _service_record_for_export(svc_id, record)
 
+    # The export goes through the same projection as every other management output (decision D31): a secret is a
+    # configured entry, never a value and never a reference. A restorable backup of the secrets themselves is a
+    # separate, encrypted operation that this export is not.
     export_doc = {
-        "services": services_export,
+        "services": projection.project("RegistryDoc", {"services": services_export}).tree.get("services", {}),
     }
 
     header = (
@@ -17456,7 +17632,7 @@ def _build_config_export_yaml() -> str:
         "# Generated by GET /admin/api/config/export\n"
         "# This file reproduces the running gateway's service registry.\n"
         "# Ephemeral runtime state (health, last_used_at, VRAM) is excluded.\n"
-        "# Round-trippable: use as a seed file via the existing import-seed path.\n"
+        "# Secrets are configured entries: their values are in the gateway's secret store and are not exported.\n"
         "#\n"
         "# NOTE: full file-wins git reconcile (services.yml as the authoritative\n"
         "# source with UI-only overlay in services.local.yml) is roadmap.\n"
@@ -17484,10 +17660,17 @@ async def admin_config_export(request: Request):
     The output is round-trippable: it matches the shape the existing
     seed-import path already understands.
 
-    Admin-auth required (same guard as all /admin/api/* routes).
+    Owner only. It holds the public configuration and, for each secret, a configured entry; it never holds a
+    secret value (decision D26), so it cannot restore a secret.
     """
     try:
-        (await asyncio.to_thread(ADMIN_AUTH, request))
+        ctx = await asyncio.to_thread(ADMIN_AUTH, request)
+        if "owner" not in ctx.roles:
+            return JSONResponse(
+                status_code=403,
+                content={"error": {"code": "owner_required", "message": "Owner role required"}},
+                headers={"Cache-Control": "no-store"},
+            )
     except AdminAuthError as exc:
         return Response(
             content=json.dumps({"error": {"code": exc.code, "message": exc.message}}),
@@ -17507,7 +17690,7 @@ async def admin_config_export(request: Request):
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(
             status_code=500,
-            content={"error": {"code": "export_failed", "message": str(exc)}},
+            content={"error": {"code": "export_failed", "message": f"The export could not be built ({type(exc).__name__})."}},
         )
 
 
@@ -29270,6 +29453,33 @@ def _provider_native_host_from_config(provider: str, cfg: Mapping[str, Any]) -> 
     return f"{scheme}://{host}:{port}".rstrip("/")
 
 
+def _native_engine_headers(target: Mapping[str, Any]) -> dict[str, str]:
+    """The owner's headers for a native call, resolved now for the origin they go to (decision D26)."""
+    origin = service_registry.origin_of(str(target.get("host") or ""))
+    return engine_headers(
+        {"headers": target.get("header_rows") or []},
+        resolve=lambda row: _resolve_header_secret(row, origin),
+    )
+
+
+def _native_engine_base(target: Mapping[str, Any]) -> str:
+    """Where a native call is sent: the target's host, with the credentials its record stores for that address."""
+    record = target.get("record")
+    if isinstance(record, Mapping) and any(record.get(key + "_entries") for key in ("url", "base_url")):
+        try:
+            return runtime_secrets.service_url(record, ("url", "base_url")) or str(target["host"])
+        except runtime_secrets.SecretUnavailable:
+            return str(target["host"])
+    return str(target["host"])
+
+
+def _resolve_header_secret(row: Mapping[str, Any], origin: str | None) -> str | None:
+    try:
+        return runtime_secrets.resolve(row["secret_ref"], origin=origin or None)
+    except runtime_secrets.SecretUnavailable:
+        return None
+
+
 def _build_provider_native_targets() -> dict[str, dict[str, Any]]:
     targets: dict[str, dict[str, Any]] = {}
     for raw_name, raw_cfg in (config.get("backends") or {}).items():
@@ -29289,8 +29499,9 @@ def _build_provider_native_targets() -> dict[str, dict[str, Any]]:
             "host": host,
             "enabled": True,
             "timeout": float(raw_cfg.get("timeout") or UPSTREAM_READ_TIMEOUT),
-            # The plain headers the owner listed for this engine (Add engine, Request headers).
-            "headers": engine_headers(raw_cfg),
+            # The headers the owner listed for this engine (Add engine, Request headers): references, resolved
+            # where the request is sent (``_native_engine_headers``), never held here.
+            "header_rows": copy.deepcopy(raw_cfg.get("headers")) if isinstance(raw_cfg.get("headers"), list) else [],
             # The engine's own record: the native lane reads its policy, its credentials and its remote flag
             # from here, never from a lookup by name (the record's key may be spelt in any case).
             "record": raw_cfg,
@@ -29833,17 +30044,14 @@ async def _forward_provider_native(
             write=60.0,
             pool=None,
         )
+        # Both routes send the engine its own credential for this call's class and nothing of the caller's:
+        # not the service record's auth_inject key, and not the caller's identity secrets (contract section 6).
+        headers = backend_request_headers(request.headers)
         if native_policy is None:
-            headers = prepare_downstream_headers(
-                request.headers,
-                auth_context,
-                str(target["service"]),
-                native_request_path,
-            )
             query = backend_query_string(request.url.query)
+            if request.method.upper() in native_lane.READ_METHODS:
+                body = b""  # a read carries no body; whatever was sent with it is not the engine's to read
         else:
-            # The lane sends the engine its own credential for this class and nothing of the caller's.
-            headers = backend_request_headers(request.headers)
             query = native_lane.forwarded_query(request.url.query)
         destination = await engine_check.check_destination(str(target["host"]), gateway_ports=_engine_check_self_ports)
         if destination.transport != "ok":
@@ -29852,22 +30060,19 @@ async def _forward_provider_native(
                 message=f"Engine {provider_key!r} cannot be reached by the native lane: {destination.reason}",
                 reason="destination_blocked",
             )
-        if native_policy is not None:
-            credential_error = await _native_credential_headers(
-                headers, target, entry.klass, provider_key,
-            )
-            if credential_error is not None:
-                return _fail_native(owner, receipt, status_code=502, **credential_error)
+        credential_error = await _native_credential_headers(headers, target, entry.klass, provider_key)
+        if credential_error is not None:
+            return _fail_native(owner, receipt, status_code=502, **credential_error)
         # Dial only the addresses just checked, so a second lookup cannot answer somewhere else.
         client = httpx.AsyncClient(
             transport=engine_check.checked_transport(destination), follow_redirects=False,
             trust_env=False, timeout=timeout,
         )
-        for name, value in (target.get("headers") or {}).items():
+        for name, value in _native_engine_headers(target).items():
             for existing in [key for key in headers if key.lower() == name.lower()]:
                 del headers[existing]
             headers[name] = value
-        url = f"{target['host']}{native_request_path}"
+        url = f"{_native_engine_base(target)}{native_request_path}"
         if query:
             url += f"?{query}"
 
@@ -30110,6 +30315,17 @@ async def unmatched_route(request: Request, path: str):
         media_type="application/json",
     )
 
+
+# The innermost layer: every management response is held until it is admitted, and every framework error on a
+# management path gets a fixed envelope (decision D31). It sits inside the compression layer so it sees the bytes
+# an approved response was made of. Startup fails for an admin route that is neither a management route nor an
+# inventoried exception, and freezes the table of management routes.
+from gateway import egress
+app.add_middleware(egress.EgressGate)
+egress.verify_and_freeze(app)
+# A field the code that builds a record writes and no projection type classifies stops startup (decision D28).
+from gateway import projection_types
+projection_types.verify()
 
 # Inside the framing/source layers, this counts a request until the whole
 # response (including every SSE chunk) is sent, and short-circuits a drain 503

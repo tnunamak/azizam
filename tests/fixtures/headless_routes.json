@@ -243,7 +243,7 @@
     "method": "GET",
     "path": "/admin/api/config/export",
     "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "handler": "proxy.admin_config_export",
     "schema": false
   },
@@ -1350,5 +1350,29 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "proxy.status_dashboard_raw",
     "schema": false
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/operator/services/{service_id}/secret-entries",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to change a secret",
+    "handler": "gateway.admin_api.change_secret_entries",
+    "schema": true
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/api/operator/service-registry/excluded/{section}/{record_id}",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.fix_excluded_record",
+    "schema": true
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/api/operator/service-registry/excluded/{section}/{record_id}",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.remove_excluded_record",
+    "schema": true
   }
 ]

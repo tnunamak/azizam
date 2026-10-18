@@ -1,0 +1,115 @@
+{
+ "engine-a": {
+  "capabilities": [
+   "chat"
+  ],
+  "config": {
+   "base_url": "http://wireuser:wirepass-1@engine-a.invalid:8080/v1?api-version=wirequery-2",
+   "headers": [
+    {
+     "name": "X-Region",
+     "value": "wire-region-eu-3"
+    },
+    {
+     "name": "X-Team",
+     "value": "wire-team-4"
+    }
+   ],
+   "models": [
+    {
+     "id": "first",
+     "upstream_model": "upstream-a"
+    }
+   ],
+   "native_passthrough": true,
+   "protocol": "openai-compatible",
+   "timeout": 120
+  },
+  "enabled": true,
+  "id": "engine-a",
+  "kind": "provider",
+  "name": "Engine A",
+  "source": "ui"
+ },
+ "engine-cmd": {
+  "capabilities": [
+   "chat"
+  ],
+  "config": {
+   "host": "127.0.0.1",
+   "port": 8191,
+   "protocol": "openai-compatible"
+  },
+  "enabled": true,
+  "id": "engine-cmd",
+  "kind": "engine",
+  "lifecycle": {
+   "driver": "command",
+   "driver_config": {
+    "env": {
+     "API_TOKEN": "wire-env-11",
+     "MODE": "prod"
+    },
+    "health_timeout_s": 5,
+    "start": "runner --token wire-token-5 --api-key=wire-key-6 -pwire-pw-7 --tokenizer plain --max-tokens 64 --upstream http://svc:wire-url-8@argv.invalid/x",
+    "status": "checker --secret wire-secret-10",
+    "stop": [
+     "stopper",
+     "--password",
+     "wire-pass-9",
+     "--now"
+    ]
+   },
+   "managed": true,
+   "service_name": "",
+   "type": "command"
+  },
+  "name": "Engine Cmd",
+  "source": "ui"
+ },
+ "engine-proc": {
+  "capabilities": [
+   "chat"
+  ],
+  "config": {
+   "host": "127.0.0.1",
+   "port": 8192,
+   "protocol": "openai-compatible"
+  },
+  "enabled": true,
+  "id": "engine-proc",
+  "kind": "engine",
+  "name": "Engine Proc",
+  "observations": {
+   "process_ready": {
+    "http": {
+     "expect": 200,
+     "path": "/ready?sig=wire-probe-16"
+    }
+   }
+  },
+  "process": {
+   "driver": "process",
+   "env": {
+    "LEVEL": "info",
+    "PROC_SECRET": "wire-env-15"
+   },
+   "port": {
+    "fixed": 8192
+   },
+   "start": [
+    "runner",
+    "--api-key",
+    "wire-key-12",
+    "--auth-token=wire-auth-13",
+    "-uadmin:wire-user-14",
+    "--flag",
+    "plain"
+   ]
+  },
+  "residency": {
+   "idle_stop_s": 60
+  },
+  "source": "ui"
+ }
+}

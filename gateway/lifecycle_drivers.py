@@ -56,6 +56,7 @@ HttpLoadUnloadDriver  (http-load-unload)
 from __future__ import annotations
 
 from gateway.compat import get_env
+from gateway import runtime_secrets
 
 import asyncio
 import contextlib
@@ -68,6 +69,14 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Optional, Protocol, TypeVar, runtime_checkable
 
 _T = TypeVar("_T")
+
+
+def _health_endpoint(driver_config: Mapping[str, Any], default: str) -> str:
+    """A driver's health path, with the query credentials its record stores for it put back (resolved now)."""
+    try:
+        return runtime_secrets.url(driver_config, "health_endpoint") or default
+    except runtime_secrets.SecretUnavailable:
+        return default
 
 
 class SwapRecoveryFailed(RuntimeError):
@@ -789,13 +798,18 @@ class CommandDriver:
         if not raw:
             return []
         if driver_cfg.get("_v2") and not (
-            isinstance(raw, list) and raw and all(isinstance(part, str) and part and "\x00" not in part for part in raw)
+            isinstance(raw, list) and raw and all(
+                (isinstance(part, str) and part and "\x00" not in part) or runtime_secrets.secret_refs.is_secret_entry(part)
+                for part in raw)
         ):
             return []
         if isinstance(raw, str):
             return shlex.split(raw)
         if isinstance(raw, (list, tuple)):
-            return [str(part) for part in raw]
+            try:
+                return runtime_secrets.argv(raw)
+            except runtime_secrets.SecretUnavailable:
+                return []  # a secret that cannot be read means the command is not run, never run with a part missing
         return []
 
     @classmethod
@@ -813,7 +827,7 @@ class CommandDriver:
         if not isinstance(extra, Mapping):
             return inherited_command_environment() if driver_cfg.get("_v2") else None
         merged = inherited_command_environment() if driver_cfg.get("_v2") else dict(os.environ)
-        merged.update({str(k): str(v) for k, v in extra.items()})
+        merged.update(runtime_secrets.env_mapping(extra))
         return merged
 
     async def _status_ok(self, driver_cfg: Mapping[str, Any]) -> Optional[bool]:
@@ -933,7 +947,7 @@ class SystemdDriver:
         ok = await self._run_systemctl(cmd)
         if not ok:
             return False
-        health_ep = dc.get("health_endpoint", "/health")
+        health_ep = _health_endpoint(dc, "/health")
         svc_for_poll = self._svc_with_health_endpoint(svc, health_ep)
         return await _poll_health(svc_for_poll, timeout_s)
 
@@ -999,7 +1013,7 @@ class SystemdDriver:
 
     async def health(self, svc: Mapping[str, Any]) -> str:
         dc = self._driver_config(svc)
-        health_ep = dc.get("health_endpoint", "/health")
+        health_ep = _health_endpoint(dc, "/health")
         svc_for_poll = self._svc_with_health_endpoint(svc, health_ep)
         ok = await _poll_health(svc_for_poll, 3.0)
         return HealthState.HEALTHY if ok else HealthState.UNHEALTHY
@@ -1140,7 +1154,7 @@ class SystemdDriver:
         scope_flag = self._scope_flag(dc)
         unit = dc.get("unit", "")
         dropin_name = dc.get("dropin", "20-model.conf")
-        health_ep = dc.get("health_endpoint", "/health")
+        health_ep = _health_endpoint(dc, "/health")
         health_timeout = float(dc.get("health_timeout_s", self._DEFAULT_HEALTH_TIMEOUT_S))
 
         if not unit:
@@ -1713,9 +1727,9 @@ class HttpLoadUnloadDriver:
         """
         lifecycle = svc.get("lifecycle") or {}
         if isinstance(lifecycle, Mapping):
-            key = lifecycle.get("admin_key", "")
+            key = runtime_secrets.scalar(lifecycle, "admin_key")
             if key:
-                return str(key)
+                return key
         env_var = dc.get("admin_key_env", "")
         if env_var:
             return get_env(env_var, "")

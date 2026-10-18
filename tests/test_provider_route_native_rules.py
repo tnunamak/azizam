@@ -14,6 +14,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 import proxy
+from gateway import service_registry
 from tests.support.access import plan_for
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
 from tests.test_native_lane_hardening import WIDE, _denied, _models_scenario, _unload_scenario
@@ -33,13 +34,15 @@ def _serve(engine_url: str, **record):
     )
 
 
-def _call(method: str, path: str, plan_name: str, engine_url: str, *, owner: bool = False, **record):
+def _call(method: str, path: str, plan_name: str, engine_url: str, *, owner: bool = False, content: bytes | None = None,
+          **record):
     backends, targets = _serve(engine_url, **record)
     with authenticated_profile(plan_for(plan_name, caps=(), **WIDE)), backends:
         with patch.object(proxy, "_native_caller_is_owner", return_value=owner), patch.dict(
             proxy._PROVIDER_NATIVE_TARGETS, proxy._build_provider_native_targets(),
         ):
-            return TestClient(proxy.app).request(method, path, headers=AUTH_HEADERS)
+            client = TestClient(proxy.app, raise_server_exceptions=False)
+            return client.request(method, path, headers=AUTH_HEADERS, content=content)
 
 
 def test_the_provider_route_does_not_relay_an_engine_cookie_or_origin_header(fake_upstreams):
@@ -142,3 +145,170 @@ def test_decoded_bytes_do_not_go_out_under_the_engines_content_encoding(fake_ups
     assert response.status_code == 200, response.text
     assert "content-encoding" not in {name.lower() for name in response.headers}
     assert response.json() == {"object": "list", "data": []}
+
+
+# --- round 4 ---------------------------------------------------------------------------------------
+
+def _sent_headers(call) -> dict:
+    return {name.lower(): value for name, value in call.headers.items()}
+
+
+def _credentials(engine) -> dict:
+    origin = service_registry.origin_of(engine.base_url)
+    return {"credentials": {"inference": {"secret_env": "NATIVE_INFER_KEY", "header": "x-api-key", "origin": origin}}}
+
+
+def test_the_provider_route_does_not_send_the_service_records_auth_inject_key(fake_upstreams, monkeypatch):
+    monkeypatch.setenv("NATIVE_ENGINE_KEY", "engine-secret")
+    engine = fake_upstreams.loopback(_models_scenario())
+    inject = [{"header": "x-api-key", "secret_env": "NATIVE_ENGINE_KEY"}]
+    response = _call("GET", f"{PROVIDER}/v1/models", "prov-no-inject", engine.base_url, auth_inject=inject)
+    assert response.status_code == 200, response.text
+    assert "engine-secret" not in _sent_headers(engine.calls("models")[0]).values()
+
+
+def test_the_provider_route_sends_the_per_class_lane_credential(fake_upstreams, monkeypatch):
+    monkeypatch.setenv("NATIVE_INFER_KEY", "infer-secret")
+    monkeypatch.setenv("NATIVE_ENGINE_KEY", "engine-secret")
+    engine = fake_upstreams.loopback(_models_scenario())
+    response = _call(
+        "GET", f"{PROVIDER}/v1/models", "prov-lane-credential", engine.base_url, connection=_credentials(engine),
+        auth_inject=[{"header": "x-admin-key", "secret_env": "NATIVE_ENGINE_KEY"}],
+    )
+    assert response.status_code == 200, response.text
+    sent = _sent_headers(engine.calls("models")[0])
+    assert sent["x-api-key"] == "infer-secret"
+    assert "engine-secret" not in sent.values()
+
+
+def test_the_provider_route_refuses_a_credential_bound_to_another_origin(fake_upstreams, monkeypatch):
+    monkeypatch.setenv("NATIVE_INFER_KEY", "infer-secret")
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
+    moved = {"credentials": {"inference": {"secret_env": "NATIVE_INFER_KEY", "origin": "http://elsewhere.test:9"}}}
+    response = _call("GET", f"{PROVIDER}/v1/models", "prov-origin", engine.base_url, connection=moved)
+    _denied(response, "native_credential_origin_mismatch", status=502)
+    assert engine.requests == []
+
+
+def test_unlisted_reads_are_served_by_default(fake_upstreams):
+    engine = fake_upstreams.loopback(_models_scenario())
+    response = _call("GET", f"{PROVIDER}/v1/models", "prov-unlisted-default", engine.base_url)
+    assert response.status_code == 200, response.text
+
+
+def test_an_unlisted_read_is_refused_when_the_record_denies_unlisted_reads(fake_upstreams):
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
+    response = _call("GET", f"{PROVIDER}/v1/models", "prov-unlisted-deny", engine.base_url,
+                     native={"unlisted_reads": "deny", "allow": []})
+    _denied(response, "native_not_allowed")
+    assert engine.requests == []
+
+
+def test_a_listed_read_is_served_when_the_record_denies_unlisted_reads(fake_upstreams):
+    engine = fake_upstreams.loopback(_models_scenario())
+    native = {"unlisted_reads": "deny", "allow": [{"method": "GET", "path": "/v1/models", "class": "generate"}]}
+    response = _call("GET", f"{PROVIDER}/v1/models", "prov-listed-read", engine.base_url, native=native)
+    assert response.status_code == 200, response.text
+
+
+def test_a_state_changing_get_listed_as_control_is_owner_only_and_the_owner_can_make_it(fake_upstreams):
+    scenario = _scenario({"id": "stop", "match": {"method": "GET", "path": "/v1/models/demo-chat"},
+                          "response": {"status": 200, "json": {"stopped": True}}})
+    native = {"unlisted_reads": "deny", "allow": [{"method": "GET", "path": "/v1/models/demo-chat", "class": "control"}]}
+    engine = fake_upstreams.loopback(scenario)
+    refused = _call("GET", f"{PROVIDER}/v1/models/demo-chat", "prov-get-control", engine.base_url, native=native)
+    _denied(refused, "native_owner_only")
+    assert engine.requests == []
+    allowed = _call("GET", f"{PROVIDER}/v1/models/demo-chat", "prov-get-control-owner", engine.base_url, owner=True, native=native)
+    assert allowed.status_code == 200, allowed.text
+    assert len(engine.calls("stop")) == 1
+
+
+def test_an_unlisted_state_changing_get_is_served_to_a_non_owner_under_the_default(fake_upstreams):
+    """The default is allow, so the switch is the only guard: this is what the deny value exists to stop."""
+    scenario = _scenario({"id": "stop", "match": {"method": "GET", "path": "/v1/models/demo-chat"},
+                          "response": {"status": 200, "json": {"stopped": True}}})
+    engine = fake_upstreams.loopback(scenario)
+    response = _call("GET", f"{PROVIDER}/v1/models/demo-chat", "prov-get-default", engine.base_url)
+    assert response.status_code == 200
+    assert len(engine.calls("stop")) == 1
+
+
+def test_a_get_body_is_not_forwarded_on_the_provider_route(fake_upstreams):
+    engine = fake_upstreams.loopback(_models_scenario())
+    response = _call("GET", f"{PROVIDER}/v1/models", "prov-get-body", engine.base_url, content=b'{"smuggled": true}')
+    assert response.status_code == 200, response.text
+    assert engine.calls("models")[0].body == b""
+
+
+def test_a_post_body_still_reaches_the_engine_on_the_provider_route(fake_upstreams):
+    engine = fake_upstreams.loopback(_scenario({
+        "id": "chat", "match": {"method": "POST", "path": "/v1/chat/completions"},
+        "response": {"status": 200, "json": {"ok": True}},
+    }))
+    allow = {"allow": [{"method": "POST", "path": "/v1/chat/completions", "class": "generate"}]}
+    response = _call("POST", f"{PROVIDER}/v1/chat/completions", "prov-post-body", engine.base_url, native=allow,
+                     content=b'{"model": "m"}')
+    assert response.status_code == 200, response.text
+    assert engine.calls("chat")[0].body == b'{"model": "m"}'
+
+
+def test_an_undeclared_read_with_a_path_as_a_bare_key_is_refused(fake_upstreams):
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
+    response = _call("GET", f"{PROVIDER}/v1/models?/etc/passwd", "prov-bare-key", engine.base_url)
+    _denied(response, "native_query_not_allowed")
+    assert engine.requests == []
+
+
+def test_an_undeclared_read_with_a_double_encoded_path_value_is_refused(fake_upstreams):
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
+    response = _call("GET", f"{PROVIDER}/v1/models?file=%252Fetc%252Fpasswd", "prov-double-encoded", engine.base_url)
+    _denied(response, "native_query_value_refused")
+    assert engine.requests == []
+
+
+# The caps are data (native.max_request_bytes, native.max_response_bytes), so these use small ones.
+
+def test_a_request_over_the_configured_cap_is_refused_before_the_engine(fake_upstreams):
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
+    native = {"max_request_bytes": 64, "allow": [{"method": "POST", "path": "/v1/chat/completions", "class": "generate"}]}
+    response = _call("POST", f"{PROVIDER}/v1/chat/completions", "prov-request-cap", engine.base_url, native=native,
+                     content=b"x" * 65)
+    _denied(response, "native_request_too_large", status=413)
+    assert engine.requests == []
+
+
+def test_a_request_at_the_configured_cap_goes_through(fake_upstreams):
+    engine = fake_upstreams.loopback(_scenario({
+        "id": "chat", "match": {"method": "POST", "path": "/v1/chat/completions"},
+        "response": {"status": 200, "json": {"ok": True}},
+    }))
+    native = {"max_request_bytes": 64, "allow": [{"method": "POST", "path": "/v1/chat/completions", "class": "generate"}]}
+    response = _call("POST", f"{PROVIDER}/v1/chat/completions", "prov-request-at-cap", engine.base_url, native=native,
+                     content=b"x" * 64)
+    assert response.status_code == 200, response.text
+
+
+def test_a_chunked_request_over_the_configured_cap_is_refused(fake_upstreams):
+    engine = fake_upstreams.loopback(load_scenario("openai-compatible/no-calls"))
+    native = {"max_request_bytes": 64, "allow": [{"method": "POST", "path": "/v1/chat/completions", "class": "generate"}]}
+
+    def chunks():
+        yield b"x" * 40
+        yield b"x" * 40
+
+    response = _call("POST", f"{PROVIDER}/v1/chat/completions", "prov-request-cap-chunked", engine.base_url,
+                     native=native, content=chunks())
+    _denied(response, "native_request_too_large", status=413)
+    assert engine.requests == []
+
+
+def test_a_reply_over_the_configured_cap_is_cut_off(fake_upstreams):
+    engine = fake_upstreams.loopback(_scenario({
+        "id": "models", "match": {"method": "GET", "path": "/v1/models"},
+        "response": {"status": 200, "body": [{"text": "a" * 40}, {"text": "b" * 40}, {"text": "c" * 40}]},
+    }))
+    response = _call("GET", f"{PROVIDER}/v1/models", "prov-reply-cap", engine.base_url,
+                     native={"max_response_bytes": 64, "allow": []})
+    assert len(response.content) < 120
+    assert b"c" * 40 not in response.content

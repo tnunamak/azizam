@@ -28,7 +28,9 @@ For the operator-facing first-run story this model implies, see
 - **A read-only service-registry export is shipped.** Authenticated
   `GET /admin/api/config/export` serializes the current registry's service
   records and omits ephemeral runtime state. It is an operator download, not an
-  authoritative configuration file or a restore command.
+  authoritative configuration file or a restore command. It is owner-only: it
+  keeps each start command and environment value whole so that it round-trips,
+  while every view an administrator reads hides those values.
 - **Instance presentation is dashboard-owned.** The owner settings API stores
   the instance name, public base URL and default theme in the existing
   `admin.db` operator settings table. Bootstrap branding and public URL values
@@ -170,7 +172,7 @@ Implications:
 
 The gateway ships a narrow, read-only service-registry export at
 `GET /admin/api/config/export`. It serializes service records for operator
-download and excludes ephemeral runtime state. It does not restore a gateway,
+download (owner only, values whole) and excludes ephemeral runtime state. It does not restore a gateway,
 make the downloaded file authoritative, reconcile it with the dashboard, or
 cover all dashboard-owned settings.
 
