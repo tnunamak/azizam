@@ -48,7 +48,7 @@ Use Docker Compose, or run without Docker: [bare-metal install](docs/FIRST_RUN_S
    - For llama.cpp, vLLM, LM Studio or another OpenAI-compatible server, choose **Any OpenAI-compatible server**. Type an address that ends in `/v1`, such as `http://192.168.1.50:8080/v1`.
    - For Ollama, choose **Server with its own model list**. Type the address with no `/v1`, such as `http://192.168.1.50:11434`.
 
-   The address must work from where the gateway runs. Read [Connect an engine by where it runs](docs/FIRST_RUN_SETUP.md#connect-an-engine-by-where-it-runs) first. Then click **Continue**. The gateway contacts the server. If the server needs a key, enter the engine's key here. Do not enter your App key. Tick the abilities you want, such as chat. Keep or rename the model names it found, then name the engine and click **Add engine**.
+   The address must work from where the gateway runs. Read [Connect an engine by where it runs](docs/FIRST_RUN_SETUP.md#connect-an-engine-by-where-it-runs) first. The dialog has several steps, and each has a **Continue** button. **Continue** sends a few harmless requests to the server. Nothing is saved yet. If the server needs a key, enter the engine's key there. Do not enter your App key. Tick the abilities you want, such as chat. Keep or rename the model names it found, then name the engine and click **Add engine**.
 
    Write down the public model name you kept, such as `my-llama`. Your app sends this name.
 

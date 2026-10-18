@@ -306,11 +306,8 @@ decision that only host networking and reverse proxies are supported.
 
 Status: open. Verify with the backend, then align the docs.
 
-Three points disagree or are unverified:
+Two points disagree or are unverified:
 
-- `docs/design/ENGINE_CONTRACT.md` section 6 says native control is owner-only,
-  and the user docs now say the same. The credential that the `/native/` route
-  sends for control calls was not verified in the audit.
 - `GET /admin/api/config/export` (`proxy.py`, the `admin_config_export`
   handler) says "Admin-auth required (same guard as all /admin/api/* routes)".
   `docs/CONFIG_SOURCE_OF_TRUTH.md` and `docs/ops/HEADLESS_ACCESS.md` differ on
@@ -321,8 +318,7 @@ Three points disagree or are unverified:
 
 Evidence: docs-currency audit at 5f9a825 (round r0), "Unsettled conflicts".
 
-Needed: decide the export guard and test it; confirm the native control path
-and its credential; then align the three docs in one change.
+Needed: decide the export guard and test it; then align the docs in one change.
 
 ## Deliberately Deferred
 
