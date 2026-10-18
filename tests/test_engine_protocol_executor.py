@@ -150,8 +150,9 @@ def test_query_values_come_from_the_request_with_defaults_and_percent_encoding()
 def test_path_parameters_are_percent_encoded_and_cannot_change_the_path() -> None:
     ops = {"get": {"class": "inventory", "request": {"method": "GET", "path": "/items/{name}/info"}, "response": {"framing": "json"}}}
     ex, fake = make(ops, lambda r: httpx.Response(200, json={}))
-    run(ex.invoke(conn(), req("get", params={"name": "../../admin?x=1#f"})))
-    assert fake.requests[0].url.raw_path == b"/items/..%2F..%2Fadmin%3Fx%3D1%23f/info"
+    with pytest.raises(MappingError):
+        run(ex.invoke(conn(), req("get", params={"name": "../../admin?x=1#f"})))
+    assert fake.requests == []
     with pytest.raises(MappingError):
         run(ex.invoke(conn(), req("get", params={})))
     with pytest.raises(MappingError):
@@ -161,7 +162,9 @@ def test_path_parameters_are_percent_encoded_and_cannot_change_the_path() -> Non
 DOT_PATH = {"get": {"class": "inventory", "request": {"method": "GET", "path": "/api/v1/models/{id}/unload"}, "response": {"framing": "json"}}}
 
 
-@pytest.mark.parametrize("value", ["..", ".", "%2F", "a%2fb", "x%5Cy", "%2e%2e%2F"])
+@pytest.mark.parametrize("value", ["..", ".", "%2F", "a%2fb", "x%5Cy", "%2e%2e%2F",
+    "a/x", "a/../../x", "a\\..\\x", "%2e%2e", "%252e", "．．", "..;/x", "a;b", "a\x00b", "a\nb",
+    "a\x7fb", "a\x85b", "a．b", "a﹒b", "a；b", "a／b"])
 def test_a_path_value_cannot_climb_the_path_or_carry_an_encoded_slash(value: str) -> None:
     ex, fake = make(DOT_PATH, lambda r: httpx.Response(200, json={}))
     with pytest.raises(MappingError):
@@ -177,7 +180,7 @@ def test_two_placeholders_cannot_join_into_a_dot_segment() -> None:
     assert fake.requests == []
 
 
-@pytest.mark.parametrize("value", ["a.b", "..x", "x..", "v1.5", "a/b", "...", "é"])
+@pytest.mark.parametrize("value", ["a.b", "..x", "x..", "v1.5", "a-b", "...", "é"])
 def test_a_path_value_with_dots_inside_a_name_is_still_sent_encoded(value: str) -> None:
     ex, fake = make(DOT_PATH, lambda r: httpx.Response(200, json={}))
     run(ex.invoke(conn(), req("get", params={"id": value})))
@@ -893,15 +896,14 @@ def test_cancel_of_a_live_job_is_sent(state: str) -> None:
     assert fake.requests[-1].url.path == "/jobs/42/cancel"
 
 
-def test_cancel_of_an_unknown_job_is_the_engines_not_found_and_sends_no_cancel() -> None:
+def test_cancel_of_an_unknown_job_still_sends_cancel() -> None:
     ex, fake = make(JOB, lambda r: httpx.Response(404, text="no such job") if r.method == "GET" else httpx.Response(202, json={"job": {"id": 42}}))
 
     async def go():
         ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
         await ex.cancel(conn(), ref)
-    with pytest.raises(UpstreamError):
-        run(go())
-    assert not any(r.url.path.endswith("/cancel") for r in fake.requests)
+    run(go())
+    assert fake.requests[-1].url.path.endswith("/cancel")
 
 
 def test_a_job_operation_is_not_invokable_and_a_plain_one_is_not_submittable() -> None:
@@ -1074,3 +1076,86 @@ def test_a_header_value_with_a_line_break_is_never_sent() -> None:
     with pytest.raises(MappingError):
         run(ex.invoke(conn(credentials={"inference": Credential("k\nInjected: 1")}), req("x")))
     assert fake.requests == []
+
+
+@pytest.mark.parametrize("failure", [503, "cancelling"])
+def test_cancel_sends_when_poll_cannot_prove_terminal(failure) -> None:
+    def handler(r):
+        if r.method == "GET":
+            return httpx.Response(failure, text="retry") if isinstance(failure, int) else httpx.Response(200, json={"state": failure})
+        return httpx.Response(202, json={"job": {"id": 42}})
+    ex, fake = make(JOB, handler)
+
+    async def go():
+        ref = await ex.submit(conn(), req("render"))
+        await ex.cancel(conn(), ref)
+    run(go())
+    assert fake.requests[-1].url.path == "/jobs/42/cancel"
+
+
+@pytest.mark.parametrize("secret", ["a", "ab", "abc"])
+def test_short_credentials_are_scrubbed_from_upstream_errors(secret) -> None:
+    ex, _ = make(MODELS, lambda r: httpx.Response(503, text="echo " + secret),
+                 auth={"inference": {"kind": "bearer"}})
+    with pytest.raises(UpstreamError) as raised:
+        run(ex.invoke(conn(credentials={"inference": Credential(secret=secret)}), req("models")))
+    assert secret.encode() not in raised.value.body
+    assert secret not in str(raised.value)
+
+
+@pytest.mark.parametrize("split", [False, True, "partial"])
+def test_error_body_scrubs_secret_at_capture_boundary(split) -> None:
+    prefix = b"x" * (executor._ERROR_BODY_CAP - 5)
+    tail = SECRET.encode()
+    chunks = [prefix + tail] if split is False else [prefix + tail[:5], tail[5:]]
+    if split == "partial":
+        chunks = [prefix + tail[:5]]
+    ex, _ = make(MODELS, lambda r: httpx.Response(503, stream=Chunks(chunks)))
+    with pytest.raises(UpstreamError) as raised:
+        run(ex.invoke(conn(credentials={"inference": Credential(secret=SECRET)}), req("models")))
+    assert len(raised.value.body) <= executor._ERROR_BODY_CAP
+    assert tail[:5] not in raised.value.body
+
+
+@pytest.mark.parametrize("failure", ["transport", 503])
+@pytest.mark.parametrize("recover", [False, True])
+def test_wait_retries_transient_errors_with_interval_and_deadline(failure, recover) -> None:
+    stamps = []
+    def handler(r):
+        if r.url.path == "/jobs":
+            return httpx.Response(202, json={"job": {"id": 42}})
+        stamps.append(time.perf_counter())
+        if recover and len(stamps) == 2:
+            return httpx.Response(200, json={"state": "ok", "files": []})
+        if failure == "transport":
+            raise httpx.ConnectError("temporary")
+        return httpx.Response(failure)
+    ex, _ = make(fast_job(0.1, 1), handler)
+
+    async def go():
+        ref = await ex.submit(conn(), req("render"))
+        if recover:
+            assert (await ex.wait(conn(), ref)).state is JobState.succeeded
+        else:
+            with pytest.raises(BudgetExceeded) as raised:
+                await ex.wait(conn(), ref)
+            assert raised.value.budget == "max_wait_s"
+    started = time.perf_counter()
+    run(go())
+    assert len(stamps) >= 2
+    assert all(b - a >= 0.09 for a, b in zip(stamps, stamps[1:]))
+    assert time.perf_counter() - started < 2
+    assert all(t - started < 1.05 for t in stamps)
+
+
+def test_wait_does_not_retry_client_errors() -> None:
+    ex, fake = make(fast_job(0.1, 1), lambda r: httpx.Response(404) if r.method == "GET"
+                    else httpx.Response(202, json={"job": {"id": 42}}))
+
+    async def go():
+        ref = await ex.submit(conn(), req("render"))
+        with pytest.raises(UpstreamError) as raised:
+            await ex.wait(conn(), ref)
+        assert raised.value.status == 404
+    run(go())
+    assert len(fake.requests) == 2

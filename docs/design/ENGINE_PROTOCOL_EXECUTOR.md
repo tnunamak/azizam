@@ -41,8 +41,10 @@ or a `job`.
 **Request.** `method` (GET, POST, PUT, PATCH, DELETE); `path`, a relative
 template that starts with `/` and holds `{name}` placeholders (values are
 percent-encoded; no host, query, fragment, `..` or backslash is allowed in the
-template. A value that would make a `.` or `..` segment, or that already holds an
-encoded slash or backslash (`%2f`, `%5c`), is refused with a mapping error);
+template. Each placeholder must be a single segment: slash, backslash, percent,
+semicolon, control characters (including NUL), Unicode dot look-alikes that
+NFKC-normalize to dots, and NFKC-normalized `.` or `..` are refused with a
+mapping error. Slash-containing organization/model IDs belong in query or body fields);
 `query`, a list of `{name, from, default}`; `headers`, constant non-credential
 headers; `body`.
 
@@ -130,8 +132,12 @@ await executor.preview(conn, request) -> {method, url, headers (key masked), bod
 - Answers are requested uncompressed; a compressed answer is refused.
 - `wait` polls every `interval_s` and raises `BudgetExceeded(max_wait_s)` when
   the job has not ended after `max_wait_s`; the limit also cuts a poll that
-  hangs. `cancel` asks the job's state first and sends nothing for a job that
-  has succeeded, failed or been cancelled. `wait` is an executor method, not
+  hangs. Transport failures and HTTP 5xx are retried at the declared interval,
+  bounded by that same deadline; HTTP 4xx and malformed statuses are not retried.
+  No poll starts at or after the deadline. `cancel` skips its request only when
+  a poll positively reports succeeded, failed or cancelled. Poll failures,
+  including unmapped states and 404, still lead to the cancel request with its
+  own total timeout; caller cancellation still propagates. `wait` is an executor method, not
   part of the adapter interface: core keeps the durable job state and may poll
   on its own clock.
 - All reads of one `fetch_assets` call share one total deadline and one size
@@ -146,9 +152,18 @@ await executor.preview(conn, request) -> {method, url, headers (key masked), bod
   text, preview, answer header and job failure reason, in the raw, percent-encoded
   and JSON-escaped spellings. Errors leave with no chained cause that holds the
   URL. `transport.py` also keeps URL queries out of the `httpx` request log.
-  The body of an answer is returned as the engine sent it.
+  Every non-empty credential is scrubbed, including one-to-three-character
+  secrets; this deliberately favors secrecy even when ordinary error text is
+  masked. Error bodies are scrubbed before the 64 KiB diagnostic cap, with
+  bounded credential-length lookahead and trailing partial credential prefixes
+  removed at the cut (also for the 160-byte message excerpt).
+  Successful response bodies are returned as the engine sent them.
 - An unmapped stream is relayed as raw bytes without a JSON parse. A mapped
-  stream yields dicts.
+  stream yields dicts. SSE and NDJSON retain mutable buffers and scan offsets;
+  only new bytes and the SSE delimiter overlap are scanned. SSE normalizes line
+  endings only in new chunks and retains a split CR. The regression feeds a
+  1 MiB event one byte at a time and bounds counted scan work linearly rather
+  than relying on wall-clock speed.
 - The transport (`HttpxTransport`) reuses the address checks of
   `gateway/engine_check.py`: one lookup, every address checked, only checked
   addresses dialled, link-local and cloud-settings addresses refused, the

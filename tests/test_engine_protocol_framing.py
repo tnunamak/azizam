@@ -144,3 +144,27 @@ def test_a_random_boundary_is_used_when_none_is_given() -> None:
     first, ct1 = framing.encode_multipart([framing.Part("a", b"1")])
     second, ct2 = framing.encode_multipart([framing.Part("a", b"1")])
     assert ct1 != ct2 and ct1.startswith("multipart/form-data; boundary=")
+
+
+@pytest.mark.parametrize("kind", ["sse", "ndjson"])
+def test_one_mib_event_in_single_byte_feeds_has_linear_scan_work(kind) -> None:
+    class CountedBuffer(bytearray):
+        scanned = 0
+
+        def find(self, sub, start=0, end=None):
+            stop = len(self) if end is None else end
+            self.scanned += max(0, stop - start)
+            return super().find(sub, start, stop)
+
+    size = 1024 * 1024
+    decoder = framing.SseDecoder(size + 16) if kind == "sse" else framing.NdjsonDecoder(size + 16)
+    held = CountedBuffer()
+    decoder._buf = held
+    if kind == "sse":
+        decoder.feed(b"data: ")
+    for _ in range(size):
+        assert decoder.feed(b"x") == []
+    events = decoder.feed(b"\n\n" if kind == "sse" else b"\n")
+    assert (events[0].data if kind == "sse" else events[0]) == b"x" * size
+    assert decoder._buf is held  # no immutable concatenation or replacement of the held buffer
+    assert 0 < held.scanned <= 4 * (size + 16)
