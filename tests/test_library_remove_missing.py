@@ -110,7 +110,7 @@ class RemoveMissingTests(unittest.TestCase):
         response = self.client.post(REMOVE, headers=VALID)
         self.assertEqual(response.status_code, 503, response.text)
         self.assertEqual(response.json()["error"]["code"], "media_folder_unconfirmed")
-        self.assert_nothing_changed()
+        self.assert_nothing_changed(written=frozenset({asset("N")}))
 
     def test_a_different_volume_id_removes_nothing(self) -> None:
         self.seed()
@@ -277,12 +277,13 @@ class RemoveMissingTests(unittest.TestCase):
 
     # --- the media folder must be seen before anything is called gone -------------------
 
-    def assert_nothing_changed(self) -> None:
+    def assert_nothing_changed(self, written: frozenset[str] = frozenset()) -> None:
+        # ``written`` names entries the test itself added after the seed; they stay.
         self.assertEqual(len(self.job_ids("req_a")), 1)
         self.assertEqual(len(self.job_ids("req_cd")), 1)
         self.assertEqual(len(self.job_ids("req_e")), 1)
         kept = prompt_memory.get_person_prompts(self.alice["id"], path=self.prompt_db)
-        self.assertEqual(set(kept), {asset(letter) for letter in "ABCD"})
+        self.assertEqual(set(kept), {asset(letter) for letter in "ABCD"} | written)
         self.assertEqual(admin_store.list_audit(action_prefix="media.", limit=50, path=self.admin_db), [])
 
     def refused(self, message: str = UNSEEN) -> None:
