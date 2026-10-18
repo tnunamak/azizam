@@ -320,3 +320,66 @@ def test_unrepresentable_embedding_number_is_a_typed_response_failure():
     with pytest.raises(ProtocolError) as raised:
         validate(payload, 'embeddings')
     assert raised.value.code == 'malformed_response'
+
+
+@pytest.mark.parametrize('failure', ['origin', 'decrypt', 'store'])
+def test_stored_credential_failures_are_typed_and_preserve_healthy_inventory(engine, monkeypatch, failure):
+    from gateway import admin_store, secret_store
+    from cryptography.exceptions import InvalidTag
+    import sqlite3
+    origin = 'http://prism.test:9100'
+    secret_store.put_provider_secret('credential-r2', 'fixture-stored-key', db_path=admin_store.DB_PATH,
+        approved_origin='http://different.test:9100' if failure == 'origin' else origin)
+    if failure == 'decrypt':
+        monkeypatch.setattr(secret_store, 'load_secret_key', lambda path: b'\0'*32)
+    elif failure == 'store':
+        def broken_store(*a, **k):
+            raise sqlite3.OperationalError('internal database file /srv/private/key')
+        monkeypatch.setattr(secret_store, 'get_provider_secret', broken_store)
+    healthy = copy.deepcopy(engine.record)
+    healthy['id'] = 'healthy'
+    engine.record['config']['connection']['credentials'] = {'inference':{
+        'secret_ref':'credential-r2','origin':origin,'header':'X-Inference','scheme':''}}
+    response = chat(engine)
+    assert response.status_code == (502 if failure == 'origin' else 503), response.text
+    assert '/srv/' not in response.text and 'fixture-stored-key' not in response.text
+    engine.registry['services']['healthy'] = healthy
+    from gateway.engine_protocol import inventory
+    inventory._cache.clear()
+    response = engine.client.get('/v1/models')
+    assert response.status_code == 200, response.text
+    assert 'prism-chat' in {item['id'] for item in response.json()['data']}
+
+
+def test_status_issue_clears_when_engine_no_longer_lists_models(engine, monkeypatch):
+    from gateway.engine_protocol import inventory
+    inventory._issues[engine.record['id']] = 'Old failure'
+    doc = description.parse_description_text((FIXTURE/'prism.yml').read_text(), source='prism.yml')
+    doc = replace(doc, operations={k:v for k,v in doc.operations.items() if k != 'models'})
+    monkeypatch.setattr(description, 'load_registry', lambda: {'prism':doc})
+    assert engine.client.get('/v1/models').status_code == 200
+    assert not any(item['engine_id'] == engine.record['id'] for item in inventory.problems())
+
+
+def test_safe_operator_advice_is_preserved_but_internal_paths_are_not():
+    from gateway.engine_protocol.errors import UpstreamError
+    safe = proxy._protocol_failure(UpstreamError(429, 'raw internal response', advice='The engine is busy. Try again soon.'))
+    assert json.loads(safe.body)['error']['message'] == 'The engine is busy. Try again soon.'
+    unsafe = proxy._protocol_failure(UpstreamError(500, 'raw response', advice='Inspect /srv/private/config for details.'))
+    assert b'/srv' not in unsafe.body
+
+
+def test_requested_stream_cannot_silently_return_json(engine, monkeypatch):
+    data = yaml.safe_load((FIXTURE/'prism.yml').read_text())
+    data['operations']['chat']['response'].pop('stream')
+    doc = description.parse_description(data, source='prism.yml')
+    monkeypatch.setattr(description, 'load_registry', lambda: {'prism':doc})
+    response = chat(engine, stream=True)
+    assert response.status_code == 502, response.text
+    assert response.json()['error']['code'] == 'malformed_response'
+
+
+def test_embedding_dimension_rejection_retains_request_id(engine):
+    response = engine.client.post('/v1/embeddings', json={'model':'prism-embed','input':'hi','dimensions':100})
+    assert response.status_code == 400
+    assert response.headers.get('x-request-id')
