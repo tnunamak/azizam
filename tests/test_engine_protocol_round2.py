@@ -27,11 +27,11 @@ def wire(monkeypatch, handler):
 def test_one_unreachable_engine_does_not_remove_healthy_models(engine, monkeypatch):
     bad = copy.deepcopy(engine.record)
     bad['id'] = 'down'
-    bad['config']['connection']['address'] = 'http://down.test:9100'
+    bad['config']['connection']['address'] = 'http://localhost:9101'
     engine.registry['services']['down'] = bad
     original = engine.fake.__call__
     def handler(request):
-        if request.url.host == 'down.test':
+        if request.url.port == 9101:
             raise ProtocolError('socket internals /srv/private/config', code='transport_failed')
         return original(request)
     wire(monkeypatch, handler)
@@ -218,7 +218,7 @@ def test_invalid_first_stream_chunk_is_a_typed_502(engine, monkeypatch):
 def test_missing_unused_control_key_does_not_break_public_chat(engine, monkeypatch):
     conn = engine.record['config']['connection']
     conn['credentials'] = {'control': {'secret_ref':'os.environ/UNSET_CONTROL_R2',
-        'origin':'http://prism.test:9100','header':'X-Control','scheme':''}}
+        'origin':'http://localhost:9100','header':'X-Control'}}
     monkeypatch.delenv('UNSET_CONTROL_R2', raising=False)
     assert chat(engine).status_code == 200
     assert all('x-control' not in request.headers for request in engine.fake.requests)
@@ -229,7 +229,7 @@ def test_missing_inference_key_fails_closed_before_control_or_generation(engine,
     switching(engine)
     conn = engine.record['config']['connection']
     conn['credentials'] = {'inference': {'secret_ref':'os.environ/UNSET_INFERENCE_R2',
-        'origin':'http://prism.test:9100','header':'X-Inference','scheme':''}}
+        'origin':'http://localhost:9100','header':'X-Inference'}}
     monkeypatch.delenv('UNSET_INFERENCE_R2', raising=False)
     response = chat(engine)
     assert response.status_code == 503, response.text
@@ -326,7 +326,7 @@ def test_unrepresentable_embedding_number_is_a_typed_response_failure():
 def test_stored_credential_failures_are_typed_and_preserve_healthy_inventory(engine, monkeypatch, failure):
     from gateway import admin_store, secret_store
     import sqlite3
-    origin = 'http://prism.test:9100'
+    origin = 'http://localhost:9100'
     secret_store.put_provider_secret('credential-r2', 'fixture-stored-key', db_path=admin_store.DB_PATH,
         approved_origin='http://different.test:9100' if failure == 'origin' else origin)
     if failure == 'decrypt':

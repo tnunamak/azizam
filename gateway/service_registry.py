@@ -893,6 +893,7 @@ def service_from_backend_config(
     source: str,
     provenance: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    validate_protocol_dispatch_local_only(raw)
     safe_config, secret_refs = split_secret_refs(raw)
     validate_provider_secret_refs(service_id, safe_config, secret_refs)
     validate_provider_native_passthrough_disabled(service_id, safe_config)
@@ -953,6 +954,7 @@ def service_from_backend_config(
 
 
 def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_version: int | None = None) -> dict[str, Any]:
+    validate_protocol_dispatch_local_only(raw)
     if schema_version is None:
         schema_version = 2 if any(key in raw for key in ("process", "observations", "residency")) else 1
     source = str(raw.get("source") or "ui")
@@ -1032,6 +1034,37 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any], *, schema_
     # rows (LiteLLM). Stored editable:false from old seeds is normalized away.
     record["editable"] = not is_litellm_service_record(service_id, record)
     return record
+
+
+def validate_protocol_dispatch_local_only(service: Mapping[str, Any]) -> None:
+    """Protocol dispatch lacks paid-provider controls; accept only proven local addresses.
+
+    This intentionally narrow rule does not resolve DNS: LAN and container names
+    remain unknown. Placement labels cannot override the connection's address.
+    """
+    config = service.get("config")
+    sources = (service, config if isinstance(config, Mapping) else {})
+    connections = [source.get("connection") for source in sources]
+    opted = [connection for connection in connections
+             if isinstance(connection, Mapping) and connection.get("dispatch") == "protocol"]
+    if not opted:
+        return
+    reason = ("protocol dispatch does not enforce paid-provider access or spend limits; "
+              "use the existing provider route")
+    if any(is_remote_provider_config(source) for source in sources):
+        raise ValueError(reason)
+    if any(str(source.get(key) or "").strip().lower() == "remote"
+           for source in sources for key in ("locality", "placement")):
+        raise ValueError(reason)
+    # Import lazily: presentation also imports registry classifiers. Reuse its
+    # address classifier with only the actual target, never placement metadata
+    # or a second legacy endpoint that could mask a public connection address.
+    from gateway.model_presentation import model_locality
+
+    for connection in opted:
+        address = connection.get("address")
+        if not isinstance(address, str) or model_locality({"base_url": address}, None) != "local":
+            raise ValueError(reason)
 
 
 def validate_provider_secret_refs(

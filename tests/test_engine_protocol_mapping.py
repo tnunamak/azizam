@@ -430,3 +430,59 @@ def test_each_checks_json_depth_for_source_and_assembled_output():
     with pytest.raises(BudgetExceeded) as raised:
         program.apply({"body": deep})
     assert raised.value.budget == "max_json_depth"
+
+
+@pytest.mark.parametrize("roots,name", [
+    (mapping.REQUEST_ROOTS, "max_request_bytes"),
+    (mapping.RESPONSE_ROOTS, "max_response_bytes"),
+])
+def test_each_output_byte_budget_utf8_boundary_and_envelope(roots, name):
+    expected = {"data": [{"value": "é"}]}
+    size = len(json.dumps(expected, ensure_ascii=False, separators=(",", ":")).encode())
+    rules = [_each([{"copy": {"from": "/item", "to": "/value"}}])]
+    source = {"body": {"models": ["é"]}}
+    assert mapping.build(rules, base="empty", roots=roots,
+                         budgets=Budgets(**{name: size})).apply(source) == expected
+    with pytest.raises(BudgetExceeded) as raised:
+        mapping.build(rules, base="empty", roots=roots,
+                      budgets=Budgets(**{name: size - 1})).apply(source)
+    assert raised.value.budget == name
+
+
+def test_each_stops_growth_early_without_serializing_accumulating_list(monkeypatch):
+    calls = []
+    real_size = mapping._json_size
+
+    def sized(value):
+        calls.append(value)
+        return real_size(value)
+
+    monkeypatch.setattr(mapping, "_json_size", sized)
+    rules = [_each([{"set": {"to": "/v", "value": "x" * 20}}])]
+    program = mapping.build(rules, base="empty", roots=mapping.REQUEST_ROOTS,
+                            budgets=Budgets(max_request_bytes=100))
+    with pytest.raises(BudgetExceeded) as raised:
+        program.apply({"body": {"models": list(range(100))}})
+    assert raised.value.budget == "max_request_bytes"
+    assert len(calls) <= 4
+    assert all(type(value) is dict and "v" in value for value in calls)
+    calls.clear()
+    program = mapping.build(rules, base="empty", roots=mapping.REQUEST_ROOTS)
+    assert len(program.apply({"body": {"models": list(range(100))}})["data"]) == 100
+    assert len(calls) == 101  # each element once, then the finished output once
+
+
+def test_each_owns_existing_root_values_and_nested_siblings():
+    source = {"body": {"models": [1, 2]}, "params": {"opts": {"x": []}}}
+    program = mapping.build([_each([{"copy": {"from": "/params/opts", "to": "/opts"}}])],
+                            base="empty", roots=mapping.REQUEST_ROOTS)
+    out = program.apply(source)
+    out["data"][0]["opts"]["x"].append(1)
+    assert source["params"]["opts"]["x"] == []
+    assert out["data"][1]["opts"]["x"] == []
+
+
+def test_each_rejects_when_nested_beyond_shared_depth():
+    rule = _each([{"when": {"if": {"path": "/item", "present": True}, "then": []}}])
+    with pytest.raises(DescriptionError):
+        mapping.build([rule], base="empty", roots=mapping.REQUEST_ROOTS, budgets=Budgets(max_when_depth=1))

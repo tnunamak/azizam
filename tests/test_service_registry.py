@@ -81,6 +81,44 @@ def test_remote_protocol_validation_does_not_resolve_dns(monkeypatch: pytest.Mon
         })
 
 
+
+@pytest.mark.parametrize("address", [
+    "http://192.168.1.2:8000", "http://executor:8000", "",
+    "https://provider.invalid/v1", "https://8.8.8.8/v1",
+])
+@pytest.mark.parametrize("placement", ["local", None])
+def test_protocol_dispatch_requires_proven_connection_locality(address, placement) -> None:
+    raw = {"placement": placement, "base_url": "http://localhost:8000", "config": {
+        "locality": placement,
+        "connection": {"dispatch": "protocol", "address": address},
+    }}
+    with pytest.raises(ValueError, match=_PROTOCOL_REFUSAL):
+        service_registry.normalize_service_record("executor", raw)
+
+
+@pytest.mark.parametrize("marker", [
+    {"paid_remote": True}, {"remote_provider": "yes"},
+    {"provider_type": "cloud"}, {"cost_class": "PAID-REMOTE"},
+])
+@pytest.mark.parametrize("remote_at_top", [True, False])
+def test_protocol_dispatch_remote_marker_cannot_be_shadowed(marker, remote_at_top) -> None:
+    local = {"paid_remote": False, "remote_provider": False,
+             "provider_type": "local", "cost_class": "local"}
+    raw = {**(marker if remote_at_top else local), "config": {
+        **(local if remote_at_top else marker),
+        "connection": {"dispatch": "protocol", "address": "http://localhost:8000"},
+    }}
+    # No provider key: the dispatch refusal must precede unrelated key errors.
+    with pytest.raises(ValueError, match=_PROTOCOL_REFUSAL):
+        service_registry.normalize_service_record("executor", raw)
+
+
+@pytest.mark.parametrize("address", ["http://LOCALHOST.:8000", "http://127.12.34.56:8000"])
+def test_protocol_dispatch_accepts_normalized_loopback(address) -> None:
+    config = {"connection": {"dispatch": "protocol", "address": address}}
+    assert service_registry.normalize_service_record("executor", {"config": config})["config"] == config
+
+
 def test_shaped_remote_service_rejects_inline_config_key() -> None:
     with pytest.raises(ValueError, match="inline secret fields"):
         service_registry.normalize_service_record("openrouter", {

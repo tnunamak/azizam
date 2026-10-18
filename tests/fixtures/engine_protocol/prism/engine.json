@@ -7,7 +7,7 @@
       "transport": "http",
       "dispatch": "protocol",
       "protocol": "prism",
-      "address": "http://prism.test:9100/prefix",
+      "address": "http://localhost:9100/prefix",
       "credentials": {},
       "headers": [
         {

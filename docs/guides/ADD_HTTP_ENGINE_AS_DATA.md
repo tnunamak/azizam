@@ -37,7 +37,7 @@ The example connection is:
   "transport": "http",
   "dispatch": "protocol",
   "protocol": "prism",
-  "address": "http://prism.test:9100/prefix",
+  "address": "http://127.0.0.1:9100/prefix",
   "credentials": {},
   "headers": [{"name": "X-Region", "value": "test"}],
   "timeouts": {"connect_s": 2, "first_byte_s": 10, "total_s": 30}
@@ -88,7 +88,7 @@ select it as `images` using description data only.
 
 Credentials are references, never values in descriptions. For example,
 `credentials.inference` may contain `secret_ref: os.environ/ENGINE_KEY`,
-`origin: http://engine.example:8080`, `header: X-Inference`, and `scheme: ""`.
+`origin: http://engine.example:8080`, `header: X-Inference`, with `scheme` omitted for a raw key header.
 The protocol's `auth.inference` must declare the matching auth method. Control
 has a separate reference, and the gateway refuses an origin mismatch before
 sending any request. Caller keys are never forwarded, and ordinary headers
@@ -198,7 +198,9 @@ origin-bound credential block. Ordinary connection headers cannot hold keys.
 
 ## Local addresses and request safety
 
-Executor dispatch currently accepts local engines only. A record marked paid
+Executor dispatch currently accepts loopback engines only. Addresses on a LAN,
+container hostnames and public hostnames have unknown placement under the
+existing classifier and are refused without a DNS lookup. A record marked paid
 or remote, or an address classified remote by the existing registry rules, is
 refused at save because this lane has no paid-provider access or spend ledger.
 Use the existing provider route for those records. At every HTTP exchange the

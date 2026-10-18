@@ -1,12 +1,12 @@
 """The fixed mapping language of ``executor: http-v1``.
 
 A map is a list of rules that builds one JSON object from a source document.
-There are nine rules and no others: ``copy``, ``rename``, ``set`` (constant),
+The scalar rules are: ``copy``, ``rename``, ``set`` (constant),
 ``default``, ``drop``, ``enum`` (table), ``clamp``, ``stringify`` and ``when``
 (a condition on presence, equality or membership). A rule names JSON pointers
-and plain values. There are no loops, no expressions, no functions and no side
-effects, so a map is straight-line: its cost is the number of rules times the
-size of the values they touch, and the rule count is fixed when the file loads.
+and plain values. ``each`` maps a bounded array into fresh objects, with lexical
+``/item`` and ``/index`` roots. There are no expressions or general loops.
+Rule count and combined each/when nesting are fixed when the file loads.
 
 A map is compiled once, when a description loads, into closures over parsed
 pointers. ``Program.apply`` then does no parsing.
@@ -40,6 +40,7 @@ _RUNNING: ContextVar[tuple[float, float] | None] = ContextVar("engine_protocol_m
 
 _RULE_KEYS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     # rule: (required keys, optional keys)
+    "each": (frozenset({"from", "to", "map"}), frozenset()),
     "copy": (frozenset({"from", "to"}), frozenset()),
     "rename": (frozenset({"from", "to"}), frozenset()),
     "set": (frozenset({"to", "value"}), frozenset()),
@@ -50,6 +51,8 @@ _RULE_KEYS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "stringify": (frozenset({"from", "to"}), frozenset()),
     "when": (frozenset({"if", "then"}), frozenset({"else"})),
 }
+_EACH_RUNNING: ContextVar[list[int] | None] = ContextVar("engine_protocol_each_selected", default=None)
+
 _PREDICATE_KEYS = ("present", "equals", "in")
 _UNMAPPED = ("pass", "drop", "error")
 
@@ -137,13 +140,16 @@ def _equality(expected: Any) -> Callable[[Any], bool]:
 class Program:
     """A compiled map. ``apply`` is the only operation."""
 
-    __slots__ = ("_steps", "_passthrough", "_writes", "_mapping_s")
+    __slots__ = ("_steps", "_passthrough", "_writes", "_mapping_s", "_each_budgets", "_output_budget")
 
-    def __init__(self, steps: Sequence[Step], *, passthrough: bool, writes: bool, mapping_s: float) -> None:
+    def __init__(self, steps: Sequence[Step], *, passthrough: bool, writes: bool, mapping_s: float,
+                 each_budgets: Budgets | None = None, output_budget: str = "max_request_bytes") -> None:
         self._steps = tuple(steps)
         self._passthrough = passthrough
         self._writes = writes
         self._mapping_s = mapping_s
+        self._each_budgets = each_budgets
+        self._output_budget = output_budget
 
     def apply(self, source: Mapping[str, Any]) -> dict:
         """Build the output. It may share containers with ``source`` where no rule writes below them: read it, do not edit it.
@@ -156,16 +162,26 @@ class Program:
         if self._passthrough and type(body) is not dict:
             raise MappingError("A passthrough map needs the body to be a JSON object.")
         token = _RUNNING.set((deadline, self._mapping_s))
+        each_token = _EACH_RUNNING.set([0]) if self._each_budgets else None
         try:  # the executor checks depth before it maps; the RecursionError net is for a caller that does not
+            if self._each_budgets:
+                for value in source.values():
+                    _check_depth(value, self._each_budgets)
             out: dict = (_clone(body) if self._writes else body) if self._passthrough else {}
             for step in self._steps:
                 step(source, out)
                 if time.perf_counter() > deadline:  # between rules, so a slow map stops while it runs, not after
                     raise BudgetExceeded("mapping_s", f"A mapping took longer than {self._mapping_s:g} s.")
+            if self._each_budgets:
+                _check_depth(out, self._each_budgets)
+                _check_size(_json_size(out), self._each_budgets, self._output_budget)
+                _check_deadline()
         except RecursionError:
             raise BudgetExceeded("max_json_depth", "A mapped value nests too deep.") from None
         finally:
             _RUNNING.reset(token)
+            if each_token is not None:
+                _EACH_RUNNING.reset(each_token)
         return out
 
 
@@ -177,6 +193,9 @@ class _Ctx:
         self.budgets = budgets
         self.rules = 0
         self.over_count = False
+        self.has_each = False
+        self.in_each = False
+        self.output_budget = "max_response_bytes" if roots & {"status", "headers", "event"} else "max_request_bytes"
         # Every place a rule writes or removes, and every copy with the cell that says whether it must clone.
         self.writes: list[pointer.Segments] = []
         self.copies: list[tuple[pointer.Segments, list[bool]]] = []
@@ -196,7 +215,8 @@ def compile_program(rules: Any, *, base: str, roots: frozenset[str], place: str,
     # A copy shares the source's container unless some rule writes below its target; then it must own a copy.
     for target, needs_clone in ctx.copies:
         needs_clone[0] = any(len(w) > len(target) and w[:len(target)] == target for w in ctx.writes)
-    return Program(steps, passthrough=base == "passthrough", writes=bool(ctx.writes), mapping_s=budgets.mapping_s)
+    return Program(steps, passthrough=base == "passthrough", writes=bool(ctx.writes), mapping_s=budgets.mapping_s,
+                   each_budgets=budgets if ctx.has_each else None, output_budget=ctx.output_budget)
 
 
 def build(rules: Sequence[Mapping[str, Any]], *, base: str, roots: frozenset[str], budgets: Budgets = DEFAULT_BUDGETS) -> Program:
@@ -292,7 +312,8 @@ def _c_copy(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
         return None
     ctx.writes.append(dst)
     needs_clone = [True]
-    ctx.copies.append((dst, needs_clone))
+    if not ctx.in_each:
+        ctx.copies.append((dst, needs_clone))
 
     read, write = _getter(src), _setter(dst)
 
@@ -504,7 +525,78 @@ def _c_when(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
     return when_rule
 
 
+def _check_deadline() -> None:
+    running = _RUNNING.get()
+    if running is not None and time.perf_counter() > running[0]:
+        raise BudgetExceeded("mapping_s", f"A mapping took longer than {running[1]:g} s.")
+
+
+def _check_depth(value: Any, budgets: Budgets) -> None:
+    if pointer.depth_exceeds(value, budgets.max_json_depth):
+        raise BudgetExceeded("max_json_depth", "A mapped value nests too deep.")
+
+
+def _json_size(value: Any) -> int:
+    return len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+
+
+def _check_size(size: int, budgets: Budgets, name: str) -> None:
+    if size > getattr(budgets, name):
+        raise BudgetExceeded(name, "A mapped output exceeds its byte budget.")
+
+
+def _c_each(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
+    if depth + 1 > ctx.budgets.max_when_depth:
+        ctx.bad(place, f"conditions and each nest more than {ctx.budgets.max_when_depth} deep")
+        return None
+    src, dst = _source(spec["from"], ctx, place), _target(spec["to"], ctx, place)
+    if src is None or dst is None:
+        return None
+    ctx.has_each = True
+    ctx.writes.append(dst)
+    roots, in_each, writes = ctx.roots, ctx.in_each, ctx.writes
+    ctx.roots = roots | {"item", "index"}
+    ctx.in_each = True
+    ctx.writes = []
+    try:
+        children = _compile_list(spec["map"], ctx, f"{place}.map", depth=depth + 1)
+    finally:
+        ctx.roots, ctx.in_each, ctx.writes = roots, in_each, writes
+    read, write = _getter(src), _setter(dst)
+    budgets, output_budget = ctx.budgets, ctx.output_budget
+
+    def each_rule(source: Mapping[str, Any], out: dict) -> None:
+        values = read(source)
+        if values is MISSING:
+            return
+        if type(values) is not list:
+            raise MappingError("The source of each must be an array.")
+        selected = _EACH_RUNNING.get()
+        assert selected is not None
+        selected[0] += len(values)
+        if selected[0] > budgets.max_selected:
+            raise BudgetExceeded("max_selected", "Too many items selected by each.")
+        result: list[dict] = []
+        size = 2  # brackets; add each encoded element once, never the growing array
+        _check_size(size, budgets, output_budget)
+        local = dict(source)
+        for index, item in enumerate(values):
+            _check_deadline()
+            local["item"], local["index"] = item, index
+            mapped: dict = {}
+            for step in children:
+                step(local, mapped)
+                _check_deadline()
+            _check_depth(mapped, budgets)
+            size += _json_size(mapped) + (1 if index else 0)
+            _check_size(size, budgets, output_budget)
+            result.append(mapped)
+        write(out, result)
+    return each_rule
+
+
 _COMPILERS: dict[str, Callable[[dict, _Ctx, str, int], Step | None]] = {
+    "each": _c_each,
     "copy": _c_copy, "rename": _c_rename, "set": _c_set, "default": _c_default, "drop": _c_drop,
     "enum": _c_enum, "clamp": _c_clamp, "stringify": _c_stringify, "when": _c_when,
 }

@@ -28551,6 +28551,10 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
             response = await _protocol_image_result(runtime, body, request, auth_context, receipt, store)
         else:
             reply = await runtime.invoke(op, body)
+            if op == "chat" and isinstance(reply, ProtocolStreamReply) != bool(body.get("stream")):
+                if isinstance(reply, ProtocolStreamReply):
+                    await reply.aclose()
+                raise ProtocolError("The engine response does not match the requested streaming mode.", code="malformed_response")
             if isinstance(reply, ProtocolStreamReply):
                 from gateway.engine_protocol.public_shape import validate
                 source_iterator = reply.__aiter__()

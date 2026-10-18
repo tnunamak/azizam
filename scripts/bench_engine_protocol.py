@@ -185,11 +185,94 @@ def measure(scale: float = 1.0) -> dict[str, dict[str, float]]:
     return {name: {"executor_us": round(a, 3), "hand_written_us": round(b, 3), "ratio": round(a / b, 2)} for name, (a, b) in rows.items()}
 
 
+def measure_each(scale: float = 1.0) -> dict[str, dict[str, float]]:
+    """Array maps + JSON writes; both paths enforce the same safety/ownership contract.
+
+    The hand implementation uses direct field access, with independent deadline
+    and cumulative selection accounting. Both include input/output depth checks,
+    incremental element bytes, final envelope bytes, and the identical JSON write.
+    Best of five; compile/build and fixtures are outside the timed region.
+    """
+    from gateway.engine_protocol.budgets import DEFAULT_BUDGETS as budgets
+    from gateway.engine_protocol.errors import BudgetExceeded, MappingError
+
+    def dumps(value):
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+    rows = {}
+    for count, mutable in ((1, False), (32, False), (256, False), (32, True), (256, True)):
+        body = {"models": [{"name": f"model-{i}", "opts": {"tags": ["a", "é"], "n": i}}
+                           for i in range(count)]}
+        source = {"body": body, "params": {}, "files": {}}
+        children = [{"copy": {"from": "/item/name", "to": "/id"}},
+                    {"copy": {"from": "/index", "to": "/index"}}]
+        if mutable:
+            children.append({"copy": {"from": "/item/opts", "to": "/opts"}})
+        program = mapping.build([{"each": {"from": "/body/models", "to": "/data", "map": children}}],
+                                base="empty", roots=mapping.REQUEST_ROOTS)
+
+        def hand():
+            deadline = mapping.time.perf_counter() + budgets.mapping_s
+
+            def check_time():
+                if mapping.time.perf_counter() > deadline:
+                    raise BudgetExceeded("mapping_s", "Mapping deadline exceeded.")
+
+            for value in source.values():
+                mapping._check_depth(value, budgets)
+            values = body.get("models", pointer.MISSING)
+            out = {}
+            if values is not pointer.MISSING:
+                if type(values) is not list:
+                    raise MappingError("The source of each must be an array.")
+                selected = len(values)
+                if selected > budgets.max_selected:
+                    raise BudgetExceeded("max_selected", "Too many items.")
+                result = []
+                size = 2
+                mapping._check_size(size, budgets, "max_request_bytes")
+                for index, item in enumerate(values):
+                    check_time()
+                    mapped = {}
+                    if "name" in item:
+                        mapped["id"] = item["name"]
+                    check_time()
+                    mapped["index"] = index
+                    check_time()
+                    if mutable:
+                        if "opts" in item:
+                            mapped["opts"] = pointer.clone(item["opts"])
+                        check_time()
+                    mapping._check_depth(mapped, budgets)
+                    size += len(dumps(mapped)) + bool(index)
+                    mapping._check_size(size, budgets, "max_request_bytes")
+                    result.append(mapped)
+                out["data"] = result
+            check_time()
+            mapping._check_depth(out, budgets)
+            mapping._check_size(len(dumps(out)), budgets, "max_request_bytes")
+            check_time()
+            return dumps(out)
+
+        def compiled():
+            return dumps(program.apply(source))
+
+        assert compiled() == hand()
+        n = max(20, 4000 // count)
+        mapped_us = best(compiled, n, repeat=5, scale=scale)
+        hand_us = best(hand, n, repeat=5, scale=scale)
+        rows[f"each {count} {'mutable' if mutable else 'scalar'} + safety + JSON"] = {
+            "executor_us": round(mapped_us, 3), "hand_written_us": round(hand_us, 3),
+            "ratio": round(mapped_us / hand_us, 2)}
+    return rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--each", action="store_true", help="Run only bounded array mapping cases")
     args = parser.parse_args()
-    out = measure()
+    out = measure_each() if args.each else measure()
     if args.json:
         print(json.dumps(out, indent=2))
         return

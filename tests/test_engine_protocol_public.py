@@ -54,7 +54,7 @@ def test_public_chat_maps_request_response_and_receipt(engine):
     assert response.status_code == 200, response.text
     assert response.json() == {'object':'chat.completion','id':'answer-1','model':'text-v2','choices':[{'index':0,'message':{'role':'assistant','content':'Hi'},'finish_reason':'stop'}],'usage':{'prompt_tokens':3,'completion_tokens':1,'total_tokens':4},'created':1700000000}
     [wire] = engine.fake.requests
-    assert str(wire.url) == 'http://prism.test:9100/prefix/api/v3/converse'
+    assert str(wire.url) == 'http://localhost:9100/prefix/api/v3/converse'
     assert wire.content == b'{"engine":{"model":"text-v2"},"input":{"turns":[{"role":"user","content":"Hello"}]},"delivery":"once","sampling":{"t":2}}'
     assert wire.headers['x-region'] == 'test'
     assert response.headers['x-request-id']
@@ -197,7 +197,7 @@ def test_credentials_use_origin_and_operation_class_without_forwarding_client_ke
     monkeypatch.setenv('PROTOCOL_INFERENCE','test-inference')
     monkeypatch.setenv('PROTOCOL_CONTROL','test-control')
     conn=engine.record['config']['connection']
-    conn['credentials']={cls:{'secret_ref':'os.environ/PROTOCOL_'+cls.upper(),'origin':'http://prism.test:9100','header':header,'scheme':''} for cls,header in [('inference','X-Inference'),('control','X-Control')]}
+    conn['credentials']={cls:{'secret_ref':'os.environ/PROTOCOL_'+cls.upper(),'origin':'http://localhost:9100','header':header} for cls,header in [('inference','X-Inference'),('control','X-Control')]}
     switching(engine)
     response=chat(engine)
     assert response.status_code == 200,response.text
@@ -290,7 +290,7 @@ def test_async_submission_receives_the_same_offering_parameters_as_sync(engine,m
     monkeypatch.setattr(description,'load_registry',lambda:{'prism':doc})
     response=engine.client.post('/v1/images/generations',json={'model':'prism-image','prompt':'blue'})
     assert response.status_code==200,response.text
-    assert str(engine.fake.requests[0].url)=='http://prism.test:9100/prefix/api/v3/renders?offering=prism-image&model=render'
+    assert str(engine.fake.requests[0].url)=='http://localhost:9100/prefix/api/v3/renders?offering=prism-image&model=render'
 
 
 @pytest.mark.parametrize('failure',['blocked',503])
