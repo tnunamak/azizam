@@ -91,7 +91,7 @@ describe("the model list on a phone", () => {
     render(<Harness initial={draftsFromCheck([detected("a"), detected("b")])} />);
     const fields = screen.getAllByLabelText("Context limit (tokens)");
     expect(fields).toHaveLength(2);
-    for (const field of fields) expect(field).toHaveAccessibleDescription("Leave empty if you don’t know.");
-    expect(within(document.body).getAllByText("Leave empty if you don’t know.")).toHaveLength(2);
+    for (const field of fields) expect(field).toHaveAccessibleDescription("The model’s maximum input and output size in tokens. Leave empty if unknown.");
+    expect(within(document.body).getAllByText("The model’s maximum input and output size in tokens. Leave empty if unknown.")).toHaveLength(2);
   });
 });

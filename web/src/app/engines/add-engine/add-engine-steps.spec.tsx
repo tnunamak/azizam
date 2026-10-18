@@ -96,7 +96,7 @@ describe("f: what a detected server can do", () => {
     const group = within(dialog).getByRole("group", { name: "What this server can do" });
     expect(within(group).getByRole("checkbox", { name: "Embeddings" })).toBeChecked();
     expect(within(group).getAllByText("Likely")).toHaveLength(2);
-    expect(within(group).getByText(`A real test passed at ${at}. That shows the server can do this.`)).toBeVisible();
+    expect(within(group).getByText(/^A test of embeddings.*passed at .* using unsaved settings\./)).toBeVisible();
     expect(within(group).getByText("POST http://192.168.1.50:8080/v1/embeddings")).toBeVisible();
     expect(
       within(group).getByText("Ran on the gateway’s computer with the values on this screen. Nothing was saved, and it is not in Activity."),

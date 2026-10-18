@@ -172,7 +172,7 @@ describe("Request adjustments: the six typed forms", () => {
     await user.selectOptions(within(card).getByLabelText("Where"), "end");
     await user.type(within(card).getByLabelText("Message text"), "Answer in plain language.");
     expect(within(card).getByRole("status")).toHaveTextContent(
-      "Azizam adds a system message at the end of every chat: “Answer in plain language.”.",
+      "Azizam adds a system message at the end of matching chat requests: “Answer in plain language.”.",
     );
     expect(await saveAndGetTransforms(user)).toEqual([
       "reasoning-effort-final-chat",

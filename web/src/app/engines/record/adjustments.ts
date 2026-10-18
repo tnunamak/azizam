@@ -35,8 +35,8 @@ export const ADJUSTMENT_KINDS: { kind: PrimitiveKind; name: string; description:
   { kind: "param-map", name: "Rename fields", description: "Send a field under a different name." },
   { kind: "drop-params", name: "Remove fields", description: "Leave out fields the server does not accept." },
   { kind: "default-params", name: "Set defaults", description: "Add a field when the request does not have it." },
-  { kind: "message-inject", name: "Add a message", description: "Put a fixed message at the start or end of every chat." },
-  { kind: "clamp", name: "Keep a number in range", description: "Move a number inside a minimum and a maximum." },
+  { kind: "message-inject", name: "Add a message", description: "Put a fixed message at the start or end of matching chat requests." },
+  { kind: "clamp", name: "Keep a number in range", description: "Limit a number with a minimum, a maximum, or both." },
 ];
 
 let nextKey = 1;
@@ -232,14 +232,51 @@ export function kindName(card: AdjustmentCard): string {
 
 const q = (text: string) => `“${text || "…"}”`;
 
+// Fields fully represented by the editable controls. Everything else remains
+// visible as stored data; this UI does not guess what unfamiliar options mean.
+const EDITABLE_KEYS: Record<PrimitiveKind, readonly string[]> = {
+  "value-map": ["kind", "param", "map", "phase"],
+  "param-map": ["kind", "from", "to", "phase"],
+  "drop-params": ["kind", "drop", "phase"],
+  "default-params": ["kind", "set"],
+  "message-inject": ["kind", "role", "text"],
+  clamp: ["kind", "param", "min", "max", "phase"],
+};
+
+function plainStored(value: unknown): string {
+  if (Array.isArray(value)) return value.length ? value.map(plainStored).join(", ") : "(empty list)";
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value);
+    return entries.length ? entries.map(([name, item]) => `${name}: ${plainStored(item)}`).join("; ") : "(empty object)";
+  }
+  return value === "" ? "(empty text)" : String(value);
+}
+
+function preservedOptions(card: AdjustmentCard): string[] {
+  if (card.kind === "builtin" || card.kind === "other") return [];
+  const rows = card.kind === "param-map" ? card.rows.map((row) => row.orig ?? {}) : [card.orig];
+  return rows.flatMap((row, index) => {
+    const extras = Object.entries(row as Stored).filter(([name, value]) => {
+      if (name === "phase" && value !== "request" && value !== "response") return true;
+      if (card.kind === "message-inject" && name === "mode" && (value === "prepend" || value === "append")) return false;
+      return !EDITABLE_KEYS[card.kind as PrimitiveKind].includes(name);
+    });
+    if (!extras.length) return [];
+    const text = extras.map(([name, value]) => `${name}: ${plainStored(value)}`).join("; ");
+    return [card.kind === "param-map" ? `Row ${index + 1}: ${text}` : text];
+  });
+}
+
 /** One plain sentence that says what the adjustment does. */
 export function sayAdjustment(card: AdjustmentCard): string {
+  const extras = preservedOptions(card);
+  if (extras.length) return `Configured adjustment: ${kindName(card)}. Preserved conditions and options (read-only, not interpreted here): ${extras.join(" | ")}.`;
   const where = "phase" in card && card.phase === "response" ? "replies" : "requests";
   switch (card.kind) {
     case "builtin":
-      return `Built-in adjustment: ${card.name.replace(/[-_]+/g, " ")}`;
+      return `Built-in adjustment: ${card.name.replace(/[-_]+/g, " ")}. Its behavior is not described here. Read-only.`;
     case "other":
-      return `Azizam keeps this adjustment as stored: ${String(card.orig.kind ?? "unknown")}.`;
+      return `Unsupported adjustment type: ${String(card.orig.kind ?? "unknown")}. Kept as stored, read-only.`;
     case "value-map": {
       const pairs = card.rows.filter((r) => r.a);
       return `In ${where}, Azizam changes the value of ${q(card.field)}${
@@ -259,8 +296,14 @@ export function sayAdjustment(card: AdjustmentCard): string {
       return `Azizam adds ${pairs.join(" and ") || q("")} to requests that do not set it.`;
     }
     case "message-inject":
-      return `Azizam adds a ${card.role} message at the ${card.where} of every chat: ${q(card.text)}.`;
-    case "clamp":
-      return `In ${where}, Azizam keeps ${q(card.field)} between ${card.min || "…"} and ${card.max || "…"}. A value outside moves to the nearest limit.`;
+      return `Azizam adds a ${card.role} message at the ${card.where} of matching chat requests: ${q(card.text)}.`;
+    case "clamp": {
+      const min = card.min.trim();
+      const max = card.max.trim();
+      if (!min && !max) return `The range for ${q(card.field)} needs a minimum, a maximum, or both.`;
+      if (!max) return `In ${where}, Azizam keeps ${q(card.field)} at or above ${min}. A lower value moves to the minimum.`;
+      if (!min) return `In ${where}, Azizam keeps ${q(card.field)} at or below ${max}. A higher value moves to the maximum.`;
+      return `In ${where}, Azizam keeps ${q(card.field)} between ${min} and ${max}. A value outside moves to the nearest limit.`;
+    }
   }
 }

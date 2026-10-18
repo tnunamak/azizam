@@ -380,10 +380,17 @@ def test_a_draft_real_test_runs_from_the_gateway_against_the_draft_values(gatewa
     assert trace["method"] == sent.method
     assert trace["url"] == f"{fake.base_url}{sent.path}"
     assert trace["body"] == sent.json
-    assert trace["headers"]["Authorization"] == "Bearer [redacted]"
+    assert trace["headers"]["Authorization"] == "[redacted]"
     assert trace["headers"]["content-type"] == sent.headers["content-type"]
     assert KEY not in tested.text
     assert "tested" not in _registry(gateway)["services"]
+    assert "evidence_token" not in result
+    # Draft results cannot prove saved settings; create deliberately requires a new saved test.
+    saved = _create(owner, {"definition": "openai-compatible", "name": "tested", "disabled": True,
+                            "values": {"address": f"{fake.base_url}/v1", "api_key": KEY},
+                            "tests": {"chat": result}})
+    assert saved.status_code == 201, saved.text
+    assert not _record(gateway, "tested")["config"].get("engine_tests")
 
 
 def test_the_engine_routes_need_an_administrator(gateway):
@@ -1041,7 +1048,8 @@ def test_declared_switch_and_workflow_offerings_reach_the_page(gateway, fake_ups
     view = owner.get("/admin/api/engines/declared-offerings").json()["engine"]
     assert view["v2"]["offerings"] == declared
     assert view["can_edit_offerings"] is False
-    assert "model-list editor" in view["offering_edit_reason"]
+    assert view["offering_edit_reason"] == ("These models or workflows have selection settings this form cannot safely edit. "
+                                             "Their saved settings are shown below.")
     saved = _edit(owner, "declared-offerings", {"definition": "openai-compatible", "disabled": True,
                                                "values": {"reply_timeout_s": 37}})
     assert saved.status_code == 200, saved.text

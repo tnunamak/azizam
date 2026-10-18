@@ -1113,7 +1113,7 @@ function RecordForm({
                 onCards={setCards}
                 owner={owner}
                 lifecycleEditable={view.lifecycle_editable}
-                locked={settingsLocked}
+                locked={settingsLocked || !offeringsEditable}
                 address={address}
                 errors={optionErrors}
               />

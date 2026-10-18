@@ -676,6 +676,15 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     v2 = service_registry.service_record_v2(record)
     v2["connection"]["address"] = engine_redaction.redact_text(address)
     v2 = engine_redaction.redact_service(_redact_record_value(v2))
+    # Persisted evidence is checked against today's effective inputs on every read,
+    # including edits through other registry routes and rotated environment credentials.
+    try:
+        tested_values = _restore_hidden_scalars(values, values, config)
+        tested_clean = clean_values(definition, tested_values, stored_headers=config.get("headers") or ())
+        tested_key = resolve_key(tested_clean, None, record=record, db_path=db_path, env=env)
+        fingerprint = _test_binding(definition, tested_clean, tested_key, str(record.get("id")), config.get("models") or [])
+    except (DraftError, EngineRouteError):
+        fingerprint = None
     return {
         "service_id": record.get("id"),
         "definition": definition["definition"],
@@ -697,7 +706,8 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "capabilities": caps,
         "models": models,
         "tests": {cap: copy.deepcopy(row) for cap, row in (config.get("engine_tests") or {}).items()
-                  if isinstance(row, Mapping) and row.get("via") == "saved" and row.get("evidence_token")},
+                  if isinstance(row, Mapping) and row.get("via") == "saved" and row.get("evidence_token")
+                  and fingerprint is not None and row.get("config_fingerprint") == fingerprint},
         "check": copy.deepcopy(config.get("engine_check") or {}),
         "calls": call_line(definition, values),
         "other_settings": _redact_record_value(other),
@@ -1001,6 +1011,7 @@ class EngineService:
                 result["evidence_token"] = token
                 stored_result = {name: copy.deepcopy(result[name]) for name in
                                  ("capability", "ok", "at", "via", "seconds", "model", "evidence_token") if name in result}
+                stored_result["config_fingerprint"] = binding
                 self._test_evidence[token] = (binding, stored_result)
                 if len(self._test_evidence) > 256:
                     del self._test_evidence[next(iter(self._test_evidence))]

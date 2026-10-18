@@ -42,12 +42,12 @@ describe("i: the engine record page", () => {
       "Resources",
       "Stored record",
     ]);
-    expect(screen.getByText("Ready")).toBeVisible();
+    expect(screen.getByText("On")).toBeVisible();
     expect(screen.getByText(/^Last checked/)).toBeVisible();
     expect(screen.getByRole("switch", { name: "Enabled" })).toBeChecked();
     expect(screen.getByText("Configured")).toBeVisible();
     expect(screen.getByRole("button", { name: "Replace key" })).toBeVisible();
-    expect(screen.getByTestId("check-line")).toHaveTextContent(/^Reached the server\. Key accepted\. 2 models\. Checked/);
+    expect(screen.getByTestId("check-line")).toHaveTextContent(/^Reached the server\. Key accepted\. 2 models found\. Checked/);
     expect(screen.getAllByTestId("call-line")[0]).toHaveTextContent("Connection check: GET http://192.168.1.50:8080/v1/models");
     expect(screen.getByRole("checkbox", { name: "Chat" })).toBeChecked();
     expect(screen.getAllByRole("checkbox", { name: /^(Chat|Embeddings|Images|Reranking|Speech to text|Text to speech|Live voice)$/ })).toHaveLength(2);
@@ -64,7 +64,7 @@ describe("i: the engine record page", () => {
     const pre = await screen.findByLabelText("Stored record, read only");
     expect(pre.tagName).toBe("PRE");
     expect(pre).toHaveTextContent('"api_key_secret_id": "configured"');
-    expect(screen.getByText("Azizam kept these values, but this form has no field for them. They are not lost.")).toBeVisible();
+    expect(screen.getByText("These saved settings have no editor on this page.")).toBeVisible();
     expect(screen.getByText("probe_interval_s")).toBeVisible();
     expect(screen.getByText("bought 2025")).toBeVisible();
     expect(screen.getByRole("button", { name: "Copy the stored record" })).toBeVisible();
@@ -74,17 +74,17 @@ describe("i: the engine record page", () => {
   it("runs a record-page test with the saved settings and stores a pass", async () => {
     const user = userEvent.setup();
     mount();
-    const result = { ...testResult("chat_pass"), via: "saved" as const };
+    const result = { ...testResult("chat_pass"), via: "saved" as const, evidence_token: "server-issued" };
     const test = vi.spyOn(enginesApi, "test").mockResolvedValue(result);
     const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
     await user.click(await screen.findByRole("button", { name: "Run a real test for Chat" }));
     expect(await screen.findByText(`Test passed at ${clockTime(result.at)}.`)).toBeVisible();
-    expect(screen.getByText("Ran on the gateway’s computer with the saved settings. It is not in Activity.")).toBeVisible();
+    expect(screen.getByText("Tested the saved settings from the gateway’s computer. This test is not listed in Activity.")).toBeVisible();
     expect(test.mock.calls[0][0]).toMatchObject({ service_id: "garage-gpu", capability: "chat" });
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith("garage-gpu", {
         definition: "openai-compatible",
-        tests: { chat: { ok: true, at: result.at, seconds: result.seconds } },
+        tests: { chat: { ok: true, at: result.at, seconds: result.seconds, evidence_token: "server-issued" } },
       }),
     );
   });
@@ -180,7 +180,7 @@ describe("N2: editing the address", () => {
     expect(screen.queryByText("Configured")).toBeNull();
     expect(screen.queryByText(/Key accepted/)).toBeNull();
     expect(screen.getByTestId("check-line")).toHaveTextContent("Out of date. Check again.");
-    expect(screen.getByTestId("check-line")).toHaveTextContent(/Last result, for the old address: reached the server\. 2 models\./);
+    expect(screen.getByTestId("check-line")).toHaveTextContent(/Last result, for the old address: reached the server\. 2 models found\./);
     expect(screen.getByText(/Saving removes the old key from this engine\./)).toBeVisible();
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save and keep off" })).toBeVisible();

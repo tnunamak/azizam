@@ -121,7 +121,7 @@ describe("b: address and key", () => {
     expect(within(dialog).getByText("Where the server listens, with its port. Usually ends in /v1.")).toBeVisible();
     expect(within(dialog).getByText("Leave empty if the server has no key.")).toBeVisible();
     expect(within(dialog).getByLabelText("API key")).toHaveAttribute("type", "password");
-    expect(within(dialog).getByText("Azizam shows the exact request it will make here.")).toBeVisible();
+    expect(within(dialog).getByText("Enter an address to see the first connection-check request.")).toBeVisible();
     await typeAddress(user, "http://192.168.1.50:8080/v1/");
     expect(within(dialog).getByTestId("call-line")).toHaveTextContent(
       "Connection check: GET http://192.168.1.50:8080/v1/models",
