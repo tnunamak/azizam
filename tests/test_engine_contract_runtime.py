@@ -395,6 +395,7 @@ def test_switch_preparation_waits_for_previous_response_lease():
 
     async def prepare():
         prepared.append("load")
+        return True
 
     controller = SwitchController(drain=SwapDrain(), invoke=invoke, observe=observe)
     service = {"id": "fixture", "offerings": [{"id": "old"}, {"id": "new"}]}
