@@ -1370,6 +1370,7 @@ async def _ensure_target(
     profile: Optional[str],
     *,
     take_lease: bool,
+    offering_id: Optional[str] = None,
 ) -> tuple[bool, Optional[ServingLease]]:
     """ensure_target; with `take_lease`, also lease the backend once it is ready.
 
@@ -1409,7 +1410,7 @@ async def _ensure_target(
         if not take_lease:
             return True, None
         offerings = offerings_config(bcfg)
-        offering = next((item for item in offerings if item.get("id") == model), None)
+        offering = next((item for item in offerings if item.get("id") == (offering_id or model)), None)
         if model and offering is None and any(
             (item.get("selection") or {}).get("mode") == "switch" for item in offerings
         ):
@@ -1523,7 +1524,8 @@ async def _ensure_target_leased(
         ready = await ensure_target(backend, activation.model, activation.mmproj, profile=activation.profile)
         return ready, None
     return await _ensure_target(
-        backend, activation.model, activation.mmproj, activation.profile, take_lease=True
+        backend, activation.model, activation.mmproj, activation.profile,
+        take_lease=True, offering_id=activation.offering_id,
     )
 
 
@@ -2743,6 +2745,7 @@ class LocalModelActivation:
     mmproj: Optional[str] = None
     profile: Optional[str] = None
     backend_model: Optional[str] = None
+    offering_id: Optional[str] = None
 
 
 def _lifecycle_driver_config(service_cfg: Mapping[str, Any] | None) -> Mapping[str, Any]:
@@ -26921,7 +26924,15 @@ def _litellm_local_activation_target(
             model=requested_model,
             backend_model=requested_model,
         )
+    from gateway.engine_contract_view import offerings_config
+
     requested = normalize_model_id(requested_model)
+    matching_offerings = [
+        item for item in offerings_config(backend_cfg)
+        if requested in {normalize_model_id(str(value)) for value in
+                         (item.get("id"), item.get("upstream")) if value}
+    ]
+    offering_id = str(matching_offerings[0]["id"]) if len(matching_offerings) == 1 else None
     for item in _service_model_records(backend_cfg):
         candidates = {
             item.get("id"),
@@ -26944,17 +26955,27 @@ def _litellm_local_activation_target(
             ).strip()
             activation_profile = str(item.get("activation_profile") or "").strip()
             backend_model = str(item.get("backend_model") or requested_model).strip()
+            resolved_offering_id = offering_id
+            if resolved_offering_id is None:
+                by_upstream = [
+                    entry for entry in offerings_config(backend_cfg)
+                    if entry.get("upstream") == activation_model
+                ]
+                if len(by_upstream) == 1:
+                    resolved_offering_id = str(by_upstream[0]["id"])
             return LocalModelActivation(
                 backend=backend,
                 model=activation_model or requested_model,
                 mmproj=activation_mmproj or None,
                 profile=activation_profile or None,
                 backend_model=backend_model or requested_model,
+                offering_id=resolved_offering_id,
             )
     return LocalModelActivation(
         backend=backend,
         model=requested_model,
         backend_model=requested_model,
+        offering_id=offering_id,
     )
 
 
