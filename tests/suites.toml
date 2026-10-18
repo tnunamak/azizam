@@ -52,6 +52,11 @@ reason = "typesafe_sdk is not in the hermetic lock"
 
 [[skip]]
 framework = "pytest"
+case = "tests/test_engine_contract_runtime.py::test_windows_process_driver_fails_closed_without_job_object"
+reason = "Windows Job Object semantics; runs only on Windows"
+
+[[skip]]
+framework = "pytest"
 case = "tests/test_fresh_instance_bootstrap.py::TestFreshInstanceBootstrap::test_harness_db_is_not_live_db"
 reason = "the sandbox hides the live database by design"
 

@@ -27,7 +27,7 @@ from typing import Any, Iterable, Mapping
 
 from fastapi import Request, status
 
-from gateway import admin_store, extension_packages, secret_store, service_registry, trusted_addresses
+from gateway import admin_store, engine_check, extension_packages, route_registry, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
 from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
@@ -245,6 +245,14 @@ def _validate_merged_oidc_setting(value: Mapping[str, Any]) -> None:
     for key in ("issuer", "client_id", "client_secret", "redirect_uri"):
         if not str(value.get(key) or "").strip():
             raise ValueError(f"{key} is required when enabled=true")
+
+
+class RegistryNotApplied(RuntimeError):
+    """The registry change is saved, but the running gateway could not apply it (a failed hot reload)."""
+
+    def __init__(self, message: str, *, record: Mapping[str, Any]) -> None:
+        super().__init__(message)
+        self.record = record
 
 
 class AdminSQLiteStore:
@@ -817,14 +825,56 @@ class AdminSQLiteStore:
         is recorded with it.
         """
         value = service_registry.normalize_service_registry(registry)
-        changed = service_registry.credential_binding_changes(self.get_service_registry(), value)
-        if not changed:
-            return value
+        before = self.get_service_registry()
         if "owner" not in actor.roles:
-            raise PermissionError(
-                "Only the owner can attach a key to a service, move a service that has one, "
-                "or set a lifecycle driver on a service.")
-        return service_registry.bind_credential_origins(value, changed)
+            old_services = before.get("services") or {}
+            for service_id, record in (value.get("services") or {}).items():
+                previous = old_services.get(service_id) or {}
+                for field in ("connection", "process", "protocol_operations", "control_file_roots",
+                              "offerings", "residency", "observations"):
+                    # Migration writes empty blocks; an empty block grants nothing.
+                    old_value = (previous.get(field) or None, (previous.get("config") or {}).get(field) or None)
+                    new_value = (record.get(field) or None, (record.get("config") or {}).get(field) or None)
+                    if field == "process":
+                        # Migration turns an external lifecycle into a process that
+                        # runs nothing; lifecycle_driver_changed below judges whether
+                        # a top-level process controls the host.
+                        old_value, new_value = old_value[1], new_value[1]
+                    if old_value != new_value:
+                        raise PermissionError(f"Only the owner can change service {field}.")
+        route_registry.refuse_unmountable_frontends(before, value)
+        changed = service_registry.credential_binding_changes(before, value)
+        if changed:
+            if "owner" not in actor.roles:
+                raise PermissionError(
+                    "Only the owner can attach a key to a service, move a service that has one, "
+                    "or set a lifecycle driver on a service.")
+            value = service_registry.bind_credential_origins(value, changed)
+        self._refuse_blocked_native_hosts(before, value)
+        return value
+
+    @staticmethod
+    def _refuse_blocked_native_hosts(before: Mapping[str, Any], after: Mapping[str, Any]) -> None:
+        """Look up the host of each engine that opens or moves its native lane, and refuse one that resolves somewhere forbidden.
+
+        The address as written was checked when the record was read (service_registry). A name is
+        looked up here, once at save; the lane checks it again on every call.
+        """
+        old_services = before.get("services") if isinstance(before.get("services"), Mapping) else {}
+        for service_id, record in (after.get("services") or {}).items():
+            config = record.get("config") if isinstance(record, Mapping) else None
+            if not isinstance(config, Mapping) or not service_registry.bool_from_config(config.get("native_passthrough"), False):
+                continue
+            url = service_registry.native_host_url(config)
+            old = (old_services.get(service_id) or {}).get("config") or {}
+            if (
+                service_registry.bool_from_config(old.get("native_passthrough"), False)
+                and service_registry.native_host_url(old) == url
+            ):
+                continue
+            reason = engine_check.blocked_reason_blocking(url) if url else None
+            if reason:
+                raise ValueError(f"service {service_id!r}: native pass-through cannot reach its host. {reason}")
 
     def update_service_registry(
         self, *, data: Mapping[str, Any], actor: AdminContext,
@@ -850,7 +900,7 @@ class AdminSQLiteStore:
             path=self.path,
         )
         self.write_litellm_config(record["value"])
-        self._fire_registry_changed()
+        self._fire_registry_changed(record)
         return record
 
     # -- single-service CRUD -------------------------------------------------
@@ -861,8 +911,12 @@ class AdminSQLiteStore:
     # immediately via the on_service_registry_changed callback (hot reload);
     # the LiteLLM subprocess still requires a separate restart.
 
-    def _fire_registry_changed(self) -> None:
-        """Invoke the registered hot-reload callback, if any."""
+    def _fire_registry_changed(self, record: Mapping[str, Any]) -> None:
+        """Invoke the registered hot-reload callback, if any. A reload that fails is reported to the caller.
+
+        The registry is already saved by now, so the error says so: the change is stored, and the
+        running gateway does not have it yet.
+        """
         cb = self.on_service_registry_changed
         if cb is not None:
             try:
@@ -870,9 +924,10 @@ class AdminSQLiteStore:
             except Exception as exc:  # noqa: BLE001
                 print(
                     f"[admin_runtime] WARNING: on_service_registry_changed callback "
-                    f"raised {type(exc).__name__} (hot-reload may not have taken effect)",
+                    f"raised {type(exc).__name__} (hot-reload did not take effect)",
                     flush=True,
                 )
+                raise RegistryNotApplied(str(exc) or type(exc).__name__, record=record) from exc
 
     def _persist_service_registry(
         self,
@@ -901,7 +956,7 @@ class AdminSQLiteStore:
             path=self.path,
         )
         self.write_litellm_config(record["value"])
-        self._fire_registry_changed()
+        self._fire_registry_changed(record)
         return record
 
     def add_service(
@@ -993,13 +1048,13 @@ class AdminSQLiteStore:
             # A lifecycle driver kept only on the record (not in its config) must
             # survive a partial edit: dropping it would count as removing a driver,
             # which only the owner may do.
-            existing_lifecycle = existing.get("lifecycle")
-            if (
-                "lifecycle" not in form_base
-                and isinstance(existing_lifecycle, Mapping)
-                and existing_lifecycle.get("driver")
-            ):
-                form_base["lifecycle"] = copy.deepcopy(dict(existing_lifecycle))
+            existing_lifecycle = service_registry.legacy_lifecycle_from_service(existing)
+            if "lifecycle" not in form_base and existing_lifecycle:
+                kept_lifecycle = copy.deepcopy(dict(existing_lifecycle))
+                for form_key, block_key in service_registry._LIFECYCLE_FORM_KEYS.items():
+                    if form_key in data:
+                        kept_lifecycle[block_key] = data[form_key]
+                form_base["lifecycle"] = kept_lifecycle
             # Drop None values so they don't override defaults downstream, then
             # overlay the caller-supplied partial data.
             merged: dict[str, Any] = {
@@ -1173,7 +1228,7 @@ class AdminSQLiteStore:
         )
         # The artifact and reload observe the committed registry.
         self.write_litellm_config(registry_record["value"])
-        self._fire_registry_changed()
+        self._fire_registry_changed(registry_record)
         return {
             "extension_package": (index_record["value"].get("packages") or {}).get(package_id),
             "review": review,

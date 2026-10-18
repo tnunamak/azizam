@@ -1,3 +1,11 @@
+# Each frontend declares `strictness`: `exact` refuses a request field the translator cannot carry and a
+# body that is not a JSON object, `lenient` drops the field and reports it (response header x-azizam-loss
+# and the receipt). A route row that declares `carries: [path, ...]` is held to that list; a path names a
+# nested field (`options.temperature`, `messages[].role`), and a name alone carries everything under it. A
+# row without `carries` is not checked, and an identity row never declares it (it carries every field, so
+# its loss report is empty). A row with `body: multipart` cannot be checked field by field; it says so, and
+# declares no `carries`. The anthropic and ollama rows list what their translators read (gateway/protocols/);
+# they stay `lenient`, because clients send fields these translators do not map and a refusal would break them.
 records:
   - id: openai
     name: OpenAI-compatible
@@ -5,6 +13,7 @@ records:
     source: builtin
     editable: false
     enabled: true
+    strictness: exact
     canonical: true
     routes:
       - /openai/v1
@@ -20,6 +29,8 @@ records:
       - video.generate
     registered_routes:
       - methods: [GET]
+        translator: identity
+        intent: models.list
         canonical: /v1/models
         alias: /openai/v1/models
         runtime_policy: {protocol: openai.models, intent: models.list}
@@ -27,10 +38,14 @@ records:
         canonical: /v1/decisions
         runtime_policy: {protocol: openai.decisions, intent: decision.systemone}
       - methods: [GET]
+        translator: identity
+        intent: voices.list
         canonical: /v1/voices
         alias: /openai/v1/voices
         runtime_policy: {protocol: openai.audio, intent: speech.synthesis, backend: tts, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
       - methods: [GET]
+        translator: identity
+        intent: voices.list
         canonical: /v1/audio/voices
         alias: /openai/v1/audio/voices
         runtime_policy: {protocol: openai.audio, intent: speech.synthesis, backend: tts, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
@@ -53,48 +68,75 @@ records:
         canonical: /v1/audio/voice_consents/{consent_id}
         alias: /openai/v1/audio/voice_consents/{consent_id}
       - methods: [POST]
+        translator: identity
+        intent: audio.speech
         canonical: /v1/audio/speech
         alias: /openai/v1/audio/speech
         runtime_policy: {protocol: openai.audio, intent: speech.synthesis, backend: tts, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
       - methods: [POST]
+        translator: identity
+        intent: audio.transcriptions
         canonical: /v1/audio/transcriptions
         alias: /openai/v1/audio/transcriptions
+        body: multipart
         runtime_policy: {protocol: openai.audio, intent: speech.transcription, backend: stt, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
       - methods: [POST]
+        translator: identity
+        intent: audio.translations
         canonical: /v1/audio/translations
         alias: /openai/v1/audio/translations
+        body: multipart
         runtime_policy: {protocol: openai.audio, intent: speech.translation, backend: stt, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
       - methods: [POST]
+        translator: identity
+        intent: audio.generate
         canonical: /v1/audio/generate
         alias: /openai/v1/audio/generate
         runtime_policy: {protocol: openai.audio, intent: audio.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
       - methods: [GET]
+        translator: identity
+        intent: audio.models
         canonical: /v1/audio/models
         alias: /openai/v1/audio/models
         runtime_policy: {protocol: openai.audio, intent: models.list}
       - methods: [POST]
+        translator: identity
+        intent: images.generate
         canonical: /v1/images/generations
         alias: /openai/v1/images/generations
       - methods: [POST]
+        translator: identity
+        intent: images.edit
         canonical: /v1/images/edits
         alias: /openai/v1/images/edits
+        body: multipart
       - methods: [GET]
+        translator: identity
+        intent: images.content
         canonical: /v1/images/{image_id}/content
         alias: /openai/v1/images/{image_id}/content
         runtime_policy: {protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
       - methods: [GET]
+        translator: identity
+        intent: assets.content
         canonical: /v1/assets/{asset_id}/content
         alias: /openai/v1/assets/{asset_id}/content
         runtime_policy: {protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
       - methods: [POST]
+        translator: identity
+        intent: videos.create
         canonical: /v1/videos
         alias: /openai/v1/videos
         runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       - methods: [GET]
+        translator: identity
+        intent: videos.retrieve
         canonical: /v1/videos/{video_id}
         alias: /openai/v1/videos/{video_id}
         runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       - methods: [GET]
+        translator: identity
+        intent: videos.content
         canonical: /v1/videos/{video_id}/content
         alias: /openai/v1/videos/{video_id}/content
         runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
@@ -113,44 +155,178 @@ records:
       # path+method (so this override wouldn't be needed) is a separate,
       # riskier change outside this task's scope.
       - methods: [POST]
+        translator: identity
+        intent: videos.remix
         canonical: /v1/videos/{video_id}/remix
         alias: /openai/v1/videos/{video_id}/remix
         runtime_policy: {protocol: openai.video, intent: video.remix, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       - methods: [POST]
+        translator: identity
+        intent: videos.edit
         canonical: /v1/videos/edits
         alias: /openai/v1/videos/edits
         runtime_policy: {protocol: openai.video, intent: video.remix, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       # /rerank and /v2/rerank are handled in-handler with the policy of /v1/rerank. rerank is retrieval
       # infrastructure like embeddings, so it shares the text.embeddings intent: a key that may embed may rerank.
       - methods: [POST]
+        translator: identity
+        intent: rerank
         canonical: /v1/rerank
         alias: /openai/v1/rerank
         runtime_policy: {protocol: openai.rerank, intent: text.embeddings, backend: rerank, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
       - methods: [POST]
+        translator: identity
+        intent: videos.extend
         canonical: /v1/videos/extensions
         alias: /openai/v1/videos/extensions
         runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       - methods: [POST]
+        translator: identity
+        intent: responses.create
         canonical: /v1/responses
         alias: /openai/v1/responses
       - methods: [GET]
+        translator: identity
+        intent: responses.retrieve
         canonical: /v1/responses/{response_id}
         alias: /openai/v1/responses/{response_id}
       - methods: [DELETE]
+        translator: identity
+        intent: responses.delete
         canonical: /v1/responses/{response_id}
         alias: /openai/v1/responses/{response_id}
       - methods: [POST]
+        translator: identity
+        intent: chat.completions
         canonical: /v1/chat/completions
         alias: /openai/v1/chat/completions
         azizam_policy: {protocol: openai.chat, intent: chat.completions}
       - methods: [POST]
+        translator: identity
+        intent: text.completions
         canonical: /v1/completions
         alias: /openai/v1/completions
         azizam_policy: {protocol: openai.chat, intent: text.completions}
       - methods: [POST]
+        translator: identity
+        intent: text.embeddings
         canonical: /v1/embeddings
         alias: /openai/v1/embeddings
         azizam_policy: {protocol: openai.embeddings, intent: text.embeddings}
+      - methods: [GET]
+        canonical: /v1/videos
+        translator: identity
+        intent: videos.list
+      - methods: [GET]
+        canonical: /openai/v1/videos
+        translator: identity
+        intent: videos.list
+      - methods: [DELETE]
+        canonical: /v1/videos/{video_id}
+        translator: identity
+        intent: videos.delete
+      - methods: [DELETE]
+        canonical: /openai/v1/videos/{video_id}
+        translator: identity
+        intent: videos.delete
+      - methods: [GET]
+        canonical: /v1/models/{model_id:path}
+        translator: identity
+        intent: models.retrieve
+      - methods: [GET]
+        canonical: /openai/v1/models/{model_id:path}
+        translator: identity
+        intent: models.retrieve
+      - methods: [POST]
+        canonical: /v1/images/variations
+        translator: identity
+        intent: images.variations
+        body: multipart
+      - methods: [POST]
+        canonical: /openai/v1/images/variations
+        translator: identity
+        intent: images.variations
+        body: multipart
+      - methods: [POST]
+        canonical: /v2/rerank
+        translator: identity
+        intent: rerank.v2
+      - methods: [POST]
+        canonical: /rerank
+        translator: identity
+        intent: rerank.root
+      - methods: [GET]
+        canonical: /v1/responses/{response_id}/input_items
+        translator: identity
+        intent: responses.input_items
+      - methods: [GET]
+        canonical: /openai/v1/responses/{response_id}/input_items
+        translator: identity
+        intent: responses.input_items
+      - methods: [POST]
+        canonical: /v1/responses/input_tokens
+        translator: identity
+        intent: responses.input_tokens
+      - methods: [POST]
+        canonical: /openai/v1/responses/input_tokens
+        translator: identity
+        intent: responses.input_tokens
+      - methods: [POST]
+        canonical: /v1/responses/{response_id}/cancel
+        translator: identity
+        intent: responses.cancel
+      - methods: [POST]
+        canonical: /openai/v1/responses/{response_id}/cancel
+        translator: identity
+        intent: responses.cancel
+      - methods: [GET, POST, PUT, DELETE, PATCH]
+        canonical: /v1/assistants{rest:path}
+        translator: identity
+        intent: unsupported.assistants
+      - methods: [GET, POST, PUT, DELETE, PATCH]
+        canonical: /openai/v1/assistants{rest:path}
+        translator: identity
+        intent: unsupported.assistants
+      - methods: [GET, POST, DELETE]
+        canonical: /v1/files{rest:path}
+        translator: identity
+        intent: unsupported.files
+      - methods: [GET, POST, DELETE]
+        canonical: /openai/v1/files{rest:path}
+        translator: identity
+        intent: unsupported.files
+      - methods: [GET, POST, DELETE]
+        canonical: /v1/batches{rest:path}
+        translator: identity
+        intent: unsupported.batches
+      - methods: [GET, POST, DELETE]
+        canonical: /openai/v1/batches{rest:path}
+        translator: identity
+        intent: unsupported.batches
+      - methods: [GET, POST, DELETE]
+        canonical: /v1/fine_tuning{rest:path}
+        translator: identity
+        intent: unsupported.fine_tuning
+      - methods: [GET, POST, DELETE]
+        canonical: /openai/v1/fine_tuning{rest:path}
+        translator: identity
+        intent: unsupported.fine_tuning
+      - methods: [GET, POST, DELETE]
+        canonical: /v1/realtime{rest:path}
+        translator: identity
+        intent: unsupported.realtime
+      - methods: [GET, POST, DELETE]
+        canonical: /openai/v1/realtime{rest:path}
+        translator: identity
+        intent: unsupported.realtime
+      - methods: [WEBSOCKET]
+        canonical: /v1/realtime
+        translator: realtime
+        intent: realtime.session
+      - methods: [WEBSOCKET]
+        canonical: /openai/v1/realtime
+        translator: realtime
+        intent: realtime.session
     public_discovery:
       compatibility: openai-compatible
       default: true
@@ -216,6 +392,7 @@ records:
     source: builtin
     editable: false
     enabled: true
+    strictness: exact
     canonical: true
     routes: [/typesafe/v1]
     intents: [decision.systemone, models.list]
@@ -239,6 +416,7 @@ records:
     source: builtin
     editable: false
     enabled: true
+    strictness: lenient
     canonical: true
     routes:
       - /anthropic/v1
@@ -247,11 +425,60 @@ records:
       - chat.completions
     registered_routes:
       - methods: [POST]
+        translator: anthropic
+        intent: chat.completions
         canonical: /v1/messages
         alias: /anthropic/v1/messages
+        carries:
+          - model
+          - max_tokens
+          - stream
+          - temperature
+          - top_p
+          - top_k
+          - stop_sequences
+          - system
+          - "messages[].role"
+          - "messages[].content"
+          - "tools[].type"
+          - "tools[].name"
+          - "tools[].description"
+          - "tools[].input_schema"
+          - "tool_choice.type"
+          - "tool_choice.name"
+          - "tool_choice.disable_parallel_tool_use"
+          - "thinking.type"
+          - "thinking.budget_tokens"
+          - "output_config.effort"
+          - "metadata.user_id"
       - methods: [POST]
+        translator: anthropic
+        intent: tokens.count
         canonical: /v1/messages/count_tokens
         alias: /anthropic/v1/messages/count_tokens
+        carries:
+          - model
+          - system
+          - "messages[].role"
+          - "messages[].content"
+          - "tools[].type"
+          - "tools[].name"
+          - "tools[].description"
+          - "tools[].input_schema"
+          - "tool_choice.type"
+          - "tool_choice.name"
+          - "tool_choice.disable_parallel_tool_use"
+          - "thinking.type"
+          - "thinking.budget_tokens"
+          - "output_config.effort"
+      - methods: [GET]
+        canonical: /anthropic/v1/models
+        translator: anthropic
+        intent: models.list
+      - methods: [GET]
+        canonical: /anthropic/v1/models/{model_id:path}
+        translator: anthropic
+        intent: models.retrieve
     public_discovery:
       compatibility: anthropic-messages-subset
       default: false
@@ -281,6 +508,7 @@ records:
     source: builtin
     editable: false
     enabled: true
+    strictness: lenient
     canonical: true
     routes:
       - /ollama/api
@@ -291,44 +519,148 @@ records:
       - text.embeddings
     registered_routes:
       - methods: [POST]
+        translator: ollama
+        intent: chat.completions
         canonical: /api/chat
         alias: /ollama/api/chat
+        carries:
+          - model
+          - stream
+          - format
+          - think
+          - keep_alive
+          - "messages[].role"
+          - "messages[].content"
+          - "messages[].images"
+          - "messages[].tool_calls"
+          - "messages[].tool_name"
+          - "tools[].type"
+          - "tools[].function"
+          - "options.temperature"
+          - "options.top_p"
+          - "options.seed"
+          - "options.stop"
+          - "options.presence_penalty"
+          - "options.frequency_penalty"
+          - "options.top_k"
+          - "options.min_p"
+          - "options.typical_p"
+          - "options.repeat_penalty"
+          - "options.repeat_last_n"
+          - "options.mirostat"
+          - "options.mirostat_tau"
+          - "options.mirostat_eta"
+          - "options.num_predict"
       - methods: [POST]
+        translator: ollama
+        intent: text.completions
         canonical: /api/generate
         alias: /ollama/api/generate
+        carries:
+          - model
+          - prompt
+          - suffix
+          - template
+          - system
+          - images
+          - stream
+          - format
+          - think
+          - raw
+          - keep_alive
+          - "options.temperature"
+          - "options.top_p"
+          - "options.seed"
+          - "options.stop"
+          - "options.presence_penalty"
+          - "options.frequency_penalty"
+          - "options.top_k"
+          - "options.min_p"
+          - "options.typical_p"
+          - "options.repeat_penalty"
+          - "options.repeat_last_n"
+          - "options.mirostat"
+          - "options.mirostat_tau"
+          - "options.mirostat_eta"
+          - "options.num_predict"
       - methods: [POST]
+        translator: ollama
+        intent: text.embeddings
         canonical: /api/embed
         alias: /ollama/api/embed
+        carries:
+          - model
+          - input
+          - dimensions
       - methods: [POST]
+        translator: ollama
+        intent: text.embeddings.prompt
         canonical: /api/embeddings
         alias: /ollama/api/embeddings
+        carries:
+          - model
+          - prompt
       - methods: [GET]
+        translator: ollama
+        intent: models.tags
         canonical: /api/tags
         alias: /ollama/api/tags
       - methods: [POST]
+        translator: ollama
+        intent: models.show
         canonical: /api/show
         alias: /ollama/api/show
       - methods: [GET]
+        translator: ollama
+        intent: models.ps
         canonical: /api/ps
         alias: /ollama/api/ps
       - methods: [GET]
+        translator: ollama
+        intent: version
         canonical: /api/version
         alias: /ollama/api/version
       - methods: [POST]
+        translator: ollama
+        intent: models.create
         canonical: /api/create
         alias: /ollama/api/create
       - methods: [POST]
+        translator: ollama
+        intent: models.copy
         canonical: /api/copy
         alias: /ollama/api/copy
       - methods: [POST]
+        translator: ollama
+        intent: models.pull
         canonical: /api/pull
         alias: /ollama/api/pull
       - methods: [POST]
+        translator: ollama
+        intent: models.push
         canonical: /api/push
         alias: /ollama/api/push
       - methods: [DELETE]
+        translator: ollama
+        intent: models.delete
         canonical: /api/delete
         alias: /ollama/api/delete
+      - methods: [HEAD]
+        canonical: /api/blobs/{digest}
+        translator: ollama
+        intent: blobs
+      - methods: [POST]
+        canonical: /api/blobs/{digest}
+        translator: ollama
+        intent: blobs
+      - methods: [HEAD]
+        canonical: /ollama/api/blobs/{digest}
+        translator: ollama
+        intent: blobs
+      - methods: [POST]
+        canonical: /ollama/api/blobs/{digest}
+        translator: ollama
+        intent: blobs
     public_discovery:
       compatibility: ollama-subset
       default: false
@@ -387,6 +719,7 @@ records:
     source: builtin
     editable: false
     enabled: true
+    strictness: exact
     canonical: true
     routes:
       - /gateway/v1
@@ -397,6 +730,8 @@ records:
       - assets.read
     registered_routes:
       - methods: [GET]
+        translator: gateway
+        intent: media.job.content
         canonical: /gateway/v1/media/jobs/{job_id}/content
         runtime_policy: {protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
     asset_content_policies:
@@ -435,11 +770,25 @@ records:
     source: builtin
     editable: false
     enabled: true
+    strictness: exact
     canonical: false
     routes:
       - /gateway/v1/providers/{provider}
     intents:
       - provider.native
+    registered_routes:
+      - methods: [GET]
+        canonical: /gateway/v1/providers
+        translator: provider-native
+        intent: provider.list
+      - methods: [GET]
+        canonical: /gateway/v1/providers/{provider}
+        translator: provider-native
+        intent: provider.detail
+      - methods: [GET, POST, PUT, DELETE, PATCH, OPTIONS]
+        canonical: /gateway/v1/providers/{provider}/{native_path:path}
+        translator: provider-native
+        intent: provider.native
     public_discovery:
       base_path: /gateway/v1/providers
       compatibility: provider-native-passthrough
@@ -463,3 +812,23 @@ records:
         - provider and operation must be allowed by policy
         - no root catch-all
         - protocol frontend path collisions stay owned by the frontend; use /gateway/v1/providers/{provider}/{path...} for raw provider-native paths
+  - id: native
+    name: Per-engine native pass-through
+    protocol: native
+    source: builtin
+    editable: false
+    enabled: true
+    strictness: exact
+    canonical: false
+    routes:
+      - /native/{engine_id}
+    intents:
+      - engine.native
+    # Contract section 5. Off unless the engine record sets native_passthrough; never for a remote
+    # provider; the access plan and the receipt apply as they do to /gateway/v1/providers/{provider}.
+    # No public_discovery: the lane is not advertised yet.
+    registered_routes:
+      - methods: [GET, POST, PUT, DELETE, PATCH, OPTIONS]
+        canonical: /native/{engine_id}/{native_path:path}
+        translator: native
+        intent: engine.native
