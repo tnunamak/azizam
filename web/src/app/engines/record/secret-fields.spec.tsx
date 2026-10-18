@@ -122,7 +122,7 @@ it("defaults a new credential argument to secret and warns when made public", as
   expect(toggle).toBeChecked();
   expect(screen.getByLabelText("process start command Argument 2")).toHaveAttribute("type", "password");
   await user.click(toggle);
-  expect(screen.getByText(/may contain a credential/i)).toBeVisible();
+  expect(screen.getByText(/may contain a private value/i)).toBeVisible();
 });
 
 it("does not offer Remove on the program and allows argument reordering", async () => {

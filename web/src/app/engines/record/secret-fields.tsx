@@ -177,7 +177,7 @@ export function SecretFields({
                         </label>
                       )}
                       {command && index > 0 && !r.secret && credentialFlag((rows[index - 1].prefix ?? "") + rows[index - 1].value) && (
-                        <p className="text-meta text-warning">This public argument may contain a credential. Mark it Secret to keep it write-only.</p>
+                        <p className="text-meta text-warning">This public argument may contain a private value. Mark it Secret to keep it write-only.</p>
                       )}
                       {command && index > 1 && (
                         <Button type="button" variant="ghost" size="sm" aria-label={`Move ${label} up`} onClick={() => move(index, -1)}>Move up</Button>
