@@ -16,10 +16,30 @@ import platform
 import shutil
 import subprocess
 import sys
+import stat
 
 
 def output(*args: str) -> str:
     return subprocess.check_output(args, text=True).strip()
+
+
+def fingerprint(directory: Path) -> str:
+    """Detect missing, changed or replaced snapshot files before restoration."""
+    digest = hashlib.sha256()
+    for path in sorted(directory.rglob("*")):
+        digest.update(str(path.relative_to(directory)).encode() + b"\0")
+        digest.update(str(stat.S_IMODE(path.lstat().st_mode)).encode() + b"\0")
+        if path.is_symlink():
+            digest.update(b"link\0" + os.readlink(path).encode())
+        elif path.is_file():
+            digest.update(b"file\0")
+            with path.open("rb") as source:
+                for block in iter(lambda: source.read(1024 * 1024), b""):
+                    digest.update(block)
+        else:
+            digest.update(b"directory\0")
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def install(kind: str, destination: Path) -> None:
@@ -48,6 +68,10 @@ def install(kind: str, destination: Path) -> None:
         if local or hooks:
             subprocess.run(["npm", "ci", "--no-audit", "--no-fund"], check=True)
             return
+        if any(item.get("hasInstallScript") for item in locked.get("packages", {}).values()):
+            # Dependency hooks can inspect INIT_CWD and arbitrary project files.
+            # Be conservative rather than maintaining a list of trusted hooks.
+            inputs["source_tree"] = output("git", "rev-parse", "HEAD^{tree}")
         inputs.update(node=output("node", "--version"), npm=output("npm", "--version"),
                       config=output("npm", "config", "list", "--json"),
                       manifest=manifest.read_text(), lock=lockfile)
@@ -73,7 +97,14 @@ def install(kind: str, destination: Path) -> None:
     entry = root / f"{kind}-{key}"
     with (root / f"{kind}-{key}.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        if not (entry / "complete").is_file():
+        complete = entry / "complete"
+        valid = False
+        if complete.is_file() and (entry / "environment").is_dir():
+            try:
+                valid = complete.read_text() == fingerprint(entry / "environment")
+            except OSError:
+                pass
+        if not valid:
             print(f"dependency cache miss: {kind} {key}", flush=True)
             shutil.rmtree(entry, ignore_errors=True)
             entry.mkdir()
@@ -83,7 +114,7 @@ def install(kind: str, destination: Path) -> None:
                     subprocess.run(["uv", "venv", "-q", "--relocatable", "--python", interpreter, str(destination)], check=True)
                 subprocess.run(command, check=True)
                 subprocess.run(["cp", "-a", "--reflink=auto", str(destination), str(entry / "environment")], check=True)
-                (entry / "complete").touch()
+                (entry / "complete").write_text(fingerprint(entry / "environment"))
             except BaseException:
                 shutil.rmtree(entry, ignore_errors=True)
                 raise

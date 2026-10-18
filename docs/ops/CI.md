@@ -17,8 +17,9 @@ were still stored.
 
 - `scripts/ci-local` runs the same four jobs as `.github/workflows/ci.yml`
   (web check, Python tests, fresh instance, production UI journey) on HEAD,
-  in a clean detached worktree with `npm ci` and fresh Python environments
-  from `tests/requirements-hermetic.lock`.
+  in clean detached worktrees with private dependencies from the installed
+  cache described below. Cache misses use `npm ci` and the hashed Python lock;
+  the fresh-instance and hermetic Python tiers always install clean environments.
 - It writes receipts to `~/.tmp/azizam-ci-receipts/<tree>/`: `run.tsv`
   (SHA, seed, layout), `steps.tsv` (step, exit code, whole seconds, wall
   seconds, CPU seconds (user plus system), peak RSS kB), `cost.json` (totals,
@@ -36,10 +37,9 @@ were still stored.
   `steps.tsv` and `cost.json` only for the newest 20 runs and recent signoffs,
   so older runs drop out of `gate-cost`.
 - Its worktrees and dependency copies live in `~/.tmp/azizam-ci-local.*`
-  (about 7 GB). Exit removes that directory, except after a failed run:
-  ci-local then keeps it, prints its path and records it in
-  `~/.tmp/azizam-ci-local.kept`; the next failed run deletes it. A run
-  directory left by a killed `ci-local` is deleted by the next run.
+  (about 7 GB). Exit removes that directory on success and failure. Logs and
+  case receipts survive under the receipts directory. A run directory left by
+  a killed `ci-local` is deleted by the next run.
 - At the start of each run, receipts are pruned (`scripts/ci/prune_receipts.py`):
   the newest 20 runs, and any run with a signoff receipt from the last 7 days,
   keep everything. Older runs keep only `run.tsv`, `PASS`, `FAIL` and
@@ -244,8 +244,9 @@ interrupted run, lock waiting, and a killed controller.
   `web/test-results` is a symlink to it. The step `e2e-tree-unchanged` fails
   the run if any other file in `web/` changed.
 - Every step writes a private receipt and log. The parent waits for every job,
-  aggregates receipts, rejects missing/nonzero/skipped steps, and retains all
-  failing-run browser evidence. Interrupts terminate job process groups
+  aggregates receipts, rejects missing/nonzero/skipped steps, and retains logs
+  and case receipts. Browser traces and mutable state are deleted on exit,
+  including after failures. Interrupts terminate job process groups
   before worktrees are removed. `setsid` is required.
 
 ## Duration
@@ -316,12 +317,15 @@ a cold installed-cache run does not clear them.
 Node and npm versions or the resolved Python interpreter and uv version, platform,
 installer configuration, installer environment, and the helper implementation.
 The Python key includes uv configuration files and interpreter build settings.
-The npm key includes effective npm configuration. Root install hooks, workspaces
+The npm key includes effective npm configuration and the complete Git tree when
+a dependency has an install hook, since hooks can read arbitrary project files.
+Root install hooks, workspaces
 and local dependencies bypass the npm cache because they can read arbitrary source.
 Keys contain hashes; configuration and environment values are never logged.
 
 A key lock serializes population. An install failure publishes no completed entry.
-Only a complete entry can be reused. Each run gets an ordinary private copy
+Only a complete entry whose file contents, modes and symlink targets match its
+stored digest can be reused; a damaged entry is rebuilt. Each run gets an ordinary private copy
 (`cp -a --reflink=auto`, with a full-copy fallback), so test or tool writes cannot
 change the cache or another run. Python console launchers are relocatable. The
 fresh-instance journey and hermetic pytest still create clean environments from
@@ -332,7 +336,10 @@ suite after web dependencies are ready. Browsers still wait for all these steps,
 Compose and conformance. Compose cannot overlap Chromium because Docker network
 changes abort in-flight browser requests. The gate enables the existing two-server
 global-state split (`UI_E2E_GLOBAL=2`); each server owns separate state and ports.
-The parallel pool, Try serialization, all three browser configurations, unchanged
+The long serial People file starts early in its own one-worker project on the
+existing gateway. Its case order stays intact, and it is excluded from the pool
+project to avoid duplicate runs. The parallel pool, Try serialization, all three
+browser configurations, unchanged
 build check, journey clock, case aggregation and policy checks remain in the gate.
 `--target main` also selects the local `origin/main` budget comparison without
 posting signoff. Signoff still requires `--signoff --force` and remote checks.

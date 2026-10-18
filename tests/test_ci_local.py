@@ -103,7 +103,7 @@ fi
     "tests/compat/node/probe-gates.test.mjs": "",
     "integrations/pi/test/a.test.ts": "",
     "web/package.json": "{}\n",
-    "web/package-lock.json": "{}\n",
+    "web/package-lock.json": '{"packages":{"node_modules/example":{"hasInstallScript":true}}}\n',
     "web/vitest.config.ts": "export default { test: { retry: 0 } };\n",
     "web/playwright.config.ts": "export default { retries: 0 };\n",
     "web/playwright.live-data.config.ts": "export default { retries: 0 };\n",
@@ -700,6 +700,12 @@ def test_dependencies_are_private_and_warm_runs_still_test(world: World) -> None
     assert (world.receipts / "cases.jsonl").read_text() == cases
     cache = world.home / "Documents/azizam/ci-cache"
     assert not list(cache.glob("node-*/environment/.cache"))
+    snapshot = next(cache.glob("node-*/environment/.bin/playwright"))
+    snapshot.write_text("corrupted cache content")
+    repaired = world.run()
+    assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+    assert "cache miss: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
+    assert snapshot.read_text().startswith("#!/usr/bin/env bash")
 
 
 def test_cache_does_not_publish_failed_install(world: World) -> None:
@@ -712,9 +718,16 @@ def test_cache_does_not_publish_failed_install(world: World) -> None:
 
 def test_lockfile_change_invalidates_node_cache(world: World) -> None:
     assert world.run().returncode == 0
-    (world.repo / "web/package-lock.json").write_text('{"changed": true}\n')
+    (world.repo / "web/package-lock.json").write_text('{"packages":{"node_modules/example":{"hasInstallScript":true}},"changed":true}\n')
     _git(world.repo, "add", "web/package-lock.json")
     _git(world.repo, "commit", "-qm", "change dependency lock")
+    result = world.run()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "cache miss: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
+
+    (world.repo / "install-input.txt").write_text("dependency hook input changed")
+    _git(world.repo, "add", "install-input.txt")
+    _git(world.repo, "commit", "-qm", "change project input read by dependency hooks")
     result = world.run()
     assert result.returncode == 0, result.stdout + result.stderr
     assert "cache miss: node" in (world.receipts / "logs/web-npm-ci.log").read_text()
