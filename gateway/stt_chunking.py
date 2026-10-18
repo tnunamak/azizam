@@ -916,30 +916,38 @@ def merge_adjacent_silences(
     return result
 
 
-def plan_silence_only_segments(
+def plan_silence_preferred_segments(
     *,
     duration_seconds: float,
     silences: Sequence[tuple[float, float]],
     target_seconds: float,
     search_seconds: float,
-) -> list[tuple[float, float]] | None:
-    """Plan contiguous segments only when every seam has a silence midpoint."""
+    max_segments: int,
+) -> list[tuple[float, float]]:
+    """Prefer silence seams, but force a target cut when speech is continuous.
+
+    With target T, clamped search S and tail allowance R=min(30,T),
+    segment lengths are at most max(T+2*S, T+R+S). No audio is omitted
+    or overlapped; a target is not a strict per-segment duration cap.
+    """
     if duration_seconds <= target_seconds:
         return [(0.0, duration_seconds)]
     search_seconds = min(search_seconds, max(0.0, target_seconds / 2.0 - 0.001))
     cuts: list[float] = []
     used: set[float] = set()
     boundary = target_seconds
-    while boundary < duration_seconds - 30.0:
+    tail_seconds = min(30.0, target_seconds)
+    while boundary < duration_seconds and (not cuts or boundary <= duration_seconds - tail_seconds):
+        if len(cuts) + 2 > max_segments:
+            raise SttResourceLimitExceeded("Audio requires more STT segments than configured")
         candidates = [
             (abs(((start + end) / 2.0) - boundary), (start + end) / 2.0)
             for start, end in silences
-            if ((start + end) / 2.0) not in used
+            if 0.0 < ((start + end) / 2.0) < duration_seconds
+            and ((start + end) / 2.0) not in used
             and abs(((start + end) / 2.0) - boundary) <= search_seconds
         ]
-        if not candidates:
-            return None
-        _, cut = min(candidates)
+        cut = min(candidates)[1] if candidates else boundary
         used.add(cut)
         cuts.append(cut)
         boundary += target_seconds
@@ -1060,11 +1068,12 @@ async def execute_chunking(
             deadline_at=deadline_at,
             on_cancel=on_cancel,
         )
-        segments = plan_silence_only_segments(
+        segments = plan_silence_preferred_segments(
             duration_seconds=probed.duration_seconds,
             silences=silences,
             target_seconds=config.target_seconds,
             search_seconds=config.silence_search_seconds,
+            max_segments=config.max_segments,
         )
     except (
         asyncio.CancelledError,
@@ -1081,7 +1090,7 @@ async def execute_chunking(
         raise
 
     if not segments or len(segments) <= 1:
-        return ChunkingOutcome("passthrough", 0, "no_silence_only_plan")
+        return ChunkingOutcome("passthrough", 0, "single_segment_plan")
     if len(segments) > config.max_segments:
         raise SttResourceLimitExceeded("Audio requires more STT segments than configured")
 
