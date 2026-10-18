@@ -15,6 +15,7 @@ import asyncio
 import time
 
 import proxy
+from gateway import record_carriers, secret_refs
 from gateway.engine_admin import build_raw, clean_values
 from gateway.engine_definitions import load_engine_catalog
 from gateway.service_registry import service_from_backend_config
@@ -34,7 +35,9 @@ def _save_engine(db, address: str, **values) -> None:
                     models=[{"id": "demo-chat", "public_name": "garage-chat"}], enabled=True,
                     check={}, tests=None, secret_id=None)
     registry = proxy.ADMIN_STORE.get_service_registry()
-    registry["services"]["garage"] = service_from_backend_config("garage", raw, source="ui")
+    record = service_from_backend_config("garage", raw, source="ui")
+    # The write path moves a header value into the secret store; the stand-in router resolves it where it compiles.
+    registry["services"]["garage"], _ = record_carriers.externalize_service(record, secret_refs.putter(db))
     write_service_registry_for_test(registry, path=db)
 
 

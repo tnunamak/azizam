@@ -222,7 +222,8 @@ def test_the_admin_api_answers_a_failed_reload_with_a_clear_error():
 
     assert isinstance(response, JSONResponse)
     assert response.status_code == 500
-    assert b"registry_saved_not_applied" in response.body and b"boom" in response.body
+    # The failure is named by its class, never by its text, which may quote what the reload read (decision D31).
+    assert b"registry_saved_not_applied" in response.body and b"RegistryNotApplied" in response.body and b"boom" not in response.body
 
 
 # --- round 4: one status key for each entry --------------------------------------------------------

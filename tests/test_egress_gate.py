@@ -271,3 +271,41 @@ def test_an_exception_inside_the_exported_app_answers_with_the_fixed_envelope(ga
     response = owner.get("/admin/api/operator/service-registry")
     assert response.status_code == 500 and SEED not in response.text
     assert response.json() == {"error": {"code": "internal_error", "message": "The gateway could not answer this request."}}
+
+
+def _mixed_app() -> FastAPI:
+    app = FastAPI()
+    outside = APIRouter(prefix="/admin/api/outside")  # a router the phase 1 inventory leaves unmanaged
+
+    @outside.get("/mine")
+    def mine():
+        return JSONResponse({"error": {"code": "test_not_found", "message": "That test is over."}}, status_code=404)
+
+    @outside.get("/framework")
+    def framework():
+        raise HTTPException(404, detail=SEED)
+
+    @outside.post("/only-post")
+    def only_post():
+        return JSONResponse({"ok": True})
+
+    app.include_router(outside)
+    app.add_middleware(egress.EgressGate)
+    return app
+
+
+def test_a_handler_outside_the_managed_list_keeps_its_own_error_code_and_the_framework_text_is_still_fixed():
+    client = TestClient(_mixed_app(), raise_server_exceptions=False)
+
+    own = client.get("/admin/api/outside/mine")
+    framework = client.get("/admin/api/outside/framework")
+
+    assert own.status_code == 404 and own.json()["error"]["code"] == "test_not_found"  # a page reads this code
+    assert framework.status_code == 404 and SEED not in framework.text and framework.json()["error"]["code"] == "not_found"
+
+
+def test_the_fixed_405_keeps_the_allow_header_of_the_route():
+    response = TestClient(_mixed_app(), raise_server_exceptions=False).get("/admin/api/outside/only-post")
+
+    assert response.status_code == 405 and response.headers["allow"] == "POST"
+    assert response.json()["error"]["code"] == "method_not_allowed"

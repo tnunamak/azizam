@@ -3,7 +3,7 @@
 The gateway sends chat requests to its LiteLLM sidecar, a separate process
 that tests do not start. This ASGI app does the sidecar's part with the same
 library: it compiles the gateway's service registry exactly as the gateway
-writes the sidecar config (compile_litellm_config_from_registry) and routes
+writes the sidecar config (litellm_runtime.compile_executable_config, which resolves the references a record holds) and routes
 the request with ``litellm.Router``. So a test can send a request through
 the gateway and watch what reaches a fake engine behind the router.
 
@@ -21,7 +21,7 @@ from typing import Any
 import litellm
 from litellm import Router
 
-from gateway.litellm_substrate import compile_litellm_config_from_registry
+from gateway import litellm_runtime
 
 
 def router_sidecar(registry: Callable[[], Mapping[str, Any]]):
@@ -37,7 +37,7 @@ def router_sidecar(registry: Callable[[], Mapping[str, Any]]):
             if not message.get("more_body"):
                 break
         payload = json.loads(body or b"{}")
-        compiled = compile_litellm_config_from_registry(registry())
+        compiled = litellm_runtime.compile_executable_config(registry())
         router = Router(model_list=compiled["model_list"], num_retries=0)
         try:
             reply = await router.acompletion(model=payload["model"], messages=payload["messages"],

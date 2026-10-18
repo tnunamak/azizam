@@ -48,7 +48,11 @@ MARKERS: dict[str, str] = {
     "held-env": "canheld-env-1102",
     "held-url": "canheld-url-1104",
     "held-string": "canheld-string-1105",
-    # From the independent review of W1 round 3 (tests/test_review_w1_r3_cases.py): values no name or shape recognizer knows.
+}
+
+# Canaries planted by tests/test_review_w1_r3_cases.py, from the independent review of the earlier projection: values no
+# name or shape recognizer knows. They are searched for in every output, but the seed does not plant them.
+REVIEW_MARKERS: dict[str, str] = {
     "review-opaque": "hunter2abc-r3o",
     "review-basic": "Basic dTpwcjNiYXNpYw",
     "review-jwt": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJyM2p3dCJ9.c3ludGhldGljcjNqd3Q",
@@ -167,7 +171,7 @@ def stored_values(db_path: Path) -> set[str]:
 
 def leaks_in(text: str, markers: dict[str, str] | None = None) -> list[str]:
     """The names of the canaries that appear in ``text``, plus any key-shaped text no canary accounts for."""
-    markers = MARKERS if markers is None else markers
+    markers = {**MARKERS, **REVIEW_MARKERS} if markers is None else markers
     found = sorted(name for name, value in markers.items() if value in text)
     values = set(markers.values())
     found += [f"key-shaped:{hit[:14]}" for hit in SHAPE_TRIPWIRE.findall(text) if not any(value in hit or hit in value for value in values)]

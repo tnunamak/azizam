@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Callable
 
@@ -91,6 +92,8 @@ class Ctx:
 
     def enable_package_a(self) -> dict[str, Any]:
         """Enable the credentialed git package the sweep names ``package-a``, so a call can remove it."""
+        for leftover in (self.gateway.path.parent / "extensions" / "installed", self.tmp_path / "package-a"):
+            shutil.rmtree(leftover, ignore_errors=True)  # an earlier call's clone and its source directory
         yaml = ("id: packageasvc\nname: Plain\nconfig:\n  protocol: openai-compatible\n"
                 "  host: 192.168.1.80\n  port: 8000\n  models:\n    - {id: m, upstream_model: m}\n")
         source = {**_git_package(self.monkeypatch, self.tmp_path, yaml, name="package-a"),

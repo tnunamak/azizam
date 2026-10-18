@@ -22,7 +22,7 @@ from tests.test_engine_admin_routes import TOKEN, _put_registry, _registry
 from tests.test_engine_admin_routes import fake_engine_dns, fixed_baseline  # noqa: F401 - fixtures
 from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin  # noqa: F401
 
-M = canary.MARKERS
+M = {**canary.MARKERS, **canary.REVIEW_MARKERS}
 USER, PASSWORD, QUERY = "demo-r3", "pw", "xy"
 PROVENANCE = {"source": "hand-written", "reference": "azizam-review-w1-r3-projection-6c5235d-r0 unsettled candidates"}
 ECHOES = (M["review-opaque"], f"{USER}:{PASSWORD}@", f"signature={QUERY}")

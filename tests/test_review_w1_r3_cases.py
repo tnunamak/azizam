@@ -33,7 +33,7 @@ from tests.support.route_discovery import can_answer_with_a_record, discover
 from tests.test_admin_secret_sweep import host_isolated, sweep_get_routes  # noqa: F401 - fixture
 from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin  # noqa: F401 - fixtures
 
-M = canary.MARKERS
+M = {**canary.MARKERS, **canary.REVIEW_MARKERS}
 REGISTRY = "/admin/api/operator/service-registry"
 OPAQUE_VALUES = ("review-opaque", "review-basic", "review-jwt")
 

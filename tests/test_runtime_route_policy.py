@@ -1178,10 +1178,10 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         """Add engine's Request headers reach the engine on its direct route too (add-engine-spec.md §8)."""
         profile = plan_for("engine-native", caps=(), engines=["garage-gpu"], operations=["v1/models"])
         backend = {"native_passthrough": True, "host": "127.0.0.1", "port": 9, "protocol": "openai-compatible",
-                   "headers": [{"name": "X-Tenant", "value": "family"}]}
+                   "headers": [{"name": "X-Tenant", "value": "family", "public": True}]}
         with patch.dict(proxy.config["backends"], {"garage-gpu": backend}):
             target = proxy._build_provider_native_targets()["garage-gpu"]
-        self.assertEqual(target["headers"], {"X-Tenant": "family"})
+        self.assertEqual(proxy._native_engine_headers(target), {"X-Tenant": "family"})
         with authenticated_profile(profile), patch.dict(proxy.config["backends"], {"garage-gpu": backend}), patch.object(
             proxy, "_PROVIDER_NATIVE_TARGETS", {"garage-gpu": target},
         ), patch.object(proxy.httpx, "AsyncClient", _CaptureNativePassthroughClient), patch.object(
