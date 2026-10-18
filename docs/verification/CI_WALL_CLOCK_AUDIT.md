@@ -15,8 +15,9 @@ short sleeps followed by completion assertions. Independent review extended the
 search to implicit completion windows, including process tick counts and
 background credential commands.
 
-No test cases or production behavior were added or removed. No latency constant
-was raised. The replacements retain case names and configured deadlines. New
+The timing replacements retain the original test cases, production behavior
+and configured deadlines. No latency constant was raised. Full validation also
+exposed the pointer-focus defect described below. New
 30-second watchdogs only terminate broken event protocols; they do not decide
 whether a valid operation is fast enough. Tests still fail on wrong deadlines,
 wrong poll intervals, missing cancellation, premature work, or missing progress.
@@ -68,3 +69,17 @@ Python used by the hermetic runner.
 No genuine sub-second latency policy needed relocation to `scripts/perf`.
 The replaced checks concern configured deadlines, cancellation, ordering and
 progress. Real endpoint performance remains in the existing performance harness.
+
+## Focus failure during full validation
+
+The second full gate exposed an independent pointer-focus race in the People
+invitation dialog. Radix prevents pointer-down from focusing a menu trigger.
+The page remembered only focused buttons, so dialog focus restoration depended
+on the dropdown's later autofocus beating the dialog's focus trap.
+
+The page now captures the pointer opener before opening the menu. The existing
+recipient-confirmation test suppresses the intermediate trigger-focus attempt,
+flushes the menu callbacks with fake timers, then closes the dialog and checks
+focus. Before the fix it deterministically focused the Invites tab; with the
+fix it returns to the invitation's Actions button. The browser test retains its
+original pointer interaction and focus assertions.
