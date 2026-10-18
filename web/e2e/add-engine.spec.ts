@@ -124,3 +124,55 @@ for (const width of [1280, 390]) {
     }
   });
 }
+
+test("a header-only save keeps an absent reply timeout and hidden header rows", { tag: GLOBAL_STATE_TAG }, async ({ page, baseURL }) => {
+  const session = await (await page.request.get("/admin/api/session")).json();
+  const registry = async () => {
+    const res = await page.request.get("/admin/api/operator/service-registry");
+    return { value: (await res.json()).service_registry, etag: res.headers().etag };
+  };
+  const headers = (etag: string) => ({ "x-azizam-csrf": session.actor.csrf_token, "if-match": etag });
+  let serviceId = "";
+  try {
+    const created = await page.request.post("/admin/api/operator/services", {
+      headers: headers((await registry()).etag),
+      data: { definition: "openai-compatible", name: "Header preservation journey", disabled: true,
+        values: { address: `http://127.0.0.1:${Number(new URL(baseURL!).port) + 1}/provider/v1` } },
+    });
+    expect(created.status()).toBe(201);
+    serviceId = (await created.json()).service_id;
+    const seed = await registry();
+    const config = seed.value.services[serviceId].config;
+    delete config.timeout;
+    config.gateway_lifecycle = true;
+    config.headers = [{ name: "X-Api-Key", value: "test-only-hidden-header" }, { name: "X-Private", value: "test-only-private-header", secret: true }];
+    expect((await page.request.put("/admin/api/operator/service-registry", { headers: headers(seed.etag), data: seed.value })).ok()).toBe(true);
+    await page.goto(`/engines/?engine=${serviceId}`);
+    await expect(page.getByRole("heading", { level: 1, name: "Header preservation journey" })).toBeVisible();
+    await expect(page.getByTestId("connection-facts")).toContainText("default for engines Azizam starts");
+    const connection = page.getByRole("region", { name: "Connection", exact: true });
+    await expect(connection.getByText("Not sent", { exact: true })).toHaveCount(2);
+    await connection.getByRole("button", { name: "Add a header" }).click();
+    await connection.getByLabel("Header name", { exact: true }).last().fill("X-Tenant");
+    await connection.getByLabel("Value", { exact: true }).last().fill("household");
+    const saved = page.waitForResponse(res => res.request().method() === "PATCH" && res.url().endsWith(`/services/${serviceId}`));
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    expect((await saved).status()).toBe(200);
+    const after = (await registry()).value.services[serviceId].config;
+    expect(after).not.toHaveProperty("timeout");
+    expect(after.headers).toHaveLength(3);
+    expect(after.headers).toContainEqual({ name: "X-Tenant", value: "household" });
+    await page.reload();
+    await expect(page.getByTestId("connection-facts")).toContainText("default for engines Azizam starts");
+    await expect(connection.getByText("Not sent", { exact: true })).toHaveCount(2);
+    await connection.getByRole("button", { name: "Remove header X-Api-Key" }).click();
+    const removed = page.waitForResponse(res => res.request().method() === "PATCH" && res.url().endsWith(`/services/${serviceId}`));
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    expect((await removed).status()).toBe(200);
+    const final = (await registry()).value.services[serviceId].config;
+    expect(final.headers.map((row: { name: string }) => row.name)).toEqual(["X-Private", "X-Tenant"]);
+    expect(final).not.toHaveProperty("timeout");
+  } finally {
+    if (serviceId) await page.request.delete(`/admin/api/operator/services/${serviceId}`, { headers: headers((await registry()).etag) });
+  }
+});
