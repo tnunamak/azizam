@@ -63,10 +63,11 @@ JobStatus = Literal["queued", "running", "succeeded", "failed", "canceled"]
 PHASE_FIELDS = ("accepted_at", "queued_at", "started_at", "first_output_at", "finished_at")
 # Typed facts about a failure, beside the plain ``error`` sentence. The category
 # says who refused: the gateway (authorization, invalid_input, capacity) or the
-# work itself (upstream, timeout, safety). ``upstream_http_status`` is set only
+# work itself (upstream, timeout, safety); ``internal`` is the gateway's own bug. ``upstream_http_status`` is set only
 # for an upstream failure. None means not recorded (older or unclassified jobs).
 ERROR_FIELDS = ("error_code", "error_category", "retryable", "upstream_http_status")
-ERROR_CATEGORIES = frozenset({"authorization", "invalid_input", "upstream", "capacity", "timeout", "safety"})
+ERROR_CATEGORIES = frozenset({"authorization", "invalid_input", "upstream", "capacity", "timeout", "safety",
+                              "internal"})
 _ERROR_CODE_RE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
 
 

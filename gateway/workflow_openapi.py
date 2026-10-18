@@ -519,8 +519,9 @@ _MEDIA_JOB_SCHEMA = {
         "error_code": {"type": ["string", "null"], "description": "A short token naming the failure."},
         "error_category": {
             "type": ["string", "null"],
-            "enum": ["authorization", "invalid_input", "upstream", "capacity", "timeout", "safety", None],
-            "description": "Who refused: the gateway (authorization, invalid_input, capacity) or the work.",
+            "enum": ["authorization", "invalid_input", "upstream", "capacity", "timeout", "safety", "internal", None],
+            "description": ("Who refused: the gateway (authorization, invalid_input, capacity), the work "
+                            "(upstream, timeout, safety), or a gateway bug (internal)."),
         },
         "retryable": {"type": ["boolean", "null"], "description": "Whether the same job may succeed later."},
         "upstream_http_status": {

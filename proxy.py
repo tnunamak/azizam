@@ -36,7 +36,9 @@ import atexit
 import hashlib
 import hmac
 import ipaddress
+import logging
 import secrets
+import traceback
 import uuid
 from decimal import Decimal
 from dataclasses import dataclass, replace
@@ -13806,7 +13808,8 @@ class _SessionMakeRuntime:
             _image_media_job_scheduled.discard(job_id)
             self._gates.pop(job_id, None)
             if not done_task.cancelled() and done_task.exception() is not None:
-                me_make._fail(job_id, "The job stopped unexpectedly; please try again", media_jobs.DB_PATH)
+                _log_media_job_crash(job_id, done_task.exception())
+                me_make._fail(job_id, _MEDIA_JOB_CRASHED, media_jobs.DB_PATH, error_info=_MEDIA_JOB_CRASHED_INFO)
                 self.drop_payload(job_id)
 
         task.add_done_callback(_done)
@@ -20394,6 +20397,20 @@ def _media_job_content_preflight_response(auth_context: AuthContext) -> Response
     )
 
 
+_MEDIA_JOB_LOG = logging.getLogger("azizam.media_jobs")
+_MEDIA_JOB_CRASHED = "The job stopped unexpectedly; please try again"
+_MEDIA_JOB_CRASHED_INFO = {"error_code": "internal_error", "error_category": "internal", "retryable": True}
+
+
+def _log_media_job_crash(job_id: str, exc: BaseException) -> None:
+    """Log where a job's worker broke: the exception type and its stack.
+
+    Not the exception's text, which may quote a prompt or a backend reply.
+    """
+    stack = "".join(traceback.format_tb(exc.__traceback__))
+    _MEDIA_JOB_LOG.error("media job %s stopped with %s\n%s", job_id, type(exc).__name__, stack)
+
+
 _MEDIA_JOB_CALLER_GONE = "The account that asked for this job can no longer use the gateway."
 _MEDIA_JOB_CALLER_GONE_INFO = {"error_code": "caller_unavailable", "error_category": "authorization",
                                "retryable": False}
@@ -20756,7 +20773,8 @@ def _schedule_image_media_job(job_id: str) -> bool:
         except asyncio.CancelledError:
             return
         if exc is not None:
-            _mark_image_media_job_failed(job_id, "The job stopped unexpectedly; please try again")
+            _log_media_job_crash(job_id, exc)
+            _mark_image_media_job_failed(job_id, _MEDIA_JOB_CRASHED, error_info=_MEDIA_JOB_CRASHED_INFO)
 
     task.add_done_callback(_done)
     return True
@@ -21323,7 +21341,8 @@ def _schedule_audio_media_job(job_id: str) -> bool:
         except asyncio.CancelledError:
             return
         if exc is not None:
-            _mark_audio_media_job_failed(job_id, "The job stopped unexpectedly; please try again")
+            _log_media_job_crash(job_id, exc)
+            _mark_audio_media_job_failed(job_id, _MEDIA_JOB_CRASHED, error_info=_MEDIA_JOB_CRASHED_INFO)
 
     task.add_done_callback(_done)
     return True
@@ -21913,7 +21932,8 @@ def _schedule_video_media_job(job_id: str) -> bool:
         except asyncio.CancelledError:
             return
         if exc is not None:
-            _mark_video_media_job_failed(job_id, "The job stopped unexpectedly; please try again")
+            _log_media_job_crash(job_id, exc)
+            _mark_video_media_job_failed(job_id, _MEDIA_JOB_CRASHED, error_info=_MEDIA_JOB_CRASHED_INFO)
 
     task.add_done_callback(_done)
     return True
