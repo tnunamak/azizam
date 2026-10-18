@@ -552,3 +552,43 @@ def test_unreachable_document_is_refused_but_a_recent_copy_carries_an_outage(wor
                                        "https://client.example/", "https://u@client.example/c.json"])
 def test_only_https_urls_with_a_path_are_document_ids(client_id):
     assert not mcp_oauth.is_client_document_url(client_id)
+
+
+# ------------------------------------------------------- allowing needs a recent sign-in
+
+
+def _ask_to_confirm(world):
+    """The person's sign-in is too old: the deployment answers 401 reauth_required."""
+    from dataclasses import replace
+    world.oauth.deps = replace(world.oauth.deps, require_recent_sign_in=lambda r, s: JSONResponse(
+        {"error": {"code": "reauth_required"}}, status_code=401))
+
+
+def test_allowing_a_client_from_an_old_sign_in_asks_the_person_to_confirm_and_grants_nothing(world):
+    client_id = world.register()["client_id"]
+    resp = world.authorize(client_id)
+    _ask_to_confirm(world)
+
+    decided = world.consent(resp, decision="allow")
+
+    assert decided.status_code == 401 and decided.json()["error"]["code"] == "reauth_required"
+    assert world.store.grants_for_person("usr_a") == []
+
+
+def test_the_pending_request_survives_the_confirmation_and_is_then_allowed(world):
+    client_id = world.register()["client_id"]
+    resp = world.authorize(client_id)
+    asked = world.oauth.deps
+    _ask_to_confirm(world)
+    assert world.consent(resp, decision="allow").status_code == 401
+    world.oauth.deps = asked                                       # the person confirmed
+
+    assert world.consent(resp, decision="allow").status_code == 200
+
+
+def test_refusing_a_client_never_asks_to_confirm(world):
+    client_id = world.register()["client_id"]
+    resp = world.authorize(client_id)
+    _ask_to_confirm(world)
+
+    assert world.consent(resp, decision="deny").status_code == 200

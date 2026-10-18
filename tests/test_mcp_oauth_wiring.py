@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import time
 import tempfile
 import unittest
 from pathlib import Path
@@ -50,7 +51,7 @@ class McpAuthorizationWiringTests(unittest.TestCase):
             (media_jobs, "DB_PATH", root / "jobs.db"),
             (proxy, "_public_base_url", lambda request: BASE),
             (proxy, "_oidc_session_from_request",
-             lambda request: SimpleNamespace(subject=request.headers["x-test-person"])
+             lambda request: SimpleNamespace(subject=request.headers["x-test-person"], last_authenticated=time.time())
              if request.headers.get("x-test-person") else None),
             (proxy, "_require_user_action_header", lambda request, session: None),
         ):

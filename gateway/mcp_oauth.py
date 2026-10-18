@@ -149,6 +149,8 @@ class McpOAuthDeps:
     client_ip: Callable[[Request], str | None]
     fetch_client_document: Callable[[str], Awaitable[tuple[bytes, Mapping[str, str]]]]
     store: Store
+    # A response when the person has not confirmed it is them lately; allowing a client is a lasting grant.
+    require_recent_sign_in: Callable[[Request, Any], Response | None] = lambda request, session: None
     settings: Callable[[], Settings] = Settings
     audit: Callable[..., None] = lambda *args, **kwargs: None
     mcp_path: str = "/mcp"
@@ -1050,6 +1052,10 @@ class McpOAuth:
                 return JSONResponse({"error": {"code": "invalid_decision", "message": "decision must be allow or deny"}},
                                     status_code=400, headers=no_store)
             person_id = str(person["id"])
+            if decision == "allow":
+                stale = await asyncio.to_thread(self.deps.require_recent_sign_in, request, session)
+                if stale is not None:
+                    return stale
             if decision == "allow" and not await asyncio.to_thread(self.deps.person_can_connect, person_id):
                 return JSONResponse({"error": {"code": "no_access",
                                                "message": "Your account can't use AI here yet. Ask the owner for access."}},

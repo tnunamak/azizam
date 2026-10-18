@@ -178,11 +178,11 @@ def test_valid_cookie_is_never_cleared_and_an_old_one_is_upgraded_in_place(princ
 
     first = client.get("/")
 
-    # A cookie from before sliding sessions is renewed once, keeping its session; none is ever deleted.
+    # A cookie from before sliding sessions is renewed once, into the same sign-in (family); none is ever deleted.
     [upgraded] = _session_cookies(first, name)
     assert "Max-Age=0" not in upgraded
     value = upgraded.split(";", 1)[0].split("=", 1)[1].strip('"')
-    assert decode_session_cookie(value, signing_key=SIGNING_KEY).session_id == \
+    assert decode_session_cookie(value, signing_key=SIGNING_KEY).family_id == \
         decode_session_cookie(old, signing_key=SIGNING_KEY).session_id
     assert "set-cookie" not in client.get("/").headers      # the renewed cookie is not touched again
 

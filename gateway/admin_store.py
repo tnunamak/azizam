@@ -299,6 +299,13 @@ CREATE TABLE IF NOT EXISTS account_sessions (
 CREATE TABLE IF NOT EXISTS account_session_revocations (
  session_id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL
 );
+-- The ids a sign-in has held since its first renewal (decision D35). ``retired_at`` is when an id was
+-- replaced by its successor; the row for the id in use has none. A retired id shown after the grace
+-- window means a copy of the cookie exists, so the whole family is revoked.
+CREATE TABLE IF NOT EXISTS account_session_lineage (
+ session_id TEXT PRIMARY KEY, family_id TEXT NOT NULL, retired_at INTEGER, expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS account_session_lineage_family ON account_session_lineage(family_id);
 CREATE TABLE IF NOT EXISTS account_links (
  id TEXT PRIMARY KEY, kind TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
  plan_id TEXT REFERENCES access_plans(id), user_id TEXT REFERENCES users(id), email TEXT,
@@ -1975,10 +1982,14 @@ def create_credential_hash(
     created_by: str | None = None,
     expires_at: int | None = None,
     session_id: str | None = None,
+    precheck: Callable[[sqlite3.Connection], None] | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Persist a credential hash.
+
+    ``precheck`` runs inside the write transaction, before the insert: a sign-out that commits first
+    makes it raise, and one that commits after finds the new key to revoke.
 
     Subject invariants:
 
@@ -2017,6 +2028,13 @@ def create_credential_hash(
         json.dumps(sorted({s for s in scopes if s})) if scopes else None
     )
     with _conn(path) as conn:
+        if precheck is not None:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                precheck(conn)
+            except BaseException:
+                conn.rollback()
+                raise
         if subject_kind in _DATA_PLANE_SUBJECTS and conn.execute(
             "SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)
         ).fetchone():

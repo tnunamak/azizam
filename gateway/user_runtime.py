@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
-from gateway import admin_store
+from gateway import accounts, admin_store
 from gateway import receipt_store
 from gateway.receipt_context import person_label, receipt_context
 from gateway.admin_oidc import AdminSession
@@ -387,11 +387,20 @@ def mint_user_app_key(
 ) -> dict[str, Any]:
     """Create an API key for an App already owned by ``session.subject``.
 
-    ``session_id`` binds the key to that sign-in, which revokes it on sign-out.
+    ``session_id`` binds the key to that sign-in (its family, so a renewal keeps it), which revokes
+    it on sign-out. The insert checks in the same transaction that the sign-in is still live, so a
+    sign-out that lands between the check on the cookie and the insert leaves no key behind.
     """
     user = _user_from_session(session, path=path)
     app = _app_belongs_to_user(app_id, str(user["id"]), path=path)
     api_key = generate_app_api_key()
+
+    def still_signed_in(conn) -> None:
+        try:
+            accounts.require_live_session_in(conn, str(user["id"]), session.session_id, session.family_id)
+        except accounts.AccountError as exc:
+            raise UserPortalError(exc.code, exc.message, status_code=exc.status) from None
+
     record = admin_store.create_credential_hash(
         subject_kind="app",
         subject_id=str(app["id"]),
@@ -401,6 +410,7 @@ def mint_user_app_key(
         created_by=str(user["id"]),
         expires_at=expires_at,
         session_id=session_id,
+        precheck=still_signed_in if session_id else None,
         path=path,
     )
     admin_store.record_audit(
@@ -423,10 +433,13 @@ def ensure_try_session_key(
     session: AdminSession,
     *,
     reuse_id: str | None = None,
+    before_mint: Callable[[], None] | None = None,
     now: int | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
     """Return the Try page's key for this sign-in, minting one only if needed.
+
+    ``before_mint`` runs just before a new key is made, never for a reused one; it can refuse by raising.
 
     The key expires with the sign-in session and is revoked when it signs
     out. The secret is shown once, so the browser keeps it and passes its id
@@ -436,7 +449,7 @@ def ensure_try_session_key(
     """
     ts = int(time.time()) if now is None else int(now)
     expires_at = int(session.expires_at)
-    if not session.session_id or expires_at <= ts:
+    if not session.family_id or expires_at <= ts:
         raise UserPortalError("login_required", "Sign in again to use Try.", status_code=401)
     user = _user_from_session(session, path=path)
     apps = [
@@ -454,19 +467,21 @@ def ensure_try_session_key(
         record for record in admin_store.list_active_credentials(
             subject_kind="app", app_id=str(app["id"]), now=ts, path=path,
         )
-        if record.get("session_id") == session.session_id
+        if record.get("session_id") == session.family_id
     ]
     reused = next((record for record in session_keys if record["id"] == reuse_id), None)
     if reused is not None:
         out = _sanitize_credential(reused)
         out.update(active=True, reused=True, app_name=app_name)
         return out
+    if before_mint is not None:
+        before_mint()
     admin_store.revoke_older_session_credentials(
-        str(app["id"]), session.session_id, keep=1, now=ts, path=path,
+        str(app["id"]), session.family_id, keep=1, now=ts, path=path,
     )
     minted = mint_user_app_key(
         session, str(app["id"]), label=admin_store.TRY_KEY_LABEL, expires_at=expires_at,
-        session_id=session.session_id, path=path,
+        session_id=session.family_id, path=path,
     )
     minted.update(reused=False, app_name=app_name)
     return minted

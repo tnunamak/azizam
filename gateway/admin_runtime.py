@@ -27,10 +27,11 @@ from typing import Any, Iterable, Mapping
 
 from fastapi import Request, status
 
-from gateway import admin_store, browser_sessions, engine_check, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
+from gateway import admin_store, browser_sessions, engine_check, step_up, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
 from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
+    SERVICE_ACCOUNT_SESSION_PREFIX,
     CookieConfig,
     OIDCConfigError,
     SessionError,
@@ -52,7 +53,6 @@ ADMIN_KEY_PREFIX = "oak_"
 ADMIN_CONTROL_ROLES = frozenset({"owner", "admin", "superadmin"})
 ADMIN_KEY_CREATABLE_ROLES = frozenset({"owner", "admin"})
 _ROLE_RANK = {"admin": 1, "superadmin": 2, "owner": 3}
-SERVICE_ACCOUNT_SESSION_PREFIX = "service_account:"
 LOCAL_ADMIN_KEY_ISSUER = "local-admin-key"
 SERVICE_AVAILABILITY_OVERRIDES_KEY = "service_availability_overrides"
 MEDIA_JOB_ADMISSION_OVERRIDES_KEY = "media_job_admission_overrides"
@@ -979,6 +979,11 @@ class AdminSQLiteStore:
                 raise PermissionError(
                     "Only the owner can attach a key to a service, move a service that has one, "
                     "or set a lifecycle driver on a service.")
+            # Where a stored key is sent is the thing a stolen session must not move (decision D36).
+            step_up.require_recent(
+                authenticated_at=actor.authenticated_at, subject=actor.subject,
+                window_seconds=browser_sessions.policy(self.path).step_up_seconds,
+            )
             value = service_registry.bind_credential_origins(value, changed)
         self._refuse_blocked_native_hosts(before, value)
         return value

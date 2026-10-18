@@ -13,7 +13,7 @@ from starlette.responses import JSONResponse
 from gateway import accounts, admin_store, browser_sessions
 from gateway.settings_api import instance_settings
 from gateway.admin_api import _require_admin
-from gateway.admin_oidc import csrf_token_for_session, safe_browser_return_to
+from gateway.admin_oidc import SessionError, csrf_token_for_session, safe_browser_return_to
 
 
 class _AccountRoute(APIRoute):
@@ -247,7 +247,10 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         session, key = signed_in_with_csrf(request)
         path = path_provider()
         accounts.confirm_password(session.subject, body.password, client_ip(request), path=path)
-        refreshed = browser_sessions.confirm(session, path=path)
+        try:
+            refreshed = browser_sessions.confirm(session, path=path)
+        except SessionError:
+            raise accounts.AccountError("login_required", "Sign in first.", 401) from None
         admin_store.record_audit("account.reauth", actor_kind="user", actor_id=session.subject,
                                  actor_label=session.email, target_kind="user", target_id=session.subject, path=path)
         response = JSONResponse({"ok": True, "authenticated_at": int(refreshed.last_authenticated)})

@@ -1,5 +1,6 @@
 import { networkFetch } from "./network-error";
 import { ApiError, type Credential, type MintedCredential } from "./api";
+import { parseReauth, requestReauth } from "./reauth";
 import {
   rejectPendingCleanup,
   type DeletePromptsResponse,
@@ -50,6 +51,7 @@ async function accountRequest<T>(
   path: string,
   init: { method?: string; body?: unknown } = {},
   retried = false,
+  confirmed = false,
 ): Promise<T> {
   const headers = new Headers();
   if (init.body !== undefined) headers.set("content-type", "application/json");
@@ -71,7 +73,13 @@ async function accountRequest<T>(
       payload?.error?.code === "user_csrf_required" &&
       !retried
     )
-      return accountRequest<T>(path, init, true);
+      return accountRequest<T>(path, init, true, confirmed);
+    // Making a key (or connecting a client) from an old sign-in asks the person to confirm
+    // it is them first, then sends the request once more.
+    const reauth =
+      response.status === 401 && !confirmed ? parseReauth(payload) : null;
+    if (reauth && (await requestReauth(reauth)))
+      return accountRequest<T>(path, init, retried, true);
     throw new ApiError(
       payload?.error?.code ?? "unexpected_response",
       payload?.error?.message ??

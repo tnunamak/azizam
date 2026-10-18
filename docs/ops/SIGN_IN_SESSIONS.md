@@ -28,19 +28,35 @@ it next renews. A longer absolute lifetime applies to new sign-ins only.
 Any request that carries a live session cookie can renew it. A session renews
 only when more than a quarter of the idle timeout has passed since it was last
 renewed (7.5 days with the default), so a busy session does not re-issue its
-cookie on every request. A renewal sets a new expiry and the same session
-identity. It never goes past the absolute lifetime. The server also extends its
-own record of the session first, so a cookie never outlives the record.
+cookie on every request. A renewal sets a new expiry and **a new session id**. It never goes past the
+absolute lifetime. The server writes the new id first, so a cookie never
+outlives its record.
 
 Renewing does not count as confirming who you are. Only a sign-in or a password
 confirmation does.
 
+### Copied cookies (decision D35)
+
+All ids that descend from one sign-in are its *family*. A renewal retires the
+old id and keeps it for about 60 seconds, so a request that was already in
+flight when the browser swapped cookies still works. After that, showing the
+retired id means a copy of the cookie exists: the gateway **revokes the whole
+family** (the person's other sign-ins are not touched), ends the keys made on it
+for the Try page, writes `account.session.reuse_detected` to the audit log and
+asks for a fresh sign-in. If a thief renews first, the person's own next request
+shows the retired id and ends both. The CSRF token belongs to the family, so a
+page that is open across a renewal keeps working. A retired id never renews.
+Confirming a password does the same swap.
+
 ### Sessions from before this change
 
 Cookies that were issued with the old fixed 8-hour life stay valid until that
-expiry. The first request that uses one upgrades it in place (same session,
-new sliding expiry), so people are not signed out when the old 8 hours end. The
-absolute lifetime is counted from the original sign-in.
+expiry. The first request that uses one upgrades it (new session id in the same
+family, new sliding expiry, and a server record, which the old cookie did not
+have), so people are not signed out when the old 8 hours end. The absolute
+lifetime is counted from the original sign-in. An old cookie that a key claim
+made (its subject is a service account, or its email is `local-admin`) is not
+upgraded: it ends at its 8 hours.
 
 ### Provider-granted administrator roles
 
@@ -56,13 +72,16 @@ access after 8 hours until they sign in with the provider again.
 - **Sign out** ends the session on this device. A copy of its cookie stops working.
 - **Sign out everywhere** (on the "Your settings" page in the account menu, or
   `POST /auth/api/sign-out-everywhere` with the CSRF header) ends every session the person has on every device,
-  including this one, and the keys that were made on those sessions for the Try page.
+  including this one, and the keys that were made on those sessions for the Try page. A key made
+  by "Make a key" on an App is not a session key: it stays until it is revoked, which is why making
+  one asks you to confirm (below).
 - A **password change or reset** ends the person's other sessions. When the owner
   sets their own password in Settings, the session that made the change stays.
 - **Removing or disabling a person** ends all their sessions.
 - A refused provider sign-in ends that person's sessions.
 
-The server keeps a record of each registered session (`account_sessions`) and of
+The server keeps a record of each registered session (`account_sessions`), of the
+ids a sign-in has held since its first renewal (`account_session_lineage`) and of
 revoked ones (`account_session_revocations`). Once a person has used "Sign out
 everywhere", a password change or a reset, or has been disabled or removed, only
 sessions with a live record count for them, so an old cookie that is still
@@ -81,19 +100,30 @@ person's sign-in. It is not recorded, never renews, and ends after the fixed
 A session whose last sign-in or confirmation is older than the confirmation
 window gets `401` with the code `reauth_required` on the actions below. The web
 app shows a password prompt (or sends you to your identity provider), then
-repeats the action.
+repeats the action. Owners, administrators and members are asked alike, except
+where noted (decision D36).
 
-- Export the configuration, or the effective settings.
-- Add a provider, or replace or clear a provider key. Create or delete a LiteLLM key. Create an admin key or an App key.
+- Export the configuration, or the effective settings (the inline view and the download).
+- Make a credential: an App key (administrator or the person's own, **members too**), an admin
+  key, a LiteLLM key, the first key on the setup page. A new Try key asks owners and
+  administrators only; the Try page reuses the key it holds without asking, and a member's Try key
+  ends with their sign-in. Allowing an MCP client to connect asks (refusing one does not).
+- Add a provider, or replace or clear a provider key.
+- Change where a stored credential is sent or what it is: any save to the service registry that
+  adds, replaces, clears or moves a key, sets a lifecycle driver or changes the address of an
+  engine that holds a key (`credential_binding_changes`). This covers the whole-registry save, adding
+  or editing a service, the engine page, fixing a left-out record, secret commands and enabling an
+  extension package. A save that only renames or switches a service does not ask.
 - Trust an address for an App, or enable an extension package.
 - Turn on or off running commands on this computer.
 - Invite a person, copy an invitation link, change or remove a person, create a password reset link.
 - Change sign-in settings (providers, rules, the owner's password).
 - Change the session settings.
 
-The list is `SENSITIVE_ROUTES` in `gateway/step_up.py`. A test checks that every
-entry names a real route. A pasted engine key in a general engine edit is not on
-the list, because that route is shared with ordinary engine edits.
+The lists are `SENSITIVE_ROUTES` (the middleware asks) and `HANDLER_GATED` (the handler asks,
+because only some requests to the route are risky) in `gateway/step_up.py`.
+`tests/test_step_up_coverage.py` finds the risky routes in the running app, by path and by the calls a
+handler makes, and fails for one that is in neither list and has not been reviewed as safe.
 
 The response names the ways to confirm:
 
@@ -104,14 +134,17 @@ The response names the ways to confirm:
 
 - `password`: `POST /auth/api/reauth` with `{"password": "..."}` and the CSRF
   header. A good password sets the confirmation time and re-issues the cookie.
-  It shares the sign-in throttle.
+  It shares the sign-in throttle, which counts every attempt before any password is
+  hashed, also from a person who has no password (that answer is `409`).
 - `oidc`: open `/login?reauth=1&return_to=<path>`. The provider is asked to log
-  the person in again (`prompt=login`, `max_age=0`). If the provider reports
-  `auth_time`, it must be from after the request began; a provider that does not
-  report it is taken at its word. The sign-in must be by the same person. The
+  the person in again (`prompt=login`, `max_age=0`). The provider must report
+  `auth_time`, from after the request began; a response without it, or with an
+  older one, does not confirm anyone. The sign-in must be by the same person. The
   new session replaces the old one. An ordinary provider sign-in also counts as
   confirmed only as far as the provider says: with `auth_time`, a silent single
-  sign-on that reuses an older login does not count as a recent sign-in.
+  sign-on that reuses an older login does not count as a recent sign-in. An ordinary
+  sign-in (not a confirmation) from a provider that sends no `auth_time` is still taken at its
+  word; only an explicit confirmation requires the claim.
 - `sign_in`: neither is possible for this session (for example it came from an
   admin key claim). Sign in again.
 
@@ -124,8 +157,8 @@ as that session, even if it also carries a key.
 The cookie is `opx_admin_session`, `HttpOnly`, `SameSite=Lax`, `Path=/`, and
 `Secure` unless the documented plain-HTTP first-run setting is on
 (`admin.oidc.cookie.secure: false`). Its `Max-Age` is the time left to its
-expiry. CSRF protection is unchanged: the token is bound to the session
-identity, which a renewal keeps.
+expiry. CSRF protection is unchanged: the token is bound to the sign-in (the
+family), which a renewal keeps.
 
 ## Phone app (PWA)
 

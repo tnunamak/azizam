@@ -148,12 +148,12 @@ def test_a_session_unused_for_over_a_quarter_of_the_idle_window_is_renewed_by_th
     assert response.json()["authenticated"] is True
     assert len(session_cookies(response)) == 1
     new = cookie_session(client)
-    assert new.session_id == old.session_id
+    assert new.session_id != old.session_id and new.family_id == old.session_id        # renewing replaces the id (D35)
     assert new.expires_at > old.expires_at + 7 * DAY
     assert abs(new.expires_at - (time.time() + 30 * DAY)) < 10
     assert abs(new.last_renewed - time.time()) < 10
     assert int(new.last_authenticated) == int(old.authenticated_at)          # renewing is not a sign-in
-    assert registry(sg, old.session_id)[0]["expires_at"] == int(new.expires_at)
+    assert registry(sg, new.session_id)[0]["expires_at"] == int(new.expires_at)
 
 
 def test_a_recently_renewed_session_gets_no_new_cookie(sg):
@@ -233,12 +233,12 @@ def test_an_old_eight_hour_cookie_still_works_and_is_upgraded_in_place_by_its_fi
 
     assert response.json()["authenticated"] is True
     upgraded = cookie_session(client)
-    assert upgraded.session_id == old.session_id
+    assert upgraded.session_id != old.session_id and upgraded.family_id == old.session_id
     assert upgraded.absolute_expires_at is not None and upgraded.renewed_at is not None
     assert abs(upgraded.expires_at - (time.time() + 30 * DAY)) < 10
     assert abs(upgraded.absolute_expires_at - (old.issued_at + 90 * DAY)) < 10      # from the original sign-in
     assert int(upgraded.last_authenticated) == int(old.issued_at)
-    assert registry(sg, old.session_id)[0]["expires_at"] == int(upgraded.expires_at)
+    assert registry(sg, upgraded.session_id)[0]["expires_at"] == int(upgraded.expires_at)
 
 
 def test_an_old_eight_hour_cookie_that_has_run_out_is_refused(sg):
@@ -256,7 +256,7 @@ def test_an_old_cookie_without_a_session_id_is_still_valid_until_it_expires_and_
     put_cookie(client, encode_session_cookie(AdminSession.from_dict(payload), signing_key=SIGNING_KEY))
 
     assert signed_in_state(client)
-    assert cookie_session(client).session_id.startswith("legacy_")
+    assert cookie_session(client).family_id.startswith("legacy_")
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +431,8 @@ def stale_owner(g, *, authenticated_ago=20 * MINUTE, sid="stale_owner_session_1"
 def asks_again(response) -> bool:
     if response.status_code != 401:
         return False
+    if response.headers.get("content-type", "").startswith("text/html"):
+        return "Sign in again" in response.text           # a form post on the setup page: asked in words
     try:
         return response.json()["error"]["code"] == "reauth_required"
     except (ValueError, KeyError, TypeError):
@@ -438,7 +440,11 @@ def asks_again(response) -> bool:
 
 
 @pytest.mark.parametrize("method, route", step_up.SENSITIVE_ROUTES)
-def test_every_risky_route_asks_a_stale_session_to_confirm_and_leaves_a_fresh_one_alone(sg, method, route):
+def test_every_risky_route_asks_a_stale_session_to_confirm_and_leaves_a_fresh_one_alone(sg, method, route, monkeypatch):
+    async def status(_config):                       # the setup page renders the gateway's status
+        return {"generated_at": 0, "banner": "ok", "errors": {}}
+
+    monkeypatch.setattr(sg.proxy.status_endpoint, "get_cached_status", status)
     path = concrete(route)
     stale, fresh = stale_owner(sg), owner_client(sg)
 
@@ -492,11 +498,11 @@ def test_confirming_with_the_right_password_makes_the_session_fresh_and_the_retr
 
     assert response.status_code == 200 and response.json()["ok"] is True
     after = cookie_session(stale)
-    assert after.session_id == before.session_id
+    assert after.session_id != before.session_id and after.family_id == before.family_id
     assert abs(after.last_authenticated - time.time()) < 10
     retry = stale.get("/admin/api/settings/effective/export")
     assert retry.status_code == 200, retry.text
-    assert registry(sg, before.session_id)[0]["expires_at"] == int(after.expires_at)
+    assert registry(sg, after.session_id)[0]["expires_at"] == int(after.expires_at)
 
 
 def test_a_wrong_password_does_not_make_the_session_fresh(sg):

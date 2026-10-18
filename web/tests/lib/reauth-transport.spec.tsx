@@ -8,6 +8,7 @@ import {
   resetSessionCache,
   signOutEverywhere,
 } from "@/lib/api";
+import { accountApi } from "@/lib/account-api";
 import { errorCopy } from "@/lib/error-copy";
 import { parseReauth, settleReauth, usePendingReauth } from "@/lib/reauth";
 
@@ -100,6 +101,43 @@ it("opens the prompt, then retries the request once the person confirms", async 
   expect(first.headers.get("x-azizam-csrf")).toBe("csrf-1");
   expect(second.headers.get("x-azizam-csrf")).toBe("csrf-2");
   expect(second.headers.get("x-azizam-admin-action")).toBe("1");
+});
+
+it("asks a member to confirm before a key is made from an old sign-in, then sends it once more", async () => {
+  reply("/me/api/apps/app_1/keys", stale, () =>
+    Response.json({ credential: { id: "cred_1", api_key: "opk_x", prefix: "opk_x" } }, { status: 201 }),
+  );
+  const prompt = openPrompt();
+  const request = accountApi.mintKey("app_1", "laptop");
+  await vi.waitFor(() => expect(prompt.result.current).not.toBeNull());
+  expect(callsTo("/me/api/apps/app_1/keys")).toHaveLength(1);
+
+  act(() => settleReauth(true));
+  await expect(request).resolves.toMatchObject({ id: "cred_1" });
+  expect(callsTo("/me/api/apps/app_1/keys")).toHaveLength(2);
+  expect(prompt.result.current).toBeNull();
+});
+
+it("leaves the member's request refused when they cancel the confirmation, and does not ask twice", async () => {
+  reply("/me/api/apps/app_1/keys", stale, stale);
+  const prompt = openPrompt();
+  const request = accountApi.mintKey("app_1", "laptop");
+  const outcome = request.catch((error: unknown) => error);
+  await vi.waitFor(() => expect(prompt.result.current).not.toBeNull());
+  act(() => settleReauth(false));
+  expect(await outcome).toMatchObject({ code: "reauth_required", status: 401 });
+  expect(callsTo("/me/api/apps/app_1/keys")).toHaveLength(1);
+});
+
+it("does not loop when the gateway still asks after a confirmation", async () => {
+  reply("/me/api/try-key", stale, stale);
+  const prompt = openPrompt();
+  const request = accountApi.tryKey(null);
+  const outcome = request.catch((error: unknown) => error);
+  await vi.waitFor(() => expect(prompt.result.current).not.toBeNull());
+  act(() => settleReauth(true));
+  expect(await outcome).toMatchObject({ code: "reauth_required" });
+  expect(callsTo("/me/api/try-key")).toHaveLength(2);
 });
 
 it("retries a risky GET too", async () => {

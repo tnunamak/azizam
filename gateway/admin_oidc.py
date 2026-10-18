@@ -794,6 +794,14 @@ class AdminSession:
     authenticated_at: float | None = None
     # False for a session that must end at its expiry (a browser session claimed with an admin key).
     renewable: bool = True
+    # The first id of this sign-in. Every renewal issues a new ``session_id`` (decision D35) but keeps
+    # the family, which the server revokes as a whole. Empty for a session that was never renewed.
+    family: str = ""
+
+    @property
+    def family_id(self) -> str:
+        """What a sign-in is called across its renewals: its first session id."""
+        return self.family or self.session_id
 
     @property
     def last_renewed(self) -> float:
@@ -827,6 +835,8 @@ class AdminSession:
                 data[key] = int(value)
         if not self.renewable:
             data["rn"] = 0
+        if self.family and self.family != self.session_id:
+            data["fid"] = self.family
         return data
 
     @classmethod
@@ -848,7 +858,8 @@ class AdminSession:
                 absolute_expires_at=_optional_float(data.get("aexp")),
                 renewed_at=_optional_float(data.get("rat")),
                 authenticated_at=_optional_float(data.get("aat")),
-                renewable=data.get("rn", 1) != 0,
+                renewable=data.get("rn", 0 if _is_key_claim(data) else 1) != 0,
+                family=str(data.get("fid") or ""),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise SessionError(f"malformed session payload: {exc}") from exc
@@ -856,6 +867,26 @@ class AdminSession:
 
 def _optional_float(value: Any) -> float | None:
     return None if value is None else float(value)
+
+
+# A browser session claimed with an admin key is not a person's sign-in (see ``/setup/claim``). Its
+# subject names a service account, or its email is this label.
+SERVICE_ACCOUNT_SESSION_PREFIX = "service_account:"
+KEY_CLAIM_EMAIL = "local-admin"
+
+
+def new_session_id() -> str:
+    return _b64url(secrets.token_bytes(16))
+
+
+def _is_key_claim(data: Mapping[str, Any]) -> bool:
+    """Whether a payload without ``rn`` was issued by a key claim.
+
+    Cookies from before sliding sessions carry no ``rn``, and a key claim lasts its eight hours and
+    never renews. A cookie without ``rn`` that a key claim could have made is not renewable; a
+    person's sign-in is upgraded once, as before.
+    """
+    return str(data.get("sub") or "").startswith(SERVICE_ACCOUNT_SESSION_PREFIX) or data.get("email") == KEY_CLAIM_EMAIL
 
 
 # A short version tag so we can rotate the cookie format without silently
@@ -884,7 +915,7 @@ def session_from_claims(
     if role not in AdminRole.ALL:
         raise SessionError(f"invalid role {role!r}")
     issued = now if now is not None else time.time()
-    session_id = _b64url(secrets.token_bytes(16))
+    session_id = new_session_id()
     if idle_seconds is None or absolute_seconds is None:
         return AdminSession(
             subject=str(claims["sub"]),
@@ -928,7 +959,8 @@ def csrf_token_for_session(session: AdminSession, *, signing_key: bytes) -> str:
     """Return the same-origin mutation token for a signed browser session."""
     if len(signing_key) < _MIN_SIGNING_KEY_BYTES:
         raise SessionError("signing_key too short")
-    session_nonce = session.session_id or (
+    # The family, not the id: a renewal keeps the token the open page already holds.
+    session_nonce = session.family_id or (
         f"{session.subject}:{int(session.issued_at)}:{int(session.expires_at)}"
     )
     mac = hmac.new(
