@@ -181,7 +181,7 @@ def test_state_naming_a_live_unrelated_process_leader_is_not_ours(tmp_path):
         driver.recover({"fixture": svc})
         assert stranger.poll() is None, "a process whose command line is not ours was signalled"
     finally:
-        stranger.kill()
+        os.killpg(stranger.pid, signal.SIGKILL)
         stranger.wait()
 
 
