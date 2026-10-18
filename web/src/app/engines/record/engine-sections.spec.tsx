@@ -143,6 +143,21 @@ describe("the six sections mirror the record", () => {
     );
   });
 
+  it("preserves structured offering declarations and explains their read-only editor", async () => {
+    mount({
+      can_edit_offerings: false,
+      offering_edit_reason: "These offerings declare selection or workflow settings that the model-list editor cannot preserve. They are shown as stored.",
+      v2: v2({ offerings: [{ id: "whole-workflow", kind: "workflow", selection: { mode: "whole_graph" } }] }),
+    });
+    await screen.findByRole("heading", { level: 1, name: "garage-gpu" });
+    const offers = section("What it offers");
+    expect(within(offers).getByText(/the model-list editor cannot preserve/)).toBeVisible();
+    expect(within(offers).getByTestId("offering-facts")).toHaveTextContent("Each request runs the whole workflow.");
+    expect(within(offers).queryByLabelText("Public name")).toBeNull();
+    expect(screen.getByLabelText("Address")).toBeEnabled();
+    for (const button of within(offers).queryAllByRole("button")) expect(button).toBeDisabled();
+  });
+
   it("direct: shows the effective request path, the key's destination, the offering and an unknown observation", async () => {
     mount();
     await screen.findByRole("heading", { level: 1, name: "garage-gpu" });

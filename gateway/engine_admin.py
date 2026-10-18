@@ -623,6 +623,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         caps = _caps_from_record(catalog, definition, record)
     field_keys = {f["key"] for f in definition["fields"]}
     schema_matches = not config.get("protocol") or config["protocol"] == definition["record"]["protocol"]
+    declared_offerings = isinstance(record.get("offerings"), list) or isinstance(config.get("offerings"), list)
     unsupported_fields = {} if schema_matches else {
         key: "The stored protocol has no matching definition schema, so this page cannot edit this setting safely."
         for key in field_keys
@@ -668,7 +669,8 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "ignored_headers": [str(row.get("name") or "(unnamed)") for row in config.get("headers") or ()
                             if isinstance(row, Mapping) and (row.get("secret") or header_problem(str(row.get("name") or ""), str(row.get("value") or "")))],
         "unsupported_fields": unsupported_fields,
-        "can_edit_offerings": schema_matches,
+        "can_edit_offerings": schema_matches and not declared_offerings,
+        "offering_edit_reason": "These offerings declare selection or workflow settings that the model-list editor cannot preserve. They are shown as stored." if declared_offerings else None,
     }
 
 
@@ -693,7 +695,7 @@ def _redact_record_value(value: Any) -> Any:
                 masked[key] = {name: "configured" for name in item}
             elif lowered.endswith("_secret_id") or lowered in ("api_key", "secret_ref"):
                 masked[key] = "configured" if item else item
-            elif lowered == "value" and "name" in value and header_problem(str(value.get("name") or ""), str(item)):
+            elif lowered == "value" and "name" in value and (value.get("secret") or header_problem(str(value.get("name") or ""), str(item))):
                 masked[key] = "configured"
             else:
                 masked[key] = _redact_record_value(item)
@@ -990,6 +992,13 @@ class EngineService:
         before = engine_view(catalog, record, db_path=self.db_path)
         definition = _definition(catalog, body.get("definition") or before["definition"])
         submitted = body.get("values") if isinstance(body.get("values"), Mapping) else {}
+        if before.get("offering_edit_reason"):
+            offering_keys = {field["key"] for field in definition["fields"] if field.get("items") == "transform"
+                             or (not field.get("advanced") and field.get("type") in ("multiselect", "number"))}
+            if "models" in body or "capabilities" in body or any(
+                key in submitted and submitted[key] != before["values"].get(key) for key in offering_keys
+            ):
+                raise DraftError(before["offering_edit_reason"], field="models")
         if not submitted and not any(key in body for key in ("models", "capabilities", "tests")) and not body.get("recheck"):
             metadata = {key: body[key] for key in ("name", "enabled") if key in body}
             if body.get("disabled"):

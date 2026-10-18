@@ -1016,8 +1016,8 @@ function RecordForm({
         <h2 id="engine-offers" className="text-heading scroll-mt-20">What it offers</h2>
         {reason && !locked && <LockedNote reason={reason} view={view} />}
         <UnsupportedNote fields={fieldsOf("offerings")} unsupported={unsupported} />
-        {!offeringsEditable && !fieldsOf("offerings").some((f) => f.key in unsupported) && <Note tone="lock">{UNSUPPORTED_REASON}</Note>}
-        <fieldset disabled={settingsLocked} className="flex min-w-0 flex-col gap-4">
+        {!offeringsEditable && !fieldsOf("offerings").some((f) => f.key in unsupported) && <Note tone="lock">{view.offering_edit_reason ?? UNSUPPORTED_REASON}</Note>}
+        <fieldset disabled={settingsLocked || !offeringsEditable} className="flex min-w-0 flex-col gap-4">
           {offeringsEditable ? (
             <>
               <div className="flex flex-col gap-2">

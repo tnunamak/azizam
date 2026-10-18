@@ -1024,3 +1024,11 @@ def test_declared_switch_and_workflow_offerings_reach_the_page(gateway, fake_ups
     _put_registry(gateway, registry)
     view = owner.get("/admin/api/engines/declared-offerings").json()["engine"]
     assert view["v2"]["offerings"] == declared
+    assert view["can_edit_offerings"] is False
+    assert "model-list editor" in view["offering_edit_reason"]
+    saved = _edit(owner, "declared-offerings", {"definition": "openai-compatible", "disabled": True,
+                                               "values": {"reply_timeout_s": 37}})
+    assert saved.status_code == 200, saved.text
+    assert owner.get("/admin/api/engines/declared-offerings").json()["engine"]["v2"]["offerings"] == declared
+    refused = _edit(owner, "declared-offerings", {"definition": "openai-compatible", "disabled": True, "models": []})
+    assert refused.status_code == 400, refused.text

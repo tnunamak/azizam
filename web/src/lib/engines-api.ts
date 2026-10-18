@@ -286,6 +286,7 @@ export interface EngineView {
   unsupported_fields?: Record<string, string>;
   /** False when the capabilities and models can't be edited for this record; the page shows the offerings read-only. */
   can_edit_offerings?: boolean;
+  offering_edit_reason?: string | null;
   /** The origin a saved key is sent to. Nowhere else gets it. */
   credential_destination?: string | { origin?: string } | null;
   ignored_headers?: string[];

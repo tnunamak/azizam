@@ -979,7 +979,7 @@ class AdminSQLiteStore:
         if isinstance(raw.get("lifecycle"), Mapping):
             record["process"] = service_registry._v2_process(raw["lifecycle"])
         if existing is not None:
-            for field in ("kind", "provenance", "secret_refs", "resources"):
+            for field in ("kind", "provenance", "secret_refs", "resources", "offerings"):
                 if field in existing:
                     record[field] = copy.deepcopy(existing[field])
             # Rebuilding a connection must not discard the process identity,

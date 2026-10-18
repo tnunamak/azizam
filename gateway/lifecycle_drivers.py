@@ -355,7 +355,9 @@ def engine_read_request(
     from gateway.engine_check import join_url
     from gateway.engine_connection import InferenceConnectionError, inference_connection
 
-    record = service if isinstance(service.get("config"), Mapping) else {"config": service}
+    record = service if isinstance(service.get("config"), Mapping) else {
+        "config": service, "secret_refs": service.get("secret_refs") or {},
+    }
     config = record["config"]
     if not fallback_root and config.get("port"):
         fallback_root = f"http://{config.get('host', '127.0.0.1')}:{config.get('port')}"
