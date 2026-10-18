@@ -1,6 +1,8 @@
 """Public OpenAI response contracts at the executor boundary."""
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import math
 from collections.abc import Mapping
@@ -34,6 +36,28 @@ def validate(payload, intent: str, *, stream: bool = False):
             require(isinstance(message, Mapping), 'Each chat choice needs a message or delta object.')
             require(stream or message.get('role') == 'assistant', 'A chat message must have the assistant role.')
             require(message.get('content') is None or isinstance(message.get('content'), str), 'Chat content must be text or null.')
+            if message.get('tool_calls') is not None:
+                calls = message['tool_calls']
+                require(isinstance(calls, list), 'Chat tool calls must be an array.')
+                for call in calls:
+                    require(isinstance(call, Mapping), 'Each chat tool call must be an object.')
+                    if stream:
+                        require(integer(call.get('index')), 'Each streamed tool call needs an integer index.')
+                    else:
+                        require(isinstance(call.get('id'), str) and call.get('type') == 'function',
+                                'Each chat tool call needs an id and type function.')
+                    function = call.get('function')
+                    require(isinstance(function, Mapping), 'Each tool call needs a function object.')
+                    require((stream and 'name' not in function) or isinstance(function.get('name'), str),
+                            'A tool function name must be a string.')
+                    require((stream and 'arguments' not in function) or isinstance(function.get('arguments'), str),
+                            'Tool function arguments must be a JSON string.')
+            if message.get('function_call') is not None:
+                function = message['function_call']
+                require(isinstance(function, Mapping) and
+                        ((stream and 'name' not in function) or isinstance(function.get('name'), str)) and
+                        ((stream and 'arguments' not in function) or isinstance(function.get('arguments'), str)),
+                        'A function call needs string name and arguments fields.')
             require('finish_reason' in choice and choice['finish_reason'] in
                     (None, 'stop', 'length', 'tool_calls', 'content_filter', 'function_call'), 'A chat choice has an invalid finish reason.')
     elif intent == 'embeddings':
@@ -47,6 +71,12 @@ def validate(payload, intent: str, *, stream: bool = False):
             value = item.get('embedding')
             require(isinstance(value, str) or (isinstance(value, list) and all(type(v) in (int, float) and math.isfinite(v) for v in value)),
                     'Each embedding must be a numeric array or a base64 string.')
+            if isinstance(value, str):
+                try:
+                    decoded = base64.b64decode(value, validate=True)
+                except (ValueError, binascii.Error):
+                    require(False, 'The encoded embedding must be valid base64.')
+                require(len(decoded) % 4 == 0, 'The encoded embedding must contain float32 values.')
     if 'usage' in payload and payload['usage'] is not None:
         usage = payload['usage']
         fields = ('prompt_tokens','total_tokens') if intent == 'embeddings' else ('prompt_tokens','completion_tokens') if stream else ('prompt_tokens','completion_tokens','total_tokens')

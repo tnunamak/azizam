@@ -18,7 +18,7 @@ ENGINE_TIMEOUT_S = 1.0
 LIST_TIMEOUT_S = 1.5
 CACHE_TTL_S = 15.0
 MAX_CACHED_ENGINES = 256
-_cache: OrderedDict[str, tuple[float, list[dict]]] = OrderedDict()
+_cache: OrderedDict[str, tuple[float, list[dict], description.ProtocolDescription]] = OrderedDict()
 _issues: dict[str, str] = {}
 _LOG = logging.getLogger(__name__)
 
@@ -36,6 +36,10 @@ def collection(payload: Any) -> list[Mapping]:
 
 
 async def models(registry: Mapping) -> list[dict]:
+    now = time.monotonic()
+    for key, cached in list(_cache.items()):
+        if now - cached[0] >= CACHE_TTL_S:
+            del _cache[key]
     docs = await asyncio.to_thread(description.load_registry)
     services = {key: row for key, row in (registry.get('services') or {}).items()
                 if dispatch.opted_in(row) and row.get('enabled', True)}
@@ -77,7 +81,7 @@ async def models(registry: Mapping) -> list[dict]:
                     if offering:
                         rows.append({**item, 'id': offering['id']})
             _issues.pop(engine_id, None)
-            _cache[key] = (time.monotonic(), rows)
+            _cache[key] = (time.monotonic(), rows, doc)
             while len(_cache) > MAX_CACHED_ENGINES:
                 _cache.popitem(last=False)
             return copy.deepcopy(rows)
@@ -86,11 +90,18 @@ async def models(registry: Mapping) -> list[dict]:
             _issues[engine_id] = 'The engine model list is unavailable or invalid.'
             return []
 
-    tasks = [asyncio.create_task(one(key, row)) for key, row in services.items()]
+    tasks = {asyncio.create_task(one(key, row)): key for key, row in services.items()}
     if not tasks:
         return []
-    done, pending = await asyncio.wait(tasks, timeout=LIST_TIMEOUT_S)
+    try:
+        done, pending = await asyncio.wait(tasks, timeout=LIST_TIMEOUT_S)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
     for task in pending:
+        _issues[tasks[task]] = 'The model listing exceeded its total time limit.'
         task.cancel()
     await asyncio.gather(*pending, return_exceptions=True)
     # Registry order is stable even though network calls complete out of order.
