@@ -168,6 +168,7 @@ interface MediaFolderView {
   path?: string;
   library_items?: number;
   items_here?: number;
+  uncheckable_items?: number;
 }
 
 interface MediaSource {
@@ -353,7 +354,8 @@ function validMediaFolder(value: unknown): boolean {
     (value.state === "confirmed" || value.state === "unconfirmed" || value.state === "mismatch") &&
     (value.path == null || typeof value.path === "string") &&
     (value.library_items == null || typeof value.library_items === "number") &&
-    (value.items_here == null || typeof value.items_here === "number");
+    (value.items_here == null || typeof value.items_here === "number") &&
+    (value.uncheckable_items == null || typeof value.uncheckable_items === "number");
 }
 function validPayload(path: string, value: unknown): boolean {
   if (!record(value)) return false;
@@ -2305,6 +2307,7 @@ export default function LibraryPage() {
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const [deleteAnnouncement, setDeleteAnnouncement] = useState("");
+  const [folderConfirmArmed, setFolderConfirmArmed] = useState(false);
   const [loadMoreRequest, setLoadMoreRequest] = useState<{ path: string; ids: Set<string>; pages: number } | null>(null);
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
     null,
@@ -2506,6 +2509,13 @@ export default function LibraryPage() {
   );
   // The folder's state comes with the first page of the Library, which every read starts with.
   const folder = mediaPages[0]?.media_folder ?? null;
+  // An id that cannot be matched to a file is left out of the count, so a Library with only such ids is
+  // unverifiable. Under half the Library here is a partial folder: confirming it takes a second, explicit click.
+  const folderItems = folder?.library_items ?? 0;
+  const folderHere = folder?.items_here ?? 0;
+  const folderUnverifiable = folderItems === 0 && (folder?.uncheckable_items ?? 0) > 0;
+  const folderMostMissing = !folderUnverifiable && folderHere * 2 < folderItems;
+  const folderNeedsSecondClick = folderUnverifiable || folderMostMissing;
   // The viewer's own media requests still running. They show only where the
   // viewer's own work belongs and when no filter they cannot answer is set.
   const runningMedia = useMemo(
@@ -3118,8 +3128,7 @@ export default function LibraryPage() {
           {canChooseOwner ? (
             <>
               <p>
-                This one-time check is for installs made before Azizam recorded its media folder.
-                Confirm this is the media folder once. Missing items can&apos;t be removed until you do.
+                Azizam needs you to confirm which folder holds the media, once. Missing items can&apos;t be removed until you do.
                 {folder.state === "mismatch"
                   ? " This folder isn't the one Azizam recorded."
                   : ""}
@@ -3127,16 +3136,36 @@ export default function LibraryPage() {
               <p>
                 <code>{folder.path}</code>
               </p>
-              <p>{`${folder.items_here ?? 0} of ${folder.library_items ?? 0} Library items have their files here.`}</p>
-              {(folder.library_items ?? 0) > 0 && !folder.items_here ? (
+              {folderUnverifiable ? (
+                <p>None of the Library&apos;s items can be checked against a file, so Azizam can&apos;t tell whether this is the media folder. Confirming it is your call.</p>
+              ) : (
+                <p>{`${folderHere} of ${folderItems} Library items have their files here.`}</p>
+              )}
+              {folderMostMissing ? (
+                <p>{`Only ${folderHere} of ${folderItems} items have their files here. If the disk is not mounted, confirming will let Remove missing delete the others.`}</p>
+              ) : null}
+              {folderItems > 0 && !folderHere ? (
                 <p>None of the Library&apos;s items have their files in this folder, so Azizam can&apos;t confirm it. Check that the media disk is mounted, then try again.</p>
               ) : null}
-              <Button
-                disabled={confirmFolderMutation.isPending || (!!folder.library_items && !folder.items_here)}
-                onClick={() => confirmFolderMutation.mutate()}
-              >
-                This is the right media folder
-              </Button>
+              {folderNeedsSecondClick && folderConfirmArmed ? (
+                <Button
+                  disabled={confirmFolderMutation.isPending || (!!folderItems && !folderHere)}
+                  onClick={() => confirmFolderMutation.mutate()}
+                >
+                  {folderUnverifiable
+                    ? "Confirm, even though nothing can be checked"
+                    : "Confirm, even though most items are missing"}
+                </Button>
+              ) : (
+                <Button
+                  disabled={confirmFolderMutation.isPending || (!!folderItems && !folderHere)}
+                  onClick={() => (folderNeedsSecondClick
+                    ? setFolderConfirmArmed(true)
+                    : confirmFolderMutation.mutate())}
+                >
+                  This is the right media folder
+                </Button>
+              )}
             </>
           ) : (
             <p>Azizam&apos;s media folder needs the owner to confirm it once. Until then, missing items can&apos;t be removed.</p>
