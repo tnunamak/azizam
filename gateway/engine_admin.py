@@ -1251,6 +1251,8 @@ class EngineService:
         moved = comparable_address(clean["address"]) != comparable_address(before["values"]["address"] or clean["address"])
         connection_changed = (
             moved
+            or clean.get("dispatch", "") != before["values"].get("dispatch", "")
+            or (clean.get("dispatch") == "protocol" and clean.get("protocol_description") != before["values"].get("protocol_description"))
             or (values.get("api_key") not in ("", SECRET_MASK, None))
             or clean.get("api_key_env") != (before["key"].get("env_name") or "")
             or clean.get("path_prefix", "") != (before["values"].get("path_prefix") or "")

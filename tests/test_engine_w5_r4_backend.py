@@ -360,6 +360,7 @@ def test_protocol_can_be_saved_off_and_changed_without_touching_unused_fields(tm
     monkeypatch.setattr(engine_admin, 'run_check', forbidden)
     saved = record(connection={'dispatch': 'protocol', 'protocol': 'openai-compatible', 'address': 'http://127.0.0.1:8080'}, timeout=77)
     saved['enabled'] = False
+    saved['config']['engine_check'] = {'status': 'ok'}
     registry = {'services': {}}
     service = engine_admin.EngineService(SimpleNamespace(path=tmp_path / 'admin.db', get_service_registry=lambda: registry))
     writes = []
@@ -375,3 +376,6 @@ def test_protocol_can_be_saved_off_and_changed_without_touching_unused_fields(tm
     registry['services']['editor'] = saved
     updated = asyncio.run(service.update(ctx, 'editor', {'values': {'protocol_description': 'ollama-native'}, 'disabled': True}, expected_generation=0))
     assert updated['saved'] and writes[-1][0]['reply_timeout_s'] == 77
+    assert writes[-1][1]['probe_connection_changed'] is True
+    assert writes[-1][1]['check']['status'] == 'not_started'
+    assert writes[-1][1]['tests'] == {}
