@@ -42,7 +42,7 @@ from gateway.engine_protocol import framing, pointer
 from gateway.engine_protocol.assets import AssetStore
 from gateway.engine_protocol.budgets import Budgets
 from gateway.engine_protocol.description import (
-    JOB_STATES, Operation, ProtocolDescription, RequestSpec, ResponseSpec, StreamSpec, Terminal,
+    Operation, ProtocolDescription, RequestSpec, ResponseSpec, StreamSpec, Terminal,
 )
 from gateway.engine_protocol.errors import (
     BudgetExceeded, MalformedResponse, MappingError, ProtocolError, RedirectRefused, TransportFailure, UnknownOperation,
@@ -113,7 +113,7 @@ class HttpV1Executor:
         """What would be sent, with credentials masked: the effective request path, headers and body."""
         op = self._operation(request.op, job=False)
         assert op.request is not None
-        wire = await self._build(conn, op.request, op, self._source(request), conn.timeouts)
+        wire = await self._build(conn, op.request, op, self._source(request))
         secrets_ = _secrets(conn)
         headers = {k: (MASK if v in secrets_ or any(s in v for s in secrets_) else v) for k, v in wire.headers.items()}
         url = _scrub(wire.url, secrets_)
@@ -263,7 +263,7 @@ class HttpV1Executor:
             pairs.append((item.name, text))
         return pairs
 
-    async def _build(self, conn: Connection, spec: RequestSpec, op: Operation, source: Mapping[str, Any], timeouts: Any) -> WireRequest:
+    async def _build(self, conn: Connection, spec: RequestSpec, op: Operation, source: Mapping[str, Any]) -> WireRequest:
         budgets = self.budgets
         path = self._expand_path(spec, source["params"])
         auth = self.description.auth.get("control" if op.op_class == "control" else "inference")
@@ -279,6 +279,9 @@ class HttpV1Executor:
                 headers[name.lower()] = f"{scheme} {credential.secret}" if scheme else credential.secret
         for name, value in {**conn.headers, **spec.headers}.items():
             headers[name.lower()] = value
+        for value in headers.values():
+            if "\r" in value or "\n" in value:
+                raise MappingError("A request header holds a line break; Azizam does not send it.")
         body: bytes | None = None
         encoding = spec.body.encoding
         if encoding == "json":
@@ -343,7 +346,7 @@ class HttpV1Executor:
 
     async def _exchange(self, conn: Connection, spec: RequestSpec, op: Operation, source: Mapping[str, Any], secrets_: list[str]) -> WireResponse:
         """Send, follow same-origin redirects, refuse cross-origin ones, and raise for a non-2xx status."""
-        wire = await self._build(conn, spec, op, source, conn.timeouts)
+        wire = await self._build(conn, spec, op, source)
         method, url, body = wire.method, wire.url, wire.body
         headers = dict(wire.headers)
         hops = 0

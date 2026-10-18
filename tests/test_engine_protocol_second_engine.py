@@ -14,7 +14,6 @@ import os
 import re
 from pathlib import Path
 
-import httpx
 import pytest
 
 from gateway.engine_protocol import adapter, description
@@ -152,7 +151,6 @@ def test_inventory_health_and_a_wrong_key(rig: Rig) -> None:
 
 def test_multipart_upload_from_a_canonical_asset(rig: Rig) -> None:
     clip = rig.assets.put(b"RIFF-clip", "audio/wav", name="clip.wav")
-    rig.registry  # the same registry serves it
     ex = HttpV1Executor(rig.description, transport=HttpxTransport.for_tests(StreamingASGITransport(rig.fake)), assets=rig.assets)
     ex.boundary_factory = lambda: "ACMEBOUNDARY"
     reply = run(ex.invoke(rig.conn, CanonicalRequest(op="transcribe", body={"language": "en"}, files={"file": clip})))

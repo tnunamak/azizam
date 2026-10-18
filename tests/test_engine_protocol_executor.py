@@ -635,3 +635,13 @@ def test_an_sse_event_name_can_end_the_stream_and_an_ndjson_tail_without_a_newli
     ex, _ = make(ops, handler)
     assert collect(run(ex.invoke(conn(), req("s")))) == [b"1"]
     assert collect(run(ex.invoke(conn(), req("n")))) == [b'{"a":1}', b'{"b":2}']
+
+
+def test_a_header_value_with_a_line_break_is_never_sent() -> None:
+    ex, fake = authed({"kind": "none"})
+    with pytest.raises(MappingError):
+        run(ex.invoke(conn(headers={"X-Client": "a\r\nInjected: 1"}), req("x")))
+    ex, fake = authed({"kind": "bearer"})
+    with pytest.raises(MappingError):
+        run(ex.invoke(conn(credentials={"inference": Credential("k\nInjected: 1")}), req("x")))
+    assert fake.requests == []

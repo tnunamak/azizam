@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import statistics
 import sys
 import timeit
 from pathlib import Path
@@ -139,7 +138,7 @@ def main() -> None:
 
     def relay_events() -> None:
         for ev in framing.SseDecoder(1 << 20).feed(wire):
-            ev.data
+            _ = ev.data
 
     def relay_hand() -> None:
         for chunk in wire.split(b"\n\n")[:-1]:

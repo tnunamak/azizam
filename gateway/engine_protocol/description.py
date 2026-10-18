@@ -340,7 +340,7 @@ class _Compiler:
             if "response" in op:
                 self.bad(place, "a job declares its own responses; remove 'response'")
             return Operation(name, op["class"], job=self._job(op["job"], f"{place}.job"))
-        request = self._request(op["request"], f"{place}.request", context="request")
+        request = self._request(op["request"], f"{place}.request")
         response = self._response(op.get("response") or {}, f"{place}.response", request)
         return Operation(name, op["class"], request=request, response=response)
 
@@ -359,7 +359,7 @@ class _Compiler:
             self.bad(place, f"path {path!r} must not hold . or .. segments")
         return tuple(names)
 
-    def _request(self, spec: dict, place: str, *, context: str) -> RequestSpec:
+    def _request(self, spec: dict, place: str) -> RequestSpec:
         method = spec["method"]
         names = self._path(spec["path"], f"{place}.path")
         headers: dict[str, str] = {}
@@ -386,7 +386,7 @@ class _Compiler:
             self.bad(place, f"{text!r} is not a valid pointer: {exc}")
             return None
         if segments[0] not in roots:
-            self.bad(place, f"a source pointer must start with " + ", ".join("/" + r for r in sorted(roots)) + f"; found {text!r}")
+            self.bad(place, "a source pointer must start with " + ", ".join("/" + r for r in sorted(roots)) + f"; found {text!r}")
             return None
         return segments
 
@@ -494,7 +494,7 @@ class _Compiler:
     # --- jobs ----------------------------------------------------------------------------------
 
     def _job(self, spec: dict, place: str) -> JobSpec | None:
-        submit_req = self._request(spec["submit"]["request"], f"{place}.submit.request", context="submit")
+        submit_req = self._request(spec["submit"]["request"], f"{place}.submit.request")
         try:
             id_segments = pointer.parse_pointer(spec["submit"]["id"])
         except ValueError as exc:
@@ -502,7 +502,7 @@ class _Compiler:
             id_segments = ("id",)
         poll = spec["poll"]
         pplace = f"{place}.poll"
-        poll_req = self._request(poll["request"], f"{pplace}.request", context="poll")
+        poll_req = self._request(poll["request"], f"{pplace}.request")
         if "id" not in poll_req.placeholders:
             self.bad(f"{pplace}.request.path", "a poll path must use {id}")
         states = dict(poll["status"]["states"])
@@ -516,13 +516,13 @@ class _Compiler:
         assets = self._ptr(poll["assets"], f"{pplace}.assets", wildcard=True) if "assets" in poll else None
         fetch = cancel = None
         if "fetch" in spec:
-            fetch = self._request(spec["fetch"]["request"], f"{place}.fetch.request", context="fetch")
+            fetch = self._request(spec["fetch"]["request"], f"{place}.fetch.request")
             if "{asset}" in spec["fetch"]["request"]["path"] and assets is None:
                 self.bad(f"{place}.fetch.request.path", "{asset} needs 'assets' under poll")
             if "id" not in fetch.placeholders and "asset" not in fetch.placeholders:
                 self.bad(f"{place}.fetch.request.path", "a fetch path must use {id} or {asset}")
         if "cancel" in spec:
-            cancel = self._request(spec["cancel"]["request"], f"{place}.cancel.request", context="cancel")
+            cancel = self._request(spec["cancel"]["request"], f"{place}.cancel.request")
             if "id" not in cancel.placeholders:
                 self.bad(f"{place}.cancel.request.path", "a cancel path must use {id}")
         return JobSpec(SubmitSpec(submit_req, id_segments), PollSpec(poll_req, status, error, assets, float(poll["interval_s"]), float(poll["max_wait_s"])), fetch, cancel)
