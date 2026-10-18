@@ -17,11 +17,11 @@ This module is management-safe: it stores and deletes secrets and never decrypts
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from gateway import record_carriers, secret_refs
-from gateway.legacy_credential_rules import argv_secret_slots
 from gateway.secret_refs import Put
 
 MAX_VALUE = 8192
@@ -34,7 +34,7 @@ _ALLOWED_KEYS = {
     "rename": {"carrier", "operation", "entry_id", "name"},
     "retain": {"carrier", "operation", "entry_id"},
     "clear": {"carrier", "operation", "entry_id"},
-    "set": {"carrier", "operation", "items", "clear"},
+    "set": {"carrier", "operation", "items", "clear"},  # an item is a literal, a retain, a replace (same id) or a new secret
     "set_credentials": {"carrier", "operation", "url"},
     "clear_credentials": {"carrier", "operation"},
 }
@@ -68,11 +68,15 @@ def carrier_kind(carrier: Any) -> str | None:
         return "env"
     if key in record_carriers.COMMAND_KEYS and container in record_carriers.COMMAND_CONTAINERS:
         return "argv"
-    if carrier in record_carriers.URL_FIELD_PATHS or _is_observation_url(carrier):
+    if carrier in record_carriers.URL_FIELD_PATHS or _is_observation_url(carrier) or _is_model_url(carrier):
         return "url"
     if carrier in record_carriers.SCALAR_SECRET_PATHS:
         return "secret"
     return None
+
+
+def _is_model_url(carrier: str) -> bool:
+    return re.fullmatch(r"config\.models\[\d{1,4}\]\.url", carrier) is not None
 
 
 def _is_observation_url(carrier: str) -> bool:
@@ -148,6 +152,11 @@ def _parent(record: dict[str, Any], carrier: str) -> tuple[dict[str, Any], str]:
     parent_path, _, key = carrier.rpartition(".")
     parent: Any = record
     for part in parent_path.split("."):
+        indexed = re.fullmatch(r"([^\[\]]+)\[(\d{1,4})\]", part)
+        if indexed:
+            rows = parent.get(indexed.group(1)) if isinstance(parent, dict) else None
+            parent = rows[int(indexed.group(2))] if isinstance(rows, list) and int(indexed.group(2)) < len(rows) else None
+            continue
         parent = parent.get(part) if isinstance(parent, dict) else None
     if not isinstance(parent, dict):
         raise CommandError("carrier_unavailable", "the record has no place for that carrier")
@@ -182,6 +191,8 @@ def _headers(record: dict[str, Any], command: Mapping[str, Any], put: Put, origi
         name = _header_name(command.get("name"))
         value = validate_value(command.get("value"))
         if command.get("public") is True:
+            if record_carriers.names_credential_header(name):
+                raise CommandError("credential_header_public", "a header that carries a credential cannot be public; add it as a secret")
             rows.append({"id": secret_refs.new_entry_id(), "name": name, "value": value, "public": True})
         else:
             ref = put(value, origin)
@@ -199,7 +210,10 @@ def _headers(record: dict[str, Any], command: Mapping[str, Any], put: Put, origi
             out.retired.append(row["secret_ref"])
         del rows[index]
     elif operation == "rename":
-        rows[index] = {**row, "name": _header_name(command.get("name"))}
+        renamed = _header_name(command.get("name"))
+        if not held and record_carriers.names_credential_header(renamed):
+            raise CommandError("credential_header_public", "a header that carries a credential cannot be public; add it as a secret")
+        rows[index] = {**row, "name": renamed}
     else:  # replace
         value = validate_value(command.get("value"))
         if held:
@@ -276,9 +290,23 @@ def _argv(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Out
     new_items: list[Any] = []
     kept: set[str] = set()
     for index, item in enumerate(items):
-        if not isinstance(item, Mapping) or len(item) not in (1, 2) or not set(item) <= {"literal", "retain", "secret", "prefix"}:
-            raise CommandError("invalid_item", f"item {index + 1} must be a literal, a retain or a secret")
-        if "literal" in item:
+        if not isinstance(item, Mapping) or not 1 <= len(item) <= 3 or not set(item) <= {"literal", "retain", "secret", "prefix", "replace"}:
+            raise CommandError("invalid_item", f"item {index + 1} must be a literal, a retain, a replace or a secret")
+        if "replace" in item:
+            # a new value for an entry that keeps its id (decision D27: the id is stable across a replace)
+            if not set(item) <= {"replace", "secret", "prefix"} or "secret" not in item or item["replace"] not in stored_entries or item["replace"] in kept:
+                raise CommandError("unknown_entry", f"item {index + 1} replaces an entry that is not in this command or is named twice")
+            old = stored_entries[item["replace"]]
+            prefix = item.get("prefix", old.get("prefix", ""))
+            if not isinstance(prefix, str) or "\x00" in prefix:
+                raise CommandError("invalid_item", f"item {index + 1}: a prefix is text")
+            ref = put(validate_value(item["secret"]), None)
+            out.created.append(ref)
+            out.retired.append(old["secret_ref"])
+            kept.add(item["replace"])
+            new_items.append({**{key: value for key, value in old.items() if key != "prefix"}, "secret_ref": ref,
+                              **({"prefix": prefix} if prefix else {})})
+        elif "literal" in item:
             text = item["literal"]
             if set(item) != {"literal"} or not isinstance(text, str) or not text or "\x00" in text:
                 raise CommandError("invalid_item", f"item {index + 1}: a literal is non-empty text")
@@ -298,9 +326,8 @@ def _argv(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Out
     dropped = set(stored_entries) - kept
     if dropped != set(clear):
         raise CommandError("unmentioned_entry", "every stored secret entry of this command must be retained or named in clear, and clear names only entries the new list drops")
-    placeholder = ["\x00" if secret_refs.is_secret_entry(item) else item for item in new_items]
-    if any(index in argv_secret_slots(placeholder) for index, item in enumerate(new_items) if isinstance(item, str)):
-        raise CommandError("credential_in_literal", "an argument that follows a credential flag must be sent as a secret, not a literal")
+    # The command is structured: each item says what it is, so a literal is public as declared. No flag name is read
+    # to guess otherwise (decision D29); only a plain line or list of text, written before D26, is read by the rule.
     out.retired.extend(stored_entries[item_id]["secret_ref"] for item_id in sorted(dropped))
     parent[key] = new_items
     out.changed = True

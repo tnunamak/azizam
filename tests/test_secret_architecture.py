@@ -109,7 +109,8 @@ def test_the_retired_detection_by_key_name_and_value_shape_is_gone_from_the_code
 
 def test_the_credential_flag_rule_is_read_only_by_ingestion_and_the_migration():
     users = {relative for relative in _production_files() if any(name.endswith("legacy_credential_rules") for name in _imports(_tree(relative)))}
-    assert users == {"gateway/record_carriers.py", "gateway/secret_commands.py"}, users
+    # A structured command (items that say literal, retain or secret) is never read by the rule (decision D29).
+    assert users == {"gateway/record_carriers.py"}, users
 
 
 def test_no_route_module_decides_what_is_secret_by_a_key_name():

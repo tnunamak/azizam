@@ -218,7 +218,7 @@ def _clone_url(source: Mapping[str, Any], url: str, credentials: Mapping[str, Ma
         parts = credentials.get(key)
         if parts and str(source.get(key) or "").strip() == url:
             joined = record_carriers.join_url(url, userinfo=parts.get("userinfo"), query=parts.get("query"), fragment=parts.get("fragment"))
-            texts = tuple(text for text in (parts.get("userinfo"), parts.get("fragment"), *(value for _n, value in parts.get("query", ()))) if text)
+            texts = tuple(text for text in (parts.get("userinfo"), parts.get("fragment"), *(value if value is not None else name for name, value in parts.get("query", ()))) if text)
             return joined, texts + tuple(item for text in texts for item in text.split(":") if len(item) >= 4)
     return url, ()
 

@@ -95,7 +95,11 @@ def argv(command: Any, *, strict: bool = False) -> list[str]:
         return shlex.split(command)
     out: list[str] = []
     for item in command if isinstance(command, (list, tuple)) else ():
-        if secret_refs.is_secret_entry(item):
+        if secret_refs.is_secret_entry(item) and item.get("whole"):
+            import shlex
+
+            out.extend(shlex.split(resolve(item["secret_ref"])))  # a line kept whole fails here as it always did
+        elif secret_refs.is_secret_entry(item):
             out.append(str(item.get("prefix") or "") + resolve(item["secret_ref"]))
         elif isinstance(item, str) or not strict:
             out.append(str(item))
@@ -135,9 +139,10 @@ def url(container: Mapping[str, Any], key: str) -> str:
     base = str(public or "")
     origin = secret_refs.origin_or_none(base)
     userinfo = resolve(held["userinfo"]["secret_ref"], origin=origin) if isinstance(held.get("userinfo"), Mapping) else None
-    query = [(str(item.get("name") or ""), resolve(item["secret_ref"], origin=origin))
-             for item in held.get("query") or () if secret_refs.is_secret_entry(item)]
-    fragment = resolve(held["fragment"]["secret_ref"], origin=origin) if isinstance(held.get("fragment"), Mapping) else None
+    query = record_carriers.query_chunks(held.get("query"), lambda ref: resolve(ref, origin=origin)) if "query" in held else None
+    fragment = None
+    if isinstance(held.get("fragment"), Mapping):
+        fragment = resolve(held["fragment"]["secret_ref"], origin=origin) if secret_refs.is_secret_entry(held["fragment"]) else ""
     return record_carriers.join_url(base, userinfo=userinfo, query=query, fragment=fragment)
 
 
