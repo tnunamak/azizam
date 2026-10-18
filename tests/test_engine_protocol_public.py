@@ -438,7 +438,7 @@ def test_public_queued_protocol_image_runs_through_the_real_worker_and_settler(e
     job=media_jobs.get(job_id,audience='internal',path=media_jobs.DB_PATH)
     assert job['status']==('canceled' if cancel else 'succeeded'),job.get('error')
     rows=receipt_store.recent(path=receipt_store.DB_PATH)
-    assert any(row['status']==('cancelled' if cancel else 'succeeded') for row in rows),rows
+    assert any(row['status']==('cancelled' if cancel else 'ok') for row in rows),rows
 
 
 def test_protocol_image_assets_keep_existing_owner_access_rules(engine):

@@ -1,17 +1,17 @@
 # Add an HTTP engine as data
 
 Use a protocol description when the engine fits the bounded `http-v1` grammar.
-The worked example is fictional. Its complete files are
+The fictional worked example consists of
 [`prism.yml`](../../tests/fixtures/engine_protocol/prism/prism.yml) and
-[`engine.json`](../../tests/fixtures/engine_protocol/prism/engine.json).
-The fake upstream is `tests/support/protocol_upstream.py`.
+[`engine.json`](../../tests/fixtures/engine_protocol/prism/engine.json), with
+the fake upstream in `tests/support/protocol_upstream.py`.
 
-1. Put a description at `registry/protocols/<id>.yml`. Set `protocol_version: 1`
-   and `executor: http-v1`. The file name must equal `id`.
+1. Put a description at `registry/protocols/<id>.yml` with
+   `protocol_version: 1` and `executor: http-v1`, where the file name equals `id`.
 2. Save an engine through the registry's raw record editor or registry import.
    Put the connection and offerings inside the service's `config` block.
-3. Set `config.connection.dispatch: protocol`. Set its `protocol` to the
-   description id and its `address` to the engine's root, including any prefix.
+3. Set `config.connection.dispatch: protocol`, its `protocol` to the
+   description id, and its `address` to the engine's root, including any prefix.
 4. Declare each offering's public `id`, upstream model id and tasks. Call the
    public API with the offering id, or `engine-id/offering-id` to disambiguate.
 5. Test with a fake upstream before enabling the record. The proof suite runs
@@ -46,14 +46,14 @@ execution path, including records that name `openai-compatible`.
 | `POST /v1/audio/speech` | `speech` | `speech` or `speech.synthesis` |
 
 The frontend aliases of these routes reach the same handlers. A generation
-operation must have `class: generate`; inventory is separate. An unsupported
-operation or task is refused. Opt-in never falls back to the old engine client.
+operation must have `class: generate`, and the gateway refuses unsupported
+operations and tasks without falling back to the old engine client.
 Other intents, including text completions and transcription, keep their existing
 paths in this slice.
 
 The description maps request `/body/model` and `/params/model` to the offering's
 **upstream** id. `/params/offering` is its public id. Other request fields stay in
-`/body`. Responses must map into the public OpenAI shape. Inventory maps its
+`/body`, and responses must map into the public OpenAI shape. Inventory maps its
 list into `data`; the gateway lists only declared offerings present in that
 answer. Chat supports JSON, SSE and NDJSON upstream; streams leave the gateway
 as SSE with a final `[DONE]` only after a complete upstream stream.
@@ -71,8 +71,9 @@ Credentials are references, never values in descriptions. For example,
 `credentials.inference` may contain `secret_ref: os.environ/ENGINE_KEY`,
 `origin: http://engine.example:8080`, `header: X-Inference`, and `scheme: ""`.
 The protocol's `auth.inference` must declare the matching auth method. Control
-has its own reference. An origin mismatch is refused before any request;
-caller keys are never forwarded. Ordinary headers cannot hold credentials.
+has a separate reference, and the gateway refuses an origin mismatch before
+sending any request. Caller keys are never forwarded, and ordinary headers
+cannot hold credentials.
 
 Images may return binary bytes, mapped OpenAI `data[].b64_json`, or a declared
 submit/poll/fetch job. The gateway stores assets in its existing owner-scoped
@@ -95,7 +96,7 @@ observations:
   offering_ready: {http: {path: /ready}, select: /ready}
 ```
 
-Both forms use the executor. The existing switch controller locks, drains,
+Both forms use the executor through the existing switch controller, which locks, drains,
 changes selection, verifies, and holds a serving lease through the final byte.
 A plan that cannot load models cannot change selection. A failed verification
 restores or fails according to the record. Unknown observations never count
