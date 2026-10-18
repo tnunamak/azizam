@@ -256,8 +256,10 @@ def test_stop_kills_term_ignoring_descendant_after_leader_exits(tmp_path):
     driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True,
                            observations=Ready())
     child_pid = None
+    group_pid = None
     try:
         assert run(driver.ensure_ready(svc, 1))
+        group_pid = json.loads((tmp_path / "state" / "fixture.json").read_text())["pid"]
         for _ in range(100):
             if child_pid_file.exists():
                 child_pid = int(child_pid_file.read_text())
@@ -274,9 +276,9 @@ def test_stop_kills_term_ignoring_descendant_after_leader_exits(tmp_path):
             pytest.fail("TERM-ignoring descendant survived gateway stop")
     finally:
         driver.stop(svc)
-        if child_pid:
+        if group_pid:
             try:
-                os.kill(child_pid, signal.SIGKILL)
+                os.killpg(group_pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
 
