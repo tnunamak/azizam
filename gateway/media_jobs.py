@@ -781,6 +781,13 @@ def hide_assets_in(conn: sqlite3.Connection, person_id: str, pairs: Iterable[tup
     )
 
 
+def delete_person_hides_in(conn: sqlite3.Connection, person_id: str) -> int:
+    """Delete one person's Library hides inside the caller's transaction; a database older than the table has none."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_hidden_assets'").fetchone() is None:
+        return 0
+    return conn.execute("DELETE FROM media_hidden_assets WHERE person_id=?", (person_id,)).rowcount
+
+
 def hidden_assets(person_ids: Iterable[str], *, path: Path = DB_PATH) -> set[tuple[str, str]]:
     """The ``(asset_id, job_id)`` pairs these people hid."""
     ids = sorted(set(person_ids))

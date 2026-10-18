@@ -85,6 +85,8 @@ clears the signed-in person's own entries whose file is gone:
   (`media_hidden_assets`), so the same bytes made again by a later job are listed.
 - Prompts, hides and job deletions commit together in the media-jobs database or
   not at all. It never deletes a stored file or a receipt.
+- Removing a person's account deletes their hide rows with their prompts, in one
+  transaction.
 
 A quarantine uses a new private `<database>.broken-<time>-<unique-id>/`
 directory on the same filesystem. If any rename fails, startup raises and the

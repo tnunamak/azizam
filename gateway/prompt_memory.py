@@ -455,11 +455,16 @@ def get_person_prompts(person_id: str, *, path: Path | None = None,
 
 
 def delete_person(person_id: str, *, path: Path | None = None) -> int:
+    """Delete a person's prompts and their Library hides in one transaction; returns the prompts deleted."""
     conn = _connect(path)
     try:
         count = conn.execute("DELETE FROM asset_prompts WHERE person_id=?", (person_id,)).rowcount
+        media_jobs.delete_person_hides_in(conn, person_id)
         conn.commit()
         return count
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
