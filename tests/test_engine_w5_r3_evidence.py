@@ -255,3 +255,24 @@ def test_saved_evidence_is_hidden_after_another_registry_path_changes_connection
     assert service.view('review', OWNER)['tests']['chat']['ok'] is True
     service.store.saved['config']['headers'] = [{'name': 'X-Tenant', 'value': 'changed-elsewhere'}]
     assert service.view('review', OWNER)['tests'] == {}
+
+
+@pytest.mark.parametrize('change', [
+    {'enabled': True}, {'context_window': 8192}, {'public_name': 'draft-public-name'},
+])
+def test_draft_model_settings_are_not_saved_settings_proof(service, change):
+    if 'enabled' in change:
+        service.store.saved['config']['models'][0]['enabled'] = False
+    request = body(service)
+    request['models'] = [{**service.view('review', OWNER)['models'][0], **change}]
+    result = asyncio.run(service.test(OWNER, request))
+    assert result['via'] == 'draft'
+    assert 'evidence_token' not in result
+
+
+def test_unchanged_submitted_model_settings_can_prove_saved_settings(service):
+    request = body(service)
+    request['models'] = service.view('review', OWNER)['models']
+    result = asyncio.run(service.test(OWNER, request))
+    assert result['via'] == 'saved'
+    assert result['evidence_token']
