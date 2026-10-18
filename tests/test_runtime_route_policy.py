@@ -1426,5 +1426,63 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                     )
 
 
+class _AuthenticatingLoopbackClient:
+    """The loopback HTTP client, replaced: authenticate what it would send to 127.0.0.1."""
+
+    seen: list = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def post(self, url, *, headers, content):
+        path = "/v1/embeddings" if url.endswith("/v1/embeddings") else "/v1/chat/completions"
+        inner = Request({
+            "type": "http", "method": "POST", "path": path, "query_string": b"", "client": ("127.0.0.1", 40000),
+            "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        })
+        self.__class__.seen.append(proxy.authenticate_request(inner, path))
+        return _ForwardResponse()
+
+    async def aclose(self):
+        return None
+
+
+class ProtocolLoopbackIdentityTests(unittest.IsolatedAsyncioTestCase):
+    """A protocol frontend's loopback runs as its caller, never as the 127.0.0.1 App."""
+
+    async def test_protocol_loopback_runs_as_the_caller(self) -> None:
+        import ipaddress
+
+        from gateway import accounts, admin_store
+        from tests.support.access import store_plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            admin = Path(tmp) / "admin.db"
+            admin_store.init_db(admin)
+            accounts.initialize(admin)
+            owner = admin_store.upsert_oidc_user("https://idp.test", "ann", email="ann@example.test", path=admin)
+            plan = store_plan("Everything", path=admin)
+            accounts.change_person(owner["id"], "test", path=admin, plan_id=plan["id"])
+            local = admin_store.create_app("This computer", kind="service", owner_user_id=owner["id"],
+                                           access_plan=plan["id"], path=admin)
+            kitchen = admin_store.create_app("Kitchen tablet", kind="service", owner_user_id=owner["id"],
+                                             access_plan=plan["id"], path=admin)
+            admin_store.add_trusted_address(local["id"], "127.0.0.1", max_entries=10, path=admin)
+            admin_store.add_trusted_address(kitchen["id"], "192.0.2.7", max_entries=10, path=admin)
+            _AuthenticatingLoopbackClient.seen = []
+            with patch.object(proxy.ADMIN_STORE, "path", admin), \
+                    patch.object(proxy.httpx, "AsyncClient", _AuthenticatingLoopbackClient):
+                caller = proxy.AuthContext(identity=proxy.runtime_identity_for_trusted_address(
+                    ipaddress.ip_address("192.0.2.7"), path=admin))
+                outer = Request({"type": "http", "method": "POST", "path": "/v1/messages", "headers": [],
+                                 "query_string": b"", "client": ("192.0.2.7", 51000)})
+                await proxy._forward_chat_completions(outer, caller, {"model": "m", "messages": []}, stream=False)
+                await proxy._forward_embeddings(outer, caller, {"model": "m", "input": "x"})
+        self.assertEqual(len(_AuthenticatingLoopbackClient.seen), 2)
+        for auth in _AuthenticatingLoopbackClient.seen:
+            self.assertIsInstance(auth, proxy.AuthContext)
+            self.assertEqual(auth.identity.app_id, kitchen["id"])
+
+
 if __name__ == "__main__":
     unittest.main()

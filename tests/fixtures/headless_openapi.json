@@ -417,6 +417,43 @@
               "null"
             ]
           },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A short token naming the failure."
+          },
+          "error_category": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "authorization",
+              "invalid_input",
+              "upstream",
+              "capacity",
+              "timeout",
+              "safety",
+              null
+            ],
+            "description": "Who refused: the gateway (authorization, invalid_input, capacity) or the work."
+          },
+          "retryable": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the same job may succeed later."
+          },
+          "upstream_http_status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The HTTP status of an upstream failure; null when the gateway refused."
+          },
           "id": {
             "type": "string"
           },
@@ -2322,13 +2359,6 @@
         "additionalProperties": false,
         "description": "Make a video with sound from a starting picture and a description.",
         "properties": {
-          "frame_rate": {
-            "default": 24,
-            "description": "How many frames the video shows each second.",
-            "maximum": 50,
-            "minimum": 1,
-            "type": "number"
-          },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
             "type": "string",
@@ -2401,13 +2431,6 @@
         "additionalProperties": false,
         "description": "Make a video with sound from a description or picture.",
         "properties": {
-          "frame_rate": {
-            "default": 24,
-            "description": "How many frames the video shows each second.",
-            "maximum": 50,
-            "minimum": 1,
-            "type": "number"
-          },
           "negative_prompt": {
             "description": "Describe anything you want left out.",
             "type": "string"
@@ -2530,12 +2553,6 @@
             "description": "Adjust how closely the video follows your description.",
             "maximum": 20,
             "minimum": 0,
-            "type": "number"
-          },
-          "frame_rate": {
-            "description": "How many frames the video shows each second.",
-            "maximum": 60,
-            "minimum": 1,
             "type": "number"
           },
           "height": {
@@ -3112,7 +3129,7 @@
     },
     "/admin/api/access/check": {
       "post": {
-        "description": "Check access (design §3.1): the decision an App's request would get.\n\n``{\"app\": app_id, \"request\": {...}}`` evaluates the App's two plans as\nthe runtime does; ``{\"plan\": plan_id, \"request\": {...}}`` evaluates one\nplan on both sides (an App that is \"Same as its person\").\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Check access (design \u00a73.1): the decision an App's request would get.\n\n``{\"app\": app_id, \"request\": {...}}`` evaluates the App's two plans as\nthe runtime does; ``{\"plan\": plan_id, \"request\": {...}}`` evaluates one\nplan on both sides (an App that is \"Same as its person\").\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_access_check",
         "parameters": [],
         "requestBody": {
@@ -3853,7 +3870,7 @@
     },
     "/admin/api/apps/{app_id}/enable": {
       "post": {
-        "description": "Re-enable a disabled App.\n\nDELETE /apps/{id} is a one-way soft-disable. This endpoint is the undo\n— the smallest honest fix that lets the optimistic-disable flow offer a\ntoast with an \"Undo\" action. Idempotent: enabling an already-active app\nis a no-op that returns 200 and the current record.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Re-enable a disabled App.\n\nDELETE /apps/{id} is a one-way soft-disable. This endpoint is the undo\n\u2014 the smallest honest fix that lets the optimistic-disable flow offer a\ntoast with an \"Undo\" action. Idempotent: enabling an already-active app\nis a no-op that returns 200 and the current record.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_apps_app_id_enable",
         "parameters": [
           {
@@ -4353,7 +4370,7 @@
     },
     "/admin/api/audit": {
       "get": {
-        "description": "List audit events with optional server-side filters and keyset cursor pagination.\n\nQuery params:\n  limit        — page size (default 50, max 200 per page); pagination\n                 via ``next_cursor`` makes the full log reachable beyond\n                 a single page.\n  actor_id     — exact match on actor_id (e.g. ``usr_…`` or ``cli``).\n  action_prefix — matches events whose action starts with this prefix\n                  (e.g. ``service.`` or ``app.``).\n  before       — keyset cursor returned as ``next_cursor`` from a prior\n                 response, encoded as ``\"<created_at>:<id>\"``; fetches\n                 the next page older than that position.\n\nResponse:\n  { \"records\": [...], \"next_cursor\": \"<created_at>:<id>\" | null }\n  ``next_cursor`` is null exactly when no more rows match the current\n  filter — ``\"End of audit log\"`` territory for the UI.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "List audit events with optional server-side filters and keyset cursor pagination.\n\nQuery params:\n  limit        \u2014 page size (default 50, max 200 per page); pagination\n                 via ``next_cursor`` makes the full log reachable beyond\n                 a single page.\n  actor_id     \u2014 exact match on actor_id (e.g. ``usr_\u2026`` or ``cli``).\n  action_prefix \u2014 matches events whose action starts with this prefix\n                  (e.g. ``service.`` or ``app.``).\n  before       \u2014 keyset cursor returned as ``next_cursor`` from a prior\n                 response, encoded as ``\"<created_at>:<id>\"``; fetches\n                 the next page older than that position.\n\nResponse:\n  { \"records\": [...], \"next_cursor\": \"<created_at>:<id>\" | null }\n  ``next_cursor`` is null exactly when no more rows match the current\n  filter \u2014 ``\"End of audit log\"`` territory for the UI.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_audit",
         "parameters": [],
         "responses": {
@@ -5236,7 +5253,7 @@
     },
     "/admin/api/config/export": {
       "get": {
-        "description": "Export the canonical YAML reproducing the running gateway's service registry.\n\nReturns clean YAML containing every service's connection, capabilities,\nmodels, priority, role, and lifecycle — everything an operator would commit\nto reproduce this gateway.  Ephemeral runtime state (health history,\nlast_used_at, probed windows, live VRAM) is excluded.\n\nThe output is round-trippable: it matches the shape the existing\nseed-import path already understands.\n\nAdmin-auth required (same guard as all /admin/api/* routes).\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Export the canonical YAML reproducing the running gateway's service registry.\n\nReturns clean YAML containing every service's connection, capabilities,\nmodels, priority, role, and lifecycle \u2014 everything an operator would commit\nto reproduce this gateway.  Ephemeral runtime state (health history,\nlast_used_at, probed windows, live VRAM) is excluded.\n\nThe output is round-trippable: it matches the shape the existing\nseed-import path already understands.\n\nAdmin-auth required (same guard as all /admin/api/* routes).\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_config_export",
         "parameters": [],
         "responses": {
@@ -5310,7 +5327,7 @@
     },
     "/admin/api/config/reload": {
       "post": {
-        "description": "Hot-reload the runtime config from the DB service registry.\n\nRe-derives all backend host constants (KOBOLD_HOST,\nLLM_BACKEND_HOSTS, TTS_HOST, STT_HOST, EMBEDDINGS_HOST, COMFY_HOST …)\nwithout a process restart.  Requests that arrive after this returns will\nsee the new values.\n\nNote: the LiteLLM subprocess still requires a separate restart to pick up\nits config-file changes.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Hot-reload the runtime config from the DB service registry.\n\nRe-derives all backend host constants (KOBOLD_HOST,\nLLM_BACKEND_HOSTS, TTS_HOST, STT_HOST, EMBEDDINGS_HOST, COMFY_HOST \u2026)\nwithout a process restart.  Requests that arrive after this returns will\nsee the new values.\n\nNote: the LiteLLM subprocess still requires a separate restart to pick up\nits config-file changes.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_config_reload",
         "parameters": [],
         "requestBody": {
@@ -5465,7 +5482,7 @@
     },
     "/admin/api/credentials/{credential_id}": {
       "delete": {
-        "description": "DELETE alias for POST …/revoke — idiomatic REST revocation.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "DELETE alias for POST \u2026/revoke \u2014 idiomatic REST revocation.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_delete_admin_api_credentials_credential_id",
         "parameters": [
           {

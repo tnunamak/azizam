@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from time import perf_counter, time
 import asyncio
+import threading
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from typing import Any, Callable, Mapping
 from uuid import uuid4
@@ -234,6 +236,29 @@ def new_request_id() -> str:
     return f"req_{uuid4().hex}"
 
 
+# Whose request each recent receipt served, by request id. An internal hop (a
+# protocol loopback, the LiteLLM round trip) knows only its parent's request id,
+# so its receipt takes the caller from here. Bounded: a child of an evicted
+# parent records no caller, as before.
+_CALLER_FIELDS = ("app_id", "api_key_name", "owner_key_hash", "app_profile")
+_CALLERS: OrderedDict[str, tuple[Any, ...]] = OrderedDict()
+_CALLERS_MAX = 4096
+_CALLERS_LOCK = threading.Lock()
+
+
+def _remember_caller(receipt: "RouteReceipt") -> None:
+    with _CALLERS_LOCK:
+        _CALLERS[receipt.request_id] = tuple(getattr(receipt, name) for name in _CALLER_FIELDS)
+        _CALLERS.move_to_end(receipt.request_id)
+        while len(_CALLERS) > _CALLERS_MAX:
+            _CALLERS.popitem(last=False)
+
+
+def _caller_of(request_id: str) -> tuple[Any, ...] | None:
+    with _CALLERS_LOCK:
+        return _CALLERS.get(request_id)
+
+
 @dataclass
 class RouteReceipt:
     protocol: str
@@ -303,6 +328,13 @@ class RouteReceipt:
             connection_for, current_client_hint, current_gateway_ui, trusted_address_for,
         )
 
+        if self.parent_request_id and self.app_id is None:
+            caller = _caller_of(self.parent_request_id)
+            if caller is not None:
+                for name, value in zip(_CALLER_FIELDS, caller):
+                    setattr(self, name, value)
+        if self.app_id:
+            _remember_caller(self)
         self.client_address = self.client_address or trusted_address_for(self.app_id)
         self.connection_id = self.connection_id or connection_for(self.app_id)
         if self.source_kind is not None:

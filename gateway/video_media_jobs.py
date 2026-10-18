@@ -260,8 +260,10 @@ def video_generation_payload(
         payload["error"] = (
             dict(error)
             if isinstance(error, Mapping)
-            else {"code": "video_generation_failed", "message": str(error)}
+            else {"code": job.get("error_code") or "video_generation_failed", "message": str(error)}
         )
+        # Who refused: the gateway (an access plan, inputs, capacity) or the upstream work.
+        payload.update({name: job[name] for name in media_jobs.ERROR_FIELDS if job.get(name) is not None})
     if include_assets and assets:
         payload["assets"] = [dict(asset) for asset in assets if isinstance(asset, Mapping)]
     elif job.get("status") == media_jobs.STATUS_SUCCEEDED and assets:

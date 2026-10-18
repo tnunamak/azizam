@@ -60,10 +60,13 @@ class MakeCanceled(Exception):
 class MakeBackendError(Exception):
     """A backend failure whose ``public_message`` is safe to store and show."""
 
-    def __init__(self, public_message: str, *, http_status: int | None = None) -> None:
+    def __init__(self, public_message: str, *, http_status: int | None = None,
+                 error_info: Mapping[str, Any] | None = None) -> None:
         super().__init__(public_message)
         self.public_message = public_message
         self.http_status = http_status
+        # Typed failure facts (``media_jobs.ERROR_FIELDS``), never free text.
+        self.error_info = error_info
 
 
 @dataclass(frozen=True)
@@ -493,7 +496,7 @@ async def _run(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> None:
     except MakeBackendError as exc:
         # Even a public backend message must not carry the prompt into storage.
         message = exc.public_message.replace(prompt, "[prompt]") if prompt else exc.public_message
-        _fail(job_id, message, jobs_path, http_status=exc.http_status)
+        _fail(job_id, message, jobs_path, http_status=exc.http_status, error_info=exc.error_info)
         return
     except Exception as exc:  # noqa: BLE001
         # Arbitrary exception text may hold the prompt or a backend secret,
@@ -529,10 +532,11 @@ def _settle_canceled(job_id: str, jobs_path: Path) -> None:
     _event(job_id, "canceled", media_jobs.STATUS_CANCELED, jobs_path, progress=100)
 
 
-def _fail(job_id: str, message: str, jobs_path: Path, *, http_status: int | None = None) -> None:
+def _fail(job_id: str, message: str, jobs_path: Path, *, http_status: int | None = None,
+          error_info: Mapping[str, Any] | None = None) -> None:
     try:
         media_jobs.update_status(
-            job_id, media_jobs.STATUS_FAILED, error=message[:500],
+            job_id, media_jobs.STATUS_FAILED, error=message[:500], error_info=error_info,
             metadata_patch={"last_http_status": int(http_status)} if http_status else None,
             path=jobs_path,
         )
