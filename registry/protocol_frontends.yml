@@ -694,3 +694,22 @@ records:
         - provider and operation must be allowed by policy
         - no root catch-all
         - protocol frontend path collisions stay owned by the frontend; use /gateway/v1/providers/{provider}/{path...} for raw provider-native paths
+  - id: native
+    name: Per-engine native pass-through
+    protocol: native
+    source: builtin
+    editable: false
+    enabled: true
+    canonical: false
+    routes:
+      - /native/{engine_id}
+    intents:
+      - engine.native
+    # Contract section 5. Off unless the engine record sets native_passthrough; never for a remote
+    # provider; the access plan and the receipt apply as they do to /gateway/v1/providers/{provider}.
+    # No public_discovery: the lane is not advertised yet.
+    registered_routes:
+      - methods: [GET, POST, PUT, DELETE, PATCH, OPTIONS]
+        canonical: /native/{engine_id}/{native_path:path}
+        translator: native
+        intent: engine.native
