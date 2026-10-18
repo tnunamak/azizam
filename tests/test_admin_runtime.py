@@ -1019,6 +1019,24 @@ class ServicePatchRoundTripTests(unittest.TestCase):
         registry = self.store.update_service(service_id="legacy", data={"note": "edit"}, actor=self.ctx)
         self.assertNotIn("model_policy_schema_version", registry["services"]["legacy"]["config"])
 
+    def test_v2_partial_patch_preserves_process_and_observations(self) -> None:
+        seed = service_registry.build_service_registry_seed({"backends": {
+            "legacy": {"protocol": "openai-compatible", "host": "engine", "port": 18001,
+                       "lifecycle": {"driver": "command", "driver_config": {
+                           "start": ["start"], "stop": ["stop"]}}},
+        }})
+        seed["services"]["legacy"]["observations"] = {"inventory": {"means": "available"}}
+        seed["services"]["legacy"]["resources"] = {"gpu": {"enforced": False}}
+        write_service_registry_for_test(seed, path=self.db)
+        before = self.store.get_service_registry()["services"]["legacy"]
+        registry = self.store.update_service(service_id="legacy", data={"name": "Renamed"}, actor=self.ctx)
+        after = registry["services"]["legacy"]
+        self.assertEqual(after["name"], "Renamed")
+        for field in ("process", "observations", "residency", "resources"):
+            self.assertEqual(after[field], before[field])
+        self.assertNotIn("lifecycle", after)
+        self.assertNotIn("lifecycle", after["config"])
+
     def _seed_embeddings(self) -> None:
         """Add the canonical 'embeddings' service from the spec example."""
         self.store.add_service(
