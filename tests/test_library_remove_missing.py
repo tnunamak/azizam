@@ -426,3 +426,42 @@ class RemoveMissingTests(unittest.TestCase):
         with self.failing_hide_reads(sqlite3.OperationalError("no such table: media_jobs")):
             with self.assertRaises(sqlite3.OperationalError):
                 media_jobs.hidden_assets([self.alice["id"]], path=self.jobs_db)
+
+    # --- a database made before the hide table ---------------------------------------------
+
+    def old_database(self, path):
+        """A media_jobs.db as origin/main's schema made it: the current schema without the hide table."""
+        start = media_jobs._SCHEMA.index("CREATE TABLE IF NOT EXISTS media_hidden_assets")
+        end = media_jobs._SCHEMA.index("CREATE TABLE IF NOT EXISTS media_jobs_schema_version")
+        old_schema = media_jobs._SCHEMA[:start] + media_jobs._SCHEMA[end:]
+        self.assertNotIn("media_hidden_assets", old_schema)
+        with sqlite3.connect(path) as conn:
+            conn.executescript(old_schema)
+            conn.execute("INSERT INTO media_jobs_schema_version(version) VALUES (?)", (media_jobs.SCHEMA_VERSION,))
+        conn.close()
+
+    def hide_table_columns(self, path) -> list[str]:
+        with sqlite3.connect(path) as conn:
+            return [row[1] for row in conn.execute("PRAGMA table_info(media_hidden_assets)")]
+
+    def test_an_old_media_jobs_database_gains_the_hide_table_and_keeps_its_rows(self) -> None:
+        old = self.root / "old_media_jobs.db"
+        self.old_database(old)
+        self.assertEqual(self.hide_table_columns(old), [])
+        media_jobs.init_db(old)
+        columns = ["person_id", "asset_id", "job_id", "hidden_at"]
+        self.assertEqual(self.hide_table_columns(old), columns)
+        with sqlite3.connect(old) as conn:
+            conn.execute("INSERT INTO media_hidden_assets VALUES ('p','a','j',1)")
+        media_jobs.init_db(old)  # idempotent: the second start changes nothing and keeps the row
+        self.assertEqual(self.hide_table_columns(old), columns)
+        self.assertEqual(media_jobs.hidden_assets(["p"], path=old), {("a", "j")})
+
+    def test_an_old_database_lists_with_nothing_hidden_and_hides_on_first_use(self) -> None:
+        old = self.root / "old_media_jobs.db"
+        self.old_database(old)
+        self.assertEqual(media_jobs.hidden_assets([self.alice["id"]], path=old), set())
+        with media_jobs._conn(old) as conn:
+            media_jobs.hide_assets_in(conn, self.alice["id"], [("a", "j")])
+            conn.commit()
+        self.assertEqual(media_jobs.hidden_assets([self.alice["id"]], path=old), {("a", "j")})
