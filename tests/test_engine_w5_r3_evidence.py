@@ -137,3 +137,54 @@ def test_probes_reject_unknown_or_incompatible_saved_contract(service, operation
         request['definition'] = 'own-model-list'
     with pytest.raises((engine_admin.DraftError, engine_admin.EngineRouteError)):
         asyncio.run(getattr(service, operation)(OWNER, request))
+
+
+def test_every_engine_view_url_uses_shared_redaction(service):
+    service.store.saved['config'].update(
+        address='http://user:test-password@127.0.0.1:5051/v1?token=test-query',
+        base_url='http://user:test-password@127.0.0.1:5051/v1?token=test-query')
+    shown = service.view('review', OWNER)
+    for value in (shown['values']['address'], shown['record']['config']['address'],
+                  shown['v2']['connection']['address'], shown['request_path']['url'],
+                  *(row['url'] for row in shown['request_path']['operations'])):
+        assert 'test-password' not in value and 'test-query' not in value
+
+
+def test_hidden_headers_restore_once_and_keep_the_name_binding(service):
+    hidden = [{'name': 'X-Token', 'value': 'test-hidden-credential', 'secret': True}]
+    service.store.saved['config']['headers'] = hidden
+    values = body(service)['values']
+    asyncio.run(service.update(OWNER, 'review', {'disabled': True, 'values': values}, expected_generation=0))
+    assert service.store.written['headers'] == hidden
+
+
+def test_admin_connection_edit_is_refused_before_network(service, monkeypatch):
+    calls = []
+    async def check(*args, **kwargs):
+        calls.append('outbound')
+        return {'outcome': 'ok', 'checked_at': 123}
+    monkeypatch.setattr(engine_admin, 'run_check', check)
+    with pytest.raises((engine_admin.EngineRouteError, PermissionError)):
+        asyncio.run(service.update(SimpleNamespace(roles=('admin',)), 'review', {
+            'values': {'address': 'http://127.0.0.1:5052/v1'},
+        }, expected_generation=0))
+    assert calls == []
+
+
+def test_ready_timeout_can_change_without_editing_list_start(service):
+    lifecycle = {'driver': 'command', 'managed': True,
+                 'driver_config': {'start': ['runner', '--port', '5051'], 'health_timeout_s': 120}}
+    service.store.saved['config']['lifecycle'] = lifecycle
+    service.store.saved['lifecycle'] = lifecycle
+    values = body(service, lifecycle_ready_s=180)['values']
+    asyncio.run(service.update(OWNER, 'review', {'disabled': True, 'values': values}, expected_generation=0))
+    assert service.store.written['lifecycle']['driver_config']['start'] == ['runner', '--port', '5051']
+    assert service.store.written['lifecycle']['driver_config']['health_timeout_s'] == 180
+
+
+def test_view_explains_why_saved_key_will_be_withheld(service):
+    service.store.saved['config'].update(api_key_env='W5_TEST_ENV_KEY', credential_origin='http://elsewhere.test:80')
+    service.env = lambda name: 'test-only-env-key'
+    shown = service.view('review', OWNER)
+    assert any(row['code'] == 'engine_credential_origin_mismatch' for row in shown['attention'])
+    assert 'test-only-env-key' not in str(shown)
