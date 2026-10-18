@@ -2701,6 +2701,20 @@ def create_admin_router(
             content={"deleted": result},
         )
 
+    def _extension_package_response(result: Mapping[str, Any]) -> JSONResponse:
+        """Answer a package change with the registry as a caller may see it.
+
+        Enable and remove share this one answer, so a new projection (D21) is switched in one place.
+        """
+        if isinstance(result.get("service_registry"), Mapping):
+            result = {**result, "service_registry": engine_redaction.redact_registry(result["service_registry"])}
+        response = JSONResponse(status_code=status.HTTP_200_OK, content=result)
+        generation = result.get("operator_settings_generation")
+        if generation is not None:
+            response.headers["ETag"] = f'"os-{generation}"'
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @router.get("/extensions")
     def list_extension_packages(request: Request) -> JSONResponse:
         ctx = _guard(request)
@@ -2783,17 +2797,7 @@ def create_admin_router(
                 "invalid_extension_package",
                 str(exc),
             ).as_response()
-        if isinstance(result.get("service_registry"), Mapping):
-            result = {**result, "service_registry": engine_redaction.redact_registry(result["service_registry"])}
-        response = JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content=result,
-        )
-        generation = result.get("operator_settings_generation")
-        if generation is not None:
-            response.headers["ETag"] = f'"os-{generation}"'
-        response.headers["Cache-Control"] = "no-store"
-        return response
+        return _extension_package_response(result)
 
     @router.delete("/extensions/{package_id}")
     async def remove_extension_package(
@@ -2830,7 +2834,7 @@ def create_admin_router(
                 "extension_package_not_found",
                 str(exc),
             ).as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+        return _extension_package_response(result)
 
     def settings_revision(request: Request) -> str:
         revision = request.headers.get("if-match")
