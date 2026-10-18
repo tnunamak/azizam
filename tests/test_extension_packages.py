@@ -1127,7 +1127,7 @@ def _plan_naming_the_package_service(store_path, name: str):
 def test_a_plan_saved_between_the_removal_read_and_write_is_seen_by_the_removal(tmp_path, monkeypatch):
     # Deterministic interleaving: a plan lands after the removal has read its inputs and before it writes.
     import pytest
-    from gateway import admin_store
+    from gateway import admin_store, extension_packages
     store, actor, _source, _installed = _installed_lifecycle_store(tmp_path, monkeypatch)
     real_write = admin_store.write_service_registry_and_setting_with_audits
     landed = []
@@ -1139,7 +1139,7 @@ def test_a_plan_saved_between_the_removal_read_and_write_is_seen_by_the_removal(
 
     monkeypatch.setattr(admin_store, "write_service_registry_and_setting_with_audits", write_after_a_plan_lands)
 
-    with pytest.raises(ValueError, match="access plan plan_race"):
+    with pytest.raises(extension_packages.PackageInUse):
         store.remove_extension_package(package_id="lifecycle", actor=actor)
 
     assert landed, "the interleaving must have run"
