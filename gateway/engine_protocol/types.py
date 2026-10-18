@@ -77,6 +77,9 @@ class CanonicalRequest:
     body: dict[str, Any] = field(default_factory=dict)
     params: dict[str, Any] = field(default_factory=dict)
     files: Mapping[str, AssetRef] = field(default_factory=dict)
+    # Headers the caller already prepared for this engine. The http-v1 executor ignores them (it builds headers from the
+    # description and the connection); a reviewed in-tree adapter that wraps an older client may send them as they are.
+    headers: Mapping[str, str] = field(default_factory=dict)
 
 
 class JobState(str, Enum):
@@ -113,6 +116,9 @@ class Reply:
     selected: Mapping[str, Any] = field(default_factory=dict)
     asset: AssetRef | None = None
     seconds: float = 0.0
+    # The unparsed answer bytes, for a reviewed adapter whose caller post-processes them in memory (the http-v1 executor
+    # leaves it empty: it returns parsed bodies and saved assets).
+    raw: bytes | None = None
 
 
 class StreamReply:
@@ -139,6 +145,17 @@ class StreamReply:
 
     async def __aexit__(self, *exc: object) -> None:
         await self.aclose()
+
+
+@dataclass(frozen=True)
+class JobEvent:
+    """A change an engine pushed about a job (for adapters whose engine can say so; others are polled)."""
+
+    ref: JobRef
+    kind: str                     # status | progress | asset
+    state: JobState | None = None
+    progress: float | None = None
+    detail: str | None = None
 
 
 @dataclass(frozen=True)

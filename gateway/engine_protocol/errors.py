@@ -88,6 +88,10 @@ class UnknownOperation(ProtocolError):
     code = "unknown_operation"
 
 
+class UnknownProtocol(UnknownOperation):
+    code = "unknown_protocol"
+
+
 class UnsupportedByAdapter(ProtocolError):
     """The adapter does not implement this part of the interface (for example events, or jobs)."""
 
