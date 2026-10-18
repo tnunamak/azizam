@@ -52,6 +52,7 @@ if ((!signoff)) && [[ -n $closes_nightly_red ]]; then
 fi
 command -v setsid >/dev/null || { echo "ci-local requires setsid" >&2; exit 2; }
 command -v flock >/dev/null || { echo "ci-local requires flock" >&2; exit 2; }
+command -v timeout >/dev/null || { echo "ci-local requires GNU timeout" >&2; exit 2; }
 
 repo=$(git rev-parse --show-toplevel)
 cd "$repo"
@@ -201,7 +202,14 @@ step() {
   wait "$!" || rc=$?
   # One writer per file; aggregation happens only after every job is reaped.
   printf '%s\t%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" "$(cost_columns "$name")" > "$receipts/steps/$name.tsv"
-  if ((rc)); then failed=1; echo "   FAILED (exit $rc): $receipts/logs/$name.log"; fi
+  if ((rc)); then
+    failed=1
+    if ((rc == 124)); then
+      echo "   FAILED: $name exceeded the 1200-second step limit: $receipts/logs/$name.log"
+    else
+      echo "   FAILED (exit $rc): $receipts/logs/$name.log"
+    fi
+  fi
   return 0
 }
 # GNU time writes "wall user system max_rss_kb" with -o; -q keeps its "exited with
@@ -211,9 +219,9 @@ measure_step() {
   local name=$1; shift
   local cost=$receipts/steps/$name.cost
   if [[ $cost_mode == gnu-time ]] && : > "$cost" 2>/dev/null; then
-    "$gate_time" -q -o "$cost" -f '%e %U %S %M' "$@"
+    "$gate_time" -q -o "$cost" -f '%e %U %S %M' timeout --signal=TERM --kill-after=20s 1200s "$@"
   else
-    python3 -I "$repo/scripts/ci/gate_cost.py" run "$cost" -- "$@"
+    python3 -I "$repo/scripts/ci/gate_cost.py" run "$cost" -- timeout --signal=TERM --kill-after=20s 1200s "$@"
   fi
 }
 # The steps.tsv columns after the name, exit code and whole seconds: wall, CPU

@@ -1186,7 +1186,9 @@ def test_a_plan_save_waits_for_a_removal_in_its_transaction(tmp_path, monkeypatc
     store, actor, _source, _installed = _installed_lifecycle_store(tmp_path, monkeypatch)
     real_registry_write = admin_store.write_service_registry_in_transaction
     inside, release = threading.Event(), threading.Event()
+    plan_started, plan_finished = threading.Event(), threading.Event()
     failures = []
+    plan_failures = []
 
     def paused_registry_write(*args, **kwargs):
         inside.set()
@@ -1201,8 +1203,18 @@ def test_a_plan_save_waits_for_a_removal_in_its_transaction(tmp_path, monkeypatc
         finally:
             inside.set()  # A failure before the write must not strand the test.
 
+    def save_plan():
+        plan_started.set()
+        try:
+            _plan_naming_the_package_service(store.path, "plan_late")
+        except BaseException as exc:
+            plan_failures.append(exc)
+        finally:
+            plan_finished.set()
+
     monkeypatch.setattr(admin_store, "write_service_registry_in_transaction", paused_registry_write)
     remover = threading.Thread(target=remove)
+    saver = threading.Thread(target=save_plan)
     remover.start()
     try:
         assert inside.wait(10)
@@ -1210,11 +1222,16 @@ def test_a_plan_save_waits_for_a_removal_in_its_transaction(tmp_path, monkeypatc
         with sqlite3.connect(store.path, timeout=0) as competing_writer:
             with pytest.raises(sqlite3.OperationalError, match="locked"):
                 competing_writer.execute("BEGIN IMMEDIATE")
+        saver.start()
+        assert plan_started.wait(10)
+        assert not plan_finished.wait(0.2), "plan save must wait for removal's transaction"
     finally:
         release.set()
         remover.join(10)
-    assert not remover.is_alive() and not failures
-    _plan_naming_the_package_service(store.path, "plan_late")
+        if saver.ident is not None:
+            saver.join(10)
+    assert not remover.is_alive() and not saver.is_alive() and not failures and not plan_failures
+    assert plan_finished.is_set()
     assert "lifecycle" not in store.get_extension_package_index()["packages"]
 
 
