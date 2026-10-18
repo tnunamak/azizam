@@ -383,6 +383,36 @@ def test_control_operation_refuses_nested_absolute_path():
         run(runtime.invoke("load", {"options": {"model_path": "/etc/passwd"}}))
 
 
+def test_switch_preparation_waits_for_previous_response_lease():
+    selected = ["old"]
+    prepared = []
+
+    async def invoke(_name, args):
+        selected[0] = args["model"]
+
+    async def observe(_name):
+        return selected[0]
+
+    async def prepare():
+        prepared.append("load")
+
+    controller = SwitchController(drain=SwapDrain(), invoke=invoke, observe=observe)
+    service = {"id": "fixture", "offerings": [{"id": "old"}, {"id": "new"}]}
+    new = {"mode": "switch", "switch": {"call": "select", "args": {"model": "new"},
+           "observe_selected": "selected", "queue_wait_s": 0.02}}
+    old = {"mode": "switch", "switch": {"call": "select", "args": {"model": "old"},
+           "observe_selected": "selected", "queue_wait_s": 0.02}}
+
+    async def scenario():
+        first = await controller.select(service, "new", new, prepare=prepare)
+        with pytest.raises(SwitchUnavailable):
+            await controller.select(service, "old", old, prepare=prepare)
+        assert prepared == ["load"]
+        first.release()
+
+    run(scenario())
+
+
 def test_observations_are_unknown_without_probe_and_inventory_is_not_residency():
     reader = ObservationReader()
     assert run(reader.read({"connection": {"address": "http://127.0.0.1:1"}}, "resident")).known is False
