@@ -159,12 +159,16 @@ class SttChunkMergeTests(unittest.TestCase):
         ))
 
     def test_silence_preferred_plan_forces_missing_seams(self) -> None:
-        for silences in ([], [(29, 31), (89, 91)]):
+        for silences, expected in (
+            ([], [(0.0, 30), (30, 60), (60, 90), (90, 125)]),
+            ([(29, 31), (89, 91)], [(0.0, 30), (30, 60), (60, 90), (90, 125)]),
+            ([(24, 26), (94, 96)], [(0.0, 25), (25, 60), (60, 95), (95, 125)]),
+        ):
             with self.subTest(silences=silences):
                 self.assertEqual(stt_chunking.plan_silence_preferred_segments(
                     duration_seconds=125, silences=silences,
                     target_seconds=30, search_seconds=10, max_segments=64,
-                ), [(0.0, 30), (30, 60), (60, 90), (90, 125)])
+                ), expected)
 
     def test_silence_preferred_plan_covers_short_targets_and_tails(self) -> None:
         for duration, target in ((80, 20), (31, 2), (60, 30), (30.001, 30), (125, 45), (1321.62, 30)):
@@ -186,9 +190,11 @@ class SttChunkMergeTests(unittest.TestCase):
 
     def test_silence_preferred_plan_bounds_opposing_offsets(self) -> None:
         segments = stt_chunking.plan_silence_preferred_segments(
-            duration_seconds=121, silences=[(19, 21), (69, 71), (0, 121)],
+            duration_seconds=121, silences=[(19, 21), (69, 71)],
             target_seconds=30, search_seconds=10, max_segments=64,
         )
+        self.assertEqual(segments, [(0.0, 20), (20, 70), (70, 90), (90, 121)])
+        self.assertEqual(max(b - a for a, b in segments), 50)  # T + 2*S
         self.assertEqual(segments[0][0], 0)
         self.assertEqual(segments[-1][1], 121)
         self.assertEqual([b for _, b in segments[:-1]], [a for a, _ in segments[1:]])
@@ -349,7 +355,11 @@ class BoundedMultipartTests(unittest.IsolatedAsyncioTestCase):
 
 class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_silence_posts_only_bounded_segments(self) -> None:
-        for silences in ([], [(29, 31), (89, 91)]):
+        for silences, expected in (
+            ([], [(0.0, 30), (30, 60), (60, 90), (90, 125)]),
+            ([(29, 31), (89, 91)], [(0.0, 30), (30, 60), (60, 90), (90, 125)]),
+            ([(24, 26), (94, 96)], [(0.0, 25), (25, 60), (60, 95), (95, 125)]),
+        ):
             with self.subTest(silences=silences), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 source = root / "source.wav"
@@ -376,7 +386,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
                     )
                 self.assertEqual(outcome.mode, "chunked")
                 self.assertEqual(outcome.attempts_started, 4)
-                self.assertEqual(extracted, [(0.0, 30), (30, 60), (60, 90), (90, 125)])
+                self.assertEqual(extracted, expected)
                 self.assertEqual(len(posted), 4)
                 self.assertEqual(outcome.merged_payload, {"text": "repeat repeat repeat repeat"})
 
