@@ -83,6 +83,11 @@ for (const width of [1280, 390]) {
         await expect(page.getByRole("heading", { name: section, exact: true })).toBeVisible();
       }
       await expect(page.getByTestId("connection-facts")).toContainText(`${address}/chat/completions`);
+      const storedTest = page.waitForResponse((response) =>
+        response.request().method() === "PATCH" &&
+        response.url().endsWith(`/admin/api/operator/services/${serviceId}`) &&
+        Boolean(response.request().postDataJSON()?.tests),
+      );
       await page.getByRole("button", { name: "Run a real test for Chat" }).click();
       const realTest = page.getByRole("status", { name: "Real test of Chat" });
       await expect(realTest).toBeVisible();
@@ -92,6 +97,9 @@ for (const width of [1280, 390]) {
       await expect(trace).toContainText("Bearer [redacted]");
       await expect(trace).not.toContainText("sk-journey-local-key");
       await expect(trace).toContainText('"messages"');
+      // The successful real test records its result in a separate registry write.
+      // Complete that write before this journey edits the same record.
+      expect((await storedTest).status()).toBe(200);
       await page.getByLabel(/^Name/).fill(`${name} edited`);
       const saved = page.waitForResponse(
         (response) => response.request().method() === "PATCH" && response.url().endsWith(`/admin/api/operator/services/${serviceId}`),
