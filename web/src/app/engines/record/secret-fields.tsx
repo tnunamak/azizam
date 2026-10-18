@@ -82,7 +82,9 @@ export function SecretFields({
                 const label = command
                   ? `${draft.label} ${index === 0 ? "Program" : `Argument ${index}`}`
                   : draft.kind === "key"
-                    ? "API key"
+                    ? draft.carrier === "config.api_key"
+                      ? "API key"
+                      : `${draft.carrier} key`
                     : draft.kind === "url"
                       ? `${draft.carrier} replacement URL`
                       : `Value for ${r.name || "new entry"}`;
@@ -92,7 +94,9 @@ export function SecretFields({
                     : draft.kind === "env"
                       ? `Remove variable ${r.name || index + 1}`
                       : draft.kind === "key"
-                        ? "Clear API key"
+                        ? draft.carrier === "config.api_key"
+                          ? "Clear API key"
+                          : `Clear ${draft.carrier} key`
                         : draft.kind === "url"
                           ? `Clear ${draft.carrier} credentials`
                           : `Remove ${label}`;
@@ -182,13 +186,27 @@ export function SecretFields({
                             ? "Clear credentials"
                             : "Remove"}
                       </Button>
-                      {r.edited && r.id && (
+                      {r.edited && (
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
                           onClick={() =>
-                            set(r.key, { value: "", edited: false })
+                            (() => {
+                              const original = (
+                                JSON.parse(draft.initial) as SecretRow[]
+                              ).find((row) => row.key === r.key);
+                              change(
+                                draft.carrier,
+                                original
+                                  ? draft.rows.map((row) =>
+                                      row.key === r.key ? original : row,
+                                    )
+                                  : draft.rows.filter(
+                                      (row) => row.key !== r.key,
+                                    ),
+                              );
+                            })()
                           }
                         >
                           Cancel replacement
@@ -210,7 +228,7 @@ export function SecretFields({
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => set(r.key, { removed: false })}
+                      onClick={() => set(r.key, { removed: undefined })}
                     >
                       Undo removal
                     </Button>

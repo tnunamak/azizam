@@ -31,7 +31,7 @@ it("reports unclassified settings without showing their values", async () => {
   const { StoredRecordSection } = await import("./record-sections");
   render(
     <StoredRecordSection
-      view={engineView({ hidden_settings_count: 2 } as never)}
+      view={engineView({ hidden_settings: 2 } as never)}
     />,
   );
   expect(

@@ -217,8 +217,6 @@ function saveField(raw: string | null): string | null {
 interface SessionCheck {
   result: CheckResult;
   address: string;
-  /** The key typed when the check ran; the result says nothing about another key. */
-  key: string;
   snapshot?: string;
 }
 
@@ -278,7 +276,7 @@ function RecordForm({
 
   const [name, setName] = useState(view.name);
   const [address, setAddress] = useState(saved.address);
-  const newKey = "";
+  const [viewedRevision] = useState(view.revision);
   const [options, setOptions] = useState<OptionValues>(() => optionValuesFrom(definition, view));
   const [headers, setHeaders] = useState<HeaderDraft[]>([]);
   const [protocol, setProtocol] = useState<ProtocolDraft>(() => ({ dispatch: view.values.dispatch ?? "", protocol: view.values.protocol_description ?? "" }));
@@ -357,13 +355,14 @@ function RecordForm({
   }
   const [initialBody] = useState(() => JSON.stringify(saveBody()));
   const bodyNow = JSON.stringify(saveBody());
+  const publicDirty = bodyNow !== initialBody;
   const configurationSnapshot = JSON.stringify({ ...saveBody(), name: undefined, secretCommands: commands });
   const [initialConfiguration] = useState(configurationSnapshot);
   const currentTests = Object.fromEntries(Object.entries(tests).filter(([, t]) => !("snapshot" in t) || t.snapshot === configurationSnapshot));
   // Without the right to change settings, only the name can be unsaved.
-  const dirty = settingsLocked ? name.trim() !== view.name : Boolean(newKey) || commands.length > 0 || bodyNow !== initialBody;
+  const dirty = settingsLocked ? name.trim() !== view.name : commands.length > 0 || bodyNow !== initialBody;
   // Only the name changed: it saves through the plain service edit when the record needs that.
-  const nameOnly = !newKey && commands.length === 0 && JSON.stringify({ ...saveBody(), name: view.name }) === initialBody;
+  const nameOnly = commands.length === 0 && JSON.stringify({ ...saveBody(), name: view.name }) === initialBody;
   const optionKeys = new Set(optionFields(definition).map((f) => f.key));
   // A refusal belongs to the form that was sent. Once the owner edits it, the message steps aside.
   const refusal = saveError && saveError.body === JSON.stringify({ body: saveBody(), commands }) ? saveError : null;
@@ -381,7 +380,7 @@ function RecordForm({
   // The server withholds a stored key from another origin (resolve_key), and drops it on Save.
   const keyOrigin = view.key.origin || originOf(saved.address);
   const n2 = keyStored && originOf(address) !== keyOrigin;
-  const fresh = session && session.address === trimAddress(address) && session.key === newKey && (!session.snapshot || session.snapshot === JSON.stringify({ values: bodyValues(), commands })) ? session : null;
+  const fresh = session && session.address === trimAddress(address) && (!session.snapshot || session.snapshot === JSON.stringify({ values: bodyValues(), commands })) ? session : null;
   const freshPassed = Boolean(fresh && fresh.result.outcome !== "error");
   const blocked = addressChanged && !freshPassed;
   const notStarted = view.check.status === "not_started" && !session;
@@ -399,7 +398,7 @@ function RecordForm({
     setDetectNote(null);
     try {
       const result = await enginesApi.check({ definition: definition.definition, values: bodyValues(at) as never, service_id: view.service_id });
-      setSession({ result, address: trimAddress(at), key: newKey, snapshot: JSON.stringify({ values: bodyValues(at), commands }) });
+      setSession({ result, address: trimAddress(at), snapshot: JSON.stringify({ values: bodyValues(at), commands }) });
       // A check never changes what someone who can't edit the settings sees saved.
       if (result.outcome !== "error" && !settingsLocked) {
         if (view.check.status === "not_started" && ticked.size === 0) setTicked(new Set(result.capabilities.filter((c) => c.ticked).map((c) => c.id)));
@@ -468,7 +467,7 @@ function RecordForm({
           const result = await enginesApi.check({ definition: definition.definition, service_id: view.service_id, values: bodyValues() as never });
           const warning = result.findings.find((f) => f.severity === "warning");
           if (result.outcome === "error" || (warning && !acknowledge)) {
-            setSession({ result, address: trimAddress(address), key: newKey });
+            setSession({ result, address: trimAddress(address) });
             if (warning && result.outcome !== "error") setEnableWarning(warning);
             else setEnableError(result.findings[0]?.what ?? "The check found a problem.");
             return;
@@ -488,7 +487,7 @@ function RecordForm({
     } catch (error) {
       const refused = checkFromError(error);
       if (refused) {
-        setSession({ result: refused, address: trimAddress(address), key: newKey });
+        setSession({ result: refused, address: trimAddress(address) });
         const warning = refused.findings.find((f) => f.severity === "warning");
         if (warning && !refused.findings.some((f) => f.severity === "error")) setEnableWarning(warning);
       }
@@ -514,17 +513,15 @@ function RecordForm({
     try {
       let registry: ServiceRegistry;
       if (commandProblem || addressProblem) throw new Error(commandProblem || addressProblem || "");
-      if (commands.length && bodyNow === initialBody) registry = await enginesApi.secretEntries(view.service_id, commands, view.revision);
+      if (commands.length && publicDirty) throw new Error("Save secret changes separately from other settings. Save or discard one group first.");
+      if (commands.length) registry = await enginesApi.secretEntries(view.service_id, commands, viewedRevision);
       else if (settingsLocked || nameOnly) registry = await api.services.edit(view.service_id, { name: name.trim() });
       else {
         const body = saveBody();
         if (options.keepOff) body.disabled = true;
         if (options.acknowledge) body.acknowledge_warnings = true;
         registry = await enginesApi.update(view.service_id, body);
-        if (commands.length) {
-          try { registry = await enginesApi.secretEntries(view.service_id, commands); }
-          catch (error) { throw new Error(`The other settings were saved. Secret changes were not saved. ${errorText(error)}`); }
-        }
+
       }
       queryClient.setQueryData(queryKeys.serviceRegistry, registry);
       await onSaved(
@@ -697,7 +694,7 @@ function RecordForm({
   const enabledNow = enabling ?? view.enabled;
   const offWord = !view.enabled && notStarted;
   const sessionFailed = !view.enabled && view.check.status === "not_started" && session?.result.outcome === "error";
-  const switchDisabled = enabling !== null || (needKey && !owner);
+  const switchDisabled = enabling !== null || saving || dirty || (needKey && !owner);
 
   return (
     <div ref={root} className="contents">
@@ -741,7 +738,7 @@ function RecordForm({
         />
       )}
       {locked && <LockedNote lead="Azizam runs this engine itself. Only its name and Enabled can change." reason={DERIVED_REASON} view={view} />}
-      {notStarted && hasLifecycle && (
+      {notStarted && hasLifecycle && secrets.some(d => d.kind === "argv") && (
         <Note tone="info">
           {owner ? (
             <>
@@ -775,9 +772,9 @@ function RecordForm({
         <div className="bg-card rounded-panel border">
           <div className="flex flex-col gap-4 p-4">
             <FormField label="Name" error={refusedHere("name")}>
-              {(control) => <Input {...control} value={name} autoComplete="off" onChange={(event) => setName(event.target.value)} />}
+              {(control) => <Input {...control} value={name} disabled={commands.length > 0 || saving} autoComplete="off" onChange={(event) => setName(event.target.value)} />}
             </FormField>
-            <fieldset disabled={settingsLocked} className="flex min-w-0 flex-col gap-4">
+            <fieldset disabled={settingsLocked || commands.length > 0 || saving} className="flex min-w-0 flex-col gap-4">
               {"address" in unsupported ? (
                 <div className="flex flex-col gap-1.5">
                   <span className="text-meta font-medium">Address</span>
@@ -900,10 +897,11 @@ function RecordForm({
         </div>
       </section>
 
-      {addressChanged && <p className="text-meta text-muted-foreground">Save the address before editing secrets. A key for a new origin must be configured after that address is saved.</p>}
-      <SecretFields drafts={secrets} onChange={setSecrets} part="connection" disabled={settingsLocked || addressChanged} />
+      {publicDirty && <p className="text-meta text-muted-foreground">Save or discard other settings before editing secrets. Address changes must be saved before a key can be bound to the new origin.</p>}
+      {commands.length > 0 && <p className="text-meta text-muted-foreground">Save or discard the secret changes before changing other settings. The secret batch is saved together.</p>}
+      <SecretFields drafts={secrets} onChange={setSecrets} part="connection" disabled={settingsLocked || publicDirty || saving} />
 
-      <div className="bg-card rounded-panel border p-4"><ProtocolChoice value={protocol} onChange={setProtocol} disabled={settingsLocked} /></div>
+      <div className="bg-card rounded-panel border p-4"><ProtocolChoice value={protocol} onChange={setProtocol} disabled={settingsLocked || commands.length > 0 || saving} /></div>
 
       <section aria-label="More options">
         <MoreOptions
@@ -917,7 +915,7 @@ function RecordForm({
           onCards={setCards}
           owner={owner}
           lifecycleEditable={view.lifecycle_editable}
-          locked={settingsLocked}
+          locked={settingsLocked || commands.length > 0 || saving}
           address={address}
           open={moreOpen}
           onOpenChange={setMoreOpen}
@@ -959,7 +957,7 @@ function RecordForm({
                   onTest={locked || mismatched ? undefined : (id) => void runTest(id)}
                   testNote={testNote}
                   storedNote={STORED_TEST_NOTE}
-                  readOnly={settingsLocked}
+                  readOnly={settingsLocked || commands.length > 0 || saving}
                 />
               </div>
 
@@ -977,7 +975,7 @@ function RecordForm({
                 <ModelsBlock
                   models={models}
                   onChange={setModels}
-                  readOnly={settingsLocked}
+                  readOnly={settingsLocked || commands.length > 0 || saving}
                   error={refusedHere("models")}
                   emptyText="No models are listed yet. Check the server to find them, or add a model by the name the server uses."
                 />
@@ -1016,7 +1014,7 @@ function RecordForm({
                 onCards={setCards}
                 owner={owner}
                 lifecycleEditable={view.lifecycle_editable}
-                locked={settingsLocked || !offeringsEditable}
+                locked={settingsLocked || !offeringsEditable || commands.length > 0 || saving}
                 address={address}
                 errors={optionErrors}
               />
@@ -1051,13 +1049,13 @@ function RecordForm({
               onCards={setCards}
               owner={owner}
               lifecycleEditable={view.lifecycle_editable}
-              locked={locked}
+              locked={locked || commands.length > 0 || saving}
               address={address}
               errors={optionErrors}
             />
           </div>
         )}
-        <SecretFields drafts={secrets} onChange={setSecrets} part="process" disabled={settingsLocked} />
+        <SecretFields drafts={secrets} onChange={setSecrets} part="process" disabled={settingsLocked || publicDirty || saving} />
       </section>
 
       <section aria-labelledby="engine-checks" className="flex flex-col gap-2">
@@ -1094,7 +1092,7 @@ function RecordForm({
         <div role="status" className="bg-card rounded-panel shadow-overlay sm:sticky sm:bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 border px-4 py-3">
           <span className="text-meta">
             {blocked ? "The address changed. Check it again before you save, or save and keep the engine off." : "You have unsaved changes."}
-            {n2 && !newKey ? " Saving removes the old key from this engine." : ""}
+            {n2 ? " Saving removes the old key from this engine." : ""}
           </span>
           <span className="flex flex-wrap gap-2">
             <Button type="button" variant="ghost" size="md" onClick={onDiscard}>

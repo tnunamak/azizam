@@ -67,3 +67,41 @@ it("env is a write-only input with configured metadata", () => {
     "password",
   );
 });
+it("cancels a secret-toggle edit by restoring the original argument", async () => {
+  render(<Editor />);
+  const user = userEvent.setup();
+  const toggle = screen.getByRole("checkbox", {
+    name: "Secret process start command Argument 1",
+  });
+  await user.click(toggle);
+  await user.type(
+    screen.getByLabelText("process start command Argument 1"),
+    "public-draft",
+  );
+  await user.click(screen.getByRole("button", { name: "Cancel replacement" }));
+  expect(toggle).toBeChecked();
+  expect(screen.getByLabelText("process start command Argument 1")).toHaveValue(
+    "",
+  );
+});
+function UrlEditor() {
+  const [drafts, setDrafts] = useState(() =>
+    secretDrafts({ config: { base_url: "http://localhost:8080/v1" } }),
+  );
+  return (
+    <SecretFields
+      drafts={drafts}
+      onChange={setDrafts}
+      part="connection"
+      disabled={false}
+    />
+  );
+}
+it("can cancel URL input without discarding other drafts", async () => {
+  render(<UrlEditor />);
+  const user = userEvent.setup();
+  const input = screen.getByLabelText("config.base_url replacement URL");
+  await user.type(input, "http://user:pass@localhost:8080/v1");
+  await user.click(screen.getByRole("button", { name: "Cancel replacement" }));
+  expect(input).toHaveValue("");
+});

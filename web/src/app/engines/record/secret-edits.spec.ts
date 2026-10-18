@@ -74,10 +74,10 @@ describe("write-only carrier drafts", () => {
       operation: "set",
       items: [
         { literal: "runner" },
-        { secret: "replacement" },
+        { replace: "ent_arg", secret: "replacement" },
         { literal: "--key" },
       ],
-      clear: ["ent_arg"],
+      clear: [],
     });
   });
   it.each(["[redacted]", "<configured>", "<redacted>"])(
@@ -146,4 +146,57 @@ it("edits canonical command fields without offering ignored compatibility copies
   );
   expect(drafts.map((d) => d.carrier)).toContain("process.stop");
   expect(drafts.map((d) => d.carrier)).toContain("process.status");
+});
+
+it("discovers additional URL carriers including a model row", () => {
+  const drafts = secretDrafts({
+    config: {
+      endpoint: "http://localhost",
+      upstream: "http://localhost",
+      models: [{ url: "http://localhost" }],
+    },
+    lifecycle: {
+      driver_config: {
+        load_url: "http://localhost/load",
+        unload_url: "http://localhost/unload",
+        verify_endpoint: "http://localhost/check",
+      },
+    },
+  });
+  expect(drafts.filter((d) => d.kind === "url").map((d) => d.carrier)).toEqual(
+    expect.arrayContaining([
+      "config.endpoint",
+      "config.upstream",
+      "config.models[0].url",
+      "lifecycle.driver_config.load_url",
+      "lifecycle.driver_config.unload_url",
+      "lifecycle.driver_config.verify_endpoint",
+    ]),
+  );
+});
+it("edits scalar control keys by entry id", () => {
+  const drafts = secretDrafts({
+    lifecycle: { admin_key: { id: "ent_control", configured: true } },
+  });
+  const key = drafts.find((d) => d.carrier === "lifecycle.admin_key")!;
+  expect(key.rows[0].value).toBe("");
+  key.rows[0].value = "new-control";
+  expect(secretCommands(drafts)).toEqual([
+    {
+      carrier: "lifecycle.admin_key",
+      operation: "replace",
+      entry_id: "ent_control",
+      value: "new-control",
+    },
+  ]);
+});
+it("keeps URL credential replacement on its saved public endpoint", () => {
+  const drafts = secretDrafts({
+    config: { base_url: "http://localhost:8091/v1" },
+  });
+  const url = drafts.find((d) => d.carrier === "config.base_url")!;
+  url.rows[0].value = "http://user:pass@localhost:8092/v1";
+  expect(secretProblem(drafts)).toMatch(/same public endpoint/i);
+  url.rows[0].value = "http://user:pass@localhost:8091/v1?token=new";
+  expect(secretProblem(drafts)).toBeNull();
 });

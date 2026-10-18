@@ -165,3 +165,70 @@ it("replaces a configured inference key only through its command carrier", async
   );
   expect(update).not.toHaveBeenCalled();
 });
+it("keeps the revision of the entries loaded into the draft after a background refresh", async () => {
+  const { act } = await import("@testing-library/react");
+  const { engineViewKey } = await import("./engine-record-page");
+  const view = engineView({
+    revision: '"os-1"',
+    record: {
+      config: {
+        headers: [{ id: "ent_header", name: "X-Tenant", configured: true }],
+      },
+    },
+  });
+  vi.spyOn(enginesApi, "view").mockResolvedValue(view);
+  const commands = vi
+    .spyOn(enginesApi, "secretEntries")
+    .mockResolvedValue({ services: {} } as never);
+  const mounted = renderWithClient(
+    <EngineRecordPage
+      serviceId={view.service_id}
+      onBack={() => {}}
+      onRemove={() => {}}
+    />,
+  );
+  await userEvent.type(
+    await screen.findByLabelText("Value for X-Tenant"),
+    "draft",
+  );
+  await act(async () =>
+    mounted.client.setQueryData(engineViewKey(view.service_id), {
+      ...view,
+      revision: '"os-2"',
+    }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() =>
+    expect(commands).toHaveBeenCalledWith(
+      view.service_id,
+      expect.any(Array),
+      '"os-1"',
+    ),
+  );
+});
+it("requires separate saves for public settings and a secret batch", async () => {
+  const view = engineView({
+    record: {
+      config: {
+        headers: [{ id: "ent_header", name: "X-Tenant", configured: true }],
+      },
+    },
+  });
+  vi.spyOn(enginesApi, "view").mockResolvedValue(view);
+  renderWithClient(
+    <EngineRecordPage
+      serviceId={view.service_id}
+      onBack={() => {}}
+      onRemove={() => {}}
+    />,
+  );
+  const name = await screen.findByLabelText("Name");
+  await userEvent.type(name, " changed");
+  expect(screen.getByLabelText("Value for X-Tenant")).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+  await userEvent.type(
+    await screen.findByLabelText("Value for X-Tenant"),
+    "replacement",
+  );
+  expect(screen.getByLabelText("Name")).toBeDisabled();
+});

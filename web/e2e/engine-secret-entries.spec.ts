@@ -159,11 +159,20 @@ for (const width of [1280, 390]) {
       await page.getByRole("button", { name: "Save changes", exact: true }).click();
       const saveResponse = await saved;
       expect(saveResponse.status()).toBe(200);
-      expect(saveResponse.request().postDataJSON().commands).toEqual(expect.arrayContaining([
+      const commands = saveResponse.request().postDataJSON().commands as Record<string, unknown>[];
+      expect(commands).toEqual(expect.arrayContaining([
         expect.objectContaining({ carrier: "config.headers", operation: "replace", entry_id: beforeHeader.id }),
         expect.objectContaining({ carrier: "process.env", operation: "replace", entry_id: beforeEnv.id }),
         expect.objectContaining({ carrier: "process.start", operation: "set" }),
       ]));
+      const argvCommand = commands.find((command) => command.carrier === "process.start");
+      expect(argvCommand?.clear).toEqual([]);
+      const items = argvCommand?.items as Record<string, unknown>[] | undefined;
+      const replacement = items?.[3];
+      if (!replacement) throw new Error("argv replacement item is missing");
+      expect(Object.keys(replacement).sort()).toEqual(["replace", "secret"]);
+      expect(replacement.replace).toBe(replacedArgId);
+      expect(typeof replacement.secret).toBe("string");
 
       const after = await readRegistry();
       const afterRecord = after.registry.services[id];
@@ -176,7 +185,7 @@ for (const width of [1280, 390]) {
       expect(afterArgv[0]).toBe("runner");
       expect(entryId(afterArgv[1])).toBe(retainedArgId);
       expect(afterArgv[2]).toBe("--token");
-      expect(entryId(afterArgv[3])).not.toBe(replacedArgId);
+      expect(entryId(afterArgv[3])).toBe(replacedArgId);
       const afterText = JSON.stringify(after.registry);
       for (const canary of Object.values(canaries)) expect(afterText).not.toContain(canary);
       expect(afterText).not.toContain(`header-replacement-${width}`);

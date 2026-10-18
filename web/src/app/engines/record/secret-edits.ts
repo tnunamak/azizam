@@ -18,6 +18,7 @@ export interface SecretDraft {
   rows: SecretRow[];
   initial: string;
   ids: string[];
+  endpoint?: string;
 }
 export type SecretCommand = Record<string, unknown> & {
   carrier: string;
@@ -36,6 +37,8 @@ const containers = [
   "config.process.profile_apply",
 ];
 const urlFields = [
+  "config.endpoint",
+  "config.upstream",
   "config.host",
   "config.url",
   "config.address",
@@ -52,6 +55,15 @@ const urlFields = [
   "lifecycle.driver_config.health_endpoint",
   "config.lifecycle.driver_config.health_endpoint",
   "config.process.health_endpoint",
+  ...[
+    "process.legacy_lifecycle.driver_config",
+    "lifecycle.driver_config",
+    "config.lifecycle.driver_config",
+  ].flatMap((base) =>
+    ["load_url", "unload_url", "verify_endpoint"].map(
+      (key) => `${base}.${key}`,
+    ),
+  ),
 ];
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -59,7 +71,12 @@ function object(value: unknown): Record<string, unknown> {
     : {};
 }
 function get(record: unknown, path: string): unknown {
-  return path.split(".").reduce((node, key) => object(node)[key], record);
+  return path.split(".").reduce((node, key) => {
+    const indexed = /^([^\[\]]+)\[(\d+)\]$/.exec(key);
+    if (!indexed) return object(node)[key];
+    const rows = object(node)[indexed[1]];
+    return Array.isArray(rows) ? rows[Number(indexed[2])] : undefined;
+  }, record);
 }
 function row(value: unknown, name: string, index: number): SecretRow {
   const entry = object(value);
@@ -120,6 +137,15 @@ export function secretDrafts(
         configured: key.state === "configured",
       },
     ]);
+  for (const carrier of [
+    "lifecycle.admin_key",
+    "process.legacy_lifecycle.admin_key",
+    "config.lifecycle.admin_key",
+  ]) {
+    const value = object(get(record, carrier));
+    if (typeof value.id === "string")
+      add(carrier, `${carrier} key`, "key", [row(value, "", 0)]);
+  }
   const headers = get(record, "config.headers");
   add(
     "config.headers",
@@ -167,7 +193,17 @@ export function secretDrafts(
     )
       add("process.env", "Process environment", "env", []);
   }
-  for (const carrier of urlFields) {
+  const models = get(record, "config.models");
+  const modelUrls = Array.isArray(models)
+    ? models.map((_, index) => `config.models[${index}].url`)
+    : [];
+  const observationUrls = Object.keys(
+    object(get(record, "observations")),
+  ).flatMap((name) => [
+    `observations.${name}.http.url`,
+    `observations.${name}.http.path`,
+  ]);
+  for (const carrier of [...urlFields, ...modelUrls, ...observationUrls]) {
     const value = get(record, carrier);
     const entries = object(get(record, carrier + "_entries"));
     if ((typeof value === "string" && value) || Object.keys(entries).length)
@@ -182,6 +218,9 @@ export function secretDrafts(
         },
       ]);
   }
+  for (const draft of drafts)
+    if (draft.kind === "url")
+      draft.endpoint = String(get(record, draft.carrier) ?? "");
   return drafts;
 }
 export function secretCommands(drafts: SecretDraft[]): SecretCommand[] {
@@ -194,6 +233,7 @@ export function secretCommands(drafts: SecretDraft[]): SecretCommand[] {
       const retained = rows
         .filter((r) => r.id && !r.value && !r.edited && r.secret)
         .map((r) => r.id!);
+      const kept = rows.filter((r) => r.id && r.secret).map((r) => r.id!);
       commands.push({
         carrier,
         operation: "set",
@@ -201,10 +241,14 @@ export function secretCommands(drafts: SecretDraft[]): SecretCommand[] {
           retained.includes(r.id ?? "")
             ? { retain: r.id }
             : r.secret
-              ? { secret: r.value, ...(r.prefix ? { prefix: r.prefix } : {}) }
+              ? {
+                  ...(r.id ? { replace: r.id } : {}),
+                  secret: r.value,
+                  ...(r.prefix ? { prefix: r.prefix } : {}),
+                }
               : { literal: r.value },
         ),
-        clear: draft.ids.filter((id) => !retained.includes(id)),
+        clear: draft.ids.filter((id) => !kept.includes(id)),
       });
     } else if (draft.kind === "url") {
       const r = draft.rows[0];
@@ -262,6 +306,13 @@ export function secretProblem(drafts: SecretDraft[]): string | null {
       (rows[0].secret || !rows[0].value.trim())
     )
       return `${draft.label}: the program must be a non-empty public executable.`;
+    if (
+      draft.kind === "url" &&
+      rows[0]?.value &&
+      draft.endpoint &&
+      publicEndpoint(rows[0].value) !== publicEndpoint(draft.endpoint)
+    )
+      return "Use the same public endpoint when replacing URL credentials. Save address changes separately.";
     for (const r of rows) {
       if (
         r.value &&
@@ -296,4 +347,13 @@ export function endpointProblem(address: string): string | null {
     /* The ordinary connection check explains malformed endpoints. */
   }
   return null;
+}
+
+function publicEndpoint(value: string): string {
+  try {
+    const url = new URL(value, "http://relative.invalid");
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch {
+    return value;
+  }
 }

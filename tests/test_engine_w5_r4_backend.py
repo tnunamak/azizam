@@ -208,3 +208,33 @@ def test_connection_secret_commands_invalidate_saved_check_and_tests():
     saved = record(engine_check={'status': 'ok', 'checked_at': 123}, engine_tests={'chat': {'ok': True, 'at': 123}})
     changed, _, _ = apply(saved, {'carrier': 'config.headers', 'operation': 'add', 'name': 'X-Tenant', 'value': 'new-private-tenant'})
     assert not changed['config'].get('engine_check') and not changed['config'].get('engine_tests')
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_an_origin_change_cannot_share_a_secret_batch_with_a_new_key(reverse):
+    saved = record(address='http://127.0.0.1:8080/v1')
+    commands = [{'carrier': 'config.address', 'operation': 'set_credentials', 'url': 'http://user:private@127.0.0.1:9090/v1'},
+                {'carrier': 'config.api_key', 'operation': 'add', 'value': 'new-provider-key'}]
+    if reverse:
+        commands.reverse()
+    writes = []
+    def put(value, origin):
+        writes.append((value, origin))
+        return 'sref_' + str(len(writes)).zfill(24)
+    with pytest.raises(secret_commands.CommandError):
+        secret_commands.apply_commands(saved, secret_commands.parse_commands({'commands': commands}), put)
+    assert writes == []
+
+
+def test_incompatible_operation_is_refused_before_a_valid_batch_item_can_store_a_secret():
+    writes = []
+    def put(value, origin):
+        writes.append(True)
+        return 'sref_000000000000000000000001'
+    request = {'commands': [
+        {'carrier': 'config.headers', 'operation': 'add', 'name': 'X-First', 'value': 'private-first'},
+        {'carrier': 'config.headers', 'operation': 'set', 'items': [], 'clear': []},
+    ]}
+    with pytest.raises(secret_commands.CommandError):
+        secret_commands.apply_commands(record(), secret_commands.parse_commands(request), put)
+    assert writes == []

@@ -200,6 +200,13 @@ resources:
     `GET /admin/api/engines/{service_id}` returns `engine.revision` as `"os-N"`
     from the same registry snapshot as the displayed record. Use that revision
     for commands against those entries. A retain-only call also checks it.
+    With protocol dispatch selected, the key's reference or environment source
+    also supplies `connection.credentials.inference`; the control credential stays
+    separate. A changed inference credential, header or endpoint clears the saved
+    connection check and test evidence.
+    A URL credential command that changes origin must be saved separately from
+    other secret commands. The parser checks carrier/operation compatibility for
+    the whole batch before it can store a secret.
   - **Writing a whole record** (the registry `PUT`, `POST` and `PATCH` of a
     service, the engine page, the left-out record `PUT`). A carrier that holds
     entries comes back exactly as the read showed it, or is left out (then it is
@@ -370,7 +377,9 @@ persistent user directories. The editor sends `values.dispatch: protocol` and
 installed and has the `http-v1` executor, then writes
 `config.connection: {dispatch: protocol, protocol: <id>, address: <root>, transport: http}`.
 Protocol endpoints must have no user info, query or fragment. The existing
-local-only dispatch validation still applies.
+local-only dispatch validation still applies. For an opted-in engine without
+explicit offerings, the protocol lane derives request-field offerings from its
+stored model rows; it does not keep a second model list.
 
 ## 5. Inbound frontends (how callers talk to Azizam) (F7)
 

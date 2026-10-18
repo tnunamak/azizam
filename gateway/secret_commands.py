@@ -132,8 +132,19 @@ def parse_commands(body: Any) -> list[dict[str, Any]]:
         extra = set(command) - _ALLOWED_KEYS[operation]
         if extra:
             raise CommandError("invalid_command", f"command {index + 1} has a field the {operation} operation does not take")
-        if carrier_kind(command.get("carrier")) is None:
+        kind = carrier_kind(command.get("carrier"))
+        if kind is None:
             raise CommandError("unknown_carrier", f"command {index + 1} names a carrier the record model does not have")
+        allowed_operations = {
+            "headers": {"add", "replace", "rename", "retain", "clear"},
+            "env": {"add", "replace", "retain", "clear"},
+            "argv": {"set"},
+            "url": {"set_credentials", "clear_credentials"},
+            "secret": {"add", "replace", "retain", "clear"},
+            "provider_key": {"add", "replace", "retain", "clear"},
+        }
+        if operation not in allowed_operations[kind]:
+            raise CommandError("invalid_command", f"command {index + 1} has an operation that does not apply to this carrier")
         entry_id = command.get("entry_id")
         if "entry_id" in _ALLOWED_KEYS[operation]:
             if not secret_refs.is_entry_id(entry_id):
@@ -359,7 +370,10 @@ def bind_protocol_inference(config: dict[str, Any]) -> None:
     origin = config.get("credential_origin")
     if not origin or record_carriers.endpoint_origin({"address": connection.get("address")}) != origin:
         return
-    credentials = connection.setdefault("credentials", {})
+    credentials = connection.get("credentials")
+    if not isinstance(credentials, dict):
+        credentials = {}
+        connection["credentials"] = credentials
     credentials["inference"] = {"secret_ref": reference, "origin": origin, "header": "Authorization", "scheme": "Bearer"}
 
 
@@ -394,8 +408,8 @@ def _provider_key(record: dict[str, Any], command: Mapping[str, Any], put: Put, 
     record.get("secret_refs", {}).pop("api_key", None)
     if operation == "clear":
         connection = config.get("connection")
-        if isinstance(connection, dict) and connection.get("dispatch") == "protocol":
-            connection.get("credentials", {}).pop("inference", None)
+        if isinstance(connection, dict) and connection.get("dispatch") == "protocol" and isinstance(connection.get("credentials"), dict):
+            connection["credentials"].pop("inference", None)
     else:
         bind_protocol_inference(config)
     out.changed = True
@@ -467,6 +481,21 @@ def apply_commands(record: Mapping[str, Any], commands: list[dict[str, Any]], pu
     out_record = copy.deepcopy(dict(record))
     outcome = Outcome()
     origin = record_carriers.endpoint_origin(out_record.get("config"))
+    if len(commands) > 1:
+        # The batch has one origin snapshot. Refuse a destination move before
+        # storing anything, independent of whether it precedes a key or header.
+        for command in commands:
+            if command.get("operation") != "set_credentials" or not isinstance(command.get("url"), str):
+                continue
+            try:
+                endpoint, _parts = record_carriers.split_url(command["url"])
+            except ValueError:
+                continue  # the URL operation returns its fixed validation error
+            parent, key = _parent(out_record, command["carrier"])
+            previous_origin = secret_refs.origin_or_none(str(parent.get(key) or "")) or origin
+            next_origin = secret_refs.origin_or_none(endpoint)
+            if next_origin is not None and next_origin != previous_origin:
+                raise CommandError("invalid_command", "save a URL that changes origin separately from other secret commands")
     try:
         for command in commands:
             kind = carrier_kind(command["carrier"])
