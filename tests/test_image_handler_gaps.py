@@ -91,12 +91,12 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
              Mock(return_value=SimpleNamespace(is_openai_alias=False))),
             ("_select_edit_workflow", lambda model, **kwargs: model),
             ("_find_image_manifest", Mock(return_value=self.manifest)),
-            ("load_comfy_workflow", Mock(return_value=self.workflow)),
+            ("load_graph_workflow", Mock(return_value=self.workflow)),
             ("_workflow_target_policy_decision", Mock(return_value=None)),
             ("resolve_image_background_decision",
              AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False))),
             ("get_vram_estimate", Mock(return_value=100)),
-            ("comfy_free_vram_bytes", AsyncMock(return_value=10**12)),
+            ("graph_free_vram_bytes", AsyncMock(return_value=10**12)),
             ("compute_max_batch", Mock(return_value=1)),
             ("IMAGE_FREE_VRAM_ON_EXHAUSTION", True),
         ):
@@ -215,7 +215,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
                 )
                 generate = AsyncMock()
                 with patch.object(proxy, "_generate_images_with_adaptive_batching", generate):
-                    response = await asyncio.wait_for(proxy.proxy_comfy_edit_request(
+                    response = await asyncio.wait_for(proxy.proxy_graph_image_edit_request(
                         self.edit_request(), proxy.NO_AUTH_CONTEXT,
                     ), timeout=HANG_BOUND_SECONDS)
                 self.assertEqual(response.status_code, status, response.body)
@@ -239,7 +239,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
                 fake = self.serve(scenario, **values)
                 generate = AsyncMock()
                 with patch.object(proxy, "_generate_images_with_adaptive_batching", generate):
-                    response = await proxy.proxy_comfy_edit_request(
+                    response = await proxy.proxy_graph_image_edit_request(
                         self.edit_request(extra_image=True), proxy.NO_AUTH_CONTEXT,
                     )
                 self.assertEqual(response.status_code, 502, response.body)
@@ -269,8 +269,8 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
         fake = self.serve("upload-ok-any")
         with patch.object(proxy, "_graph_run_round", side_effect=run):
             responses = await asyncio.wait_for(asyncio.gather(
-                proxy.proxy_comfy_edit_request(left, proxy.NO_AUTH_CONTEXT),
-                proxy.proxy_comfy_edit_request(right, proxy.NO_AUTH_CONTEXT),
+                proxy.proxy_graph_image_edit_request(left, proxy.NO_AUTH_CONTEXT),
+                proxy.proxy_graph_image_edit_request(right, proxy.NO_AUTH_CONTEXT),
             ), timeout=2)
         self.assertEqual([r.status_code for r in responses], [200, 200])
         self.assertEqual(sorted(w["p"]["inputs"]["text"] for w in seen), ["LEFT", "RIGHT"])
@@ -288,7 +288,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
         before = copy.deepcopy(self.workflow)
         self.serve("upload-ok-any")
         with patch.object(proxy, "_graph_run_round", side_effect=run):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 self.edit_request(n=2, seed=41), proxy.NO_AUTH_CONTEXT,
             )
         self.assertEqual(response.status_code, 200, response.body)
@@ -302,7 +302,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
                 request = SimpleNamespace(json=AsyncMock(return_value=body))
                 with patch.object(proxy, "_generate_images_with_adaptive_batching",
                                   new_callable=AsyncMock) as generate:
-                    response = await proxy.proxy_comfy_request(request, proxy.NO_AUTH_CONTEXT)
+                    response = await proxy.proxy_graph_image_request(request, proxy.NO_AUTH_CONTEXT)
                 self.assertEqual(response.status_code, 400, response.body)
                 error = json.loads(response.body)["error"]
                 self.assertEqual(error["type"], "invalid_request_error")
@@ -315,9 +315,9 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
 class ImageRouteCancellationGapTests(IsolatedAsyncioTestCase):
     async def test_public_routes_persist_one_cancelled_receipt_and_reraise(self):
         cases = [
-            (proxy.images_generations, "proxy_comfy_request", "image.generate"),
-            (proxy.images_edits, "proxy_comfy_edit_request", "image.edit"),
-            (proxy.images_variations, "proxy_comfy_variations_request", "image.variations"),
+            (proxy.images_generations, "proxy_graph_image_request", "image.generate"),
+            (proxy.images_edits, "proxy_graph_image_edit_request", "image.edit"),
+            (proxy.images_variations, "proxy_graph_image_variations_request", "image.variations"),
         ]
         for route, worker_name, intent in cases:
             with self.subTest(intent=intent):
@@ -395,3 +395,32 @@ class ImageRoundCancellationGapTests(IsolatedAsyncioTestCase):
                                 await asyncio.gather(task, return_exceptions=True)
                 self.assertEqual([r.path for r in fake.requests], ["/prompt", "/history/mine", "/api/jobs/mine/cancel"])
                 probe.stop.assert_awaited_once()
+
+
+def test_graph_failure_response_maps_transport_failures_and_httpx_errors(monkeypatch):
+    """Adapter transport failures and the httpx errors of other calls in the same try read the same to the caller."""
+    from gateway.engine_protocol.errors import TransportFailure
+
+    monkeypatch.setattr(proxy, "COMFY_HOST", "http://graph.test:1")
+    for error, status, message in (
+        (TransportFailure("timeout", "read"), 504, "ComfyUI request timeout"),
+        (httpx.ReadTimeout("read"), 504, "ComfyUI request timeout"),
+        (TransportFailure("unreachable", "refused"), 502, "ComfyUI unavailable at http://graph.test:1"),
+        (httpx.ConnectError("refused"), 502, "ComfyUI unavailable at http://graph.test:1"),
+    ):
+        response = proxy._graph_failure_response(error)
+        assert (response.status_code, response.media_type, response.body) == (
+            status, "application/json", json.dumps({"error": {"message": message, "type": "api_error"}}).encode())
+    for other in (TransportFailure("aborted", "dropped"), httpx.RemoteProtocolError("dropped"), ValueError("x")):
+        assert proxy._graph_failure_response(other) is None
+
+
+def test_identity_upload_refusal_still_raises_the_httpx_error(monkeypatch):
+    """The identity routes catch httpx.HTTPError: an upload that cannot connect keeps raising the error they handle."""
+    _refused_comfy_host(monkeypatch)
+    monkeypatch.setattr(proxy, "COMFY_ENABLED", True)
+    with pytest.raises(httpx.ConnectError):
+        asyncio.run(asyncio.wait_for(
+            proxy._identity_run_workflow(proxy.NO_AUTH_CONTEXT, {"1": {"inputs": {}}}, {"1": _png_bytes((0, 0, 0, 255))}),
+            timeout=HANG_BOUND_SECONDS,
+        ))

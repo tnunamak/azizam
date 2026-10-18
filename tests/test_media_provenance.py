@@ -29,9 +29,10 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from tests.support.access import plan_for, access, access_context, auth_identity  # noqa: E402
-from gateway import admin_store, comfy_object_info, media_delivery, media_jobs, media_metadata, prompt_memory, provenance, receipt_store  # noqa: E402
+from gateway import admin_store, media_delivery, media_jobs, media_metadata, prompt_memory, provenance, receipt_store  # noqa: E402
 
-_REAL_OBJECT_INFO_LOOKUP = comfy_object_info.lookup  # tests/conftest.py stubs the module attribute
+from gateway.engine_protocol import node_info  # noqa: E402
+_REAL_OBJECT_INFO_LOOKUP = node_info.lookup  # tests/conftest.py stubs the module attribute
 from gateway.extensions import validate_extension_inputs  # noqa: E402
 from gateway.access_plans import PlanError, plan_from_document, plan_to_document  # noqa: E402
 
@@ -479,13 +480,13 @@ class ImageRouteTests(unittest.IsolatedAsyncioTestCase):
         receipt = proxy.start_image_route_receipt("/v1/images/generations", auth_context)
         with patch.object(proxy, "_graph_run_round", fake_round), patch.object(
             proxy, "get_vram_estimate", lambda *_a, **_k: 1024), patch.object(
-            proxy, "comfy_free_vram_bytes", AsyncMock(return_value=10**10)
+            proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**10)
         ), patch.object(proxy, "_service_availability_response", lambda *_a, **_k: None), patch.object(
             proxy.httpx, "AsyncClient", lambda *a, **k: _NullClient()
         ), patch.object(
             proxy, "configured_downstream_headers", lambda *_a: {}
         ):
-            response = await proxy.proxy_comfy_request(Req(), auth_context, receipt=receipt)  # type: ignore[arg-type]
+            response = await proxy.proxy_graph_image_request(Req(), auth_context, receipt=receipt)  # type: ignore[arg-type]
         return response, json.loads(response.body)
 
     async def test_plan_bound_and_request_override(self) -> None:
@@ -964,10 +965,10 @@ class MetadataOnlyExtensionTests(unittest.TestCase):
 
 class ObjectInfoLookupTests(unittest.TestCase):
     def setUp(self) -> None:
-        comfy_object_info._CACHE.clear()
-        comfy_object_info._FAILED_AT.clear()
-        self.addCleanup(comfy_object_info._CACHE.clear)
-        self.addCleanup(comfy_object_info._FAILED_AT.clear)
+        node_info._CACHE.clear()
+        node_info._FAILED_AT.clear()
+        self.addCleanup(node_info._CACHE.clear)
+        self.addCleanup(node_info._FAILED_AT.clear)
 
     def _client(self, calls: list[str], *, status: int = 200, raises: bool = False):
         class Client:
@@ -992,7 +993,7 @@ class ObjectInfoLookupTests(unittest.TestCase):
 
     def test_success_is_cached(self) -> None:
         calls: list[str] = []
-        with patch.object(comfy_object_info.httpx, "Client", self._client(calls)):
+        with patch.object(node_info.httpx, "Client", self._client(calls)):
             first = _REAL_OBJECT_INFO_LOOKUP("http://h", "KSampler")
             second = _REAL_OBJECT_INFO_LOOKUP("http://h", "KSampler")
         self.assertEqual(first, {"output": ["LATENT"]})
@@ -1001,12 +1002,12 @@ class ObjectInfoLookupTests(unittest.TestCase):
 
     def test_failure_is_retried_after_the_ttl_not_forever(self) -> None:
         calls: list[str] = []
-        with patch.object(comfy_object_info.httpx, "Client", self._client(calls, raises=True)):
+        with patch.object(node_info.httpx, "Client", self._client(calls, raises=True)):
             self.assertIsNone(_REAL_OBJECT_INFO_LOOKUP("http://h", "KSampler"))
             self.assertIsNone(_REAL_OBJECT_INFO_LOOKUP("http://h", "KSampler"))
             self.assertEqual(len(calls), 1)  # inside the TTL: no second attempt
-            comfy_object_info._FAILED_AT[("http://h", "KSampler")] -= comfy_object_info.FAILURE_TTL + 1
-        with patch.object(comfy_object_info.httpx, "Client", self._client(calls)):
+            node_info._FAILED_AT[("http://h", "KSampler")] -= node_info.FAILURE_TTL + 1
+        with patch.object(node_info.httpx, "Client", self._client(calls)):
             self.assertEqual(_REAL_OBJECT_INFO_LOOKUP("http://h", "KSampler"), {"output": ["LATENT"]})
         self.assertEqual(len(calls), 2)
 
@@ -1033,7 +1034,7 @@ class UiGraphSubmitTests(unittest.TestCase):
             "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "THIS REQUEST", "clip": ["1", 1]}},
             "__ui_workflow__": {"nodes": [], "stale": True},
         }
-        with patch.object(proxy, "_comfy_object_info", lambda ct: self.OBJECT_INFO.get(ct)):
+        with patch.object(proxy, "_graph_node_info", lambda ct: self.OBJECT_INFO.get(ct)):
             payload = proxy._build_graph_submit_payload(graph)
         ui = payload["extra_data"]["extra_pnginfo"]["workflow"]
         self.assertNotIn("stale", ui)
@@ -1048,7 +1049,7 @@ class UiGraphSubmitTests(unittest.TestCase):
             "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "a"}},
             "__ui_workflow__": {"nodes": [], "twin": True},
         }
-        with patch.object(proxy, "_comfy_object_info", lambda ct: None):
+        with patch.object(proxy, "_graph_node_info", lambda ct: None):
             payload = proxy._build_graph_submit_payload(graph)
         self.assertTrue(payload["extra_data"]["extra_pnginfo"]["workflow"]["twin"])
 

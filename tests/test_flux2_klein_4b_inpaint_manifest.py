@@ -24,7 +24,7 @@ WORKFLOW_PATH = ROOT / "workflows/images/flux2-klein-4b-inpaint.json"
 class TestFlux2KleinInpaintManifest(unittest.TestCase):
     def setUp(self) -> None:
         self.manifest = load_workflow_manifest(MANIFEST_PATH)
-        self.workflow = proxy.load_comfy_workflow("flux2-klein-4b-inpaint")
+        self.workflow = proxy.load_graph_workflow("flux2-klein-4b-inpaint")
 
     def test_workflow_file_loads(self) -> None:
         self.assertTrue(WORKFLOW_PATH.exists())

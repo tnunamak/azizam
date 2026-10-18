@@ -19,13 +19,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import comfy_object_info, comfy_ui_graph, media_metadata  # noqa: E402
-from gateway import comfy_workflow_catalog as catalog  # noqa: E402
+from gateway import media_metadata  # noqa: E402
+from gateway.engine_protocol import node_catalog as catalog  # noqa: E402
+from gateway.engine_protocol import node_info, node_ui_graph  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "comfy_object_info_catalog.json"
 OBJECT_INFO = json.loads(FIXTURE.read_text())
-_REAL_LOOKUP = comfy_object_info.lookup  # tests/conftest.py stubs the module attribute per test
-PATHS = catalog.catalog_workflow_paths(ROOT)
+_REAL_LOOKUP = node_info.lookup  # tests/conftest.py stubs the module attribute per test
+PATHS = catalog.catalog_workflow_paths(ROOT, "comfyui")
 
 # Known gaps, each with the reason. A listed workflow that starts passing fails
 # the test (strict xfail), which forces this list to shrink.
@@ -65,8 +66,8 @@ def test_workflow_derives_a_complete_ui_graph(path: Path, request: pytest.Fixtur
 @pytest.mark.parametrize("path", PATHS, ids=_rel)
 def test_submit_payload_embeds_workflow(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The real submit helper, on the template as the gateway loads it."""
-    monkeypatch.setattr(proxy, "_comfy_object_info", OBJECT_INFO.get)
-    workflow = proxy._load_comfy_workflow_file(path)
+    monkeypatch.setattr(proxy, "_graph_node_info", OBJECT_INFO.get)
+    workflow = proxy._load_graph_workflow_file(path)
     assert workflow is not None, "gateway rejects this workflow"
     payload = proxy._build_graph_submit_payload(workflow)
     ui = payload["extra_data"]["extra_pnginfo"]["workflow"]
@@ -80,12 +81,12 @@ def test_readable_node_ids_get_integer_ids() -> None:
         "clip_text": {"class_type": "CLIPTextEncode", "inputs": {"text": "hi", "clip": ["7", 1]}},
         "a_first": {"class_type": "CLIPTextEncode", "inputs": {"text": "yo", "clip": ["7", 1]}},
     }
-    ui = comfy_ui_graph.derive_ui_workflow(api, OBJECT_INFO.get)
+    ui = node_ui_graph.derive_ui_workflow(api, OBJECT_INFO.get)
     assert ui is not None
     ids = {n["properties"].get("api_node_id", str(n["id"])): n["id"] for n in ui["nodes"]}
     assert ids == {"7": 7, "a_first": 8, "clip_text": 9}
     assert len(ui["links"]) == 2 and ui["last_node_id"] == 9
-    assert comfy_ui_graph.validate_ui_workflow(api, ui) == []
+    assert node_ui_graph.validate_ui_workflow(api, ui) == []
 
 
 def test_validator_reports_a_dropped_link() -> None:
@@ -93,13 +94,13 @@ def test_validator_reports_a_dropped_link() -> None:
         "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "a"}},
         "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "hi", "clip": ["1", 1]}},
     }
-    ui = comfy_ui_graph.derive_ui_workflow(api, OBJECT_INFO.get)
+    ui = node_ui_graph.derive_ui_workflow(api, OBJECT_INFO.get)
     ui["links"] = []
-    assert any("link" in p for p in comfy_ui_graph.validate_ui_workflow(api, ui))
+    assert any("link" in p for p in node_ui_graph.validate_ui_workflow(api, ui))
 
 
 def test_object_info_falls_back_to_last_good_disk_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    module = comfy_object_info
+    module = node_info
     monkeypatch.setattr(module, "lookup", _REAL_LOOKUP)
     info = {"input": {"required": {}}, "output": [], "output_name": []}
     calls = {"ok": True}

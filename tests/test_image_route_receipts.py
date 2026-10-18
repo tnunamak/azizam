@@ -274,7 +274,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         ), patch.object(
             proxy, "get_vram_estimate", lambda *_a, **_k: 1024
         ), patch.object(
-            proxy, "comfy_free_vram_bytes", AsyncMock(return_value=10**10)
+            proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**10)
         ):
             response = await proxy._generate_images_with_adaptive_batching(
                 request=request,  # type: ignore[arg-type]
@@ -318,7 +318,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         meta = {"batch_size_node": "b", "batch_size_field": "batch_size"}
         with patch.object(proxy, "_graph_run_round", fake_run_round), patch.object(
             proxy, "get_vram_estimate", lambda *_a, **_k: estimate
-        ), patch.object(proxy, "comfy_free_vram_bytes", fake_free), patch.object(
+        ), patch.object(proxy, "graph_free_vram_bytes", fake_free), patch.object(
             proxy, "_free_graph_models_if_idle", free_models
         ), patch.object(proxy, "IMAGE_VRAM_RESERVE_BYTES", 1 << 30), patch.object(
             proxy, "IMAGE_FREE_VRAM_ON_EXHAUSTION", True
@@ -387,7 +387,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch.object(proxy, "COMFY_ENABLED", True):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
                 receipt=receipt,
@@ -879,12 +879,12 @@ class TestImageEditMaskSemantics(unittest.TestCase):
         self.assertEqual(body["error"]["code"], "invalid_mask_dimensions")
 
     def test_inpaint_workflow_is_preferred_only_when_it_exists(self) -> None:
-        with patch.object(proxy, "load_comfy_workflow", lambda name: {"ok": True} if name.endswith("-inpaint") else None):
+        with patch.object(proxy, "load_graph_workflow", lambda name: {"ok": True} if name.endswith("-inpaint") else None):
             self.assertEqual(
                 proxy._prefer_inpaint_workflow_for_mask("flux2-klein-4b-edit"),
                 "flux2-klein-4b-inpaint",
             )
-        with patch.object(proxy, "load_comfy_workflow", lambda _name: None):
+        with patch.object(proxy, "load_graph_workflow", lambda _name: None):
             self.assertEqual(
                 proxy._prefer_inpaint_workflow_for_mask("flux2-klein-4b-edit"),
                 "flux2-klein-4b-edit",
@@ -977,7 +977,7 @@ class TestFinishReceiptIncludesRoutingFacts(unittest.TestCase):
 
 
 class TestProxyComfyRequestReceipt(unittest.IsolatedAsyncioTestCase):
-    """Integration-ish: drive proxy_comfy_request with COMFY disabled or invalid
+    """Integration-ish: drive proxy_graph_image_request with COMFY disabled or invalid
     bodies to exercise early-return receipt instrumentation without ComfyUI."""
 
     def _receipt(self) -> RouteReceipt:
@@ -1000,7 +1000,7 @@ class TestProxyComfyRequestReceipt(unittest.IsolatedAsyncioTestCase):
                 "configured_downstream_headers",
                 lambda _ac, _b: {},
             ):
-                response = await proxy.proxy_comfy_request(
+                response = await proxy.proxy_graph_image_request(
                     _StubRequest(),  # type: ignore[arg-type]
                     OWNER_CONTEXT,
                     receipt=receipt,
@@ -1015,7 +1015,7 @@ class TestProxyComfyRequestReceipt(unittest.IsolatedAsyncioTestCase):
                 return {}
 
         with patch.object(proxy, "COMFY_ENABLED", False):
-            response = await proxy.proxy_comfy_request(
+            response = await proxy.proxy_graph_image_request(
                 _StubRequest(),  # type: ignore[arg-type]
                 OWNER_CONTEXT,
                 receipt=receipt,
@@ -1251,7 +1251,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
             )
@@ -1278,7 +1278,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
             proxy, "_service_availability_response", return_value=None
         ):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 request, OWNER_CONTEXT  # type: ignore[arg-type]
             )
 
@@ -1382,7 +1382,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             lambda _auth_context, _service: {},
         ), patch.object(
             proxy,
-            "load_comfy_workflow",
+            "load_graph_workflow",
             lambda _model: copy.deepcopy(workflow),
         ), patch.object(
             proxy,
@@ -1393,7 +1393,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
                 receipt=receipt,
@@ -1514,7 +1514,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             lambda _auth_context, _service: {},
         ), patch.object(
             proxy,
-            "load_comfy_workflow",
+            "load_graph_workflow",
             lambda _model: copy.deepcopy(workflow),
         ), patch.object(
             proxy,
@@ -1525,7 +1525,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
                 receipt=receipt,
@@ -1694,7 +1694,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
                 receipt=receipt,
@@ -1737,7 +1737,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
                 receipt=receipt,
@@ -1810,7 +1810,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
                 receipt=receipt,
@@ -1838,14 +1838,14 @@ class TestEditWorkflowSelection(unittest.TestCase):
         self.assertEqual(
             proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW, "qwen-image-2.1-edit"
         )
-        self.assertIsNotNone(proxy.load_comfy_workflow("flux2-klein-4b"))
-        self.assertIsNotNone(proxy.load_comfy_workflow("flux2-klein-4b-edit"))
-        workflow = proxy.load_comfy_workflow("krea2-turbo")
+        self.assertIsNotNone(proxy.load_graph_workflow("flux2-klein-4b"))
+        self.assertIsNotNone(proxy.load_graph_workflow("flux2-klein-4b-edit"))
+        workflow = proxy.load_graph_workflow("krea2-turbo")
         assert workflow is not None
         meta = workflow.pop("_meta")
         self.assertTrue(proxy.set_workflow_background_removal(workflow, meta, True))
         self.assertEqual(workflow["9"]["inputs"]["images"], ["10", 0])
-        workflow = proxy.load_comfy_workflow("krea2-turbo")
+        workflow = proxy.load_graph_workflow("krea2-turbo")
         assert workflow is not None
         meta = workflow.pop("_meta")
         self.assertTrue(proxy.set_workflow_background_removal(workflow, meta, True))
@@ -1985,7 +1985,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
             lambda _auth_context, _service: {},
         ), patch.object(
             proxy,
-            "load_comfy_workflow",
+            "load_graph_workflow",
             lambda _model: copy.deepcopy(workflow),
         ), patch.object(
             proxy,
@@ -1996,7 +1996,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
                 receipt=receipt,
@@ -2047,7 +2047,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
                 receipt=receipt,
@@ -2088,14 +2088,14 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
             lambda _auth_context, _service: {},
         ), patch.object(
             proxy,
-            "load_comfy_workflow",
+            "load_graph_workflow",
             lambda _model: copy.deepcopy(workflow),
         ), patch.object(
             proxy,
             "_find_image_manifest",
             lambda _intent, _model: None,
         ):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
                 receipt=receipt,
@@ -2141,7 +2141,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
             lambda _auth_context, _service: {},
         ), patch.object(
             proxy,
-            "load_comfy_workflow",
+            "load_graph_workflow",
             lambda _model: copy.deepcopy(workflow),
         ), patch.object(
             proxy,
@@ -2152,7 +2152,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
                 receipt=receipt,
@@ -2216,7 +2216,7 @@ class TestJpegBackgroundAutoBypass(unittest.IsolatedAsyncioTestCase):
         with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
             proxy, "configured_downstream_headers", lambda _a, _b: {}
         ), patch.object(
-            proxy, "load_comfy_workflow", lambda _m: copy.deepcopy(workflow)
+            proxy, "load_graph_workflow", lambda _m: copy.deepcopy(workflow)
         ), patch.object(
             proxy, "_find_image_manifest", lambda _i, _m: None
         ), patch.object(
@@ -2224,7 +2224,7 @@ class TestJpegBackgroundAutoBypass(unittest.IsolatedAsyncioTestCase):
         ), patch.object(
             proxy, "decide_image_background_removal", decide_mock
         ):
-            response = await proxy.proxy_comfy_request(
+            response = await proxy.proxy_graph_image_request(
                 _StubRequest(), OWNER_CONTEXT  # type: ignore[arg-type]
             )
 
@@ -2307,7 +2307,7 @@ class TestQualityStepsWiring(unittest.IsolatedAsyncioTestCase):
             lambda _auth_context, _service: {},
         ), patch.object(
             proxy,
-            "load_comfy_workflow",
+            "load_graph_workflow",
             lambda _model: copy.deepcopy(workflow),
         ), patch.object(
             proxy,
@@ -2318,7 +2318,7 @@ class TestQualityStepsWiring(unittest.IsolatedAsyncioTestCase):
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
                 receipt=receipt,
@@ -2360,7 +2360,7 @@ class TestProxyComfyEditRequestOutputShape(unittest.IsolatedAsyncioTestCase):
         )
         request = _MultipartRequest([("model", "flux2-klein-4b-edit"), *extra_fields])
         with patch.object(proxy, "COMFY_ENABLED", True):
-            response = await proxy.proxy_comfy_edit_request(
+            response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
                 receipt=receipt,
@@ -2460,7 +2460,7 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
             lambda _auth_context, _service: {},
         ), patch.object(
             proxy,
-            "load_comfy_workflow",
+            "load_graph_workflow",
             lambda _model: copy.deepcopy(workflow),
         ), patch.object(
             proxy,
@@ -2471,7 +2471,7 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
             "_generate_images_with_adaptive_batching",
             fake_generate,
         ):
-            response = await proxy.proxy_comfy_variations_request(
+            response = await proxy.proxy_graph_image_variations_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
                 receipt=receipt,

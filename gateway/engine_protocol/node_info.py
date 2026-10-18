@@ -1,7 +1,7 @@
 """ComfyUI ``/object_info`` lookup with a cache that survives transient errors.
 
 The gateway derives the UI workflow it embeds in generated media from each
-node type's slot definitions (see ``gateway.comfy_ui_graph``). A successful
+node type's slot definitions (see ``gateway.engine_protocol.node_ui_graph``). A successful
 answer is cached for the life of the process. A failure is remembered only for
 ``FAILURE_TTL`` seconds, so a ComfyUI that is down costs one short attempt per
 node type per minute, and a transient error does not disable the lookup until
