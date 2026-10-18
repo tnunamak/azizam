@@ -26,6 +26,8 @@ ADDED_PATHS: dict[str, str] = {
                                                      "tests/test_excluded_records.py covers it",
     "/me/api/media/remove-missing": "Library 'Remove missing items' (r64), outside the OpenAPI schema; "
                                     "tests/test_library_remove_missing.py covers it",
+    "/me/api/media/confirm-folder": "Library 'This is the right media folder' (owner confirm of the media marker, D17), "
+                                    "outside the OpenAPI schema; tests/test_library_remove_missing.py covers it",
 }
 
 
