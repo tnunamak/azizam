@@ -1071,3 +1071,44 @@ def test_package_lifecycle_runtime_stale_generation_is_atomic(tmp_path, monkeypa
         )
     assert store.get_extension_package_index() == before_index
     assert store.get_service_registry() == before_registry
+
+
+def test_the_stored_index_keeps_a_digest_of_each_installed_record(tmp_path, monkeypatch):
+    import json
+    import re
+    store, _actor, _source, _installed = _installed_lifecycle_store(tmp_path, monkeypatch)
+    from gateway import admin_store
+    stored = admin_store.get_operator_setting(EXTENSION_PACKAGE_INDEX_SETTING_KEY, path=store.path)["value"]
+    entry = stored["packages"]["lifecycle"]["installed_records"]["services"]["lifecycle-service"]
+    assert set(entry) == {"kind", "id", "sha256"}
+    assert entry["kind"] == "services" and entry["id"] == "lifecycle-service"
+    assert re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])
+    assert "localhost:9999" not in json.dumps(stored)
+
+
+def test_an_index_from_before_the_digests_is_migrated_once_and_keeps_its_matching(tmp_path):
+    import json
+    from gateway import admin_store
+    from gateway.extension_packages import installed_record_digest
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    record = {
+        "id": "old-service", "enabled": True, "name": "Old",
+        "config": {"base_url": "http://localhost:9998"},
+        "provenance": {"package_id": "old", "package_version": "1", "package_hash": "h"},
+    }
+    legacy = {"packages": {"old": {
+        "id": "old", "version": "1", "enabled": True, "package_hash": "h",
+        "installed_records": {"services": {"old-service": record}},
+    }}, "sources": [], "updated_at": 1}
+    admin_store.put_operator_setting(EXTENSION_PACKAGE_INDEX_SETTING_KEY, legacy, path=db)
+
+    admin_store.init_db(db)
+    once = admin_store.get_operator_setting(EXTENSION_PACKAGE_INDEX_SETTING_KEY, path=db)["value"]
+    admin_store.init_db(db)
+    again = admin_store.get_operator_setting(EXTENSION_PACKAGE_INDEX_SETTING_KEY, path=db)["value"]
+
+    assert again == once
+    assert "localhost:9998" not in json.dumps(once)
+    entry = once["packages"]["old"]["installed_records"]["services"]["old-service"]
+    assert entry == {"kind": "services", "id": "old-service", "sha256": installed_record_digest(record)}
