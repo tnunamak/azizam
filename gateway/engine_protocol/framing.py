@@ -24,43 +24,43 @@ class SseEvent:
 class SseDecoder:
     def __init__(self, max_event_bytes: int = DEFAULT_BUDGETS.max_event_bytes) -> None:
         self._max = max_event_bytes
-        self._buf = b""
+        self._buf = bytearray()
+        self._scan = 0
+        self._held_cr = False
 
     def feed(self, chunk: bytes) -> list[SseEvent]:
-        buf = self._buf + chunk if self._buf else chunk
-        held = b""
-        if b"\r" in buf:
-            if buf.endswith(b"\r"):
-                buf, held = buf[:-1], b"\r"  # the LF of a CRLF may open the next chunk
-            buf = buf.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        # Normalize only newly arrived bytes, never the growing pending event.
+        if self._held_cr:
+            chunk = b"\r" + chunk
+        self._held_cr = chunk.endswith(b"\r")
+        if self._held_cr:
+            chunk = chunk[:-1]
+        chunk = chunk.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        self._buf.extend(chunk)
         events: list[SseEvent] = []
         start = 0
-        find = buf.find
         while True:
-            end = find(b"\n\n", start)
+            end = self._buf.find(b"\n\n", self._scan)
             if end < 0:
+                self._scan = max(start, len(self._buf) - 1)
                 break
             if end - start > self._max:
                 raise BudgetExceeded("max_event_bytes", f"An SSE event is larger than {self._max} bytes.")
-            event = self._parse(buf[start:end])
+            event = self._parse(bytes(self._buf[start:end]))
             if event is not None:
                 events.append(event)
             start = end + 2
-        rest = buf[start:]
-        if len(rest) > self._max:
+            self._scan = start
+        if start:
+            del self._buf[:start]
+            self._scan -= start
+        if len(self._buf) > self._max:
             raise BudgetExceeded("max_event_bytes", f"An SSE event is larger than {self._max} bytes.")
-        self._buf = rest + held
         return events
 
     def finish(self) -> list[SseEvent]:
-        """Events the end of the stream completes: a held CR is a line ending, so ``data: a\\r\\r`` is whole.
-
-        Bytes of an event with no blank line after it stay held (``pending`` is then true): that stream was cut.
-        """
-        if not self._buf.endswith(b"\r"):
-            return []
-        held, self._buf = self._buf[:-1], b""
-        return self.feed(held + b"\n")
+        """A held CR completes a line; an event still needs its blank line."""
+        return self.feed(b"\n") if self._held_cr else []
 
     @staticmethod
     def _parse(block: bytes) -> SseEvent | None:
@@ -90,25 +90,37 @@ class SseDecoder:
 class NdjsonDecoder:
     def __init__(self, max_line_bytes: int) -> None:
         self._max = max_line_bytes
-        self._buf = b""
+        self._buf = bytearray()
+        self._scan = 0
 
     def feed(self, chunk: bytes) -> list[bytes]:
-        lines = (self._buf + chunk).split(b"\n") if self._buf else chunk.split(b"\n")
-        self._buf = lines.pop()
-        if len(self._buf) > self._max:
-            raise BudgetExceeded("max_event_bytes", f"An NDJSON line is larger than {self._max} bytes.")
+        self._buf.extend(chunk)
         out: list[bytes] = []
-        for line in lines:
-            if len(line) > self._max:
+        start = 0
+        while True:
+            end = self._buf.find(b"\n", self._scan)
+            if end < 0:
+                self._scan = len(self._buf)
+                break
+            if end - start > self._max:
                 raise BudgetExceeded("max_event_bytes", f"An NDJSON line is larger than {self._max} bytes.")
-            line = line.rstrip(b"\r")
+            line = bytes(self._buf[start:end]).rstrip(b"\r")
             if line:
                 out.append(line)
+            start = end + 1
+            self._scan = start
+        if start:
+            del self._buf[:start]
+            self._scan -= start
+        if len(self._buf) > self._max:
+            raise BudgetExceeded("max_event_bytes", f"An NDJSON line is larger than {self._max} bytes.")
         return out
 
     def finish(self) -> list[bytes]:
         """The last line when the stream ended without a final newline."""
-        rest, self._buf = self._buf.rstrip(b"\r"), b""
+        rest = bytes(self._buf).rstrip(b"\r")
+        self._buf.clear()
+        self._scan = 0
         return [rest] if rest else []
 
 
