@@ -50,3 +50,8 @@ def test_plain_headers_cannot_override_credentials_or_http_framing(tmp_path):
         {"name": "X-Workspace", "value": "tenant"},
     ]}, tmp_path)
     assert result.headers == {"content-type": "application/json", "x-workspace": "tenant"}
+
+
+def test_legacy_base_path_already_contains_the_saved_prefix(tmp_path):
+    result = connection({"host": "server.invalid", "port": 80, "base_path": "/provider/v1", "path_prefix": "/v1"}, tmp_path)
+    assert result.url == "http://server.invalid:80/provider/v1/chat/completions"

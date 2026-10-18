@@ -51,6 +51,7 @@ from gateway.engine_check import (
     run_real_test,
 )
 from gateway.engine_definitions import EngineCatalog, EngineDefinitionError, load_engine_catalog
+from gateway.engine_connection import inference_base_url
 from gateway.litellm_substrate import CREDENTIAL_HEADER_RE, header_problem, reaches_engine_directly, routed_models
 
 # Record keys this module writes. Every other config key is the owner's and is
@@ -604,7 +605,7 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     }
     values = {k: v for k, v in values.items() if k in field_keys}
     other = {k: v for k, v in config.items() if k not in _KNOWN_CONFIG_KEYS and k != "engine_capabilities"}
-    request_base = join_url(address, str(config.get("path_prefix") or ""))
+    request_base = inference_base_url(config)
     hop_routed = bool(config.get("gateway_lifecycle") or any(
         row.get("gateway_lifecycle") for row in model_rows(config.get("models"))
     ))

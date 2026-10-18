@@ -19,6 +19,13 @@ class InferenceConnection:
     read_timeout: float
 
 
+def inference_base_url(config: Mapping[str, Any], fallback_address: str = "") -> str:
+    """Saved forms keep address plus prefix; legacy base_path already includes it."""
+    if config.get("address"):
+        return join_url(str(config["address"]), str(config.get("path_prefix") or ""))
+    return service_registry.service_base_url(config) or fallback_address
+
+
 def inference_connection(
     record: Mapping[str, Any] | None, operation_path: str, *,
     fallback_address: str, fallback_timeout: float, db_path: Path,
@@ -32,7 +39,7 @@ def inference_connection(
     """
     config = (record or {}).get("config") or {}
     address = str(config.get("address") or service_registry.service_base_url(config) or fallback_address)
-    base = join_url(address, str(config.get("path_prefix") or ""))
+    base = inference_base_url(config, fallback_address)
     headers = {"content-type": "application/json"}
     headers.update({name.lower(): value for name, value in engine_headers(config).items()})
     origin = service_registry.origin_of(address)
