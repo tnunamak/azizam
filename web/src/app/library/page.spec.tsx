@@ -2098,21 +2098,21 @@ describe("Library paging regressions", () => {
 });
 
 describe("Library items whose files are gone", () => {
-  // Written before the 24-hour expiry ended on 2026-10-11.
+  // Written before the expiry cutoff, 2026-10-10 11:59:31 CDT.
   const oldGone = (id: string, prompt: string) =>
     picture(id, prompt, {
       available: false,
       unavailable_reason: "missing_or_expired",
       created_at: Date.UTC(2026, 9, 5) / 1000,
     });
-  // Made a second before, and exactly at, the moment the expiry was removed (2026-10-11T16:59:31Z).
+  // Made a second before, and exactly at, the expiry cutoff (2026-10-10T16:59:31Z).
   const justBefore = (id: string) =>
     picture(id, "Just before", {
-      available: false, unavailable_reason: "missing_or_expired", created_at: Date.UTC(2026, 9, 11, 16, 59, 30) / 1000,
+      available: false, unavailable_reason: "missing_or_expired", created_at: Date.UTC(2026, 9, 10, 16, 59, 30) / 1000,
     });
   const atCutoff = (id: string) =>
     picture(id, "At the cutoff", {
-      available: false, unavailable_reason: "missing_or_expired", created_at: Date.UTC(2026, 9, 11, 16, 59, 31) / 1000,
+      available: false, unavailable_reason: "missing_or_expired", created_at: Date.UTC(2026, 9, 10, 16, 59, 31) / 1000,
     });
   const newGone = (id: string, prompt: string) =>
     picture(id, prompt, { available: false, unavailable_reason: "missing_or_expired" });
@@ -2129,7 +2129,7 @@ describe("Library items whose files are gone", () => {
     vi.unstubAllGlobals();
   });
 
-  test("an item from before Oct 11 says it was deleted and cannot be recovered", async () => {
+  test("an item from before Oct 10 says it was deleted and cannot be recovered", async () => {
     routeFetch((path) =>
       path.startsWith("/me/api/media?")
         ? list([oldGone("old", "An old fox"), newGone("new", "A new owl")])
@@ -2148,7 +2148,7 @@ describe("Library items whose files are gone", () => {
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    // A file lost after that date has no such explanation to give.
+    // A file lost after that has no such explanation to give.
     fireEvent.click(screen.getByRole("button", { name: (name) => name.startsWith("Open A new owl, ") }));
     dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("This file is no longer stored. The prompt is below.")).toBeVisible();
