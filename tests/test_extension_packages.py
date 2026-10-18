@@ -955,9 +955,10 @@ def test_package_lifecycle_refuses_plan_reference_without_mutation():
 def test_package_lifecycle_removes_an_alias_the_package_owns_with_its_base():
     from gateway.extension_packages import change_package_lifecycle
     index, registry = _lifecycle_fixture()
-    registry["services"]["services-one"]["config"] = {"models": [
-        {"id": "base"}, {"id": "alias", "base_model_id": "base"},
-    ]}
+    models = {"models": [{"id": "base"}, {"id": "alias", "base_model_id": "base"}]}
+    # The package installed these models, so the snapshot holds them too.
+    registry["services"]["services-one"]["config"] = models
+    index["packages"]["pkg"]["installed_records"]["services"]["services-one"]["config"] = dict(models)
     result, rows, affected = change_package_lifecycle(index, registry, "pkg")
     assert result["packages"] == {}
     assert rows["services"] == {}
