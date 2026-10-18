@@ -282,3 +282,26 @@ def test_later_invalid_stream_event_is_typed_without_done_and_receipt_stays_fail
     assert b'[DONE]' not in response.content
     [receipt] = receipt_store.recent(path=receipt_store.DB_PATH)
     assert receipt['status'] == 'failed'
+
+
+def test_cyclic_yaml_file_cannot_break_unrelated_description(tmp_path):
+    (tmp_path/'prism.yml').write_text((FIXTURE/'prism.yml').read_text())
+    (tmp_path/'cycle.yml').write_text('protocol_version: 1\nid: cycle\nexecutor: http-v1\noperations: &self\n  chat: *self\n')
+    assert set(description.load_registry(tmp_path)) == {'prism'}
+    assert any(row['file'] == 'cycle.yml' for row in description.registry_problems())
+
+
+@pytest.mark.parametrize('op,payload', [
+    ('chat', {'object':'chat.completion','id':'c','created':0,'model':'m','choices':[
+        {'index':0,'message':{'role':'assistant','content':None,'tool_calls':[
+            {'type':'function','function':{'name':'f','arguments':{}}}]},'finish_reason':'tool_calls'}]}),
+    ('embeddings', {'object':'list','model':'m','data':[{'object':'embedding','index':0,'embedding':'%%%'}]})])
+def test_malformed_tool_calls_and_encoded_embeddings_are_typed_502(engine, monkeypatch, op, payload):
+    data = yaml.safe_load((FIXTURE/'prism.yml').read_text())
+    data['operations'][op]['response'] = {'framing':'json'}
+    doc = description.parse_description(data, source='prism.yml')
+    monkeypatch.setattr(description, 'load_registry', lambda: {'prism':doc})
+    wire(monkeypatch, lambda r: httpx.Response(200, json=payload))
+    response = chat(engine) if op == 'chat' else engine.client.post('/v1/embeddings', json={'model':'prism-embed','input':'hi'})
+    assert response.status_code == 502, response.text
+    assert response.json()['error']['code'] == 'malformed_response'
