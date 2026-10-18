@@ -10,7 +10,7 @@ explained against the fixture's own copy of the database, and any plan that
 
 is printed with the table size.
 
-    PERF_PLANS=1 scripts/perf/serve.py --port 18740 &   # prints the ready line; S is its "state" path
+    PERF_PLANS=1 scripts/perf/serve.py --port 18830 &   # prints the ready line; S is its "state" path
     scripts/perf/api_bench.py --manifest S/perf-manifest.json --out /dev/null
     scripts/perf/plans.py --manifest S/perf-manifest.json [--rows 2000]
 """

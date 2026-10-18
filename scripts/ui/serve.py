@@ -112,7 +112,17 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
         merge(document, json.loads(Path(os.environ['UI_E2E_EXTRA_CONFIG']).read_text()))
         config.write_text(yaml.safe_dump(document))
     try:
-        for module, port in [('scripts.ui.fake_engine:app', ENGINE_PORT), ('proxy:app', PORT)]:
+        servers = [('scripts.ui.fake_engine:app', ENGINE_PORT, {}), ('proxy:app', PORT, {})]
+        if FIRST_RUN:
+            # The engine at ENGINE_PORT stands in for LiteLLM and sends each chat to the
+            # address in the config the gateway writes; the operator adds the engine
+            # one port above it (inside the harness's strict-port window), which has a
+            # model and a reply of its own.
+            servers[0][2].update(FAKE_SUBSTRATE_CONFIG=str(state / 'litellm.config.yaml'))
+            servers.insert(1, ('scripts.ui.fake_engine:app', ENGINE_PORT + 1,
+                               {'FAKE_ENGINE_MODEL': 'marker-engine-chat',
+                                'FAKE_ENGINE_REPLY': 'Answered by the engine you just added: marker-engine-chat.'}))
+        for module, port, extra_env in servers:
             if module != 'proxy:app' and EXTERNAL_UPSTREAM_PORT:
                 continue
             log = (state / f'{port}.log').open('w')
@@ -120,7 +130,7 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
                        if module == 'proxy:app' else [sys.executable, '-m', 'uvicorn', module, '--host',
                                                     '127.0.0.1', '--port', str(port),
                                                     '--timeout-keep-alive', '3600'])
-            children.append(subprocess.Popen(command, cwd=state, env=env,
+            children.append(subprocess.Popen(command, cwd=state, env={**env, **extra_env},
                                              stdout=log, stderr=subprocess.STDOUT))
             log.close()
         deadline = time.monotonic() + 90

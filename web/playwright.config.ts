@@ -20,7 +20,7 @@ const secondGlobalPort = port + 60;
 // The fresh gateway for first-run.spec.ts sits after the second global-state one.
 const firstRunPort = port + 70;
 if (!Number.isInteger(port) || port < 18000 || firstRunPort + 9 > 18998) {
-  throw new Error("UI_E2E_PORT must be an integer from 18000 to 18979");
+  throw new Error("UI_E2E_PORT must be an integer from 18000 to 18919");
 }
 // The parallel pool may span 1-3 gateways: one gateway is one Python process,
 // and ten workers on it queue behind each other. Workers are spread over the

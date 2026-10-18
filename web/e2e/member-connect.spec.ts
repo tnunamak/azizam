@@ -6,12 +6,27 @@
 // exactly those copied values, must then succeed. Its receipt names the member's
 // app, and the owner's Activity names the member. The member's browser never
 // opens an owner page or calls an owner API.
-import { request as playwrightRequest } from "@playwright/test";
+import { request as playwrightRequest, type Locator, type Page } from "@playwright/test";
 import { expect, test } from "./fixtures/isolation";
 
 const PASSWORD = "A long member connect password";
 // What the member's pages may load: no People, Engines, Settings or other owner page.
 const MEMBER_PAGES = new Set(["/invite/", "/", "/connect/", "/apps/"]);
+
+// Click a copy button and return what it put on the clipboard. The clipboard is
+// emptied first, so a value from an earlier copy cannot pass for this one, and the
+// read polls because the write finishes after the click.
+async function copyAndRead(page: Page, button: Locator): Promise<string> {
+  await page.evaluate(() => navigator.clipboard.writeText(""));
+  await button.click();
+  let text = "";
+  await expect
+    .poll(async () => (text = await page.evaluate(() => navigator.clipboard.readText())), {
+      message: "the copy button put nothing on the clipboard",
+    })
+    .not.toBe("");
+  return text;
+}
 
 test("an invited member connects an app with copied settings and the receipt names them", async ({
   page,
@@ -43,15 +58,20 @@ test("an invited member connects an app with copied settings and the receipt nam
     storageState: { cookies: [], origins: [] },
     permissions: ["clipboard-read", "clipboard-write"],
   });
-  const pages = new Set<string>();
+  // Every page the member's browser shows, by full load and by client-side
+  // navigation alike: Playwright reports history changes as navigations too.
+  const visited: string[] = [];
+  member.on("page", (opened) =>
+    opened.on("framenavigated", (frame) => {
+      if (frame.parentFrame() === null) visited.push(new URL(frame.url()).pathname);
+    }),
+  );
   const ownerCalls: string[] = [];
   member.on("request", (request) => {
     const url = new URL(request.url());
     // The shell asks who is signed in on every page, whoever they are.
     if (url.pathname.startsWith("/admin") && url.pathname !== "/admin/api/session")
       ownerCalls.push(`${request.method()} ${url.pathname}`);
-    if (request.isNavigationRequest() && request.frame().parentFrame() === null)
-      pages.add(url.pathname);
   });
   try {
     const mine = await member.newPage();
@@ -77,8 +97,7 @@ test("an invited member connects an app with copied settings and the receipt nam
     await create.getByRole("button", { name: "Create app and key" }).click();
     const reveal = mine.getByRole("dialog", { name: /^Connect / });
     await expect(reveal.getByLabel("Your key", { exact: true })).toHaveValue(/^opk_/);
-    await reveal.getByRole("button", { name: "Copy your key" }).click();
-    const key = await mine.evaluate(() => navigator.clipboard.readText());
+    const key = await copyAndRead(mine, reveal.getByRole("button", { name: "Copy your key" }));
     expect(key).toMatch(/^opk_/);
     await reveal.getByRole("button", { name: "I’ve saved the key" }).click();
     await expect(reveal).toBeHidden();
@@ -89,10 +108,8 @@ test("an invited member connects an app with copied settings and the receipt nam
       .getByRole("link", { name: "Connect", exact: true })
       .click();
     await expect(mine.getByRole("heading", { level: 1, name: "Connect" })).toBeVisible();
-    await mine.getByRole("button", { name: "Copy URL", exact: true }).click();
-    const baseUrl = await mine.evaluate(() => navigator.clipboard.readText());
-    await mine.getByRole("button", { name: "Copy Model IDs", exact: true }).click();
-    const model = await mine.evaluate(() => navigator.clipboard.readText());
+    const baseUrl = await copyAndRead(mine, mine.getByRole("button", { name: "Copy URL", exact: true }));
+    const model = await copyAndRead(mine, mine.getByRole("button", { name: "Copy Model IDs", exact: true }));
     expect(baseUrl).toBe(`${baseURL}/openai/v1`);
     expect(model.trim(), "the copied model name").not.toBe("");
 
@@ -139,7 +156,9 @@ test("an invited member connects an app with copied settings and the receipt nam
     }
 
     expect(ownerCalls, "the member's browser called an owner API").toEqual([]);
-    expect([...pages].filter((path) => !MEMBER_PAGES.has(path))).toEqual([]);
+    // The list must show the member's own route, or it watched nothing.
+    expect(visited).toEqual(expect.arrayContaining(["/invite/", "/connect/", "/apps/"]));
+    expect(visited.filter((path) => !MEMBER_PAGES.has(path))).toEqual([]);
   } finally {
     await member.close();
   }

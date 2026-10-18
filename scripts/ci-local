@@ -124,7 +124,7 @@ echo "order seed: $seed (reproduce with --order-seed $seed)"
 scratch=${AZIZAM_CI_SCRATCH:-$HOME/.tmp}
 mkdir -p "$scratch" "$receipts/logs"
 receipts=$(cd "$receipts" && pwd)
-rm -f "$receipts/PASS" "$receipts/steps.tsv" "$receipts/cases.jsonl" "$receipts/signoff-$sha.tsv"
+rm -f "$receipts/PASS" "$receipts/steps.tsv" "$receipts/cases.jsonl" "$receipts/cost.json" "$receipts/signoff-$sha.tsv"
 rm -rf "$receipts/steps" "$receipts/test-results" "$receipts/raw"
 mkdir -p "$receipts/steps" "$receipts/raw"
 # Receipts: old runs keep only their verdicts (scripts/ci/prune_receipts.py).
@@ -276,7 +276,8 @@ start_job "$run/fresh" bash -c '
     failed=1
     echo "== fresh-compose SKIPPED: the run cannot pass without it"
   else
-    step fresh-compose env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh --compose
+    # Bring-up time (pull, build, up until healthy): journey-clock adds it to the browser journey.
+    step fresh-compose env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" FRESH_INSTANCE_TIMING_OUT="$receipts/raw/compose-bringup.json" scripts/e2e/fresh_instance.sh --compose
   fi
   exit "$failed"
 '
@@ -367,7 +368,7 @@ if ((browser_ready)); then
       name=$1; shift
       step "$name" "$@"
       exit "$failed"
-    ' _ "${browser_names[i]}" env UI_E2E_PORT="${browser_ports[i]}" UI_E2E_WORKERS="$browser_workers" UI_E2E_POOL="$browser_servers" \
+    ' _ "${browser_names[i]}" env FIRST_RUN_TIMING_OUT="$receipts/raw/first-run-ui.json" UI_E2E_PORT="${browser_ports[i]}" UI_E2E_WORKERS="$browser_workers" UI_E2E_POOL="$browser_servers" \
       UI_E2E_STATE_ROOT="$run/state/${browser_names[i]}" UI_E2E_RUN_ID="$seed" UI_E2E_PYTHON="$work/venv/bin/python" \
       CASE_RECEIPTS_FILE="$receipts/raw/${browser_names[i]}.cases.jsonl" \
       ./node_modules/.bin/playwright test --config "${browser_configs[i]}"
@@ -406,6 +407,9 @@ for name in "${browser_names[@]}"; do
     merge_args+=(--receipts "$receipts/raw/$name.cases.jsonl" "$work")
   fi
 done
+# The ten-minute bar: Compose bring-up plus the browser journey, strictly under 600 s.
+step journey-clock "$run/python/scripts/ci/journey_clock.py" --compose "$receipts/raw/compose-bringup.json" \
+  --first-run "$receipts/raw/first-run-ui.json" --out "$receipts/cost.json"
 step cases "$run/python/scripts/ci/merge_cases.py" --sha "$sha" --seed "$seed" --out "$receipts/cases.jsonl" "${merge_args[@]}"
 # Ratchets may only fall: compare with the target branch's budgets when it has them.
 policy_args=()
@@ -427,7 +431,7 @@ git worktree remove --force "$work"
 
 cat "$receipts"/steps/*.tsv > "$receipts/steps.tsv"
 # Missing/truncated receipts or skipped/nonzero steps can never produce PASS.
-if ! awk -F '\t' -v expected="$((browser_steps + 15))" '
+if ! awk -F '\t' -v expected="$((browser_steps + 16))" '
   NF != 6 || $2 != "0" || $3 !~ /^[0-9]+$/ { bad=1 }
   END { exit (bad || NR != expected) }
 ' "$receipts/steps.tsv"; then failed=1; fi
@@ -462,6 +466,7 @@ receipt=$receipts/signoff-$sha.tsv
   printf 'started\t%s\nfinished\t%s\n' "$started" "$(date -u +%FT%TZ)"
   printf 'steps\t%s\n' "$(cut -f1 "$receipts/steps.tsv" | sort | paste -sd, -)"
   printf 'policy\t%s\n' "$(tail -n 1 "$receipts/logs/policy.log")"
+  printf 'cost\t%s\n' "$(tr -d '\n ' < "$receipts/cost.json")"
   printf 'nightly_red_closed\t%s\n' "${closes_nightly_red:-none}"
   printf 'python_fresh\t%s\n' "$python_fresh"
   printf 'python_e2e\t%s\n' "$python_e2e"

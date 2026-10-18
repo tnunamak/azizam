@@ -3,7 +3,7 @@
 
 Needs a fixture started with PERF_PROFILE=1 (scripts/perf/serve.py):
 
-    PERF_PROFILE=1 scripts/perf/serve.py --port 18730 &
+    PERF_PROFILE=1 scripts/perf/serve.py --port 18820 &
     scripts/perf/profile.py --manifest STATE/perf-manifest.json /me/api/home [--member] [--repeat 25]
 
 Prints the repo functions with the most samples (inclusive: the function or anything

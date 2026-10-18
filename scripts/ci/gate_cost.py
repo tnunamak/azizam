@@ -4,7 +4,8 @@
 Usage:
   gate_cost.py run OUT -- COMMAND...    run COMMAND, write "wall user system max_rss_kb" to OUT
   gate_cost.py report RECEIPTS [--measure MODE]
-                                        write RECEIPTS/cost.json and print the cost table
+                                        write RECEIPTS/cost.json and print the cost table; the
+                                        "journey" section from journey_clock.py is kept
 
 run is the fallback when GNU time is absent. It returns COMMAND's exit status (128+N when
 COMMAND dies from signal N), as the shell would. Every measurement is the step's own rusage,
@@ -43,7 +44,9 @@ GATE_DEPS: dict[str, tuple[str, ...]] = {
     "web-check": BARRIER,
     "fresh-native": ("web-check",),
     "e2e-tree-unchanged": ("python-hermetic", "e2e-main", "e2e-live-data", "e2e-household", "web-check", "fresh-native"),
-    "cases": ("python-hermetic", "e2e-tree-unchanged", "fresh-native", "web-check", "e2e-main", "e2e-live-data", "e2e-household"),
+    # Runs after every job has joined, then cases follows it: the sequential tail of scripts/ci-local.
+    "journey-clock": ("python-hermetic", "e2e-tree-unchanged", "fresh-native", "web-check", "e2e-main", "e2e-live-data", "e2e-household", "fresh-compose"),
+    "cases": ("journey-clock",),
     "policy": ("cases",),
 }
 
@@ -108,6 +111,15 @@ def read_steps(path: Path) -> dict[str, dict]:
     return steps
 
 
+def read_journey(path: Path) -> dict | None:
+    """The "journey" section scripts/ci/journey_clock.py left in cost.json, if any."""
+    try:
+        journey = json.loads(path.read_text())["journey"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return journey if isinstance(journey, dict) else None
+
+
 def run_elapsed(path: Path) -> int | None:
     """Whole seconds from run.tsv's started line to its finished line, if both exist."""
     if not path.is_file():
@@ -161,6 +173,9 @@ def report(receipts: Path, mode: str) -> None:
         "totals": totals,
         "steps": steps,
     }
+    journey = read_journey(receipts / "cost.json")
+    if journey is not None:
+        cost["journey"] = journey  # written earlier by scripts/ci/journey_clock.py
     (receipts / "cost.json").write_text(json.dumps(cost, indent=2, sort_keys=True) + "\n")
 
     print(f"{'step':<22} {'rc':>7} {'wall_s':>8} {'cpu_s':>8} {'peak_mb':>9}")
