@@ -29314,17 +29314,14 @@ async def _forward_provider_native(
             write=60.0,
             pool=None,
         )
+        # Both routes send the engine its own credential for this call's class and nothing of the caller's:
+        # not the service record's auth_inject key, and not the caller's identity secrets (contract section 6).
+        headers = backend_request_headers(request.headers)
         if native_policy is None:
-            headers = prepare_downstream_headers(
-                request.headers,
-                auth_context,
-                str(target["service"]),
-                native_request_path,
-            )
             query = backend_query_string(request.url.query)
+            if request.method.upper() in native_lane.READ_METHODS:
+                body = b""  # a read carries no body; whatever was sent with it is not the engine's to read
         else:
-            # The lane sends the engine its own credential for this class and nothing of the caller's.
-            headers = backend_request_headers(request.headers)
             query = native_lane.forwarded_query(request.url.query)
         destination = await engine_check.check_destination(str(target["host"]), gateway_ports=_engine_check_self_ports)
         if destination.transport != "ok":
@@ -29333,12 +29330,9 @@ async def _forward_provider_native(
                 message=f"Engine {provider_key!r} cannot be reached by the native lane: {destination.reason}",
                 reason="destination_blocked",
             )
-        if native_policy is not None:
-            credential_error = await _native_credential_headers(
-                headers, target, entry.klass, provider_key,
-            )
-            if credential_error is not None:
-                return _fail_native(owner, receipt, status_code=502, **credential_error)
+        credential_error = await _native_credential_headers(headers, target, entry.klass, provider_key)
+        if credential_error is not None:
+            return _fail_native(owner, receipt, status_code=502, **credential_error)
         # Dial only the addresses just checked, so a second lookup cannot answer somewhere else.
         client = httpx.AsyncClient(
             transport=engine_check.checked_transport(destination), follow_redirects=False,
