@@ -75,6 +75,7 @@ class SwitchController:
         self, service: Mapping[str, Any], offering_id: str, selection: Mapping[str, Any],
         *, on_acquired: Callable[[], None] | None = None,
         on_release: Callable[[], None] | None = None,
+        prepare: Callable[[], Awaitable[bool]] | None = None,
     ) -> SwitchLease:
         offerings = service.get("offerings") or []
         offering = next((row for row in offerings if isinstance(row, Mapping) and row.get("id") == offering_id), None)
@@ -99,9 +100,15 @@ class SwitchController:
         except asyncio.TimeoutError as exc:
             raise SwitchUnavailable("selection queue full") from exc
         handed_off = False
+        activity_started = False
         try:
+            if on_acquired is not None:
+                on_acquired()
+                activity_started = True
             drain_timeout = max(0.01, float(spec.get("drain_timeout_s", 30)))
             await self._drain.clear_for_swap(scope, SwapDrainSettings(enabled=True, timeout_s=drain_timeout))
+            if prepare is not None and not await prepare():
+                raise SwitchUnavailable("residency could not be prepared")
             previous = _value(await self._observe(observation))
             try:
                 await self._invoke(op, args)
@@ -127,8 +134,6 @@ class SwitchController:
                 if isinstance(exc, asyncio.CancelledError):
                     raise
                 raise SwitchUnavailable("selection failed or is unknown") from exc
-            if on_acquired is not None:
-                on_acquired()
             lease = SwitchLease(lock, self._drain.lease(scope, on_release=on_release))
             handed_off = True
             return lease
@@ -136,6 +141,8 @@ class SwitchController:
             raise SwitchUnavailable(str(exc)) from exc
         finally:
             if not handed_off:
+                if activity_started and on_release is not None:
+                    on_release()
                 lock.release()
 
     async def _restore(self, op: str, args: Mapping[str, Any], observation: str, previous: str) -> None:

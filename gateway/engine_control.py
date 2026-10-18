@@ -91,11 +91,12 @@ class EngineControlRuntime:
         inspect(args)
 
     async def select(self, offering_id: str, selection: Mapping[str, Any], *,
-                     on_acquired=None, on_release=None):
+                     on_acquired=None, on_release=None, prepare=None):
         controller = SwitchController(drain=self._drain, invoke=self.invoke,
             observe=self.observe, lock_for=self._lock_for)
         return await controller.select(self.service, offering_id, selection,
-                                       on_acquired=on_acquired, on_release=on_release)
+                                       on_acquired=on_acquired, on_release=on_release,
+                                       prepare=prepare)
 
     async def load(self) -> bool:
         controller = ResidencyController(invoke=self.invoke, observe=self.observe)

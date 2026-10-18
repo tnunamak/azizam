@@ -1378,7 +1378,7 @@ def test_declared_switch_and_load_reach_local_forward_before_request():
             ready, lease = await proxy._ensure_target_leased("fixture-switch", activation)
             assert ready and lease is fake_lease
             fake_runtime.select.assert_awaited_once()
-            fake_runtime.load.assert_awaited_once()
+            assert fake_runtime.select.await_args.kwargs["prepare"] is fake_runtime.load
 
     _run(scenario())
 

@@ -1420,16 +1420,34 @@ async def _ensure_target(
 
             runtime = EngineControlRuntime({**bcfg, "id": backend, "offerings": offerings},
                                            drain=_swap_drain, lock_for=swap_lock_for)
-            if selection.get("implicit_load") is False and residency_config(bcfg).get("load"):
-                if not await runtime.load():
-                    return False, None
+            needs_load = selection.get("implicit_load") is False and bool(residency_config(bcfg).get("load"))
             if selection.get("mode") == "switch":
                 lease = await runtime.select(
                     str(offering["id"]), selection,
                     on_acquired=(lambda: driver.request_started(bcfg)) if owned_process else None,
                     on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None,
+                    prepare=runtime.load if needs_load else None,
                 )
                 return True, lease
+            if needs_load:
+                async with swap_lock_for(backend):
+                    await _swap_drain.clear_for_swap(
+                        backend, SwapDrainSettings(enabled=True, timeout_s=30)
+                    )
+                    if owned_process:
+                        driver.request_started(bcfg)
+                    leased = False
+                    try:
+                        if not await runtime.load():
+                            return False, None
+                        lease = _swap_drain.lease(
+                            backend, on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None
+                        )
+                        leased = True
+                        return True, lease
+                    finally:
+                        if owned_process and not leased:
+                            driver.request_finished(bcfg)
         async with swap_lock_for(backend):
             if owned_process:
                 driver.request_started(bcfg)
