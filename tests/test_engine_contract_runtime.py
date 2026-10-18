@@ -8,6 +8,7 @@ import os
 import signal
 import socket
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -217,6 +218,83 @@ def test_adopted_process_that_never_passes_readiness_is_stopped(tmp_path):
         run(scenario())
     finally:
         original.stop(svc)
+
+
+def test_process_readiness_probe_respects_total_deadline(tmp_path):
+    svc = process_service(tmp_path)
+
+    class SlowProbe:
+        async def read(self, *_args):
+            await asyncio.sleep(0.08)
+            return type("Fact", (), {"known": True, "value": True})()
+
+    driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True,
+                           observations=SlowProbe())
+    started = time.monotonic()
+    assert run(driver._ready(svc, 0.01)) is False
+    assert time.monotonic() - started < 0.06
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Linux process groups")
+def test_stop_kills_term_ignoring_descendant_after_leader_exits(tmp_path):
+    child_pid_file = tmp_path / "child.pid"
+    script = tmp_path / "group.py"
+    script.write_text(
+        "import os, signal, subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)'])\n"
+        "open(sys.argv[1], 'w').write(str(child.pid))\n"
+        "time.sleep(30)\n"
+    )
+    svc = process_service(tmp_path)
+    svc["process"]["start"] = [sys.executable, str(script), str(child_pid_file)]
+
+    class Ready:
+        async def read(self, *_args):
+            return type("Fact", (), {"known": True, "value": True})()
+
+    driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True,
+                           observations=Ready())
+    child_pid = None
+    try:
+        assert run(driver.ensure_ready(svc, 1))
+        for _ in range(100):
+            if child_pid_file.exists():
+                child_pid = int(child_pid_file.read_text())
+                break
+            time.sleep(0.01)
+        assert child_pid is not None
+        driver.stop(svc)
+        for _ in range(100):
+            status = Path(f"/proc/{child_pid}/stat")
+            if not status.exists() or status.read_text().split(") ", 1)[1].startswith("Z"):
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("TERM-ignoring descendant survived gateway stop")
+    finally:
+        driver.stop(svc)
+        if child_pid:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_residency_deadline_includes_control_and_observation_wait():
+    async def slow_invoke(_op, _args):
+        await asyncio.sleep(0.08)
+
+    async def slow_observe(_name):
+        await asyncio.sleep(0.08)
+        return True
+
+    controller = ResidencyController(invoke=slow_invoke, observe=slow_observe)
+    service = {"residency": {"load": {"op": "load"},
+                             "load_deadline": {"stall_s": 0.01, "max_s": 0.02}}}
+    started = time.monotonic()
+    assert run(controller.load(service)) is False
+    assert time.monotonic() - started < 0.06
 
 
 def test_observations_are_unknown_without_probe_and_inventory_is_not_residency():
