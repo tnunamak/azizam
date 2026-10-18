@@ -69,7 +69,7 @@ def test_public_sse_is_openai_framed_with_final_done(engine):
         {'object':'chat.completion.chunk','choices':[{'index':0,'delta':{'content':''},'finish_reason':'stop'}],
          'usage':{'prompt_tokens':3,'completion_tokens':1},'id':'stream-1','created':1700000000,'model':'text-v2'},
     ]
-    assert response.content == b''.join(b'data: '+json.dumps(event,separators=(',',':')).encode()+b'\n\n' for event in expected)+b'data: [DONE]\n\n' 
+    assert response.content == b''.join(b'data: '+json.dumps(event,separators=(',',':')).encode()+b'\n\n' for event in expected)+b'data: [DONE]\n\n'
 
 
 def test_public_embeddings(engine):

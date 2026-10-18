@@ -296,3 +296,17 @@ and per streamed event.
 - `tests/fixtures/engine_protocol/negative/`: invalid grammar and static-budget
   files with the message each must produce (`expectations.json`), and
   `runtime.yml` for budgets exceeded and a cross-origin redirect.
+
+### W6a connection and invocation measurement
+
+The W6a hermetic run adds per-request connection and adapter construction to
+the non-streaming fake-upstream comparison. It measured 137.485 µs versus
+66.284 µs for the direct mapping path, 2.07x and 0.071 ms extra. The executor
+alone measured 100.230 µs versus 62.142 µs, 1.61x. The request map plus JSON
+write measured 9.052 µs versus 7.137 µs, 1.27x; five rules with equal defensive
+copying measured 2.99x. These include the applicable work for the roughly 3x
+mapping-cost target. Isolated response-only mapping was 12.63x a function that
+shares containers; the SSE decode/map case was 3.10x. These are separate costs,
+not evidence that every isolated primitive is below 3x. No real network,
+provider inference, admission database or public-handler latency is measured
+by this microbenchmark.
