@@ -368,7 +368,7 @@ def test_a_lenient_frontend_strips_a_nested_field_and_reports_its_path():
 
     assert response.status_code == 200, response.text
     assert seen.bodies == [NESTED_BODY]
-    assert json.loads(response.headers["x-azizam-loss"])["dropped"] == ["extra", "messages[].name", "metadata.session"]
+    assert json.loads(response.headers["x-azizam-loss"])["dropped"] == ["messages[].name", "metadata.session", "extra"]
 
 
 def test_a_name_with_no_nested_path_carries_everything_under_it():
