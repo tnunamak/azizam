@@ -28460,7 +28460,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
     if not isinstance(body, Mapping):
         return None
     try:
-        target = protocol_dispatch.resolve(ADMIN_STORE.get_service_registry(), body.get("model"), op)
+        target = await asyncio.to_thread(lambda: protocol_dispatch.resolve(ADMIN_STORE.get_service_registry(), body.get("model"), op))
     except ProtocolError as error:
         return _protocol_failure(error)
     if target is None:
@@ -28496,7 +28496,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
     store = GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=_asset_owner_key(auth_context))
     lease = None
     try:
-        runtime = protocol_dispatch.Runtime(target, assets=store)
+        runtime = await asyncio.to_thread(protocol_dispatch.Runtime, target, assets=store)
         lease = await runtime.lease(drain=_swap_drain, lock_for=swap_lock_for,
                                     may_switch=_target_activation(auth_context) != "existing_only")
         if op == "images":
@@ -28560,12 +28560,14 @@ async def _protocol_models_payload(auth_context):
     from gateway.engine_protocol import dispatch as protocol_dispatch
     from gateway.engine_protocol.types import CanonicalRequest
     data = []
-    for engine_id, service in (ADMIN_STORE.get_service_registry().get("services") or {}).items():
+    registry = await asyncio.to_thread(ADMIN_STORE.get_service_registry)
+    for engine_id, service in (registry.get("services") or {}).items():
         if not protocol_dispatch.opted_in(service) or not service.get("enabled", True):
             continue
         from gateway.engine_contract_view import connection_config, offerings_config
         from gateway.engine_protocol import description
-        doc = description.load_registry().get(connection_config(service).get("protocol"))
+        descriptions = await asyncio.to_thread(description.load_registry)
+        doc = descriptions.get(connection_config(service).get("protocol"))
         if doc is None or doc.executor != "http-v1" or "models" not in doc.operations:
             continue
         if doc.operations["models"].op_class != "inventory":
@@ -28573,7 +28575,7 @@ async def _protocol_models_payload(auth_context):
         offerings = offerings_config(service)
         if not offerings:
             continue
-        runtime = protocol_dispatch.Runtime(protocol_dispatch.Target(engine_id, service, offerings[0], doc))
+        runtime = await asyncio.to_thread(protocol_dispatch.Runtime, protocol_dispatch.Target(engine_id, service, offerings[0], doc))
         reply = await runtime.adapter.invoke(runtime.connection, "models", CanonicalRequest("models"))
         if isinstance(reply, ProtocolStreamReply):
             await reply.aclose()
