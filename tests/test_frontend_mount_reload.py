@@ -216,6 +216,7 @@ def test_a_commit_that_fails_after_changing_the_table_restores_the_routes(monkey
     monkeypatch.setattr(frontend_mount.FrontendMounts, "_swap", swap)
     mounts.apply([_frontend("a", _get("/x/a")), _frontend("c", _get("/x/c"))])
     assert _paths(mounts) == ["/x/a", "/x/c"]
+    assert mounts.broken() == []  # the old /x/a was not mistaken for a foreign route
     client = TestClient(mounts.app)
     assert client.get("/x/a").json() == {"served": "/x/a"}
     assert client.get("/x/b").status_code == 404
