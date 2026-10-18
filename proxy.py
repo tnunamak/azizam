@@ -28745,6 +28745,7 @@ def _native_passthrough_receipt(
     provider: str,
     gateway_path: str,
     native_path: str,
+    lane: str | None = None,
 ) -> RouteReceipt:
     receipt = RouteReceipt(
         protocol="provider-native",
@@ -28762,6 +28763,8 @@ def _native_passthrough_receipt(
         "provider": provider,
         "native_path": f"/{native_path.lstrip('/')}",
     })
+    if lane is not None:
+        receipt.metadata["lane"] = lane
     return receipt
 
 
@@ -28958,7 +28961,6 @@ async def provider_native_request(
     provider_key = provider.strip().lower()
     gateway_path = f"/gateway/v1/providers/{provider}/{native_path}"
     target = _PROVIDER_NATIVE_TARGETS.get(provider_key)
-    auth_context = _auth_context_from_scope(request)
 
     if target is None:
         return openai_error_response(
@@ -28969,7 +28971,61 @@ async def provider_native_request(
     invalid_response = _provider_native_invalid_paid_remote_response(provider_key, target)
     if invalid_response is not None:
         return invalid_response
+    return await _forward_provider_native(
+        request,
+        provider_key=provider_key,
+        target=target,
+        native_path=native_path,
+        gateway_path=gateway_path,
+    )
 
+
+async def native_engine_request(request: Request):
+    """Per-engine native pass-through (contract section 5): the engine's own API, forwarded untouched.
+
+    Off unless the engine record sets ``native_passthrough``, and never for a remote provider. The
+    gateway adds authentication, the access plan and the receipt; it changes neither path nor body.
+    """
+    engine_id = str(request.path_params["engine_id"])
+    engine = engine_id.strip().lower()
+    native_path = str(request.path_params.get("native_path") or "")
+    target = _build_provider_native_targets().get(engine)
+    if target is None:
+        return openai_error_response(
+            f"Engine {engine_id!r} is not configured for native pass-through.",
+            status_code=404,
+            code="native_not_enabled",
+        )
+    if any(
+        service_registry.is_remote_provider_config(candidate)
+        for candidate in _provider_native_backend_configs(engine, target)
+    ):
+        return openai_error_response(
+            f"Engine {engine_id!r} is a remote provider and cannot use native pass-through.",
+            status_code=403,
+            code="native_remote_forbidden",
+        )
+    return await _forward_provider_native(
+        request,
+        provider_key=engine,
+        target=target,
+        native_path=native_path,
+        gateway_path=f"/native/{engine_id}/{native_path}",
+        lane="native",
+    )
+
+
+async def _forward_provider_native(
+    request: Request,
+    *,
+    provider_key: str,
+    target: Mapping[str, Any],
+    native_path: str,
+    gateway_path: str,
+    lane: str | None = None,
+):
+    """Authorize one native call, forward it with downstream auth only, and stream the reply back."""
+    auth_context = _auth_context_from_scope(request)
     try:
         native_request_path = canonical_native_path(
             native_path, raw_path=request.scope.get("raw_path")
@@ -28984,6 +29040,7 @@ async def provider_native_request(
         provider=provider_key,
         gateway_path=gateway_path,
         native_path=native_path,
+        lane=lane,
     )
     native_operation = f"{request.method.upper()} {native_request_path}"
     decision = evaluate_and_apply(
@@ -29205,6 +29262,10 @@ FRONTEND_TRANSLATORS.register("provider-native", {
     "provider.detail": Op(provider_native_detail, frozenset({"GET"})),
     "provider.native": Op(provider_native_request, frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}),
                           include_in_schema=False),
+})
+FRONTEND_TRANSLATORS.register("native", {
+    "engine.native": Op(native_engine_request, frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}),
+                        include_in_schema=False),
 })
 FRONTEND_TRANSLATORS.mount_owned(app)
 frontend_mount.mount(

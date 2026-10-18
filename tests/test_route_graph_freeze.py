@@ -16,8 +16,11 @@ import route_graph
 
 FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 
-# Deliberate additions since the freeze: path prefix -> reason. Empty until a slice adds a route.
-ADDED_PATHS: dict[str, str] = {}
+# Deliberate additions since the freeze: path prefix -> reason.
+ADDED_PATHS: dict[str, str] = {
+    "/native": "per-engine native pass-through (contract section 5): one route, off unless an "
+               "engine record sets native_passthrough, outside the OpenAPI schema",
+}
 
 
 def _reviewed(path: str | None) -> bool:
