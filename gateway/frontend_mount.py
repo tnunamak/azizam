@@ -298,7 +298,7 @@ def plan(
     for row in sorted(rows, key=lambda candidate: not candidate.builtin):
         try:
             operation = _check_row(row, translators, claims, authenticate)
-        except Exception as error:  # noqa: BLE001 - one row's failure never takes the table down
+        except FrontendMountError as error:
             problems.append(RowProblem(row.frontend, row.path, tuple(sorted(row.methods)), str(error)))
             continue
         for method in row.methods:

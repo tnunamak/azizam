@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
+import proxy
 from gateway import admin_store, frontend_mount, route_registry, service_registry
 from gateway.admin_api import AdminContext, derive_admin_attention
 from gateway.admin_runtime import AdminSQLiteStore
@@ -112,9 +113,9 @@ def test_a_stored_record_with_a_builtins_id_does_not_replace_the_builtin_at_moun
 def test_the_ignored_record_is_reported_as_broken_and_the_builtin_stays_mounted():
     frontend_id = _builtin_id()
     registry = {"protocol_frontends": {frontend_id: _shadow(frontend_id)}}
-    mounts = frontend_mount.FrontendMounts(FastAPI(), _translators(), authenticate=None)
+    mounts = frontend_mount.FrontendMounts(FastAPI(), proxy.FRONTEND_TRANSLATORS,
+                                           authenticate=proxy._authenticate_mounted_route)
 
-    mounts.prepare(route_registry.mount_frontend_records(registry=registry, proxy_config={}))
     status = mounts.prepare(route_registry.mount_frontend_records(registry=registry, proxy_config={})).status
 
     by_source = {item["source"]: item for item in status if item["id"] == frontend_id}
