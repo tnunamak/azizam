@@ -139,7 +139,11 @@ def test_embedding_dimensions_are_removed_upstream_and_normalized(engine):
 def test_engine_description_is_loaded_outside_repo(engine, monkeypatch, tmp_path):
     root = tmp_path/'user-protocols'
     root.mkdir()
-    (root/'prism.yml').write_text((FIXTURE/'prism.yml').read_text())
+    import shutil
+    shutil.copyfile(FIXTURE/'prism.yml', root/'prism.yml')
+    shutil.copyfile(FIXTURE/'engine.json', root/'engine.json')
+    engine.record.clear()
+    engine.record.update(json.loads((root/'engine.json').read_text()))
     loader = description.load_registry.__closure__[0].cell_contents
     monkeypatch.setattr(description, 'load_registry', lambda: loader(root))
     assert not root.is_relative_to(Path(proxy.__file__).parent)
@@ -240,3 +244,41 @@ def test_description_validate_command_prints_all_problems(monkeypatch, tmp_path,
     assert description.main() == 1
     output = capsys.readouterr().out
     assert 'invalid.yml' in output and 'protocol_version' in output and 'executor' in output
+
+
+def test_total_inventory_deadline_reports_cancelled_engines(engine, monkeypatch):
+    from gateway.engine_protocol import inventory
+    inventory._cache.clear()
+    inventory._issues.clear()
+    monkeypatch.setattr(inventory, 'ENGINE_TIMEOUT_S', 5)
+    monkeypatch.setattr(inventory, 'LIST_TIMEOUT_S', .03)
+    closed = []
+    async def hang(self, op, body):
+        try:
+            await asyncio.sleep(5)
+        finally:
+            closed.append(self.target.engine_id)
+    monkeypatch.setattr(dispatch.Runtime, 'invoke', hang)
+    response = engine.client.get('/v1/models')
+    assert response.status_code == 200
+    assert closed == [engine.record['id']]
+    assert any(row['engine_id'] == engine.record['id'] for row in inventory.problems())
+
+
+def test_later_invalid_stream_event_is_typed_without_done_and_receipt_stays_failed(engine, monkeypatch):
+    from tests.test_engine_protocol_executor import Chunks
+    data = yaml.safe_load((FIXTURE/'prism.yml').read_text())
+    stream = data['operations']['chat']['response']['stream']
+    stream.pop('map'); stream['terminal'] = {'sentinel':'[DONE]'}
+    doc = description.parse_description(data, source='prism.yml')
+    monkeypatch.setattr(description, 'load_registry', lambda: {'prism':doc})
+    good = {'object':'chat.completion.chunk','id':'a','created':0,'model':'m',
+        'choices':[{'index':0,'delta':{'content':'hi'},'finish_reason':None}]}
+    wire(monkeypatch, lambda r: httpx.Response(200, stream=Chunks([
+        b'data: ' + json.dumps(good).encode() + b'\n\n', b'data: {}\n\ndata: [DONE]\n\n'])))
+    response = chat(engine, stream=True)
+    assert response.status_code == 200
+    assert b'malformed_response' in response.content
+    assert b'[DONE]' not in response.content
+    [receipt] = receipt_store.recent(path=receipt_store.DB_PATH)
+    assert receipt['status'] == 'failed'

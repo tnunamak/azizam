@@ -177,14 +177,19 @@ load, unload and so on), `auth`, `errors` (advice rows) and an `executor`.
   - one async pattern: submit, then poll a status path, then fetch an
     artifact, with typed id, status and asset selectors
 
-  The **mapping language** is fixed at nine rules: copy, rename, set
-  (constant), default, drop, enum (table), clamp, stringify, and `when`, with
-  `present`, `equals` and `in` conditions (D14). No loops, no
-  arbitrary expressions, no side effects, and size, depth and time budgets.
+  The **mapping language** has ten rules: copy, rename, set
+  (constant), default, drop, enum (table), clamp, stringify, `when`, and
+  bounded `each` (D23 amends D14). Conditions use `present`, `equals` and `in`.
+  `each` maps one selected list with nested rules; it shares size, depth, rule,
+  iteration and time budgets. There is no other iteration, arbitrary
+  expression or side effect.
   The claim "a new HTTP-shaped engine needs no code" applies exactly to this
   grammar. It is proven by a second-engine fixture for each pattern.
 
-Public execution is opt-in in W6a. A stored service uses
+Public execution is opt-in in W6a. Until this path enforces paid-provider
+access and spend, paid or remote records cannot enable it (D24). Save validation
+requires a loopback address without DNS resolution; other placements use the
+existing provider route. A stored service uses
 `config.connection.dispatch: protocol`, a `protocol` id resolving to
 `executor: http-v1`, and `config.offerings`. The runtime also accepts top-level
 contract blocks. With no opt-in, even an `http-v1` description leaves the

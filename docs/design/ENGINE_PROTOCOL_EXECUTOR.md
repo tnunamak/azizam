@@ -29,7 +29,12 @@ description and an engine record. It needs no code and no release.
 The seed `openai-compatible.yml` describes the operations Azizam sends to an
 engine that serves the OpenAI-shaped API: `models`, `chat`, `embeddings`,
 `speech`, `transcribe`. LiteLLM still executes chat. The seed stays on its existing execution path. Public execution requires the
-record opt-in described below.
+record opt-in described below. Operator descriptions also load from
+`<admin-state-directory>/protocols`, or `AZIZAM_PROTOCOLS_DIR`; user files
+replace seeds by id. Validate a file with
+`python -m gateway.engine_protocol.description path/to/id.yml`. An invalid
+file disables only that description. The [operator guide](../guides/ADD_HTTP_ENGINE_AS_DATA.md)
+includes persistent Docker storage and stored-key setup.
 
 ## Public dispatch (W6a)
 
@@ -44,10 +49,26 @@ The fixed operation names served are `chat` (JSON and streams), `models`,
 buffered `speech` when declared. They reach the public OpenAI routes;
 frontend aliases use the same handlers. The offering's upstream id becomes
 `/body/model` and `/params/model`; `/params/offering` carries its public id.
+`/params/request_id` and `/params/created` provide a unique gateway-generated
+response id and Unix timestamp, constant across that response's stream chunks.
 An unsupported task is refused before upstream I/O. Inventory lists only
 configured offerings present in the mapped answer. Streaming responses are
 framed as OpenAI SSE, including multiline raw events and the final `[DONE]`.
-A broken upstream stream produces a typed error event and a failed receipt.
+A malformed first event returns a typed 502 before SSE headers are sent.
+A later broken event produces a typed error event and a failed receipt.
+Mapped chat and embedding responses must match the public OpenAI shape.
+Chat applies the existing extension validator and records stream, output limit
+and request-shape metadata. Embeddings use the existing dimensions validation,
+truncation and normalization rules.
+
+Model discovery runs engines concurrently with 1 second per engine and a
+1.5-second total network budget. Valid lists are cached for 15 seconds per engine
+configuration (up to 256 entries). A failed engine is left out and reported on
+Status; it cannot remove models from the engines that answered.
+
+Executor saves require loopback addresses and refuse paid or remote markers
+until this path enforces paid-provider access and spend (D24). Unknown placement
+is refused without a DNS lookup. The existing provider route remains available.
 
 Core keeps policy, admission, receipts, owner-scoped asset storage, image-job
 state and replay. The queued image API uses the same dispatch. A saved upstream
@@ -76,7 +97,10 @@ percent-encoded; no host, query, fragment, `..` or backslash is allowed in the
 template. Each placeholder must be a single segment: slash, backslash, percent,
 semicolon, control characters (including NUL), Unicode dot look-alikes that
 NFKC-normalize to dots, lone surrogates, and NFKC-normalized `.` or `..` are refused with a
-mapping error. Slash-containing organization/model IDs belong in query or body fields);
+mapping error for caller-supplied values. Upstream-returned job ids and asset
+handles may contain percent and semicolon; the executor encodes them as literal
+path values. Other segment defenses still apply. Slash-containing
+organization/model IDs belong in query or body fields);
 `query`, a list of `{name, from, default}`; `headers`, constant non-credential
 headers; `body`.
 
@@ -86,7 +110,7 @@ headers; `body`.
 - `multipart`: `parts`, each `{name, kind: field | json | file, from, required,
   default}`. A `file` part reads `/files/<name>`, a canonical asset.
 
-**Mapping language.** Nine rules, each an object with exactly one key:
+**Mapping language.** Ten rules, each an object with exactly one key:
 
 | Rule | Does |
 |---|---|
@@ -99,11 +123,12 @@ headers; `body`.
 | `clamp {path, min, max}` | limit a number |
 | `stringify {from, to}` | put compact JSON inside a string |
 | `when {if, then, else}` | run rules if a condition holds; `if` is `{path, present \| equals \| in}` |
+| `each {from, to, map}` | map every element of one selected list into an object |
 
-There are no loops, no expressions, no functions and no side effects. A map is
-straight-line, so its cost is the rule count times the size of the values it
-touches. A pointer cannot create a list: a numeric segment must index a list
-that exists, so a `set` of a constant skeleton gives an array its shape.
+There are no expressions, functions or side effects. `each` is the only
+iteration: it maps a selected list under the shared count, depth and time
+budgets. Other rules run in order. A pointer cannot create a list: a numeric
+segment must index an existing list, built with `each` or a constant skeleton.
 Source pointers start with `/body`, `/params` or `/files` in a request map;
 `/body`, `/status`, `/headers`, `/params` or `/event` in a response map.
 
@@ -129,7 +154,7 @@ place (`operations.chat.request.body.map[2].copy`). It refuses: unknown keys;
 a key that names code (`class_name`, `script`, `expression`, `python`, `eval`
 …); repeated YAML keys; credential-like header names; paths that could leave
 the engine; malformed pointers; unknown rules; more than 64 rules in a map;
-conditions nested deeper than 3; constants over 16 KiB; and combinations the
+`when` and `each` nested deeper than 3; constants over 16 KiB; and combinations the
 grammar forbids (a GET with a body, a poll path without `{id}`).
 
 **Budgets** (`budgets.py`). Checked on every call: request body 8 MiB, upload
@@ -140,9 +165,32 @@ call 512 MiB. The connection adds connect, first-byte and total timeouts.
 Depth is checked first and without recursion, on the request body and params
 before any rule runs, on every JSON answer, job step and stream event that is
 parsed. A deeper value is `BudgetExceeded(max_json_depth)`, never a
-`RecursionError`. `mapping_s` is checked between rules (inside a `when` too), so a
+`RecursionError`. `mapping_s` is checked between rules and iterations (inside `when` and `each` too), so a
 slow map stops while it runs. A stream's total time is checked at each chunk;
 a stalled stream ends at the first-byte timeout.
+
+### Bounded list mapping (`each`)
+
+```yaml
+- each:
+    from: /body/models
+    to: /data
+    map:
+      - copy: {from: /item/name, to: /id}
+      - copy: {from: /index, to: /index}
+```
+
+`from` selects one list. Each element runs `map` into a new object, and `to`
+receives the resulting list in order. `/item` and zero-based `/index` are
+lexical roots inside the nested map; existing roots remain available. Nested
+`each` restores the outer item and index when it finishes. A missing source
+skips the rule, an empty list produces an empty list, and a non-list fails.
+No filter, join, expression or other iteration is allowed. Nested `when` and
+`each` share the depth limit; their rules share the compile-time count.
+Iterations share `max_selected` across the whole invocation, including nested
+maps. The mapping deadline is shared. JSON depth and request/response byte
+budgets apply to the assembled result as it grows. The result owns its mutable
+containers so later writes cannot change the input.
 
 ## The executor
 
