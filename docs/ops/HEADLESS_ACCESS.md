@@ -271,6 +271,9 @@ Selected successful workflows are exercised separately.
 | `DELETE /admin/api/operator/services/{service_id}` | owner-bearer | denied | `gateway.admin_api.remove_service`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PATCH /admin/api/operator/services/{service_id}` | owner-bearer | denied | `gateway.admin_api.update_service`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/operator/services/{service_id}/enabled` | owner-bearer | denied | `gateway.admin_api.set_service_enabled`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/operator/services/{service_id}/secret-entries` | owner-bearer | denied | `gateway.admin_api.change_secret_entries`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to change a secret | owner |
+| `PUT /admin/api/operator/service-registry/excluded/{section}/{record_id}` | owner-bearer | denied | `gateway.admin_api.fix_excluded_record`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `DELETE /admin/api/operator/service-registry/excluded/{section}/{record_id}` | owner-bearer | denied | `gateway.admin_api.remove_excluded_record`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/overview` | owner-bearer | denied | `gateway.admin_api.overview`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/people` | owner-bearer | denied | `gateway.accounts_api.people`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `DELETE /admin/api/people/{user_id}` | owner-bearer | denied | `gateway.accounts_api.remove_person`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |

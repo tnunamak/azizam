@@ -312,8 +312,12 @@ export interface ServiceRegistryResponse {
   excluded?: LeftOutRecord[];
 }
 
+/** The registry, carrying the left-out records only when there are any: every other page reads the plain registry. */
 function withLeftOut(response: ServiceRegistryResponse): ServiceRegistry {
-  return { ...response.service_registry, excluded: response.excluded ?? [] };
+  const excluded = response.excluded ?? [];
+  return excluded.length > 0
+    ? { ...response.service_registry, excluded }
+    : response.service_registry;
 }
 
 // ---------------------------------------------------------------------------
