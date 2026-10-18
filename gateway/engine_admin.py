@@ -260,16 +260,23 @@ def _split_address(address: str, definition: Mapping[str, Any], prefix: str) -> 
     return out
 
 
+def _command_value(value: Any) -> Any:
+    """A command as stored: a list of arguments stays a list, a line is trimmed."""
+    if isinstance(value, list):
+        return list(value)
+    return str(value or "").strip()
+
+
 def lifecycle_block(values: Mapping[str, Any], definition: Mapping[str, Any]) -> dict[str, Any] | None:
     """The record's lifecycle block from the typed Start and stop fields; ``None`` for "leave it running"."""
     mode = str(values.get("lifecycle_mode") or _field_default(definition, "lifecycle_mode", "external"))
     if mode != "managed":
         return None
-    start = str(values.get("lifecycle_start") or "").strip()
+    start = _command_value(values.get("lifecycle_start"))
     if not start:
         raise DraftError("Type the command that starts the server.", field="lifecycle_start")
     driver_config: dict[str, Any] = {"start": start}
-    stop = str(values.get("lifecycle_stop") or "").strip()
+    stop = _command_value(values.get("lifecycle_stop"))
     if stop:
         driver_config["stop"] = stop
     driver_config["health_timeout_s"] = _number(values, "lifecycle_ready_s", 120, low=1, high=3600)
@@ -564,12 +571,13 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     definition = catalog.definition(infer_definition(catalog, record))
     assert definition is not None
     address = str(config.get("address") or service_registry.service_base_url(config) or "")
-    values: dict[str, Any] = {"address": address}
+    values: dict[str, Any] = {"address": engine_redaction.redact_text(address)}
     values["api_key_env"] = config.get("api_key_env") or ""
     values["path_prefix"] = config.get("path_prefix") or ""
     values["reply_timeout_s"] = config.get("timeout") or _field_default(definition, "reply_timeout_s", 600)
-    values["headers"] = [{"name": h.get("name"), "value": h.get("value", "")}
-                         for h in config.get("headers") or () if isinstance(h, Mapping) and "value" in h]
+    values["headers"] = engine_redaction.redact_headers(
+        [{"name": h.get("name"), "value": h.get("value", "")}
+         for h in config.get("headers") or () if isinstance(h, Mapping) and "value" in h])
     values["transforms"] = copy.deepcopy(config.get("transforms") or [])
     lifecycle = service_registry.legacy_lifecycle_from_service(record)
     driver_config = lifecycle.get("driver_config") or {}
@@ -647,6 +655,21 @@ def _restore_lifecycle_markers(ctx: Any, values: dict[str, Any], shown: Mapping[
     return restored
 
 
+def _restore_hidden_scalars(values: dict[str, Any], shown: Mapping[str, Any], stored_config: Mapping[str, Any]) -> dict[str, Any]:
+    """Put back what the page was not shown: a header value behind its marker, an address as shown.
+
+    A marker keeps the stored value of the header row of the same name; a row renamed with the marker
+    still in it is dropped. An address sent back unchanged is the stored address, not its hidden form.
+    """
+    restored = dict(values)
+    if isinstance(values.get("headers"), list):
+        restored["headers"] = engine_redaction.restore_headers(values["headers"], stored_config.get("headers"))
+    stored_address = str(stored_config.get("address") or service_registry.service_base_url(stored_config) or "")
+    if values.get("address") == shown.get("address") and stored_address:
+        restored["address"] = stored_address
+    return restored
+
+
 def _caps_from_record(catalog: EngineCatalog, definition: Mapping[str, Any], record: Mapping[str, Any]) -> list[str]:
     """For a record saved before definitions: a capability is on when the record holds a word only it uses."""
     have = set(record.get("capabilities") or ())
@@ -682,6 +705,16 @@ def redacted_record(record: Mapping[str, Any]) -> dict[str, Any]:
     out = mask(out)
     if isinstance(out.get("secret_refs"), Mapping):
         out["secret_refs"] = {k: "configured" for k in out["secret_refs"]}
+    config = out.get("config")
+    if isinstance(config, dict):
+        if "headers" in config:
+            config["headers"] = engine_redaction.redact_headers(config["headers"])
+        if isinstance(config.get("address"), str):
+            config["address"] = engine_redaction.redact_text(config["address"])
+        if "observations" in config:
+            config["observations"] = engine_redaction.redact_config(config["observations"])
+    if "observations" in out:
+        out["observations"] = engine_redaction.redact_config(out["observations"])
     return engine_redaction.redact_service(out)
 
 
@@ -964,6 +997,8 @@ class EngineService:
         definition = _definition(catalog, body.get("definition") or before["definition"])
         values = {**before["values"], **(body.get("values") if isinstance(body.get("values"), Mapping) else {})}
         values = _restore_lifecycle_markers(ctx, values, before["values"], record)
+        stored_config = record.get("config") or {}
+        values = _restore_hidden_scalars(values, before["values"], stored_config)
         if "api_key" not in values:
             values["api_key"] = SECRET_MASK if before["key"]["state"] == "configured" and before["key"].get("source") == "stored" else ""
         _header_credentials_are_the_owners(ctx, body.get("values"))
@@ -979,7 +1014,7 @@ class EngineService:
             or clean.get("api_key_env") != (before["key"].get("env_name") or "")
             or clean.get("path_prefix", "") != (before["values"].get("path_prefix") or "")
             or [(h["name"], h["value"]) for h in clean.get("headers") or ()]
-               != [(h["name"], h["value"]) for h in before["values"].get("headers") or ()]
+               != [(h["name"], h["value"]) for h in stored_config.get("headers") or () if isinstance(h, Mapping) and "value" in h]
             or body.get("recheck") is True
         )
         if moved:

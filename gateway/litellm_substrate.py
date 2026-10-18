@@ -16,6 +16,7 @@ Explicit limitations:
 from __future__ import annotations
 
 from gateway.compat import get_env
+from gateway.engine_redaction import CREDENTIAL_HEADER_RE  # noqa: F401  (header rule shared with the engine view)
 
 import os
 import hashlib
@@ -506,9 +507,6 @@ TRANSPORT_HEADERS = frozenset({
     "host", "content-length", "content-type", "transfer-encoding", "connection", "upgrade", "te",
     "trailer", "keep-alive", "proxy-connection", "accept-encoding",
 })
-# A header whose name looks like it carries a credential. Header values are plain
-# text in the registry and the router's config file, so a key never goes there.
-CREDENTIAL_HEADER_RE = re.compile(r"auth|key|token|secret|passw|cookie|session|credential|signature", re.IGNORECASE)
 
 
 def header_problem(name: str, value: str) -> str:

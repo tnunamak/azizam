@@ -21,6 +21,7 @@ from __future__ import annotations
 import copy
 import re
 import shlex
+from urllib.parse import urlsplit
 from typing import Any, Iterable, Mapping
 
 from gateway.provenance import looks_like_credential
@@ -33,6 +34,13 @@ _CREDENTIAL_NAME = re.compile(
     r"|auth(?![a-z])|(?<![a-z])key|key(?![a-z])",
     re.IGNORECASE,
 )
+# A header whose name looks like it carries a credential. Header values are plain
+# text in the registry and the router's config file, so a key never goes there.
+CREDENTIAL_HEADER_RE = re.compile(r"auth|key|token|secret|passw|cookie|session|credential|signature", re.IGNORECASE)
+# Text with the shape of a key, a bearer value or an inline data blob.
+_CREDENTIAL_TEXT = re.compile(r"\b(?:opk_|oak_|sk-)[A-Za-z0-9_-]+|^Bearer\s|^data:", re.IGNORECASE)
+# A key name whose value a settings view never shows.
+_CREDENTIAL_KEY = re.compile(r"secret|password|credential|key|token|authorization|cookie|headers", re.IGNORECASE)
 # Short flags that conventionally carry a key.
 _CREDENTIAL_SHORT_FLAGS = frozenset({"-k", "-K"})
 # Flags whose value is a credential when it is a ``user:password`` pair.
@@ -280,4 +288,80 @@ def restore_registry(new: Mapping[str, Any], stored: Mapping[str, Any]) -> dict[
                     _restore_block(block, _stored_block(before, path))
         except ValueError as exc:
             raise ValueError(f"service {service_id!r}: {exc}") from None
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Scalars: a header value, an address, a probe path
+# ---------------------------------------------------------------------------
+
+
+def redact_text(value: str, marker: str = "<redacted>") -> str:
+    """A string without the credential it holds: key-shaped text becomes ``marker``; a URL loses its
+    user name, password, query and fragment; a path loses its query and fragment."""
+    if _CREDENTIAL_TEXT.search(value):
+        return marker
+    if "://" in value:
+        try:
+            url = urlsplit(value)
+            if url.username or url.password or url.query or url.fragment:
+                host = url.hostname or ""
+                if ":" in host:
+                    host = f"[{host}]"
+                return f"{url.scheme}://{host}" + (f":{url.port}" if url.port else "") + url.path
+        except ValueError:
+            return marker
+    elif value.startswith("/") and ("?" in value or "#" in value):
+        return value.split("?", 1)[0].split("#", 1)[0]
+    return value
+
+
+def redact_config(value: Any) -> Any:
+    """Redact nested credentials and credential-bearing URLs in runtime data.
+
+    The settings view and the engine view share this rule, so they agree on what a scalar may show.
+    """
+    if isinstance(value, Mapping):
+        return {str(key): "<redacted>" if _CREDENTIAL_KEY.search(str(key)) else redact_config(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [redact_config(item) for item in value]
+    if isinstance(value, str):
+        return redact_text(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return "<not serializable>"
+
+
+def _credential_header(row: Mapping[str, Any]) -> bool:
+    name = str(row.get("name") or "")
+    value = row.get("value")
+    return bool(CREDENTIAL_HEADER_RE.search(name)) or (
+        isinstance(value, str) and (looks_like_credential(value) or redact_text(value) != value))
+
+
+def redact_headers(rows: Any) -> Any:
+    """Header rows with the value of each credential row hidden; names and other values stay."""
+    if not isinstance(rows, list):
+        return rows
+    return [{**row, "value": REDACTED} if isinstance(row, Mapping) and "value" in row and _credential_header(row) else row
+            for row in rows]
+
+
+def restore_headers(new: Any, stored: Any) -> Any:
+    """Rows from a caller with each marker replaced by the stored value of the row of the same name.
+
+    A row renamed while it still holds the marker has no stored value to keep: it is dropped,
+    so the marker cannot carry a hidden value to another name.
+    """
+    if not isinstance(new, list):
+        return new
+    stored_by_name = {str(row.get("name")): row.get("value") for row in stored or ()
+                      if isinstance(row, Mapping) and "value" in row} if isinstance(stored, list) else {}
+    out = []
+    for row in new:
+        if isinstance(row, Mapping) and row.get("value") == REDACTED:
+            if str(row.get("name")) not in stored_by_name:
+                continue
+            row = {**row, "value": stored_by_name[str(row.get("name"))]}
+        out.append(row)
     return out
