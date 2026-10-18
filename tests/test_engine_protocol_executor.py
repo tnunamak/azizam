@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 import httpx
@@ -20,6 +21,7 @@ from tests.support.fake_upstream import HandlerTransport
 
 BASE = "http://engine.test:8080"
 SECRET = "sk-test-SECRET-1234"
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8  # the first bytes of a PNG: assets are sniffed
 
 
 def desc(operations: dict, *, auth: dict | None = None, errors: list | None = None, budgets: Budgets | None = None):
@@ -616,6 +618,80 @@ def test_cancel_and_a_missing_job_id() -> None:
     ex2, _ = make(JOB, lambda r: httpx.Response(202, json={"nope": 1}))
     with pytest.raises(MalformedResponse):
         run(ex2.submit(conn(), req("render", {"prompt": "x"})))
+
+
+class Slow(httpx.AsyncByteStream):
+    def __init__(self, count: int, delay: float, size: int = 1024) -> None:
+        self.count, self.delay, self.size = count, delay, size
+
+    async def __aiter__(self):
+        for _ in range(self.count):
+            await asyncio.sleep(self.delay)
+            yield b"x" * self.size
+
+    async def aclose(self) -> None:
+        pass
+
+
+def fetch_all(ex, **kw):
+    async def go():
+        ref = await ex.submit(conn(**kw), req("render", {"prompt": "x"}))
+        status = await ex.poll(conn(**kw), ref)
+        return await ex.fetch_assets(conn(**kw), ref, status)
+    return run(go())
+
+
+def asset_handler(states, answer):
+    base = job_handler(states)
+    return lambda r: answer(r) if "/files/" in r.url.path else base(r)
+
+
+def test_a_slow_asset_body_runs_into_the_total_deadline() -> None:
+    assets = MemoryAssetStore()
+    ex, _ = make(JOB, asset_handler([{"state": "ok", "files": [{"name": "a.png"}]}],
+                                    lambda r: httpx.Response(200, stream=Slow(50, 0.05), headers={"content-type": "image/png"})), assets=assets)
+    started = time.perf_counter()
+    with pytest.raises(TransportFailure) as raised:
+        fetch_all(ex, timeouts=Timeouts(connect_s=1, first_byte_s=1, total_s=0.3))
+    assert raised.value.kind == "timeout"
+    assert time.perf_counter() - started < 1.5  # the body alone takes 2.5 s
+    assert assets.count() == 0
+
+
+def test_all_the_assets_of_one_fetch_share_one_total_deadline() -> None:
+    files = [{"name": f"f{i}.png"} for i in range(4)]
+    ex, _ = make(JOB, asset_handler([{"state": "ok", "files": files}],
+                                    lambda r: httpx.Response(200, stream=Slow(1, 0.12, 16), headers={"content-type": "image/png"})))
+    with pytest.raises(TransportFailure) as raised:
+        fetch_all(ex, timeouts=Timeouts(connect_s=1, first_byte_s=1, total_s=0.3))  # 4 x 0.12 s is over 0.3 s together
+    assert raised.value.kind == "timeout"
+
+
+def test_the_assets_of_one_fetch_have_a_total_size_cap() -> None:
+    files = [{"name": f"f{i}.png"} for i in range(3)]
+    ex, _ = make(JOB, asset_handler([{"state": "ok", "files": files}],
+                                    lambda r: httpx.Response(200, content=PNG + b"x" * 52, headers={"content-type": "image/png"})),  # 60 bytes each
+                 budgets=Budgets(max_asset_bytes=100, max_fetch_bytes=150))
+    with pytest.raises(BudgetExceeded) as raised:
+        fetch_all(ex)
+    assert raised.value.budget == "max_fetch_bytes"
+
+
+def test_an_asset_store_that_ignores_the_byte_cap_is_still_capped() -> None:
+    class Greedy:
+        async def read(self, ref, *, max_bytes):
+            raise AssertionError
+
+        async def save(self, chunks, *, content_type, max_bytes, name=None):
+            async for _ in chunks:
+                pass
+            raise AssertionError("the executor should have stopped the stream")
+    ex, _ = make(JOB, asset_handler([{"state": "ok", "files": [{"name": "a.png"}]}],
+                                    lambda r: httpx.Response(200, stream=Chunks([PNG + b"x" * 200] * 3), headers={"content-type": "image/png"})),
+                 assets=Greedy(), budgets=Budgets(max_asset_bytes=100))
+    with pytest.raises(BudgetExceeded) as raised:
+        fetch_all(ex)
+    assert raised.value.budget == "max_asset_bytes"
 
 
 def test_a_job_operation_is_not_invokable_and_a_plain_one_is_not_submittable() -> None:
