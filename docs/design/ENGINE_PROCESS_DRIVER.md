@@ -72,10 +72,14 @@ until a kernel-backed start-time identity and restart recovery are implemented.
 The platform-gated tests document these limits rather than claiming support.
 
 **Control file paths.** A control call may carry a path only under an absolute,
-owner-allowlisted root. Azizam treats a string argument as a path when it is
-absolute, starts with `~`, contains a path separator, or names something that
-exists in the gateway's working directory. The key name decides nothing, so a
-model id such as `org/model` is also refused unless it resolves under a root.
-Paths are sent as their real path, and checked again just before the request:
-a symlink or file swapped in after the first check is refused. The engine still
-opens the file by name, so this narrows the race but cannot close it.
+owner-allowlisted root. A protocol operation declares which of its arguments are
+paths with `"arguments": {"model_path": {"type": "path"}}`. Every string under a
+declared argument is checked whatever its form, and a relative one is refused.
+Elsewhere a string is a path only when it is absolute, starts with `~`, `./`,
+`../` or `file:`, or is `.` or `..`. Any other string is an identifier, so a
+model id such as `org/model` passes unchanged, whether or not a file of that name
+exists in the gateway's working directory. Paths are sent as their real path,
+and checked again just before the request: a symlink or file swapped in after the
+first check is refused. The engine still opens the file by name, so this narrows
+the race but cannot close it. An argument that the engine reads as a file must be
+declared, because the gateway cannot tell from the value alone.

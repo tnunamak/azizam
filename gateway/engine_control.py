@@ -60,7 +60,7 @@ class EngineControlRuntime:
         target = urlsplit(url)
         if (target.scheme, target.netloc) != (origin.scheme, origin.netloc):
             raise ValueError("control operation cannot cross origins")
-        body, checked = self._check_paths(args)
+        body, checked = self._check_paths(args, self._declared_path_arguments(operation))
         headers = credential_headers(self.service, "control")
         timeout_s = max(0.01, min(float(operation.get("timeout_s", 10)), 30))
         self._recheck_paths(checked)
@@ -77,14 +77,40 @@ class EngineControlRuntime:
                         if size > 1048576:
                             raise ValueError("control response exceeded size limit")
 
-    def _check_paths(self, args: Mapping[str, Any]) -> tuple[Any, list[tuple[str, tuple[int, int] | None]]]:
-        """Resolve every path-like string argument under the owner's roots.
+    @staticmethod
+    def _declared_path_arguments(operation: Mapping[str, Any]) -> frozenset[str]:
+        """The operation's arguments declared ``{"type": "path"}``.
 
-        A string is path-like when it is absolute, starts with ``~``, contains a
-        path separator, or names something that exists here. Key names decide
-        nothing. Relative paths are refused, because they mean something only
-        in the engine's working directory. Returns the arguments with each such
-        string replaced by its real path, plus the identities to re-check.
+        That is the only declaration. Any other one is refused on every call, so
+        a misspelt type cannot switch the path check off without a trace.
+        """
+        arguments = operation.get("arguments") or {}
+        if not isinstance(arguments, Mapping):
+            raise ValueError("control operation arguments must be a mapping")
+        for name, declaration in arguments.items():
+            if not isinstance(declaration, Mapping) or declaration.get("type") != "path":
+                raise ValueError(f"control argument {name} has an unsupported declaration; "
+                                 "only type: path is supported")
+        return frozenset(arguments)
+
+    @staticmethod
+    def _is_path_like(value: str) -> bool:
+        """Whether the string's own form names a file, whatever argument carries it."""
+        return (os.path.isabs(value) or value in {".", ".."} or value.startswith(("~", "./", "../"))
+                or value.lower().startswith("file:"))
+
+    def _check_paths(self, args: Mapping[str, Any], declared: frozenset[str]
+                     ) -> tuple[Any, list[tuple[str, tuple[int, int] | None]]]:
+        """Resolve every path argument under the owner's roots.
+
+        An argument is a path when the operation declares it ``type: path``, and
+        then every string under it is checked whatever its form. Elsewhere a
+        string is a path only when its own form says so. Any other string is an
+        identifier, such as ``org/model``, and passes unchanged. A path is
+        checked against the roots even when relative, so a relative declared path
+        is refused: a relative path means something only in the engine's working
+        directory. Returns the arguments with each path replaced by its real
+        path, plus the identities to re-check.
         """
         config = self.service.get("config") or {}
         roots = self.service.get("control_file_roots") or config.get("control_file_roots") or []
@@ -100,13 +126,6 @@ class EngineControlRuntime:
 
         def resolve(value: str) -> str:
             expanded = os.path.expanduser(value)
-            separators = {os.sep, os.altsep or os.sep}
-            path_like = (
-                os.path.isabs(expanded) or value.startswith("~") or value in {".", ".."}
-                or any(sep in value for sep in separators) or os.path.lexists(expanded)
-            )
-            if not path_like:
-                return value
             outside = ValueError("control file path is outside owner allowlisted roots")
             if "\x00" in value or not os.path.isabs(expanded):
                 raise outside
@@ -116,14 +135,16 @@ class EngineControlRuntime:
             identities.append((str(real), self._identity(real)))
             return str(real)
 
-        def walk(value: Any) -> Any:
+        def walk(value: Any, as_path: bool) -> Any:
             if isinstance(value, Mapping):
-                return {key: walk(item) for key, item in value.items()}
+                return {key: walk(item, as_path) for key, item in value.items()}
             if isinstance(value, list):
-                return [walk(item) for item in value]
-            return resolve(value) if isinstance(value, str) else value
+                return [walk(item, as_path) for item in value]
+            if not isinstance(value, str):
+                return value
+            return resolve(value) if as_path or self._is_path_like(value) else value
 
-        return walk(args), identities
+        return {key: walk(item, key in declared) for key, item in args.items()}, identities
 
     @staticmethod
     def _identity(path: Path) -> tuple[int, int] | None:

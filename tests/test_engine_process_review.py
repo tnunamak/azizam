@@ -663,7 +663,7 @@ from gateway.engine_control import EngineControlRuntime  # noqa: E402
 from tests.support.fake_upstream.observation_client import observation_client  # noqa: E402
 
 
-def _control(roots, calls=None):
+def _control(roots, calls=None, **operation):
     def handler(request: httpx.Request) -> httpx.Response:
         if calls is not None:
             calls.append(json.loads(request.content or b"{}"))
@@ -671,14 +671,13 @@ def _control(roots, calls=None):
 
     service = {"connection": {"address": "http://fixture.test:18091"},
                "control_file_roots": roots,
-               "protocol_operations": {"load": {"method": "POST", "path": "/load"}}}
+               "protocol_operations": {"load": {"method": "POST", "path": "/load", **operation}}}
     return EngineControlRuntime(service, drain=SwapDrain(), lock_for=lambda _scope: asyncio.Lock(),
                                 client_factory=observation_client(handler))
 
 
 @pytest.mark.parametrize("value", [
-    "../../etc/passwd", "/etc/passwd", "~/private/model.gguf", "models/model.gguf", "./model.gguf",
-    "org/model-name", "file:///etc/passwd",
+    "../../etc/passwd", "/etc/passwd", "~/private/model.gguf", "./model.gguf", "file:///etc/passwd",
 ])
 @pytest.mark.parametrize("shape", ["plain key", "nested list"])
 def test_any_path_like_string_is_checked_whatever_its_key_is_called(tmp_path, value, shape):
@@ -690,13 +689,65 @@ def test_any_path_like_string_is_checked_whatever_its_key_is_called(tmp_path, va
     assert calls == []
 
 
-def test_a_bare_name_that_exists_in_the_working_directory_is_a_path(tmp_path, monkeypatch):
+@pytest.mark.parametrize("model", ["org/model", "Qwen/Qwen3-8B"])
+def test_org_slash_model_ids_pass_as_plain_ids(tmp_path, model):
+    calls = []
+    runtime = _control([str(tmp_path / "allowed")], calls)
+    run(runtime.invoke("load", {"model": model, "layers": 3}))
+    assert calls == [{"model": model, "layers": 3}]
+
+
+def test_a_bare_name_is_an_identifier_even_when_a_file_of_that_name_is_here(tmp_path, monkeypatch):
     (tmp_path / "weights.bin").write_text("x")
     monkeypatch.chdir(tmp_path)
     calls = []
     runtime = _control([str(tmp_path / "allowed")], calls)
+    run(runtime.invoke("load", {"name": "weights.bin"}))
+    assert calls == [{"name": "weights.bin"}]
+
+
+def test_an_absolute_path_outside_the_roots_is_refused(tmp_path):
+    outside = tmp_path / "outside.gguf"
+    outside.write_text("x")
+    calls = []
     with pytest.raises(ValueError, match="allowlisted"):
-        run(runtime.invoke("load", {"name": "weights.bin"}))
+        run(_control([str(tmp_path / "allowed")], calls).invoke("load", {"model_path": str(outside)}))
+    assert calls == []
+
+
+def test_a_parent_relative_path_is_refused(tmp_path):
+    calls = []
+    with pytest.raises(ValueError, match="allowlisted"):
+        run(_control([str(tmp_path / "allowed")], calls).invoke("load", {"model_path": "../x"}))
+    assert calls == []
+
+
+@pytest.mark.parametrize("value", ["weights.gguf", "org/model"])
+def test_a_relative_value_of_a_declared_path_argument_is_checked_and_refused(tmp_path, value):
+    calls = []
+    runtime = _control([str(tmp_path / "allowed")], calls, arguments={"model_path": {"type": "path"}})
+    with pytest.raises(ValueError, match="allowlisted"):
+        run(runtime.invoke("load", {"model_path": value}))
+    assert calls == []
+
+
+def test_a_declared_path_argument_inside_a_root_is_sent_resolved(tmp_path):
+    root = tmp_path / "allowed"
+    root.mkdir()
+    weights = root / "m.gguf"
+    weights.write_text("x")
+    calls = []
+    runtime = _control([str(root)], calls, arguments={"model_path": {"type": "path"}})
+    run(runtime.invoke("load", {"model_path": str(weights), "model": "qwen"}))
+    assert calls == [{"model_path": str(weights.resolve()), "model": "qwen"}]
+
+
+@pytest.mark.parametrize("declaration", [{"type": "Path"}, {"type": "string"}, "path", {}])
+def test_an_argument_declaration_other_than_type_path_is_refused(tmp_path, declaration):
+    calls = []
+    runtime = _control([str(tmp_path / "allowed")], calls, arguments={"model_path": declaration})
+    with pytest.raises(ValueError, match="only type: path is supported"):
+        run(runtime.invoke("load", {"model": "qwen"}))
     assert calls == []
 
 
