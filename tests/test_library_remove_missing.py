@@ -11,6 +11,7 @@ import os
 import shutil
 import sqlite3
 import unittest
+from contextlib import contextmanager
 from unittest.mock import patch
 
 from fastapi import FastAPI
@@ -365,3 +366,63 @@ class RemoveMissingTests(unittest.TestCase):
                 prompt_memory.delete_person(self.alice["id"], path=self.jobs_db)
         self.assertEqual(self.hides(), {self.alice["id"]: 1, self.bob["id"]: 1})
         self.assertTrue(prompt_memory.get_person_prompts(self.alice["id"], path=self.prompt_db))
+
+    # --- a failed read of the hides must not show hidden items ----------------------------
+
+    @contextmanager
+    def failing_hide_reads(self, *errors: Exception):
+        """The hide query raises each error in turn, then reads for real."""
+        pending = list(errors)
+        calls = [0]
+        real = media_jobs._conn
+
+        @contextmanager
+        def conn(path=media_jobs.DB_PATH):
+            with real(path) as inner:
+                class Wrapped:
+                    def execute(self, sql, *args):
+                        if "media_hidden_assets" in sql and sql.lstrip().startswith("SELECT") and pending:
+                            calls[0] += 1
+                            raise pending.pop(0)
+                        return inner.execute(sql, *args)
+                yield Wrapped()
+
+        with patch("gateway.media_jobs._conn", conn), patch("gateway.media_jobs.time.sleep"):
+            yield calls
+
+    def hidden_by_alice(self) -> None:
+        self.seed()
+        self.assertEqual(self.client.post(REMOVE, headers=VALID).json(), {"removed_assets": 2, "removed_jobs": 1})
+        self.assertEqual(len(media_jobs.hidden_assets([self.alice["id"]], path=self.jobs_db)), 1)
+
+    def test_a_lock_on_the_hide_read_is_retried_briefly(self) -> None:
+        self.hidden_by_alice()
+        locked = sqlite3.OperationalError("database is locked")
+        with self.failing_hide_reads(locked, locked) as calls:
+            self.assertEqual(self.library(), {asset("B"): True, asset("D"): True})
+        self.assertEqual(calls[0], 2)
+
+    def test_a_lock_that_does_not_clear_fails_the_request_instead_of_showing_hidden_items(self) -> None:
+        self.hidden_by_alice()
+        locked = sqlite3.OperationalError("database is locked")
+        with self.failing_hide_reads(*[locked] * 20):
+            response = self.client.get("/me/api/media")
+        self.assertGreaterEqual(response.status_code, 500)
+        self.assertNotIn("assets", response.json())
+        with self.assertRaises(sqlite3.OperationalError):
+            with self.failing_hide_reads(*[locked] * 20):
+                media_jobs.hidden_assets([self.alice["id"]], path=self.jobs_db)
+
+    def test_another_database_error_on_the_hide_read_is_not_swallowed(self) -> None:
+        self.hidden_by_alice()
+        with self.failing_hide_reads(sqlite3.OperationalError("disk I/O error")):
+            with self.assertRaises(sqlite3.OperationalError):
+                media_jobs.hidden_assets([self.alice["id"]], path=self.jobs_db)
+
+    def test_only_a_missing_hide_table_means_nothing_is_hidden(self) -> None:
+        self.hidden_by_alice()
+        with self.failing_hide_reads(sqlite3.OperationalError("no such table: media_hidden_assets")):
+            self.assertEqual(media_jobs.hidden_assets([self.alice["id"]], path=self.jobs_db), set())
+        with self.failing_hide_reads(sqlite3.OperationalError("no such table: media_jobs")):
+            with self.assertRaises(sqlite3.OperationalError):
+                media_jobs.hidden_assets([self.alice["id"]], path=self.jobs_db)
