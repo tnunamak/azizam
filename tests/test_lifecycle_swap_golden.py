@@ -1329,6 +1329,7 @@ def test_owned_process_forward_holds_activity_lease_and_declared_start_budget():
     svc = {"process": {"driver": "process", "ready_timeout_s": 120},
            "connection": {"address": "http://127.0.0.1:18091"}}
     fake = MagicMock()
+    fake._SWAPPABLE = False
     fake.ensure_ready = AsyncMock(return_value=True)
     activation = proxy.LocalModelActivation(backend="fixture-owned", model="fixture-model")
 
