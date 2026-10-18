@@ -87,4 +87,4 @@ def test_litellm_compiler_and_current_are_frozen() -> None:
     compiled = compile_litellm_config_from_registry({"services": {"engine-a": service}})
     names = [row["model_name"] for row in compiled["model_list"]]
     assert "current" in names and "current-fast" in names
-    assert _digest(compiled) == "FILL_LITELLM"
+    assert _digest(compiled) == "837dc6e043ab9d7cf2dfa0ac0916e662c48db9d73bd25aa0999aade926f77dd7"
