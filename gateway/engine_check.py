@@ -36,7 +36,6 @@ import httpx
 
 from gateway import transforms
 from gateway.engine_definitions import EngineCatalog
-from gateway.litellm_substrate import header_problem
 
 DEFAULT_CAP_BYTES = 64 * 1024
 TEST_CAP_BYTES = 4 * 1024 * 1024
@@ -532,6 +531,8 @@ def _error_message(answer: Answer) -> str:
 
 
 def _auth_headers(key: str | None, values: Mapping[str, Any]) -> dict[str, str]:
+    from gateway.litellm_substrate import header_problem
+
     headers: dict[str, str] = {}
     for row in values.get("headers") or ():
         if isinstance(row, Mapping):
