@@ -31,6 +31,7 @@ docs/design/ENGINE_PROTOCOL_EXECUTOR.md and ``tests/test_engine_protocol_overhea
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import secrets
@@ -183,15 +184,20 @@ class HttpV1Executor:
         if len(handles) > self.budgets.max_assets:
             raise BudgetExceeded("max_assets", f"A job may fetch at most {self.budgets.max_assets} assets.")
         out: list[AssetRef] = []
-        for handle in handles:
-            params: dict[str, Any] = {"id": ref.id}
-            if handle is not None:
-                params["asset"] = handle
-            wire = await self._timed_exchange(conn, fetch, op, {"body": {}, "params": params, "files": {}})
-            try:
-                out.append(await self._save_binary(wire, name=handle))
-            finally:
-                await wire.aclose()
+        secrets_ = _secrets(conn)
+        total = 0
+        async with _total(conn, "The engine did not deliver the assets"):
+            for handle in handles:
+                params: dict[str, Any] = {"id": ref.id}
+                if handle is not None:
+                    params["asset"] = handle
+                wire = await self._exchange(conn, fetch, op, {"body": {}, "params": params, "files": {}}, secrets_)
+                try:
+                    asset = await self._save_binary(wire, name=handle, fetch_left=self.budgets.max_fetch_bytes - total)
+                finally:
+                    await wire.aclose()
+                total += asset.size
+                out.append(asset)
         return tuple(out)
 
     # --- operations ------------------------------------------------------------------------------
@@ -438,16 +444,26 @@ class HttpV1Executor:
     async def _read_json(self, response: WireResponse) -> Any:
         return self._parse_json(await self._read_all(response, self.budgets.max_response_bytes, "max_response_bytes"))
 
-    async def _save_binary(self, response: WireResponse, *, name: str | None = None) -> AssetRef:
+    async def _save_binary(self, response: WireResponse, *, name: str | None = None, fetch_left: int | None = None) -> AssetRef:
         if self._assets is None:
             raise ProtocolError("No asset store is configured, so a binary answer cannot be saved.", code="no_asset_store")
         self._check_identity(response)
-        limit = self.budgets.max_asset_bytes
+        limit, budget = self.budgets.max_asset_bytes, "max_asset_bytes"
+        if fetch_left is not None and fetch_left < limit:
+            limit, budget = max(fetch_left, 0), "max_fetch_bytes"
         declared = response.headers.get("content-length")
         if declared and declared.isdigit() and int(declared) > limit:
-            raise BudgetExceeded("max_asset_bytes", f"The engine's answer is larger than {limit} bytes.")
+            raise BudgetExceeded(budget, f"The engine's answer is larger than {limit} bytes.")
         content_type = response.headers.get("content-type", "application/octet-stream")
-        return await self._assets.save(response.chunks(), content_type=content_type, max_bytes=limit, name=name)
+
+        async def capped() -> AsyncIterator[bytes]:  # the cap holds whatever the store does with it
+            seen = 0
+            async for chunk in response.chunks():
+                seen += len(chunk)
+                if seen > limit:
+                    raise BudgetExceeded(budget, f"The engine's answer is larger than {limit} bytes.")
+                yield chunk
+        return await self._assets.save(capped(), content_type=content_type, max_bytes=limit, name=name)
 
     async def _finish(self, response: WireResponse, spec: ResponseSpec, source: Mapping[str, Any], request: CanonicalRequest, started: float) -> Reply:
         headers = dict(response.headers)
@@ -563,6 +579,16 @@ class HttpV1Executor:
                 raise TransportFailure("aborted", "The stream ended in the middle of an event.")
         finally:
             await response.aclose()
+
+
+@contextlib.asynccontextmanager
+async def _total(conn: Connection, what: str) -> AsyncIterator[None]:
+    """One total deadline for everything inside, however many exchanges and body reads it holds."""
+    try:
+        async with asyncio.timeout(conn.timeouts.total_s):
+            yield
+    except TimeoutError:
+        raise TransportFailure("timeout", f"{what} within {conn.timeouts.total_s:g} s.") from None
 
 
 def _secrets(conn: Connection) -> list[str]:

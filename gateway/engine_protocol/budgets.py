@@ -17,6 +17,7 @@ class Budgets:
     max_upload_bytes: int = 64 * 1024 * 1024        # all file parts of one multipart body
     max_response_bytes: int = 16 * 1024 * 1024      # a buffered JSON answer
     max_asset_bytes: int = 256 * 1024 * 1024        # one binary answer saved as an asset
+    max_fetch_bytes: int = 512 * 1024 * 1024        # all assets of one fetch_assets call
     max_event_bytes: int = 1024 * 1024              # one SSE event or NDJSON line
     max_stream_bytes: int = 64 * 1024 * 1024        # a whole stream
     max_selected: int = 10_000        # values a wildcard pointer may collect
