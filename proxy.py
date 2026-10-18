@@ -28535,10 +28535,20 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
             api_key_name=caller.name if caller else None, visibility=_access_for_auth_context(auth_context).receipt_detail)
     receipt.backend = target.engine_id
     receipt.resolved_model = target.upstream
+    backend_body = {**body, "model": target.upstream}
+
+    def _finish_chat_receipt(reason: str, status: str) -> None:
+        """Close an owned chat receipt the way the legacy route does: its terminal stage and reason."""
+        receipt.metadata["terminal_reason"] = reason
+        record_request_shape_stage(receipt.metadata, "terminal", backend_body, extra={"terminal_reason": reason})
+        receipt.finish(status)
+        receipt_store.finalize(receipt, path=receipt_store.DB_PATH)
+    closes_chat = op == "chat" and owns_receipt
     if op == "chat":
         receipt.metadata["request_shape"] = request_shape_fields(body)
+        receipt.metadata["request_shape"]["body_bytes"] = request_body_byte_count(await request.body())
         record_request_shape_stage(receipt.metadata, "accepted", body)
-        record_request_shape_stage(receipt.metadata, "outer_egress", {**body, "model": target.upstream})
+        record_request_shape_stage(receipt.metadata, "outer_egress", backend_body)
     receipt.metadata.update({"execution_backend":"http-v1", "engine_id":target.engine_id,
                              "offering_id":target.offering["id"], "upstream_id":target.upstream})
     if owns_receipt:
@@ -28568,6 +28578,8 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
             response = await _protocol_image_result(runtime, body, request, auth_context, receipt, store)
         else:
             reply = await runtime.invoke(op, body)
+            if op == "chat":
+                record_request_shape_stage(receipt.metadata, "backend_egress", backend_body, extra={"status_code": reply.status})
             if op == "chat" and isinstance(reply, ProtocolStreamReply) != bool(body.get("stream")):
                 if isinstance(reply, ProtocolStreamReply):
                     await reply.aclose()
@@ -28596,8 +28608,13 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
                             data = event if isinstance(event, bytes) else json.dumps(event, separators=(",",":"), ensure_ascii=False).encode()
                             yield b"data: " + data.replace(b"\n", b"\ndata: ") + b"\n\n"
                         yield b"data: [DONE]\n\n"
+                        if closes_chat:
+                            _finish_chat_receipt("completed", "succeeded")
                     except ProtocolError as error:
                         receipt.metadata["stream_error_code"] = error.code
+                        if op == "chat":
+                            record_request_shape_stage(receipt.metadata, "terminal", backend_body, extra={"terminal_reason": "failed"})
+                            receipt.metadata["terminal_reason"] = "failed"
                         receipt.finish("failed")
                         receipt_store.finalize(receipt, path=receipt_store.DB_PATH)
                         yield b"data: " + _protocol_failure(error).body + b"\n\n"
@@ -28622,6 +28639,8 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
                         return media_ingestion.finish_response(receipt, error_response) if owns_receipt else error_response
                 response = Response(content=json.dumps(reply.body, separators=(",",":"), ensure_ascii=False),
                                     status_code=reply.status, media_type="application/json")
+                if closes_chat:
+                    _finish_chat_receipt("completed", "succeeded")
     except ProtocolError as error:
         response = _protocol_failure(error)
     except media_jobs.CancellationPending:
