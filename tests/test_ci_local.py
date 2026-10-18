@@ -573,3 +573,74 @@ def test_critical_path_takes_the_longest_chain_and_ignores_unmeasured_predecesso
     durations = {"a": 1.0, "b": 2.0, "c": 4.0, "d": 0.5, "e": 6.0}
     deps = {"a": (), "b": ("a",), "c": ("a", "b"), "d": ("missing",), "e": ()}
     assert gate_cost.critical_path(durations, deps) == (["a", "b", "c"], 7.0)
+
+
+@pytest.mark.parametrize(("existing", "version", "install_rc"), [
+    (False, "3.12.13", 0),
+    (True, "3.12.13", 0),
+    (False, "3.12.12", 0),
+    (True, "3.12.12", 0),
+    (False, "3.12.13", 19),
+])
+def test_hermetic_runner_self_heals_pinned_python(
+    tmp_path: Path, existing: bool, version: str, install_rc: int,
+) -> None:
+    repo, home, bin_dir = (tmp_path / name for name in ("repo", "home", "bin"))
+    (repo / "scripts/lib").mkdir(parents=True)
+    (repo / "tests").mkdir()
+    bin_dir.mkdir()
+    runner = repo / "scripts/run-hermetic-pytest.sh"
+    shutil.copy2(ROOT / "scripts/run-hermetic-pytest.sh", runner)
+    (repo / "scripts/lib/scratch.sh").write_text("")
+    for relative in ("tests/requirements-hermetic.lock", "tests/requirements-hermetic.in",
+                     "requirements.txt", "proxy_config.yml"):
+        (repo / relative).write_text("")
+    log = bin_dir / "calls"
+    store = home / ".tmp/azizam-hermetic-python"
+    python = store / "cpython-3.12.13-linux-x86_64-gnu/bin/python3.12"
+    interpreter = f'#!/bin/bash\n[[ $1 == --version ]] || exit 91\necho "Python {version}"\n'
+
+    def script(path: Path, body: str) -> None:
+        path.write_text("#!/bin/bash\nset -eu\n" + body + "\n")
+        path.chmod(0o755)
+
+    script(repo / "scripts/hermetic_source_preflight.sh", ":")
+    for name in ("bwrap", "git", "ip"):
+        script(bin_dir / name, "exit 92")  # No sandbox, checkout or network is needed.
+    script(bin_dir / "uv", f"""
+calls="$(dirname "$0")/calls"
+printf '%s\\n' "$@" >> "$calls"
+[[ $# == 5 && $1 == python && $2 == install && $3 == 3.12.13 && $4 == --install-dir ]] || exit 93
+exit_code={install_rc}
+((exit_code == 0)) || exit "$exit_code"
+root="$5/cpython-3.12.13-linux-x86_64-gnu"
+mkdir -p "$root/bin"
+cat > "$root/bin/python3.12" <<'PYTHON'
+{interpreter}PYTHON
+chmod +x "$root/bin/python3.12"
+""")
+    # Stop at the first operation after bootstrap; no packages are installed.
+    script(bin_dir / "sha256sum", 'echo continued >> "$(dirname "$0")/calls"; exit 73')
+    (bin_dir / "awk").symlink_to(next(filter(None, map(shutil.which, ("mawk", "gawk", "original-awk")))))
+    if existing:
+        python.parent.mkdir(parents=True)
+        python.write_text(interpreter)
+        python.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(runner)], text=True, capture_output=True, timeout=10,
+        env={"HOME": str(home), "PATH": f"{bin_dir}:/usr/bin:/bin", "AZIZAM_PRIORITY_SET": "1"},
+    )
+    calls = log.read_text().splitlines() if log.exists() else []
+    expected = [] if existing else ["python", "install", "3.12.13", "--install-dir", str(store)]
+    if install_rc:
+        assert result.returncode == install_rc, result.stderr
+        assert not python.exists()
+    elif version != "3.12.13":
+        assert result.returncode == 1, result.stderr
+        assert "requires Python 3.12.13" in result.stderr
+    else:
+        assert result.returncode == 73, result.stderr
+        assert python.is_file()
+        expected.append("continued")
+    assert calls == expected
+    assert result.stderr.count("hermetic pytest: reinstalling Python 3.12.13") == int(not existing)
