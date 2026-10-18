@@ -77,14 +77,18 @@ def _stored(gateway) -> dict:
     return admin_store.get_service_registry_with_generation(path=gateway.path)["value"]["services"]["engine-a"]
 
 
-def _seed(gateway, owner, *, native: bool = False) -> None:
-    registry = {"schema_version": 1, "services": {}}
-    record = service_registry.normalize_service_record("engine-a", _command_record(native=native))
-    registry["services"]["engine-a"] = record
+def _write(gateway, record: dict, *, migrate: bool = True) -> None:
+    registry = {"schema_version": 1 if migrate else 2, "services": {"engine-a": record}}
+    if migrate:
+        service_registry.migrate_engine_records_v2(registry)
     admin_store.write_service_registry_with_audit(
         service_registry.normalize_service_registry(registry), expected_generation=0, updated_by="test",
         audit_action="test", audit_actor_kind=None, audit_actor_id=None, audit_actor_label=None,
         audit_target_kind=None, audit_target_id=None, path=gateway.path)
+
+
+def _seed(gateway, owner, *, native: bool = False) -> None:
+    _write(gateway, _command_record(native=native), migrate=not native)
 
 
 @pytest.mark.parametrize("who", ["owner", "admin"])
@@ -136,15 +140,10 @@ def test_a_marker_with_no_stored_value_is_refused_not_stored(gateway) -> None:
 
 def test_an_engine_page_save_that_changes_the_command_keeps_the_secret_behind_the_marker(gateway) -> None:
     owner, *_ = owner_and_admin(gateway)
-    registry = {"schema_version": 1, "services": {}}
-    record = service_registry.normalize_service_record("engine-a", _command_record())
+    record = _command_record()
     record["lifecycle"]["driver_config"]["start"] = f"runner --token {SECRET}"
     record["config"]["lifecycle"] = copy.deepcopy(record["lifecycle"])
-    registry["services"]["engine-a"] = record
-    admin_store.write_service_registry_with_audit(
-        service_registry.normalize_service_registry(registry), expected_generation=0, updated_by="test",
-        audit_action="test", audit_actor_kind=None, audit_actor_id=None, audit_actor_label=None,
-        audit_target_kind=None, audit_target_id=None, path=gateway.path)
+    _write(gateway, record)
     view = owner.get("/admin/api/engines/engine-a").json()["engine"]
     assert SECRET not in json.dumps(view)
     start = view["values"]["lifecycle_start"]

@@ -29,7 +29,7 @@ from typing import Any
 
 import yaml
 
-from gateway import admin_store
+from gateway import admin_store, engine_redaction
 from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
@@ -640,9 +640,11 @@ def service_record_v2(record: Mapping[str, Any]) -> dict[str, Any]:
                           "inputs": {}, "options": {}, "start_profile": {},
                           "adjustments": copy.deepcopy(config.get("transforms") or [])})
     lifecycle = _agreed_lifecycle(service_id, record) if "process" not in record else {}
-    process = copy.deepcopy(record.get("process")) if isinstance(record.get("process"), Mapping) else _v2_process(lifecycle)
+    process = record.get("process") if isinstance(record.get("process"), Mapping) else _v2_process(lifecycle)
     if process is not None:
-        process.pop("legacy_lifecycle", None)
+        # A public projection of the stored block: an allow-list of fields, commands and
+        # environment values hidden. It is never a copy of what the gateway runs.
+        process = engine_redaction.public_process(process)
     observations = copy.deepcopy(record.get("observations")) if isinstance(record.get("observations"), Mapping) else {}
     if not observations and isinstance(lifecycle.get("driver_config"), Mapping):
         endpoint = lifecycle["driver_config"].get("health_endpoint")

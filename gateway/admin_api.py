@@ -44,7 +44,7 @@ from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.availability import availability_evidence_snapshot, project_service
 from gateway.model_presentation import service_presentation, starts_on_demand
 from gateway.backends.litellm_admin import LiteLLMAdminError
-from gateway import admin_catalog, admin_store, engine_admin, engine_check, extension_packages, service_registry
+from gateway import admin_catalog, admin_store, engine_admin, engine_check, engine_redaction, extension_packages, service_registry
 
 __all__ = [
     "AdminAuthError",
@@ -2252,7 +2252,7 @@ def create_admin_router(
             return ctx
         response = JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"service_registry": store.get_service_registry()},
+            content={"service_registry": engine_redaction.redact_registry(store.get_service_registry())},
         )
         if hasattr(store, "path"):
             record = admin_store.get_service_registry_with_generation(path=store.path)
@@ -2284,7 +2284,7 @@ def create_admin_router(
     ) -> JSONResponse:
         response = JSONResponse(
             status_code=response_status,
-            content={"service_registry": record["value"]},
+            content={"service_registry": engine_redaction.redact_registry(record["value"])},
         )
         response.headers.update(
             {
@@ -2309,6 +2309,8 @@ def create_admin_router(
         try:
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
+            # The registry a caller read hides command secrets behind markers; a marker keeps its stored value.
+            body = engine_redaction.restore_registry(body, store.get_service_registry())
             registry = _validate_service_registry(body)
             record = store.update_service_registry(
                 data=registry,
@@ -2750,6 +2752,8 @@ def create_admin_router(
                 "invalid_extension_package",
                 str(exc),
             ).as_response()
+        if isinstance(result.get("service_registry"), Mapping):
+            result = {**result, "service_registry": engine_redaction.redact_registry(result["service_registry"])}
         response = JSONResponse(
             status_code=status.HTTP_200_OK,
             content=result,

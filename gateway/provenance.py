@@ -129,9 +129,16 @@ _SECRET_VALUE = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----|[?&](?:sig|api_key|key|token)=\S+)",
     re.IGNORECASE,
 )
+# Gateway-issued key prefixes, which a start command must never show.
+_ISSUED_KEY = re.compile(r"\b(?:opk|oak)_[A-Za-z0-9_-]+")
 _DATA_URI = re.compile(r"^\s*data:[^,]{0,80};base64,", re.IGNORECASE)
 _LONG_BASE64 = re.compile(r"^[A-Za-z0-9+/=\s]{512,}$")
 _REDACTED = "[redacted]"
+
+
+def looks_like_credential(text: str) -> bool:
+    """True when ``text`` has the shape of a key, token or bearer value."""
+    return bool(_SECRET_VALUE.search(text) or _ISSUED_KEY.search(text))
 
 
 def _sanitize_value(value: Any, depth: int) -> Any:
