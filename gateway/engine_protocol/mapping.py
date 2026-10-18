@@ -23,6 +23,7 @@ import json
 import time
 from contextvars import ContextVar
 from itertools import filterfalse
+from io import StringIO
 from typing import Any, Callable, Mapping, Sequence
 
 from gateway.engine_protocol import pointer
@@ -151,6 +152,8 @@ class _JsonFacts:
             try:
                 for number in missing:
                     _check_deadline()
+                    if kind is int and number.bit_length() > 1024:
+                        _check_deadline(force=True)
                     sizes[number] = _json_size(number)
                 if kind is float and 0.0 in chunk:
                     sizes[0.0] = 3
@@ -233,7 +236,62 @@ def json_key(value: Any) -> str:
     """How a scalar is spelled as a table key."""
     if isinstance(value, str):
         return value
-    return json.dumps(value)
+    return _json_text(value, compact=False, ensure_ascii=True)
+
+
+def _json_text(value: Any, *, compact: bool, ensure_ascii: bool) -> str:
+    """The standard JSON spelling, with polling inside each-map serialization.
+
+    The ordinary mapping path keeps the native encoder. During each, neither a
+    large array nor a long string may hide unbounded work inside one rule.
+    """
+    if _FACTS.get() is None:
+        return json.dumps(value, ensure_ascii=ensure_ascii, **({"separators": (",", ":")} if compact else {}))
+    output = StringIO()
+    markers: set[int] = set()
+    comma, colon = (",", ":") if compact else (", ", ": ")
+
+    def string(text: str) -> None:
+        output.write('"')
+        for start in range(0, len(text), 4096):
+            _check_deadline(force=True)
+            output.write(json.dumps(text[start:start + 4096], ensure_ascii=ensure_ascii)[1:-1])
+        output.write('"')
+
+    def emit(node: Any) -> None:
+        _check_deadline()
+        if isinstance(node, str):
+            string(node)
+        elif isinstance(node, (dict, list, tuple)):
+            identity = id(node)
+            if identity in markers:
+                raise ValueError("Circular reference detected")
+            markers.add(identity)
+            is_object = isinstance(node, dict)
+            output.write("{" if is_object else "[")
+            for index, (key, child) in enumerate(node.items() if is_object else enumerate(node)):
+                if index:
+                    output.write(comma)
+                if is_object:
+                    if isinstance(key, str):
+                        string(key)
+                    elif key is None or isinstance(key, (int, float, bool)):
+                        string(json.dumps(key))
+                    else:
+                        raise TypeError(f"keys must be str, int, float, bool or None, not {type(key).__name__}")
+                    output.write(colon)
+                emit(child)
+            output.write("}" if is_object else "]")
+            markers.remove(identity)
+        else:
+            _check_deadline(force=isinstance(node, int) and node.bit_length() > 1024)
+            output.write(json.dumps(node, ensure_ascii=ensure_ascii))
+
+    emit(value)
+    _check_deadline(force=True)
+    result = output.getvalue()
+    _check_deadline(force=True)
+    return result
 
 
 def _getter(segments: pointer.Segments) -> Callable[[Any], Any]:
@@ -643,7 +701,7 @@ def _c_stringify(spec: dict, ctx: _Ctx, place: str, depth: int) -> Step | None:
         value = read(source)
         if value is not MISSING:
             try:
-                write(out, json.dumps(value, separators=(",", ":"), ensure_ascii=False))
+                write(out, _json_text(value, compact=True, ensure_ascii=False))
             except (TypeError, ValueError) as exc:  # an asset reference, a non-text key
                 raise MappingError(f"Cannot stringify {'/'.join(src)}: {exc}") from None
     return stringify_rule

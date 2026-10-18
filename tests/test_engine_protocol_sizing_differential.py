@@ -165,6 +165,10 @@ def test_oversized_intermediate_each_cannot_be_hidden_by_later_overwrite():
 # These tests deliberately inspect implementation calls or simulate elapsed time;
 # a constant clock and a second evaluator would invalidate their assertions.
 _CORPUS_EXCLUSIONS = {
+    "test_stringify_and_enum_do_not_serialize_unbounded_containers": "serialization-call instrumentation",
+    "test_chunked_string_accounting_bounds_deadline_overshoot": "elapsed-work clock instrumentation",
+    "test_each_all_runtime_budgets_refuse_before_unbounded_growth": "includes a real-time deadline test",
+    "test_large_integer_sizing_polls_between_expensive_values": "elapsed-work clock instrumentation",
     "test_mapping_s_stops_the_map_while_it_runs_not_after_it": "clone-count clock instrumentation",
     "test_mapping_s_stops_rules_inside_a_condition_too": "clone-count clock instrumentation",
     "test_a_map_within_mapping_s_still_runs_every_rule": "clone-count clock instrumentation",

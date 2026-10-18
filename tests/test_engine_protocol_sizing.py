@@ -136,3 +136,44 @@ def test_each_all_runtime_budgets_refuse_before_unbounded_growth():
             program.apply({'body': {'items': items}})
         assert raised.value.budget == name
         assert time.perf_counter() - start < 1.0
+
+
+def test_large_integer_sizing_polls_between_expensive_values(monkeypatch):
+    import pytest
+    from gateway.engine_protocol.errors import BudgetExceeded
+    elapsed = SimpleNamespace(now=0.0)
+    monkeypatch.setattr(mapping, 'time', SimpleNamespace(perf_counter=lambda: elapsed.now))
+    original = mapping._json_size
+    def costly_integer(value):
+        result = original(value)
+        if type(value) is int and value.bit_length() > 1024:
+            elapsed.now += .0002
+        return result
+    monkeypatch.setattr(mapping, '_json_size', costly_integer)
+    rules = [{'each': {'from': '/body/items', 'to': '/data', 'map': []}}]
+    with pytest.raises(BudgetExceeded) as raised:
+        mapping.build(rules, base='empty', roots=mapping.RESPONSE_ROOTS,
+                      budgets=Budgets(mapping_s=.001)).apply(
+                          {'body': {'items': [[10**3999 + i for i in range(64)]]}})
+    assert raised.value.budget == 'mapping_s'
+    assert elapsed.now - .001 < .005
+
+
+def test_stringify_and_enum_do_not_serialize_unbounded_containers(monkeypatch):
+    import json
+    original = json.dumps
+    def bounded_only(value, *args, **kwargs):
+        assert type(value) not in (dict, list), 'uninterrupted container serialization'
+        if type(value) is str:
+            assert len(value) <= 4096
+        return original(value, *args, **kwargs)
+    source = {'body': {'items': [{'large': 'é' * 10000}]}}
+    children = [
+        {'stringify': {'from': '/item', 'to': '/text'}},
+        {'enum': {'from': '/item', 'to': '/enum', 'table': {'unused': 1}, 'unmapped': 'drop'}},
+    ]
+    program = mapping.build([{'each': {'from': '/body/items', 'to': '/data', 'map': children}}],
+                            base='empty', roots=mapping.RESPONSE_ROOTS)
+    expected = original(source['body']['items'][0], separators=(',', ':'), ensure_ascii=False)
+    monkeypatch.setattr(mapping.json, 'dumps', bounded_only)
+    assert program.apply(source) == {'data': [{'text': expected}]}
