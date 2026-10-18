@@ -121,7 +121,7 @@ describe("request adjustments: stored rows <-> typed forms", () => {
     expect(sayAdjustment(pm)).toBe("In replies, Azizam renames “max_completion_tokens” to “max_tokens”.");
     expect(sayAdjustment(drop)).toBe("Azizam leaves “logit_bias”, “user” out of requests.");
     expect(sayAdjustment(defs)).toBe("Azizam adds “top_p” = “0.9” to requests that do not set it.");
-    expect(sayAdjustment(msg)).toBe("Azizam adds a system message at the start of matching chat requests: “Be brief.”.");
+    expect(sayAdjustment(msg)).toBe("Azizam adds instructions at the start of matching chat requests: “Be brief.”.");
     expect(sayAdjustment(clamp)).toBe(
       "In requests, Azizam keeps “temperature” between 0 and 1. A value outside moves to the nearest limit.",
     );
@@ -130,7 +130,7 @@ describe("request adjustments: stored rows <-> typed forms", () => {
   it("shows a named built-in read-only in words", () => {
     const [card] = cardsFromTransforms(["reasoning-effort-final-chat"]);
     expect(card.kind).toBe("builtin");
-    expect(sayAdjustment(card)).toBe("Built-in adjustment: reasoning effort final chat. Its behavior is not described here. Read-only.");
+    expect(sayAdjustment(card)).toBe("Built-in adjustment: reasoning-effort-final-chat. Its behavior is not described here. Read-only.");
   });
 
   it("shows preserved conditions and options without claiming unconditional behavior", () => {

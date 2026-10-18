@@ -172,7 +172,7 @@ describe("Request adjustments: the six typed forms", () => {
     await user.selectOptions(within(card).getByLabelText("Where"), "end");
     await user.type(within(card).getByLabelText("Message text"), "Answer in plain language.");
     expect(within(card).getByRole("status")).toHaveTextContent(
-      "Azizam adds a system message at the end of matching chat requests: “Answer in plain language.”.",
+      "Azizam adds instructions at the end of matching chat requests: “Answer in plain language.”.",
     );
     expect(await saveAndGetTransforms(user)).toEqual([
       "reasoning-effort-final-chat",
@@ -196,7 +196,7 @@ describe("Request adjustments: the six typed forms", () => {
   it("a built-in shows in words and can be removed", async () => {
     const user = userEvent.setup();
     const more = await section({}, "What it offers");
-    expect(within(more).getByText("Built-in adjustment: reasoning effort final chat")).toBeInTheDocument();
+    expect(within(more).getByText("Built-in adjustment: reasoning-effort-final-chat")).toBeInTheDocument();
     await user.click(within(more).getByRole("button", { name: "Remove adjustment: Built-in adjustment" }));
     expect(await saveAndGetTransforms(user)).toEqual([]);
   });
