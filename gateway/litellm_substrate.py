@@ -16,18 +16,19 @@ Explicit limitations:
 from __future__ import annotations
 
 from gateway.compat import get_env
-from gateway.engine_redaction import CREDENTIAL_HEADER_RE  # noqa: F401  (header rule shared with the engine view)
 
 import os
 import hashlib
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 import yaml
 
 from gateway.provider_catalog import load_provider_catalog
+from gateway.secret_refs import is_secret_entry
 from gateway.secret_store import credential_origin_from_url
 from gateway.service_registry import (
     canonical_provider_id,
@@ -52,10 +53,33 @@ DEFAULT_LITELLM_KEY_HEADER = "X-Litellm-Key"
 DEFAULT_LITELLM_CONFIG_PATH = Path("litellm.config.yaml")
 
 
+@dataclass(frozen=True)
+class Materializer:
+    """How an executable config gets what a record only references (decision D30).
+
+    ``header(row, origin)`` is the value of a secret header row for the origin it is sent to, or None when it
+    cannot be read (the row is then left out). ``url(config)`` is a record's endpoint with its stored credentials.
+    Only ``gateway/litellm_runtime.py`` builds one; this module never reads a secret, so without one it renders
+    the preview: public data, a header's name with a placeholder for its value, an endpoint without credentials.
+    """
+
+    header: Callable[[Mapping[str, Any], str | None], str | None]
+    url: Callable[[Mapping[str, Any]], str]
+
+
+HEADER_PLACEHOLDER = "<configured>"
+
+
 def compile_litellm_substrate_config(
     services: Mapping[str, Any],
+    *,
+    materializer: Materializer | None = None,
 ) -> dict[str, Any]:
-    """Return a LiteLLM-compatible config fragment from Gateway-owned data."""
+    """A LiteLLM-compatible config fragment from Gateway-owned data.
+
+    Without ``materializer`` this is the preview a management route may show: no secret is in it and none can
+    be. With the runtime's, it is the executable config the router reads from a restricted file.
+    """
 
     service_records = _normalize_services(services)
     entries: list[dict[str, Any]] = []
@@ -71,7 +95,7 @@ def compile_litellm_substrate_config(
         deployments = _deployment_records(service)
         if not deployments:
             continue
-        entries.extend(_model_list_entries(service, deployments))
+        entries.extend(_model_list_entries(service, deployments, materializer))
     entries.extend(_current_loaded_entries(service_records))
     _validate_no_local_remote_model_name_collisions(entries)
 
@@ -95,9 +119,11 @@ def compile_litellm_substrate_config(
 
 def compile_litellm_config_from_registry(
     registry: Mapping[str, Any],
+    *,
+    materializer: Materializer | None = None,
 ) -> dict[str, Any]:
     services = registry.get("services") if isinstance(registry, Mapping) else {}
-    return compile_litellm_substrate_config(services if isinstance(services, Mapping) else {})
+    return compile_litellm_substrate_config(services if isinstance(services, Mapping) else {}, materializer=materializer)
 
 
 def litellm_known_model_names(registry: Mapping[str, Any]) -> frozenset[str]:
@@ -214,24 +240,6 @@ def litellm_config_path_from_registry(
     raw_path = str(config.get("config_path") or DEFAULT_LITELLM_CONFIG_PATH).strip()
     path = Path(raw_path)
     return path if path.is_absolute() else base_dir / path
-
-
-def write_litellm_config_artifact(
-    registry: Mapping[str, Any],
-    *,
-    base_dir: Path,
-    path: Path | None = None,
-) -> Path:
-    path = path if path is not None else litellm_config_path_from_registry(registry, base_dir=base_dir)
-    compiled = compile_litellm_config_from_registry(registry)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(
-        yaml.safe_dump(compiled, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
-    )
-    tmp.replace(path)
-    return path
 
 
 def _litellm_service_record(registry: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -431,12 +439,13 @@ def _current_loaded_entries(service_records: list[Mapping[str, Any]]) -> list[di
 def _model_list_entries(
     service: Mapping[str, Any],
     deployments: Iterable[Mapping[str, Any]],
+    materializer: Materializer | None = None,
 ) -> list[dict[str, Any]]:
     config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
     secret_refs = (
         service.get("secret_refs") if isinstance(service.get("secret_refs"), Mapping) else {}
     )
-    base_url = service_base_url(config)
+    base_url = materializer.url(config) if materializer is not None else service_base_url(config)
 
     out: list[dict[str, Any]] = []
     for deployment in deployments:
@@ -471,7 +480,7 @@ def _model_list_entries(
             api_key_ref = _api_key_ref(config, secret_refs, base_url, service_id=str(service.get("id") or ""))
             if base_url:
                 litellm_params["api_base"] = base_url
-            litellm_params.update(_engine_request_settings(config))
+            litellm_params.update(_engine_request_settings(config, materializer, origin=origin_of(base_url)))
             if api_key_ref:
                 litellm_params["api_key"] = api_key_ref
             elif base_url:
@@ -501,6 +510,9 @@ def _model_list_entries(
     return out
 
 
+# A header whose name looks like it carries a credential: only the owner may set one (a write rule about who may
+# send a key; a view hides every header value whatever its name).
+CREDENTIAL_HEADER_RE = re.compile(r"auth|key|token|secret|passw|cookie|session|credential|signature", re.IGNORECASE)
 _HEADER_NAME_RE = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 # Headers the gateway or the HTTP layer sets itself.
 TRANSPORT_HEADERS = frozenset({
@@ -522,18 +534,31 @@ def header_problem(name: str, value: str) -> str:
     return ""
 
 
-def engine_headers(config: Mapping[str, Any]) -> dict[str, str]:
-    """The plain request headers a service record lists as ``[{"name", "value"}]`` rows.
+def engine_headers(
+    config: Mapping[str, Any],
+    *,
+    resolve: Callable[[Mapping[str, Any]], str | None] | None = None,
+    preview: bool = False,
+) -> dict[str, str]:
+    """The request headers a service record lists (decision D29): public rows as written, secret rows resolved.
 
-    A row that fails ``header_problem`` is left out: a raw service edit can store
-    anything, and nothing malformed or credential-shaped is sent.
+    A secret row (``{"id", "name", "secret_ref"}``) is resolved by ``resolve(row)``, which only the runtime can
+    supply; without it the row is left out, or with ``preview`` it shows as a placeholder. A row that fails
+    ``header_problem`` is left out: a raw service edit can store anything, and nothing malformed is sent.
     """
     out: dict[str, str] = {}
     for row in config.get("headers") or () if isinstance(config.get("headers"), list) else ():
-        if isinstance(row, Mapping) and isinstance(row.get("name"), str) and isinstance(row.get("value"), str):
-            name = row["name"].strip()
-            if not header_problem(name, row["value"]):
-                out[name] = row["value"]
+        if not isinstance(row, Mapping) or not isinstance(row.get("name"), str):
+            continue
+        name = row["name"].strip()
+        if is_secret_entry(row):
+            value = HEADER_PLACEHOLDER if preview else (resolve(row) if resolve is not None else None)
+        elif row.get("public") is True and isinstance(row.get("value"), str):
+            value = row["value"]
+        else:
+            continue  # a legacy inline row no migration has moved: never sent, never shown
+        if isinstance(value, str) and (preview or not header_problem(name, value)):
+            out[name] = value
     return out
 
 
@@ -559,10 +584,15 @@ def router_reply_timeout(registry: Mapping[str, Any], model_name: str) -> float 
     return None
 
 
-def _engine_request_settings(config: Mapping[str, Any]) -> dict[str, Any]:
+def _engine_request_settings(
+    config: Mapping[str, Any], materializer: Materializer | None = None, *, origin: str | None = None,
+) -> dict[str, Any]:
     """What the router sends and how long it waits, from the record's ``headers`` and ``timeout``."""
     out: dict[str, Any] = {}
-    headers = engine_headers(config)
+    if materializer is None:
+        headers = engine_headers(config, preview=True)
+    else:
+        headers = engine_headers(config, resolve=lambda row: materializer.header(row, origin))
     if headers:
         out["extra_headers"] = headers
     timeout = config.get("timeout")

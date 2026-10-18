@@ -10,6 +10,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from gateway import runtime_secrets
 from gateway.engine_credentials import credential_headers
 
 
@@ -61,6 +62,11 @@ class ObservationReader:
         if not isinstance(http, Mapping) or not isinstance(address, str):
             return UNKNOWN
         path = http.get("path")
+        if isinstance(path, str) and http.get("path_entries"):
+            try:
+                path = runtime_secrets.url(http, "path")  # the query credentials the record stores for this probe
+            except runtime_secrets.SecretUnavailable:
+                return UNKNOWN
         expected = http.get("expect", 200)
         if not isinstance(path, str) or not path.startswith("/") or not isinstance(expected, int):
             return UNKNOWN
