@@ -81,7 +81,7 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
         receipt = proxy.start_image_route_receipt("/v1/images/generations", self.auth)
         with patch.object(
             proxy, "get_vram_estimate", lambda *_a, **_k: 1024), patch.object(
-            proxy, "comfy_free_vram_bytes", AsyncMock(return_value=10**10)), patch.object(
+            proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**10)), patch.object(
             proxy, "_service_availability_response", lambda *_a, **_k: None), patch.object(
             proxy, "configured_downstream_headers", lambda *_a: {}), patch.object(
             # The background decision probes service health over HTTP; no ComfyUI fact is under test here.

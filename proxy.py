@@ -5234,7 +5234,7 @@ def _load_graph_workflow_file(workflow_path: Path) -> Optional[dict]:
     errors = validate_workflow_graph(workflow)
     if errors:
         print(
-            f"[proxy] invalid ComfyUI workflow {workflow_path}: {'; '.join(errors)}",
+            f"[proxy] invalid {_graph_adapter().label} workflow {workflow_path}: {'; '.join(errors)}",
             flush=True,
         )
         return None
@@ -5255,7 +5255,7 @@ def _graph_workflow_artifact_path_for_model(model_name: str) -> Path:
         bindings = record.manifest.get("bindings")
         if not isinstance(bindings, Mapping):
             continue
-        comfy = bindings.get("comfyui")
+        comfy = bindings.get(_GRAPH_BACKEND_ID)
         if not isinstance(comfy, Mapping):
             continue
         artifact = comfy.get("workflow")
@@ -5289,7 +5289,7 @@ async def check_comfy_health() -> bool:
     """Check if ComfyUI backend is healthy."""
     if not COMFY_ENABLED:
         return False
-    return await check_service_health("comfyui")
+    return await check_service_health(_GRAPH_BACKEND_ID)
 
 
 def parse_size(size_str: str) -> tuple[int, int]:
@@ -5594,7 +5594,7 @@ def record_vram_estimate(
     _persist_vram_estimates()
 
 
-async def comfy_vram_snapshot(
+async def graph_vram_snapshot(
     client: httpx.AsyncClient,
 ) -> tuple[Optional[int], Optional[int]]:
     """Return (free, total) VRAM bytes on GPU0 from the engine's system stats."""
@@ -5617,9 +5617,9 @@ async def comfy_vram_snapshot(
         return None, None
 
 
-async def comfy_free_vram_bytes(client: httpx.AsyncClient) -> Optional[int]:
+async def graph_free_vram_bytes(client: httpx.AsyncClient) -> Optional[int]:
     """Backward-compatible: just the free-VRAM read."""
-    free, _ = await comfy_vram_snapshot(client)
+    free, _ = await graph_vram_snapshot(client)
     return free
 
 
@@ -5853,7 +5853,7 @@ class _VramProbe:
         # Whole-GPU side: keep populating min_free / total via ComfyUI's
         # /system_stats. Cheap, async, and feeds the legacy "system pressure"
         # metric (NOT used by the batcher).
-        free, total = await comfy_vram_snapshot(self._client)
+        free, total = await graph_vram_snapshot(self._client)
         if isinstance(total, int) and self.total is None:
             self.total = total
         if isinstance(free, int):
@@ -7041,6 +7041,29 @@ def _image_client_disconnected_response(prompt_id: str) -> Response:
     )
 
 
+def _graph_failure_response(error: Exception) -> Response | None:
+    """The answer for a graph engine that timed out or could not be reached, else ``None``.
+
+    The adapter raises ``TransportFailure``; other calls in an image handler's ``try`` (not to the engine) still raise
+    httpx errors, which have always read the same to the caller.
+    """
+    kind = error.kind if isinstance(error, TransportFailure) else None
+    adapter = _graph_adapter()
+    if kind == "timeout" or isinstance(error, httpx.TimeoutException):
+        return Response(
+            content=json.dumps({"error": {"message": f"{adapter.label} request timeout", "type": "api_error"}}),
+            status_code=504,
+            media_type="application/json",
+        )
+    if kind == "unreachable" or isinstance(error, httpx.ConnectError):
+        return Response(
+            content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection()), "type": "api_error"}}),
+            status_code=502,
+            media_type="application/json",
+        )
+    return None
+
+
 async def _request_is_disconnected(request: Request | None) -> bool:
     if request is None or not hasattr(request, "is_disconnected"):
         return False
@@ -7334,7 +7357,7 @@ async def _generate_images_with_adaptive_batching(
     requests) can scale up safely. Never exceeds free VRAM minus reserve.
     """
     estimate = get_vram_estimate(workflow_name, width, height)
-    free_before = await comfy_free_vram_bytes(client)
+    free_before = await graph_free_vram_bytes(client)
     warnings: list[str] = []
     response_headers: dict[str, str] = {}
     models_freed = False
@@ -7349,7 +7372,7 @@ async def _generate_images_with_adaptive_batching(
 
     while images_remaining > 0 and rounds_run < max_rounds:
         rounds_run += 1
-        free_now = await comfy_free_vram_bytes(client)
+        free_now = await graph_free_vram_bytes(client)
 
         # Sizing model:
         #   - Probe round (rounds_run==1, no estimate): batch_size=1 so we can
@@ -7365,7 +7388,7 @@ async def _generate_images_with_adaptive_batching(
             if cap == 0 and IMAGE_FREE_VRAM_ON_EXHAUSTION and not models_freed:
                 models_freed = await _free_graph_models_if_idle(client)
                 if models_freed:
-                    free_now = await comfy_free_vram_bytes(client)
+                    free_now = await graph_free_vram_bytes(client)
                     cap = compute_max_batch(free_now, estimate)
             # The estimate sizes batches > 1 only. It is measured as the
             # marginal ComfyUI VRAM of a probe run (cold model loads
@@ -7513,7 +7536,7 @@ async def _generate_images_with_adaptive_batching(
             # Avoid infinite loops if the backend silently returns nothing.
             if rounds_run >= 2 and not images_collected:
                 return Response(
-                    content=json.dumps({"error": {"message": "ComfyUI returned no images", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": f"{_graph_adapter().label} returned no images", "type": "api_error"}}),
                     status_code=502,
                     media_type="application/json",
                 )
@@ -7537,7 +7560,7 @@ async def _generate_images_with_adaptive_batching(
             model_state = "unknown"
             comfy_baseline = 0
             samples_count = probe.samples if probe is not None else 0
-            free_after, _ = await comfy_vram_snapshot(client)
+            free_after, _ = await graph_vram_snapshot(client)
 
             if probe is not None and probe.trustworthy():
                 marginal, model_state = probe.marginal_and_state()
@@ -7655,7 +7678,7 @@ async def _generate_images_with_adaptive_batching(
             response_headers["X-Image-Background-Removal-Source"] = background_removal_decision.source
 
     print(
-        f"[proxy] ComfyUI generated {len(images_collected)}/{n_requested} image(s) "
+        f"[proxy] {_graph_adapter().label} generated {len(images_collected)}/{n_requested} image(s) "
         f"across {rounds_run} round(s)",
         flush=True,
     )
@@ -7689,7 +7712,7 @@ async def proxy_graph_image_request(
 ) -> Response:
     """Handle OpenAI-compatible image generation request via ComfyUI."""
     admission = _dispatch_admission_response(
-        'image.generate', auth_context=auth_context, service_id="comfyui",
+        'image.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -7703,8 +7726,8 @@ async def proxy_graph_image_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
-        service_label="ComfyUI",))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
+        service_label=_graph_adapter().label,))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -7800,7 +7823,7 @@ async def proxy_graph_image_request(
             media_type="application/json",
         )
     _record_image_input(receipt, "response_format")
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         model_resolution = resolve_model_for_operation("images", model)
     except ModelCompatibilityError as e:
@@ -7990,7 +8013,7 @@ async def proxy_graph_image_request(
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
             admission = _dispatch_admission_response(
-                "image.generate", auth_context=auth_context, service_id="comfyui",
+                "image.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
                 service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
@@ -8024,21 +8047,12 @@ async def proxy_graph_image_request(
                 output_quality=quality,
                 output_size=effective_size,
             )
-    except httpx.TimeoutException:
-        return Response(
-            content=json.dumps({"error": {"message": "ComfyUI request timeout", "type": "api_error"}}),
-            status_code=504,
-            media_type="application/json"
-        )
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
     except Exception as e:
+        failure = _graph_failure_response(e)
+        if failure is not None:
+            return failure
         return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI proxy error: {str(e)}", "type": "api_error"}}),
+            content=json.dumps({"error": {"message": f"{_graph_adapter().label} proxy error: {str(e)}", "type": "api_error"}}),
             status_code=502,
             media_type="application/json"
         )
@@ -8131,7 +8145,7 @@ async def proxy_graph_image_edit_request(
 ) -> Response:
     """Handle OpenAI-compatible image edit request via ComfyUI."""
     admission = _dispatch_admission_response(
-        'image.edit', auth_context=auth_context, service_id="comfyui",
+        'image.edit', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -8145,8 +8159,8 @@ async def proxy_graph_image_edit_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
-        service_label="ComfyUI",))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
+        service_label=_graph_adapter().label,))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -8284,7 +8298,7 @@ async def proxy_graph_image_edit_request(
             media_type="application/json",
         )
     _record_image_input(receipt, "response_format")
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         model_resolution = resolve_model_for_operation("image_edits", model)
     except ModelCompatibilityError as e:
@@ -8352,7 +8366,7 @@ async def proxy_graph_image_edit_request(
             "prompt",
             ignored_reason="workflow does not use prompt",
         )
-    required_route_bound_inputs = _manifest_required_route_bound_inputs(manifest, "comfyui")
+    required_route_bound_inputs = _manifest_required_route_bound_inputs(manifest, _GRAPH_BACKEND_ID)
     minimum_image_count = 1 + len(required_route_bound_inputs)
     if len(image_files) < minimum_image_count:
         _record_image_input(receipt, "image[]", rejected_reason="missing_required_image")
@@ -8447,9 +8461,10 @@ async def proxy_graph_image_edit_request(
                 image_content = _apply_edit_mask_as_source_alpha(mask_context)
 
             files = {"image": (image_file.filename or "input.png", image_content, "image/png")}
-            upload_resp = await client.post(f"{COMFY_HOST}/upload/image", headers=headers, files=files)
+            graph = _graph(client)
+            upload_resp = await graph.upload(files, headers=headers)
 
-            if upload_resp.status_code != 200:
+            if upload_resp.status != 200:
                 return Response(
                     content=json.dumps({"error": {"message": f"Image upload failed: {upload_resp.text}", "type": "api_error"}}),
                     status_code=502,
@@ -8515,12 +8530,11 @@ async def proxy_graph_image_edit_request(
             image_filenames = [uploaded_filename]
             for extra_file in image_files[1:]:
                 extra_content = await extra_file.read()
-                extra_upload_resp = await client.post(
-                    f"{COMFY_HOST}/upload/image",
+                extra_upload_resp = await graph.upload(
+                    {"image": (extra_file.filename or "input.png", extra_content, "image/png")},
                     headers=headers,
-                    files={"image": (extra_file.filename or "input.png", extra_content, "image/png")},
                 )
-                if extra_upload_resp.status_code != 200:
+                if extra_upload_resp.status != 200:
                     return Response(
                         content=json.dumps({"error": {"message": f"Image upload failed: {extra_upload_resp.text}", "type": "api_error"}}),
                         status_code=502,
@@ -8548,12 +8562,8 @@ async def proxy_graph_image_edit_request(
             )
             if mask_context is not None and mask_input_name and mask_content is not None:
                 mask_files = {"image": ("normalized-mask.png", mask_context.edit_mask, "image/png")}
-                mask_upload_resp = await client.post(
-                    f"{COMFY_HOST}/upload/image",
-                    headers=headers,
-                    files=mask_files,
-                )
-                if mask_upload_resp.status_code != 200:
+                mask_upload_resp = await graph.upload(mask_files, headers=headers)
+                if mask_upload_resp.status != 200:
                     return Response(
                         content=json.dumps({"error": {"message": f"Mask upload failed: {mask_upload_resp.text}", "type": "api_error"}}),
                         status_code=502,
@@ -8569,7 +8579,7 @@ async def proxy_graph_image_edit_request(
                     )
                 workflow = bind_backend_request(
                     manifest,
-                    "comfyui",
+                    _GRAPH_BACKEND_ID,
                     workflow,
                     {mask_input_name: uploaded_mask_filename},
                 ).request
@@ -8665,7 +8675,7 @@ async def proxy_graph_image_edit_request(
                     seed_field = "noise_seed"
 
             admission = _dispatch_admission_response(
-                "image.edit", auth_context=auth_context, service_id="comfyui",
+                "image.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
                 service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
@@ -8697,21 +8707,12 @@ async def proxy_graph_image_edit_request(
                 fixed_seed=_workflow_extension_integer(form_dict, "seed"),
             )
 
-    except httpx.TimeoutException:
-        return Response(
-            content=json.dumps({"error": {"message": "ComfyUI request timeout", "type": "api_error"}}),
-            status_code=504,
-            media_type="application/json"
-        )
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
     except Exception as e:
+        failure = _graph_failure_response(e)
+        if failure is not None:
+            return failure
         return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI edit error: {str(e)}", "type": "api_error"}}),
+            content=json.dumps({"error": {"message": f"{_graph_adapter().label} edit error: {str(e)}", "type": "api_error"}}),
             status_code=502,
             media_type="application/json"
         )
@@ -8769,7 +8770,7 @@ async def proxy_graph_image_variations_request(
     pipeline rather than duplicating it.
     """
     admission = _dispatch_admission_response(
-        'image.variation', auth_context=auth_context, service_id="comfyui",
+        'image.variation', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -8783,8 +8784,8 @@ async def proxy_graph_image_variations_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
-        service_label="ComfyUI",))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
+        service_label=_graph_adapter().label,))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -14403,7 +14404,7 @@ FRONTEND_TRANSLATORS.register_owned("a1111", lambda app: a1111_api.register_a111
 IDENTITY_CFG = config.get("identity", {}) or {}
 IDENTITY_MODEL_ID = "image-identity"
 IDENTITY_MANIFEST_ID = "image.edit.image-identity"
-_IDENTITY_ROUTE_POLICY = {"protocol": "openai.images", "intent": "image.edit", "backend": "comfyui"}
+_IDENTITY_ROUTE_POLICY = {"protocol": "openai.images", "intent": "image.edit", "backend": _GRAPH_BACKEND_ID}
 _identity_template_cache: tuple[dict[str, Any], dict[str, Any]] | None = None
 
 
@@ -14457,19 +14458,25 @@ def _identity_template() -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any], uploads: dict[str, bytes]) -> bytes:
+    engine = _graph_adapter().label
     if not COMFY_ENABLED:
-        raise RuntimeError("ComfyUI media backend is disabled")
-    headers = configured_downstream_headers(auth_context, "comfyui")
+        raise RuntimeError(f"{engine} media backend is disabled")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
         for node_id, content in uploads.items():
-            name, upload_error = await _upload_graph_image_bytes(
-                client, headers, content, filename=f"identity-{uuid.uuid4().hex}.png"
-            )
+            try:
+                name, upload_error = await _upload_graph_image_bytes(
+                    client, headers, content, filename=f"identity-{uuid.uuid4().hex}.png"
+                )
+            except TransportFailure as failure:
+                # The identity routes handle httpx.HTTPError: raise the error the adapter translated, as before.
+                cause = failure.__cause__
+                raise cause if isinstance(cause, Exception) else failure
             if upload_error is not None:
-                raise RuntimeError("ComfyUI image upload failed")
+                raise RuntimeError(f"{engine} image upload failed")
             graph[node_id]["inputs"]["image"] = name
         admission = _dispatch_admission_response(
-            "image.edit", auth_context=auth_context, service_id="comfyui",
+            "image.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
             service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
         )
         if admission is not None:
@@ -14482,10 +14489,10 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
         try:
             message = json.loads(error.body.decode("utf-8"))["error"]["message"]
         except Exception:  # noqa: BLE001
-            message = "ComfyUI returned an error"
+            message = f"{engine} returned an error"
         raise RuntimeError(str(message)[:300])
     if not images:
-        raise RuntimeError("ComfyUI returned no image")
+        raise RuntimeError(f"{engine} returned no image")
     return images[0]
 
 
@@ -14514,7 +14521,7 @@ def _identity_store_image(request: Request, auth_context: AuthContext, content: 
         kind="image",
         workflow_id=IDENTITY_MANIFEST_ID,
         resolved_model=IDENTITY_MODEL_ID,
-        backend="comfyui",
+        backend=_GRAPH_BACKEND_ID,
         parameters=delivery.parameters or None,
     )
     content = media_delivery.attach_provenance(content, ".png", record)
@@ -14563,7 +14570,7 @@ async def _identity_submit_job(
     job = media_jobs.MediaJob(
         intent=_IDENTITY_JOB_INTENT,
         workflow=IDENTITY_MANIFEST_ID,
-        backend="comfyui",
+        backend=_GRAPH_BACKEND_ID,
         request_id=f"identity-{uuid.uuid4().hex}",
         app_profile=plan_ref(auth_context.identity),
         api_key_name=auth_context.identity.name if auth_context.identity else None,
@@ -14686,7 +14693,7 @@ def _identity_admission(auth: AuthContext, path: str) -> Response | None:
     if denied is not None:
         return denied
     return _dispatch_admission_response(
-        "image.edit", auth_context=auth, service_id="comfyui",
+        "image.edit", auth_context=auth, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
 
@@ -18319,12 +18326,8 @@ async def _upload_graph_image_bytes(
     media_type: str = "image/png",
 ) -> tuple[str | None, Response | None]:
     files = {"image": (filename, content, media_type)}
-    upload_resp = await client.post(
-        f"{COMFY_HOST}/upload/image",
-        headers=dict(headers),
-        files=files,
-    )
-    if upload_resp.status_code != 200:
+    upload_resp = await _graph(client).upload(files, headers=dict(headers))
+    if upload_resp.status != 200:
         return None, Response(
             content=json.dumps({
                 "error": {
@@ -18480,7 +18483,7 @@ async def _run_single_graph_image(
         return Response(
             content=json.dumps({
                 "error": {
-                    "message": "ComfyUI returned no images",
+                    "message": f"{_graph_adapter().label} returned no images",
                     "type": "api_error",
                 }
             }),
@@ -18614,7 +18617,7 @@ async def _proxy_offset_inpaint_tile_request(
     if base_extension_inputs:
         base_workflow = bind_backend_request(
             base_manifest,
-            "comfyui",
+            _GRAPH_BACKEND_ID,
             base_workflow,
             base_extension_inputs,
         ).request
@@ -18704,7 +18707,7 @@ async def _proxy_offset_inpaint_tile_request(
                 set_workflow_background_removal(edit_workflow, edit_meta, False)
                 edit_workflow = bind_backend_request(
                     inpaint_manifest,
-                    "comfyui",
+                    _GRAPH_BACKEND_ID,
                     edit_workflow,
                     {
                         "prompt": seam_prompt,
@@ -18741,19 +18744,10 @@ async def _proxy_offset_inpaint_tile_request(
                         y_fraction=-0.5,
                     )
                 )
-    except httpx.TimeoutException:
-        return Response(
-            content=json.dumps({"error": {"message": "ComfyUI request timeout", "type": "api_error"}}),
-            status_code=504,
-            media_type="application/json",
-        )
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json",
-        )
     except Exception as e:
+        failure = _graph_failure_response(e)
+        if failure is not None:
+            return failure
         return Response(
             content=json.dumps({"error": {"message": f"Gateway tile composition error: {e}", "type": "api_error"}}),
             status_code=502,
@@ -18780,7 +18774,7 @@ def _manifest_uses_source_alpha_mask(manifest: Mapping[str, Any] | None) -> bool
     if not isinstance(manifest, Mapping):
         return False
     bindings = manifest.get("bindings")
-    comfyui = bindings.get("comfyui") if isinstance(bindings, Mapping) else None
+    comfyui = bindings.get(_GRAPH_BACKEND_ID) if isinstance(bindings, Mapping) else None
     return bool(comfyui.get("mask_to_source_alpha")) if isinstance(comfyui, Mapping) else False
 
 
@@ -18788,7 +18782,7 @@ def _manifest_route_managed_mask_input(manifest: Mapping[str, Any] | None) -> st
     if not isinstance(manifest, Mapping):
         return None
     inputs = manifest.get("inputs")
-    binding = (manifest.get("bindings") or {}).get("comfyui")
+    binding = (manifest.get("bindings") or {}).get(_GRAPH_BACKEND_ID)
     mapping = binding.get("map") if isinstance(binding, Mapping) else None
     if not isinstance(inputs, Mapping) or not isinstance(mapping, Mapping):
         return None
@@ -18825,7 +18819,7 @@ def _apply_manifest_route_inputs(
     """
     if not isinstance(manifest, Mapping):
         return dict(workflow)
-    binding = (manifest.get("bindings") or {}).get("comfyui")
+    binding = (manifest.get("bindings") or {}).get(_GRAPH_BACKEND_ID)
     mapping = binding.get("map") if isinstance(binding, Mapping) else None
     if not isinstance(mapping, Mapping):
         return dict(workflow)
@@ -18838,7 +18832,7 @@ def _apply_manifest_route_inputs(
         return dict(workflow)
     return bind_backend_request(
         dict(manifest),
-        "comfyui",
+        _GRAPH_BACKEND_ID,
         dict(workflow),
         mapped_values,
     ).request
@@ -19064,7 +19058,7 @@ def _allowed_image_extension_asset_fields(
             "manifest must define an 'inputs' mapping",
         )
 
-    supported = set(_workflow_extension_supported_names(manifest, "comfyui"))
+    supported = set(_workflow_extension_supported_names(manifest, _GRAPH_BACKEND_ID))
     fields: set[str] = set()
     for input_name, field_name in references.items():
         spec = inputs.get(input_name)
@@ -19246,7 +19240,7 @@ async def _upload_image_workflow_extension_assets(
     if not isinstance(inputs, Mapping):
         return updated, None
 
-    supported = set(_workflow_extension_supported_names(manifest, "comfyui"))
+    supported = set(_workflow_extension_supported_names(manifest, _GRAPH_BACKEND_ID))
     allowed_fields, allow_error = _allowed_image_extension_asset_fields(
         request_body=request_body,
         manifest=manifest,
@@ -19313,36 +19307,11 @@ async def _upload_image_workflow_extension_assets(
 
             filename = getattr(upload, "filename", None) or f"{field_name}.png"
             content_type = getattr(upload, "content_type", None) or "image/png"
-        files = {"image": (filename, content, content_type)}
-        upload_resp = await client.post(
-            f"{COMFY_HOST}/upload/image",
-            headers=dict(headers),
-            files=files,
+        uploaded_filename, upload_error = await _upload_graph_image_bytes(
+            client, headers, content, filename=filename, media_type=content_type,
         )
-        if upload_resp.status_code != 200:
-            return updated, Response(
-                content=json.dumps({
-                    "error": {
-                        "message": f"Image upload failed: {upload_resp.text}",
-                        "type": "api_error",
-                    }
-                }),
-                status_code=502,
-                media_type="application/json",
-            )
-
-        uploaded_filename = upload_resp.json().get("name")
-        if not uploaded_filename:
-            return updated, Response(
-                content=json.dumps({
-                    "error": {
-                        "message": "No filename returned from upload",
-                        "type": "api_error",
-                    }
-                }),
-                status_code=502,
-                media_type="application/json",
-            )
+        if upload_error is not None:
+            return updated, upload_error
 
         next_block[input_key] = str(uploaded_filename)
         uploaded_any = True
@@ -19406,9 +19375,9 @@ async def _apply_workflow_extensions_to_image_request(
         result = bind_workflow_extensions(
             extension_body,
             manifest,
-            "comfyui",
+            _GRAPH_BACKEND_ID,
             backend_request,
-            supported_names=_workflow_extension_supported_names(manifest, "comfyui"),
+            supported_names=_workflow_extension_supported_names(manifest, _GRAPH_BACKEND_ID),
             standard_fields=standard_fields,
         )
         if receipt is not None:

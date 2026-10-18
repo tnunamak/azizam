@@ -96,7 +96,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
             ("resolve_image_background_decision",
              AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False))),
             ("get_vram_estimate", Mock(return_value=100)),
-            ("comfy_free_vram_bytes", AsyncMock(return_value=10**12)),
+            ("graph_free_vram_bytes", AsyncMock(return_value=10**12)),
             ("compute_max_batch", Mock(return_value=1)),
             ("IMAGE_FREE_VRAM_ON_EXHAUSTION", True),
         ):
@@ -395,3 +395,32 @@ class ImageRoundCancellationGapTests(IsolatedAsyncioTestCase):
                                 await asyncio.gather(task, return_exceptions=True)
                 self.assertEqual([r.path for r in fake.requests], ["/prompt", "/history/mine", "/api/jobs/mine/cancel"])
                 probe.stop.assert_awaited_once()
+
+
+def test_graph_failure_response_maps_transport_failures_and_httpx_errors(monkeypatch):
+    """Adapter transport failures and the httpx errors of other calls in the same try read the same to the caller."""
+    from gateway.engine_protocol.errors import TransportFailure
+
+    monkeypatch.setattr(proxy, "COMFY_HOST", "http://graph.test:1")
+    for error, status, message in (
+        (TransportFailure("timeout", "read"), 504, "ComfyUI request timeout"),
+        (httpx.ReadTimeout("read"), 504, "ComfyUI request timeout"),
+        (TransportFailure("unreachable", "refused"), 502, "ComfyUI unavailable at http://graph.test:1"),
+        (httpx.ConnectError("refused"), 502, "ComfyUI unavailable at http://graph.test:1"),
+    ):
+        response = proxy._graph_failure_response(error)
+        assert (response.status_code, response.media_type, response.body) == (
+            status, "application/json", json.dumps({"error": {"message": message, "type": "api_error"}}).encode())
+    for other in (TransportFailure("aborted", "dropped"), httpx.RemoteProtocolError("dropped"), ValueError("x")):
+        assert proxy._graph_failure_response(other) is None
+
+
+def test_identity_upload_refusal_still_raises_the_httpx_error(monkeypatch):
+    """The identity routes catch httpx.HTTPError: an upload that cannot connect keeps raising the error they handle."""
+    _refused_comfy_host(monkeypatch)
+    monkeypatch.setattr(proxy, "COMFY_ENABLED", True)
+    with pytest.raises(httpx.ConnectError):
+        asyncio.run(asyncio.wait_for(
+            proxy._identity_run_workflow(proxy.NO_AUTH_CONTEXT, {"1": {"inputs": {}}}, {"1": _png_bytes((0, 0, 0, 255))}),
+            timeout=HANG_BOUND_SECONDS,
+        ))

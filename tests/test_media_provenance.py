@@ -480,7 +480,7 @@ class ImageRouteTests(unittest.IsolatedAsyncioTestCase):
         receipt = proxy.start_image_route_receipt("/v1/images/generations", auth_context)
         with patch.object(proxy, "_graph_run_round", fake_round), patch.object(
             proxy, "get_vram_estimate", lambda *_a, **_k: 1024), patch.object(
-            proxy, "comfy_free_vram_bytes", AsyncMock(return_value=10**10)
+            proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**10)
         ), patch.object(proxy, "_service_availability_response", lambda *_a, **_k: None), patch.object(
             proxy.httpx, "AsyncClient", lambda *a, **k: _NullClient()
         ), patch.object(

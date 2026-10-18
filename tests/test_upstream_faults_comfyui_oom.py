@@ -26,7 +26,7 @@ def _generate(fakes: FakeUpstreams, monkeypatch, scenario: str):
     fake = fakes.asgi(load_scenario(f"comfyui/{scenario}"))
     monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
     monkeypatch.setattr(proxy, "get_vram_estimate", lambda *a: 100)  # known cost: no VRAM probe round
-    monkeypatch.setattr(proxy, "comfy_free_vram_bytes", AsyncMock(return_value=10**12))
+    monkeypatch.setattr(proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**12))
     monkeypatch.setattr(proxy, "IMAGE_FREE_VRAM_ON_EXHAUSTION", True)
     monkeypatch.setattr(proxy, "_build_image_response_payload", lambda request, images, response_format, warning_headers, **kw: proxy.Response(
         json.dumps({"count": len(images)}), status_code=200, media_type="application/json", headers=warning_headers))
@@ -73,7 +73,7 @@ def test_a_refused_background_removal_round_is_retried_without_it_and_the_upstre
     fake = fake_upstreams.asgi(load_scenario("comfyui/image-rmbg-fails-then-completes"))
     monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
     monkeypatch.setattr(proxy, "get_vram_estimate", lambda *a: 100)
-    monkeypatch.setattr(proxy, "comfy_free_vram_bytes", AsyncMock(return_value=10**12))
+    monkeypatch.setattr(proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**12))
     monkeypatch.setattr(proxy, "_build_image_response_payload", lambda request, images, response_format, warning_headers, **kw: proxy.Response(
         json.dumps({"count": len(images)}), status_code=200, media_type="application/json", headers=warning_headers))
     fallback = {"2": {"class_type": "FkFallbackNode", "inputs": {"text": "a red fox"}}}
