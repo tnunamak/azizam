@@ -9951,7 +9951,7 @@ async def _load_completed_video_bytes(
         raise _VideoAssetError("invalid video_id", param=param)
     if _video_job_blocked(prompt_id, auth_context):
         raise _VideoAssetError("video_id not found", param=param, status=404)
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
         job = await _graph_history(client, prompt_id, headers)
         if job is None:
@@ -10065,7 +10065,7 @@ async def _resolve_video_workflow_assets(
     if not isinstance(block, Mapping):
         raise _VideoAssetError("extensions must be a mapping", param="extensions")
     specs = manifest.get("inputs") or {}
-    binding_map = (((manifest.get("bindings") or {}).get("comfyui") or {}).get("map")) or {}
+    binding_map = (((manifest.get("bindings") or {}).get(_GRAPH_BINDING) or {}).get("map")) or {}
     source_input = workflow_cfg.get("source_video_input")
     ext_param = f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}"
     if source_input and source_input not in block:
@@ -10123,7 +10123,7 @@ async def _upload_video_workflow_assets(
     updated = dict(body)
     extensions = dict(updated.get("extensions") or {})
     block = dict(extensions.get(WORKFLOW_EXTENSION_NAMESPACE) or {})
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
             graph = _graph(client, "videos")
@@ -10178,11 +10178,11 @@ async def _submit_video_graph(
     add fields to the stored record and to the response. `progress_units` names
     the per-segment sampler/decode nodes so progress spans the whole chain.
     """
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
             admission = _dispatch_admission_response(
-                "video.generate", auth_context=auth_context, service_id="comfyui",
+                "video.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
                 service_available=COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
@@ -10308,7 +10308,7 @@ async def _submit_video_graph(
                             requested_model=public_model,
                             resolved_model=workflow_name,
                             workflow_id=f"video.generate.{workflow_name}",
-                            backend="comfyui",
+                            backend=_GRAPH_BACKEND_ID,
                             seed=seed_val,
                             parameters={
                                 **(media_delivery.current().parameters if media_delivery.current() else {}),
@@ -10399,7 +10399,7 @@ async def proxy_graph_video_create(
     pipeline with an already-parsed body.
     """
     admission = _dispatch_admission_response(
-        'video.generate', auth_context=auth_context, service_id="comfyui",
+        'video.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -10411,8 +10411,8 @@ async def proxy_graph_video_create(
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
-        service_label="ComfyUI",))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
+        service_label=_graph_adapter().label,))
     if service_response is not None:
         return service_response
 
@@ -10558,7 +10558,7 @@ async def proxy_graph_video_create(
             intent=INTENT_VIDEO_GENERATE,
             model=str(requested_model) if requested_model is not None else None,
             workflow=f"video.generate.{workflow_name}",
-            backend="comfyui",
+            backend=_GRAPH_BACKEND_ID,
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="expensive",
@@ -10875,7 +10875,7 @@ async def proxy_graph_video_create(
             )
 
         # Upload to the engine's input cache (same upload used by image-edit).
-        upload_headers = configured_downstream_headers(auth_context, "comfyui")
+        upload_headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10)) as upload_client:
                 files = {"image": (image_filename, image_bytes, "image/png")}
@@ -11091,7 +11091,7 @@ def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workfl
             intent=INTENT_VIDEO_GENERATE,
             model=str(requested_model) if requested_model is not None else None,
             workflow=f"video.generate.{workflow_name}",
-            backend="comfyui",
+            backend=_GRAPH_BACKEND_ID,
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="expensive",
@@ -11203,7 +11203,7 @@ def _parse_chain_shots(body: Mapping[str, Any], *, default_seconds: float, min_s
 
 async def _upload_graph_input(data: bytes, filename: str, mime: str, auth_context: AuthContext) -> str:
     """Upload bytes to the graph engine's input dir. Return the stored file name."""
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     engine = _graph_adapter("videos").label
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
@@ -11392,7 +11392,7 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext) 
     """
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
-        'video.extend', auth_context=auth_context, service_id="comfyui",
+        'video.extend', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -11400,7 +11400,7 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext) 
 
     if not COMFY_ENABLED:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
     if service_response is not None:
         return service_response
     if not VIDEO_EXTEND_WORKFLOW:
@@ -11481,7 +11481,7 @@ async def proxy_graph_video_status(video_id: str, auth_context: AuthContext) -> 
             media_type="application/json"
         )
 
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
             job = await _graph_history(client, prompt_id, headers)
@@ -11609,7 +11609,7 @@ async def proxy_graph_video_content(
             media_type="application/json"
         )
 
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10)) as client:
             job = await _graph_history(client, prompt_id, headers)
@@ -11804,7 +11804,7 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
     if service_response is not None:
         return service_response
 
@@ -11883,7 +11883,7 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
     page = records[:limit]
     has_more = len(records) > len(page)
 
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     data: list[dict[str, Any]] = []
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
@@ -11965,7 +11965,7 @@ async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> 
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
     if service_response is not None:
         return service_response
 
@@ -11994,7 +11994,7 @@ async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> 
             media_type="application/json"
         )
 
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
             job = await _graph_history(client, prompt_id, headers)
@@ -12195,7 +12195,7 @@ async def proxy_graph_video_remix(
     """
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
-        'video.remix', auth_context=auth_context, service_id="comfyui",
+        'video.remix', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -12207,7 +12207,7 @@ async def proxy_graph_video_remix(
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
     if service_response is not None:
         return service_response
 
@@ -12254,7 +12254,7 @@ async def proxy_graph_video_edit(request: Request, auth_context: AuthContext) ->
     """
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
-        'video.edit', auth_context=auth_context, service_id="comfyui",
+        'video.edit', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -12262,7 +12262,7 @@ async def proxy_graph_video_edit(request: Request, auth_context: AuthContext) ->
 
     if not COMFY_ENABLED:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
     if service_response is not None:
         return service_response
     try:
@@ -12802,7 +12802,7 @@ def _target_activation(auth_context: AuthContext) -> str:
 def _graph_target_available() -> bool:
     if not COMFY_ENABLED:
         return False
-    override = _operator_service_availability_overrides().get("comfyui", {})
+    override = _operator_service_availability_overrides().get(_GRAPH_BACKEND_ID, {})
     state = str((override or {}).get("state") or "available").strip().lower()
     return state not in {"disabled", "maintenance", "draining"}
 
@@ -13270,7 +13270,7 @@ def _gateway_catalog_finish(
                     record,
                     backend=backend,
                     execution="job",
-                    resources=ResourceEstimate(gpu_required=backend == "comfyui"),
+                    resources=ResourceEstimate(gpu_required=backend == _GRAPH_BINDING),
                 ))
             except Exception:
                 continue
@@ -17893,7 +17893,7 @@ def start_image_route_receipt(
         protocol="openai.images",
         path=path,
         intent=intent,
-        backend="comfyui",
+        backend=_GRAPH_BACKEND_ID,
         api_key_name=key_name,
         app_id=app_id,
         owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
@@ -21028,7 +21028,7 @@ def _media_job_admission_response(
     app_id = (auth_context.identity.app_id if auth_context and auth_context.identity
               else receipt.app_id if receipt else None)
     app_limits = admission_cfg.get("max_app_concurrency") if count_queue else None
-    service_override = _operator_service_availability_overrides().get("comfyui", {})
+    service_override = _operator_service_availability_overrides().get(_GRAPH_BACKEND_ID, {})
     override_state = str(service_override.get("state") or "available")
     service_blocked = override_state in {"disabled", "maintenance", "draining"}
     service_degraded = override_state == "degraded"
@@ -21412,7 +21412,7 @@ async def _submit_audio_media_job(
             intent=intent,
             model=str(requested_model) if requested_model is not None else None,
             workflow=f"audio.generate.{workflow_name}",
-            backend="comfyui",
+            backend=_GRAPH_BACKEND_ID,
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="batch",
@@ -21436,7 +21436,7 @@ async def _submit_audio_media_job(
         body,
         request_id=request_id,
         workflow=f"audio.generate.{workflow_name}",
-        backend="comfyui",
+        backend=_GRAPH_BACKEND_ID,
         app_profile=plan_ref(auth_context.identity),
         api_key_name=auth_context.identity.name if auth_context.identity else None,
         parent_request_id=request_id,
@@ -21989,7 +21989,7 @@ def _video_job_policy_decision(auth_context: AuthContext, requested_model: Any, 
             intent=INTENT_VIDEO_GENERATE,
             model=str(requested_model) if requested_model is not None else None,
             workflow=f"video.generate.{workflow_name}",
-            backend="comfyui",
+            backend=_GRAPH_BACKEND_ID,
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="expensive",
@@ -22066,7 +22066,7 @@ async def _submit_video_media_job(
         body,
         video_media_job_http.VideoRequestContext(
             workflow=workflow_name,
-            backend="comfyui",
+            backend=_GRAPH_BACKEND_ID,
             request_id=request_id,
             idempotency_key=request.headers.get("idempotency-key"),
             app_profile=plan_ref(auth_context.identity),
@@ -22794,7 +22794,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
             status_code=404, media_type="application/json",
         )
     admission = _dispatch_admission_response(
-        "video.edit", auth_context=auth_context, service_id="comfyui",
+        "video.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -22876,7 +22876,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
             status_code=500, media_type="application/json",
         )
 
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
         graph = _graph(client, "videos")
         for input_name, (filename, raw_bytes, content_type) in asset_uploads.items():
@@ -22894,7 +22894,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
 
         async def submit_and_collect() -> tuple[dict[str, Any] | None, Response | None]:
             admission = _dispatch_admission_response(
-                "video.edit", auth_context=auth_context, service_id="comfyui",
+                "video.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
                 service_available=COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
@@ -22974,7 +22974,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
                         workflow_id=identity.id,
                         workflow_version=identity.version,
                         workflow_hash=identity.manifest_hash,
-                        backend="comfyui",
+                        backend=_GRAPH_BACKEND_ID,
                         parameters=validation.accepted,
                     ),
                 )
@@ -23267,7 +23267,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
     keep full metadata and the delivery mode is applied when the asset is served.
     """
     admission = _dispatch_admission_response(
-        'audio.generate', auth_context=auth_context, service_id="comfyui",
+        'audio.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='audio', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -23280,7 +23280,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             media_type="application/json"
         )
     adapter = _graph_adapter("audio.generate")
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
         service_label=adapter.label,))
     if service_response is not None:
         return service_response
@@ -23409,7 +23409,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             intent=INTENT_AUDIO_GENERATE,
             model=str(model) if model is not None else None,
             workflow=f"audio.generate.{workflow_name}",
-            backend="comfyui",
+            backend=_GRAPH_BACKEND_ID,
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="batch",
@@ -23494,12 +23494,12 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             )
         workflow = extension_result.request
 
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
             graph = _graph(client, "audio.generate")
             admission = _dispatch_admission_response(
-                "audio.generate", auth_context=auth_context, service_id="comfyui",
+                "audio.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
                 service_available=COMFY_ENABLED, resource_class="audio", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
@@ -23575,7 +23575,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                                             requested_model=str(model),
                                             resolved_model=workflow_name,
                                             workflow_id=f"audio.generate.{workflow_name}",
-                                            backend="comfyui",
+                                            backend=_GRAPH_BACKEND_ID,
                                             seed=seed_val,
                                             parameters={
                                                 **media_delivery.current().parameters,
