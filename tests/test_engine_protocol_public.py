@@ -450,3 +450,30 @@ def test_protocol_image_assets_keep_existing_owner_access_rules(engine):
     assert engine.client.get(response.json()['data'][0]['url']).status_code==200
     assert proxy._asset_access_allowed(asset_id,access_context())
     assert not proxy._asset_access_allowed(asset_id,access_context(identity(app_id='different-app',key_hash='different-key').access,app_id='different-app',key_hash='different-key'))
+
+
+def test_model_inventory_cannot_invoke_a_control_operation(engine,monkeypatch):
+    import yaml
+    data=yaml.safe_load((FIXTURE/'prism.yml').read_text())
+    data['operations']['models']['class']='control'
+    data['operations']['models']['request']={'method':'POST','path':'/selected','body':{'encoding':'json'}}
+    doc=description.parse_description(data,source='prism.yml')
+    monkeypatch.setattr(description,'load_registry',lambda:{'prism':doc})
+    response=engine.client.get('/v1/models')
+    assert response.status_code==502,response.text
+    assert not engine.fake.requests
+
+
+def test_fictional_chat_and_embeddings_data_include_required_openai_response_fields(engine):
+    response=chat(engine)
+    assert response.status_code==200,response.text
+    assert isinstance(response.json()['created'],int)
+    assert response.json()['usage']['total_tokens']==4
+    streamed=chat(engine,stream=True)
+    assert streamed.status_code==200
+    for block in streamed.content.split(b'\n\n'):
+        if block and block!=b'data: [DONE]':
+            chunk=json.loads(block.removeprefix(b'data: '))
+            assert {'id','created','model','object','choices'}<=chunk.keys()
+    embedded=engine.client.post('/v1/embeddings',json={'model':'prism-embed','input':['hello']})
+    assert embedded.json()['usage']=={'prompt_tokens':1,'total_tokens':1}
