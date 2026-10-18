@@ -41,13 +41,13 @@ def test_video_routes_resolve_owner_keys_off_the_loop(call_route):
     async def call():
         with request_connections.request_scope():
             if call_route == "list":
-                return await proxy.proxy_comfy_video_list(_ListRequest(), access_context())
-            return await proxy.proxy_comfy_video_status(proxy._video_id_from_prompt_id("p1"), access_context())
+                return await proxy.proxy_graph_video_list(_ListRequest(), access_context())
+            return await proxy.proxy_graph_video_status(proxy._video_id_from_prompt_id("p1"), access_context())
 
     with patch.object(proxy, "_video_job_records", records), \
             patch.object(proxy, "COMFY_ENABLED", True), \
-            patch.object(proxy, "_comfy_history", _no_history), \
-            patch.object(proxy, "_comfy_queue_status", _idle_queue), \
+            patch.object(proxy, "_graph_history", _no_history), \
+            patch.object(proxy, "_graph_queue_status", _idle_queue), \
             patch.object(proxy, "_asset_owner_key", lambda _ctx: "owner-a"), \
             patch.object(ownership, "credential_owner_keys", credential_owner_keys):
         response = asyncio.run(call())

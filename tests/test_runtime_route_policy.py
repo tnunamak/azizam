@@ -431,7 +431,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "proxy_stt_request", AsyncMock(side_effect=blocked)
         ), patch.object(
-            proxy, "proxy_comfy_video_create", AsyncMock(side_effect=blocked)
+            proxy, "proxy_graph_video_create", AsyncMock(side_effect=blocked)
         ), patch.object(
             proxy, "proxy_audio_generate", AsyncMock(side_effect=blocked)
         ), patch.object(
@@ -469,9 +469,9 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         blocked = AssertionError("runtime backend should not be called")
 
         with authenticated_profile(chat_only), patch.object(
-            proxy, "proxy_comfy_video_list", AsyncMock(side_effect=blocked)
+            proxy, "proxy_graph_video_list", AsyncMock(side_effect=blocked)
         ), patch.object(
-            proxy, "proxy_comfy_video_delete", AsyncMock(side_effect=blocked)
+            proxy, "proxy_graph_video_delete", AsyncMock(side_effect=blocked)
         ):
             cases = [
                 ("get", "/v1/videos"),
@@ -498,18 +498,18 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
     def test_media_profile_allows_video_list_and_delete(self) -> None:
         media_profile = plan_for("media", caps=('video',))
         delegates = {
-            "proxy_comfy_video_list": AsyncMock(return_value=routed_response("list")),
-            "proxy_comfy_video_delete": AsyncMock(return_value=routed_response("delete")),
+            "proxy_graph_video_list": AsyncMock(return_value=routed_response("list")),
+            "proxy_graph_video_delete": AsyncMock(return_value=routed_response("delete")),
         }
 
         with authenticated_profile(media_profile) as identity, patch.object(
-            proxy, "proxy_comfy_video_list", delegates["proxy_comfy_video_list"]
+            proxy, "proxy_graph_video_list", delegates["proxy_graph_video_list"]
         ), patch.object(
-            proxy, "proxy_comfy_video_delete", delegates["proxy_comfy_video_delete"]
+            proxy, "proxy_graph_video_delete", delegates["proxy_graph_video_delete"]
         ):
             cases = [
-                ("get", "/v1/videos", "proxy_comfy_video_list", "list"),
-                ("delete", "/v1/videos/video_does-not-exist", "proxy_comfy_video_delete", "delete"),
+                ("get", "/v1/videos", "proxy_graph_video_list", "list"),
+                ("delete", "/v1/videos/video_does-not-exist", "proxy_graph_video_delete", "delete"),
             ]
             for method, path, target, route in cases:
                 with self.subTest(path=path):
@@ -626,7 +626,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         delegates = {
             name: AsyncMock(return_value=routed_response(name))
             for name in ("proxy_tts_request", "proxy_stt_request",
-                         "proxy_comfy_video_create", "proxy_audio_generate")
+                         "proxy_graph_video_create", "proxy_audio_generate")
         }
 
         with authenticated_profile(media_profile) as identity, patch.object(
@@ -634,7 +634,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "proxy_stt_request", delegates["proxy_stt_request"]
         ), patch.object(
-            proxy, "proxy_comfy_video_create", delegates["proxy_comfy_video_create"]
+            proxy, "proxy_graph_video_create", delegates["proxy_graph_video_create"]
         ), patch.object(
             proxy, "proxy_audio_generate", delegates["proxy_audio_generate"]
         ):
@@ -643,7 +643,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                 ("/v1/audio/speech", {"input": "hello", "voice": "alloy"}, "proxy_tts_request", {"receipt"}),
                 ("/v1/audio/transcriptions", None, "proxy_stt_request", {"operation": "transcriptions"}),
                 ("/v1/audio/translations", None, "proxy_stt_request", {"operation": "translations"}),
-                ("/v1/videos", {"prompt": "waves"}, "proxy_comfy_video_create", {}),
+                ("/v1/videos", {"prompt": "waves"}, "proxy_graph_video_create", {}),
                 ("/v1/audio/generate", {"prompt": "piano"}, "proxy_audio_generate", {"receipt"}),
             ]
             for path, payload, target, keywords in cases:

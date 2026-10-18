@@ -108,9 +108,9 @@ def test_video_existing_submission_settles_failures_and_deadline(
                                     AssertionError("polled again after the outcome or deadline")])
     content = AsyncMock(return_value=content_response)
     store_asset = Mock(side_effect=AssertionError("failed video published an asset"))
-    monkeypatch.setattr(proxy, "proxy_comfy_video_create", submit)
-    monkeypatch.setattr(proxy, "proxy_comfy_video_status", status)
-    monkeypatch.setattr(proxy, "proxy_comfy_video_content", content)
+    monkeypatch.setattr(proxy, "proxy_graph_video_create", submit)
+    monkeypatch.setattr(proxy, "proxy_graph_video_status", status)
+    monkeypatch.setattr(proxy, "proxy_graph_video_content", content)
     monkeypatch.setattr(proxy, "store_asset_bytes", store_asset)
     monkeypatch.setattr(proxy, "_media_job_admission_response",
                         Mock(side_effect=AssertionError("existing video was re-admitted")))
