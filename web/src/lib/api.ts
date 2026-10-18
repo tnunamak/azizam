@@ -523,6 +523,27 @@ export interface StatusResponse {
   status: StatusPayload;
 }
 
+/** One item of the overview's attention list; the registry problem has kind "registry". */
+export interface OverviewAttentionItem {
+  kind: string;
+  severity: string;
+  title: string;
+  detail?: string;
+}
+
+/** The part of GET /admin/api/overview the web app reads: why the running
+ * config is not the stored registry, and the stored records left out. */
+export interface OverviewPayload {
+  attention: OverviewAttentionItem[];
+  registry_apply: {
+    mode: "partial" | "empty" | "stale";
+    error: string;
+    left_out: Record<string, string>;
+    served: number;
+  } | null;
+  registry_excluded: Array<{ section: string; id: string; error: string }>;
+}
+
 // ---------------------------------------------------------------------------
 // CSRF session bootstrap
 
@@ -785,6 +806,16 @@ export const api = {
 
   status: () =>
     adminFetch<StatusResponse>("/admin/api/status").then((r) => r.status),
+
+  overview: () => adminFetch<OverviewPayload>("/admin/api/overview"),
+
+  config: {
+    /** Apply the stored registry to the running gateway again. */
+    reload: () =>
+      adminFetch<{ reloaded: boolean }>("/admin/api/config/reload", {
+        method: "POST",
+      }),
+  },
 
   audit: {
     /** Paginated fetch. Returns {records, next_cursor}. */

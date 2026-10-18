@@ -58,8 +58,8 @@ class RequestHotpathTests(unittest.TestCase):
         service_registry._normalized_registry_snapshot.cache_clear()
         with patch.object(
             service_registry,
-            "normalize_service_registry",
-            wraps=service_registry.normalize_service_registry,
+            "read_registry",
+            wraps=service_registry.read_registry,
         ) as normalize:
             first = service_registry.load_service_registry(path=self.db)
             self.assertEqual(normalize.call_count, 1)
