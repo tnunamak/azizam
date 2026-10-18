@@ -61,8 +61,15 @@ def test_live_registry_shapes_are_redacted_and_complete() -> None:
 
 
 def test_runtime_backend_projection_is_frozen() -> None:
-    projected = service_registry.runtime_backend_from_service(_service())
+    service = _service()
+    projected = service_registry.runtime_backend_from_service(service)
     assert _digest(projected) == "b8671053c0d25c24753abf0b10d0bc9a35512398cdea0a029a3b54cb64fe4bd3"
+    # Contract v2 collapses lifecycle storage; it does not change the runtime
+    # backend consumed by the existing gateway and LiteLLM compiler.
+    registry = {"schema_version": 1, "services": {"engine-a": service}}
+    service_registry.migrate_engine_records_v2(registry)
+    after = service_registry.runtime_backend_from_service(registry["services"]["engine-a"])
+    assert _digest(after) == _digest(projected)
 
 
 def test_frontend_route_graph_is_frozen() -> None:
