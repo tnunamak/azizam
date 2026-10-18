@@ -4706,6 +4706,9 @@ async def _dispatch_selected_stt_route(
                     requested_name = resolved["requested"]
                     engine_id = resolved["engine"]
                     remaining = [(engine, service) for engine, service in resolved["fallbacks"] if service]
+                    # Further attempts already have a selected, authorized
+                    # service. Keep policy tied to the caller's original alias.
+                    model_unpeeked = False
             else:
                 response, reason = not_ready, "start_failed"
             if reason is None:
