@@ -474,8 +474,13 @@ def test_command_permission_is_read_from_the_bound_live_admin_database(tmp_path)
         audit_action="operator.host_commands.update", audit_actor_kind="owner", audit_actor_id="owner",
         audit_actor_label="owner", audit_target_kind="operator_setting",
         audit_target_id="allow_host_commands", path=live)
+    other = tmp_path / "other-admin.db"
+    admin_store.init_db(other)
     try:
-        assert host_commands.commands_allowed() is False  # unbound: the import-time default store is empty
+        # Another database without the setting answers no; the shared default
+        # store is not used here, because other tests in the worker write to it.
+        host_commands.bind_admin_db(other)
+        assert host_commands.commands_allowed() is False
         host_commands.bind_admin_db(live)
         assert host_commands.commands_allowed() is True
         from gateway.engine_process import _operator_allows_commands
