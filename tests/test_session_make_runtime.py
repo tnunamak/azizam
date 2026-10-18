@@ -140,6 +140,15 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         self.assertEqual(seen["body"], {"model": "image", "prompt": "private make prompt",
                                         "response_format": "url"})
 
+    def test_generate_uses_the_neutral_protocol_dispatch_entry(self) -> None:
+        async def fake_generate(request, auth_context, receipt=None):
+            return self._ok()
+        with patch.object(proxy, "proxy_image_request", fake_generate), patch.object(
+            proxy, "proxy_comfy_request", side_effect=AssertionError("bypassed neutral dispatch")
+        ):
+            assets = asyncio.run(self.runtime.execute(self._payload("image.generate")))
+        self.assertEqual(assets[0]["asset_id"], OUTPUT)
+
     def test_only_the_persons_own_enabled_session_app_can_run(self) -> None:
         other = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], access_plan="person", path=self.admin)
         stranger = admin_store.upsert_oidc_user("issuer", "stranger", email="s@example.test", path=self.admin)

@@ -92,6 +92,7 @@ class SwitchController:
         *, on_acquired: Callable[[], None] | None = None,
         on_release: Callable[[], None] | None = None,
         prepare: Callable[[], Awaitable[bool]] | None = None,
+        may_switch: bool = True,
     ) -> SwitchLease:
         offerings = service.get("offerings") or []
         offering = next((row for row in offerings if isinstance(row, Mapping) and row.get("id") == offering_id), None)
@@ -132,6 +133,8 @@ class SwitchController:
                     raise SwitchUnavailable("residency could not be prepared")
                 handed_off = True
                 return SwitchLease(self._drain.lease(scope, on_release=on_release))
+            if not may_switch:
+                raise SwitchUnavailable("The plan permits only the already selected offering.")
             drain_timeout = max(0.01, float(spec.get("drain_timeout_s", 30)))
             await self._drain.clear_for_swap(scope, SwapDrainSettings(enabled=True, timeout_s=drain_timeout))
             try:

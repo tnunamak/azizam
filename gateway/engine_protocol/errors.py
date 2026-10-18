@@ -96,3 +96,10 @@ class UnsupportedByAdapter(ProtocolError):
     """The adapter does not implement this part of the interface (for example events, or jobs)."""
 
     code = "unsupported_by_adapter"
+
+
+def retryable_poll_failure(error: ProtocolError) -> bool:
+    """Only transient transport failures and server HTTP failures may retry a poll."""
+    if isinstance(error, TransportFailure):
+        return error.kind not in {"dns", "tls", "blocked"}
+    return isinstance(error, UpstreamError) and 500 <= error.status < 600
