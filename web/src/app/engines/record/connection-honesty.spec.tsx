@@ -167,3 +167,18 @@ describe("Key is sent to", () => {
     expect(screen.getByTestId("connection-facts")).toHaveTextContent("No key is sent: the key belongs to");
   });
 });
+
+it("does not claim a key destination when the request URL is unknown", async () => {
+  mount({ request_path: requestPath(""), key: { state: "configured", source: "stored", origin: "https://gpu.example" } });
+  await screen.findByRole("heading", { level: 1, name: "garage-gpu" });
+  expect(screen.getByTestId("connection-facts")).not.toHaveTextContent("only. Azizam never sends it");
+  expect(screen.getByTestId("connection-facts")).toHaveTextContent("Unknown. The request address is unavailable.");
+});
+
+it("says no key is sent when the configured environment key is unavailable", async () => {
+  mount({ request_path: requestPath("https://gpu.example/v1/chat/completions"),
+    key: { state: "configured", source: "env", env_name: "MISSING_KEY", origin: "https://gpu.example" },
+    attention: [{ code: "engine_credential_unavailable", message: "Key not available: MISSING_KEY is not set" }] });
+  await screen.findByRole("heading", { level: 1, name: "garage-gpu" });
+  expect(screen.getByTestId("connection-facts")).toHaveTextContent("No key is sent. The configured key is not available.");
+});
