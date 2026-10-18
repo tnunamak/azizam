@@ -7,6 +7,7 @@ never a receipt.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sqlite3
@@ -18,9 +19,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gateway import admin_store, media_jobs, me_media, prompt_memory, receipt_store
+from gateway.public_failure import PublicFailure
 from tests import test_me_media as base
 
 REMOVE = "/me/api/media/remove-missing"
+CONFIRM_FOLDER = "/me/api/media/confirm-folder"
 VALID = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
 UNSEEN = "Azizam can't see its media folder right now, so nothing was removed. Try again when the folder is back."
 EMPTY = "Azizam's media folder is empty, which usually means it isn't mounted, so nothing was removed. Check the disk, then try again."
@@ -34,6 +37,8 @@ class RemoveMissingTests(unittest.TestCase):
     def setUp(self) -> None:
         base.MeMediaRouterTests.setUp(self)
         self.client = self.make_client(self._asset_path)
+        # Existing fixtures represent a known, mounted volume.
+        prompt_memory.confirm_media_folder(self.cache, owner=True, path=self.jobs_db)
 
     def make_client(self, asset_path_resolver) -> TestClient:
         # The route reads the media folder through this provider; without it, it refuses.
@@ -86,7 +91,7 @@ class RemoveMissingTests(unittest.TestCase):
         for letter in "BD":
             self._asset_path(asset(letter)).unlink()
             self._meta_path(asset(letter)).unlink()
-        self.assertEqual(os.listdir(self.cache), [])
+        self.assertEqual(os.listdir(self.cache), [".azizam-media"])
 
     def library(self) -> dict[str, bool]:
         rows = self.client.get("/me/api/media").json()["assets"]
@@ -94,6 +99,118 @@ class RemoveMissingTests(unittest.TestCase):
 
     def job_ids(self, request_id: str) -> list[str]:
         return [job["job_id"] for job in media_jobs.recent(500, path=self.jobs_db) if job["request_id"] == request_id]
+
+    def test_an_unmounted_folder_with_a_new_file_removes_nothing(self) -> None:
+        self.seed()
+        # Simulate an absent volume followed by an ordinary write on the bare mount.
+        shutil.rmtree(self.cache)
+        self.cache.mkdir()
+        self._write_asset(asset("N"), ["sha256:alice"])
+        self.assertFalse((self.cache / ".azizam-media").exists())
+        response = self.client.post(REMOVE, headers=VALID)
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"], "media_folder_unconfirmed")
+        self.assert_nothing_changed()
+
+    def test_a_different_volume_id_removes_nothing(self) -> None:
+        self.seed()
+        marker = self.cache / ".azizam-media"
+        value = json.loads(marker.read_text())
+        value["volume_id"] = "0" * 32
+        marker.write_text(json.dumps(value))
+        response = self.client.post(REMOVE, headers=VALID)
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"], "media_folder_unconfirmed")
+        self.assertEqual(response.json()["error"]["details"]["layer"], "library")
+        self.assert_nothing_changed()
+
+    def test_an_existing_install_needs_owner_confirmation_before_removal(self) -> None:
+        self.seed()
+        (self.cache / ".azizam-media").unlink()
+        with sqlite3.connect(self.jobs_db) as conn:
+            conn.execute("DELETE FROM media_volume_identity")
+        self.assertEqual(self.client.post(REMOVE, headers=VALID).status_code, 503)
+        self.assertEqual(self.client.post(CONFIRM_FOLDER, headers=VALID).status_code, 403)
+        self.assertFalse((self.cache / ".azizam-media").exists())
+        self.assert_nothing_changed()
+        self.current_user = self.owner
+        response = self.client.post(CONFIRM_FOLDER, headers=VALID)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"confirmed": True})
+        self.assert_nothing_changed()
+        self.current_user = self.alice
+        self.assertEqual(self.client.post(REMOVE, headers=VALID).json(), {"removed_assets": 2, "removed_jobs": 1})
+
+    def test_confirm_requires_owner_in_core_and_user_action_at_route(self) -> None:
+        before = (self.cache / ".azizam-media").read_bytes()
+        with self.assertRaises(PublicFailure) as raised:
+            prompt_memory.confirm_media_folder(self.cache, owner=False, path=self.jobs_db)
+        self.assertEqual(raised.exception.status_code, 403)
+        self.current_user = self.owner
+        self.assertEqual(self.client.post(CONFIRM_FOLDER).status_code, 403)
+        self.assertEqual(self.client.post(CONFIRM_FOLDER, headers={**VALID, "x-azizam-csrf": "bad"}).status_code, 403)
+        self.assertEqual((self.cache / ".azizam-media").read_bytes(), before)
+
+    def test_a_person_with_no_entries_cannot_bootstrap_over_another_person(self) -> None:
+        self.seed()
+        (self.cache / ".azizam-media").unlink()
+        with sqlite3.connect(self.jobs_db) as conn:
+            conn.execute("DELETE FROM media_volume_identity")
+        self.current_user = self.owner
+        response = self.client.post(REMOVE, headers=VALID)
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertFalse((self.cache / ".azizam-media").exists())
+        self.assert_nothing_changed()
+
+    def test_an_empty_index_does_not_recreate_a_marker_or_adopt_existing_files(self) -> None:
+        (self.cache / ".azizam-media").unlink()
+        response = self.client.post(REMOVE, headers=VALID)
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertFalse((self.cache / ".azizam-media").exists())
+        with sqlite3.connect(self.jobs_db) as conn:
+            conn.execute("DELETE FROM media_volume_identity")
+        (self.cache / ("f" * 64 + ".png")).write_bytes(b"orphaned media")
+        response = self.client.post(REMOVE, headers=VALID)
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertFalse((self.cache / ".azizam-media").exists())
+
+    def test_an_invalid_marker_is_refused_without_touching_entries(self) -> None:
+        self.seed()
+        marker = self.cache / ".azizam-media"
+        for value in ('not json', '{}', '{"volume_id": 7, "created_at": 1}'):
+            with self.subTest(value=value):
+                marker.write_text(value)
+                response = self.client.post(REMOVE, headers=VALID)
+                self.assertEqual(response.status_code, 503, response.text)
+                self.assertEqual(response.json()["error"]["code"], "media_folder_unconfirmed")
+                self.assert_nothing_changed()
+
+    def test_the_core_refuses_a_missing_marker_before_any_delete(self) -> None:
+        self.seed()
+        (self.cache / ".azizam-media").unlink()
+        with self.assertRaises(PublicFailure) as raised:
+            prompt_memory.remove_missing_media(
+                self.alice["id"], [asset("A")], [(asset("C"), "req_cd")], self.job_ids("req_a"),
+                path=self.jobs_db, media_folder=self.cache,
+            )
+        self.assertEqual(raised.exception.code, "media_folder_unconfirmed")
+        self.assert_nothing_changed()
+
+    def test_losing_the_marker_during_removal_rolls_back_every_change(self) -> None:
+        self.seed()
+        real = media_jobs.delete_succeeded_in
+
+        def lose_marker(conn, job_ids):
+            removed = real(conn, job_ids)
+            (self.cache / ".azizam-media").unlink()
+            return removed
+
+        with patch("gateway.media_jobs.delete_succeeded_in", lose_marker):
+            response = self.client.post(REMOVE, headers=VALID)
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assert_nothing_changed()
+        with sqlite3.connect(self.jobs_db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM media_hidden_assets").fetchone()[0], 0)
 
     def test_library_lists_the_gone_items_before_the_removal(self) -> None:
         self.seed()
@@ -209,10 +326,21 @@ class RemoveMissingTests(unittest.TestCase):
         self.assert_nothing_changed()
 
     def test_an_empty_media_folder_and_an_empty_library_has_nothing_to_remove(self) -> None:
+        # Simulate the first remove-missing on a fresh install.
+        (self.cache / ".azizam-media").unlink()
+        with sqlite3.connect(self.jobs_db) as conn:
+            conn.execute("DELETE FROM media_volume_identity")
         self.assertEqual(os.listdir(self.cache), [])
         response = self.client.post(REMOVE, headers=VALID)
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json(), {"removed_assets": 0, "removed_jobs": 0})
+        marker = json.loads((self.cache / ".azizam-media").read_text())
+        self.assertRegex(marker["volume_id"], r"^[0-9a-f]{32}$")
+        self.assertGreater(marker["created_at"], 0)
+        with sqlite3.connect(self.jobs_db) as conn:
+            self.assertEqual(conn.execute("SELECT volume_id FROM media_volume_identity").fetchone()[0], marker["volume_id"])
+        self.assertEqual(self.client.post(REMOVE, headers=VALID).status_code, 200)
+        self.assertEqual(json.loads((self.cache / ".azizam-media").read_text()), marker)
 
     def test_a_folder_with_only_sidecars_and_scratch_files_removes_nothing(self) -> None:
         self.seed()

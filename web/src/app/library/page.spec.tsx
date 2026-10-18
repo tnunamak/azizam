@@ -2228,6 +2228,62 @@ describe("Library items whose files are gone", () => {
     expect(screen.getByRole("button", { name: "Remove missing items" })).toBeVisible();
   });
 
+  test.each([
+    ["owner", "media_folder_unconfirmed", true],
+    ["member", "media_folder_unconfirmed", false],
+    ["admin", "media_folder_unconfirmed", false],
+    ["owner", "media_folder_unavailable", false],
+  ] as const)("folder confirmation for %s after %s is offered: %s", async (role, cause, offered) => {
+    session.viewer = { role, name: "Alex", id: "me" };
+    session.home = { receipts: [], user: { id: "me" }, apps: [{ id: "my-app" }] };
+    const calls: Array<{ path: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/me/api/session") return Response.json({ csrf_token: "csrf-1" });
+      if (path === "/me/api/media/remove-missing") {
+        calls.push({ path, init });
+        return Response.json({ error: { code: cause, message: "Check the disk.", details: { layer: "library" } } }, { status: 503 });
+      }
+      if (path === "/me/api/media/confirm-folder") {
+        calls.push({ path, init });
+        return Response.json({ confirmed: true });
+      }
+      if (path.startsWith("/me/api/media?")) return list([{
+        ...oldGone("old", "An old fox"),
+        source: { id: "app:my-app", kind: "app", app_id: "my-app", person_id: "me", label: "My app" },
+      }]);
+      return Response.json({ assets: [], models: [], next_cursor: null });
+    }));
+    renderLibrary();
+    const buttonName = "This is the right media folder";
+    expect(screen.queryByRole("button", { name: buttonName })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Remove missing items" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    if (cause === "media_folder_unconfirmed") {
+      await screen.findByText("Azizam can't confirm this is the right media folder, so nothing was removed. Ask the owner to check the disk and confirm this folder.");
+    } else {
+      await waitFor(() => expect(within(dialog).getByRole("button", { name: "Remove" })).toBeEnabled());
+    }
+    if (!offered) {
+      expect(screen.queryByRole("button", { name: buttonName })).toBeNull();
+      return;
+    }
+    fireEvent.click(await screen.findByRole("button", { name: buttonName }));
+    await screen.findByText("Media folder confirmed. Choose Remove missing items again when you are ready.");
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual({
+      path: "/me/api/media/confirm-folder",
+      init: {
+        credentials: "same-origin", method: "POST",
+        headers: { "x-azizam-user-action": "1", "x-azizam-csrf": "csrf-1" },
+      },
+    });
+    expect(screen.queryByRole("button", { name: buttonName })).toBeNull();
+    expect(screen.getByRole("button", { name: "Remove missing items" })).toBeVisible();
+  });
+
   test("a Library with nothing missing offers no removal", async () => {
     routeFetch((path) => (path.startsWith("/me/api/media?") ? list([picture("kept", "A kept kite")]) : undefined));
     renderLibrary();
