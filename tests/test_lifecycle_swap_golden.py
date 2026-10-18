@@ -1323,5 +1323,30 @@ class TestBuildActivationGolden(unittest.TestCase):
         self.assertEqual(result["model_name"], "some-model-name")
 
 
+def test_owned_process_forward_holds_activity_lease_and_declared_start_budget():
+    from gateway import lifecycle_drivers
+
+    svc = {"process": {"driver": "process", "ready_timeout_s": 120},
+           "connection": {"address": "http://127.0.0.1:18091"}}
+    fake = MagicMock()
+    fake.ensure_ready = AsyncMock(return_value=True)
+    activation = proxy.LocalModelActivation(backend="fixture-owned", model="fixture-model")
+
+    async def scenario():
+        with patch.dict(proxy.config["backends"], {"fixture-owned": svc}), \
+             patch.object(lifecycle_drivers, "_process_driver", fake), \
+             patch.object(proxy, "_swap_drain_settings", return_value=proxy.SwapDrainSettings(enabled=False)):
+            ready, lease = await proxy._ensure_target_leased("fixture-owned", activation)
+            assert ready and lease is not None
+            fake.ensure_ready.assert_awaited_once()
+            assert fake.ensure_ready.await_args.kwargs["timeout_s"] == 120
+            fake.request_started.assert_called_once()
+            fake.request_finished.assert_not_called()
+            lease.release()
+            fake.request_finished.assert_called_once()
+
+    _run(scenario())
+
+
 if __name__ == "__main__":
     unittest.main()
