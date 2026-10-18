@@ -42,6 +42,9 @@ class ResidencyController:
             return await asyncio.wait_for(awaitable, timeout=remaining)
 
         try:
+            # Concurrent requests share one loaded model; only a missing one is loaded.
+            if _value(await within_deadline(self._observe("resident"))) is True:
+                return True
             await within_deadline(self._invoke(str(operation["op"]), operation.get("args") or {}))
             while time.monotonic() - started < max_s and time.monotonic() - stalled_at < stall_s:
                 if _value(await within_deadline(self._observe("resident"))) is True:
