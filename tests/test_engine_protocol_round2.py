@@ -422,3 +422,37 @@ def test_protocol_issues_reach_the_status_page_existing_health_signal_contract(e
     assert any('broken.yml' in reason for reason in signal['reasons'])
     assert any(engine.record['id'] in reason for reason in signal['reasons'])
     assert str(tmp_path) not in json.dumps(signal)
+
+
+def test_existing_refused_record_does_not_break_registry_read_or_healthy_engine(engine, monkeypatch, tmp_path):
+    from gateway import admin_store, service_registry
+    from gateway.admin_runtime import AdminSQLiteStore
+    from tests.registry_test_helpers import write_service_registry_for_test
+    db = tmp_path/'old-install.db'
+    admin_store.init_db(db)
+    bad = copy.deepcopy(engine.record)
+    bad['id'] = 'old-lan'
+    bad['config']['connection']['address'] = 'http://192.168.1.5:11434'
+    stored = copy.deepcopy(engine.registry)
+    stored['services']['old-lan'] = bad
+    write_service_registry_for_test(stored, path=db)
+    store = AdminSQLiteStore(db)
+    loaded = store.get_service_registry()
+    assert {'prism-local','old-lan'} <= loaded['services'].keys()
+    assert 'old-lan' in service_registry.ensure_service_registry({}, path=db)['services']
+    monkeypatch.setattr(proxy.ADMIN_STORE, 'get_service_registry', store.get_service_registry)
+    assert chat(engine).status_code == 200
+    response = engine.client.get('/v1/models')
+    assert response.status_code == 200, response.text
+    assert 'prism-chat' in {item['id'] for item in response.json()['data']}
+    from gateway.engine_protocol import inventory
+    inventory._issues.clear()  # Status must report configuration faults before a catalog probe.
+    payload = asyncio.run(proxy._status_payload_with_protocol_issues({'health_sources':{}}))
+    assert any(row.get('engine_id') == 'old-lan' for row in payload['protocol_issues'])
+
+
+def test_session_make_uses_neutral_image_entry():
+    import inspect
+    source = inspect.getsource(proxy._SessionMakeRuntime.execute)
+    assert 'proxy_image_request' in source
+    assert 'proxy_comfy_request' not in source
