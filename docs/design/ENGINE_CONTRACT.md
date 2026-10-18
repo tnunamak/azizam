@@ -325,9 +325,13 @@ template, through `native.allow`.
   each bound to the origin it was attached for. A class with no credential
   sends none, and never the other class's. It never forwards the client's auth
   or cookies, and it does not use the service record's single `auth_inject`
-  key or a caller's per-identity downstream secrets. (`auth_inject` rules stay
-  for the older chat paths, and only the owner may add, change or remove them:
-  any change to a record's rules is a credential binding change.) A credential that is not
+  key or a caller's per-identity downstream secrets. (`auth_inject` rules are
+  still used by the older chat, speech-synthesis and audio paths, which read
+  them through `prepare_downstream_headers`, and only the owner may add, change
+  or remove them: any change to a record's rules is a credential binding change.
+  The Overview warns when an enabled engine has rules and native pass-through on,
+  because a call to the provider route then reaches it with only the key under
+  `connection.credentials`.) A credential that is not
   bound to the address it would go to is not sent, and the call is refused.
 - Request and response bytes are capped. Redirects are refused. Configured
   hosts are SSRF-checked with `gateway/engine_check.py`: the address as written

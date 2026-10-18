@@ -821,6 +821,26 @@ def _registry_problem_item(problem: Mapping[str, Any]) -> dict[str, Any]:
     return _attention_item(kind="registry", severity="problem", title=title, detail=detail.strip())
 
 
+def _unsent_inject_rules(registry: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Enabled engines that have ``auth_inject`` rules and a provider route (native pass-through on).
+
+    The provider route (``/gateway/v1/providers/{provider}/...``) sends the engine's own credential and
+    never these rules, so a caller of that route reaches the engine with no key from them. The older
+    chat, speech and audio paths still send them.
+    """
+    found: list[dict[str, str]] = []
+    for service_id, record in (registry.get("services") or {}).items():
+        config = record.get("config") if isinstance(record, Mapping) else None
+        if not isinstance(config, Mapping) or not config.get("auth_inject"):
+            continue
+        if not service_registry.bool_from_config(record.get("enabled"), True):
+            continue
+        if config.get("native_passthrough") is not True or service_registry.is_remote_provider_config(config):
+            continue
+        found.append({"id": str(service_id), "name": str(record.get("name") or service_id)})
+    return found
+
+
 def _excluded_name(row: Mapping[str, Any]) -> str:
     """The name the boot report lists a left-out record under: a service by id, any other as ``kind:id``."""
     kinds = {"protocol_frontends": "frontend", "workflows": "workflow", "capabilities": "capability"}
@@ -897,6 +917,15 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
     problem = snapshot.get("registry_problem")
     if isinstance(problem, Mapping):
         items.append(_registry_problem_item(problem))
+    for row in snapshot.get("unsent_inject_rules") or []:
+        items.append(_attention_item(
+            kind="service", severity="attention",
+            title=f"{row['name']} has key rules the provider route does not send",
+            detail=("Calls through /gateway/v1/providers/ reach this engine with the engine's own key only, "
+                    "and none from its auth_inject rules. Give the engine its own key under its connection, "
+                    "or turn off native pass-through."),
+            target_kind="service", target_id=row["id"], target_name=row["name"],
+        ))
     excluded = snapshot.get("registry_excluded") or []
     reported = problem.get("left_out") if isinstance(problem, Mapping) and isinstance(problem.get("left_out"), Mapping) else {}
     unreported = [row for row in excluded if isinstance(row, Mapping) and _excluded_name(row) not in reported]
@@ -1763,6 +1792,7 @@ def create_admin_router(
         attention = derive_admin_attention({
             "registry_problem": registry_apply,
             "registry_excluded": registry_excluded,
+            "unsent_inject_rules": _unsent_inject_rules(registry),
             "apps": apps,
             "credentials": credentials,
             "frontends": frontends,
