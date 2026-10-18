@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import shutil
 import subprocess
 import tempfile
@@ -69,6 +70,55 @@ def empty_extension_package_index() -> dict[str, Any]:
     }
 
 
+# A package's install snapshot holds a digest per record, not the record: a record can carry a
+# command or environment secret, and the index is returned to callers. Version 2 is this shape;
+# an entry without the version is a legacy copy and is digested the first time it is read.
+INSTALLED_RECORDS_VERSION = 2
+
+
+def installed_record_digest(record: Mapping[str, Any]) -> str:
+    """Proof that an installed record is unchanged: a digest of its normalized JSON form."""
+    encoded = json.dumps(record, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def installed_records_proof(records_by_kind: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """The install snapshot a package keeps: kind -> id -> {kind, id, sha256}, never the records."""
+    return {
+        "installed_records_version": INSTALLED_RECORDS_VERSION,
+        "installed_records": {
+            kind: {
+                record_id: {"kind": kind, "id": record_id, "sha256": installed_record_digest(record)}
+                for record_id, record in (records_by_kind.get(kind) or {}).items()
+                if isinstance(record, Mapping)
+            }
+            for kind in sorted(DATA_OBJECT_KINDS)
+        },
+    }
+
+
+def _digest_legacy_installed_records(package: Mapping[str, Any]) -> dict[str, Any]:
+    """A package whose snapshot still holds record copies, with each copy replaced by its digest."""
+    out = dict(package)
+    if "installed_records" not in out or out.get("installed_records_version") == INSTALLED_RECORDS_VERSION:
+        return out
+    legacy = out.get("installed_records")
+    legacy = legacy if isinstance(legacy, Mapping) else {}
+    out.update(installed_records_proof({kind: legacy.get(kind) or {} for kind in DATA_OBJECT_KINDS}))
+    return out
+
+
+def needs_installed_records_migration(value: Any) -> bool:
+    """True when a stored index still holds a record copy, so the one-time migration has work to do."""
+    if not isinstance(value, Mapping) or not isinstance(value.get("packages"), Mapping):
+        return False
+    return any(
+        isinstance(package, Mapping) and "installed_records" in package
+        and package.get("installed_records_version") != INSTALLED_RECORDS_VERSION
+        for package in value["packages"].values()
+    )
+
+
 def normalize_extension_package_index(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return empty_extension_package_index()
@@ -85,7 +135,7 @@ def normalize_extension_package_index(value: Any) -> dict[str, Any]:
         "schema_version": int(value.get("schema_version") or 1),
         "sources": [dict(source) for source in sources if isinstance(source, Mapping)],
         "packages": {
-            str(package_id): dict(package)
+            str(package_id): _digest_legacy_installed_records(package)
             for package_id, package in packages.items()
             if isinstance(package, Mapping)
         },
@@ -436,6 +486,141 @@ def remove_extension_package(
     del out["packages"][package_id]
     out["updated_at"] = int(time.time())
     return out
+
+
+class PackageInUse(ValueError):
+    """A removal would leave a record that something outside the package still names."""
+
+
+def package_registry_snapshot(
+    registry: Mapping[str, Any], package_id: str,
+) -> dict[str, dict[str, Any]]:
+    """Capture the actual normalized installed records, including host bindings."""
+    return {
+        kind: {
+            record_id: copy.deepcopy(record)
+            for record_id, record in (registry.get(kind) or {}).items()
+            if (record.get("provenance") or {}).get("package_id") == package_id
+        }
+        for kind in sorted(DATA_OBJECT_KINDS)
+    }
+
+
+def _matches_install(
+    record: Mapping[str, Any], expected: Mapping[str, Any] | None, package: Mapping[str, Any],
+    disabled_state: bool | None,
+) -> bool:
+    """True when the row is still exactly what the package installed (its disable aside).
+
+    The expected entry is the digest the install stored. The provenance hash and version must
+    also still name this package, so a row that was rewritten under another package does not match.
+    """
+    comparable = copy.deepcopy(dict(record))
+    if disabled_state is not None and comparable.get("enabled") is False:
+        comparable["enabled"] = disabled_state
+    provenance = record.get("provenance") or {}
+    return (
+        expected is not None
+        and expected.get("sha256") == installed_record_digest(comparable)
+        and provenance.get("package_hash") == package.get("package_hash")
+        and provenance.get("package_version") == package.get("version")
+    )
+
+
+def change_package_lifecycle(
+    index: Mapping[str, Any], registry: Mapping[str, Any], package_id: str,
+    *, mode: str = "remove", references: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, str]]]:
+    """Compute a lifecycle edit without mutating inputs or trusting provenance alone."""
+    if mode not in {"remove", "disable", "enable"}:
+        raise ValueError("package lifecycle mode must be remove, disable or enable")
+    out_index = copy.deepcopy(normalize_extension_package_index(index))
+    if package_id not in out_index["packages"]:
+        raise KeyError(f"extension package not found: {package_id!r}")
+    package = out_index["packages"][package_id]
+    out = copy.deepcopy(dict(registry))
+    snapshot = package.get("installed_records") or {}
+    disabled_states = package.setdefault("disabled_states", {})
+    owned = package_registry_snapshot(out, package_id)
+    # A row the operator changed is detached and kept, so it survives the removal.
+    unchanged = {
+        kind: {
+            record_id for record_id, record in records.items()
+            if _matches_install(
+                record, (snapshot.get(kind) or {}).get(record_id), package,
+                disabled_states.get(kind, {}).get(record_id),
+            )
+        }
+        for kind, records in owned.items()
+    } if mode == "remove" else {}
+    if mode == "remove":
+        gone = {(kind, record_id) for kind, ids in unchanged.items() for record_id in ids}
+        # Match routing identifiers as well as service ids: access plans name
+        # the public model, not its service. A model the removed rows define
+        # dies with them, so only a surviving reference can keep the package.
+        targets = {record_id for _, record_id in gone}
+        for kind, record_id in gone:
+            if kind != "services":
+                continue
+            for model in (out[kind][record_id].get("config") or {}).get("models") or []:
+                if isinstance(model, Mapping):
+                    targets.update(str(model[key]) for key in ("id", "model_group") if model.get(key))
+
+        def referenced(value: Any) -> bool:
+            if isinstance(value, Mapping):
+                return any(referenced(item) for item in value.values())
+            if isinstance(value, (list, tuple)):
+                return any(referenced(item) for item in value)
+            return isinstance(value, str) and value in targets
+
+        for label, document in (references or {}).items():
+            if referenced(document):
+                raise PackageInUse(f"cannot remove package {package_id!r}: referenced by {label}")
+        # Every row that stays, including an edited row of this package, must not name a target.
+        for kind in sorted(DATA_OBJECT_KINDS):
+            for record_id, record in (out.get(kind) or {}).items():
+                # A row's own id names the row; only what it carries can name a removed record.
+                carried = {key: value for key, value in record.items() if key != "id"}
+                if (kind, record_id) not in gone and referenced(carried):
+                    raise PackageInUse(
+                        f"cannot remove package {package_id!r}: referenced by {kind}/{record_id}"
+                    )
+    affected = []
+    for kind, records in owned.items():
+        states = disabled_states.setdefault(kind, {})
+        for record_id, record in records.items():
+            current = out[kind][record_id]
+            if mode == "disable":
+                states.setdefault(record_id, bool(current.get("enabled", True)))
+                current["enabled"] = False
+                action = "disabled"
+            elif mode == "enable":
+                if record_id not in states:
+                    continue
+                previous_enabled = states.pop(record_id)
+                if current.get("enabled") is False:
+                    current["enabled"] = previous_enabled
+                action = "enabled" if current["enabled"] else "restored_disabled"
+            elif record_id in unchanged[kind]:
+                del out[kind][record_id]
+                action = "removed"
+            else:
+                provenance = dict(current.get("provenance") or {})
+                for key in ("package_id", "package_version", "package_hash"):
+                    provenance.pop(key, None)
+                current["provenance"] = provenance
+                # The package's disable does not outlive the package; an operator's edit stays.
+                if record_id in states and current.get("enabled") is False:
+                    current["enabled"] = states[record_id]
+                action = "detached"
+            affected.append({"kind": kind, "id": record_id, "action": action})
+    if mode == "remove":
+        del out_index["packages"][package_id]
+    else:
+        package["enabled"] = mode == "enable"
+        package["updated_at"] = int(time.time())
+    out_index["updated_at"] = out["updated_at"] = int(time.time())
+    return out_index, out, affected
 
 
 def review_local_directory_package(package_dir: str | Path) -> dict[str, Any]:

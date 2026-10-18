@@ -29,7 +29,7 @@ import hmac
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
+from typing import Any, Awaitable, Callable, Iterable, Literal, Mapping, Protocol
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
@@ -237,7 +237,8 @@ class AdminStore(Protocol):
     ) -> dict[str, Any]: ...
 
     def remove_extension_package(
-        self, *, package_id: str, actor: AdminContext
+        self, *, package_id: str, actor: AdminContext, mode: str = "remove",
+        expected_generation: int | None = None,
     ) -> dict[str, Any]: ...
 
     def recent_audit(
@@ -2396,6 +2397,10 @@ def create_admin_router(
             )
         return int(generation_text)
 
+    def _optional_registry_match(request: Request) -> int | None:
+        """The If-Match precondition when the client sends one; a request without it is not refused."""
+        return _registry_match(request) if "if-match" in request.headers else None
+
     def _registry_response(
         record: Mapping[str, Any], *, response_status: int = status.HTTP_200_OK, extra: Mapping[str, Any] | None = None,
     ) -> JSONResponse:
@@ -2872,6 +2877,20 @@ def create_admin_router(
             content={"deleted": result},
         )
 
+    def _extension_package_response(result: Mapping[str, Any]) -> JSONResponse:
+        """Answer a package change with the registry as a caller may see it.
+
+        Enable and remove share this one answer, so a new projection (D21) is switched in one place.
+        """
+        if isinstance(result.get("service_registry"), Mapping):
+            result = {**result, "service_registry": engine_redaction.redact_registry(result["service_registry"])}
+        response = JSONResponse(status_code=status.HTTP_200_OK, content=result)
+        generation = result.get("operator_settings_generation")
+        if generation is not None:
+            response.headers["ETag"] = f'"os-{generation}"'
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @router.get("/extensions")
     def list_extension_packages(request: Request) -> JSONResponse:
         ctx = _guard(request)
@@ -2954,34 +2973,39 @@ def create_admin_router(
                 "invalid_extension_package",
                 str(exc),
             ).as_response()
-        response = egress.projected_response(
-            status_code=status.HTTP_200_OK,
-            content=result,
-        )
-        generation = result.get("operator_settings_generation")
-        if generation is not None:
-            response.headers["ETag"] = f'"os-{generation}"'
-        response.headers["Cache-Control"] = "no-store"
-        return response
+        return _extension_package_response(result)
 
     @router.delete("/extensions/{package_id}")
     async def remove_extension_package(
-        request: Request, package_id: str
+        request: Request,
+        package_id: str,
+        mode: Literal["remove", "disable"] = "remove",
     ) -> JSONResponse:
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
             result = store.remove_extension_package(
-                package_id=package_id, actor=ctx
+                package_id=package_id, actor=ctx, mode=mode,
+                expected_generation=_optional_registry_match(request),
             )
+        except _RouteError as exc:
+            return exc.as_response()
+        except extension_packages.PackageInUse as exc:
+            return _RouteError(
+                status.HTTP_409_CONFLICT,
+                "extension_package_referenced",
+                str(exc),
+            ).as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_404_NOT_FOUND,
                 "extension_package_not_found",
                 str(exc),
             ).as_response()
-        return egress.projected_response(status_code=status.HTTP_200_OK, content=result)
+        return _extension_package_response(result)
 
     def settings_revision(request: Request) -> str:
         revision = request.headers.get("if-match")

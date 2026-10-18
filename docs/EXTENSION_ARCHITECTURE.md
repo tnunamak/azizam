@@ -354,6 +354,7 @@ Current admin API:
 - `GET /admin/api/extensions`
 - `POST /admin/api/extensions/validate`
 - `POST /admin/api/extensions/enable`
+- `DELETE /admin/api/extensions/{package_id}?mode=remove|disable`
 
 Validation returns package metadata, object counts, normalized candidate
 records, warnings, and errors without mutating state. Enable writes the service
@@ -361,3 +362,26 @@ registry and package index, records audit events, and persists Git-backed
 packages under `data/extensions/installed`. Imported records carry package
 provenance: package id, version, hash, source summary, and resolved commit when
 available.
+
+The package index keeps a SHA-256 digest of each normalized record a package
+installed, with the record's kind and id, and never a copy of the record. A
+record can carry a command or environment secret, and the index is returned by
+the list, enable and remove routes. A stored index written before this change
+is digested once at startup (`installed_records_version: 2` marks the new form).
+A row still matches its install when its digest, its provenance hash and its
+provenance version all match the package; any other row is detached.
+
+Remove and disable change a package in one write transaction with the registry,
+the index and their audit facts. Remove refuses, with `409
+extension_package_referenced`, when an access plan still names a record the
+package would remove; the plan is checked under the same write lock, so a plan
+saved during the removal waits for it. The 409 names the plan. Disable switches
+off each record the package owns and turns it back on when the package is
+enabled again. An operator edit to a record detaches it from the package instead
+of removing it, so the edit is kept. Reinstalling over a kept record fails with
+`409 extension_package_conflict` and says the record was kept.
+
+The DELETE takes an optional `If-Match: "os-N"`; a stale value gets `412
+generation_mismatch`, as the service registry routes do. Its response is the
+registry through the same redacted projection as enable, with `ETag` and
+`Cache-Control: no-store`.

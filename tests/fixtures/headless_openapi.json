@@ -6493,6 +6493,20 @@
               "title": "Package Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "default": "remove",
+              "enum": [
+                "remove",
+                "disable"
+              ],
+              "title": "Mode",
+              "type": "string"
+            }
           }
         ],
         "responses": {
