@@ -276,7 +276,7 @@ def create_me_media_router(
     def remove_missing_media(request: Request) -> JSONResponse:
         """Drop the caller's Library and job entries whose files are gone.
 
-        Refuses unless the media folder is seen to hold media. A file counts as
+        Refuses unless the media folder can be read and does not hold only stray files. A file counts as
         gone only when nothing in the folder holds its digest, under any suffix.
         Stored files and receipts are never touched.
         """
@@ -291,7 +291,7 @@ def create_me_media_router(
             prompt_path = _resolve_path(prompt_memory_path)
             actor = _actor_from_session(session, admin_path)
             storage = asset_storage_provider() if asset_storage_provider is not None else None
-            if storage is None or not storage.files:
+            if storage is None:
                 raise PublicFailure("media_folder_unavailable", 503)
             scope = _member_media_scope(actor.user_id, admin_path)
             plan = _plan_removal(
@@ -404,9 +404,10 @@ StorageSnapshotProvider = Callable[[], "StorageSnapshot | None"]
 def create_storage_snapshot_provider(cache_dir: Path) -> StorageSnapshotProvider:
     """List the media folder, or return None when it cannot be seen.
 
-    None covers a folder that is missing, not a directory, unreadable or listed
-    without any media in it. An unmounted volume looks the same as every file
-    being gone, so it must never be read as "gone".
+    None covers a folder that is missing, not a directory, unreadable, or holding
+    files but no media (only sidecars or scratch files). An existing, readable,
+    empty folder is healthy: nothing is stored, so there is nothing to protect.
+    A folder that cannot be seen must never be read as "everything is gone".
     """
 
     def snapshot() -> StorageSnapshot | None:
@@ -421,7 +422,9 @@ def create_storage_snapshot_provider(cache_dir: Path) -> StorageSnapshotProvider
             digest = directory_index.stored_digest(name)
             if digest is not None:
                 files.setdefault(digest, []).append(name)
-        return StorageSnapshot({digest: tuple(sorted(found)) for digest, found in files.items()}) if files else None
+        if names and not files:
+            return None
+        return StorageSnapshot({digest: tuple(sorted(found)) for digest, found in files.items()})
 
     return snapshot
 
