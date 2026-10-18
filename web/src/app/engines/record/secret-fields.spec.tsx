@@ -105,8 +105,40 @@ function UrlEditor() {
 it("can cancel URL input without discarding other drafts", async () => {
   render(<UrlEditor />);
   const user = userEvent.setup();
-  const input = screen.getByLabelText("config.base_url replacement URL");
+  const input = screen.getByLabelText("Replacement URL");
   await user.type(input, "http://user:pass@localhost:8080/v1");
   await user.click(screen.getByRole("button", { name: "Cancel replacement" }));
   expect(input).toHaveValue("");
+});
+
+it("defaults a new credential argument to secret and warns when made public", async () => {
+  render(<Editor />);
+  const user = userEvent.setup();
+  const flag = screen.getByLabelText("process start command Argument 1");
+  await user.click(screen.getByRole("checkbox", { name: "Secret process start command Argument 1" }));
+  await user.type(flag, "--api-key");
+  await user.click(screen.getByRole("button", { name: "Add process start command argument" }));
+  const toggle = screen.getByRole("checkbox", { name: "Secret process start command Argument 2" });
+  expect(toggle).toBeChecked();
+  expect(screen.getByLabelText("process start command Argument 2")).toHaveAttribute("type", "password");
+  await user.click(toggle);
+  expect(screen.getByText(/may contain a credential/i)).toBeVisible();
+});
+
+it("does not offer Remove on the program and allows argument reordering", async () => {
+  render(<Editor />);
+  const user = userEvent.setup();
+  expect(screen.queryByRole("button", { name: "Remove process start command Program" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Add process start command argument" }));
+  await user.click(screen.getByRole("button", { name: "Move process start command Argument 2 up" }));
+  expect(screen.getByLabelText("process start command Program")).toHaveValue("runner");
+});
+
+it("shows one plain connection URL control and no Clear without stored entries", () => {
+  const drafts = secretDrafts({ config: { host: "example.test", address: "https://example.test/v1", base_url: "https://example.test/v1" } });
+  render(<SecretFields drafts={drafts} onChange={() => {}} part="connection" disabled={false} />);
+  expect(screen.getByRole("group", { name: "Connection URL credentials" })).toBeVisible();
+  expect(screen.getByLabelText("Replacement URL")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Clear URL credentials" })).toBeNull();
+  expect(screen.queryByText(/config\.host credentials|config\.address credentials/)).toBeNull();
 });

@@ -93,6 +93,12 @@ describe("write-only carrier drafts", () => {
     draft.find((d) => d.carrier === "process.start")!.rows[0].value = "";
     expect(secretProblem(draft)).toMatch(/program/i);
   });
+  it("rejects removal of the original program even when the next argument is public", () => {
+    const draft = secretDrafts({ process: { start: ["systemctl", "start", "unit"] } });
+    const argv = draft.find((d) => d.carrier === "process.start")!;
+    argv.rows[0].removed = true;
+    expect(secretProblem(draft)).toMatch(/program/i);
+  });
   it("changes URL credentials only through explicit commands", () => {
     const draft = secretDrafts(record);
     const url = draft.find((d) => d.carrier === "config.base_url")!;
@@ -148,9 +154,10 @@ it("edits canonical command fields without offering ignored compatibility copies
   expect(drafts.map((d) => d.carrier)).toContain("process.status");
 });
 
-it("discovers additional URL carriers including a model row", () => {
+it("offers URL credentials only for the connection address", () => {
   const drafts = secretDrafts({
     config: {
+      address: "http://localhost/v1",
       endpoint: "http://localhost",
       upstream: "http://localhost",
       models: [{ url: "http://localhost" }],
@@ -163,16 +170,8 @@ it("discovers additional URL carriers including a model row", () => {
       },
     },
   });
-  expect(drafts.filter((d) => d.kind === "url").map((d) => d.carrier)).toEqual(
-    expect.arrayContaining([
-      "config.endpoint",
-      "config.upstream",
-      "config.models[0].url",
-      "lifecycle.driver_config.load_url",
-      "lifecycle.driver_config.unload_url",
-      "lifecycle.driver_config.verify_endpoint",
-    ]),
-  );
+  expect(drafts.filter((d) => d.kind === "url").map((d) => d.carrier)).toEqual(["config.address"]);
+  expect(drafts.find((d) => d.carrier === "config.address")?.label).toBe("Connection URL credentials");
 });
 it("edits scalar control keys by entry id", () => {
   const drafts = secretDrafts({

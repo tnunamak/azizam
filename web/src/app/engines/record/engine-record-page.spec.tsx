@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { enginesApi, type EngineView } from "@/lib/engines-api";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { protocolDescriptionsApi } from "@/lib/protocol-descriptions-api";
 import { accessAnswer, check, definitions, engineView, renderWithClient, testResult } from "../__fixtures__/test-utils";
 import { clockTime } from "../add-engine/draft";
@@ -415,6 +415,38 @@ describe("kept-off engines", () => {
 });
 
 describe("inference key commands", () => {
+  it("uses the refreshed revision after changing Enabled", async () => {
+    const user = userEvent.setup();
+    mount({ revision: '"os-1"' });
+    vi.spyOn(enginesApi, "update").mockImplementation(async () => {
+      view = { ...view, revision: '"os-2"', enabled: false };
+      return registry;
+    });
+    const commands = vi.spyOn(enginesApi, "secretEntries").mockResolvedValue(registry);
+    await user.click(await screen.findByRole("switch", { name: "Enabled" }));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Enabled" })).not.toBeChecked());
+    await user.type(screen.getByLabelText("API key"), "replacement-value");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(commands).toHaveBeenCalledWith("garage-gpu", expect.any(Array), '"os-2"'));
+  });
+
+  it("Discard refetches and a 412 Refresh clears stale edits", async () => {
+    const user = userEvent.setup();
+    mount({ revision: '"os-1"' });
+    const commands = vi.spyOn(enginesApi, "secretEntries").mockRejectedValue(new ApiError("stale_revision", "stale", 412));
+    await user.type(await screen.findByLabelText("API key"), "replacement-value");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText("Engine settings changed elsewhere. Refresh and try again.")).toBeVisible();
+    view = { ...view, revision: '"os-2"' };
+    await user.click(screen.getByRole("button", { name: "Refresh engine settings" }));
+    await waitFor(() => expect(screen.getByLabelText("API key")).toHaveValue(""));
+    await user.type(screen.getByLabelText("API key"), "another-value");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(commands).toHaveBeenLastCalledWith("garage-gpu", expect.any(Array), '"os-2"'));
+    view = { ...view, revision: '"os-3"' };
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(enginesApi.view).toHaveBeenCalledTimes(3));
+  });
   it("replaces a configured key by stable id and keeps the ordinary record free of key input", async () => {
     const user = userEvent.setup();
     mount({ revision: '"os-12"' });
