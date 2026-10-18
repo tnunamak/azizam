@@ -865,8 +865,19 @@ def _merge_imported_record(
 ) -> None:
     existing = target.get(record_id)
     if existing is not None and not _same_imported_package_record(existing, record):
+        if _kept_after_operator_edit(existing):
+            raise ServiceRegistryConflict(
+                f"{kind} {record_id!r} was kept when an earlier install was removed after an operator "
+                "edited it; remove or rename it, then install the package again"
+            )
         raise ServiceRegistryConflict(f"{kind} {record_id!r} already exists")
     target[record_id] = record
+
+
+def _kept_after_operator_edit(existing: Mapping[str, Any]) -> bool:
+    """A package record whose package detached it: imported, and no longer naming a package."""
+    provenance = existing.get("provenance")
+    return existing.get("source") == "imported" and isinstance(provenance, Mapping) and "package_id" not in provenance
 
 
 def _same_imported_package_record(
