@@ -29,7 +29,7 @@ MODELS = {"data": [{"id": "served-id", "context_length": 32768}]}
 def _saved(origin: str = ORIGIN) -> dict:
     scheme, _, rest = origin.partition("://")
     host, _, port = rest.partition(":")
-    return {"scheme": scheme, "host": host, "port": int(port), "base_path": "/provider/v1",
+    return {"definition": "openai-compatible", "scheme": scheme, "host": host, "port": int(port), "base_path": "/provider/v1",
             "headers": [{"name": "X-Tenant", "value": "family"}],
             "api_key_env": "PROBE_TEST_KEY", "credential_origin": origin}
 
@@ -67,8 +67,8 @@ def test_a_saved_connection_gives_the_scheme_prefix_headers_and_key(endpoint, ur
 
 
 def test_an_address_without_a_port_field_is_still_probed():
-    assert engine_read_request({"base_url": f"{ORIGIN}/provider/v1"}, "/v1/models")[0] == f"{ORIGIN}/provider/v1/models"
-    assert engine_read_request({"base_url": ORIGIN}, "/v1/models")[0] == f"{ORIGIN}/v1/models"
+    assert engine_read_request({"definition": "openai-compatible", "base_url": f"{ORIGIN}/provider/v1"}, "/v1/models")[0] == f"{ORIGIN}/provider/v1/models"
+    assert engine_read_request({"definition": "openai-compatible", "base_url": ORIGIN}, "/v1/models")[0] == f"{ORIGIN}/v1/models"
 
 
 def test_a_control_credential_never_goes_with_a_read(monkeypatch):
@@ -79,9 +79,9 @@ def test_a_control_credential_never_goes_with_a_read(monkeypatch):
     assert headers == {"x-tenant": "family", "authorization": f"Bearer {KEY}"}
 
 
-def test_a_missing_key_makes_the_probe_unknown_not_unauthenticated(monkeypatch):
+def test_a_missing_key_keeps_the_probe_unauthenticated(monkeypatch):
     monkeypatch.delenv("PROBE_TEST_KEY")
-    assert engine_read_request(_saved(), "/v1/models") is None
+    assert engine_read_request(_saved(), "/v1/models") == (f"{ORIGIN}/provider/v1/models", {"x-tenant": "family"})
 
 
 def test_the_ready_check_reaches_the_saved_prefix_with_header_and_key(fake_upstreams):

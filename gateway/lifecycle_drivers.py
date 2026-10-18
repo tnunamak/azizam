@@ -349,7 +349,8 @@ def engine_read_request(
     credentials never do. ``endpoint`` is written from the server root, like
     ``health_endpoint``: ``/v1/...`` joins the protocol base, so a base that
     ends in /v1 is not doubled; any other path joins that base without /v1.
-    None when no address is known or the credential is unavailable.
+    Legacy records retain their original root-relative, keyless probes.
+    A missing inference key does not prevent an unauthenticated probe.
     """
     from gateway import admin_store
     from gateway.engine_check import join_url
@@ -359,12 +360,20 @@ def engine_read_request(
         "config": service, "secret_refs": service.get("secret_refs") or {},
     }
     config = record["config"]
+    # Existing transport probes keep their root-relative paths and carry no
+    # inference credential. A saved engine-page connection opts into the
+    # protocol prefix, safe headers and origin-bound inference credential.
+    if not config.get("definition"):
+        root = fallback_root
+        if not root and config.get("port"):
+            root = f"http://{config.get('host', '127.0.0.1')}:{config['port']}"
+        return (f"{root.rstrip('/')}/{endpoint.lstrip('/')}", {}) if root else None
     if not fallback_root and config.get("port"):
         fallback_root = f"http://{config.get('host', '127.0.0.1')}:{config.get('port')}"
     try:
         connection = inference_connection(
             record, "", fallback_address=f"{fallback_root}/v1" if fallback_root else "",
-            fallback_timeout=0.0, db_path=db_path or admin_store.DB_PATH, env=get_env,
+            fallback_timeout=0.0, db_path=db_path or admin_store.DB_PATH, env=get_env, allow_unavailable_key=True,
         )
     except InferenceConnectionError:
         return None
@@ -392,7 +401,7 @@ async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
 
     Reads health_endpoint and the connection (see engine_read_request) from
     the svc (config["backends"][id]) dict. Polls every 0.5 s. Returns False
-    immediately when the svc has no usable address or its key is unavailable.
+    immediately when the svc has no usable address.
     """
     from gateway.engine_contract_view import observations_config
 

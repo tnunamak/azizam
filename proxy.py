@@ -3387,23 +3387,29 @@ async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
 async def _probe_service_resource_fact(bcfg: Mapping[str, Any]) -> dict[str, Any]:
     from gateway.lifecycle_drivers import engine_read_request
 
-    probe_config = dict(bcfg)
-    env_name = str(bcfg.get("base_url_env") or bcfg.get("api_base_env") or "").strip()
-    env_base = str(get_env(env_name) or "").strip() if env_name else ""
-    if env_base:
-        probe_config["base_url"] = env_base
-    endpoint = str(bcfg.get("health_endpoint") or "/health").strip() or "/health"
-    absolute = endpoint.startswith(("http://", "https://"))
-    if absolute:
-        # Check the key against the health destination so an origin different
-        # from its approved inference origin cannot receive it.
-        probe_config["base_url"] = endpoint
-    probe = engine_read_request(probe_config, "" if absolute else endpoint)
-    if probe is None:
-        return {"status": "unknown"}
-    url, headers = probe
-    if absolute:
-        url = endpoint
+    if not bcfg.get("definition"):
+        # A page read must not change existing health traffic. These probes
+        # historically ignored base_path and carried no inference credential.
+        url, headers = _service_resource_probe_url(bcfg), {}
+        if not url:
+            return {"status": "unknown"}
+    else:
+        probe_config = dict(bcfg)
+        env_name = str(bcfg.get("base_url_env") or bcfg.get("api_base_env") or "").strip()
+        env_base = str(get_env(env_name) or "").strip() if env_name else ""
+        if env_base:
+            probe_config["base_url"] = env_base
+        endpoint = str(bcfg.get("health_endpoint") or "/health").strip() or "/health"
+        absolute = endpoint.startswith(("http://", "https://"))
+        if absolute:
+            # Resolve against the health destination before attaching a key.
+            probe_config["base_url"] = endpoint
+        probe = engine_read_request(probe_config, "" if absolute else endpoint)
+        if probe is None:
+            return {"status": "unknown"}
+        url, headers = probe
+        if absolute:
+            url = endpoint
     try:
         timeout = float(bcfg.get("timeout") or HEALTH_CHECK_TIMEOUT)
     except (TypeError, ValueError):
@@ -15276,6 +15282,7 @@ app.include_router(
         ),
         # Add engine never calls the gateway itself: its default ports and the one it listens on.
         engine_fetch=engine_check.make_http_fetch(gateway_ports=_engine_check_self_ports),
+        engine_hop_timeout=lambda: UPSTREAM_READ_TIMEOUT,
         frontend_status=lambda: FRONTEND_MOUNTS.status(),
     )
 )

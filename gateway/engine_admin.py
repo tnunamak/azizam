@@ -199,16 +199,27 @@ def _clean_transforms(value: Any) -> list[Any]:
     return out
 
 
-def _clean_headers(value: Any) -> list[dict[str, Any]]:
+def _clean_headers(value: Any, *, stored: Iterable[Any] = ()) -> list[dict[str, Any]]:
     if value in (None, ""):
         return []
     if not isinstance(value, list):
         raise DraftError("Request headers must be a list of name and value rows.", field="headers")
     out = []
+    remaining = [copy.deepcopy(row) for row in stored if isinstance(row, Mapping)]
     for index, row in enumerate(value):
         if not isinstance(row, Mapping):
             raise DraftError(f"Header {index + 1} needs a name and a value.", field="headers")
         name = str(row.get("name") or "").strip()
+        if row.get("not_sent"):
+            # Bind each hidden row to its stored header name. Reordering or
+            # removing rows must never move a secret to a different header.
+            matched = next((old for old in remaining if old.get("name") == name
+                            and (old.get("secret") or header_problem(name, str(old.get("value") or "")))), None)
+            if matched is None or row.get("value") != engine_redaction.REDACTED:
+                raise DraftError("This hidden header has no stored value. Remove it and use the API key field.", field="headers")
+            remaining.remove(matched)
+            out.append(matched)
+            continue
         if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name):
             raise DraftError(f"Header {index + 1}: “{name}” is not a header name.", field="headers")
         value_text = str(row.get("value") or "")
@@ -277,7 +288,8 @@ def lifecycle_block(values: Mapping[str, Any], definition: Mapping[str, Any]) ->
     return {"type": "command", "managed": True, "driver": "command", "driver_config": driver_config}
 
 
-def clean_values(definition: Mapping[str, Any], values: Mapping[str, Any]) -> dict[str, Any]:
+def clean_values(definition: Mapping[str, Any], values: Mapping[str, Any], *,
+                 stored_headers: Iterable[Any] = ()) -> dict[str, Any]:
     """Validate draft values against the definition's field list."""
     if not isinstance(values, Mapping):
         raise DraftError("values must be an object.", field="values")
@@ -298,7 +310,7 @@ def clean_values(definition: Mapping[str, Any], values: Mapping[str, Any]) -> di
     key = str(values.get("api_key") or "")
     if key and key != SECRET_MASK and (not key.isascii() or any(ch.isspace() for ch in key.strip())):
         raise DraftError("The key holds a space or a character a request cannot carry. Paste it again.", field="api_key")
-    out["headers"] = _clean_headers(values.get("headers"))
+    out["headers"] = _clean_headers(values.get("headers"), stored=stored_headers)
     out["transforms"] = _clean_transforms(values["transforms"]) if "transforms" in values else None
     out["reply_timeout_s"] = _number(values, "reply_timeout_s", _field_default(definition, "reply_timeout_s", 600), low=1, high=3600)
     return out
@@ -508,7 +520,7 @@ def build_raw(
         raw["timeout"] = int(values["reply_timeout_s"])
     if "headers" in has:
         # Sent with every chat and embedding request (litellm_substrate) and every direct call (proxy).
-        headers = [{"name": row["name"], "value": row["value"]} for row in values.get("headers") or ()]
+        headers = copy.deepcopy(values.get("headers") or [])
         if headers:
             raw["headers"] = headers
         else:
@@ -570,7 +582,8 @@ def infer_definition(catalog: EngineCatalog, record: Mapping[str, Any]) -> str:
     return catalog.data["definitions"][0]["definition"]
 
 
-def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: Path) -> dict[str, Any]:
+def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: Path,
+                hop_timeout: float = 600, env: Callable[[str], str | None] = os.environ.get) -> dict[str, Any]:
     config = record.get("config") or {}
     definition = catalog.definition(infer_definition(catalog, record))
     assert definition is not None
@@ -590,10 +603,22 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         env_name = "AZIZAM_DOWNSTREAM_API_KEY"
     values["api_key_env"] = env_name
     values["path_prefix"] = config.get("path_prefix") or ""
-    values["reply_timeout_s"] = config.get("timeout") or _field_default(definition, "reply_timeout_s", 600)
-    values["headers"] = [{"name": h.get("name"), "value": h.get("value", "")}
-                         for h in config.get("headers") or () if isinstance(h, Mapping) and "value" in h
-                         and not h.get("secret") and not header_problem(str(h.get("name") or ""), str(h["value"]))]
+    hop_routed = bool(config.get("gateway_lifecycle") or any(
+        row.get("gateway_lifecycle") for row in model_rows(config.get("models"))
+    ))
+    effective_timeout = config.get("timeout") or (hop_timeout if hop_routed else None)
+    values["reply_timeout_s"] = effective_timeout if effective_timeout is not None else ""
+    timeout_source = ("saved on this engine" if config.get("timeout") else
+                      "default for engines Azizam starts" if hop_routed else "model router default (no saved timeout)")
+    values["headers"] = []
+    for header in config.get("headers") or ():
+        if not isinstance(header, Mapping):
+            continue
+        name, value = str(header.get("name") or ""), str(header.get("value") or "")
+        if header.get("secret") or header_problem(name, value):
+            values["headers"].append({"name": name, "value": engine_redaction.REDACTED, "secret": True, "not_sent": True})
+        else:
+            values["headers"].append({"name": name, "value": value})
     values["transforms"] = copy.deepcopy(config.get("transforms") or [])
     lifecycle = service_registry.legacy_lifecycle_from_service(record)
     driver_config = lifecycle.get("driver_config") or {}
@@ -633,9 +658,6 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
     other = {k: v for k, v in config.items() if k not in _KNOWN_CONFIG_KEYS and k != "engine_capabilities"}
     other = engine_redaction.redact_service({"config": other})["config"]
     request_base = inference_base_url(config)
-    hop_routed = bool(config.get("gateway_lifecycle") or any(
-        row.get("gateway_lifecycle") for row in model_rows(config.get("models"))
-    ))
     operations = []
     for cap_id in caps if schema_matches else ():
         route = (catalog.capability(cap_id) or {}).get("route") or {}
@@ -656,6 +678,9 @@ def engine_view(catalog: EngineCatalog, record: Mapping[str, Any], *, db_path: P
         "editable": editable,
         "lifecycle_editable": lifecycle_editable,
         "values": values,
+        "reply_timeout": {"seconds": effective_timeout, "source": timeout_source},
+        "attention": ([{"code": "engine_credential_unavailable",
+                        "message": f"Key not available: {env_name} is not set"}] if env_name and not env(str(env_name)) else []),
         "key": key,
         "capabilities": caps,
         "models": models,
@@ -713,7 +738,7 @@ def _redact_record_value(value: Any) -> Any:
         for key, item in value.items():
             lowered = str(key).lower()
             if lowered == "env" and isinstance(item, Mapping):
-                masked[key] = {name: "configured" for name in item}
+                masked[key] = {name: engine_redaction.REDACTED for name in item}
             elif lowered.endswith("_secret_id") or lowered in ("api_key", "secret_ref"):
                 masked[key] = "configured" if item else item
             elif lowered == "value" and "name" in value and (value.get("secret") or header_problem(str(value.get("name") or ""), str(item))):
@@ -823,11 +848,13 @@ class EngineService:
     """The create and edit steps. The store persists; the r47 rules are re-checked there."""
 
     def __init__(self, store: Any, *, catalog_loader: Callable[[], EngineCatalog] = load_engine_catalog,
-                 fetch: Fetch | None = None, env: Callable[[str], str | None] | None = None) -> None:
+                 fetch: Fetch | None = None, env: Callable[[str], str | None] | None = None,
+                 hop_timeout: Callable[[], float] | None = None) -> None:
         self.store = store
         self.catalog_loader = catalog_loader
         self.fetch = fetch or make_http_fetch()
         self.env = env or (lambda name: os.environ.get(name) or None)
+        self.hop_timeout = hop_timeout or (lambda: 600.0)
 
     @property
     def db_path(self) -> Path:
@@ -849,11 +876,11 @@ class EngineService:
         if service_id and record is None:
             raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
         _header_credentials_are_the_owners(ctx, body.get("values"))
-        clean = clean_values(definition, values)
+        clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         existing = _existing_engines(registry, exclude=service_id)
         if record is not None:
-            saved = engine_view(catalog, record, db_path=self.db_path)["values"]
+            saved = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)["values"]
             if comparable_address(clean["address"]) == comparable_address(saved.get("address") or ""):
                 # Checking an engine where it already is: the duplicate rule is for moving onto another's address.
                 existing = []
@@ -868,7 +895,7 @@ class EngineService:
         service_id = body.get("service_id")
         record = (registry.get("services") or {}).get(service_id) if service_id else None
         _header_credentials_are_the_owners(ctx, body.get("values"))
-        clean = clean_values(definition, values)
+        clean = clean_values(definition, values, stored_headers=((record or {}).get("config") or {}).get("headers") or ())
         key = resolve_key({**values, "address": clean["address"]}, ctx, record=record, db_path=self.db_path, env=self.env)
         capability = str(body.get("capability") or "")
         model = str(body.get("model") or "").strip() or None
@@ -938,7 +965,7 @@ class EngineService:
         if record is None:
             raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
         catalog = self.catalog()
-        view = engine_view(catalog, record, db_path=self.db_path)
+        view = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)
         definition = _definition(catalog, view["definition"])
         # Every request names its work; the router serves an engine's models for any of
         # the work it routes, so an engine that names none is asked about all of it.
@@ -1010,7 +1037,7 @@ class EngineService:
             raise EngineRouteError(status.HTTP_404_NOT_FOUND, "service_not_found", f"No engine called {service_id!r}.")
         if service_registry.is_litellm_service_record(service_id, record):
             raise EngineRouteError(status.HTTP_403_FORBIDDEN, "service_not_editable", "Azizam runs this engine itself. Only its name and Enabled can change.")
-        before = engine_view(catalog, record, db_path=self.db_path)
+        before = engine_view(catalog, record, db_path=self.db_path, hop_timeout=self.hop_timeout(), env=self.env)
         definition = _definition(catalog, body.get("definition") or before["definition"])
         submitted = body.get("values") if isinstance(body.get("values"), Mapping) else {}
         if before.get("offering_edit_reason"):
@@ -1045,7 +1072,7 @@ class EngineService:
         if "api_key" not in values:
             values["api_key"] = SECRET_MASK if before["key"]["state"] == "configured" and before["key"].get("source") == "stored" else ""
         _header_credentials_are_the_owners(ctx, body.get("values"))
-        clean = clean_values(definition, values)
+        clean = clean_values(definition, values, stored_headers=(record.get("config") or {}).get("headers") or ())
         _admin_limits(ctx, {**values, **clean}, definition, before=before)
         name = str(body.get("name") or before["name"] or service_id).strip()
         disabled = bool(body.get("disabled"))
@@ -1056,8 +1083,7 @@ class EngineService:
             or (values.get("api_key") not in ("", SECRET_MASK, None))
             or clean.get("api_key_env") != (before["key"].get("env_name") or "")
             or clean.get("path_prefix", "") != (before["values"].get("path_prefix") or "")
-            or [(h["name"], h["value"]) for h in clean.get("headers") or ()]
-               != [(h["name"], h["value"]) for h in before["values"].get("headers") or ()]
+            or values.get("headers") != before["values"].get("headers")
             or body.get("recheck") is True
         )
         if moved:
@@ -1096,6 +1122,7 @@ class EngineService:
                            extra_capabilities=extra_capabilities,
                            record_capabilities=None if capabilities_sent else list(record.get("capabilities") or ()),
                            keep_lifecycle=not lifecycle_changed,
+                           keep_timeout=_same_text(values.get("reply_timeout_s")) == _same_text(before["values"].get("reply_timeout_s")),
                            key_dropped=bool(
                                key.withheld
                                and values.get("api_key") in ("", SECRET_MASK, None)
@@ -1106,7 +1133,7 @@ class EngineService:
                service_id: str, name: str, capabilities: list[Any], models: Any, enabled: bool, check: Mapping[str, Any],
                tests: Mapping[str, Any], key: KeyInput, existing: Mapping[str, Any] | None, expected_generation: int,
                action: str, keep: Mapping[str, Any] | None = None, key_dropped: bool = False,
-               keep_lifecycle: bool = False, extra_capabilities: Iterable[str] = (),
+               keep_lifecycle: bool = False, keep_timeout: bool = False, extra_capabilities: Iterable[str] = (),
                record_capabilities: list[str] | None = None) -> dict[str, Any]:
         """Write new secrets first, then the record; on failure remove what was written. Old secrets go after success."""
         written: list[str] = []
@@ -1136,6 +1163,11 @@ class EngineService:
                             stored_models=old_config.get("models") or (), extra_capabilities=extra_capabilities,
                             record_capabilities=record_capabilities)
             if existing is not None:
+                if keep_timeout:
+                    if "timeout" in old_config:
+                        raw["timeout"] = copy.deepcopy(old_config["timeout"])
+                    else:
+                        raw.pop("timeout", None)
                 for field in ("priority", "role"):
                     if existing.get(field) is not None:
                         raw[field] = existing[field]

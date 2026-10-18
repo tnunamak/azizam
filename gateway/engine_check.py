@@ -36,6 +36,7 @@ import httpx
 
 from gateway import transforms
 from gateway.engine_definitions import EngineCatalog
+from gateway.litellm_substrate import header_problem
 
 DEFAULT_CAP_BYTES = 64 * 1024
 TEST_CAP_BYTES = 4 * 1024 * 1024
@@ -535,7 +536,8 @@ def _auth_headers(key: str | None, values: Mapping[str, Any]) -> dict[str, str]:
     for row in values.get("headers") or ():
         if isinstance(row, Mapping):
             name, value = str(row.get("name") or "").strip(), row.get("value")
-            if name and isinstance(value, str) and value and value != SECRET_MASK and _header_ok(name, value):
+            if (name and isinstance(value, str) and value and value != SECRET_MASK
+                    and not row.get("secret") and not header_problem(name, value) and _header_ok(name, value)):
                 headers[name] = value
     if key and _header_ok("Authorization", key):
         headers["Authorization"] = f"Bearer {key}"

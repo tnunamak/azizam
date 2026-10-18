@@ -36,7 +36,7 @@ def inference_base_url(config: Mapping[str, Any], fallback_address: str = "") ->
 def inference_connection(
     record: Mapping[str, Any] | None, operation_path: str, *,
     fallback_address: str, fallback_timeout: float, db_path: Path,
-    env: Callable[[str], str | None],
+    env: Callable[[str], str | None], allow_unavailable_key: bool = False,
 ) -> InferenceConnection:
     """Use one record snapshot, binding inference credentials to its origin.
 
@@ -64,11 +64,12 @@ def inference_connection(
             except Exception:
                 # Missing key files, unreadable ciphertext and stale references
                 # all stop dispatch, without exposing secret-store details.
-                raise InferenceConnectionError("The engine credential is unavailable. Re-enter it in Connection.") from None
+                if not allow_unavailable_key:
+                    raise InferenceConnectionError("The engine credential is unavailable. Re-enter it in Connection.") from None
         elif secret_refs.get("api_key") == SECRET_PLACEHOLDER:
             env_name = "AZIZAM_DOWNSTREAM_API_KEY"
             key = env(env_name)
-        if (config.get("api_key_secret_id") or env_name) and not key:
+        if (config.get("api_key_secret_id") or env_name) and not key and not allow_unavailable_key:
             raise InferenceConnectionError("The engine credential is unavailable. Re-enter it in Connection.")
         if key:
             headers["authorization"] = f"Bearer {key}"
