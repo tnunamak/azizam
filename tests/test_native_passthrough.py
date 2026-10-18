@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import receipt_store
+from gateway import receipt_store, service_registry
 from tests.support.access import plan_for
 from tests.support.fake_upstream import fake_upstreams, load_scenario, scenario_from_data  # noqa: F401 - fixture
 from tests.test_runtime_route_policy import AUTH_HEADERS, _migrated_model_policy_config, authenticated_profile
@@ -309,10 +309,12 @@ def test_the_engines_credential_goes_out_and_the_clients_never_does(fake_upstrea
     monkeypatch.setenv("NATIVE_ENGINE_KEY", "engine-secret")
     engine = fake_upstreams.loopback(load_scenario("openai-compatible/chat-text", model="demo-chat", content="ok"))
     profile = plan_for("native-credential", caps=(), engines=["garage"], operations=["v1/chat/completions"])
-    inject = [{"header": "x-api-key", "secret_env": "NATIVE_ENGINE_KEY"}]
+    connection = {"credentials": {"inference": {
+        "secret_env": "NATIVE_ENGINE_KEY", "header": "x-api-key", "origin": service_registry.origin_of(engine.base_url),
+    }}}
 
     with authenticated_profile(profile), patch.dict(
-        proxy.config["backends"], {"garage": _engine(engine.base_url, native_passthrough=True, auth_inject=inject)},
+        proxy.config["backends"], {"garage": _engine(engine.base_url, native_passthrough=True, connection=connection)},
     ):
         response = TestClient(proxy.app).post(
             NATIVE_PATH, json=BODY,

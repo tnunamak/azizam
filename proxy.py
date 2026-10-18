@@ -28736,6 +28736,8 @@ def _provider_native_host_from_config(provider: str, cfg: Mapping[str, Any]) -> 
     port = cfg.get("port")
     if not host or port is None:
         return ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"  # an IPv6 address needs its brackets to be a URL host
     scheme = str(cfg.get("scheme", "http")).strip() or "http"
     return f"{scheme}://{host}:{port}".rstrip("/")
 

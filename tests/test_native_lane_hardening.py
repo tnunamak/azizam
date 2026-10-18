@@ -28,6 +28,13 @@ def _denied(response, code: str, status: int = 403) -> None:
     assert response.json()["error"]["code"] == code
 
 
+def _unload_scenario():
+    return _scenario({
+        "id": "unload", "match": {"method": "DELETE", "path": "/v1/models/demo-chat"},
+        "response": {"status": 200, "json": {"unloaded": True}},
+    })
+
+
 def _models_scenario(**response):
     return _scenario({
         "id": "models", "match": {"method": "GET", "path": "/v1/models"},
@@ -46,12 +53,12 @@ def test_a_query_key_the_template_declares_reaches_the_engine_and_any_other_is_r
     engine = fake_upstreams.loopback(_models_scenario())
     allow = {"allow": [{"method": "GET", "path": "/v1/models", "class": "generate", "query": ["limit"]}]}
     path = "/native/garage/v1/models"
-    before = _receipts_for(path)
 
     with authenticated_profile(plan_for("native-query", caps=(), **WIDE)), patch.dict(
         proxy.config["backends"], {"garage": _engine(engine.base_url, native_passthrough=True, native=allow)},
     ):
         allowed = _get(path, params={"limit": "5"})
+        before = _receipts_for(path)
         refused = _get(path, params={"limit": "5", "debug": "1"})
 
     assert allowed.status_code == 200, allowed.text
@@ -93,18 +100,17 @@ def test_a_generate_call_cannot_pass_a_file_path_in_a_declared_query_value(fake_
 
 
 def test_an_owner_control_call_may_pass_a_path_in_a_declared_query_value(fake_upstreams):
-    engine = fake_upstreams.loopback(_scenario({
-        "id": "load", "match": {"method": "POST", "path": "/v1/load"}, "response": {"status": 200, "json": {"ok": True}},
-    }))
-    allow = {"allow": [{"method": "POST", "path": "/v1/load", "class": "control", "query": ["file"]}]}
+    engine = fake_upstreams.loopback(_unload_scenario())
+    allow = {"allow": [{"method": "DELETE", "path": "/v1/models/{model}", "class": "control", "query": ["file"]}]}
 
     with authenticated_profile(plan_for("native-query-control", caps=(), **WIDE)), patch.object(
         proxy, "_native_caller_is_owner", return_value=True,
     ), patch.dict(proxy.config["backends"], {"garage": _engine(engine.base_url, native_passthrough=True, native=allow)}):
-        response = TestClient(proxy.app).post("/native/garage/v1/load?file=/models/a.gguf", headers=AUTH_HEADERS)
+        response = TestClient(proxy.app).delete("/native/garage/v1/models/demo-chat?file=/models/a.gguf",
+                                                headers=AUTH_HEADERS)
 
     assert response.status_code == 200, response.text
-    assert dict(engine.calls("load")[0].query) == {"file": "/models/a.gguf"}
+    assert dict(engine.calls("unload")[0].query) == {"file": "/models/a.gguf"}
 
 
 # --- reply headers -----------------------------------------------------------------------------
@@ -143,15 +149,17 @@ def _credentials(engine, **overrides) -> dict:
 
 CALLS = {"allow": [
     {"method": "POST", "path": "/v1/chat/completions", "class": "generate"},
-    {"method": "POST", "path": "/v1/load", "class": "control"},
+    {"method": "DELETE", "path": "/v1/models/{model}", "class": "control"},
 ]}
+UNLOAD = "/native/garage/v1/models/demo-chat"
 
 
 def _two_call_engine(fake_upstreams):
     return fake_upstreams.loopback(_scenario(
         {"id": "chat", "match": {"method": "POST", "path": "/v1/chat/completions"},
          "response": {"status": 200, "json": {"choices": []}}},
-        {"id": "load", "match": {"method": "POST", "path": "/v1/load"}, "response": {"status": 200, "json": {}}},
+        {"id": "unload", "match": {"method": "DELETE", "path": "/v1/models/demo-chat"},
+         "response": {"status": 200, "json": {}}},
     ))
 
 
@@ -171,9 +179,9 @@ def test_each_class_goes_out_with_its_own_credential_and_never_the_others(fake_u
     ), patch.dict(proxy.config["backends"], {"garage": record}):
         client = TestClient(proxy.app)
         assert client.post(NATIVE_PATH, json=BODY, headers=client_headers).status_code == 200
-        assert client.post("/native/garage/v1/load", headers=client_headers).status_code == 200
+        assert client.delete(UNLOAD, headers=client_headers).status_code == 200
 
-    chat, load = engine.calls("chat")[0], engine.calls("load")[0]
+    chat, load = engine.calls("chat")[0], engine.calls("unload")[0]
     assert _sent_headers(chat)["x-api-key"] == "infer-secret"
     assert "authorization" not in _sent_headers(chat)
     assert _sent_headers(load)["authorization"] == "Bearer control-secret"
@@ -192,10 +200,10 @@ def test_a_control_call_with_no_control_credential_sends_no_credential_at_all(fa
     with authenticated_profile(plan_for("native-no-control-cred", caps=(), **WIDE)), patch.object(
         proxy, "_native_caller_is_owner", return_value=True,
     ), patch.dict(proxy.config["backends"], {"garage": record}):
-        response = TestClient(proxy.app).post("/native/garage/v1/load", headers=AUTH_HEADERS)
+        response = TestClient(proxy.app).delete(UNLOAD, headers=AUTH_HEADERS)
 
     assert response.status_code == 200, response.text
-    sent = _sent_headers(engine.calls("load")[0])
+    sent = _sent_headers(engine.calls("unload")[0])
     assert "infer-secret" not in sent.values()
     assert not {"x-api-key", "authorization"} & set(sent)
 
@@ -401,14 +409,14 @@ def test_saving_an_engine_whose_name_resolves_to_a_blocked_address_is_refused(tm
 def test_a_path_that_matches_a_control_entry_only_by_letter_case_is_refused(fake_upstreams):
     engine = _two_call_engine(fake_upstreams)
     allow = {"allow": [
-        {"method": "POST", "path": "/v1/Load", "class": "control"},
+        {"method": "POST", "path": "/v1/Embeddings", "class": "control"},
         {"method": "POST", "path": "/v1/{action}", "class": "generate"},
     ]}
 
     with authenticated_profile(plan_for("native-ambiguous", caps=(), **WIDE)), patch.dict(
         proxy.config["backends"], {"garage": _engine(engine.base_url, native_passthrough=True, native=allow)},
     ):
-        response = TestClient(proxy.app).post("/native/garage/v1/load", headers=AUTH_HEADERS)
+        response = TestClient(proxy.app).post("/native/garage/v1/embeddings", headers=AUTH_HEADERS)
 
     _denied(response, "native_ambiguous_path")
     assert engine.requests == []
@@ -417,14 +425,14 @@ def test_a_path_that_matches_a_control_entry_only_by_letter_case_is_refused(fake
 def test_an_engine_declared_case_insensitive_treats_the_folded_path_as_the_control_call(fake_upstreams):
     engine = _two_call_engine(fake_upstreams)
     allow = {"case_insensitive": True, "allow": [
-        {"method": "POST", "path": "/v1/Load", "class": "control"},
+        {"method": "POST", "path": "/v1/Embeddings", "class": "control"},
         {"method": "POST", "path": "/v1/{action}", "class": "generate"},
     ]}
 
     with authenticated_profile(plan_for("native-case-insensitive", caps=(), **WIDE)), patch.dict(
         proxy.config["backends"], {"garage": _engine(engine.base_url, native_passthrough=True, native=allow)},
     ):
-        response = TestClient(proxy.app).post("/native/garage/v1/load", headers=AUTH_HEADERS)
+        response = TestClient(proxy.app).post("/native/garage/v1/embeddings", headers=AUTH_HEADERS)
 
     _denied(response, "native_owner_only")  # control wins: a non-owner never reaches the generate entry
     assert engine.requests == []

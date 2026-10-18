@@ -877,7 +877,14 @@ def validate_provider_native_passthrough_disabled(
 
 def native_host_url(config: Mapping[str, Any]) -> str:
     """Where the native lane sends a record's calls: its ``url``, else its base URL, else its host and port."""
-    return str(config.get("url") or "").strip() or service_base_url(config)
+    explicit = str(config.get("url") or "").strip()
+    if explicit:
+        return explicit
+    host = str(config.get("host") or "").strip()
+    if ":" in host and not host.startswith("[") and not str(config.get("base_url") or config.get("api_base") or "").strip():
+        # An IPv6 address needs its brackets to be a URL host.
+        config = {**config, "host": f"[{host}]"}
+    return service_base_url(config)
 
 
 def is_remote_provider_config(config: Mapping[str, Any]) -> bool:
