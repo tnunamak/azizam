@@ -412,7 +412,7 @@ def _current_loaded_entries(service_records: list[Mapping[str, Any]]) -> list[di
         or DEFAULT_GATEWAY_LIFECYCLE_API_KEY_REF
     )
     entries: list[dict[str, Any]] = []
-    timeout = _lifecycle_router_timeout(service, config)
+    timeout = _current_router_timeout(service_records)
     for alias, fast in CURRENT_LOADED_ALIASES:
         entries.append(
             {
@@ -570,10 +570,7 @@ def router_reply_timeout(registry: Mapping[str, Any], model_name: str) -> float 
                     return _lifecycle_router_timeout(service, config)
                 return _engine_request_settings(config).get("timeout")
     if model_name in {alias for alias, _fast in CURRENT_LOADED_ALIASES}:
-        current = _current_loaded_service(records)
-        if current is not None:
-            config = current.get("config") if isinstance(current.get("config"), Mapping) else {}
-            return _lifecycle_router_timeout(current, config)
+        return _current_router_timeout(records)
     return None
 
 
@@ -581,6 +578,19 @@ def router_reply_timeout(registry: Mapping[str, Any], model_name: str) -> float 
 # default read limit for the final hop (UPSTREAM_READ_TIMEOUT).
 ROUTER_DEFAULT_TIMEOUT_S = 600.0
 _READINESS_KEYS = ("ready_timeout_s", "health_timeout_s", "load_timeout_s")
+
+
+def _current_router_timeout(records: list[Mapping[str, Any]]) -> float | None:
+    """Allow the dynamic aliases to serve any eligible local engine's reply time."""
+    budgets = []
+    for service in records:
+        config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+        if not service.get("enabled", True) or not _is_openai_compatible(service) or is_remote_provider_config(config):
+            continue
+        budget = _lifecycle_router_timeout(service, config)
+        if budget is not None:
+            budgets.append(budget)
+    return max(budgets) if budgets else None
 
 
 def _declared_readiness_s(service: Mapping[str, Any]) -> float:
