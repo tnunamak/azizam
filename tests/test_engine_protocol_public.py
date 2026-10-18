@@ -35,6 +35,8 @@ def engine(monkeypatch, tmp_path):
     monkeypatch.setattr(proxy, 'IMAGE_CACHE_DIR', tmp_path/'assets')
     monkeypatch.setattr(media_jobs, 'DB_PATH', tmp_path/'jobs.db')
     monkeypatch.setattr(receipt_store, 'DB_PATH', tmp_path/'receipts.db')
+    media_jobs.init_db(path=media_jobs.DB_PATH)
+    receipt_store.init_db(path=receipt_store.DB_PATH)
     monkeypatch.setattr(proxy, '_decision_models_for', lambda *a, **k: [])
     with authenticated():
         yield SimpleNamespace(record=record, fake=fake, client=TestClient(proxy.app), registry=registry)
