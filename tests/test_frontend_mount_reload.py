@@ -221,16 +221,14 @@ def _publish_registry(db, *frontends: dict) -> None:
 
 @pytest.fixture
 def live(monkeypatch, tmp_path):
-    """The live gateway on a fresh admin store; its config, runtime constants and routes are put back."""
+    """The live gateway on a fresh admin store; its config and runtime constants are put back, and the table remounted."""
     db = use_admin_db(monkeypatch, tmp_path)
     for name in ("config", "KOBOLD_HOST", "TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "COMFY_HOST", "TTS_ENABLED",
                  "STT_ENABLED", "STT_TIMEOUT", "EMBEDDINGS_ENABLED", "COMFY_ENABLED", "LLM_BACKEND_HOSTS"):
         monkeypatch.setattr(proxy, name, getattr(proxy, name))
-    routes = list(proxy.app.router.routes)
-    status = proxy.FRONTEND_MOUNTS.status()
+    boot = route_registry.mount_frontend_records(registry=proxy._PROTOCOL_ROUTE_REGISTRY, proxy_config=proxy.config)
     yield db
-    proxy.app.router.routes[:] = routes
-    proxy.FRONTEND_MOUNTS.restore(status)
+    proxy.FRONTEND_MOUNTS.apply(boot)
 
 
 def _get_status(path: str) -> int:

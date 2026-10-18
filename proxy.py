@@ -974,6 +974,15 @@ def _derive_backend_constants(effective_cfg: dict) -> dict:
     }
 
 
+def _prepare_frontend_mounts(effective_cfg: Mapping[str, Any]):
+    """The frontend table the stored registry describes, built but not live; None before the app mounts one."""
+    mounts = globals().get("FRONTEND_MOUNTS")
+    if mounts is None:
+        return None
+    registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
+    return mounts.prepare(route_registry.mount_frontend_records(registry=registry, proxy_config=effective_cfg))
+
+
 def reload_runtime_config() -> dict:
     """Re-derive all backend constants from the current DB service registry.
 
@@ -995,12 +1004,21 @@ def reload_runtime_config() -> dict:
     # constants serving, never a new config paired with old constants.
     updates = _derive_backend_constants(new_cfg)
 
+    # Build the frontend table the new registry describes before publishing anything: a failure here
+    # leaves the old config, the old constants and the old routes serving.
+    frontends = _prepare_frontend_mounts(new_cfg)
+
     # Publish the completed registry-derived configuration by one reference
     # swap.  A request either captures the old mapping or the new mapping; it
     # can never rank ids from one while resolving records from the other.
     # Use globals() rather than sys.modules[__name__] so this works even when
     # a test has popped 'proxy' from sys.modules (e.g. test_gateway_api.py).
     _g = globals()
+    if frontends is not None:
+        frontends.commit()
+        web_ui = _g.get("WEB_UI_ROUTE")
+        if web_ui is not None:
+            web_ui.registered_segments = ui_routes.registered_first_segments(app.router.routes)
     _g["config"] = new_cfg
     for name, value in updates.items():
         _g[name] = value
@@ -15075,6 +15093,7 @@ app.include_router(
         ),
         # Add engine never calls the gateway itself: its default ports and the one it listens on.
         engine_fetch=engine_check.make_http_fetch(gateway_ports=_engine_check_self_ports),
+        frontend_status=lambda: FRONTEND_MOUNTS.status(),
     )
 )
 
@@ -29404,15 +29423,12 @@ FRONTEND_TRANSLATORS.register("native", {
                         include_in_schema=False),
 })
 FRONTEND_TRANSLATORS.mount_owned(app)
-frontend_mount.mount(
-    app,
-    frontend_mount.rows_from_frontends(
-        route_registry.mount_frontend_records(registry=_PROTOCOL_ROUTE_REGISTRY, proxy_config=config),
-    ),
-    FRONTEND_TRANSLATORS,
-    refuse=_frontend_refusal,
-    authenticate=_authenticate_mounted_route,
+# The mounted table (gateway/frontend_mount.py): a row that cannot mount is skipped, logged and shown as a
+# broken frontend; a registry reload rebuilds it (reload_runtime_config) and rolls back when that fails.
+FRONTEND_MOUNTS = frontend_mount.FrontendMounts(
+    app, FRONTEND_TRANSLATORS, authenticate=_authenticate_mounted_route, refuse=_frontend_refusal,
 )
+FRONTEND_MOUNTS.apply(route_registry.mount_frontend_records(registry=_PROTOCOL_ROUTE_REGISTRY, proxy_config=config))
 
 
 # The web app: just before the catch-all, never a partial match (gateway/ui_routes.py).
@@ -29422,6 +29438,7 @@ WEB_UI_ROUTE = ui_routes.UiRoute(
     registered_segments=ui_routes.registered_first_segments(app.router.routes),
 )
 app.router.routes.append(WEB_UI_ROUTE)
+FRONTEND_MOUNTS.before = WEB_UI_ROUTE
 
 
 @app.api_route(

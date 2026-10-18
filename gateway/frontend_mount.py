@@ -20,13 +20,14 @@ mount functions were given.
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import FastAPI, Request, Response
+from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from starlette.routing import BaseRoute
@@ -234,7 +235,7 @@ def mount(
         raise FrontendMountError(problems[0].message)
     start = len(app.router.routes)
     for row, operation in planned:
-        _add_route(app, row, operation, refuse=refuse, authenticate=authenticate)
+        _add_route(app.router, row, operation, refuse=refuse, authenticate=authenticate)
     created = app.router.routes[start:]
     if index is not None:
         del app.router.routes[start:]
@@ -319,7 +320,7 @@ def _check_row(
 
 
 def _add_route(
-    app: FastAPI,
+    router: APIRouter,
     row: RouteRow,
     operation: Operation,
     *,
@@ -327,7 +328,7 @@ def _add_route(
     authenticate: Authenticate | None,
 ) -> None:
     if WEBSOCKET in row.methods:
-        app.add_api_websocket_route(row.path, operation.endpoint)
+        router.add_api_websocket_route(row.path, operation.endpoint)
         return
     options: dict[str, Any] = {}
     if not operation.include_in_schema:
@@ -339,7 +340,7 @@ def _add_route(
     route_class = _mounted_route_class(row, operation, authenticate=authenticate, refuse=refuse)
     if route_class is not None:
         options["route_class_override"] = route_class
-    app.router.add_api_route(row.path, operation.endpoint, methods=sorted(row.methods), **options)
+    router.add_api_route(row.path, operation.endpoint, methods=sorted(row.methods), **options)
 
 
 _PARAMETER = re.compile(r"\{[^}:]*(:[^}]*)?\}")
@@ -352,6 +353,121 @@ def _shape(path: str) -> str:
 
 def _opens_with_literal(path: str) -> bool:
     return path.startswith("/") and len(path) > 1 and not path[1:].startswith("{")
+
+
+@dataclass
+class PreparedMounts:
+    """A table built but not yet live: ``commit`` swaps it in, and nothing else changes the app."""
+
+    owner: "FrontendMounts"
+    routes: list[BaseRoute]
+    status: list[dict[str, Any]]
+
+    def commit(self) -> None:
+        self.owner._commit(self)
+
+
+class FrontendMounts:
+    """The mounted frontend table of one app: built at boot, rebuilt on reload, never fatal.
+
+    ``prepare`` reads the frontend records and builds every route it can; a row that cannot mount is
+    skipped, logged and reported as a broken frontend, and the rest still mount. ``commit`` replaces the
+    previously mounted rows with the new ones in one list swap, at the position the old rows held. A
+    ``prepare`` that raises changes nothing; a ``commit`` that raises restores the routes it found.
+    """
+
+    def __init__(
+        self,
+        app: FastAPI,
+        translators: Translators,
+        *,
+        authenticate: Authenticate | None,
+        refuse: Refuse | None = None,
+        before: BaseRoute | None = None,
+    ) -> None:
+        self.app = app
+        self.translators = translators
+        self.authenticate = authenticate
+        self.refuse = refuse
+        # With no row mounted yet, new rows go in front of this route (the web app, for instance).
+        self.before = before
+        self._routes: list[BaseRoute] = []
+        self._status: list[dict[str, Any]] = []
+
+    def status(self) -> list[dict[str, Any]]:
+        """Every frontend with ``status`` mounted, broken or disabled, and the errors of a broken one."""
+        return copy.deepcopy(self._status)
+
+    def broken(self) -> list[dict[str, Any]]:
+        return [item for item in self.status() if item["status"] == "broken"]
+
+    def apply(self, records: Iterable[Mapping[str, Any]]) -> None:
+        """Prepare and commit in one step: boot, or a reload with nothing between."""
+        self.prepare(records).commit()
+
+    def prepare(self, records: Iterable[Mapping[str, Any]]) -> PreparedMounts:
+        records = list(records)
+        problems: list[RowProblem] = []
+        rows = rows_from_frontends(records, problems)
+        own = {id(route) for route in self._routes}
+        claimed = _claimed(route for route in self.app.routes if id(route) not in own)
+        planned, row_problems = plan(claimed, rows, self.translators, authenticate=self.authenticate)
+        problems.extend(row_problems)
+        router = APIRouter(
+            dependency_overrides_provider=self.app.router.dependency_overrides_provider,
+            default_response_class=self.app.router.default_response_class,
+            generate_unique_id_function=self.app.router.generate_unique_id_function,
+        )
+        for row, operation in planned:
+            _add_route(router, row, operation, refuse=self.refuse, authenticate=self.authenticate)
+        return PreparedMounts(self, list(router.routes), _status_of(records, problems))
+
+    def _commit(self, prepared: PreparedMounts) -> None:
+        before = list(self.app.router.routes)
+        try:
+            self._swap(prepared.routes)
+        except BaseException:
+            self.app.router.routes[:] = before
+            raise
+        self._status = prepared.status
+        self.app.openapi_schema = None
+        for item in self._status:
+            for error in item["errors"]:
+                print(f"[frontends] {item['id']} is broken: {error['message']}", flush=True)
+
+    def _swap(self, routes: list[BaseRoute]) -> None:
+        current = self.app.router.routes
+        own = {id(route) for route in self._routes}
+        rest = [route for route in current if id(route) not in own]
+        first_own = next((index for index, route in enumerate(current) if id(route) in own), None)
+        if first_own is not None:
+            position = first_own
+        elif self.before is not None and self.before in rest:
+            position = rest.index(self.before)
+        else:
+            position = len(rest)
+        rest[position:position] = routes
+        current[:] = rest
+        self._routes = list(routes)
+
+
+def _status_of(records: list[Mapping[str, Any]], problems: list[RowProblem]) -> list[dict[str, Any]]:
+    errors: dict[str, list[dict[str, str]]] = {}
+    for problem in problems:
+        errors.setdefault(problem.frontend, []).append({"route": problem.path, "message": problem.message})
+    status: list[dict[str, Any]] = []
+    for record in records:
+        frontend_id = str(record.get("id") or "")
+        frontend_errors = errors.get(frontend_id, [])
+        state = "disabled" if record.get("enabled") is False else "broken" if frontend_errors else "mounted"
+        status.append({
+            "id": frontend_id,
+            "name": str(record.get("name") or frontend_id),
+            "source": str(record.get("source") or ""),
+            "status": state,
+            "errors": frontend_errors,
+        })
+    return status
 
 
 def _methods(value: Any) -> list[str]:
