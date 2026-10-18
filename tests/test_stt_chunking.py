@@ -163,6 +163,7 @@ class SttChunkMergeTests(unittest.TestCase):
             ([], [(0.0, 30), (30, 60), (60, 90), (90, 125)]),
             ([(29, 31), (89, 91)], [(0.0, 30), (30, 60), (60, 90), (90, 125)]),
             ([(24, 26), (94, 96)], [(0.0, 25), (25, 60), (60, 95), (95, 125)]),
+            ([(23, 25), (33, 34)], [(0.0, 33.5), (33.5, 60), (60, 90), (90, 125)]),
         ):
             with self.subTest(silences=silences):
                 self.assertEqual(stt_chunking.plan_silence_preferred_segments(
@@ -187,6 +188,14 @@ class SttChunkMergeTests(unittest.TestCase):
             duration_seconds=80, silences=[(19, 21), (39, 41), (59, 61)],
             target_seconds=20, search_seconds=8, max_segments=64,
         ), [(0.0, 20), (20, 40), (40, 60), (60, 80)])
+        self.assertEqual(stt_chunking.plan_silence_preferred_segments(
+            duration_seconds=80, silences=[(29, 31)],
+            target_seconds=20, search_seconds=50, max_segments=64,
+        ), [(0.0, 20), (20, 40), (40, 60), (60, 80)])
+        self.assertEqual(stt_chunking.plan_silence_preferred_segments(
+            duration_seconds=50, silences=[(48, 52)],
+            target_seconds=40, search_seconds=10, max_segments=64,
+        ), [(0.0, 40), (40, 50)])
 
     def test_silence_preferred_plan_bounds_opposing_offsets(self) -> None:
         segments = stt_chunking.plan_silence_preferred_segments(
