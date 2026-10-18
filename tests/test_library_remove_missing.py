@@ -327,8 +327,8 @@ class RemoveMissingTests(unittest.TestCase):
         self.assertEqual(rows[0]["metadata"], {"library_items": 5, "items_here": 2})
 
     def test_a_library_whose_only_ids_are_not_digests_reads_as_unverifiable(self) -> None:
-        self.empty_the_folder()
         self.unconfirm_folder()
+        self.assertEqual(os.listdir(self.cache), [])
         self._receipt(self.app_a["id"], "req_legacy")
         media_jobs.create(media_jobs.MediaJob(
             request_id="req_legacy", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
