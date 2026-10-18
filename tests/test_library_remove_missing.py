@@ -357,8 +357,11 @@ class RemoveMissingTests(unittest.TestCase):
         self.seed()
         self.unconfirm_folder()
         self.current_user = self.owner
-        self.assertEqual(self.client.get("/me/api/media", params={"cursor": "later"}).json()["media_folder"], None)
-        self.assertEqual(self.media_folder()["state"], "unconfirmed")
+        first = self.client.get("/me/api/media", params={"limit": 1}).json()
+        self.assertEqual(first["media_folder"]["state"], "unconfirmed")
+        second = self.client.get("/me/api/media", params={"limit": 1, "cursor": first["next_cursor"]})
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertIsNone(second.json()["media_folder"])
 
     def test_an_ordinary_media_write_never_creates_the_marker(self) -> None:
         self.unconfirm_folder()
