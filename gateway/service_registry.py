@@ -700,13 +700,23 @@ def _native_process(service_id: str, record: dict[str, Any], lifecycle: Mapping[
     Two sources that both run something are refused: Azizam does not guess which one the owner meant.
     """
     config = record.get("config") if isinstance(record.get("config"), dict) else {}
-    block = record.get("process") if isinstance(record.get("process"), Mapping) else config.get("process")
+    top, nested = record.get("process"), config.get("process")
+    block = top if isinstance(top, Mapping) else nested
+    if isinstance(top, Mapping) and isinstance(nested, Mapping) and top != nested and (
+            _declares_process(top) or _declares_process(nested)):
+        raise ValueError(
+            f"service {service_id!r} has both a process block and a config.process block, and they differ. "
+            "Azizam cannot tell which one you mean. Keep one: delete `process` or `config.process` "
+            "from the service, then save again."
+        )
     if not _declares_process(block):
         return None
     if "legacy_lifecycle" not in block and _declares_lifecycle(lifecycle):
+        where = "process" if isinstance(top, Mapping) else "config.process"
         raise ValueError(
-            f"service {service_id!r} has both a process block and a lifecycle that run commands; "
-            "remove one of them before retrying"
+            f"service {service_id!r} has both a process block and a lifecycle block that run commands "
+            f"(`{where}` and `lifecycle`), and Azizam cannot tell which one you mean. "
+            f"Keep one: delete `{where}` or delete `lifecycle` (and `config.lifecycle`), then save again."
         )
     return copy.deepcopy(dict(block))
 
