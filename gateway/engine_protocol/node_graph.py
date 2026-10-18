@@ -449,10 +449,12 @@ class NodeGraphAdapter:
                 if job_event.state in (JobState.succeeded, JobState.failed, JobState.cancelled):
                     return
 
-    async def watch(self, conn: Connection, client_id: str | None = None) -> AsyncIterator[dict[str, Any]]:
+    async def watch(self, conn: Connection, client_id: str | None = None, *,
+                    on_open: Callable[[str], None] | None = None) -> AsyncIterator[dict[str, Any]]:
         """The engine's push channel as decoded events, for one connection's lifetime. Raises when it drops.
 
-        Binary frames (previews) are skipped and text frames that are not JSON objects are ignored.
+        Binary frames (previews) are skipped and text frames that are not JSON objects are ignored. ``on_open`` is
+        called with the channel's URL once it is open, before any event, so a caller can say it is connected.
         """
         try:
             from websockets.asyncio.client import connect as ws_connect
@@ -461,6 +463,8 @@ class NodeGraphAdapter:
         url = conn.address.replace("http://", "ws://").replace("https://", "wss://")
         url = f"{url}/ws" + (f"?clientId={client_id}" if client_id else "")
         async with ws_connect(url, max_size=8 * 1024 * 1024, ping_interval=20, ping_timeout=20) as socket:
+            if on_open is not None:
+                on_open(url)
             async for raw in socket:
                 if isinstance(raw, (bytes, bytearray)):
                     continue

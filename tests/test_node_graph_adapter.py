@@ -448,6 +448,41 @@ def test_events_follow_one_prompt_until_it_ends(monkeypatch: pytest.MonkeyPatch)
     assert [e.kind for e in events] == ["status", "progress", "status"] and events[-1].state is JobState.succeeded
 
 
+def test_watch_opens_the_push_channel_says_when_it_is_open_and_passes_on_json_objects(monkeypatch: pytest.MonkeyPatch) -> None:
+    from websockets.asyncio import client as ws_client
+
+    seen: list[Any] = []
+    frames = [b"\x00preview", "not json", json.dumps([1, 2]), json.dumps({"type": "status", "data": {}}),
+              bytearray(b"more"), json.dumps({"type": "progress", "data": {"value": 1}})]
+
+    class Socket:
+        async def __aiter__(self):
+            for frame in frames:
+                seen.append(("frame", frame))
+                yield frame
+
+    @asynccontextmanager
+    async def connect(url, **kwargs):
+        seen.append(("connect", url, kwargs))
+        yield Socket()
+        seen.append(("closed",))
+
+    monkeypatch.setattr(ws_client, "connect", connect)
+    secure = Connection(address=f"https://{HOST}", timeouts=CONN.timeouts)
+
+    async def go():
+        out = []
+        async for event in NodeGraphAdapter().watch(secure, "c1", on_open=lambda url: seen.append(("open", url))):
+            out.append(event)
+        return out
+
+    events = run(go())
+    assert events == [{"type": "status", "data": {}}, {"type": "progress", "data": {"value": 1}}]
+    url = f"wss://{HOST}/ws?clientId=c1"
+    assert seen[:2] == [("connect", url, {"max_size": 8 * 1024 * 1024, "ping_interval": 20, "ping_timeout": 20}), ("open", url)]
+    assert seen[-1] == ("closed",)
+
+
 # --- selection by data ---------------------------------------------------------------------------------------------
 
 
