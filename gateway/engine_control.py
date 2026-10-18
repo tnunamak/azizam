@@ -7,6 +7,8 @@ keeps v2 control data separate from the legacy activation driver.
 from __future__ import annotations
 
 import asyncio
+import os
+import stat
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urljoin, urlsplit
@@ -58,13 +60,14 @@ class EngineControlRuntime:
         target = urlsplit(url)
         if (target.scheme, target.netloc) != (origin.scheme, origin.netloc):
             raise ValueError("control operation cannot cross origins")
-        self._check_paths(args)
+        body, checked = self._check_paths(args)
         headers = credential_headers(self.service, "control")
         timeout_s = max(0.01, min(float(operation.get("timeout_s", 10)), 30))
+        self._recheck_paths(checked)
         async with asyncio.timeout(timeout_s):
             async with self._client_factory(follow_redirects=False, trust_env=False) as client:
                 async with client.stream(method, url, headers=headers,
-                                         json=dict(args) if method != "GET" else None,
+                                         json=body if method != "GET" else None,
                                          timeout=timeout_s) as response:
                     if response.is_redirect or not 200 <= response.status_code < 300:
                         raise ValueError("control operation failed")
@@ -74,34 +77,83 @@ class EngineControlRuntime:
                         if size > 1048576:
                             raise ValueError("control response exceeded size limit")
 
-    def _check_paths(self, args: Mapping[str, Any]) -> None:
+    def _check_paths(self, args: Mapping[str, Any]) -> tuple[Any, list[tuple[str, tuple[int, int] | None]]]:
+        """Resolve every path-like string argument under the owner's roots.
+
+        A string is path-like when it is absolute, starts with ``~``, contains a
+        path separator, or names something that exists here. Key names decide
+        nothing. Relative paths are refused, because they mean something only
+        in the engine's working directory. Returns the arguments with each such
+        string replaced by its real path, plus the identities to re-check.
+        """
         config = self.service.get("config") or {}
         roots = self.service.get("control_file_roots") or config.get("control_file_roots") or []
         if not isinstance(roots, list) or any(not isinstance(root, str) for root in roots):
             raise ValueError("invalid control file roots")
-        allowed = [Path(root).expanduser().resolve() for root in roots]
-        def inspect(value: Any, *, path_field: bool = False) -> None:
-            if isinstance(value, Mapping):
-                for key, item in value.items():
-                    is_path = isinstance(key, str) and (
-                        key in {"file", "path"} or key.endswith(("_file", "_path")))
-                    inspect(item, path_field=path_field or is_path)
-            elif isinstance(value, list):
-                for item in value:
-                    inspect(item, path_field=path_field)
-            elif isinstance(value, str):
-                expanded = Path(value).expanduser()
-                if not path_field and not expanded.is_absolute():
-                    return
-                # A relative path has a meaning only in the backend's working
-                # directory, which this gateway cannot safely determine.
-                if not expanded.is_absolute():
-                    raise ValueError("control file path is outside owner allowlisted roots")
-                path = expanded.resolve()
-                if not any(path.is_relative_to(root) for root in allowed):
-                    raise ValueError("control file path is outside owner allowlisted roots")
+        allowed = []
+        for root in roots:
+            expanded = Path(root).expanduser()
+            if not expanded.is_absolute():
+                raise ValueError("invalid control file roots: roots must be absolute")
+            allowed.append(Path(os.path.realpath(expanded)))
+        identities: list[tuple[str, tuple[int, int] | None]] = []
 
-        inspect(args)
+        def resolve(value: str) -> str:
+            expanded = os.path.expanduser(value)
+            separators = {os.sep, os.altsep or os.sep}
+            path_like = (
+                os.path.isabs(expanded) or value.startswith("~") or value in {".", ".."}
+                or any(sep in value for sep in separators) or os.path.lexists(expanded)
+            )
+            if not path_like:
+                return value
+            outside = ValueError("control file path is outside owner allowlisted roots")
+            if "\x00" in value or not os.path.isabs(expanded):
+                raise outside
+            real = Path(os.path.realpath(expanded))
+            if not any(real.is_relative_to(root) for root in allowed):
+                raise outside
+            identities.append((str(real), self._identity(real)))
+            return str(real)
+
+        def walk(value: Any) -> Any:
+            if isinstance(value, Mapping):
+                return {key: walk(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [walk(item) for item in value]
+            return resolve(value) if isinstance(value, str) else value
+
+        return walk(args), identities
+
+    @staticmethod
+    def _identity(path: Path) -> tuple[int, int] | None:
+        try:
+            info = os.lstat(path)
+        except OSError:
+            return None
+        return info.st_dev, info.st_ino
+
+    def _recheck_paths(self, identities: list[tuple[str, tuple[int, int] | None]]) -> None:
+        """Just before use: the same real path, the same file, and no symlink swapped in."""
+        for real, expected in identities:
+            changed = ValueError("control file path changed after it was checked")
+            if os.path.realpath(real) != real:
+                raise changed
+            if expected is None:
+                if self._identity(Path(real)) is not None:
+                    raise changed
+                continue
+            try:
+                # O_PATH | O_NOFOLLOW opens a symlink itself rather than its target.
+                fd = os.open(real, getattr(os, "O_PATH", os.O_RDONLY) | os.O_NOFOLLOW | os.O_CLOEXEC)
+            except OSError as exc:
+                raise changed from exc
+            try:
+                info = os.fstat(fd)
+            finally:
+                os.close(fd)
+            if stat.S_ISLNK(info.st_mode) or (info.st_dev, info.st_ino) != expected:
+                raise changed
 
     async def select(self, offering_id: str, selection: Mapping[str, Any], *,
                      on_acquired=None, on_release=None, prepare=None):
