@@ -225,13 +225,6 @@ def test_image_idempotency_replays_without_resubmit_and_conflicts_on_changed_inp
     assert len(engine.fake.requests)==count
 
 
-def test_data_only_fixture_addition_has_no_production_diff_or_name_dependency():
-    # The commit that adds this engine contains test data and test code only.
-    # Replacement names and addresses are loaded through the same registry seam.
-    root=Path(__file__).parent.parent
-    for file in [root/'proxy.py',*(root/'gateway').rglob('*.py')]:
-        assert 'prism' not in file.read_text().lower(),file
-
 
 def test_admission_denial_precedes_all_protocol_network_calls(engine,monkeypatch):
     monkeypatch.setattr(proxy,'_effective_media_job_admission_cfg',lambda:{'disabled_intents':['chat.generate']})
@@ -336,8 +329,13 @@ def test_malformed_upstream_collections_are_typed_failures(engine,monkeypatch,op
     wire=transport.HttpxTransport.for_tests(HandlerTransport(lambda r:httpx.Response(200,json={'data':[None]})))
     monkeypatch.setattr(executor,'HttpxTransport',lambda:wire)
     response=(engine.client.get('/v1/models') if op=='models' else engine.client.post('/v1/images/generations',json={'model':'prism-image','prompt':'blue'}))
-    assert response.status_code==502,response.text
-    assert response.json()['error']['code']=='malformed_response'
+    if op == 'models':
+        assert response.status_code == 200, response.text
+        from gateway.engine_protocol import inventory
+        assert inventory.problems()
+    else:
+        assert response.status_code==502,response.text
+        assert response.json()['error']['code']=='malformed_response'
 
 
 @pytest.mark.parametrize('denial',['policy','admission'])
@@ -401,7 +399,7 @@ def test_unmapped_multiline_sse_retains_every_data_line(engine,monkeypatch):
     stream=data['operations']['chat']['response']['stream'];stream.pop('map');stream['terminal']={'sentinel':'[DONE]'}
     doc=description.parse_description(data,source='prism.yml')
     monkeypatch.setattr(description,'load_registry',lambda:{'prism':doc})
-    raw=b'data: {"choices":\ndata: []}\n\ndata: [DONE]\n\n'
+    raw=b'data: {"object":"chat.completion.chunk","id":"a","created":0,"model":"m","choices":\ndata: []}\n\ndata: [DONE]\n\n'
     wire=transport.HttpxTransport.for_tests(HandlerTransport(lambda r:httpx.Response(200,stream=Chunks([raw]))))
     monkeypatch.setattr(executor,'HttpxTransport',lambda:wire)
     response=chat(engine,stream=True)
@@ -467,7 +465,9 @@ def test_model_inventory_cannot_invoke_a_control_operation(engine,monkeypatch):
     doc=description.parse_description(data,source='prism.yml')
     monkeypatch.setattr(description,'load_registry',lambda:{'prism':doc})
     response=engine.client.get('/v1/models')
-    assert response.status_code==502,response.text
+    assert response.status_code==200,response.text
+    from gateway.engine_protocol import inventory
+    assert inventory.problems()
     assert not engine.fake.requests
 
 

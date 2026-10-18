@@ -7742,15 +7742,20 @@ async def _generate_images_with_adaptive_batching(
     )
 
 
+async def proxy_image_request(request, auth_context, receipt=None):
+    """Dispatch image requests through their declared engine protocol."""
+    response = await _try_protocol_request(request, auth_context, "images", receipt=receipt)
+    if response is not None:
+        return response
+    return await proxy_comfy_request(request, auth_context, receipt=receipt)
+
+
 async def proxy_comfy_request(
     request: Request,
     auth_context: AuthContext,
     receipt: RouteReceipt | None = None,
 ) -> Response:
     """Handle OpenAI-compatible image generation request via ComfyUI."""
-    protocol_response = await _try_protocol_request(request, auth_context, "images", receipt=receipt)
-    if protocol_response is not None:
-        return protocol_response
     admission = _dispatch_admission_response(
         'image.generate', auth_context=auth_context, service_id="comfyui",
         service_available=COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
@@ -20813,7 +20818,7 @@ async def _run_image_media_job(job_id: str) -> None:
                 try:
                     worker_token = _ADMISSION_WORKER.set(True)
                     try:
-                        response = await proxy_comfy_request(request_shim, auth_context, receipt=receipt)
+                        response = await proxy_image_request(request_shim, auth_context, receipt=receipt)
                     finally:
                         _ADMISSION_WORKER.reset(worker_token)
                 finally:
@@ -22704,7 +22709,7 @@ async def images_generations(request: Request):
         finish_image_route_receipt(receipt, response)
         return response
     try:
-        response = await proxy_comfy_request(request, auth_context, receipt=receipt)
+        response = await proxy_image_request(request, auth_context, receipt=receipt)
     except asyncio.CancelledError:
         finish_image_route_receipt(receipt, None, status="cancelled")
         raise
@@ -24906,6 +24911,9 @@ async def v1_status(request: Request):
 
     try:
         payload = await status_endpoint.get_cached_status(config)
+        from gateway.engine_protocol import description as protocol_descriptions, inventory as protocol_inventory
+        await asyncio.to_thread(protocol_descriptions.load_registry)
+        payload = {**payload, "protocol_issues": protocol_descriptions.registry_problems() + protocol_inventory.problems()}
     except Exception as e:  # noqa: BLE001
         # Never leak tracebacks. Return a minimal degraded payload instead.
         print(f"[proxy] /v1/status fatal: {e}", flush=True)
@@ -28336,21 +28344,35 @@ def _provider_alias_model(engine_id: str, service_id: str | None, spec: Mapping[
 
 
 def _protocol_failure(error: ProtocolError) -> Response:
+    # Internal diagnostics can hold filesystem paths or upstream error bodies.
+    logging.getLogger("gateway.engine_protocol").warning("Engine protocol failure (%s): %s", error.code, error)
     status, code = 502, error.code
-    message = str(error)
+    messages = {
+        "invalid_description": "The engine protocol description is invalid. Check Status for the file name.",
+        "malformed_response": "The mapped engine response does not match the public OpenAI response shape.",
+        "mapping_failed": "The engine mapping could not process this request or response.",
+        "transport_failed": "The engine could not be reached or did not respond in time.",
+        "budget_exceeded": "The engine response exceeded a protocol size, depth or time limit.",
+        "engine_credential_unavailable": "The credential required by this operation is unavailable.",
+        "unknown_operation": "The selected engine does not declare this operation.",
+        "unknown_protocol": "The selected engine protocol description is unavailable.",
+        "ambiguous_model": "The model names more than one offering. Use engine/id.",
+        "engine_disabled": "The selected engine is disabled.",
+    }
+    message = messages.get(code, "The engine protocol request failed. Check Status or gateway logs.")
     headers = {}
     if isinstance(error, ProtocolUpstreamError):
         status = error.status if error.status in {400, 404, 409, 422, 429, 503} else 502
         code = error.advice_code or code
-        message = error.advice or message
         headers = {k: v for k, v in error.headers.items() if k == "retry-after"}
+        message = "The engine refused the request. Check its status and protocol configuration."
     elif isinstance(error, TransportFailure) and error.kind == "timeout":
         status = 504
     elif isinstance(error, ProtocolMappingError):
         status = 400
     elif error.code in {"unknown_operation", "ambiguous_model"}:
         status = 400
-    elif error.code == "engine_disabled":
+    elif error.code in {"engine_disabled", "engine_credential_unavailable"}:
         status = 503
     response = openai_error_response(message, status_code=status, code=code)
     response.headers.update(headers)
@@ -28465,17 +28487,38 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
         return _protocol_failure(error)
     if target is None:
         return None
+    dimensions = None
+    if op == "chat":
+        try:
+            extensions = validate_chat_completions_extensions(body)
+        except ExtensionError as error:
+            return _extension_validation_error_response({"extensions": str(error)})
+        if not extensions.ok:
+            return _extension_validation_error_response(extensions.rejected)
+        body = extensions.request
+    elif op == "embeddings":
+        dimensions, error_response = _requested_embedding_dimensions(body)
+        if error_response is not None:
+            return error_response
+        if dimensions is not None:
+            body = {k: v for k, v in body.items() if k != "dimensions"}
     intents = {"chat":"chat.generate", "embeddings":"text.embeddings", "images":"image.generate", "speech":"speech.synthesis"}
     intent = intents[op]
     owns_receipt = receipt is None
     if receipt is None:
         caller = auth_context.identity
-        receipt = RouteReceipt(path=request.url.path, protocol=_protocol_for_intent(intent), intent=intent,
+        receipt = RouteReceipt(path=request.url.path, protocol=_protocol_for_intent(intent),
+            intent="chat.completions" if op == "chat" else intent,
+            stream=bool(body.get("stream")), effective_output_limit=effective_output_limit(body),
             requested_model=str(body.get("model")), app_id=caller.app_id if caller else None,
             app_profile=plan_ref(caller), owner_key_hash=_asset_owner_key(auth_context),
             api_key_name=caller.name if caller else None, visibility=_access_for_auth_context(auth_context).receipt_detail)
     receipt.backend = target.engine_id
     receipt.resolved_model = target.upstream
+    if op == "chat":
+        receipt.metadata["request_shape"] = request_shape_fields(body)
+        record_request_shape_stage(receipt.metadata, "accepted", body)
+        record_request_shape_stage(receipt.metadata, "outer_egress", {**body, "model": target.upstream})
     receipt.metadata.update({"execution_backend":"http-v1", "engine_id":target.engine_id,
                              "offering_id":target.offering["id"], "upstream_id":target.upstream})
     if owns_receipt:
@@ -28504,9 +28547,26 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
         else:
             reply = await runtime.invoke(op, body)
             if isinstance(reply, ProtocolStreamReply):
+                from gateway.engine_protocol.public_shape import validate
+                iterator = reply.__aiter__()
+                try:
+                    first_event = await anext(iterator)
+                    validate(first_event, op, stream=True)
+                except StopAsyncIteration:
+                    await reply.aclose()
+                    raise ProtocolError("The engine returned an empty stream.", code="malformed_response") from None
+                except BaseException:
+                    await reply.aclose()
+                    raise
+                async def validated_events():
+                    yield first_event
+                    async for event in iterator:
+                        yield event
                 async def stream():
                     try:
-                        async for event in reply:
+                        async for event in validated_events():
+                            from gateway.engine_protocol.public_shape import validate
+                            validate(event, op, stream=True)
                             data = event if isinstance(event, bytes) else json.dumps(event, separators=(",",":"), ensure_ascii=False).encode()
                             yield b"data: " + data.replace(b"\n", b"\ndata: ") + b"\n\n"
                         yield b"data: [DONE]\n\n"
@@ -28520,12 +28580,20 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
                 iterator = lease.hand_off(stream()) if lease else stream()
                 response = StreamingResponse(iterator, media_type="text/event-stream")
             elif reply.asset:
+                if op != "speech":
+                    raise ProtocolError("The engine returned binary data for a JSON operation.", code="malformed_response")
                 content = await store.read(reply.asset, max_bytes=target.description.budgets.max_asset_bytes)
                 from gateway import media_ingestion
                 media_ingestion.index_receipt_assets(receipt, [{"asset_id":reply.asset.id, "kind":"audio",
                     "media_type":reply.asset.content_type, "size_bytes":reply.asset.size}])
                 response = Response(content=content, media_type=reply.asset.content_type)
             else:
+                from gateway.engine_protocol.public_shape import validate
+                validate(reply.body, op)
+                if op == "embeddings" and dimensions is not None:
+                    error_response = _apply_embedding_dimensions(reply.body, dimensions)
+                    if error_response is not None:
+                        return media_ingestion.finish_response(receipt, error_response) if owns_receipt else error_response
                 response = Response(content=json.dumps(reply.body, separators=(",",":"), ensure_ascii=False),
                                     status_code=reply.status, media_type="application/json")
     except ProtocolError as error:
@@ -28557,35 +28625,9 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
 
 
 async def _protocol_models_payload(auth_context):
-    from gateway.engine_protocol import dispatch as protocol_dispatch
-    from gateway.engine_protocol.types import CanonicalRequest
-    data = []
+    from gateway.engine_protocol import inventory
     registry = await asyncio.to_thread(ADMIN_STORE.get_service_registry)
-    for engine_id, service in (registry.get("services") or {}).items():
-        if not protocol_dispatch.opted_in(service) or not service.get("enabled", True):
-            continue
-        from gateway.engine_contract_view import connection_config, offerings_config
-        from gateway.engine_protocol import description
-        descriptions = await asyncio.to_thread(description.load_registry)
-        doc = descriptions.get(connection_config(service).get("protocol"))
-        if doc is None or doc.executor != "http-v1" or "models" not in doc.operations:
-            continue
-        if doc.operations["models"].op_class != "inventory":
-            raise ProtocolError("Model listing requires an inventory operation.", code="invalid_description")
-        offerings = offerings_config(service)
-        if not offerings:
-            continue
-        runtime = await asyncio.to_thread(protocol_dispatch.Runtime, protocol_dispatch.Target(engine_id, service, offerings[0], doc))
-        reply = await runtime.adapter.invoke(runtime.connection, "models", CanonicalRequest("models"))
-        if isinstance(reply, ProtocolStreamReply):
-            await reply.aclose()
-            raise ProtocolError("The model list cannot be streamed.", code="malformed_response")
-        offered = {str(o["upstream"] or o["id"]):o for o in offerings}
-        for item in _protocol_collection(reply.body):
-            offering = offered.get(str(item.get("id"))) or next((o for o in offerings if o["id"] == item.get("id")), None)
-            if offering is not None:
-                data.append({**item, "id":offering["id"]})
-    return data
+    return await inventory.models(registry)
 
 
 async def _handle_openai_litellm_request_once(

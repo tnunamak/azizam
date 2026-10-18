@@ -111,7 +111,7 @@ def test_chat_receipt_has_legacy_stream_shape_and_limit_fields(engine):
     assert row['stream'] is True
     assert row['effective_output_limit'] == 19
     assert row['metadata']['request_shape']
-    assert {'accepted','outer_egress'} <= row['metadata']['request_shape_stages'].keys()
+    assert {'accepted','outer_egress'} <= {stage['stage'] for stage in row['metadata']['request_shape_stages']}
 
 
 @pytest.mark.parametrize('known_namespace', [False, True])
