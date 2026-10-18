@@ -1152,6 +1152,45 @@ def _backend_base_url(backend: str) -> str:
     return f"http://{cfg.get('host', '127.0.0.1')}:{cfg.get('port')}"
 
 
+def _engine_probe(backend: str, endpoint: str) -> tuple[str, dict[str, str]] | None:
+    """The URL and headers of a GET at one of a service's own probe endpoints.
+
+    Reads the saved record, as the final inference hop does, so an owner edit
+    to the address, prefix, headers or credential reaches the probe too. A
+    service with no saved record keeps the legacy ``http://host:port`` root.
+    See ``engine_read_request`` for the path and credential rules.
+    """
+    from gateway.lifecycle_drivers import engine_read_request
+
+    record = (ADMIN_STORE.get_service_registry().get("services") or {}).get(backend) or {}
+    return engine_read_request(
+        {**record, "config": record.get("config") or {}}, endpoint,
+        fallback_root=_backend_base_url(backend), db_path=ADMIN_DB_PATH,
+    )
+
+
+def _engine_probe_json_sync(backend: str, endpoint: str, timeout: float) -> Any:
+    """The JSON a service returns at a probe endpoint, or None. Redirects are not followed."""
+    probe = _engine_probe(backend, endpoint)
+    if probe is None:
+        return None
+    url, headers = probe
+    with httpx.Client(timeout=timeout, verify=tls_context(), follow_redirects=False) as client:
+        resp = client.get(url, headers=headers)
+    return resp.json() if resp.status_code == 200 else None
+
+
+async def _engine_probe_json(backend: str, endpoint: str, timeout: float) -> Any:
+    """The async form of ``_engine_probe_json_sync``."""
+    probe = _engine_probe(backend, endpoint)
+    if probe is None:
+        return None
+    url, headers = probe
+    async with httpx.AsyncClient(timeout=timeout, verify=tls_context(), follow_redirects=False) as client:
+        resp = await client.get(url, headers=headers)
+    return resp.json() if resp.status_code == 200 else None
+
+
 def _backend_reports_loaded_model_as_path(backend: str) -> bool:
     """True if the service record declares ``loaded_model_identity: path``.
 
@@ -1230,8 +1269,6 @@ def _seed_loaded_state(backend: str) -> None:
     is cold (startup or TTL expiry) — synchronous but cheap relative to a model
     swap.
     """
-    import urllib.request as _urlreq
-
     state_type = ((config.get("backends") or {}).get(backend) or {}).get("state_type", "llama_cpp")
     strategy = _BACKEND_STATE_STRATEGIES.get(state_type)
 
@@ -1240,9 +1277,8 @@ def _seed_loaded_state(backend: str) -> None:
 
     if strategy:
         try:
-            url = f"{_backend_base_url(backend)}{strategy['endpoint']}"
-            with _urlreq.urlopen(url, timeout=2) as resp:
-                data = json.loads(resp.read())
+            data = _engine_probe_json_sync(backend, strategy["endpoint"], 2.0)
+            if isinstance(data, dict):
                 model = _resolve_dot_path(data, strategy["model_key"])
         except Exception:
             pass  # server not up yet, or wrong endpoint — state stays None
@@ -3078,24 +3114,22 @@ async def _activate_prepared_litellm_local_target(
     )
 
 
-async def get_served_model_id(base_url: str) -> str:
-    """The first model id an OpenAI-compatible server lists at ``base_url``."""
+async def served_model_id_for_backend(backend: str) -> str:
+    """The first model id a service lists at its own ``/v1/models``, through its saved connection."""
     try:
-        async with httpx.AsyncClient(verify=tls_context()) as client:
-            resp = await client.get(f"{base_url}/v1/models", timeout=HEALTH_CHECK_TIMEOUT)
-            if resp.status_code != 200:
-                return ""
-            data = resp.json().get("data", [])
-            if data and isinstance(data[0], dict):
-                return data[0].get("id") or ""
+        payload = await _engine_probe_json(backend, "/v1/models", HEALTH_CHECK_TIMEOUT)
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        if data and isinstance(data[0], dict):
+            return data[0].get("id") or ""
     except Exception:
         pass
     return ""
 
 
 async def effective_llm_model_for_host(target_host: str) -> str:
-    if any(_backend_base_url(backend) == target_host for backend in _path_identity_backends()):
-        return await get_served_model_id(target_host)
+    for backend in _path_identity_backends():
+        if _backend_base_url(backend) == target_host:
+            return await served_model_id_for_backend(backend)
     return ""
 
 
@@ -3120,7 +3154,7 @@ async def current_llm_model_for_backend(backend: str) -> str:
         loaded_path = currently_loaded_model(backend)
         if not loaded_path:
             return ""
-        loaded_id = await get_served_model_id(_backend_base_url(backend))
+        loaded_id = await served_model_id_for_backend(backend)
         return loaded_id or os.path.basename(loaded_path) or loaded_path
 
     host = LLM_BACKEND_HOSTS.get(backend)
@@ -3132,11 +3166,7 @@ async def current_llm_model_for_backend(backend: str) -> str:
     if not strategy:
         return ""
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0), verify=tls_context()) as client:
-            resp = await client.get(f"{host}{strategy['endpoint']}")
-        if resp.status_code != 200:
-            return ""
-        data = resp.json()
+        data = await _engine_probe_json(backend, str(strategy["endpoint"]), 2.0)
         if not isinstance(data, dict):
             return ""
         return _resolve_dot_path(data, str(strategy["model_key"])) or ""
@@ -23954,10 +23984,8 @@ async def _probed_context_window(backend: str) -> int | None:
 
     value: int | None = None
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0), verify=tls_context()) as client:
-            resp = await client.get(f"{_backend_base_url(backend)}{endpoint}")
-        if resp.status_code == 200:
-            payload = resp.json()
+        payload = await _engine_probe_json(backend, endpoint, 2.0)
+        if payload is not None:
             data = payload.get("data") if isinstance(payload, Mapping) else None
             if isinstance(data, list):
                 for item in data:

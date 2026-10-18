@@ -3,6 +3,8 @@
     "paths": [
       "/v1/chat/completions",
       "/provider/v1/chat/completions",
+      "/provider/v1/models",
+      "/provider/health",
       "/v1/completions",
       "/v1/embeddings",
       "/v1/models",

@@ -114,7 +114,7 @@ def test_the_gateway_waits_for_the_router_at_least_as_long_as_the_engine_reply_t
     assert sent[0].read_timeout == 1805.0
 
 
-def test_the_hop_keeps_its_own_limit_when_the_engine_sets_none_or_a_shorter_one():
+def test_the_router_waits_the_saved_reply_time_of_a_direct_engine_and_of_a_long_lifecycle_one():
     registry = _registry("http://garage.fk.test/v1", reply_timeout_s=30)
     assert router_reply_timeout(registry, "garage-chat") == 30.0
     assert router_reply_timeout(registry, "another-model") is None
@@ -126,6 +126,46 @@ def test_the_hop_keeps_its_own_limit_when_the_engine_sets_none_or_a_shorter_one(
     compiled = compile_litellm_config_from_registry(hopped)
     entry = next(row for row in compiled["model_list"] if row["model_name"] == "hopped-chat")
     assert entry["litellm_params"]["timeout"] == 900.0
+
+
+def _lifecycle_registry(timeout, **record) -> dict:
+    return {"schema_version": 1, "services": {"hopped": service_from_backend_config("hopped", {
+        "name": "Hopped", "host": "h.fk.test", "port": 80, "base_path": "/v1", "protocol": "openai-compatible",
+        "capabilities": ["chat"], "gateway_lifecycle": True, "timeout": timeout,
+        "models": [{"model_group": "hopped-chat", "upstream_model": "hopped"}], **record}, source="ui")}}
+
+
+def test_a_short_lifecycle_reply_time_does_not_cut_off_the_cold_start_but_ends_the_final_hop(tmp_path):
+    """The router waits for readiness plus the reply; the final hop waits exactly the saved 37 s."""
+    from gateway.engine_connection import inference_connection
+
+    registry = _lifecycle_registry(37)
+    entry = next(row for row in compile_litellm_config_from_registry(registry)["model_list"]
+                 if row["model_name"] == "hopped-chat")
+    assert entry["litellm_params"]["timeout"] >= 600.0
+    assert router_reply_timeout(registry, "hopped-chat") == entry["litellm_params"]["timeout"]
+    final = inference_connection(registry["services"]["hopped"], "/chat/completions",
+                                 fallback_address="http://unused.fk.test/v1", fallback_timeout=600.0,
+                                 db_path=tmp_path / "absent.db", env=lambda name: None)
+    assert final.read_timeout == 37.0
+
+
+def test_a_declared_start_budget_adds_to_a_long_lifecycle_reply_time():
+    registry = _lifecycle_registry(900, lifecycle={"driver": "command", "driver_config": {
+        "start": "server", "health_timeout_s": 120}})
+    assert router_reply_timeout(registry, "hopped-chat") == 1020.0
+    entry = next(row for row in compile_litellm_config_from_registry(registry)["model_list"]
+                 if row["model_name"] == "hopped-chat")
+    assert entry["litellm_params"]["timeout"] == 1020.0
+
+
+@pytest.mark.parametrize("saved,router", [(900, 900.0), (37, 600.0)])
+def test_the_current_aliases_wait_for_the_current_service_reply_time(saved, router):
+    registry = _lifecycle_registry(saved)
+    entries = {row["model_name"]: row for row in compile_litellm_config_from_registry(registry)["model_list"]}
+    for alias in ("current", "current-fast"):
+        assert entries[alias]["litellm_params"]["timeout"] == router
+        assert router_reply_timeout(registry, alias) == router
 
 
 def test_a_header_stored_by_a_raw_edit_is_sent_only_when_it_is_safe():

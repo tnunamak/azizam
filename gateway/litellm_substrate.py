@@ -397,6 +397,11 @@ def _current_loaded_service(service_records: list[Mapping[str, Any]]) -> Mapping
     return None
 
 
+# The router names that serve whatever the current lifecycle service has loaded,
+# and whether each is the fast variant.
+CURRENT_LOADED_ALIASES = (("current", False), ("current-fast", True))
+
+
 def _current_loaded_entries(service_records: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
     service = _current_loaded_service(service_records)
     if service is None:
@@ -407,7 +412,8 @@ def _current_loaded_entries(service_records: list[Mapping[str, Any]]) -> list[di
         or DEFAULT_GATEWAY_LIFECYCLE_API_KEY_REF
     )
     entries: list[dict[str, Any]] = []
-    for alias, fast in (("current", False), ("current-fast", True)):
+    timeout = _lifecycle_router_timeout(service, config)
+    for alias, fast in CURRENT_LOADED_ALIASES:
         entries.append(
             {
                 "model_name": alias,
@@ -415,6 +421,7 @@ def _current_loaded_entries(service_records: list[Mapping[str, Any]]) -> list[di
                     "model": f"openai/{alias}",
                     "api_base": DEFAULT_GATEWAY_CURRENT_BASE_URL,
                     "api_key": api_key_ref,
+                    **({"timeout": timeout} if timeout is not None else {}),
                 },
                 "model_info": {
                     "gateway_current_loaded": True,
@@ -456,7 +463,7 @@ def _model_list_entries(
                 backend=gateway_backend,
             )
             litellm_params["api_key"] = _lifecycle_api_key(config, litellm_params["api_base"])
-            timeout = _engine_request_settings(config).get("timeout")
+            timeout = _lifecycle_router_timeout(service, config)
             if timeout is not None:
                 litellm_params["timeout"] = timeout
             model_info.update(
@@ -548,8 +555,8 @@ def router_reply_timeout(registry: Mapping[str, Any], model_name: str) -> float 
     owner's setting would be cut short by the hop in front of it.
     """
     services = registry.get("services") if isinstance(registry, Mapping) else {}
-    for service in sorted(_normalize_services(services if isinstance(services, Mapping) else {}),
-                          key=lambda row: (row["priority"], row["id"])):
+    records = _normalize_services(services if isinstance(services, Mapping) else {})
+    for service in sorted(records, key=lambda row: (row["priority"], row["id"])):
         if not service.get("enabled", True) or not _is_openai_compatible(service):
             continue
         config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
@@ -559,8 +566,57 @@ def router_reply_timeout(registry: Mapping[str, Any], model_name: str) -> float 
             continue
         for deployment in deployments:
             if str(deployment["model_group"]) == model_name:
+                if deployment.get("gateway_lifecycle") or config.get("gateway_lifecycle"):
+                    return _lifecycle_router_timeout(service, config)
                 return _engine_request_settings(config).get("timeout")
+    if model_name in {alias for alias, _fast in CURRENT_LOADED_ALIASES}:
+        current = _current_loaded_service(records)
+        if current is not None:
+            config = current.get("config") if isinstance(current.get("config"), Mapping) else {}
+            return _lifecycle_router_timeout(current, config)
     return None
+
+
+# LiteLLM's own request timeout when an entry sets none; also the gateway's
+# default read limit for the final hop (UPSTREAM_READ_TIMEOUT).
+ROUTER_DEFAULT_TIMEOUT_S = 600.0
+_READINESS_KEYS = ("ready_timeout_s", "health_timeout_s", "load_timeout_s")
+
+
+def _declared_readiness_s(service: Mapping[str, Any]) -> float:
+    """The longest start or load budget the record declares, or 0 when it declares none."""
+    from gateway.engine_contract_view import process_config, residency_config
+
+    process = process_config(service)
+    sources: list[tuple[Any, tuple[str, ...]]] = [(process, _READINESS_KEYS)]
+    for holder in (process.get("legacy_lifecycle"), service.get("lifecycle")):
+        if isinstance(holder, Mapping):
+            sources.append((holder.get("driver_config"), _READINESS_KEYS))
+    sources.append((residency_config(service).get("load_deadline"), ("max_s",)))
+    budgets = [0.0]
+    for source, keys in sources:
+        if not isinstance(source, Mapping):
+            continue
+        for key in keys:
+            value = source.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+                budgets.append(float(value))
+    return max(budgets)
+
+
+def _lifecycle_router_timeout(service: Mapping[str, Any], config: Mapping[str, Any]) -> float | None:
+    """How long the router waits for the gateway's lifecycle hop, or None for its default.
+
+    The hop first makes the engine ready (a cold start or a model switch) and
+    only then waits the saved reply time for the engine. A short saved reply
+    time must not end a cold start, so the router waits at least its default
+    and at least the saved time plus the declared readiness budget. The final
+    hop itself still uses exactly the saved reply time.
+    """
+    timeout = _engine_request_settings(config).get("timeout")
+    if timeout is None:
+        return None
+    return max(ROUTER_DEFAULT_TIMEOUT_S, timeout + _declared_readiness_s(service))
 
 
 def _engine_request_settings(config: Mapping[str, Any]) -> dict[str, Any]:
