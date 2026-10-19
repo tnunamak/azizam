@@ -92,6 +92,7 @@ class SttRun(CanonicalRequest):
     on_cancel: Callable[[], None]
     on_attempt_started: Callable[[int], None]
     on_outcome: Callable[[stt_chunking.ChunkingOutcome], None]
+    on_whole_file_attempt: Callable[[], None] | None = None   # called when the whole upload is sent in one request
     wav16k_input: bool = False      # the engine reads only 16 kHz mono WAV: decode the upload first
     stream: bool = False            # relay the engine's event stream when no chunked answer settled the run
 
@@ -334,6 +335,8 @@ class ChunkedSttAdapter:
             return TranscriptReply(200, {}, body=outcome.merged_payload, mode="chunked")
         if outcome.mode == "upstream_error" and outcome.upstream_response is not None:
             return _transcript(outcome.upstream_response, "upstream_error")
+        if run.on_whole_file_attempt is not None:
+            run.on_whole_file_attempt()
         if run.stream and len(uploads) == 1:
             return await wire.open_stream(
                 prepared_source or stt_chunking.source_path(uploads[0][1]),

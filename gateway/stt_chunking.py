@@ -14,11 +14,13 @@ import asyncio
 import json
 import math
 import os
-import re
 import shutil
 import tempfile
 import time
+from array import array
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from itertools import accumulate
+from operator import mul
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -55,11 +57,15 @@ from gateway.transforms import run_response_pipeline
 
 
 _T = TypeVar("_T")
-_SILENCE_START_RE = re.compile(r"silence_start:\s*([\d.]+)")
-_SILENCE_END_RE = re.compile(
-    r"silence_end:\s*([\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)"
-)
-_NOISE_DB_RE = re.compile(r"^-?\d+(?:\.\d+)?dB$")
+# Cuts are chosen on 20 ms frames of the decoded 16 kHz mono signal, one frame every 10 ms.
+_PLANNING_SAMPLE_RATE = 16_000
+_FRAME_SAMPLES = 320
+_FRAME_HOP_SAMPLES = 160
+# The search never reaches further than a quarter of the target, so two neighbouring cuts stay at least half a target apart.
+_MAX_SEARCH_FRACTION_OF_TARGET = 0.25
+# The last segment may run a quarter target past the target, so a file never ends in a sliver.
+_TAIL_FRACTION_OF_TARGET = 0.25
+_MIN_SEGMENT_SECONDS = 0.5
 # Boundary line, part headers and CRLFs around one multipart part, with room for long filenames.
 _PART_FRAMING_BYTES = 8192
 _HOP_BY_HOP_RESPONSE_HEADERS = frozenset(
@@ -139,6 +145,19 @@ class SttInvalidAudio(SttExecutionError):
     """The uploaded file is not audio the decoder can read (the caller's input, not a server fault)."""
 
 
+class SttAudioNotSplittable(SttExecutionError):
+    """A file longer than the engine accepts could not be cut, so the gateway refuses it instead of sending it whole.
+
+    ``reason`` is one of a fixed set (never text from a tool or an engine): ``unreadable_media`` when the file or its
+    decoded audio could not be read, ``split_failed`` when a local step failed.
+    """
+
+    def __init__(self, reason: Literal["unreadable_media", "split_failed"], *, limit_seconds: float) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.limit_seconds = limit_seconds
+
+
 class SttMediaCommandFailed(SttSetupFailure):
     """A local media utility ran and exited non-zero: its input could not be read."""
 
@@ -174,9 +193,10 @@ class SttExecutionConfig:
     chunking_enabled: bool
     threshold_seconds: float
     target_seconds: float
-    silence_noise_db: str
-    silence_min_seconds: float
-    silence_search_seconds: float
+    search_seconds: float
+    max_segment_seconds: float
+    max_segment_declared: bool
+    native_long_audio: bool
     max_input_bytes: int
     max_decoded_bytes: int
     max_duration_seconds: float
@@ -240,9 +260,13 @@ class SttExecutionConfig:
         target = positive_float("target_seconds", 480.0)
         if target >= threshold:
             raise SttConfigurationError("STT target_seconds must be less than threshold_seconds")
-        noise_db = str(chunking.get("silence_noise_db", "-30dB")).strip()
-        if not _NOISE_DB_RE.fullmatch(noise_db):
-            raise SttConfigurationError("STT silence_noise_db must be a decibel value such as -30dB")
+        search = positive_float("search_seconds", 2.0)
+        # The hard maximum is the longest piece the engine takes without losing words. A record that does not
+        # declare one gets the longest piece the cut rules can produce (target plus the search width on each side).
+        max_segment_declared = chunking.get("max_segment_seconds") is not None
+        max_segment = positive_float("max_segment_seconds", target + 2.0 * search) if max_segment_declared else target + 2.0 * search
+        if max_segment < target:
+            raise SttConfigurationError("STT max_segment_seconds must be at least target_seconds")
 
         policy = str(chunking.get("setup_failure_policy", "passthrough")).strip().lower()
         if policy not in {"passthrough", "error"}:
@@ -274,9 +298,10 @@ class SttExecutionConfig:
             chunking_enabled=_as_bool(chunking.get("enabled", True)),
             threshold_seconds=threshold,
             target_seconds=target,
-            silence_noise_db=noise_db,
-            silence_min_seconds=positive_float("silence_min_seconds", 0.5),
-            silence_search_seconds=positive_float("silence_search_seconds", 120.0),
+            search_seconds=search,
+            max_segment_seconds=max_segment,
+            max_segment_declared=max_segment_declared,
+            native_long_audio=_as_bool(chunking.get("native_long_audio", False)),
             max_input_bytes=positive_int("max_input_bytes", 536_870_912),
             max_decoded_bytes=positive_int("max_decoded_bytes", 1_073_741_824),
             max_duration_seconds=positive_float("max_duration_seconds", 14_400.0),
@@ -303,6 +328,26 @@ class SttExecutionConfig:
             queue_class=QueueClass.INTERACTIVE,
             reasons=("bounded STT upload and decoded media workspace",),
         )
+
+    def chunking_view(self) -> dict[str, Any]:
+        """What the owner is shown about long-audio cutting: the numbers in force and where the hard maximum came from."""
+        return {
+            "enabled": self.chunking_enabled,
+            "cut_files_longer_than_seconds": self.chunk_above_seconds,
+            "target_seconds": self.target_seconds,
+            "search_seconds": self.search_seconds,
+            "max_segment_seconds": self.max_segment_seconds,
+            "max_segment_source": (
+                "saved on this engine" if self.max_segment_declared
+                else "default (target plus twice the search width); set max_segment_seconds on this engine to change it"
+            ),
+            "native_long_audio": self.native_long_audio,
+        }
+
+    @property
+    def chunk_above_seconds(self) -> float:
+        """Files longer than this are cut. A file longer than the hard maximum is never sent whole by choice."""
+        return min(self.threshold_seconds, self.max_segment_seconds)
 
     @property
     def replay_limit_bytes(self) -> int:
@@ -847,7 +892,7 @@ async def probe_audio(
             (payload.get("format") or {}).get("duration")
         )
     except (IndexError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise SttSetupFailure("STT media probe returned invalid audio metadata") from error
+        raise SttMediaCommandFailed("STT media probe returned invalid audio metadata") from error
     if duration is None:
         # Some containers (notably a Chrome MediaRecorder webm whose recording
         # session ended without a clean stop) carry audio/video sample data but
@@ -865,7 +910,7 @@ async def probe_audio(
             on_cancel=on_cancel,
         )
     if duration is None or sample_rate <= 0 or channels <= 0:
-        raise SttSetupFailure("STT media probe returned invalid audio metadata")
+        raise SttMediaCommandFailed("STT media probe returned invalid audio metadata")
     probed = ProbedAudio(duration, sample_rate, channels)
     if duration > config.max_duration_seconds:
         raise SttResourceLimitExceeded("Audio duration exceeds the configured STT limit")
@@ -939,104 +984,111 @@ async def _probe_duration_from_packets(
     return last_end
 
 
-async def detect_silences(
+async def decode_planning_pcm(
     source_path: Path,
+    destination_path: Path,
     *,
     config: SttExecutionConfig,
     cancellation_waiters: Sequence[Callable[[], Awaitable[None]]],
     deadline_at: float,
     on_cancel: Callable[[], None] | None,
-) -> list[tuple[float, float]]:
-    _, stderr = await run_media_command(
+) -> None:
+    """Decode the upload to raw 16 kHz mono 16-bit samples, the signal the cut search reads."""
+    await run_media_command(
         [
-            "ffmpeg",
-            "-hide_banner",
-            "-nostats",
-            "-i",
-            os.fspath(source_path),
-            "-af",
-            f"silencedetect=n={config.silence_noise_db}:d={config.silence_min_seconds}",
-            "-f",
-            "null",
-            "-",
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-i", os.fspath(source_path),
+            "-vn", "-ac", "1", "-ar", str(_PLANNING_SAMPLE_RATE), "-f", "s16le",
+            os.fspath(destination_path),
         ],
-        timeout_seconds=min(config.timeout_seconds, 300.0),
+        timeout_seconds=config.timeout_seconds,
         cancellation_waiters=cancellation_waiters,
         deadline_at=deadline_at,
         on_cancel=on_cancel,
         max_output_bytes=config.max_media_output_bytes,
     )
-    intervals: list[tuple[float, float]] = []
-    pending_start: float | None = None
-    for line in stderr.decode("utf-8", errors="replace").splitlines():
-        start = _SILENCE_START_RE.search(line)
-        if start is not None:
-            pending_start = float(start.group(1))
-            continue
-        end = _SILENCE_END_RE.search(line)
-        if end is not None and pending_start is not None:
-            intervals.append((pending_start, float(end.group(1))))
-            pending_start = None
-    return merge_adjacent_silences(intervals)
+    try:
+        size = destination_path.stat().st_size
+    except OSError as error:
+        raise SttSetupFailure("STT planning decode did not create audio") from error
+    if size <= 0:
+        raise SttMediaCommandFailed("STT planning decode holds no audio")
+    if size > config.max_decoded_bytes:
+        raise SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
 
 
-def merge_adjacent_silences(
-    silences: Sequence[tuple[float, float]],
-    *,
-    max_gap_seconds: float = 0.3,
-) -> list[tuple[float, float]]:
-    if not silences:
-        return []
-    result: list[tuple[float, float]] = []
-    for start, end in sorted(silences):
-        if not result or start - result[-1][1] >= max_gap_seconds:
-            result.append((start, end))
-        else:
-            result[-1] = (result[-1][0], max(result[-1][1], end))
-    return result
+def quietest_frame_reader(pcm_path: Path) -> Callable[[float, float, float], float]:
+    """Return ``quietest(lo, hi, near)``: the centre time of the lowest-energy 20 ms frame centred in [lo, hi].
+
+    Frames start every 10 ms. Energy is the sum of squared samples, so ties (digital silence, a flat signal) go to
+    the frame nearest ``near``. The reader opens the file for each call and holds only that window in memory.
+    """
+    rate = _PLANNING_SAMPLE_RATE
+    half = _FRAME_SAMPLES // 2
+
+    def quietest(lo: float, hi: float, near: float) -> float:
+        first = max(0, math.ceil((lo * rate - half) / _FRAME_HOP_SAMPLES))
+        last = math.floor((hi * rate - half) / _FRAME_HOP_SAMPLES)
+        if last < first:
+            return min(max(near, lo), hi)
+        samples = array("h")
+        with pcm_path.open("rb") as handle:
+            handle.seek(first * _FRAME_HOP_SAMPLES * 2)
+            samples.frombytes(handle.read(((last - first) * _FRAME_HOP_SAMPLES + _FRAME_SAMPLES) * 2))
+        if len(samples) < _FRAME_SAMPLES:
+            return min(max(near, lo), hi)
+        squares = list(accumulate(map(mul, samples, samples), initial=0))
+        frames = (len(samples) - _FRAME_SAMPLES) // _FRAME_HOP_SAMPLES + 1
+        near_sample = near * rate
+        best = min(
+            range(frames),
+            key=lambda index: (
+                squares[index * _FRAME_HOP_SAMPLES + _FRAME_SAMPLES] - squares[index * _FRAME_HOP_SAMPLES],
+                abs((first + index) * _FRAME_HOP_SAMPLES + half - near_sample),
+            ),
+        )
+        centre = ((first + best) * _FRAME_HOP_SAMPLES + half) / rate
+        return min(max(centre, lo), hi)
+
+    return quietest
 
 
-def plan_silence_preferred_segments(
+def plan_quietest_frame_segments(
     *,
     duration_seconds: float,
-    silences: Sequence[tuple[float, float]],
+    quietest_frame: Callable[[float, float, float], float],
     target_seconds: float,
     search_seconds: float,
+    max_segment_seconds: float,
     max_segments: int,
 ) -> list[tuple[float, float]]:
-    """Prefer silence seams, but force a target cut when speech is continuous.
+    """Cut at the quietest frame near each multiple of the target; no overlap, no segment above the hard maximum.
 
-    With target T, clamped search S and tail allowance R=min(30,T),
-    segment lengths are at most max(T+2*S, T+R+S). No audio is omitted
-    or overlapped; a target is not a strict per-segment duration cap.
+    The cut for target ``k * T`` is searched in ``k * T +- W`` (W is the search width, capped at a quarter of T). The
+    range is clipped to what keeps the segment ending at the cut within ``max_segment_seconds``, so the maximum is
+    kept even when the signal gives no quiet place. Cutting stops when the rest of the file fits one segment of at
+    most ``T`` plus a quarter of ``T`` (and never more than the hard maximum). Segments tile the file exactly.
     """
-    if duration_seconds <= target_seconds:
-        return [(0.0, duration_seconds)]
-    search_seconds = min(search_seconds, max(0.0, target_seconds / 2.0 - 0.001))
+    if max_segment_seconds < target_seconds:
+        raise SttConfigurationError("STT max_segment_seconds must be at least target_seconds")
+    width = min(search_seconds, target_seconds * _MAX_SEARCH_FRACTION_OF_TARGET)
+    end_limit = min(max_segment_seconds, target_seconds * (1.0 + _TAIL_FRACTION_OF_TARGET))
     cuts: list[float] = []
-    used: set[float] = set()
-    boundary = target_seconds
-    tail_seconds = min(30.0, target_seconds)
-    while boundary < duration_seconds and (not cuts or boundary <= duration_seconds - tail_seconds):
+    previous = 0.0
+    while duration_seconds - previous > end_limit:
         if len(cuts) + 2 > max_segments:
             raise SttResourceLimitExceeded("Audio requires more STT segments than configured")
-        candidates = [
-            (abs(((start + end) / 2.0) - boundary), (start + end) / 2.0)
-            for start, end in silences
-            if 0.0 < ((start + end) / 2.0) < duration_seconds
-            and ((start + end) / 2.0) not in used
-            and abs(((start + end) / 2.0) - boundary) <= search_seconds
-        ]
-        cut = min(candidates)[1] if candidates else boundary
-        used.add(cut)
+        target = target_seconds * (len(cuts) + 1)
+        highest = min(previous + max_segment_seconds, duration_seconds - _MIN_SEGMENT_SECONDS, target + width)
+        lowest = max(previous + _MIN_SEGMENT_SECONDS, target - width)
+        if lowest > highest:
+            # The previous cut was early enough that the hard maximum stops short of the target window.
+            lowest = max(previous + _MIN_SEGMENT_SECONDS, highest - 2.0 * width)
+        cut = min(max(quietest_frame(lowest, highest, min(max(target, lowest), highest)), lowest), highest)
         cuts.append(cut)
-        boundary += target_seconds
-    boundaries = [0.0, *sorted(cuts), duration_seconds]
-    return [
-        (start, end)
-        for start, end in zip(boundaries[:-1], boundaries[1:])
-        if end > start
-    ]
+        previous = cut
+    boundaries = [0.0, *cuts, duration_seconds]
+    return list(zip(boundaries[:-1], boundaries[1:]))
 
 
 async def extract_segment(
@@ -1114,6 +1166,23 @@ def request_supports_chunking(fields: Sequence[tuple[str, str]], *, file_count: 
     )
 
 
+def _may_send_whole(config: SttExecutionConfig, probed: ProbedAudio | None) -> bool:
+    """Whether a file whose cut failed may go to the engine uncut: the record says so, and the engine can take it."""
+    if config.setup_failure_policy != "passthrough":
+        return False
+    return config.native_long_audio or (probed is not None and probed.duration_seconds <= config.max_segment_seconds)
+
+
+def _unplanned_outcome(config: SttExecutionConfig, probed: ProbedAudio | None, error: SttSetupFailure) -> ChunkingOutcome:
+    """The cut could not be planned: send the file whole only when the engine can take it, else refuse it."""
+    if _may_send_whole(config, probed):
+        return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
+    if config.setup_failure_policy != "passthrough" or config.native_long_audio:
+        raise error
+    reason = "unreadable_media" if isinstance(error, SttMediaCommandFailed) else "split_failed"
+    raise SttAudioNotSplittable(reason, limit_seconds=config.max_segment_seconds) from error
+
+
 async def execute_chunking(
     *,
     source_path: Path,
@@ -1131,6 +1200,8 @@ async def execute_chunking(
     if not config.chunking_enabled or not request_supports_chunking(fields, file_count=1):
         return ChunkingOutcome("passthrough", 0, "ineligible_envelope")
 
+    probed: ProbedAudio | None = None
+    pcm_path = source_path.parent / "planning-16k.pcm"
     try:
         probed = await probe_audio(
             source_path,
@@ -1139,20 +1210,25 @@ async def execute_chunking(
             deadline_at=deadline_at,
             on_cancel=on_cancel,
         )
-        if probed.duration_seconds <= config.threshold_seconds:
+        if probed.duration_seconds <= config.chunk_above_seconds:
             return ChunkingOutcome("passthrough", 0, "below_threshold")
-        silences = await detect_silences(
+        if cleanup is not None:
+            cleanup.add("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
+        await decode_planning_pcm(
             source_path,
+            pcm_path,
             config=config,
             cancellation_waiters=cancellation_waiters,
             deadline_at=deadline_at,
             on_cancel=on_cancel,
         )
-        segments = plan_silence_preferred_segments(
+        segments = await asyncio.to_thread(
+            plan_quietest_frame_segments,
             duration_seconds=probed.duration_seconds,
-            silences=silences,
+            quietest_frame=quietest_frame_reader(pcm_path),
             target_seconds=config.target_seconds,
-            search_seconds=config.silence_search_seconds,
+            search_seconds=config.search_seconds,
+            max_segment_seconds=config.max_segment_seconds,
             max_segments=config.max_segments,
         )
     except (
@@ -1164,10 +1240,15 @@ async def execute_chunking(
         SttBackendUnavailable,
     ):
         raise
-    except SttSetupFailure:
-        if config.setup_failure_policy == "passthrough":
-            return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
-        raise
+    except SttSetupFailure as error:
+        return _unplanned_outcome(config, probed, error)
+    except OSError:
+        return _unplanned_outcome(config, probed, SttSetupFailure("STT planning could not read the decoded audio"))
+    finally:
+        if cleanup is None:
+            _unlink_chunk_path(pcm_path)
+        else:
+            await cleanup.release("planning_pcm", lambda: _unlink_chunk_path(pcm_path))
 
     if not segments or len(segments) <= 1:
         return ChunkingOutcome("passthrough", 0, "single_segment_plan")
@@ -1182,7 +1263,7 @@ async def execute_chunking(
     try:
         run_response_pipeline(response_transforms, {"text": ""})
     except (KeyError, TypeError, ValueError) as error:
-        if config.setup_failure_policy == "passthrough":
+        if _may_send_whole(config, probed):
             return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
         raise SttSetupFailure("STT service response transforms cannot run") from error
     payloads: list[Mapping[str, Any]] = []
@@ -1207,7 +1288,7 @@ async def execute_chunking(
                 # Extraction failure before the first backend attempt may use
                 # the configured explicit setup policy.  After progress it can
                 # never silently replay the original audio.
-                if attempts_started == 0 and config.setup_failure_policy == "passthrough":
+                if attempts_started == 0 and _may_send_whole(config, probed):
                     return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
                 raise SttChunkAttemptError("STT segment extraction failed after chunk progress") from error
 

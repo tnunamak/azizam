@@ -36,7 +36,7 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 from gateway import log_scrub
-from gateway import admin_store, category_enforcement, egress, projection, record_carriers, secret_commands, secret_store, service_registry, transforms, url_binding
+from gateway import admin_store, category_enforcement, egress, projection, record_carriers, secret_commands, secret_store, service_registry, stt_chunking, transforms, url_binding
 from gateway.access_plans import PlanError, plan_from_document
 from gateway.engine_access import who_can_use
 from gateway.engine_check import (
@@ -636,6 +636,18 @@ def _projected_engine_record(stored: Mapping[str, Any]) -> dict[str, Any]:
     return projection.project("ServiceRecord", stored).tree or {}
 
 
+def _stt_chunking_view(service_id: Any, config: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The long-audio cutting numbers in force for a transcription record; None for a record with no ``chunking``."""
+    if not isinstance(config.get("chunking"), Mapping):
+        return None
+    try:
+        execution = stt_chunking.SttExecutionConfig.from_service(
+            service_id=str(service_id or ""), service_config=config, config_directory=Path.cwd())
+    except stt_chunking.SttConfigurationError as error:
+        return {"invalid": str(error)}
+    return execution.chunking_view()
+
+
 def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: Path,
                 hop_timeout: float = 600, env: Callable[[str], str | None] = os.environ.get) -> dict[str, Any]:
     """What the record page reads. Everything a caller sees is read from the projection of the stored record
@@ -775,6 +787,7 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
         "lifecycle_editable": lifecycle_editable,
         "values": values,
         "reply_timeout": {"seconds": effective_timeout, "source": timeout_source},
+        "stt_chunking": _stt_chunking_view(record.get("id"), config),
         "attention": protocol_attention + ([{"code": "engine_credential_unavailable",
                         "message": f"Key not available: {env_name} is not set"}] if env_name and not env(str(env_name)) else [])
                       + ([{"code": "engine_credential_unavailable", "message": "The stored key is unavailable. Replace it in Connection."}]
