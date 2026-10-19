@@ -512,6 +512,67 @@ def test_removed_period_shortens_existing_prompt_deadlines(tmp_path, monkeypatch
     assert prompt_memory.tighten_removed_periods(admin_path=admin_path, path=media_path) == 0
 
 
+@pytest.mark.parametrize("stored,owner_cap", [("3_months", False), ("3_months", True)])
+def test_removed_choice_uses_nearest_shorter_period_even_if_default_is_never(monkeypatch, stored, owner_cap):
+    data = _bundled_data()
+    data["retention_choices"]["1_month"] = 30 * 86400
+    data["groups"]["prompts"].update(choices=["never", "1_year", "1_month"],
+                                      default_retention="never", default_cap="never")
+    contract = retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
+    monkeypatch.setattr(retention, "bundled", lambda: contract)
+    assert retention.normalize_period(stored, kind=retention.LIBRARY_PROMPT, owner_cap=owner_cap) == "1_month"
+
+
+def test_bundled_kill_switch_is_refused_until_startup_erasure_exists():
+    data = _bundled_data()
+    data["household"]["never_keep"] = True
+    with pytest.raises(retention.RetentionDataError, match="slice 5.*never_keep|never_keep.*slice 5"):
+        retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
+
+
+@pytest.mark.parametrize("edit,member,old_days,want_days", [
+    ("default_cap", "never", None, 365),
+    ("seconds", "3_months", 90, 30),
+])
+def test_startup_repair_applies_every_stricter_contract_edit(tmp_path, monkeypatch, edit, member, old_days, want_days):
+    from gateway import prompt_memory
+    admin_path, media_path = tmp_path / "admin.db", tmp_path / "media.db"
+    admin_store.init_db(admin_path)
+    person = admin_store.upsert_oidc_user("iss", edit, path=admin_path)["id"]
+    with sqlite3.connect(admin_path) as conn:
+        conn.execute("UPDATE prompt_memory_preferences SET retention=? WHERE user_id=?", (member, person))
+    created = int(time.time()) - 86400
+    prompt_memory._connect(media_path).close()
+    with sqlite3.connect(media_path) as conn:
+        conn.execute("INSERT INTO asset_prompts VALUES (?,?,?,?,?,?)",
+                     ("asset", person, "prompt", None, created,
+                      None if old_days is None else created + old_days * 86400))
+    data = _bundled_data()
+    if edit == "default_cap":
+        data["groups"]["prompts"]["default_cap"] = "1_year"
+    else:
+        data["retention_choices"]["3_months"] = 30 * 86400
+    contract = retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
+    monkeypatch.setattr(retention, "bundled", lambda: contract)
+    assert prompt_memory.tighten_removed_periods(admin_path=admin_path, path=media_path) == 1
+    with sqlite3.connect(media_path) as conn:
+        assert conn.execute("SELECT kept_until FROM asset_prompts WHERE asset_id='asset'").fetchone()[0] == (
+            created + want_days * 86400)
+    assert prompt_memory.tighten_removed_periods(admin_path=admin_path, path=media_path) == 0
+
+
+@pytest.mark.parametrize("stored", ["{", "[]", '{"groups": []}'])
+def test_startup_repair_tolerates_corrupt_stored_setting(tmp_path, capsys, stored):
+    from gateway import prompt_memory
+    admin_path, media_path = tmp_path / "admin.db", tmp_path / "media.db"
+    admin_store.init_db(admin_path)
+    with sqlite3.connect(admin_path) as conn:
+        conn.execute("INSERT INTO operator_settings(key,value_json,updated_at) VALUES(?,?,1)",
+                     (retention.SETTING_KEY, stored))
+    assert prompt_memory.tighten_removed_periods(admin_path=admin_path, path=media_path) == 0
+    assert capsys.readouterr().err.count("invalid stored retention setting") == 1
+
+
 def test_a_missing_file_stops_startup_with_a_plain_message(tmp_path, monkeypatch):
     import asyncio
     import proxy
