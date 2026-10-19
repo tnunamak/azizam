@@ -252,16 +252,15 @@ def test_total_inventory_deadline_reports_cancelled_engines(engine, monkeypatch)
     inventory._issues.clear()
     monkeypatch.setattr(inventory, 'ENGINE_TIMEOUT_S', 5)
     monkeypatch.setattr(inventory, 'LIST_TIMEOUT_S', .03)
-    closed, cancelled = [], []
+    closed, cancelled, engine_timeouts = [], [], []
     entered = asyncio.Event()
     async def hang(self, op, body):
         entered.set()
-        began = time.monotonic()
         try:
             await asyncio.sleep(5)
         except asyncio.CancelledError:
-            # The engine timeout (5 s) also cancels; only the total deadline cancels this early.
-            if time.monotonic() - began < 4:
+            # Distinguish aggregate cancellation from the engine timeout, including slow setup.
+            if not engine_timeouts[0].expired():
                 cancelled.append(self.target.engine_id)
             raise
         finally:
@@ -274,6 +273,10 @@ def test_total_inventory_deadline_reports_cancelled_engines(engine, monkeypatch)
         # the real asyncio.wait with the deadline-derived timeout. Only inventory sees this proxy.
         def __getattr__(self, name):
             return getattr(real_asyncio, name)
+        def timeout(self, delay):
+            timer = real_asyncio.timeout(delay)
+            engine_timeouts.append(timer)
+            return timer
         async def wait(self, *args, **kwargs):
             await real_asyncio.wait_for(entered.wait(), 5)
             return await real_asyncio.wait(*args, **kwargs)
