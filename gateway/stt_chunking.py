@@ -1013,7 +1013,8 @@ async def decode_planning_pcm(
         raise SttSetupFailure("STT planning decode did not create audio") from error
     if size <= 0:
         raise SttMediaCommandFailed("STT planning decode holds no audio")
-    if size > config.max_decoded_bytes:
+    # The samples are the same audio at a fixed rate, so the duration limit bounds them (with a second of slack).
+    if size > (config.max_duration_seconds + 1.0) * _PLANNING_SAMPLE_RATE * 2:
         raise SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
 
 
