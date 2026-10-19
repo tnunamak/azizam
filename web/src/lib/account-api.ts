@@ -52,6 +52,7 @@ async function accountRequest<T>(
   init: { method?: string; body?: unknown } = {},
   retried = false,
   confirmed = false,
+  renewed = false,
 ): Promise<T> {
   const headers = new Headers();
   if (init.body !== undefined) headers.set("content-type", "application/json");
@@ -73,13 +74,23 @@ async function accountRequest<T>(
       payload?.error?.code === "user_csrf_required" &&
       !retried
     )
-      return accountRequest<T>(path, init, true, confirmed);
+      return accountRequest<T>(path, init, true, confirmed, renewed);
+    // A write answered `login_required` wrote nothing (decision D41), so it is safe to send again once: the
+    // session may have renewed while the request was in flight, and the second try carries the new cookie.
+    if (
+      response.status === 401 &&
+      payload?.error?.code === "login_required" &&
+      init.method &&
+      init.method !== "GET" &&
+      !renewed
+    )
+      return accountRequest<T>(path, init, retried, confirmed, true);
     // Making a key (or connecting a client) from an old sign-in asks the person to confirm
     // it is them first, then sends the request once more.
     const reauth =
       response.status === 401 && !confirmed ? parseReauth(payload) : null;
     if (reauth && (await requestReauth(reauth)))
-      return accountRequest<T>(path, init, retried, true);
+      return accountRequest<T>(path, init, retried, true, renewed);
     throw new ApiError(
       payload?.error?.code ?? "unexpected_response",
       payload?.error?.message ??

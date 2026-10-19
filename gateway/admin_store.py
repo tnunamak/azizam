@@ -2060,40 +2060,51 @@ def create_credential_hash(
             )
 
     ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        session_guard.begin_write(conn, session)
+        record = _insert_credential_in(
+            conn, subject_kind=subject_kind, subject_id=subject_id, app_id=app_id, hash=hash, prefix=prefix,
+            display_name=display_name, scopes=scopes, created_by=created_by, expires_at=expires_at,
+            session_id=session_id, ts=ts)
+        conn.commit()
+    return record
+
+
+def _insert_credential_in(
+    conn: sqlite3.Connection, *, subject_kind: str, subject_id: str, app_id: str | None, hash: str, prefix: str,
+    display_name: str | None, scopes: Iterable[str] | None, created_by: str | None, expires_at: int | None,
+    session_id: str | None, ts: int,
+) -> dict[str, Any]:
+    """Insert one credential row inside the caller's open transaction and return it. The caller commits."""
     cred_id = _gen_id("cred")
     scopes_json = (
         json.dumps(sorted({s for s in scopes if s})) if scopes else None
     )
-    with _conn(path) as conn:
-        session_guard.begin_write(conn, session)
-        if subject_kind in _DATA_PLANE_SUBJECTS and conn.execute(
-            "SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)
-        ).fetchone():
-            raise ValueError("this App is a person's signed-in App and cannot hold API keys")
-        conn.execute(
-            "INSERT INTO credentials(id, subject_kind, subject_id, app_id, "
-            "hash, prefix, display_name, scopes_json, "
-            "created_at, created_by, expires_at, session_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                cred_id,
-                subject_kind,
-                subject_id,
-                app_id,
-                hash,
-                prefix,
-                display_name,
-                scopes_json,
-                ts,
-                created_by,
-                expires_at,
-                session_id,
-            ),
-        )
-        conn.commit()
-        row = conn.execute(
-            "SELECT * FROM credentials WHERE id = ?", (cred_id,)
-        ).fetchone()
+    if subject_kind in _DATA_PLANE_SUBJECTS and conn.execute(
+        "SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)
+    ).fetchone():
+        raise ValueError("this App is a person's signed-in App and cannot hold API keys")
+    conn.execute(
+        "INSERT INTO credentials(id, subject_kind, subject_id, app_id, "
+        "hash, prefix, display_name, scopes_json, "
+        "created_at, created_by, expires_at, session_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            cred_id,
+            subject_kind,
+            subject_id,
+            app_id,
+            hash,
+            prefix,
+            display_name,
+            scopes_json,
+            ts,
+            created_by,
+            expires_at,
+            session_id,
+        ),
+    )
+    row = conn.execute("SELECT * FROM credentials WHERE id = ?", (cred_id,)).fetchone()
     return _credential_row_to_dict(row)
 
 
@@ -2395,45 +2406,99 @@ def assign_admin_role(
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute(
-            "SELECT * FROM admin_role_assignments "
-            "WHERE role = ? AND subject_kind = ? AND subject_id = ? "
-            "AND COALESCE(scope_app_id, '') = COALESCE(?, '')",
-            (role, subject_kind, subject_id, scope_app_id),
-        ).fetchone()
-        confirmed = ts if provenance == "oidc" else None
-        if row is not None:
-            if provenance == "oidc" and row["provenance"] == "manual" and row["revoked_at"] is None:
-                return _row_to_dict(row)  # type: ignore[return-value]
-            if (subject_kind == "service_account" and row["granted_by"]
-                    and row["granted_by"] != granted_by):
-                # A key's authority belongs to whoever granted it. Re-granting
-                # under another name would let a later caller take the key over.
-                conn.rollback()
-                raise PermissionError("this service account was granted by someone else")
-            conn.execute(
-                "UPDATE admin_role_assignments SET revoked_at = NULL, "
-                "granted_at = ?, granted_by = ?, provenance = ?, last_confirmed_at = ? WHERE id = ?",
-                (ts, granted_by, provenance, confirmed, row["id"]),
-            )
-            assignment_id = row["id"]
-        else:
-            cur = conn.execute(
-                "INSERT INTO admin_role_assignments(role, subject_kind, "
-                "subject_id, scope_app_id, granted_at, granted_by, provenance, last_confirmed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (role, subject_kind, subject_id, scope_app_id, ts, granted_by, provenance, confirmed),
-            )
-            assignment_id = cur.lastrowid
-        granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
-        _audit_admin_role(conn, "admin_role.grant", granted, ts, actor=actor,
-                          actor_kind=actor_kind, actor_id=granted_by)
+        out, changed = _assign_admin_role_in(
+            conn, role=role, subject_kind=subject_kind, subject_id=subject_id, scope_app_id=scope_app_id,
+            granted_by=granted_by, provenance=provenance, actor=actor, actor_kind=actor_kind, ts=ts)
+        if changed:
+            conn.commit()
+    return out
+
+
+def _assign_admin_role_in(
+    conn: sqlite3.Connection, *, role: str, subject_kind: str, subject_id: str, scope_app_id: str | None,
+    granted_by: str | None, provenance: str, actor: Any, actor_kind: str, ts: int,
+) -> tuple[dict[str, Any], bool]:
+    """Grant a role inside the caller's open write transaction. Returns the assignment and whether anything
+    changed; the caller commits. A refusal rolls the transaction back before it raises."""
+    row = conn.execute(
+        "SELECT * FROM admin_role_assignments "
+        "WHERE role = ? AND subject_kind = ? AND subject_id = ? "
+        "AND COALESCE(scope_app_id, '') = COALESCE(?, '')",
+        (role, subject_kind, subject_id, scope_app_id),
+    ).fetchone()
+    confirmed = ts if provenance == "oidc" else None
+    if row is not None:
+        if provenance == "oidc" and row["provenance"] == "manual" and row["revoked_at"] is None:
+            return _row_to_dict(row), False  # type: ignore[return-value]
+        if (subject_kind == "service_account" and row["granted_by"]
+                and row["granted_by"] != granted_by):
+            # A key's authority belongs to whoever granted it. Re-granting
+            # under another name would let a later caller take the key over.
+            conn.rollback()
+            raise PermissionError("this service account was granted by someone else")
+        conn.execute(
+            "UPDATE admin_role_assignments SET revoked_at = NULL, "
+            "granted_at = ?, granted_by = ?, provenance = ?, last_confirmed_at = ? WHERE id = ?",
+            (ts, granted_by, provenance, confirmed, row["id"]),
+        )
+        assignment_id = row["id"]
+    else:
+        cur = conn.execute(
+            "INSERT INTO admin_role_assignments(role, subject_kind, "
+            "subject_id, scope_app_id, granted_at, granted_by, provenance, last_confirmed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (role, subject_kind, subject_id, scope_app_id, ts, granted_by, provenance, confirmed),
+        )
+        assignment_id = cur.lastrowid
+    granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
+    _audit_admin_role(conn, "admin_role.grant", granted, ts, actor=actor,
+                      actor_kind=actor_kind, actor_id=granted_by)
+    return _row_to_dict(granted), True  # type: ignore[return-value]
+
+
+def create_admin_key_with_role(
+    *,
+    name: str,
+    description: str | None,
+    role: str,
+    granted_by: str | None,
+    actor: Any,
+    hash: str,
+    prefix: str,
+    display_name: str,
+    created_by: str | None,
+    session: session_guard.BrowserSession | None = None,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Make a service account, grant it ``role`` and give it a key, in one transaction.
+
+    The sign-in that asked (``session``, decision D41) is checked in this transaction first: when it has ended,
+    nothing is made, no account and no role to take back. ``sqlite3.IntegrityError`` when the name is taken.
+    Returns the service account, the assignment and the credential.
+    """
+    if not name:
+        raise ValueError("service account name is required")
+    if role not in {"owner", "admin"}:
+        raise ValueError("role must be one of: owner, admin")
+    ts = _now() if now is None else int(now)
+    svc_id = _gen_id("svc")
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        conn.execute(
+            "INSERT INTO service_accounts(id, name, description, created_at) VALUES (?, ?, ?, ?)",
+            (svc_id, name, description, ts),
+        )
+        account = _row_to_dict(conn.execute("SELECT * FROM service_accounts WHERE id = ?", (svc_id,)).fetchone())
+        assignment, _ = _assign_admin_role_in(
+            conn, role=role, subject_kind="service_account", subject_id=svc_id, scope_app_id=None,
+            granted_by=granted_by, provenance="manual", actor=actor, actor_kind="system", ts=ts)
+        credential = _insert_credential_in(
+            conn, subject_kind="service_account", subject_id=svc_id, app_id=None, hash=hash, prefix=prefix,
+            display_name=display_name, scopes=None, created_by=created_by, expires_at=None, session_id=None, ts=ts)
         conn.commit()
-        out = conn.execute(
-            "SELECT * FROM admin_role_assignments WHERE id = ?",
-            (assignment_id,),
-        ).fetchone()
-    return _row_to_dict(out)  # type: ignore[return-value]
+    return account, assignment, credential  # type: ignore[return-value]
 
 
 def reconcile_oidc_admin_roles(
@@ -3542,6 +3607,7 @@ __all__ = [
     "list_apps",
     "list_apps_for_user",
     "create_credential_hash",
+    "create_admin_key_with_role",
     "revoke_credential",
     "get_credential",
     "find_credential_by_hash",

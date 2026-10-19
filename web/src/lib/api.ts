@@ -718,6 +718,14 @@ async function send(
   return answer;
 }
 
+function isLoginRequired({ response, payload }: Answer): boolean {
+  return (
+    response.status === 401 &&
+    isErrorEnvelope(payload) &&
+    payload.error.code === "login_required"
+  );
+}
+
 /** Send the request; when the gateway asks the person to confirm it is them
  * (`401 reauth_required`), wait for the one shared prompt and send it once
  * more. A cancelled prompt leaves the first answer, so callers see the
@@ -727,7 +735,13 @@ async function sendWithReauth(
   init: AdminFetchInit,
   parse: boolean,
 ): Promise<Answer> {
-  const first = await send(path, init, false, parse);
+  let first = await send(path, init, false, parse);
+  // A write answered `login_required` wrote nothing (decision D41), so it is safe to send again. The session may
+  // simply have renewed while the request was in flight (its old id was in the 60 s grace window, or the
+  // response carrying the new one was lost); the second try carries the cookie the browser holds now.
+  if (isLoginRequired(first) && (init.method ?? "GET") !== "GET") {
+    first = await send(path, init, true, parse);
+  }
   const reauth =
     first.response.status === 401 ? parseReauth(first.payload) : null;
   if (!reauth || !(await requestReauth(reauth))) return first;

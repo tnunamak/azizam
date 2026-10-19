@@ -50,6 +50,7 @@ CREATES = re.compile(
 # inside its own transaction.
 GUARDED = {
     "gateway/admin_store.py::create_credential_hash": "App keys, Try keys, admin keys",
+    "gateway/admin_store.py::create_admin_key_with_role": "a dashboard admin key with its service account and role, in one transaction",
     "gateway/admin_store.py::set_local_password_verifier": "the owner's password",
     "gateway/accounts.py::create_link": "invitation and password-reset links",
     "gateway/mcp_oauth_store.py::Store.create_grant": "an MCP connection (consent)",
@@ -66,6 +67,7 @@ GUARDED = {
 
 # Writers no browser sign-in starts, with why.
 EXEMPT = {
+    "gateway/admin_store.py::_insert_credential_in": "inserts inside the open transaction of its two callers, both guarded above",
     "gateway/accounts.py::accept_invite": "the holder of an invitation link; no sign-in exists yet, the new person's first key is made with the account",
     "gateway/accounts.py::reset_password": "the holder of a reset link; every sign-in of the person ends with it",
     "gateway/admin_store.py::claim_first_local_owner": "first-run setup before any sign-in exists",
@@ -83,7 +85,8 @@ NO_BROWSER = {
 REGISTRY_WRITERS = {"write_service_registry", "write_service_registry_with_audit",
                     "write_service_registry_and_setting_with_audits"}
 SECRET_STORE_WRITERS = {"put_provider_secret", "delete_provider_secret"}
-CALLED_AS = {"create_credential_hash", "set_local_password_verifier", "create_link", "create_grant"} | REGISTRY_WRITERS
+CALLED_AS = ({"create_credential_hash", "create_admin_key_with_role", "set_local_password_verifier", "create_link",
+              "create_grant"} | REGISTRY_WRITERS)
 # Writers whose plain name another function also has (the runtime's own ``add_trusted_address(actor=...)``), called
 # by their dotted names.
 CALLED_AS_DOTTED = {"admin_store.add_trusted_address", "signin_admin.link_identity"}
@@ -123,6 +126,8 @@ def _own_nodes(function):
 
 
 EXECUTE = {"execute", "executemany", "executescript"}
+# Helpers that write inside the caller's open transaction; whoever calls one is a writer.
+IN_TRANSACTION_WRITES = {"write_service_registry_in_transaction", "_insert_credential_in"}
 
 
 def _module_strings(tree: ast.AST) -> dict[str, str]:
@@ -169,8 +174,8 @@ def writers_in(source: str, rel: str) -> set[str]:
                   for node in _own_nodes(function))
         hit = hit or any(CREATES.search(_assembled(call.args[0], strings)) for call in _execute_calls(function))
         hit = hit or any(isinstance(node, ast.Call) and getattr(node.func, "attr", getattr(node.func, "id", ""))
-                         == "write_service_registry_in_transaction" for node in _own_nodes(function))
-        if hit and not qualname.endswith("write_service_registry_in_transaction"):
+                         in IN_TRANSACTION_WRITES for node in _own_nodes(function))
+        if hit and qualname.rsplit(".", 1)[-1] not in {"write_service_registry_in_transaction"}:
             found.add(f"{rel}::{qualname}")
     return found
 
@@ -378,8 +383,10 @@ CREDENTIAL_TABLES = {
 }
 # Tables that hold or grant something but whose writers are listed, not guarded, with why.
 REVIEWED_UNGUARDED_TABLES = {
-    "admin_role_assignments": "grants authority, not a secret or a way in; behind the step-up window (D36). A role granted by a "
-                              "request in flight at sign-out is the remaining limit named in D41",
+    "admin_role_assignments": "grants authority, not a secret or a way in. The one browser path, the dashboard's admin key, grants the "
+                              "role to a fresh service account in the same transaction that checks the sign-in and inserts the key "
+                              "(create_admin_key_with_role), so a signed-out request grants nothing. The other writers are the CLI, "
+                              "the first-owner claims at setup and the provider-claim reconcile at sign-in; no signed-in browser asks",
     "mcp_oauth_clients": "dynamic client registration is a public endpoint: no browser sign-in asks for it, and a client holds no access until a person consents (create_grant)",
     "mcp_oauth_requests": "a pending authorization request; it grants nothing until the consent, which is guarded",
     "service_accounts": "a name for an admin key's owner; the key itself is in `credentials`, guarded",
@@ -413,6 +420,10 @@ def test_every_table_is_classified_so_a_new_credential_table_is_not_missed():
     assert CREDENTIAL_TABLES <= set(re.findall(r"\|?([a-z_]+)", CREATES.pattern)), "a credential table is missing from CREATES"
 
 
+GUARDED_NAMES = {"create_credential_hash", "create_admin_key_with_role", "create_link", "set_local_password_verifier",
+                 "create_grant"}
+
+
 def test_routes_that_make_a_credential_are_found_through_their_helpers():
     """The routes below reach a guarded writer; the call graph that finds them is the same one the step-up
     coverage test uses. If discovery broke, this fails before the guarantee is silently empty."""
@@ -425,9 +436,9 @@ def test_routes_that_make_a_credential_are_found_through_their_helpers():
             if method in {"HEAD", "OPTIONS"} or endpoint is None:
                 continue
             reached = {fn.__name__ for fn in call_graph.reach(endpoint)}
-            if reached & {"create_credential_hash", "create_link", "set_local_password_verifier", "create_grant"}:
+            if reached & GUARDED_NAMES:
                 reaching[(method, re.sub(r"\{[^}]+\}", "*", route.path))] = sorted(
-                    reached & {"create_credential_hash", "create_link", "set_local_password_verifier", "create_grant"})
+                    reached & GUARDED_NAMES)
 
     assert {("POST", "/me/api/apps/*/keys"), ("POST", "/me/api/try-key"), ("POST", "/admin/api/apps/*/keys"),
             ("POST", "/admin/api/admin-keys"), ("POST", "/setup/first-app"), ("POST", "/admin/api/invites"),
@@ -496,6 +507,13 @@ def world(tmp_path):
             {"services": {}}, expected_generation=generation(), updated_by="u", setting_key="some_setting",
             setting_value={"a": 1}, audits=[{"action": "t"}], session=session, path=db)
 
+    def make_admin_key(session):
+        state["n"] += 1
+        return admin_store.create_admin_key_with_role(
+            name=f"robot-{state['n']}", description=None, role="admin", granted_by=user["id"], actor=None,
+            hash=f"ah{state['n']}", prefix="oak_x", display_name="robot key", created_by=user["id"],
+            session=session, path=db)
+
     def make_secret(session):
         state["n"] += 1
         return secret_store.put_provider_secret(f"secret-{state['n']}", "a-secret-value", db_path=db, session=session)
@@ -511,6 +529,7 @@ def world(tmp_path):
 
     # writer name -> (make, a number that grows by one with each write)
     writes = {
+        "create_admin_key_with_role": (make_admin_key, lambda: count("service_accounts")),
         "put_provider_secret": (make_secret, lambda: count("provider_secrets")),
         "add_trusted_address": (make_trusted_address, lambda: count("app_trusted_addresses")),
         "link_identity": (make_identity_link, lambda: count("oidc_identity_links")),
@@ -642,14 +661,16 @@ def test_an_admin_app_key_is_not_made_after_sign_out_everywhere(sg, monkeypatch)
 def test_an_admin_automation_key_is_not_made_after_sign_out_everywhere(sg, monkeypatch):
     client = owner_client(sg)
     headers = {**csrf(client), **ACT}
-    sign_out_just_before(sg, monkeypatch, admin_store, "create_credential_hash", cookie_session(client).subject)
+    sign_out_just_before(sg, monkeypatch, admin_store, "create_admin_key_with_role", cookie_session(client).subject)
 
     response = client.post("/admin/api/admin-keys", json={"name": "late-robot", "role": "admin"}, headers=headers)
 
     assert response.status_code == 401, response.text
     assert sg.rows("SELECT * FROM credentials WHERE subject_kind='service_account'") == []
-    # The account the request had made is left holding no role.
-    assert sg.rows("SELECT * FROM admin_role_assignments WHERE subject_kind='service_account' AND revoked_at IS NULL") == []
+    # Nothing was made, so there is nothing to take back: no account, no role (not even a revoked one), no grant fact.
+    assert sg.rows("SELECT * FROM service_accounts WHERE name='late-robot'") == []
+    assert sg.rows("SELECT * FROM admin_role_assignments WHERE subject_kind='service_account'") == []
+    assert sg.rows("SELECT * FROM audit_events WHERE action='admin_role.grant' AND metadata_json LIKE '%service_account%'") == []
 
 
 def test_a_try_key_is_not_made_after_sign_out_everywhere(sg, monkeypatch):
@@ -757,3 +778,34 @@ def test_a_permanent_key_is_not_made_by_a_request_whose_session_ran_out_while_it
 
     assert response.status_code == 401, response.text
     assert sg.rows("SELECT * FROM credentials WHERE app_id=?", (app_id,)) == []
+
+
+# -- a request that carries a retired session id (documented in docs/ops/SIGN_IN_SESSIONS.md) --------
+
+def test_a_credential_write_with_an_id_in_its_grace_window_is_refused_and_works_with_the_new_cookie(sg):
+    """The session is fine, but a retired id only serves reads: the write answers 401 and writes nothing. The web
+    client sends it once more, and that second request carries the cookie the browser holds by then."""
+    from dataclasses import replace
+
+    from gateway.admin_oidc import encode_session_cookie
+    from tests.test_session_lifecycle import COOKIE
+
+    client = owner_client(sg)
+    headers = {**csrf(client), **ACT}
+    app_id = client.post("/me/api/apps", json={"name": "mine"}, headers=headers).json()["app"]["id"]
+    old = cookie_session(client)
+    now = int(time.time())
+    assert accounts.rotate_session(old.subject, old.session_id, old.family_id, "renewed-id",
+                                   old_expires_at=now + 100, expires_at=now + 1000, path=sg.path)
+
+    during_grace = client.post(f"/me/api/apps/{app_id}/keys", json={"label": "late"}, headers=headers)
+
+    assert during_grace.status_code == 401 and during_grace.json()["error"]["code"] == "login_required"
+    assert sg.rows("SELECT * FROM credentials WHERE app_id=?", (app_id,)) == []
+
+    renewed = replace(old, session_id="renewed-id", family=old.family_id, expires_at=now + 1000)
+    client.cookies.set(COOKIE, encode_session_cookie(renewed, signing_key=SIGNING_KEY))
+
+    retried = client.post(f"/me/api/apps/{app_id}/keys", json={"label": "late"}, headers=headers)
+
+    assert retried.status_code == 201, retried.text

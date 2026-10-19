@@ -174,6 +174,10 @@ The response names the ways to confirm:
 - `sign_in`: neither is possible for this session (for example it came from an
   admin key claim). Sign in again.
 
+API keys are never asked. An admin key with the owner role can still do all of
+these actions headless. A request that carries a valid session cookie is treated
+as that session, even if it also carries a key.
+
 ### A provider that does not report the sign-in time (decision D40)
 
 An ordinary provider sign-in records `auth_time` from the ID token as the time the person
@@ -206,20 +210,31 @@ sign-out that committed between its binding check and its commit stops it.
 Stored secrets follow the same rule: a provider key, an engine's key, the secret entries of a record and
 the identity provider's client secret are stored, replaced or deleted only when the sign-in that asks is
 still live. So are a trusted address (it lets a device in with no key) and the link of an identity-provider
-account to the owner. Clean-up of a secret that the same request stored runs even after sign-out. A
-role granted by a request in flight at sign-out is not checked; it is behind the confirmation window only.
+account to the owner. A request that is refused part-way (the sign-out lands between two of its secret
+writes) takes back the secrets it had already stored, so a refused request leaves no secret behind; that
+clean-up carries no sign-in and runs even after sign-out.
+
+A role is granted to a browser sign-in's request in one place only: the dashboard's admin key. The service
+account, its role and its key are made in one transaction that checks the sign-in first, so a signed-out
+request makes none of them. The other role grants are the command line, the first-owner claims at setup and
+the identity provider's group claims at sign-in; no signed-in browser asks for those.
+
+### A write sent with a retired session id
+
+A renewal replaces the session id, and the old id still works for 60 seconds (see "Copied cookies and lost
+responses"). During that window, and after a lost response until the gateway reissues, the old id serves
+reads but is not "live" for a write that makes a credential or a stored secret. Such a write answers
+`401 login_required` and writes nothing, although the person is still signed in. It is rare: it needs a
+credential request in flight at the moment of a renewal, or a phone that woke up with an id whose
+successor never arrived. The web app sends such a write once more at once; that second request carries the
+cookie the browser holds by then, and it succeeds. A client that is not the web app (a script holding a
+copied cookie) should do the same, or sign in again. Only writes that make or change a credential are
+affected, and a `401 login_required` for one never means that something was written.
 
 "Live" includes the deadlines. A request whose session ran past its idle timeout or its absolute
 lifetime while the request was in flight is refused too, whether or not the server requires a stored
 record for that person's sessions: the cookie's deadlines and the stored row's deadline are both
 checked, and the deadline second itself counts as ended.
-- `sign_in`: neither is possible for this session (for example it came from an
-  admin key claim). Sign in again.
-
-API keys are never asked. An admin key with the owner role can still do all of
-these actions headless. A request that carries a valid session cookie is treated
-as that session, even if it also carries a key.
-
 ## Cookie
 
 The cookie is `opx_admin_session`, `HttpOnly`, `SameSite=Lax`, `Path=/`, and

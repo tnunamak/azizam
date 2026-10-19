@@ -186,3 +186,87 @@ def test_a_trusted_address_is_not_added_after_sign_out_everywhere(gateway, monke
 
     assert response.status_code == 401, response.text
     assert gateway.rows("SELECT * FROM app_trusted_addresses") == []
+
+
+# -- a refused request leaves no secret behind (from the independent review of d9740dc9) -------------
+
+def _secret_ids(gateway):
+    try:
+        return {row["id"] for row in gateway.rows("SELECT id FROM provider_secrets")}
+    except Exception:  # noqa: BLE001 - no secret was ever stored
+        return set()
+
+
+def _sign_out_at_nth_session_put(monkeypatch, gateway, owner_id, n):
+    """Sign out everywhere just before the n-th secret write that carries a sign-in (1-based)."""
+    original = secret_store.put_provider_secret
+    seen: list[int] = []
+
+    def wrapped(*args, **kw):
+        if kw.get("session") is not None:
+            seen.append(1)
+            if len(seen) == n:
+                accounts.revoke_person_sessions(owner_id, path=gateway.path)
+        return original(*args, **kw)
+
+    monkeypatch.setattr(secret_store, "put_provider_secret", wrapped)
+    return seen
+
+
+def test_secret_entries_sign_out_at_second_put_leaves_no_stored_secret(gateway, host_isolated, tmp_path, monkeypatch):
+    owner, owner_id, _, admin = owner_and_admin(gateway)
+    Ctx(gateway, owner, admin, tmp_path, monkeypatch)
+    _seed_registry(gateway)
+    before_ids = _secret_ids(gateway)
+    before = admin_store.get_service_registry_with_generation(path=gateway.path)
+    seen = _sign_out_at_nth_session_put(monkeypatch, gateway, owner_id, 2)
+
+    response = owner.post(_fill("/admin/api/operator/services/{service_id}/secret-entries"),
+                          headers={"If-Match": _etag(gateway), **csrf_for(owner)},
+                          json={"commands": [
+                              {"carrier": "config.headers", "operation": "add", "name": "X-One", "value": "first-secret-value-1"},
+                              {"carrier": "config.headers", "operation": "add", "name": "X-Two", "value": "second-secret-value-2"},
+                          ]})
+
+    assert len(seen) >= 2, response.text
+    assert response.status_code == 401, response.text
+    after = admin_store.get_service_registry_with_generation(path=gateway.path)
+    assert after["operator_settings_generation"] == before["operator_settings_generation"]
+    assert _secret_ids(gateway) - before_ids == set(), "a secret stored by the refused request was left behind"
+
+
+def test_left_out_fix_sign_out_at_second_put_leaves_no_stored_secret(gateway, host_isolated, tmp_path, monkeypatch):
+    owner, owner_id, _, admin = owner_and_admin(gateway)
+    ctx = Ctx(gateway, owner, admin, tmp_path, monkeypatch)
+    _seed_registry(gateway)
+    record = ctx.left_out_fixed("held-url")
+    record["config"].setdefault("headers", []).extend([
+        {"name": "X-One", "value": "inline-one-value-4711"}, {"name": "X-Two", "value": "inline-two-value-4711"}])
+    before_ids = _secret_ids(gateway)
+    seen = _sign_out_at_nth_session_put(monkeypatch, gateway, owner_id, 2)
+
+    response = owner.put(_fill("/admin/api/operator/service-registry/excluded/{section}/{record_id}"),
+                         headers={"If-Match": _etag(gateway), **csrf_for(owner)}, json={"record": record})
+
+    assert len(seen) >= 2, response.text
+    assert response.status_code == 401, response.text
+    assert _secret_ids(gateway) - before_ids == set(), "a secret stored by the refused request was left behind"
+
+
+def test_registry_save_sign_out_at_second_put_leaves_no_stored_secret(gateway, host_isolated, tmp_path, monkeypatch):
+    """The same for the whole-registry save, which stores each inline value as it ingests the records."""
+    owner, owner_id, _, admin = owner_and_admin(gateway)
+    ctx = Ctx(gateway, owner, admin, tmp_path, monkeypatch)
+    _seed_registry(gateway)
+    registry = ctx.registry_echo()
+    registry["services"]["engine-d"]["config"].setdefault("headers", []).extend([
+        {"name": "X-One", "value": "inline-one-value-4711"}, {"name": "X-Two", "value": "inline-two-value-4711"}])
+    before_ids = _secret_ids(gateway)
+    seen = _sign_out_at_nth_session_put(monkeypatch, gateway, owner_id, 2)
+
+    response = owner.put("/admin/api/operator/service-registry",
+                         headers={"If-Match": _etag(gateway), **csrf_for(owner)}, json=registry)
+
+    assert len(seen) >= 2, response.text
+    assert response.status_code == 401, response.text
+    assert _secret_ids(gateway) - before_ids == set()

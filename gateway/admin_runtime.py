@@ -30,7 +30,6 @@ from fastapi import Request, status
 from gateway import admin_store, browser_sessions, engine_check, step_up, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
 from gateway import session_guard
-from gateway.session_guard import SessionEnded
 from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
     SERVICE_ACCOUNT_SESSION_PREFIX,
@@ -670,27 +669,17 @@ class AdminSQLiteStore:
             raise PermissionError("owner role required to mint owner keys")
         # A key always gets a service account of its own. Reusing one by name
         # would let a caller take over a key that someone else minted.
-        try:
-            service_account = admin_store.create_service_account(
-                name, description="Owner for an admin automation key created from the dashboard.",
-                path=self.path,
-            )
-        except sqlite3.IntegrityError:
-            raise AdminKeyNameTaken(f"a key named {name!r} already exists; choose another name") from None
-        minter = f"{actor.actor_kind}:{actor.audit_actor_id}"
-        assignment = admin_store.assign_admin_role(
-            role=role,
-            subject_kind="service_account",
-            subject_id=service_account["id"],
-            granted_by=actor.audit_actor_id,
-            actor=actor,
-            path=self.path,
-        )
+        # The account, its role and its key are made in one transaction that first checks the sign-in
+        # (decision D41): when the sign-in has ended nothing exists, so there is no role to take back.
         api_key = generate_admin_api_key()
+        minter = f"{actor.actor_kind}:{actor.audit_actor_id}"
         try:
-            credential = admin_store.create_credential_hash(
-                subject_kind="service_account",
-                subject_id=service_account["id"],
+            service_account, assignment, credential = admin_store.create_admin_key_with_role(
+                name=name,
+                description="Owner for an admin automation key created from the dashboard.",
+                role=role,
+                granted_by=actor.audit_actor_id,
+                actor=actor,
                 hash=hash_api_key(api_key),
                 prefix=_key_prefix(api_key),
                 display_name=f"{name} admin automation key",
@@ -698,12 +687,8 @@ class AdminSQLiteStore:
                 session=actor.browser_session,
                 path=self.path,
             )
-        except SessionEnded:
-            # The sign-in ended after the role was granted and before the key was made: take the role back, so
-            # the account is left holding nothing.
-            admin_store.revoke_admin_role(
-                assignment["id"], actor_kind="system", actor_id="session_guard", path=self.path)
-            raise
+        except sqlite3.IntegrityError:
+            raise AdminKeyNameTaken(f"a key named {name!r} already exists; choose another name") from None
         admin_store.record_audit(
             "admin_key.create",
             actor_kind=actor.actor_kind,
@@ -857,7 +842,12 @@ class AdminSQLiteStore:
                 created.append(ref)
                 return ref
 
-            record, _ = record_carriers.ingest_service(record, stored, put)
+            try:
+                record, _ = record_carriers.ingest_service(record, stored, put)
+            except BaseException:
+                # A sign-out between two puts refuses the second; the first must not stay behind.
+                self._discard_secrets(created)
+                raise
         try:
             if section == "services" and isinstance(record, Mapping) and service_registry.is_litellm_service_record(held.id, record):
                 raise ValueError(f"service {held.id!r} is a managed substrate; remove it and the gateway restores its own")
@@ -1456,11 +1446,19 @@ class AdminSQLiteStore:
             record = (registry.get("services") or {}).get(sid)
             if record is None:
                 raise ValueError(f"service {sid!r} not found")
-            put = secret_refs.putter(self.path, session=actor.browser_session)
+            stored_put = secret_refs.putter(self.path, session=actor.browser_session)
+            made: list[str] = []
+
+            def put(value: str, origin: str | None = None) -> str:
+                ref = stored_put(value, origin)
+                made.append(ref)
+                return ref
+
             try:
                 new_record, outcome = secret_commands.apply_commands(record, commands, put)
-            except secret_commands.CommandError as error:
-                for ref in getattr(error, "created", ()):
+            except BaseException:
+                # Any error, a sign-out between two puts included, takes back what this call stored.
+                for ref in made:
                     secret_refs.delete(ref, db_path=self.path)
                 raise
             if not outcome.changed:
