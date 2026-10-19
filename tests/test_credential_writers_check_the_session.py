@@ -403,7 +403,10 @@ NOT_CREDENTIAL_TABLES = {
     "prompt_memory_erasure_intents", "prompt_memory_preferences", "prompt_metadata_migration",
     "prompt_metadata_migration_attempts", "prompt_purge_done", "prompt_purge_queue", "provider_spend",
     "receipt_history", "receipts", "schema_migration_steps", "schema_version", "signin_rule_plans",
-    "signin_seen_values", "user_identity_claims", "users", "video_job_records",
+    # user_avatars: the choice of a generated or a sign-in picture and the picture's https URL the provider
+    # shared. It holds no secret and moves none; the URL is only ever fetched by the SSRF-guarded fetcher
+    # (decision D36 asks about credentials and where they are sent, so no step-up and no require_live here).
+    "signin_seen_values", "user_avatars", "user_identity_claims", "users", "video_job_records",
 }
 
 
