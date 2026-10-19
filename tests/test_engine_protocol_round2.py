@@ -252,16 +252,35 @@ def test_total_inventory_deadline_reports_cancelled_engines(engine, monkeypatch)
     inventory._issues.clear()
     monkeypatch.setattr(inventory, 'ENGINE_TIMEOUT_S', 5)
     monkeypatch.setattr(inventory, 'LIST_TIMEOUT_S', .03)
-    closed = []
+    closed, cancelled = [], []
+    entered = asyncio.Event()
     async def hang(self, op, body):
+        entered.set()
+        began = time.monotonic()
         try:
             await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            # The engine timeout (5 s) also cancels; only the total deadline cancels this early.
+            if time.monotonic() - began < 4:
+                cancelled.append(self.target.engine_id)
+            raise
         finally:
             closed.append(self.target.engine_id)
     monkeypatch.setattr(dispatch.Runtime, 'invoke', hang)
+    real_asyncio = asyncio
+    class WaitAfterProbeEntered:
+        # The total deadline starts before the cold description read and Runtime construction, so on
+        # a slow host it can expire before the probe starts. Wait (bounded) for the probe, then run
+        # the real asyncio.wait with the deadline-derived timeout. Only inventory sees this proxy.
+        def __getattr__(self, name):
+            return getattr(real_asyncio, name)
+        async def wait(self, *args, **kwargs):
+            await real_asyncio.wait_for(entered.wait(), 5)
+            return await real_asyncio.wait(*args, **kwargs)
+    monkeypatch.setattr(inventory, 'asyncio', WaitAfterProbeEntered())
     response = engine.client.get('/v1/models')
     assert response.status_code == 200
-    assert closed == [engine.record['id']]
+    assert closed == cancelled == [engine.record['id']]
     assert any(row['engine_id'] == engine.record['id'] for row in inventory.problems())
 
 
