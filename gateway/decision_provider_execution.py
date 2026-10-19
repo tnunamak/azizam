@@ -185,7 +185,8 @@ def openai_decisions_provider(registry: Mapping[str, Any]) -> providers.Provider
 
 
 def _map_provider_error(error: providers.ProviderError) -> PaidDecisionError:
-    headers = {"retry-after": error.retry_after} if error.retry_after else None
+    seconds = client_errors.retry_after(error.retry_after)
+    headers = {"retry-after": seconds} if seconds else None
     return PaidDecisionError(error.status_code, error.code, str(error), headers=headers)
 
 
@@ -447,10 +448,18 @@ async def openai(
                 "x-azizam-provider": provider.id,
                 "x-azizam-cost-usd": str(receipt.cost["usd"]) if receipt.cost and receipt.cost.get("usd") is not None else "unknown",
             }
+            if upstream_status >= 400:
+                # An error reply is the gateway's words, not the provider's (decision D45); it echoes what it was sent.
+                return client_errors.upstream_error_response(
+                    upstream_status, upstream_content, upstream_headers,
+                    request_id=receipt.request_id, own_headers=headers,
+                    request_fields=body if isinstance(body, Mapping) else None,
+                )
             seconds = client_errors.retry_after(upstream_headers.get("retry-after"))
             if seconds is not None:
                 headers["retry-after"] = seconds
-            return Response(upstream_content, status_code=upstream_status, media_type=upstream_headers.get("content-type", "application/json"), headers=headers)
+            return Response(upstream_content, status_code=upstream_status,
+                            media_type=client_errors.safe_content_type(upstream_headers.get("content-type")), headers=headers)
         except TimeoutError:
             owner.report(status="failed", reason="deadline_exceeded")
             return PaidDecisionError(504, "deadline_exceeded", "Remote decision provider timed out.").response()

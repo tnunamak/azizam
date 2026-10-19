@@ -19,6 +19,7 @@ given text derived from an upstream reply or from an exception caught around a c
 
 from __future__ import annotations
 
+import codecs
 import datetime
 import email.utils
 import json
@@ -181,6 +182,48 @@ _UNKNOWN_MODEL = re.compile(
 
 _RETRY_AFTER_NUMBER = re.compile(r"^[0-9]{1,9}(\.[0-9]{1,3})?$")
 _RETRY_AFTER_MAX = 86400
+_MEDIA_TYPE = re.compile(r"[a-z0-9][a-z0-9.+\-]*/[a-z0-9][a-z0-9.+\-]*")
+_CHARSET_TOKEN = re.compile(r"[a-z0-9][a-z0-9_.:+\-]{0,31}")
+# RFC 9110 parameter: ``;`` name ``=`` token or quoted-string (backslash escapes). Whitespace around ``;`` is allowed.
+_PARAMETER = re.compile(r'\s*;\s*([!#$%&\'*+.^_`|~0-9a-z-]+)=("(?:[^"\\]|\\.)*"|[!#$%&\'*+.^_`|~0-9a-z-]*)', re.IGNORECASE)
+
+
+def _charset_of(parameters: str) -> str | None:
+    position = 0
+    while position < len(parameters):
+        match = _PARAMETER.match(parameters, position)
+        if match is None:
+            return None
+        position = match.end()
+        if match.group(1).lower() != "charset":
+            continue
+        value = match.group(2)
+        if value.startswith('"'):
+            value = re.sub(r"\\(.)", r"\1", value[1:-1])
+        value = value.lower()
+        if _CHARSET_TOKEN.fullmatch(value):
+            try:
+                codecs.lookup(value)
+            except LookupError:
+                return None
+            return value
+        return None
+    return None
+
+
+def safe_content_type(value: str | None, default: str = "application/json") -> str:
+    """The media type of an engine's reply with its charset (quoted or not, in any position), nothing else it wrote.
+
+    The reviewer found no relayed multipart success, so no ``boundary`` is kept; a path that relays one must add it.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return default
+    media, _, parameters = value.strip().lower().partition(";")
+    media = media.strip()
+    if _MEDIA_TYPE.fullmatch(media) is None:
+        return default
+    charset = _charset_of(";" + parameters) if parameters else None
+    return media + (f"; charset={charset}" if charset else "")
 
 
 def status_reason(status: int) -> str:

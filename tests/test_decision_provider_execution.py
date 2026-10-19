@@ -431,7 +431,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows, [("needs_reconciliation", None)])
 
 
-    async def test_openai_opaque_hook_forwards_403_body_and_status_without_rewriting(self) -> None:
+    async def test_openai_opaque_hook_answers_a_403_with_the_gateways_words_and_the_status(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(403, json={"error": {"code": "not_enabled", "message": "disabled"}})
 
@@ -446,14 +446,14 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
 
         body = json.loads(await _response_body(response))
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(body, {"error": {"code": "not_enabled", "message": "disabled"}})
+        self.assertEqual(body, {"error": {"message": "The engine refused the request.", "type": "permission_error", "param": None, "code": None}})
         self.assertEqual(len(self.receipts), 1)
         self.assertEqual(self.receipts[0].status, "failed")
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
         self.assertEqual(rows, [("needs_reconciliation", None)])
 
-    async def test_openai_opaque_hook_forwards_429_retry_after_and_releases_unknown_reservation(self) -> None:
+    async def test_openai_opaque_hook_answers_a_429_with_retry_after_as_a_number_and_releases_unknown_reservation(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(429, headers={"retry-after": "7"}, json={"error": {"code": "rate_limit"}})
 
@@ -468,7 +468,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
 
         body = json.loads(await _response_body(response))
         self.assertEqual(response.status_code, 429)
-        self.assertEqual(body, {"error": {"code": "rate_limit"}})
+        self.assertEqual(body, {"error": {"message": "The engine is busy or limiting requests. Try again later.", "type": "rate_limit_error", "param": None, "code": None}})
         self.assertEqual(response.headers["retry-after"], "7")
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()

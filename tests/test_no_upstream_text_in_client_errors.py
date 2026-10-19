@@ -283,3 +283,169 @@ def unrelated(payload):
     return payload.get("message")
 '''
     assert error_field_reads([("x.py", ast.parse(relay))]) == {"x.py::handle_chunk", "x.py::inline"}
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Responses built from an upstream's status, content type or Retry-After (decision D45, round 12)
+#
+# ``relays`` above finds ``Response(content=x.content, status_code=x.status_code)``. A relay can also take its body from a
+# name (``Response(upstream_content, status_code=upstream_status)``), so these scans look at the other two values an
+# upstream chooses: the status it answered with, and the header it wrote. A response whose status is an upstream's passes
+# only when its function sends an error status (>= 400) through ``client_errors`` first; the list below says which function
+# does. A ``Content-Type`` or ``Retry-After`` an upstream wrote reaches a caller only through ``client_errors``.
+# ---------------------------------------------------------------------------------------------------------------------
+
+RESPONSE_CALLS = {"Response", "JSONResponse", "PlainTextResponse", "HTMLResponse", "StreamingResponse"}
+UPSTREAM_RECEIVERS = taint.REPLY_NAMES | {"upstream"}
+
+# "file::function": the response takes the upstream's status; why an error status never reaches it that way.
+ALLOWED_STATUS_RELAYS: dict[str, str] = {
+    "gateway/decision_provider_execution.py::openai": "an upstream status >= 400 returns client_errors.upstream_error_response first",
+    "gateway/provider_execution.py::execute_paid_litellm": "an upstream status >= 400 is answered with gateway.providers errors or a fixed body first; the "
+                                                          "stream branch takes only 2xx",
+    "proxy.py::_proxy_tts_once": "a status outside 2xx returns a fixed TTS error first",
+    "proxy.py::_stt_response_from_upstream": "a status >= 400 returns client_errors.upstream_error_response first",
+    "proxy.py::_upstream_admission_response": "the body is the gateway's own admission refusal, re-shaped for a protocol; Retry-After goes through client_errors",
+    "proxy.py::_forward_current_loaded_openai_request": "a stream is relayed only below 400; an error reply goes through _engine_error_response",
+    "proxy.py::_forward_litellm_proxy_request": "a stream is relayed only below 400; an error reply goes through _engine_error_response",
+    "proxy.py::_try_protocol_request": "the body is rebuilt from the validated public shape; an engine error raises and goes through _protocol_failure",
+    "proxy.py::_forward_internal_litellm_local_upstream": "the internal hop the model router calls with the lifecycle key; the router's own reply to a caller goes "
+                                                        "through _engine_error_response",
+    "proxy.py::_forward_provider_native": "an upstream status >= 400 returns client_errors.upstream_error_response first",
+}
+
+# "file::function": a Content-Type taken from an upstream without ``client_errors.safe_content_type``.
+ALLOWED_CONTENT_TYPES: dict[str, str] = {
+    "proxy.py::_forward_provider_native": "the native lane relays the engine's success headers as they are (an owner-only lane); an error is rebuilt",
+}
+ALLOWED_RETRY_AFTER: dict[str, str] = {
+    "gateway/engine_admin.py::slot": "the gateway's own rate limit, in seconds",
+    "gateway/engine_switch.py::__init__": "the gateway's own wait, in seconds",
+    "gateway/me_make.py::_error": "an integer the gateway chose (PublicFailure.retry_after)",
+    "gateway/resource_admission_http.py::admission_http_response": "an integer the admission decision computed",
+    "proxy.py::_swap_deferred_response": "an integer the swap controller computed",
+    "proxy.py::_service_availability_response": "an integer from the owner's service override",
+}
+
+
+def _root_name(node: ast.AST) -> str | None:
+    while isinstance(node, (ast.Attribute, ast.Subscript, ast.Call)):
+        node = node.func if isinstance(node, ast.Call) else node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _is_upstream_status(node: ast.AST) -> bool:
+    return isinstance(node, ast.Attribute) and node.attr in {"status_code", "status"} and _root_name(node) in UPSTREAM_RECEIVERS
+
+
+def _functions(trees):
+    for relative, tree in trees:
+        for function in ast.walk(tree):
+            if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield relative, function
+
+
+def status_relays_in(trees) -> set[str]:
+    """``file::function`` of each response that takes its status from an upstream reply (an attribute of ``resp``,
+    ``response``, ``reply``, ``upstream``, or a name assigned from one, or an ``upstream_*`` name)."""
+    found: set[str] = set()
+    for relative, function in _functions(trees):
+        names = {target.id for node in ast.walk(function) if isinstance(node, ast.Assign) and _is_upstream_status(node.value)
+                 for target in node.targets if isinstance(target, ast.Name)}
+        for node in ast.walk(function):
+            if not (isinstance(node, ast.Call) and taint.call_name(node) in RESPONSE_CALLS):
+                continue
+            status = next((keyword.value for keyword in node.keywords if keyword.arg == "status_code"), None)
+            if _is_upstream_status(status) or (isinstance(status, ast.Name) and (status.id in names or status.id.startswith("upstream_"))):
+                found.add(f"{relative}::{function.name}")
+    return found
+
+
+def unsafe_content_types_in(trees) -> set[str]:
+    """``file::function`` of each response whose ``media_type`` is an upstream's ``content-type`` header as it came."""
+    found: set[str] = set()
+    for relative, function in _functions(trees):
+        for node in ast.walk(function):
+            if not (isinstance(node, ast.Call) and taint.call_name(node) in RESPONSE_CALLS):
+                continue
+            media = next((keyword.value for keyword in node.keywords if keyword.arg == "media_type"), None)
+            text = ast.unparse(media).lower() if media is not None else ""
+            if "content-type" in text and "safe_content_type" not in text:
+                found.add(f"{relative}::{function.name}")
+    return found
+
+
+def retry_after_copies_in(trees) -> set[str]:
+    """``file::function`` of each ``Retry-After`` header set to a value that is not a literal and not the number
+    ``client_errors.retry_after`` returned (a name assigned from it)."""
+    def header_name(key) -> bool:
+        return isinstance(key, ast.Constant) and isinstance(key.value, str) and key.value.lower() == "retry-after"
+    found: set[str] = set()
+    for relative, function in _functions(trees):
+        clean = {target.id for node in ast.walk(function) if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                 and taint.chain(node.value.func).endswith("retry_after") for target in node.targets if isinstance(target, ast.Name)}
+        for node in ast.walk(function):
+            values = []
+            if isinstance(node, ast.Dict):
+                values = [value for key, value in zip(node.keys, node.values) if key is not None and header_name(key)]
+            elif isinstance(node, ast.Assign):
+                values = [node.value for target in node.targets if isinstance(target, ast.Subscript) and header_name(target.slice)]
+            for value in values:
+                if isinstance(value, ast.Constant) or (isinstance(value, ast.Name) and value.id in clean):
+                    continue
+                found.add(f"{relative}::{function.name}")
+    return found
+
+
+def test_a_response_with_an_upstream_status_is_known_to_send_errors_through_the_helpers():
+    new = sorted(status_relays_in(taint.gateway_modules()) - set(ALLOWED_STATUS_RELAYS))
+    assert not new, ("a response takes the status of an upstream reply: send a status >= 400 through client_errors "
+                     f"(upstream_error_response) before it and list the function in ALLOWED_STATUS_RELAYS: {new}")
+    assert not sorted(set(ALLOWED_STATUS_RELAYS) - status_relays_in(taint.gateway_modules()))
+
+
+def test_a_content_type_an_upstream_wrote_is_cut_to_its_media_type():
+    found = unsafe_content_types_in(taint.gateway_modules())
+    assert not sorted(found - set(ALLOWED_CONTENT_TYPES)), \
+        f"a response takes the Content-Type of an upstream as it came; use client_errors.safe_content_type: {sorted(found - set(ALLOWED_CONTENT_TYPES))}"
+    assert not sorted(set(ALLOWED_CONTENT_TYPES) - found)
+
+
+def test_a_retry_after_is_a_number_the_gateway_wrote():
+    found = retry_after_copies_in(taint.gateway_modules())
+    assert not sorted(found - set(ALLOWED_RETRY_AFTER)), \
+        f"a Retry-After is set from a value that did not go through client_errors.retry_after: {sorted(found - set(ALLOWED_RETRY_AFTER))}"
+    assert not sorted(set(ALLOWED_RETRY_AFTER) - found)
+
+
+def test_the_status_content_type_and_retry_after_scans_find_what_they_are_meant_to_find():
+    source = '''
+async def relay_by_name(client, url):
+    resp = await client.get(url)
+    upstream_status = resp.status_code
+    return Response(resp_body, status_code=upstream_status, media_type="x")
+async def relay_by_attribute(client, url):
+    resp = await client.get(url)
+    return JSONResponse({}, status_code=resp.status_code)
+async def own_status(client, url):
+    return Response("x", status_code=502)
+async def raw_type(client, url):
+    resp = await client.get(url)
+    return Response("x", status_code=200, media_type=resp.headers.get("content-type", "application/json"))
+async def cut_type(client, url):
+    resp = await client.get(url)
+    return Response("x", status_code=200, media_type=client_errors.safe_content_type(resp.headers.get("content-type")))
+async def raw_retry(error):
+    return JSONResponse({}, headers={"retry-after": error.retry_after})
+async def number_retry(error):
+    seconds = client_errors.retry_after(error.retry_after)
+    return JSONResponse({}, headers={"retry-after": seconds})
+async def fixed_retry(error):
+    out = {}
+    out["Retry-After"] = "10"
+    return out
+'''
+    trees = [("x.py", ast.parse(source))]
+    assert status_relays_in(trees) == {"x.py::relay_by_name", "x.py::relay_by_attribute"}
+    assert unsafe_content_types_in(trees) == {"x.py::raw_type"}
+    assert retry_after_copies_in(trees) == {"x.py::raw_retry"}

@@ -44,7 +44,8 @@ def provider_for_model(registry: Mapping[str, Any], model: Any) -> providers.Pro
 
 
 def error_response(error: providers.ProviderError) -> JSONResponse:
-    headers = {"retry-after": error.retry_after} if error.retry_after else {}
+    seconds = client_errors.retry_after(error.retry_after)
+    headers = {"retry-after": seconds} if seconds else {}
     return JSONResponse(error.error_body(), status_code=error.status_code, headers=headers)
 
 
@@ -771,7 +772,7 @@ async def execute_paid_litellm(
             cost_usd = receipt.cost["usd"]
             headers["x-azizam-cost-usd"] = str(cost_usd) if cost_usd is not None else "unknown"
             owner.report(status="succeeded", reason="completed")
-            return Response(content, status_code=response.status_code, media_type=response.headers.get("content-type", "application/json"), headers=headers)
+            return Response(content, status_code=response.status_code, media_type=client_errors.safe_content_type(response.headers.get("content-type")), headers=headers)
         except httpx.TimeoutException:
             providers.settle_provider_spend(reservation, None, path=ledger_path)
             receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
