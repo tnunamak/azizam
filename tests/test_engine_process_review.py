@@ -107,7 +107,12 @@ def test_client_disconnect_during_cold_start_keeps_engine_and_budget(tmp_path):
 
     async def scenario():
         waiter = asyncio.create_task(driver.ensure_ready(svc, 3))
-        await asyncio.sleep(0.15)
+        # Cancel after the process has actually spawned, even when concurrent
+        # workers delay startup. A fixed sleep could cancel before spawn.
+        deadline = asyncio.get_running_loop().time() + 3
+        while not (tmp_path / "state" / "fixture.json").is_file():
+            assert asyncio.get_running_loop().time() < deadline, "the fixture process never spawned"
+            await asyncio.sleep(0.01)
         waiter.cancel()
         with pytest.raises(asyncio.CancelledError):
             await waiter

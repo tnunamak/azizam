@@ -3,6 +3,8 @@
     "paths": [
       "/v1/chat/completions",
       "/provider/v1/chat/completions",
+      "/provider/v1/models",
+      "/provider/health",
       "/v1/completions",
       "/v1/embeddings",
       "/v1/models",
@@ -15,7 +17,9 @@
       "/v1/images/edits",
       "/v1/rerank",
       "/health",
-      "/v1/health"
+      "/v1/health",
+      "/api/v1/health",
+      "/health/liveliness"
     ],
     "framing": "sse-data",
     "stream_media_type": "text/event-stream",

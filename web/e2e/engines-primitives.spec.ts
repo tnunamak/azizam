@@ -105,7 +105,7 @@ for (const scale of [1, 2]) {
     for (const control of [
       page.getByRole("switch", { name: "Enabled" }),
       page.getByRole("button", { name: "Check again" }),
-      page.getByRole("button", { name: "Detect models again" }),
+      page.getByRole("button", { name: "Find new models" }),
     ]) {
       const box = await control.boundingBox();
       expect(box!.height).toBeGreaterThanOrEqual(44);
@@ -126,7 +126,7 @@ test("a stale save is rejected by the fixture registry and a retry keeps the typ
   await expect(
     page.getByRole("heading", { level: 1, name: "Local test engine" }),
   ).toBeVisible();
-  const publicName = page.getByLabel("Public name").first();
+  const publicName = page.getByLabel("Name apps use").first();
   const original = await publicName.inputValue();
   await publicName.fill("conflict-retry-chat");
   const session = await (await page.request.get("/admin/api/session")).json();

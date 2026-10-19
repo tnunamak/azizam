@@ -202,3 +202,24 @@ identified the job recovery and polling commits that touched this journey.
 The release traces supplied the decisive evidence: the browser fixtures
 missed playback renewal and query parameters on job polls. No CLI friction
 in this use; source reads and trace inspection were still necessary.
+
+## 2026-10-18 — engine contract W5
+
+- `ds recent` found the integration-base commits and engine runtime files.
+- `ds recent --limit 3` failed with `unknown flag`; plain `ds recent` worked.
+- A focused `ds find 'lifecycle hop forwarding'` started a full 2,327-file index. That startup cost was too high for this lookup, so source inspection remained necessary.
+
+
+## 2026-10-18: W5 round 2 compatibility repairs
+
+`ds tldr` and a two-slice `ds task` completed in the isolated worktree. Task creation reported progress through 2,415 candidate files, then 7,321 new and 192 updated index entries. The task ID and separate compatibility and verification slices were useful for the handoff. Indexing was substantial for a repair whose files and acceptance checks were already known; source inspection and committed regression tests supplied the decisive evidence while indexing ran.
+
+## 2026-10-18: W5 round 3 engine-contract fixes
+
+`ds tldr` and `ds recent` worked in the isolated worktree. Recent activity
+found the prior W5 connection and timeout commits. The task command requires a
+title for each `--slice`; its error made that clear. Task creation completed in
+about two minutes and reported low context completeness with eight missed test
+files. Those warnings were accurate; source and review-probe reads remained the
+main evidence. The task files live outside the checkout so hermetic preflight
+can keep requiring a clean Git tree.

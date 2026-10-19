@@ -215,7 +215,7 @@ class AudioFailurePollingGaps(unittest.IsolatedAsyncioTestCase):
                 "evaluate_and_apply": lambda *a, **kw: SimpleNamespace(denied=False),
                 "_workflow_target_policy_decision": lambda *a, **kw: None,
                 "configured_downstream_headers": lambda *a, **kw: {},
-                "_build_comfy_submit_payload": lambda graph, **kw: {"prompt": graph},
+                "_build_graph_submit_payload": lambda graph, **kw: {"prompt": graph},
             }
             for name, value in replacements.items():
                 stack.enter_context(patch.object(proxy, name, value))

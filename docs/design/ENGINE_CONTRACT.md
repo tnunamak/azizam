@@ -170,7 +170,7 @@ resources:
     (owner only; `If-Match: "os-N"` is required) takes
     `{"commands": [...]}`. Each command names a `carrier` (`config.headers`,
     `process.env`, `config.env`, `process.start`, `lifecycle.driver_config.start`,
-    `config.base_url`, ...) and an `operation`:
+    `config.base_url`, `config.api_key`, ...) and an `operation`:
     `add` (`name`, `value`, optional `public: true` for a header or variable that is
     not a secret), `replace` (`entry_id`, `value`), `rename` (`entry_id`, `name`; headers),
     `retain` (`entry_id`; no value; it checks the id exists), `clear` (`entry_id`),
@@ -189,6 +189,25 @@ resources:
     `reserved_value`, `invalid_name`, `duplicate_name`, `unmentioned_entry`,
     `credential_header_public` (a header named like a credential cannot be `public`), `carrier_unavailable`, `owner_required` (403),
     `service_not_found` (404), `generation_mismatch` (412).
+    The engine's inference key uses the `config.api_key` carrier: `add` takes
+    `value`; `replace`, `retain` and `clear` name `key.entry_id` from the engine
+    view. A replacement is bound to the engine's current origin and removes an
+    existing environment-variable binding; a clear removes either source. A key
+    entry keeps its identity when replaced. The view also reports `availability`:
+    `available` for a populated environment source, `unavailable` for a missing
+    environment value or stored row, and `unknown` for stored ciphertext that
+    has not been read. A management read never decrypts it.
+    `GET /admin/api/engines/{service_id}` returns `engine.revision` as `"os-N"`
+    from the same registry snapshot as the displayed record. Use that revision
+    for commands against those entries. A retain-only call also checks it.
+    With protocol dispatch selected, the key's reference or environment source
+    also supplies `connection.credentials.inference`, bound to the active connection's
+    origin even when a legacy endpoint differs. The control credential stays
+    separate and is read-only on this page; Phase 1 has no command carrier for it. A changed inference credential, header or endpoint clears the saved
+    connection check and test evidence.
+    A URL credential command that changes origin must be saved separately from
+    other secret commands. The parser checks carrier/operation compatibility for
+    the whole batch before it can store a secret.
   - **Writing a whole record** (the registry `PUT`, `POST` and `PATCH` of a
     service, the engine page, the left-out record `PUT`). A carrier that holds
     entries comes back exactly as the read showed it, or is left out (then it is
@@ -198,8 +217,10 @@ resources:
     owner may send it. The engine page therefore leaves `values.headers` out unless it
     adds headers (on create every row is a new secret header; on an engine that
     already has entries, headers change only through the commands). The view shows a
-    start or stop command that holds an entry as `null`. The key field keeps its
-    mask for now (phase 2).
+    start or stop command that holds an entry as `null`; the page edits its
+    structured argument list from the projected stored record through commands.
+    Existing key edits also use `config.api_key` commands. Empty fields and
+    displayed configured metadata never stand for a retain command.
     A reference slot that has no entry id (`config.api_key_secret_id`, `secret_refs`) is read as
     `{"configured": true}` or as names; a write that sends back exactly what a read shows for the stored
     value leaves it as it is (the same rule as for a carrier), and any other marker, mapping or reserved text there
@@ -231,6 +252,10 @@ resources:
     YAML file in the effective configuration, the package index and the overrides. A header row has `id`, `name`,
     `secret_ref`, and for a row declared `public: true` (exactly `true`) a `value`; any other field of a row is
     dropped. A record's id must equal the key it is stored under, and two records may not end up with one id.
+    The shared record projection types the connection block: unknown nested
+    fields are hidden and per-class credential references show configured metadata.
+    A whole-registry write preserves a credential reference only when the value at
+    that slot exactly matches its current configured projection and the revision matches.
   - **The router config** (decision D30). `GET /admin/api/operator/litellm-config`
     answers with a preview (a header's name with `<configured>`, an endpoint without
     credentials). The executable config is rendered only by `gateway/litellm_runtime.py`,
@@ -259,7 +284,7 @@ resources:
     classification, response shapes). Positive controls show the canaries reached
     the store, the runtime resolves each, and the detector can fail.
   - What phase 2 still does: MCP, CLI, logs and receipts through the same projection
-    library; the engine page on the command protocol; a restorable encrypted secret
+    library; a restorable encrypted secret
     backup; moving the remaining admin routers (settings, sign-in, accounts, categories,
     home, activity) onto `ManagementRoute`; Schemathesis and a Hypothesis state machine.
   - Credentials are per operation class and bound to the address origin.
@@ -320,7 +345,8 @@ Core applies access plans and admission, finalizes receipts, and owns durable
 media jobs, idempotency, cancellation settlement and asset access. Queued image
 jobs use this same dispatch. Startup keeps the existing fail-closed policy for
 uncertain running work rather than resubmitting it. Text completions,
-transcription, graph workflows and other existing paths are not migrated here.
+transcription, graph workflows and other existing paths keep their dispatch;
+W6b moves their clients behind reviewed adapters (above), not onto `http-v1`.
 See [Add an HTTP engine as data](../guides/ADD_HTTP_ENGINE_AS_DATA.md).
 
 - **`executor: adapter:<id>`** is a reviewed adapter, for anything outside
@@ -340,13 +366,67 @@ See [Add an HTTP engine as data](../guides/ADD_HTTP_ENGINE_AS_DATA.md).
   evidence and the open decision are in
   [ENGINE_PROTOCOL_EXECUTOR.md](ENGINE_PROTOCOL_EXECUTOR.md#w6a-round-3-absolute-each-measurement).
   JSONata and CEL-class languages (375x to 1,158x) are not used. The in-tree ComfyUI,
-  STT and TTS clients become adapters behind one interface.
+  speech and transcription clients are reviewed adapters behind one interface
+  (W6b, below).
 - **The adapter interface is versioned:** `health`, `inventory`,
   `invoke(op, canonical_request)`, and for jobs `submit`, `poll` or `events`,
   `cancel`, `recover` and `fetch_assets`.
 - **Core owns the durable job state machine** (F8): idempotency keys, retry
   boundaries, event order, asset lifetime and access, and receipt
   finalization. Adapters return typed result, job, event or asset references.
+- **Reviewed in-tree adapters (W6b).** Three protocol descriptions in
+  `registry/protocols/` say `executor: adapter:<id>` and list operation names
+  only; the adapter owns the wire.
+
+  | Adapter id | Module | Serves | Owns |
+  |---|---|---|---|
+  | `node-graph` | `gateway/engine_protocol/node_graph.py` | `images`, `videos`, `audio.generate` | submit a graph prompt, read its history and queue, read output files, upload input images, cancel, delete history, system stats and memory release, the push channel; the readers of the engine's answers (execution errors, queue position, output files); node-class inspection and graph validation (`node_info.py`, `node_ui_graph.py`, `node_catalog.py`, `node_validation.py`) |
+  | `inline-tts` | `gateway/engine_protocol/inline_tts.py` | `speech` | buffered and streamed speech, voice check, voice design |
+  | `chunked-stt` | `gateway/engine_protocol/chunked_stt.py` | `transcriptions` | the multipart transcription request, the bounded and classified answer, the event-stream relay, the 16 kHz preparation, and the chunk plan, chunk posts and merge |
+
+  **How a record selects one.** The record's `protocol` (or
+  `connection.protocol`) names a protocol description. When that description
+  says `executor: adapter:<id>`, the factory registered under `<id>` builds the
+  adapter (`gateway/engine_protocol/reviewed.py`). A record that names no
+  adapter protocol is answered by the adapter whose description lists the
+  route's capability in `serves`, so records stored before the field existed
+  keep working with no migration. Core never branches on what the engine is.
+  The shipped descriptions are the floor: an operator file that is invalid, or
+  that replaces one with an `http-v1` description, cannot take the media
+  routes away. A caller-facing message that names the engine takes the name
+  from the description's `label`, and a workflow manifest's engine key from its
+  `binding`; both are data.
+
+  **What stays in core.** Admission, access plans, receipts, media jobs and
+  assets, idempotency, the video progress records and their phase heuristics,
+  deadlines, cancellation signalling and cleanup ownership. An adapter returns
+  typed replies and failures (`WireReply`, `StreamReply`, `TransportFailure`,
+  `UpstreamError`); core decides what a failure means to the caller.
+
+  **Not behind an adapter yet.** The host-process VRAM probe and the PID
+  lookup (host knowledge, not the wire), the status page's own reads of the
+  engine, the long-video graph builders that carry graph node names
+  (`video_extend*.py`, `video_subject.py`, `video_extensions.py`), and the
+  capability tables that key on the backend id. The ratchet still counts them.
+
+The engine page and Add engine list validated installed descriptions from
+`GET /admin/api/engine-protocols`. The list uses the dispatch loader's seed and
+persistent user directories. The editor sends `values.dispatch: protocol` and
+`values.protocol_description: <selected id>`; a save validates that the id is
+installed and has the `http-v1` executor, then writes
+`config.connection: {dispatch: protocol, protocol: <id>, address: <root>, transport: http}`.
+Protocol endpoints must have no user info, query or fragment. The existing
+local-only dispatch validation still applies. For an opted-in engine without
+explicit offerings, the protocol lane derives request-field offerings from its
+stored model rows; it does not keep a second model list. The engine view shows
+the installed description's methods and path templates joined to this root,
+including job phases, and keeps inference and control credential metadata separate.
+An unavailable description shows attention and no guessed operation destination.
+Legacy header, path-prefix, reply-timeout and transform controls are read-only in
+this mode: protocol dispatch reads its connection block and installed description.
+The legacy Check and Test endpoints refuse protocol mode with
+`unsupported_protocol_probe` before traffic. The editor can validate the installed
+description and save the engine off; it does not claim a runtime probe passed.
 
 ## 5. Inbound frontends (how callers talk to Azizam) (F7)
 

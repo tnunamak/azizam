@@ -1,0 +1,142 @@
+{
+  "assets": [],
+  "caller": [
+    {
+      "label": "design a voice from a prompt",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"name\":\"designed\",\"type\":\"prompt\",\"prompt\":\"young british female, high pitch\",\"seed\":7}"
+        },
+        "headers": {
+          "content-length": "88",
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/audio/voices",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"object\":\"audio.voice\",\"id\":\"voice_000000000000000000000001\",\"type\":\"prompt\",\"name\":\"designed\",\"created_at\":\"<time>\",\"description\":null,\"labels\":{},\"duration_seconds\":8.0,\"consent\":null,\"seed\":7,\"prompt\":\"young british female, high pitch\",\"design_instruct\":\"female, young adult, high pitch, british accent\",\"quality\":{\"speaker_similarity\":0.82,\"encoder\":\"fake-encoder\",\"engine\":\"omnivoice\",\"status\":\"ok\"},\"warnings\":[],\"compatible_engines\":[\"omnivoice\",\"chatterbox\"]}"
+        },
+        "headers": {
+          "content-length": "<468 after normalisation>",
+          "content-type": "application/json"
+        },
+        "status": 200
+      }
+    }
+  ],
+  "description": "Voice design: the design request goes to the speech route of the design engine, then the quality probe",
+  "engine_requests": [
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"input\":\"Hello, and welcome. I'm glad you could join us today. Let me tell you a little about myself: I enjoy clear conversations, good questions, and taking the time to explain things well. If there is anything you would like to know, just ask, and we will work through it together.\",\"voice\":\"alloy\",\"instructions\":\"female, young adult, high pitch, british accent\",\"seed\":7,\"response_format\":\"wav\"}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "content-length": "400",
+        "content-type": "application/json",
+        "host": "127.0.0.1:8002"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/v1/audio/speech",
+      "query": [],
+      "step": 0,
+      "to": "127.0.0.1:8002"
+    },
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"voice_ref\":\"<tmp>/voices/<hex32:1>/voices/voice_000000000000000000000001/reference.wav\"}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "content-length": "<90 after normalisation>",
+        "content-type": "application/json",
+        "host": "127.0.0.1:8002"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/v1/audio/voice-check",
+      "query": [],
+      "step": 0,
+      "to": "127.0.0.1:8002"
+    }
+  ],
+  "gateway_sleeps": [],
+  "media_jobs": {
+    "media_jobs_schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "notes": {
+    "voice_store": [
+      {
+        "json": {
+          "consent": null,
+          "created_at": "<time>",
+          "description": null,
+          "design_instruct": "female, young adult, high pitch, british accent",
+          "duration_seconds": 8.0,
+          "id": "voice_000000000000000000000001",
+          "labels": {},
+          "measurements": {
+            "clipping_fraction": 0.0,
+            "denoised": false,
+            "snr_db": 45.4,
+            "source_seconds": 8.0,
+            "speech_seconds": 5.76,
+            "window_start_seconds": 0.0
+          },
+          "name": "designed",
+          "object": "audio.voice",
+          "preprocessing": "voice_audio-1",
+          "prompt": "young british female, high pitch",
+          "quality": {
+            "encoder": "fake-encoder",
+            "engine": "omnivoice",
+            "speaker_similarity": 0.82,
+            "status": "ok"
+          },
+          "seed": 7,
+          "transcript": "Hello, and welcome. I'm glad you could join us today. Let me tell you a little about myself: I enjoy clear conversations, good questions, and taking the time to explain things well. If there is anything you would like to know, just ask, and we will work through it together.",
+          "type": "prompt",
+          "warnings": []
+        },
+        "name": "<hex32:1>/voices/voice_000000000000000000000001/meta.json",
+        "size": 937,
+        "suffix": ".json"
+      },
+      {
+        "name": "<hex32:1>/voices/voice_000000000000000000000001/reference.wav",
+        "sha256": "dacd0e2f3c0522fd42977a83298ae33c77b1463ea320636e98cd34e0fd7b67ca",
+        "size": 384044,
+        "suffix": ".wav"
+      }
+    ]
+  },
+  "receipts": {
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "tts_voice_design",
+  "schema": 1
+}

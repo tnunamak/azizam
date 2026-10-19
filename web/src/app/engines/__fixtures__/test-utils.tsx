@@ -59,7 +59,6 @@ export function engineView(over: Partial<EngineView> = {}): EngineView {
     locked: false,
     lifecycle_editable: true,
     editable: true,
-    not_editable_reason: "",
     values: {
       address: "http://192.168.1.50:8080/v1",
       path_prefix: "",
@@ -68,7 +67,7 @@ export function engineView(over: Partial<EngineView> = {}): EngineView {
       transforms: ["reasoning-effort-final-chat"],
       lifecycle_mode: "external",
     },
-    key: { state: "configured", source: "stored", origin: "http://192.168.1.50:8080" },
+    key: { state: "configured", source: "stored", origin: "http://192.168.1.50:8080", entry_id: "ent_fixture_key" },
     capabilities: ["chat", "embeddings"],
     models: [
       { id: "qwen3-32b-instruct-q4_k_m", public_name: "qwen3-32b", context_window: 40960, enabled: true },

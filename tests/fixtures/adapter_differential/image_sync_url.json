@@ -1,0 +1,418 @@
+{
+  "assets": [
+    {
+      "json": {
+        "asset_id": "img_b8b1266ff29b9596389d7beda3ee902541358b277066e0bb8bafeef664479cf5",
+        "owner_key_hashes": [
+          "app:app_test"
+        ],
+        "updated_at": "<time>"
+      },
+      "name": "b8b1266ff29b9596389d7beda3ee902541358b277066e0bb8bafeef664479cf5.meta.json",
+      "size": 148,
+      "suffix": ".json"
+    },
+    {
+      "name": "b8b1266ff29b9596389d7beda3ee902541358b277066e0bb8bafeef664479cf5.png",
+      "sha256": "b8b1266ff29b9596389d7beda3ee902541358b277066e0bb8bafeef664479cf5",
+      "size": 77,
+      "suffix": ".png"
+    }
+  ],
+  "caller": [
+    {
+      "label": "generate one image as url",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"prompt\":\"a blue heron\",\"response_format\":\"url\",\"size\":\"512x512\",\"background\":\"opaque\"}"
+        },
+        "headers": {
+          "content-length": "88",
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/images/generations",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"created\": \"<time>\", \"data\": [{\"asset_id\": \"img_b8b1266ff29b9596389d7beda3ee902541358b277066e0bb8bafeef664479cf5\", \"asset_url\": \"http://gateway.test/v1/assets/img_b8b1266ff29b9596389d7beda3ee902541358b277066e0bb8bafeef664479cf5/content?expires=<expires>&md=none&sig=<sig>\", \"media_type\": \"image/png\", \"url\": \"http://gateway.test/v1/images/img_b8b1266ff29b9596389d7beda3ee902541358b277066e0bb8bafeef664479cf5/content?expires=<expires>&md=none&sig=<sig>\"}], \"output_format\": \"png\", \"background\": \"opaque\", \"size\": \"512x512\"}"
+        },
+        "headers": {
+          "content-length": "<523 after normalisation>",
+          "content-type": "application/json",
+          "x-image-background-removal": "false",
+          "x-image-background-removal-source": "request",
+          "x-image-returned": "1",
+          "x-image-rounds": "1"
+        },
+        "status": 200
+      }
+    },
+    {
+      "label": "download the signed image url",
+      "request": {
+        "body": {
+          "kind": "empty"
+        },
+        "headers": {},
+        "method": "GET",
+        "path": "/v1/images/img_b8b1266ff29b9596389d7beda3ee902541358b277066e0bb8bafeef664479cf5/content",
+        "query": [
+          [
+            "expires",
+            "<expires>"
+          ],
+          [
+            "md",
+            "none"
+          ],
+          [
+            "sig",
+            "<sig>"
+          ]
+        ]
+      },
+      "response": {
+        "body": {
+          "kind": "binary",
+          "len": 77,
+          "magic": "89504e470d0a1a0a",
+          "sha256": "b8b1266ff29b9596389d7beda3ee902541358b277066e0bb8bafeef664479cf5"
+        },
+        "headers": {
+          "accept-ranges": "bytes",
+          "cache-control": "private, max-age=3600",
+          "content-length": "77",
+          "content-type": "image/png"
+        },
+        "status": 200
+      }
+    }
+  ],
+  "description": "POST /v1/images/generations with response_format url, then GET the signed url",
+  "engine_requests": [
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/system_stats",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/system_stats",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"prompt\":{\"1\":{\"class_type\":\"UNETLoader\",\"inputs\":{\"unet_name\":\"krea2_turbo_int8_convrot.safetensors\",\"weight_dtype\":\"default\"}},\"2\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"qwen3vl_4b_fp8_scaled.safetensors\",\"type\":\"krea2\",\"device\":\"default\"}},\"3\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"qwen_image_vae.safetensors\"}},\"4\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"text\":\"a blue heron\",\"clip\":[\"2\",0]}},\"5\":{\"class_type\":\"ConditioningZeroOut\",\"inputs\":{\"conditioning\":[\"4\",0]}},\"6\":{\"class_type\":\"EmptyLatentImage\",\"inputs\":{\"width\":512,\"height\":512,\"batch_size\":1}},\"7\":{\"class_type\":\"KSampler\",\"inputs\":{\"model\":[\"1\",0],\"seed\":192058881,\"steps\":8,\"cfg\":1.0,\"sampler_name\":\"euler\",\"scheduler\":\"simple\",\"positive\":[\"4\",0],\"negative\":[\"5\",0],\"latent_image\":[\"6\",0],\"denoise\":1.0}},\"8\":{\"class_type\":\"VAEDecode\",\"inputs\":{\"samples\":[\"7\",0],\"vae\":[\"3\",0]}},\"9\":{\"class_type\":\"SaveImage\",\"inputs\":{\"images\":[\"8\",0],\"filename_prefix\":\"krea2-turbo\"}},\"10\":{\"class_type\":\"RMBG\",\"inputs\":{\"image\":[\"8\",0],\"model\":\"RMBG-2.0\",\"sensitivity\":1.0,\"process_res\":1024,\"mask_blur\":2,\"mask_offset\":0,\"invert_output\":false,\"refine_foreground\":true,\"background\":\"Alpha\",\"background_color\":\"#00000000\"}}},\"extra_data\":{\"extra_pnginfo\":{\"workflow\":{\"id\":\"<uuid:1>\",\"revision\":0,\"last_node_id\":10,\"last_link_id\":10,\"nodes\":[{\"id\":1,\"type\":\"UNETLoader\",\"pos\":[100,80],\"size\":[300,120],\"flags\":{},\"order\":0,\"mode\":0,\"inputs\":[{\"name\":\"unet_name\",\"localized_name\":\"unet_name\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"unet_name\"}},{\"name\":\"weight_dtype\",\"localized_name\":\"weight_dtype\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"weight_dtype\"}}],\"outputs\":[{\"name\":\"MODEL\",\"localized_name\":\"MODEL\",\"type\":\"MODEL\",\"links\":[3],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"UNETLoader\"},\"widgets_values\":[\"krea2_turbo_int8_convrot.safetensors\",\"default\"]},{\"id\":2,\"type\":\"CLIPLoader\",\"pos\":[440,80],\"size\":[300,120],\"flags\":{},\"order\":1,\"mode\":0,\"inputs\":[{\"name\":\"clip_name\",\"localized_name\":\"clip_name\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"clip_name\"}},{\"name\":\"type\",\"localized_name\":\"type\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"type\"}},{\"name\":\"device\",\"localized_name\":\"device\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"device\"}}],\"outputs\":[{\"name\":\"CLIP\",\"localized_name\":\"CLIP\",\"type\":\"CLIP\",\"links\":[1],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"CLIPLoader\"},\"widgets_values\":[\"qwen3vl_4b_fp8_scaled.safetensors\",\"krea2\",\"default\"]},{\"id\":3,\"type\":\"VAELoader\",\"pos\":[780,80],\"size\":[300,120],\"flags\":{},\"order\":2,\"mode\":0,\"inputs\":[{\"name\":\"vae_name\",\"localized_name\":\"vae_name\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"vae_name\"}}],\"outputs\":[{\"name\":\"VAE\",\"localized_name\":\"VAE\",\"type\":\"VAE\",\"links\":[8],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"VAELoader\"},\"widgets_values\":[\"qwen_image_vae.safetensors\"]},{\"id\":4,\"type\":\"CLIPTextEncode\",\"pos\":[1120,80],\"size\":[300,120],\"flags\":{},\"order\":3,\"mode\":0,\"inputs\":[{\"name\":\"text\",\"localized_name\":\"text\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"text\"}},{\"name\":\"clip\",\"localized_name\":\"clip\",\"type\":\"*\",\"link\":1,\"widget\":{\"name\":\"clip\"}}],\"outputs\":[{\"name\":\"CONDITIONING\",\"localized_name\":\"CONDITIONING\",\"type\":\"CONDITIONING\",\"links\":[2,4],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"CLIPTextEncode\"},\"widgets_values\":[\"a placeholder prompt\"]},{\"id\":5,\"type\":\"ConditioningZeroOut\",\"pos\":[100,320],\"size\":[300,120],\"flags\":{},\"order\":4,\"mode\":0,\"inputs\":[{\"name\":\"conditioning\",\"localized_name\":\"conditioning\",\"type\":\"*\",\"link\":2,\"widget\":{\"name\":\"conditioning\"}}],\"outputs\":[{\"name\":\"CONDITIONING\",\"localized_name\":\"CONDITIONING\",\"type\":\"CONDITIONING\",\"links\":[5],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"ConditioningZeroOut\"},\"widgets_values\":[]},{\"id\":6,\"type\":\"EmptyLatentImage\",\"pos\":[440,320],\"size\":[300,120],\"flags\":{},\"order\":5,\"mode\":0,\"inputs\":[{\"name\":\"width\",\"localized_name\":\"width\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"width\"}},{\"name\":\"height\",\"localized_name\":\"height\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"height\"}},{\"name\":\"batch_size\",\"localized_name\":\"batch_size\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"batch_size\"}}],\"outputs\":[{\"name\":\"LATENT\",\"localized_name\":\"LATENT\",\"type\":\"LATENT\",\"links\":[6],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"EmptyLatentImage\"},\"widgets_values\":[1024,1024,1]},{\"id\":7,\"type\":\"KSampler\",\"pos\":[780,320],\"size\":[300,120],\"flags\":{},\"order\":6,\"mode\":0,\"inputs\":[{\"name\":\"model\",\"localized_name\":\"model\",\"type\":\"*\",\"link\":3,\"widget\":{\"name\":\"model\"}},{\"name\":\"seed\",\"localized_name\":\"seed\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"seed\"}},{\"name\":\"steps\",\"localized_name\":\"steps\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"steps\"}},{\"name\":\"cfg\",\"localized_name\":\"cfg\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"cfg\"}},{\"name\":\"sampler_name\",\"localized_name\":\"sampler_name\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"sampler_name\"}},{\"name\":\"scheduler\",\"localized_name\":\"scheduler\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"scheduler\"}},{\"name\":\"positive\",\"localized_name\":\"positive\",\"type\":\"*\",\"link\":4,\"widget\":{\"name\":\"positive\"}},{\"name\":\"negative\",\"localized_name\":\"negative\",\"type\":\"*\",\"link\":5,\"widget\":{\"name\":\"negative\"}},{\"name\":\"latent_image\",\"localized_name\":\"latent_image\",\"type\":\"*\",\"link\":6,\"widget\":{\"name\":\"latent_image\"}},{\"name\":\"denoise\",\"localized_name\":\"denoise\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"denoise\"}}],\"outputs\":[{\"name\":\"LATENT\",\"localized_name\":\"LATENT\",\"type\":\"LATENT\",\"links\":[7],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"KSampler\"},\"widgets_values\":[0,8,1.0,\"euler\",\"simple\",1.0]},{\"id\":8,\"type\":\"VAEDecode\",\"pos\":[1120,320],\"size\":[300,120],\"flags\":{},\"order\":7,\"mode\":0,\"inputs\":[{\"name\":\"samples\",\"localized_name\":\"samples\",\"type\":\"*\",\"link\":7,\"widget\":{\"name\":\"samples\"}},{\"name\":\"vae\",\"localized_name\":\"vae\",\"type\":\"*\",\"link\":8,\"widget\":{\"name\":\"vae\"}}],\"outputs\":[{\"name\":\"IMAGE\",\"localized_name\":\"IMAGE\",\"type\":\"IMAGE\",\"links\":[9,10],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"VAEDecode\"},\"widgets_values\":[]},{\"id\":9,\"type\":\"SaveImage\",\"pos\":[100,560],\"size\":[300,120],\"flags\":{},\"order\":8,\"mode\":0,\"inputs\":[{\"name\":\"images\",\"localized_name\":\"images\",\"type\":\"*\",\"link\":9,\"widget\":{\"name\":\"images\"}},{\"name\":\"filename_prefix\",\"localized_name\":\"filename_prefix\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"filename_prefix\"}}],\"outputs\":[{\"name\":\"images\",\"localized_name\":\"images\",\"type\":\"IMAGE\",\"links\":[],\"slot_index\":0}],\"properties\":{\"Node name for S&R\":\"SaveImage\"},\"widgets_values\":[\"krea2-turbo\"]},{\"id\":10,\"type\":\"RMBG\",\"pos\":[440,560],\"size\":[300,120],\"flags\":{},\"order\":9,\"mode\":0,\"inputs\":[{\"name\":\"image\",\"localized_name\":\"image\",\"type\":\"*\",\"link\":10,\"widget\":{\"name\":\"image\"}},{\"name\":\"model\",\"localized_name\":\"model\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"model\"}},{\"name\":\"sensitivity\",\"localized_name\":\"sensitivity\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"sensitivity\"}},{\"name\":\"process_res\",\"localized_name\":\"process_res\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"process_res\"}},{\"name\":\"mask_blur\",\"localized_name\":\"mask_blur\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"mask_blur\"}},{\"name\":\"mask_offset\",\"localized_name\":\"mask_offset\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"mask_offset\"}},{\"name\":\"invert_output\",\"localized_name\":\"invert_output\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"invert_output\"}},{\"name\":\"refine_foreground\",\"localized_name\":\"refine_foreground\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"refine_foreground\"}},{\"name\":\"background\",\"localized_name\":\"background\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"background\"}},{\"name\":\"background_color\",\"localized_name\":\"background_color\",\"type\":\"*\",\"link\":null,\"widget\":{\"name\":\"background_color\"}}],\"outputs\":[{\"name\":\"IMAGE\",\"localized_name\":\"IMAGE\",\"type\":\"IMAGE\",\"links\":[],\"slot_index\":0},{\"name\":\"MASK\",\"localized_name\":\"MASK\",\"type\":\"MASK\",\"links\":[],\"slot_index\":1},{\"name\":\"MASK_IMAGE\",\"localized_name\":\"MASK_IMAGE\",\"type\":\"IMAGE\",\"links\":[],\"slot_index\":2}],\"properties\":{\"Node name for S&R\":\"RMBG\"},\"widgets_values\":[\"RMBG-2.0\",1.0,1024,2,0,false,true,\"Alpha\",\"#00000000\"]}],\"links\":[[1,2,0,4,1,\"CLIP\"],[2,4,0,5,0,\"CONDITIONING\"],[3,1,0,7,0,\"MODEL\"],[4,4,0,7,6,\"CONDITIONING\"],[5,5,0,7,7,\"CONDITIONING\"],[6,6,0,7,8,\"LATENT\"],[7,7,0,8,0,\"LATENT\"],[8,3,0,8,1,\"VAE\"],[9,8,0,9,0,\"IMAGE\"],[10,8,0,10,0,\"IMAGE\"]],\"groups\":[],\"config\":{},\"extra\":{},\"version\":0.4}}}}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "content-length": "<8374 after normalisation>",
+        "content-type": "application/json",
+        "host": "comfy.fk.test"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/prompt",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/system_stats",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/history/p1",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/view",
+      "query": [
+        [
+          "filename",
+          "out.png"
+        ],
+        [
+          "type",
+          "output"
+        ]
+      ],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/system_stats",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/system_stats",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    }
+  ],
+  "gateway_sleeps": [],
+  "media_jobs": {
+    "media_jobs": [
+      {
+        "api_key_name": "test-app",
+        "app_profile": "plan_everything",
+        "backend": "comfyui",
+        "created_at": "<time>",
+        "error": null,
+        "intent": "image.generate",
+        "job_id": "<job:1>",
+        "job_json": {
+          "accepted_at": "<time>",
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "assets": [
+            {
+              "asset_id": "img_b8b1266ff29b9596389d7beda3ee902541358b277066e0bb8bafeef664479cf5",
+              "kind": "image",
+              "media_type": "image/png"
+            }
+          ],
+          "attempt_number": 1,
+          "backend": "comfyui",
+          "cancel_requested": false,
+          "created_at": "<time>",
+          "creating_receipt_id": "<req:1>",
+          "error": null,
+          "error_category": null,
+          "error_code": null,
+          "finished_at": "<time>",
+          "first_output_at": "<time>",
+          "input_hash": "<digest>",
+          "intent": "image.generate",
+          "job_id": "<job:1>",
+          "metadata": {
+            "mode": "sync_media_route"
+          },
+          "owner_key_hash": "app:app_test",
+          "owner_scope": "app:app_test",
+          "parent_request_id": null,
+          "previous_attempts": [],
+          "progress": 100,
+          "queued_at": null,
+          "request_id": "<req:1>",
+          "retryable": null,
+          "started_at": null,
+          "status": "succeeded",
+          "updated_at": "<time>",
+          "upstream_http_status": null,
+          "workflow": "krea2-turbo"
+        },
+        "parent_request_id": null,
+        "progress": 100,
+        "request_id": "<req:1>",
+        "status": "succeeded",
+        "updated_at": "<time>",
+        "workflow": "krea2-turbo"
+      }
+    ],
+    "media_jobs_schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "notes": {},
+  "receipts": {
+    "receipts": [
+      {
+        "api_key_name": "test-app",
+        "app_id": "app_test",
+        "app_profile": "plan_everything",
+        "created_at": "<time>",
+        "intent": "image.generate",
+        "job_id": "<job:1>",
+        "parent_request_id": null,
+        "path": "/v1/images/generations",
+        "protocol": "openai.images",
+        "receipt_json": {
+          "accepted_at_ms": null,
+          "accepted_inputs": [
+            "model",
+            "size",
+            "background",
+            "n",
+            "response_format",
+            "prompt"
+          ],
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "attempt_number": 1,
+          "backend": "comfyui",
+          "client_address": null,
+          "client_hint": null,
+          "connection_id": null,
+          "cost": null,
+          "effective_output_limit": null,
+          "fallback_reasons": [],
+          "finished_at_ms": "<time>",
+          "first_output_at_ms": null,
+          "ignored_inputs": {},
+          "intent": "image.generate",
+          "job_id": "<job:1>",
+          "latency_ms": "<duration>",
+          "manifest_hash": "9aed1752d05b0e8bfa743a08ee5372a4e723d24d248c7a8c95e3e3b1ea6cea3a",
+          "manifest_id": "image.generate.krea2-turbo",
+          "manifest_version": "0.1.0",
+          "metadata": {},
+          "owner_key_hash": "app:app_test",
+          "parent_request_id": null,
+          "path": "/v1/images/generations",
+          "policy_decision": "allowed",
+          "policy_reasons": [
+            "allowed by your access plan",
+            "allowed by your access plan",
+            "allowed by your access plan"
+          ],
+          "policy_sources": [
+            "access_plan:plan_everything",
+            "access_plan:plan_everything",
+            "access_plan:plan_everything"
+          ],
+          "protocol": "openai.images",
+          "queued_at_ms": null,
+          "rejected_inputs": {},
+          "remote": false,
+          "request_id": "<req:1>",
+          "requested_model": "krea2-turbo",
+          "requested_workflow": "krea2-turbo",
+          "resolved_model": "krea2-turbo",
+          "resolved_workflow": "krea2-turbo",
+          "source_kind": "app",
+          "source_label": "test-app",
+          "started_at_ms": null,
+          "status": "ok",
+          "stream": false,
+          "updated_at_ms": "<time>",
+          "usage": null,
+          "visibility": "full",
+          "warnings": []
+        },
+        "request_id": "<req:1>",
+        "status": "ok"
+      }
+    ],
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "image_sync_url",
+  "schema": 1
+}

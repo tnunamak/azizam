@@ -65,7 +65,7 @@ PROCESS = Obj("Process", {
 #
 # Plain settings (a name, a number, a switch, an environment variable's *name*): public scalars.
 CONFIG_SCALAR_KEYS = (
-    "port", "base_path", "path_prefix", "scheme", "protocol", "native_passthrough", "definition", "definition_version",
+    "probe_with_inference_connection", "port", "base_path", "path_prefix", "scheme", "protocol", "native_passthrough", "definition", "definition_version",
     "timeout", "api_key_env", "api_key_ref", "credential_origin", "model_policy_schema_version", "name", "enabled", "role",
     "priority", "managed", "base_url_env", "api_base_env", "default_model", "activation_model", "model_id", "model",
     "execution_substrate", "paid_remote", "remote_provider", "preset_id", "provider_id", "provider_type", "cost_class",
@@ -104,6 +104,22 @@ NATIVE = Obj("NativePolicy", {
 }, extras=HIDDEN)
 PROVIDER_AUTH = Obj("ProviderAuth", {"header": SHORT, "prefix": SHORT}, extras=HIDDEN)
 
+ENGINE_CREDENTIAL = Obj("EngineCredential", {
+    "secret_ref": CONFIGURED, "secret_env": SHORT, "origin": URL, "header": SHORT, "scheme": SHORT,
+})
+ENGINE_CONNECTION = register(Obj("EngineConnection", {
+    "dispatch": SHORT, "protocol": SHORT, "transport": SHORT, "address": URL,
+    "credentials": Obj("EngineCredentials", {"inference": ENGINE_CREDENTIAL, "control": ENGINE_CREDENTIAL}),
+    "headers": HEADERS,
+    "timeouts": Obj("EngineTimeouts", {"connect_s": NUM, "first_byte_s": NUM, "total_s": NUM}),
+}))
+
+OFFERING = Obj("Offering", {
+    "id": SHORT, "kind": SHORT, "upstream": ANY_SCALAR, "tasks": JSON, "inputs": JSON, "options": JSON,
+    "selection": JSON, "adjustments": JSON,
+    "start_profile": Obj("OfferingStartProfile", {"env": ENV}, extras=JSON),
+}, extras=HIDDEN)
+
 CONFIG = Obj("ServiceConfig", {
     "headers": HEADERS, "env": ENV, "process": PROCESS, "lifecycle": LIFECYCLE,
     "api_key_secret_id": CONFIGURED,
@@ -111,6 +127,7 @@ CONFIG = Obj("ServiceConfig", {
     **{key: ANY_SCALAR for key in CONFIG_SCALAR_KEYS},
     **{key: JSON for key in CONFIG_DESCRIPTOR_KEYS},
     "models": Alt((Seq(Alt((MODEL_ROW, ANY_SCALAR))), Dict(Alt((MODEL_ROW, ANY_SCALAR))))),
+    "offerings": seq(OFFERING), "connection": ENGINE_CONNECTION,
     "auth": PROVIDER_AUTH, "native": NATIVE, "resources": RESOURCES, "residency": Alt((ANY_SCALAR, RESIDENCY)),
     "context_window_probe": Obj("ContextWindowProbe", {
         "endpoint": URL, "endpoint" + record_carriers.SECRETS_SUFFIX: URL_ENTRIES}, extras=HIDDEN),
@@ -127,6 +144,7 @@ SERVICE_RECORD_FIELDS_PROJECTED = {
     "id": STR, "name": STR, "kind": SHORT, "source": SHORT, "enabled": BOOL, "priority": INT, "role": SHORT,
     "capabilities": seq(SHORT), "config": CONFIG, "secret_refs": REF_MAP, "lifecycle": LIFECYCLE, "provenance": PROVENANCE,
     "process": PROCESS, "observations": mapping(OBSERVATION), "residency": RESIDENCY, "resources": RESOURCES, "editable": BOOL,
+    "offerings": seq(OFFERING), "connection": ENGINE_CONNECTION,
     # Left by the schema 2 migration on a record it refused; the text is the gateway's own and is never shown.
     "migration_refused": OMIT,
 }
@@ -214,7 +232,10 @@ ENGINE_VIEW = register(Obj("EngineView", {
     "service_id": STR, "definition": STR, "definition_version": ANY_SCALAR, "inferred": BOOL, "name": STR,
     "enabled": BOOL, "locked": BOOL, "editable": BOOL, "not_editable_reason": STR, "lifecycle_editable": BOOL,
     "values": JSON, "key": JSON, "capabilities": JSON, "models": JSON, "tests": JSON, "check": JSON, "calls": JSON,
-    "other_settings": JSON, "hidden_settings": INT, "record": JSON, "v2": JSON, "access": JSON,
+    "other_settings": JSON, "record": JSON, "v2": JSON, "access": JSON,
+    "reply_timeout": JSON, "attention": JSON, "request_path": JSON, "credential_destination": STR,
+    "ignored_headers": JSON, "unsupported_fields": JSON, "can_edit_offerings": BOOL, "offering_edit_reason": ANY_SCALAR,
+    "revision": ANY_SCALAR, "registry_generation": ANY_SCALAR, "hidden_settings": INT,
 }))
 
 # --- the effective configuration -------------------------------------------------------------------------------------------

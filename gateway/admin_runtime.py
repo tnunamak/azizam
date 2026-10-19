@@ -790,6 +790,14 @@ class AdminSQLiteStore:
             }
         return registry
 
+    def get_service_registry_snapshot(self) -> tuple[dict[str, Any], int]:
+        """One registry read binds the engine view and its compare-and-swap revision."""
+        snapshot = admin_store.get_service_registry_with_generation(path=self.path)
+        if snapshot is None:
+            return service_registry.read_registry({})[0], 0
+        registry, _excluded = service_registry.read_registry(snapshot["value"])
+        return registry, int(snapshot["operator_settings_generation"])
+
     def get_service_registry_exclusions(self) -> list[service_registry.ExcludedRecord]:
         """The stored records ``get_service_registry`` leaves out because they do not validate, each with why."""
         return service_registry.load_service_registry_exclusions(path=self.path)
@@ -943,16 +951,14 @@ class AdminSQLiteStore:
         )
 
     def _settle_credential_bindings(
-        self, registry: Mapping[str, Any], actor: AdminContext
+        self, registry: Mapping[str, Any], actor: AdminContext, *, _trusted_engine_evidence: bool = False
     ) -> dict[str, Any]:
         """Normalize a registry about to be written; keep credential changes for the owner.
 
-        A credential reference names a secret the gateway holds, and the host of
-        its record decides where that secret is sent. An administrator may manage
-        services, but may not attach a credential to one, nor move a service that
-        carries one, nor give one a lifecycle driver (a driver runs commands or sends a
-        stored key to the record's host). When the owner does, the host the key is for
-        is recorded with it.
+        Administrators may add keyless external services and edit metadata.
+        Existing connection, offering and lifecycle settings belong to the
+        owner, whether or not a key is attached. The owner also binds each key
+        to the origin that may receive it.
         """
         before = self.get_service_registry()
         service_registry.validate_protocol_dispatch_registry(registry, before=before)
@@ -961,12 +967,47 @@ class AdminSQLiteStore:
             old_services = before.get("services") or {}
             for service_id, record in (value.get("services") or {}).items():
                 previous = old_services.get(service_id) or {}
+                if not _trusted_engine_evidence:
+                    # Verification facts come from EngineService, never raw caller data.
+                    for field in ("engine_check", "engine_tests"):
+                        old_evidence = (previous.get(field) or None, (previous.get("config") or {}).get(field) or None)
+                        new_evidence = (record.get(field) or None, (record.get("config") or {}).get(field) or None)
+                        if old_evidence != new_evidence:
+                            raise PermissionError("Only the engine verification routes can change saved check or test evidence.")
+                if previous:
+                    old_config, new_config = dict(previous.get("config") or {}), dict(record.get("config") or {})
+                    # The legacy PATCH form fills model_group from id. That
+                    # representation change grants no new offering or route.
+                    for config_values, service in ((old_config, previous), (new_config, record)):
+                        if isinstance(config_values.get("models"), (list, tuple)):
+                            config_values["models"] = service_registry._form_models_to_config(config_values["models"])
+                        config_values["lifecycle"] = service_registry.legacy_lifecycle_from_service(service)
+                    defaults = {"base_path": "/v1", "scheme": "http", "timeout": 600,
+                                "headers": [], "models": [], "transforms": [], "role": "required", "managed": False}
+                    # Compare settings that grant connection, routing or host control.
+                    # Metadata may be written by administrators; evidence needs the trusted route.
+                    keys = {
+                        "host", "port", "scheme", "base_path", "base_url", "api_base", "default_base_url",
+                        "base_url_env", "api_base_env", "address", "path_prefix", "protocol", "native_passthrough",
+                        "timeout", "headers", "models", "transforms", "lifecycle", "managed", "role",
+                        "gateway_lifecycle", "gateway_lifecycle_base_url", "probe_with_inference_connection",
+                        "health_endpoint", "api_key", "api_key_env", "api_key_ref", "api_key_secret_id", "credential_origin",
+                        "litellm_provider", "provider_adapter",
+                    }
+                    missing_timeout = object()
+                    if (old_config.get("timeout", missing_timeout) != new_config.get("timeout", missing_timeout)
+                            or any((old_config.get(key) or defaults.get(key)) != (new_config.get(key) or defaults.get(key))
+                                   for key in keys if key != "timeout")):
+                        raise PermissionError("Only the owner can change service settings.")
+                    for field in ("capabilities", "priority", "role", "kind", "resources", "secret_refs"):
+                        if previous.get(field) != record.get(field):
+                            raise PermissionError(f"Only the owner can change service {field}.")
                 for field in ("connection", "process", "protocol_operations", "control_file_roots",
-                              "offerings", "residency", "observations"):
+                              "offerings", "residency", "observations", "credentials"):
                     # Migration writes empty blocks; an empty block grants nothing.
                     old_value = (previous.get(field) or None, (previous.get("config") or {}).get(field) or None)
                     new_value = (record.get(field) or None, (record.get("config") or {}).get(field) or None)
-                    if field == "process":
+                    if field == "process" and not previous:
                         # Migration turns an external lifecycle into a process that
                         # runs nothing; lifecycle_driver_changed below judges whether
                         # a top-level process controls the host.
@@ -1131,6 +1172,7 @@ class AdminSQLiteStore:
         extra: Mapping[str, Any] | None = None,
         removing: Collection[tuple[str, str]] = (),
         ingest: bool = True,
+        _trusted_engine_evidence: bool = False,
     ) -> dict[str, Any]:
         created: list[str] = []
         retired: list[str] = []
@@ -1138,7 +1180,7 @@ class AdminSQLiteStore:
             # Carriers first: what a read showed is put back as stored before the rules that compare with the stored record.
             registry, created, retired = self._ingest_carriers(registry, actor)
         try:
-            value = self._settle_credential_bindings(registry, actor)
+            value = self._settle_credential_bindings(registry, actor, _trusted_engine_evidence=_trusted_engine_evidence)
         except BaseException:
             self._discard_secrets(created)
             raise
@@ -1153,6 +1195,10 @@ class AdminSQLiteStore:
         record = {**record, "value": value, "excluded": excluded}
         self.write_litellm_config(value)
         self._fire_registry_changed(record)
+        fresh = admin_store.get_service_registry_with_generation(path=self.path)
+        if fresh and fresh["operator_settings_generation"] != record["operator_settings_generation"]:
+            fresh_registry, fresh_excluded = service_registry.read_registry(fresh["value"])
+            record = {**fresh, "value": fresh_registry, "excluded": fresh_excluded}
         return record
 
     def _write_registry_for_persist(self, document: Mapping[str, Any], value: Mapping[str, Any], action: str, actor: AdminContext,
@@ -1213,6 +1259,7 @@ class AdminSQLiteStore:
     def write_engine(
         self, *, service_id: str, raw: Mapping[str, Any], actor: AdminContext,
         expected_generation: int, replace: bool, existing: Mapping[str, Any] | None = None,
+        drop_inference_secret_ref: bool = False,
     ) -> dict[str, Any]:
         """Create or replace one service from an engine definition's record (gateway/engine_admin.py).
 
@@ -1224,6 +1271,8 @@ class AdminSQLiteStore:
         registry, record = service_registry.upsert_service_in_registry(
             self.get_service_registry(), service_id=service_id, raw=raw, source="ui", replace=replace,
         )
+        if isinstance(raw.get("lifecycle"), Mapping):
+            record["process"] = service_registry._v2_process(raw["lifecycle"])
         if existing is not None:
             # An edit through the engine page names the engine's own settings. Everything else the record holds (its
             # process and observations, its residency and resources, its secret references, its kind and provenance)
@@ -1232,6 +1281,8 @@ class AdminSQLiteStore:
             if "lifecycle" in raw and raw["lifecycle"] != dict(service_registry.legacy_lifecycle_from_service(existing)):
                 named["lifecycle"] = True  # a lifecycle the page changed; one it sent back as stored is not a change
             service_registry.carry_unnamed_record_fields(existing, record, named=named)
+            if drop_inference_secret_ref:
+                record.get("secret_refs", {}).pop("api_key", None)
         return self._persist_service_registry(
             registry,
             action="operator.service.updated" if replace else "operator.service.added",
@@ -1239,6 +1290,7 @@ class AdminSQLiteStore:
             service_id=service_id,
             expected_generation=expected_generation,
             extra={"definition": str(raw.get("definition") or "")},
+            _trusted_engine_evidence=True,
         )
 
     def update_service(
@@ -1256,6 +1308,37 @@ class AdminSQLiteStore:
         if left_out is not None and isinstance(left_out.record, Mapping):
             # The way to fix a record that is left out: edit it, starting from what is stored.
             existing = left_out.record
+        metadata_fields = {"name", "enabled", "disabled", "note", "acknowledge_warnings"}
+        if existing is not None and "owner" not in actor.roles and set(data) - metadata_fields:
+            raise PermissionError("Only the owner can change service settings.")
+        if existing is not None and set(data) <= metadata_fields:
+            # A metadata save must not rebuild a connection through a legacy
+            # form, which can discard URL aliases or custom protocol paths.
+            registry = copy.deepcopy(current_registry)
+            record = registry["services"][sid]
+            for field, value in data.items():
+                if field == "acknowledge_warnings":
+                    continue
+                if field == "disabled":
+                    disabled = service_registry.bool_from_config(value, False)
+                    record["enabled"] = not disabled
+                    if "enabled" in record.get("config", {}):
+                        record["config"]["enabled"] = not disabled
+                    if "disabled" in record.get("config", {}):
+                        record["config"]["disabled"] = disabled
+                    continue
+                if field == "enabled":
+                    value = service_registry.bool_from_config(value, True)
+                else:
+                    value = str(value).strip()
+                if field != "note":
+                    record[field] = value
+                if field == "note" or field in record.get("config", {}):
+                    record.setdefault("config", {})[field] = value
+            return self._persist_service_registry(
+                registry, action="operator.service.updated", actor=actor,
+                service_id=sid, expected_generation=expected_generation,
+            )
         if existing is not None and not service_registry.is_litellm_service_record(
             sid, existing
         ):
@@ -1348,7 +1431,11 @@ class AdminSQLiteStore:
         if any(command["operation"] != "retain" for command in commands) and "owner" not in actor.roles:
             raise PermissionError("Only the owner can change a secret.")
         with secret_store.provider_mutation_lock(self.path):
-            registry = self.get_service_registry()
+            snapshot = admin_store.get_service_registry_with_generation(path=self.path)
+            generation = int(snapshot["operator_settings_generation"]) if snapshot else 0
+            if generation != expected_generation:
+                raise admin_store.OperatorSettingsGenerationConflict("the service registry changed")
+            registry = service_registry.read_registry(snapshot["value"])[0] if snapshot else self.get_service_registry()
             record = (registry.get("services") or {}).get(sid)
             if record is None:
                 raise ValueError(f"service {sid!r} not found")
@@ -1360,7 +1447,7 @@ class AdminSQLiteStore:
                     secret_refs.delete(ref, db_path=self.path)
                 raise
             if not outcome.changed:
-                return {**(admin_store.get_service_registry_with_generation(path=self.path) or {}), "value": registry,
+                return {**(snapshot or {}), "value": registry,
                         "excluded": self.get_service_registry_exclusions()}
             registry["services"][sid] = new_record
             try:

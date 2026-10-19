@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Dump the normalised trace of every adapter differential scenario of THIS checkout into a directory.
+#
+#   scripts/adapter-differential-dump <out-dir>
+#
+# Run it in two checkouts (before and after a refactor) and compare:  diff -r <before> <after>
+# The scenarios also compare themselves with the goldens committed in tests/fixtures/adapter_differential;
+# a mismatch there does not stop the dump (the pytest exit status is printed, not returned).
+# The hermetic runner clears the environment and cannot write host paths, so the traces leave the
+# sandbox as the junit report that --junit-xml-out copies out (see docs/verification/ENGINE_W6B_DIFFERENTIAL.md).
+set -euo pipefail
+(($# == 1)) || { echo "usage: $0 <out-dir>" >&2; exit 2; }
+out=$(realpath -m -- "$1")
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+[[ ! -e $out ]] || [[ -d $out && -z $(ls -A -- "$out") ]] || { echo "error: $out exists and is not empty" >&2; exit 2; }
+mkdir -p -- "$out"
+xml=$(mktemp -u "${TMPDIR:-$HOME/.tmp}/adapter-differential.XXXXXXXX.xml")
+rc=0
+(cd -- "$root" && scripts/run-hermetic-pytest.sh --junit-xml-out "$xml" -q \
+  tests/test_adapter_differential.py tests/test_adapter_differential_speech.py) || rc=$?
+echo "pytest exit status: $rc (0 means every trace also equals its committed golden)" >&2
+(cd -- "$root" && python3 -m tests.support.adapter_differential extract "$xml" "$out")
+rm -f -- "$xml"

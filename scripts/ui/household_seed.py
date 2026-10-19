@@ -74,7 +74,7 @@ MODEL_GROUPS = {
         ("mistral-small", "Mistral Small", "chat"),
     ],
     # The image engine's id is "comfyui": the gateway's image route always
-    # runs on the backend of that name (proxy_comfy_request), and the fake
+    # runs on the backend of that name (proxy_graph_image_request), and the fake
     # engine answers its API, so Try's "Make a picture" finishes (D1.5b).
     "comfyui": [
         ("image", "Krea 2 Turbo", "image"),

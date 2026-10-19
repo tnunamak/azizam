@@ -531,11 +531,14 @@ def _error_message(answer: Answer) -> str:
 
 
 def _auth_headers(key: str | None, values: Mapping[str, Any]) -> dict[str, str]:
+    from gateway.litellm_substrate import header_problem
+
     headers: dict[str, str] = {}
     for row in values.get("headers") or ():
         if isinstance(row, Mapping):
             name, value = str(row.get("name") or "").strip(), row.get("value")
-            if name and isinstance(value, str) and value and value != SECRET_MASK and _header_ok(name, value):
+            if (name and isinstance(value, str) and value and value != SECRET_MASK
+                    and not row.get("secret") and not header_problem(name, value) and _header_ok(name, value)):
                 headers[name] = value
     if key and _header_ok("Authorization", key):
         headers["Authorization"] = f"Bearer {key}"
@@ -1225,7 +1228,8 @@ async def run_real_test(
     prefix = str(values.get("path_prefix") or "").strip()
     base = join_url(address, prefix) if prefix else address
     if definition["probes"].get("route_base"):
-        url = join_url(join_url(origin_of(address), definition["probes"]["route_base"]), cap["route"]["path"])
+        route_base = join_url(origin_of(address), definition["probes"]["route_base"])
+        url = join_url(join_url(route_base, prefix), cap["route"]["path"])
     else:
         url = join_url(base, cap["route"]["path"])
     slots = {"model": model or ""}
@@ -1263,6 +1267,10 @@ async def run_real_test(
     result: dict[str, Any] = {
         **base_result, "seconds": answer.seconds, "status": answer.status, "adjusted": bool(specs),
         "sent": test["sent"] + (", with your request adjustments applied" if specs else ""),
+        "request": {"method": "POST", "url": url,
+                    "headers": {name: "Bearer [redacted]" if name.lower() == "authorization" else value
+                                for name, value in headers.items()},
+                    "body": body, "timeout_s": timeout_s},
     }
     ok, reply = _judge(test, answer)
     if answer.withheld:
