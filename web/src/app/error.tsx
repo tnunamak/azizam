@@ -8,9 +8,9 @@ import { Button } from "@/components/ui/button";
 
 /**
  * The crashed state of any page (a render that threw). The app shell stays;
- * the page area says so calmly and offers the two ways out. The error goes to
- * the console for whoever runs the gateway and is never drawn: no message, no
- * stack, no digest.
+ * the page area says so calmly and offers the two ways out. The member sees no
+ * message, stack or digest, and the console gets only a fixed label and the
+ * digest, never the error itself.
  */
 export default function RouteError({
   error,
@@ -20,7 +20,8 @@ export default function RouteError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error(error);
+    // Only the digest (the id a server log can be searched by) and a fixed label: no message, no stack.
+    console.error("Azizam page error", error.digest ?? "no digest");
   }, [error]);
   return (
     <>

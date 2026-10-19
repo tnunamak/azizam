@@ -130,6 +130,8 @@ def test_the_whole_journey_choose_the_picture_and_see_it_served_without_the_sess
     picture = client.get(saved.json()["picture_url"])
     assert picture.status_code == 200 and picture.content == PNG
     assert picture.headers["content-type"] == "image/png"
+    assert picture.headers["cache-control"] == "no-store"
+    assert picture.headers["content-disposition"] == 'inline; filename="avatar"'
     assert fetched[0]["url"] == PICTURE
     assert fetched[0]["schemes"] == frozenset({"https"}) and fetched[0]["limit"] <= 1024 * 1024
     # The browser never sees the provider's address.

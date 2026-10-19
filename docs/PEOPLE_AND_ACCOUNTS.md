@@ -87,10 +87,15 @@ an `https` URL of at most 2048 characters with no credentials, and it is stored 
 not in the session cookie. A claim that is present and fails these checks removes the stored URL; an absent claim
 leaves it. The browser never loads the provider's address (no hot-linking, so the provider learns nothing about
 who views whom): the gateway fetches it on the server with no cookie, credential or referer, over `https` only, at
-most 1 MB and 8 seconds, through the same fetcher that guards media URLs against private addresses
-(`gateway/media_fetch.py`). The header and the file signature must agree on one of the four image types. A good
-copy is kept in memory for six hours, a failure for five minutes, and a failed fetch answers `404`, so the page
-shows the generated avatar. Only the person themself and an owner or admin (who already see the person in People
+most 1 MB and 8 seconds, through the fetcher that guards media URLs (`gateway/media_fetch.py`) in its strict
+mode: public addresses only (checked after DNS and on every redirect hop), destination port 443 only, and never
+the operator's `AZIZAM_MEDIA_FETCH_ALLOW_PRIVATE_HOSTS` exception, which is for media inputs. The header and the
+file signature must agree on one of the four image types. A good copy is kept in memory for six hours, a failure
+for five minutes, per person and URL; requests that arrive while a fetch runs wait for it (one fetch per
+picture). A failed fetch answers `404`, so the page shows the generated avatar. Every response about an avatar or
+a picture is `Cache-Control: no-store`: the server keeps the copy and the browser keeps nothing, so a sign-out, or
+another person's session in the same browser, is never answered from its cache. The picture is sent with
+`Content-Disposition: inline; filename="avatar"`, `nosniff` and a sandbox CSP. Only the person themself and an owner or admin (who already see the person in People
 and Library) can fetch a picture, and an owner or admin only when the person chose it.
 
 The sign-in switches, the identity provider connection and the sign-in rules

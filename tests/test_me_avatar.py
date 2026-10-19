@@ -12,9 +12,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
+from unittest.mock import AsyncMock, patch
+
 from gateway import admin_store, avatars, media_fetch
 from gateway.admin_oidc import AdminSession
-from gateway.me_avatar import PictureCache, create_me_avatar_router, image_type
+from gateway.me_avatar import PictureCache, create_me_avatar_router, fetch_picture, image_type
 from tests.support.fake_upstream import HandlerTransport
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
@@ -59,6 +61,7 @@ class Rig:
         app.include_router(create_me_avatar_router(
             session_provider=_session_for(self.who), mutation_validator=_validator,
             admin_db_path=self.db, picture_fetcher=fetcher, cache=PictureCache()))
+        self.app = app
         self.client = TestClient(app)
 
     def person(self, name: str, *, picture: str | None = None) -> str:
@@ -288,7 +291,9 @@ def test_the_picture_is_fetched_on_the_server_and_served_from_the_gateway(rig: R
     assert response.content == PNG
     assert response.headers["content-type"] == "image/png"
     assert response.headers["x-content-type-options"] == "nosniff"
-    assert response.headers["cache-control"].startswith("private, max-age=")
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["content-disposition"] == 'inline; filename="avatar"'
+    assert response.headers["content-security-policy"] == "default-src 'none'; sandbox"
     assert "set-cookie" not in response.headers
     assert rig.fetches == [PICTURE]
 
@@ -300,8 +305,8 @@ def test_the_picture_is_kept_so_the_provider_is_asked_once(rig: Rig) -> None:
     second = client.get("/me/api/profile/avatar/picture")
     assert first.content == second.content == PNG
     assert rig.fetches == [PICTURE]
-    revalidated = client.get("/me/api/profile/avatar/picture", headers={"if-none-match": first.headers["etag"]})
-    assert revalidated.status_code == 304
+    # The browser keeps nothing, so there is nothing to revalidate.
+    assert "etag" not in first.headers and "last-modified" not in first.headers
 
 
 @pytest.mark.parametrize("data,declared,served", [
@@ -467,3 +472,290 @@ def test_the_cache_is_bounded_and_expires() -> None:
     for index in range(300):
         cache.put((str(index), "u"), b"x", "image/png")
     assert len(cache._items) <= 256
+
+
+# --- the browser keeps nothing --------------------------------------------------------------------------------------
+
+def test_no_response_about_a_picture_or_an_avatar_may_be_stored_by_a_browser(rig: Rig) -> None:
+    alice = rig.person("alice", picture=PICTURE)
+    client = rig.as_(alice).client
+    responses = [
+        client.get("/me/api/profile/avatar/picture"),
+        client.get("/me/api/profile/avatar"),
+        client.get("/me/api/profile/avatars"),
+        client.put("/me/api/profile/avatar", json={"choice": "v2"}, headers=ACTION),
+        client.put("/me/api/profile/avatar", json={"choice": "v9"}, headers=ACTION),
+        client.get("/me/api/profile/avatar/picture", params={"person": "usr_nobody"}),
+        rig.as_(None).client.get("/me/api/profile/avatar/picture"),
+        rig.as_(None).client.get("/me/api/profile/avatar"),
+    ]
+    for response in responses:
+        assert response.headers["cache-control"] == "no-store", (response.url, response.status_code)
+        assert "max-age" not in response.headers["cache-control"]
+        assert "etag" not in response.headers
+
+
+def test_a_second_session_is_judged_by_its_own_rights_not_by_the_first_ones_copy(rig: Rig) -> None:
+    """The server keeps the bytes, but each request is checked again: a browser cannot reuse them."""
+    alice = rig.person("alice", picture=PICTURE)
+    bob = rig.person("bob")
+    avatars.set_choice(alice, "picture", path=rig.db)
+    first = rig.as_(alice).client.get("/me/api/profile/avatar/picture")
+    assert first.status_code == 200 and first.headers["cache-control"] == "no-store"
+    # The same URL, asked by another person (or by nobody), is refused or answers with that person's own picture.
+    assert rig.as_(bob).client.get("/me/api/profile/avatar/picture").status_code == 404
+    assert rig.as_(None).client.get("/me/api/profile/avatar/picture").status_code == 401
+    assert rig.as_(bob).client.get("/me/api/profile/avatar/picture", params={"person": alice}).status_code == 404
+    assert rig.fetches == [PICTURE]
+
+
+# --- one fetch at a time per picture --------------------------------------------------------------------------------
+
+def test_twenty_parallel_requests_cause_one_provider_fetch(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    alice = rig.person("alice", picture=PICTURE)
+    rig.as_(alice)
+    calls: list[str] = []
+
+    async def fetcher(url: str) -> media_fetch.FetchedMedia:
+        calls.append(url)
+        await asyncio.sleep(0.2)  # long enough for every request to arrive while the first is still fetching
+        return media_fetch.FetchedMedia(PNG, "p.png", "image/png")
+
+    app = FastAPI()
+    app.include_router(create_me_avatar_router(
+        session_provider=_session_for(rig.who), mutation_validator=_validator, admin_db_path=rig.db,
+        picture_fetcher=fetcher, cache=PictureCache()))
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            return await asyncio.gather(*[client.get("/me/api/profile/avatar/picture") for _ in range(20)])
+
+    responses = asyncio.run(run())
+    assert [response.status_code for response in responses] == [200] * 20
+    assert all(response.content == PNG for response in responses)
+    assert len(calls) == 1, calls
+
+
+def test_parallel_requests_for_a_failing_picture_cause_one_fetch_and_all_say_404(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    alice = rig.person("alice", picture=PICTURE)
+    rig.as_(alice)
+    calls: list[str] = []
+
+    async def fetcher(url: str) -> media_fetch.FetchedMedia:
+        calls.append(url)
+        await asyncio.sleep(0.2)
+        raise media_fetch.MediaFetchError("provider down")
+
+    app = FastAPI()
+    app.include_router(create_me_avatar_router(
+        session_provider=_session_for(rig.who), mutation_validator=_validator, admin_db_path=rig.db,
+        picture_fetcher=fetcher, cache=PictureCache()))
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            return await asyncio.gather(*[client.get("/me/api/profile/avatar/picture") for _ in range(20)])
+
+    responses = asyncio.run(run())
+    assert {response.status_code for response in responses} == {404}
+    assert len(calls) == 1
+
+
+def test_different_pictures_are_fetched_separately_while_each_is_coalesced(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    alice = rig.person("alice", picture="https://a.example.test/a.png")
+    bob = rig.person("bob", picture="https://b.example.test/b.png")
+    calls: list[str] = []
+
+    async def fetcher(url: str) -> media_fetch.FetchedMedia:
+        calls.append(url)
+        await asyncio.sleep(0.1)
+        return media_fetch.FetchedMedia(PNG, "p.png", "image/png")
+
+    app = FastAPI()
+    app.include_router(create_me_avatar_router(
+        session_provider=lambda request: AdminSession(
+            subject=request.headers["x-who"], email="x@example.test", role="none",
+            issued_at=time.time(), expires_at=time.time() + 3600),
+        mutation_validator=_validator, admin_db_path=rig.db, picture_fetcher=fetcher, cache=PictureCache()))
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            return await asyncio.gather(*[
+                client.get("/me/api/profile/avatar/picture", headers={"x-who": who}) for who in [alice, bob] * 5])
+
+    assert {response.status_code for response in asyncio.run(run())} == {200}
+    assert sorted(calls) == ["https://a.example.test/a.png", "https://b.example.test/b.png"]
+
+
+def test_a_cancelled_first_request_does_not_cancel_the_fetch_the_others_wait_for(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    alice = rig.person("alice", picture=PICTURE)
+    rig.as_(alice)
+    calls: list[str] = []
+
+    async def fetcher(url: str) -> media_fetch.FetchedMedia:
+        calls.append(url)
+        await asyncio.sleep(0.2)
+        return media_fetch.FetchedMedia(PNG, "p.png", "image/png")
+
+    app = FastAPI()
+    app.include_router(create_me_avatar_router(
+        session_provider=_session_for(rig.who), mutation_validator=_validator, admin_db_path=rig.db,
+        picture_fetcher=fetcher, cache=PictureCache()))
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            first = asyncio.ensure_future(client.get("/me/api/profile/avatar/picture"))
+            await asyncio.sleep(0.05)
+            others = [asyncio.ensure_future(client.get("/me/api/profile/avatar/picture")) for _ in range(3)]
+            first.cancel()
+            return await asyncio.gather(*others)
+
+    assert {response.status_code for response in asyncio.run(run())} == {200}
+    assert len(calls) == 1
+
+
+# --- public addresses and port 443 only -----------------------------------------------------------------------------
+
+PUBLIC = "93.184.216.34"
+
+
+def _png_response(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, headers={"content-type": "image/png"}, stream=httpx.ByteStream(PNG))
+
+
+@pytest.fixture
+def allowlist(monkeypatch):
+    """The operator's exception for media inputs, with every private name this file uses on it."""
+    monkeypatch.setenv("AZIZAM_MEDIA_FETCH_ALLOW_PRIVATE_HOSTS", "127.0.0.1,10.0.0.5,intranet.test,localhost")
+
+
+@pytest.mark.parametrize("url,answers", [
+    ("https://127.0.0.1/p.png", ["127.0.0.1"]),
+    ("https://10.0.0.5/p.png", ["10.0.0.5"]),
+    ("https://192.168.1.20/p.png", ["192.168.1.20"]),
+    ("https://[::1]/p.png", ["::1"]),
+    ("https://169.254.169.254/latest/meta-data", ["169.254.169.254"]),
+    ("https://intranet.test/p.png", ["10.0.0.5"]),             # an allowlisted name that resolves to a private address
+    ("https://localhost/p.png", ["127.0.0.1"]),
+    ("https://mixed.example.test/p.png", [PUBLIC, "10.0.0.5"]),  # one private answer spoils the lot
+])
+def test_the_allowlist_for_media_inputs_never_opens_a_private_host_to_an_avatar(allowlist, url, answers):
+    contacted: list[httpx.Request] = []
+
+    def handler(request):
+        contacted.append(request)
+        return _png_response(request)
+
+    with patch.object(media_fetch, "_resolve_addresses", AsyncMock(return_value=answers)):
+        with pytest.raises(media_fetch.MediaFetchError):
+            asyncio.run(fetch_picture(url, transport=HandlerTransport(handler)))
+    assert contacted == []
+
+
+def test_the_same_allowlist_still_opens_those_hosts_to_media_inputs(allowlist):
+    """The exception itself is unchanged for media inputs: only the avatar fetch ignores it."""
+    contacted: list[httpx.Request] = []
+
+    def handler(request):
+        contacted.append(request)
+        return _png_response(request)
+
+    with patch.object(media_fetch, "_resolve_addresses", AsyncMock(return_value=["10.0.0.5"])):
+        result = asyncio.run(media_fetch.safe_fetch_media("https://intranet.test/p.png", transport=HandlerTransport(handler)))
+    assert result.data == PNG and len(contacted) == 1
+
+
+@pytest.mark.parametrize("url", ["https://example.test:8443/p.png", "https://example.test:444/p.png",
+                                 "https://example.test:80/p.png", "https://example.test:22/p.png"])
+def test_only_port_443_is_ever_contacted(url):
+    contacted: list[httpx.Request] = []
+
+    def handler(request):
+        contacted.append(request)
+        return _png_response(request)
+
+    with patch.object(media_fetch, "_resolve_addresses", AsyncMock(return_value=[PUBLIC])):
+        with pytest.raises(media_fetch.MediaFetchError):
+            asyncio.run(fetch_picture(url, transport=HandlerTransport(handler)))
+    assert contacted == []
+
+
+def test_port_443_spelled_out_or_implied_works():
+    contacted: list[httpx.Request] = []
+
+    def handler(request):
+        contacted.append(request)
+        return _png_response(request)
+
+    with patch.object(media_fetch, "_resolve_addresses", AsyncMock(return_value=[PUBLIC])):
+        for url in ("https://example.test/p.png", "https://example.test:443/p.png"):
+            assert asyncio.run(fetch_picture(url, transport=HandlerTransport(handler))).data == PNG
+    assert len(contacted) == 2
+
+
+@pytest.mark.parametrize("target,answers", [
+    ("https://127.0.0.1/inner.png", {}),
+    ("https://10.0.0.5/inner.png", {}),
+    ("https://intranet.test/inner.png", {"intranet.test": ["10.0.0.5"]}),
+    ("https://public.example.test:8443/inner.png", {"public.example.test": [PUBLIC]}),
+    ("http://public.example.test/inner.png", {"public.example.test": [PUBLIC]}),
+])
+def test_every_redirect_hop_is_checked_again_and_the_private_host_is_never_contacted(allowlist, target, answers):
+    contacted: list[str] = []
+
+    def handler(request):
+        contacted.append(request.url.host)
+        if request.url.host == PUBLIC:
+            return httpx.Response(302, headers={"location": target}, stream=httpx.ByteStream(b""))
+        return _png_response(request)
+
+    async def resolve(host, port):
+        return answers.get(host) or [host] if host != "start.example.test" else [PUBLIC]
+
+    with patch.object(media_fetch, "_resolve_addresses", resolve):
+        with pytest.raises(media_fetch.MediaFetchError):
+            asyncio.run(fetch_picture("https://start.example.test/p.png", transport=HandlerTransport(handler)))
+    # Only the first, public hop was contacted.
+    assert contacted == [PUBLIC]
+
+
+def test_a_redirect_between_public_hosts_on_443_still_works(allowlist):
+    def handler(request):
+        if request.url.host == PUBLIC:
+            return httpx.Response(302, headers={"location": "https://cdn.example.test/p.png"}, stream=httpx.ByteStream(b""))
+        return _png_response(request)
+
+    async def resolve(host, port):
+        return [PUBLIC] if host == "start.example.test" else ["93.184.216.35"]
+
+    with patch.object(media_fetch, "_resolve_addresses", resolve):
+        result = asyncio.run(fetch_picture("https://start.example.test/p.png", transport=HandlerTransport(handler)))
+    assert result.data == PNG
+
+
+def test_through_the_route_a_private_host_on_the_allowlist_gets_zero_requests(tmp_path, allowlist):
+    """The default fetcher, behind the route, with the operator's allowlist set."""
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    contacted: list[httpx.Request] = []
+
+    def handler(request):
+        contacted.append(request)
+        return _png_response(request)
+
+    async def fetcher(url: str) -> media_fetch.FetchedMedia:
+        return await fetch_picture(url, transport=HandlerTransport(handler))
+
+    who: dict[str, str] = {}
+    app = FastAPI()
+    app.include_router(create_me_avatar_router(
+        session_provider=_session_for(who), mutation_validator=_validator, admin_db_path=db,
+        picture_fetcher=fetcher, cache=PictureCache()))
+    user = admin_store.upsert_oidc_user("https://idp.example", "a", email="a@example.test", path=db)
+    who["subject"] = user["id"]
+    avatars.record_sign_in_picture(user["id"], "https://10.0.0.5/photo.png", path=db)
+    assert TestClient(app).get("/me/api/profile/avatar/picture").status_code == 404
+    assert contacted == []

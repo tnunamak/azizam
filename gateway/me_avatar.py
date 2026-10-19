@@ -9,13 +9,13 @@ answers 404, and the page shows the generated avatar instead.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Mapping
 
+import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -33,7 +33,6 @@ KEEP_SECONDS = 6 * 3600
 KEEP_FAILURE_SECONDS = 300
 MAX_KEPT_BYTES = 32 * 1024 * 1024
 MAX_KEPT_ENTRIES = 256
-BROWSER_KEEP_SECONDS = 3600
 ADMIN_ROLES = frozenset({"owner", "superadmin", "admin"})
 
 ALLOWED_TYPES = frozenset({"image/png", "image/jpeg", "image/webp", "image/gif"})
@@ -69,10 +68,16 @@ def allowed_picture(media: media_fetch.FetchedMedia) -> tuple[bytes, str]:
     return media.data, declared
 
 
-async def fetch_picture(url: str) -> media_fetch.FetchedMedia:
+async def fetch_picture(url: str, *, transport: httpx.AsyncBaseTransport | None = None) -> media_fetch.FetchedMedia:
+    """Fetch a provider's picture: https on port 443 only, public addresses only on every hop.
+
+    ``public_only`` ignores the operator's AZIZAM_MEDIA_FETCH_ALLOW_PRIVATE_HOSTS, which is meant for
+    media inputs, not for an address a sign-in provider (or a redirect) names.
+    """
     return await media_fetch.safe_fetch_media(
         url, limit=MAX_PICTURE_BYTES, max_redirects=MAX_REDIRECTS, schemes=frozenset({"https"}),
         timeout=FETCH_TIMEOUT_SECONDS, accept="image/png,image/jpeg,image/webp,image/gif",
+        public_only=True, ports=frozenset({443}), transport=transport,
     )
 
 
@@ -145,6 +150,17 @@ def create_me_avatar_router(
 
     def _is_admin(person_id: str) -> bool:
         return bool(ADMIN_ROLES & set(admin_store.effective_admin_roles("user", person_id, path=db())))
+
+    inflight: dict[tuple[str, str], asyncio.Future] = {}
+
+    async def _fetch_and_keep(key: tuple[str, str], url: str) -> _Kept:
+        try:
+            data, content_type = allowed_picture(await picture_fetcher(url))
+        except Exception:  # noqa: BLE001 - a provider that is down, slow or wrong shows the generated mark
+            kept.put(key, None, None)
+            return _Kept(0.0, None, None)
+        kept.put(key, data, content_type)
+        return _Kept(0.0, data, content_type)
 
     @router.get("/avatar", include_in_schema=False)
     async def get_avatar(request: Request) -> JSONResponse:
@@ -220,26 +236,22 @@ def create_me_avatar_router(
         key = (person_id, url)
         entry = kept.get(key)
         if entry is None:
-            try:
-                data, content_type = allowed_picture(await picture_fetcher(url))
-            except Exception:  # noqa: BLE001 - a provider that is down, slow or wrong shows the generated mark
-                kept.put(key, None, None)
-                return missing
-            kept.put(key, data, content_type)
-        elif entry.data is None or entry.content_type is None:
+            # One fetch per key at a time: requests that arrive while it runs wait for its answer.
+            task = inflight.get(key)
+            if task is None:
+                task = inflight[key] = asyncio.ensure_future(_fetch_and_keep(key, url))
+                task.add_done_callback(lambda _done, key=key: inflight.pop(key, None))
+            entry = await asyncio.shield(task)
+        if entry.data is None or entry.content_type is None:
             return missing
-        else:
-            data, content_type = entry.data, entry.content_type
-        etag = f'"{hashlib.sha256(data).hexdigest()[:32]}"'
-        headers = {
-            "Cache-Control": f"private, max-age={BROWSER_KEEP_SECONDS}",
-            "ETag": etag,
+        # The copy is kept on the server, per person and URL. The browser keeps nothing: whether it may
+        # show this picture depends on the session asking, and a session can end or lose its rights.
+        return Response(content=entry.data, media_type=entry.content_type, headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": 'inline; filename="avatar"',
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox",
             "Cross-Origin-Resource-Policy": "same-origin",
-        }
-        if request.headers.get("if-none-match") == etag:
-            return Response(status_code=304, headers=headers)
-        return Response(content=data, media_type=content_type, headers=headers)
+        })
 
     return router

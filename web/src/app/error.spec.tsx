@@ -47,13 +47,21 @@ describe("route error boundary (app/error.tsx)", () => {
     expect(within(container).queryByText(/technical details/i)).toBeNull();
   });
 
-  it("logs the error to the console once, for whoever runs the gateway", () => {
+  it("logs only a fixed label and the digest, never the error, its message or its stack", () => {
     const error = crash();
     const { rerender } = render(<RouteError error={error} reset={() => {}} />);
     expect(consoleError).toHaveBeenCalledTimes(1);
-    expect(consoleError).toHaveBeenCalledWith(error);
+    expect(consoleError).toHaveBeenCalledWith("Azizam page error", "digest-9f3a");
+    expect(JSON.stringify(consoleError.mock.calls)).not.toMatch(/TypeError|opk_live|PeoplePage|_next\/static|Cannot read/);
+    expect(consoleError.mock.calls[0]).not.toContain(error);
     rerender(<RouteError error={error} reset={() => {}} />);
     expect(consoleError).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs a placeholder when the error has no digest", () => {
+    const error = new Error(SECRET_MESSAGE);
+    render(<RouteError error={error} reset={() => {}} />);
+    expect(consoleError).toHaveBeenCalledWith("Azizam page error", "no digest");
   });
 
   it("says what to do in plain words", () => {
@@ -100,7 +108,7 @@ describe("global error boundary (app/global-error.tsx)", () => {
       expect(html).not.toContain(leak);
   });
 
-  it("calls reset when Try again is pressed and logs the error to the console", async () => {
+  it("calls reset when Try again is pressed and logs only a label and the digest", async () => {
     const reset = vi.fn();
     const error = crash();
     // A document cannot be mounted into a div; mount the same tree in the test document instead.
@@ -114,7 +122,9 @@ describe("global error boundary (app/global-error.tsx)", () => {
         <GlobalError error={error} reset={reset} />,
       );
     });
-    expect(consoleError).toHaveBeenCalledWith(error);
+    expect(consoleError).toHaveBeenCalledWith("Azizam root error", "digest-9f3a");
+    expect(consoleError.mock.calls.flat()).not.toContain(error);
+    expect(JSON.stringify(consoleError.mock.calls)).not.toMatch(/TypeError|opk_live|PeoplePage|Cannot read/);
     const button = host.querySelector("button") ?? document.querySelector("button");
     expect(button).not.toBeNull();
     await userEvent.click(button!);

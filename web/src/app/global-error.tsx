@@ -6,7 +6,7 @@ import { useEffect } from "react";
  * The last resort: the root layout itself threw, so there is no shell, no
  * providers and no stylesheet. This renders its own html and body with one
  * inline style element and the same words as the page-level crashed state.
- * The error goes to the console and is never drawn.
+ * The console gets a fixed label and the digest, never the error; nothing is drawn.
  */
 const STYLE = `
   :root { color-scheme: light dark; }
@@ -39,7 +39,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error(error);
+    console.error("Azizam root error", error.digest ?? "no digest");
   }, [error]);
   return (
     <html lang="en">

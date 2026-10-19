@@ -89,10 +89,14 @@ describe("generated avatars", () => {
     }
   });
 
-  it("shows the initial, two letters only in the large preview", () => {
-    expect(render(<PersonAvatar personId="u" name="Mira Chen" size="sm" decorative />).container).toHaveTextContent(/^M$/);
-    cleanup();
-    expect(render(<PersonAvatar personId="u" name="Mira Chen" size="xl" decorative />).container).toHaveTextContent(/^MC$/);
+  it("shows one initial at every size, the preview included", () => {
+    for (const size of ["2xs", "xs", "sm", "md", "lg", "xl"] as const) {
+      const { container, unmount } = render(
+        <PersonAvatar personId="u" name="Yara Adeyemi" size={size} decorative />,
+      );
+      expect(container).toHaveTextContent(/^Y$/);
+      unmount();
+    }
   });
 
   it("names itself for a screen reader unless an adjacent label does", () => {
@@ -117,18 +121,19 @@ describe("generated avatars", () => {
 
 describe("initials", () => {
   it.each([
-    ["Mira Chen", 1, "M"],
-    ["Mira Chen", 2, "MC"],
-    ["mira", 2, "M"],
-    ["  ", 1, "?"],
-    ["", 2, "?"],
-    ["Émile Zola", 2, "ÉZ"],
-    ["李小龍", 1, "李"],
-    ["Ada Lovelace-King Jr", 2, "AJ"],
-    ["123 Main", 1, "1"],
-    ["@@@", 1, "?"],
-  ] as const)("%j with %i letter(s) is %j", (name, count, expected) => {
-    expect(getAvatarInitials(name, count)).toBe(expected);
+    ["Mira Chen", "M"],
+    ["mira", "M"],
+    ["  ", "?"],
+    ["", "?"],
+    ["Émile Zola", "É"],
+    ["éclair", "É"],
+    ["李小龍", "李"],
+    ["  ada lovelace", "A"],
+    ["123 Main", "1"],
+    ["@@@", "?"],
+    ["@sam", "S"],
+  ] as const)("%j is %j", (name, expected) => {
+    expect(getAvatarInitials(name)).toBe(expected);
   });
 });
 

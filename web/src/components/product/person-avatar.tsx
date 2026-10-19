@@ -48,17 +48,16 @@ export function choiceFromSelection(selection: AvatarSelection): AvatarChoice {
   return selection.kind === "generated" ? selection.variant : "auto";
 }
 
-/** The first letter of the name; two letters (first and last word) when `count` is 2. */
-export function getAvatarInitials(name: string, count: 1 | 2 = 1): string {
-  const words =
-    name.normalize("NFC").match(/[\p{L}\p{N}][\p{L}\p{N}\p{M}]*/gu) ?? [];
-  const initial = (word: string) =>
-    word.toLocaleUpperCase().match(/^[\p{L}\p{N}]\p{M}*/u)?.[0] ?? "";
-  if (!words.length) return "?";
-  const first = initial(words[0] ?? "");
-  return count === 2 && words.length > 1
-    ? first + initial(words[words.length - 1] ?? "")
-    : first;
+/**
+ * The first letter or digit of the name, upper-cased, or "?". One letter at every
+ * size, so the account button, the picker, People and Library read the same;
+ * two letters crowd a 16 to 28 px disc.
+ */
+export function getAvatarInitials(name: string): string {
+  const first = name
+    .normalize("NFC")
+    .match(/[\p{L}\p{N}][\p{M}]*/u)?.[0];
+  return first ? first.toLocaleUpperCase() : "?";
 }
 
 /** Never seed with a display name or email. The id stays the same across renames. */
@@ -146,7 +145,7 @@ export function PersonAvatar({
   const imageUrl =
     selection?.kind === "sign-in" ? getAvatarPictureUrl(pictureUrl) : undefined;
   const hidden = decorative && !label;
-  const initials = getAvatarInitials(name, size === "xl" ? 2 : 1);
+  const initials = getAvatarInitials(name);
 
   return (
     <AvatarPrimitive.Root
