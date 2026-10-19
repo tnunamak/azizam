@@ -1629,6 +1629,17 @@ the build chose a form that the text above leaves open:
   (with their lengths, in listing order) and every default of the group. The web
   reads them from there and keeps no copy. Nothing else in either response
   changes.
+- The validator accepts only values the runtime enforces today and names the
+  slice that adds the rest: `readers: maker_signed_in` (slice 5), a `parts`
+  list other than what is captured, and any group other than `prompts`. A
+  value that changes nothing is a control that does nothing.
+- A stored period that the group no longer offers reads as the shortest period
+  it offers, in one function (`retention.normalize_period`), for the member and
+  owner screens, the decision, the write and the cleanup loop. A change to the
+  file therefore keeps content for less time, never more. The file does not
+  refuse the change, because it ships with the code and cannot see stored values.
+- Fields of the old `prompt_memory` setting that nothing reads are kept under
+  `unclassified` in `retention` and shown by no output (D34).
 - `retention.write` takes the kind, the request's time and a `commit` function.
   It runs `commit` under the same lock that `retention_guard` held, for Library
   prompts (`prompt_memory.put`) and for the two Responses writes.

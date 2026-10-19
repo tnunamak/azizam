@@ -94,6 +94,15 @@ def _ref_me_effective(member, household):
 
 
 PERIODS = ("never", "3_months", "1_year", "bogus")
+
+
+def _as_offered(values):
+    """The input as the new rule reads it: a period the group does not offer is the shortest it offers
+    (`normalize_period`). Everything else is the input as it was."""
+    if not isinstance(values, dict):
+        return values
+    return {key: ("3_months" if key in {"retention", "retention_cap"} and value == "bogus" else value)
+            for key, value in values.items()}
 BODIES = (None, {}, {"input": "x"}, {"extensions": {"com.azizam.prompts": {"mode": "forget"}}},
           {"extensions": {"com.azizam.prompts": {"mode": "keep"}}}, {"extensions": "x"},
           {"extensions": {"com.azizam.prompts": {"mode": "forget", "x": 1}}})
@@ -118,8 +127,8 @@ def test_decide_equals_the_moved_decision_on_every_input(kind):
         (None, "person"), _members(), _households(), BODIES, (None, True, False),
     ):
         try:
-            want = _ref_decide(person_id=person, member=member, household=household, request_body=body,
-                               responses_store=store, now=NOW)
+            want = _ref_decide(person_id=person, member=_as_offered(member), household=_as_offered(household),
+                               request_body=body, responses_store=store, now=NOW)
         except retention.PromptModeError as exc:
             with pytest.raises(retention.PromptModeError, match=re.escape(str(exc))):
                 retention.decide(kind, person_id=person, member=member, household_policy=household,
@@ -160,14 +169,14 @@ def test_effective_periods_equal_both_moved_copies():
     members = [None, {}] + [{"remember": r, "retention": p} for r in (True, False) for p in (*PERIODS, "", None)]
     households = [None, {}] + [{"never_keep": k, "retention_cap": c} for k in (True, False) for c in (*PERIODS, "", None)]
     for member, household in itertools.product(members, households):
-        assert retention.effective(member, household) == _ref_effective(member, household)
+        assert retention.effective(member, household) == _ref_effective(_as_offered(member), _as_offered(household))
     # The member settings route normalizes the household first; the same answer through its own copy of the rule.
     from gateway import me_prompt_memory
     for member, household in itertools.product(
         [{"remember": r, "retention": p} for r in (True, False) for p in PERIODS],
         [me_prompt_memory._household_policy(h) for h in households],
     ):
-        assert me_prompt_memory._effective(member, household) == _ref_me_effective(member, household)
+        assert me_prompt_memory._effective(member, household) == _ref_me_effective(_as_offered(member), _as_offered(household))
 
 
 # --- 16.1.2 The settings key migration -----------------------------------------------------------------------------
@@ -338,13 +347,56 @@ def test_migration_refuses_a_setting_it_cannot_read(tmp_path, payload):
         admin_store.init_db(path)
 
 
-def test_migration_logs_a_field_it_does_not_carry(tmp_path, capsys):
+def test_migration_keeps_an_unknown_field_stored_and_never_shows_it(tmp_path, capsys):
+    """D34: a key nothing classifies is kept in storage unchanged and left out of every output."""
+    from gateway import prompt_memory, settings_api
     path = tmp_path / "admin.db"
-    _legacy_database(path, {"never_keep": False, "x": 1, "retention_cap": "3_months"})
+    _legacy_database(path, {"never_keep": False, "x": 1, "retention_cap": "3_months", "note": {"a": [1]}})
     admin_store.init_db(path)
-    assert "x" in capsys.readouterr().out
-    assert admin_store.get_operator_setting("retention", path=path)["value"] == {
-        "never_keep": False, "groups": {"prompts": {"retention_cap": "3_months"}}}
+    out = capsys.readouterr().out
+    assert "2 fields" in out and "hidden" in out
+    stored = admin_store.get_operator_setting("retention", path=path)["value"]
+    assert stored == {"never_keep": False, "groups": {"prompts": {"retention_cap": "3_months"}},
+                      "unclassified": {"x": 1, "note": {"a": [1]}}}
+    wanted = {"default_remember": True, "never_keep": False, "retention_cap": "3_months"}
+    assert settings_api.prompt_memory_settings(path) == wanted
+    assert prompt_memory.household_settings(admin_path=path) == wanted
+    with retention.guard(path) as policy:
+        assert "x" not in policy and "unclassified" not in policy and "note" not in policy
+    # A save through the settings view keeps what it does not show.
+    admin_store.put_operator_setting("prompt_memory", {"default_remember": False, "never_keep": False,
+                                                       "retention_cap": "1_year"}, path=path)
+    saved = admin_store.get_operator_setting("retention", path=path)["value"]
+    assert saved["unclassified"] == {"x": 1, "note": {"a": [1]}}
+    assert prompt_memory.household_settings(admin_path=path)["retention_cap"] == "1_year"
+
+
+def test_no_response_shows_a_stored_unknown_field(tmp_path):
+    import json as _json
+    import time as _time
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from gateway.admin_api import AdminContext
+    from gateway.admin_oidc import AdminSession
+    from gateway.me_prompt_memory import create_me_prompt_memory_router
+    from gateway.settings_api import create_settings_router
+    path = tmp_path / "admin.db"
+    admin_store.init_db(path)
+    user = admin_store.upsert_oidc_user("iss", "dana", email="d@example.test", path=path)["id"]
+    with sqlite3.connect(path) as conn:
+        conn.execute("INSERT INTO operator_settings(key,value_json,updated_at,updated_by) VALUES('retention',?,1,NULL)",
+                     (_json.dumps({"unclassified": {"secret-marker": 1}, "never_keep": False}),))
+    app = FastAPI()
+    app.include_router(create_settings_router(
+        auth=lambda request: AdminContext(subject="o", roles=frozenset({"owner"}), auth_method="session", csrf_token="x"),
+        admin_path=path, config_provider=lambda: {}))
+    app.include_router(create_me_prompt_memory_router(
+        session_provider=lambda request: AdminSession(subject=user, email="d@example.test", role="none",
+                                                      issued_at=_time.time(), expires_at=_time.time() + 60),
+        admin_db_path=path, household_provider=lambda: __import__("gateway.settings_api", fromlist=["x"]).prompt_memory_settings(path)))
+    client = TestClient(app)
+    for url in ("/admin/api/settings/prompt-memory", "/me/api/prompt-memory"):
+        assert "secret-marker" not in client.get(url).text and "unclassified" not in client.get(url).text
 
 
 def test_a_database_that_never_had_the_setting_stays_without_one(tmp_path):
@@ -407,6 +459,12 @@ ILLEGAL = {
     "a kind core cannot capture": lambda d: d["kinds"].update(request_history=d["kinds"]["library_prompt"]),
     "a core kind with no values": lambda d: d["kinds"].pop("conversation"),
     "a kind in no group": lambda d: d["groups"]["prompts"].update(kinds=["library_prompt"]),
+    "readers the runtime does not enforce yet": lambda d: d["kinds"]["library_prompt"].update(readers="maker_signed_in"),
+    "a parts default narrower than what is captured": lambda d: d["kinds"]["conversation"]["parts"].update(default=["accepted"]),
+    "parts allowed narrower than what is captured": lambda d: d["kinds"]["conversation"]["parts"].update(allowed=["accepted"], default=["accepted"]),
+    "a second group": lambda d: d["groups"].update(request_history={**d["groups"]["prompts"], "kinds": ["request_history"]}),
+    "the kinds split into two groups": lambda d: (d["groups"]["prompts"].update(kinds=["library_prompt"]),
+                                                  d["groups"].update(other={**d["groups"]["prompts"], "kinds": ["conversation"]})),
     "an unknown field": lambda d: d.update(surprise=True),
     "a wrong format version": lambda d: d.update(format_version=2),
     "a missing group field": lambda d: d["groups"]["prompts"].pop("default_keep"),
@@ -419,6 +477,17 @@ def test_the_validator_refuses_each_illegal_value(name):
     with pytest.raises(retention.RetentionDataError) as error:
         retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()), source="retention.yml")
     assert "retention.yml" in str(error.value)
+
+
+def test_a_value_whose_enforcement_has_not_shipped_is_refused_with_the_slice_that_adds_it():
+    """A setting that changes nothing is a defect: only values the runtime enforces today pass."""
+    schema = json.loads(SCHEMA.read_text())
+    with pytest.raises(retention.RetentionDataError, match=r"maker_signed_in.*not enforced yet.*slice 5"):
+        retention.parse_contract(_mutated(ILLEGAL["readers the runtime does not enforce yet"]), schema=schema)
+    with pytest.raises(retention.RetentionDataError, match=r"parts.*captures.*slice 5"):
+        retention.parse_contract(_mutated(ILLEGAL["parts allowed narrower than what is captured"]), schema=schema)
+    with pytest.raises(retention.RetentionDataError, match=r"group.*slice 5"):
+        retention.parse_contract(_mutated(ILLEGAL["a second group"]), schema=schema)
 
 
 def test_a_missing_file_stops_startup_with_a_plain_message(tmp_path, monkeypatch):
@@ -582,3 +651,84 @@ def test_the_settings_responses_carry_the_bundled_choices_and_defaults(tmp_path)
                                     "remember": True, "retention": "never"}
     assert client.get("/admin/api/settings/prompt-memory", headers={"x-azizam-csrf": "x"}).json()["contract"] == expected
     assert client.get("/me/api/prompt-memory").json()["contract"] == expected
+
+
+# --- One reading of a stored period, for display, decision, write and cleanup -----------------------------------------
+
+
+def _narrowed_file(tmp_path, choices):
+    data = _bundled_data()
+    data["groups"]["prompts"].update(choices=choices, default_retention=choices[0], default_cap=choices[0])
+    changed = tmp_path / "retention.yml"
+    changed.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return changed
+
+
+def test_a_stored_period_the_contract_no_longer_offers_reads_the_same_everywhere(tmp_path, monkeypatch):
+    """Member and household both stored `never`; the contract now offers only 3_months."""
+    import time as _time
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from gateway import media_jobs, prompt_memory, settings_api
+    from gateway.admin_oidc import AdminSession
+    from gateway.me_prompt_memory import create_me_prompt_memory_router
+
+    path, media = tmp_path / "admin.db", tmp_path / "media.db"
+    admin_store.init_db(path)
+    media_jobs.init_db(media)
+    prompt_memory.init_db(path=media)
+    user = admin_store.upsert_oidc_user("iss", "review", email="r@example.test", path=path)["id"]
+    admin_store.put_operator_setting("prompt_memory", {"default_remember": True, "never_keep": False,
+                                                       "retention_cap": "never"}, path=path)
+    admin_store.put_prompt_memory_preference(user, remember=True, retention="never", path=path)
+    now = int(_time.time())
+    prompt_memory.put("old", user, "kept forever", kept_until=None, created_at=now - 5, path=media)
+    monkeypatch.setattr(retention, "BUNDLED_PATH", _narrowed_file(tmp_path, ["3_months"]))
+    ninety = 90 * 86400
+
+    # display
+    app = FastAPI()
+    app.include_router(create_me_prompt_memory_router(
+        session_provider=lambda request: AdminSession(subject=user, email=None, role="none", issued_at=now, expires_at=now + 600),
+        admin_db_path=path, prompt_memory_path=media,
+        household_provider=lambda: settings_api.prompt_memory_settings(path)))
+    body = TestClient(app).get("/me/api/prompt-memory").json()["prompt_memory"]
+    assert body["effective_retention"] == "3_months" and body["household"]["retention_cap"] == "3_months"
+    # decision
+    decision = prompt_memory.decide_for_person(user, None, admin_path=path)
+    assert decision.kept_until - decision.created_at == ninety
+    # write
+    assert prompt_memory.put("new", user, "words", kept_until=decision.kept_until, created_at=decision.created_at,
+                             path=media, admin_path=path)
+    assert prompt_memory.put("free", user, "no caller deadline", kept_until=None, created_at=decision.created_at,
+                             path=media, admin_path=path)
+    assert prompt_memory.get("new", user, path=media)["kept_until"] == decision.created_at + ninety
+    assert prompt_memory.get("free", user, path=media)["kept_until"] == decision.created_at + ninety
+    # cleanup: the policy the maintenance loop reads shortens the deadline that was kept forever
+    with retention.guard(path, user) as policy:
+        assert (policy["retention"], policy["retention_cap"]) == ("3_months", "3_months")
+        cap = policy["retention_cap"]
+    prompt_memory.tighten_retention(cap, path=media)
+    assert prompt_memory.get("old", user, path=media)["kept_until"] == now - 5 + ninety
+    # the owner's screen reads the same cap and does not fail on the stored value
+    assert settings_api.prompt_memory_settings(path)["retention_cap"] == "3_months"
+
+
+def test_a_missing_period_stands_for_the_default_in_decision_and_display(tmp_path, monkeypatch):
+    monkeypatch.setattr(retention, "BUNDLED_PATH", _narrowed_file(tmp_path, ["1_year", "3_months"]))
+    for unset in ("", None):
+        assert retention.effective({"retention": unset}, {"retention_cap": unset})["retention"] == "1_year"
+        kept = retention.decide(retention.LIBRARY_PROMPT, person_id="p", member={"retention": unset},
+                                household_policy={"retention_cap": unset}, request_body=None, now=NOW)
+        assert kept.kept_until == NOW + 365 * 86400
+
+
+@pytest.mark.parametrize("stored", ["never", "bogus"])
+def test_one_function_maps_a_period_the_group_does_not_offer(tmp_path, monkeypatch, stored):
+    monkeypatch.setattr(retention, "BUNDLED_PATH", _narrowed_file(tmp_path, ["1_year", "3_months"]))
+    assert retention.normalize_period(stored) == "3_months"  # the shortest the group offers
+    assert retention.normalize_period("1_year") == "1_year"
+    assert retention.effective({"remember": True, "retention": stored}, {"retention_cap": stored})["retention"] == "3_months"
+    kept = retention.decide(retention.LIBRARY_PROMPT, person_id="p", member={"retention": stored},
+                            household_policy={"retention_cap": stored}, request_body=None, now=NOW)
+    assert kept.kept_until == NOW + 90 * 86400

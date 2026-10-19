@@ -270,7 +270,7 @@ def safe_put(
 def tighten_retention(period: str, *, person_id: str | None = None,
                       path: Path | None = None, now: int | None = None) -> int:
     """Shorten existing deadlines; never restore or lengthen a prompt."""
-    seconds = retention.seconds_map()[period]
+    seconds = retention.seconds_map()[retention.normalize_period(period)]
     if seconds is None:
         return 0
     conn = _connect(path)

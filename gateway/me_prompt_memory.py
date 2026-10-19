@@ -240,7 +240,7 @@ def _household_policy(value: Any) -> dict[str, Any]:
     return {
         "default_remember": bool(source.get("default_remember", defaults["default_remember"])),
         "never_keep": bool(source.get("never_keep", defaults["never_keep"])),
-        "retention_cap": str(source.get("retention_cap") or defaults["retention_cap"]),
+        "retention_cap": retention.normalize_period(source.get("retention_cap"), unset=defaults["retention_cap"]),
     }
 
 

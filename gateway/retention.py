@@ -61,10 +61,21 @@ CONVERSATION = "conversation"
 KINDS = (LIBRARY_PROMPT, CONVERSATION)
 #: The group whose view the settings screens speak.
 GROUP_PROMPTS = "prompts"
-#: What a record of each kind can hold at most: the boundaries the code can capture.
+#: What a record of each kind holds: the boundaries the code captures. Today it captures all of them, always, so
+#: the file may list nothing else (a narrower list would change nothing).
 CAPTURE_POINTS = {LIBRARY_PROMPT: ("accepted",), CONVERSATION: ("accepted", "received")}
-#: Who can read, by kind. ``scope`` is the conversation rule; ``maker`` is the floor of the person-scoped kinds.
+#: Who can read, by kind, as the design names them (section 4). ``scope`` is the conversation rule; ``maker`` is the
+#: floor of the person-scoped kinds; ``maker_signed_in`` narrows it to the maker's browser session.
 READERS = {LIBRARY_PROMPT: ("maker", "maker_signed_in"), CONVERSATION: ("scope",)}
+#: The readers the read paths enforce today. A legal value that is not here is refused until its slice ships, because
+#: a value that changes nothing is a control that does nothing.
+ENFORCED_READERS = {LIBRARY_PROMPT: ("maker",), CONVERSATION: ("scope",)}
+UNSHIPPED = "slice 5 of docs/design/REQUEST_RETENTION.md section 17"
+#: The groups the runtime has: one member switch for both kinds. Another group is a switch nothing reads.
+ENFORCED_GROUPS = {GROUP_PROMPTS: (LIBRARY_PROMPT, CONVERSATION)}
+
+#: Fields of the household setting that nothing classifies: stored unchanged, shown by no output (decision D34).
+UNCLASSIFIED = "unclassified"
 
 #: The names of the prompts group's view (the settings screens' wire names).
 PROMPTS_VIEW_FIELDS = frozenset({"default_remember", "never_keep", "retention_cap"})
@@ -164,11 +175,21 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
     for kind in KINDS:
         if kind in data["kinds"] and kind not in seen_in:
             errors.append(f"kinds/{kind}: the kind is in no group")
+    for name, group in data["groups"].items():
+        if name not in ENFORCED_GROUPS:
+            errors.append(f"groups/{name}: the gateway has one member switch today, the group {GROUP_PROMPTS}; "
+                          f"another group would be a switch nothing reads ({UNSHIPPED} adds request_history)")
+        elif set(group["kinds"]) != set(ENFORCED_GROUPS[name]):
+            errors.append(f"groups/{name}/kinds: the group holds {', '.join(ENFORCED_GROUPS[name])} today, "
+                          f"because one member switch governs both ({UNSHIPPED} adds other groups)")
     for kind, values in data["kinds"].items():
         if kind not in KINDS:
             continue
         if values["readers"] not in READERS[kind]:
             errors.append(f"kinds/{kind}/readers: {values['readers']} is not legal for {kind} (legal: {', '.join(READERS[kind])})")
+        elif values["readers"] not in ENFORCED_READERS[kind]:
+            errors.append(f"kinds/{kind}/readers: {values['readers']} is not enforced yet; the read paths allow "
+                          f"{', '.join(ENFORCED_READERS[kind])} only ({UNSHIPPED} adds it), so the file refuses it")
         parts = values["parts"]
         for part in parts["allowed"]:
             if part not in CAPTURE_POINTS[kind]:
@@ -176,6 +197,10 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
         for part in parts["default"]:
             if part not in parts["allowed"]:
                 errors.append(f"kinds/{kind}/parts/default: {part} is not in allowed")
+        for field in ("allowed", "default"):
+            if set(parts[field]) != set(CAPTURE_POINTS[kind]):
+                errors.append(f"kinds/{kind}/parts/{field}: the gateway captures {', '.join(CAPTURE_POINTS[kind])} for {kind} "
+                              f"every time, so another list changes nothing ({UNSHIPPED} adds part choices)")
     return errors
 
 
@@ -309,17 +334,40 @@ def validate_prompts_view(view: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def household(document: Mapping[str, Any] | None) -> dict[str, Any]:
-    """The prompts group's household values: the owner's, over the bundled defaults."""
-    return {**household_defaults(), **prompts_view(document)}
+    """The prompts group's household values: the owner's, over the bundled defaults. A cap the group no longer
+    offers reads as ``normalize_period`` says, here and wherever else the cap is used."""
+    values = {**household_defaults(), **prompts_view(document)}
+    values["retention_cap"] = normalize_period(values["retention_cap"])
+    return values
 
 
 # ---------------------------------------------------------------------- periods
 
 
+def normalize_period(value: Any, kind: str = LIBRARY_PROMPT, *, unset: str | None = None) -> str:
+    """The one reading of a stored period, for display, decision, write and cleanup.
+
+    A period the group offers stays as it is. Any other stored value (one the contract used to offer, or damage)
+    stands for the shortest period the group offers, so a change to the contract can only keep content for
+    less time, never more. When the group offers no finite period, it stands for the one with no deadline.
+    A value that is missing altogether stands for ``unset`` (the default), when the caller gives one.
+    """
+    contract = bundled()
+    choices = contract.choices(kind)
+    if unset is not None and (value is None or value == ""):
+        value = unset  # nothing stored: the default stands, as it did before the file existed
+    if value in choices:
+        return value
+    seconds = contract.seconds_map()
+    finite = [choice for choice in choices if seconds[choice] is not None]
+    return min(finite, key=lambda choice: seconds[choice] or 0) if finite else contract.no_expiry(kind)
+
+
 def effective_period(member_period: str, cap: str, kind: str = LIBRARY_PROMPT) -> str:
-    """The shorter of the member's period and the household cap. A value that is not a choice is no limit."""
+    """The shorter of the member's period and the household cap, each read by ``normalize_period``."""
     contract = bundled()
     seconds = contract.seconds_map()
+    member_period, cap = normalize_period(member_period, kind), normalize_period(cap, kind)
     finite = [value for value in (member_period, cap) if seconds.get(value) is not None]
     if not finite:
         return contract.no_expiry(kind)
@@ -336,8 +384,9 @@ def effective(member: Mapping[str, Any] | None, household_policy: Mapping[str, A
     return {
         "remember": keep,
         "retention": effective_period(
-            str(prefs.get("retention") or contract.member_defaults(kind)["retention"]),
-            str(policy.get("retention_cap") or contract.household_defaults(kind)["retention_cap"]),
+            normalize_period(prefs.get("retention"), kind, unset=contract.member_defaults(kind)["retention"]),
+            normalize_period(policy.get("retention_cap"), kind,
+                             unset=contract.household_defaults(kind)["retention_cap"]),
             kind,
         ),
     }
@@ -397,8 +446,10 @@ def decide(
         return Decision(person_id, False, "member_disabled", kind=kind)
     started = int(time.time()) if now is None else now
     seconds = contract.seconds_map()
-    member_period = seconds.get(preference.get("retention", contract.member_defaults(kind)["retention"]))
-    cap_period = seconds.get(policy.get("retention_cap", contract.household_defaults(kind)["retention_cap"]))
+    member_default = contract.member_defaults(kind)["retention"]
+    cap_default = contract.household_defaults(kind)["retention_cap"]
+    member_period = seconds[normalize_period(preference.get("retention", member_default), kind, unset=member_default)]
+    cap_period = seconds[normalize_period(policy.get("retention_cap", cap_default), kind, unset=cap_default)]
     finite = [period for period in (member_period, cap_period) if period is not None]
     expiry = started + min(finite) if finite else None
     return Decision(person_id, True, "remembered", expiry, started, kind, contract.parts(kind))
@@ -506,8 +557,9 @@ def guard(admin_path: Path | None, person_id: str | None = None) -> Iterator[dic
                     person_enabled = access is None or (access[0] is None and access[1] is None)
         policy = {**household_policy,
                   "remember": bool(member[0]) if member else household_policy["default_remember"],
-                  "retention": member[1] if member else member_default["retention"],
+                  "retention": normalize_period(member[1] if member else member_default["retention"]),
                   "forgot_before": forgot_before}
+        policy["retention_cap"] = normalize_period(policy["retention_cap"])
         policy["remember"] = bool(policy["remember"]) and person_enabled
         yield policy
         conn.commit()
@@ -522,8 +574,8 @@ def _library_prompt_gate(policy: Mapping[str, Any], started: int, kept_until: in
     if policy["never_keep"] or not policy["remember"] or started <= policy.get("forgot_before", 0):
         return False, None
     seconds = seconds_map()
-    periods = [seconds[value] for value in (policy["retention"], policy["retention_cap"])
-               if seconds[value] is not None]
+    periods = [seconds[normalize_period(value)] for value in (policy["retention"], policy["retention_cap"])
+               if seconds[normalize_period(value)] is not None]
     limits = [kept_until] if kept_until is not None else []
     limits.extend(started + period for period in periods)
     deadline = min(limits) if limits else None

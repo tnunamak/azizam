@@ -30,7 +30,7 @@ def instance_settings(path: Path, defaults: Mapping[str, Any] | None = None) -> 
 
 def prompt_memory_settings(path: Path) -> dict[str, Any]:
     stored = admin_store.get_operator_setting(retention.SETTING_KEY, path=path)
-    return retention.validate_prompts_view(retention.prompts_view(stored["value"] if stored else None))
+    return retention.validate_prompts_view(retention.household(stored["value"] if stored else None))
 
 
 def _has_pending_purge(value: Any) -> bool:
@@ -76,7 +76,7 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
     def prompt_memory_response(*, extra: Mapping[str, Any] | None = None,
                                status_code: int = 200) -> JSONResponse:
         record = admin_store.get_operator_setting(retention.SETTING_KEY, path=admin_path)
-        value = retention.validate_prompts_view(retention.prompts_view(record["value"] if record else None))
+        value = retention.validate_prompts_view(retention.household(record["value"] if record else None))
         purge = dict(purge_status_provider() if purge_status_provider else {})
         if prompt_memory.erasure_pending("*", admin_path=admin_path):
             purge.update(pending=True, database_pending=True, retry_scheduled=True)
