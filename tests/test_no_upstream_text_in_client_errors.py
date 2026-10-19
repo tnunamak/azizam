@@ -138,8 +138,30 @@ async def h(client, url):
 async def i(client, url):
     resp = await client.get(url)
     return upstream_error_response(resp.status_code, resp.content, resp.headers)
+def reply_text(reply):
+    return reply.read_text()
+async def j(client, url):
+    resp = await client.post(url)
+    return Response(content=json.dumps({"error": {"message": f"upload failed: {reply_text(resp)[:200]}"}}), status_code=502)
+async def k(client, url):
+    resp = await client.post(url)
+    return Response(content=json.dumps({"error": {"message": "upload failed: " + resp.content.decode()}}), status_code=502)
+async def l(client, url):
+    resp = await client.post(url)
+    return Response(content=json.dumps({"error": {"message": f"upload failed: {resp.status}"}}), status_code=502)
+async def m(client, url):
+    try:
+        await client.post(url)
+    except httpx.HTTPError as exc:
+        return Response(content=json.dumps({"error": {"message": f"upload failed: {str(exc)}"}}), status_code=502)
 '''
-    assert taint.scan_source(source, is_client_sink, traceback_is_sink=False, bare_exception=False) == {"a", "b", "d", "f", "g"}
+    assert taint.scan_source(source, is_client_sink, traceback_is_sink=False, bare_exception=False) == {"a", "b", "d", "f", "g", "j", "k", "m"}
+
+
+def test_the_production_helpers_that_return_a_response_body_are_known():
+    """The review of r9 found a 502 built from ``_graph_reply_text(resp)``: a wrapper hid ``.read_text()`` from the scan."""
+    assert taint.helpers_returning_a_body(ast.parse("def wrap(reply):\n    return reply.read_text()\n")) == {"wrap"}
+    assert taint.helpers_returning_a_body(ast.parse("def own(path):\n    return 'x'\n")) == set()
 
 
 # ---------------------------------------------------------------------------------------------------------------------

@@ -32,11 +32,16 @@ ROOT = Path(__file__).resolve().parents[2]
 SANITIZERS = {"describe_response", "describe_bytes", "describe_error", "describe_origin", "describe_media_type",
               # a size or a flag derived from a body is a value, not its text
               "len", "int", "float", "bool", "isinstance", "id", "hash",
-              # a summary the gateway builds from a history entry: node labels only, never the engine's error text
+              # a summary the gateway builds from a history entry: a fixed sentence plus, for a node of the graph it submitted, its own label (D45b)
               "_graph_error_message", "execution_error_message"}
 BODY_ATTRS = {"text", "content", "stdout", "stderr"}
-BODY_CALLS = {"json", "read", "aread", "readline", "readlines", "communicate", "iter_bytes", "iter_text", "iter_lines",
-              "aiter_bytes", "aiter_text", "aiter_lines"}
+BODY_CALLS = {"json", "read", "aread", "readline", "readlines", "communicate", "iter_bytes", "iter_text",
+              "iter_lines", "aiter_bytes", "aiter_text", "aiter_lines"}
+# A reply's own ``read_text()`` is its body as text; the same method of a path reads a file (not an upstream's text).
+REPLY_NAMES = {"reply", "resp", "response", "res", "submitted", "upload", "wire"}
+# Names of the helpers that return a response body they were given (``def reply_text(reply): return reply.read_text()``).
+# Filled from the production modules on first use and, for the checker's own test, from the source it scans.
+BODY_HELPERS: set[str] = set()
 NETWORK_NAMES = ("httpx", "client", "session", "urlopen", "requests", "aiohttp", "adapter", "graph")
 NETWORK_METHODS = {"aiter_bytes", "aiter_lines", "aread", "raise_for_status", "urlopen", "stream", "submit", "upload", "invoke",
                    "dispatch", "send"}
@@ -200,6 +205,54 @@ def _field(node: ast.AST) -> str | None:
     return None
 
 
+def is_body_helper_call(node: ast.AST) -> bool:
+    """A call to a helper that returns the body it was given: the wrapper hides the ``.text`` or ``.read_text()`` inside it."""
+    return isinstance(node, ast.Call) and call_name(node) in body_helpers()
+
+
+def is_reply_read_text(node: ast.AST) -> bool:
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "read_text" \
+        and _root(node.func.value) in REPLY_NAMES
+
+
+def _returns_body_text(value: ast.AST, params: set[str]) -> bool:
+    """Whether ``value`` is a parameter's body as text: ``p.text``, ``p.content``, ``p.read_text()``, ``p.read()``, optionally
+    sliced, stripped, decoded or passed through ``str``."""
+    if isinstance(value, ast.Subscript):
+        return _returns_body_text(value.value, params)
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "str" and value.args:
+        return _returns_body_text(value.args[0], params)
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute):
+        if value.func.attr in {"decode", "strip", "lstrip", "rstrip"}:
+            return _returns_body_text(value.func.value, params)
+        if value.func.attr in {"read_text", "read", "aread"}:
+            return _root(value.func.value) in params
+        return False
+    return isinstance(value, ast.Attribute) and value.attr in BODY_ATTRS and _root(value) in params
+
+
+def helpers_returning_a_body(tree: ast.Module) -> set[str]:
+    """Functions of ``tree`` that return the text of a parameter that is a reply (the wrapper hides ``.text`` from the scan)."""
+    found: set[str] = set()
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        params = {argument.arg for argument in [*function.args.args, *function.args.kwonlyargs]} - NOT_UPSTREAM - {"self", "cls"}
+        if any(isinstance(node, ast.Return) and node.value is not None and _returns_body_text(node.value, params)
+               for node in own_nodes(function)):
+            found.add(function.name)
+    return found
+
+
+@functools.lru_cache(maxsize=1)
+def _production_body_helpers() -> frozenset[str]:
+    return frozenset(name for _, tree in gateway_modules() for name in helpers_returning_a_body(tree))
+
+
+def body_helpers() -> set[str]:
+    return BODY_HELPERS | _production_body_helpers()
+
+
 def body_sources(node: ast.AST, tainted: set[str]) -> bool:
     """Whether the expression holds a response body, subprocess output or text derived from them."""
     if isinstance(node, ast.Call) and call_name(node) in SANITIZERS:
@@ -211,6 +264,8 @@ def body_sources(node: ast.AST, tainted: set[str]) -> bool:
         return True
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in BODY_CALLS \
             and _root(node.func.value) not in NOT_UPSTREAM:
+        return True
+    if is_body_helper_call(node) or is_reply_read_text(node):
         return True
     if isinstance(node, ast.Name) and node.id in tainted:
         return True
@@ -239,6 +294,10 @@ def argument_violations(node: ast.AST, tainted: set[str], exceptions: set[str | 
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in BODY_CALLS \
             and _root(node.func.value) not in NOT_UPSTREAM:
         return [f"a response or process {node.func.attr}()"]
+    if is_reply_read_text(node):
+        return ["a response read_text()"]
+    if is_body_helper_call(node):
+        return [f"{call_name(node)}(), which returns a response body"]  # type: ignore[arg-type]
     if isinstance(node, ast.Name) and node.id in tainted:
         return [f"{node.id}, derived from a response or process output"]
     if isinstance(node, ast.Name) and node.id in exceptions and (bare_exception or in_text):
@@ -354,6 +413,10 @@ def scan_source(source: str, is_sink: Callable[[ast.Call, ModuleInfo], bool], *,
                 bare_exception: bool = True) -> set[str]:
     """The function names of ``source`` that pass tainted text to a sink (the checker's own test)."""
     tree = ast.parse(source)
-    scan = Scan("x.py", module_info(tree), is_sink, traceback_is_sink=traceback_is_sink, bare_exception=bare_exception)
-    scan.visit(tree)
+    BODY_HELPERS.update(helpers_returning_a_body(tree))
+    try:
+        scan = Scan("x.py", module_info(tree), is_sink, traceback_is_sink=traceback_is_sink, bare_exception=bare_exception)
+        scan.visit(tree)
+    finally:
+        BODY_HELPERS.clear()
     return {key.split("::")[1] for key, _, _ in scan.found}

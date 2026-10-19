@@ -7202,9 +7202,12 @@ def _says_out_of_memory(text: str, *, plain: bool = False) -> bool:
     return any(marker in lowered for marker in ("cuda out of memory", "cuda oom", "out of memory", *(() if plain else ("oom",))))
 
 
-def _graph_error_message(job: Mapping[str, Any] | None) -> str | None:
-    """A safe, short summary of an execution error in a history entry, or None."""
-    return node_graph.execution_error_message(job, _graph_adapter().label)
+def _graph_error_message(job: Mapping[str, Any] | None, graph: Mapping[str, Any] | None = None) -> str | None:
+    """A short summary of an execution error in a history entry, or None.
+
+    ``graph`` is the prompt the gateway submitted: a node is named only when the engine's node id is in it, by the
+    graph's own label (decision D45b). Without it the sentence names no node."""
+    return node_graph.execution_error_message(job, _graph_adapter().label, graph)
 
 
 def _video_job_warnings(record: Mapping[str, Any] | None, job: Mapping[str, Any] | None) -> list[str]:
@@ -7452,7 +7455,7 @@ async def _graph_run_round(
                 remaining_wait_s,
             )
             try:
-                status = await adapter.poll(graph.conn, ref, headers=headers, session=graph)
+                status = await adapter.poll(graph.conn, ref, headers=headers, session=graph, graph=workflow)
             except (TransportFailure, ProtocolUpstreamError):
                 continue
             if status.state is JobState.failed:
@@ -9551,7 +9554,7 @@ async def _record_event(event: dict) -> None:
             entry["ended_at"] = time.time()
         elif etype == "execution_error":
             entry["status"] = "failed"
-            entry["error"] = _graph_error_message({"status": {"messages": [["execution_error", data]]}})
+            entry["error"] = _graph_error_message({"status": {"messages": [["execution_error", data]]}}, wf)
             entry["ended_at"] = time.time()
 
         entry["updated_at"] = time.time()
@@ -9602,9 +9605,9 @@ _VIDEO_RECONCILE_RETAIN = 5 * 60
 _VIDEO_RECONCILE_HISTORY_LIMIT = 200
 
 
-def _graph_history_state(job: dict) -> tuple[str, Optional[str]]:
+def _graph_history_state(job: dict, graph: Mapping[str, Any] | None = None) -> tuple[str, Optional[str]]:
     """``(terminal_status, error_text)`` for a history entry: ``failed``, ``running`` or ``succeeded``."""
-    return node_graph.history_state(job, _graph_adapter().label)
+    return node_graph.history_state(job, _graph_adapter().label, graph)
 
 
 async def _fetch_graph_state() -> tuple[Optional[set[str]], Optional[dict]]:
@@ -9672,7 +9675,7 @@ async def _reconcile_video_progress() -> None:
 
             if prompt_id in history:
                 job = history.get(prompt_id) or {}
-                terminal, err_text = _graph_history_state(job)
+                terminal, err_text = _graph_history_state(job, _video_workflows.get(prompt_id))
                 if terminal == "succeeded" and current_status != "succeeded":
                     entry["status"] = "succeeded"
                     entry["percent"] = 100
@@ -9979,10 +9982,6 @@ def _graph_video_unavailable_response() -> Response:
         media_type="application/json"
     )
 
-
-def _graph_reply_text(reply: Any) -> str:
-    """The body of an upload or submit answer as text, decoded by the charset the answer declares."""
-    return reply.read_text()
 
 
 def _job_status_from_history(job: dict) -> tuple[str, int]:
@@ -10447,14 +10446,8 @@ async def _upload_video_workflow_assets(
                 resp = await graph.upload({"image": (filename, data, mime)}, headers=headers)
                 uploaded = resp.json().get("name") if resp.status == 200 else None
                 if not uploaded:
-                    return updated, Response(
-                        content=json.dumps({"error": {
-                            "message": f"{_graph_adapter('videos').label} upload failed for {name}: {_graph_reply_text(resp)[:200]}",
-                            "type": "api_error",
-                        }}),
-                        status_code=502,
-                        media_type="application/json",
-                    )
+                    # What the engine said about the file is never passed on (decisions D44, D45b).
+                    return updated, client_errors.client_error(502, "asset_upload_failed", error_type="api_error")
                 block[name] = str(uploaded)
     except TransportFailure as exc:
         return updated, client_errors.client_error(502, "asset_upload_failed", error_type="api_error")
@@ -11846,7 +11839,7 @@ async def proxy_graph_video_status(video_id: str, auth_context: AuthContext) -> 
             if sora_status == "failed":
                 payload["error"] = _chain_failure_error(
                     _video_job_records.get(prompt_id), job,
-                    _graph_error_message(job) or f"{_graph_adapter('videos').label} execution_error",
+                    _graph_error_message(job, _video_workflows.get(prompt_id)) or f"{_graph_adapter('videos').label} execution_error",
                 )
             return Response(
                 content=json.dumps(payload),
@@ -12189,7 +12182,7 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
                             if fresh is not None:
                                 entry["completed_at"] = fresh.get("completed_at")
                     if status == "failed":
-                        entry["error"] = _graph_error_message(job) or f"{_graph_adapter('videos').label} execution_error"
+                        entry["error"] = _graph_error_message(job, _video_workflows.get(prompt_id)) or f"{_graph_adapter('videos').label} execution_error"
                 else:
                     live = _video_progress_snapshot(prompt_id)
                     if live and live.get("status") in ("queued", "running"):
@@ -23357,7 +23350,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
                 job = history.json().get(prompt_id) if history.status == 200 else None
                 if not isinstance(job, Mapping):
                     continue
-                error_message = _graph_error_message(job)
+                error_message = _graph_error_message(job, workflow)
                 if error_message:
                     return dict(job), Response(
                         content=json.dumps({"error": {"message": error_message, "type": "api_error"}}),
@@ -24043,7 +24036,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                     err_msg = f"{adapter.label} generation failed"
                     for tag, payload in (status_obj.get("messages") or []):
                         if tag == "execution_error" and isinstance(payload, dict):
-                            err_msg = _graph_error_message({"status": {"messages": [["execution_error", payload]]}})
+                            err_msg = _graph_error_message({"status": {"messages": [["execution_error", payload]]}}, workflow) or err_msg
                             break
                     return Response(
                         content=json.dumps({"error": {"message": err_msg, "type": "api_error"}}),
