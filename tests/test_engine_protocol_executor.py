@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 from typing import Any
 from urllib.parse import quote, quote_plus
 
@@ -20,6 +19,7 @@ from gateway.engine_protocol.errors import (
 )
 from gateway.engine_protocol.types import AssetRef, CanonicalRequest, Connection, Credential, JobState, Timeouts
 from tests.support.fake_upstream import HandlerTransport
+from tests.support.virtual_loop import run_virtual
 
 BASE = "http://engine.test:8080"
 SECRET = "sk-test-SECRET-1234"
@@ -742,22 +742,25 @@ def test_cancel_and_a_missing_job_id() -> None:
 class Slow(httpx.AsyncByteStream):
     def __init__(self, count: int, delay: float, size: int = 1024) -> None:
         self.count, self.delay, self.size = count, delay, size
+        self.sent = 0
+        self.closed = False
 
     async def __aiter__(self):
         for _ in range(self.count):
             await asyncio.sleep(self.delay)
+            self.sent += 1
             yield (PNG + b"x" * self.size)[:self.size] if self.size >= len(PNG) else b"x" * self.size
 
     async def aclose(self) -> None:
-        pass
+        self.closed = True
 
 
-def fetch_all(ex, **kw):
+def fetch_all(ex, *, runner=run, **kw):
     async def go():
         ref = await ex.submit(conn(**kw), req("render", {"prompt": "x"}))
         status = await ex.poll(conn(**kw), ref)
         return await ex.fetch_assets(conn(**kw), ref, status)
-    return run(go())
+    return runner(go())
 
 
 def asset_handler(states, answer):
@@ -767,13 +770,13 @@ def asset_handler(states, answer):
 
 def test_a_slow_asset_body_runs_into_the_total_deadline() -> None:
     assets = MemoryAssetStore()
+    body = Slow(50, 0.05)
     ex, _ = make(JOB, asset_handler([{"state": "ok", "files": [{"name": "a.png"}]}],
-                                    lambda r: httpx.Response(200, stream=Slow(50, 0.05), headers={"content-type": "image/png"})), assets=assets)
-    started = time.perf_counter()
+                                    lambda r: httpx.Response(200, stream=body, headers={"content-type": "image/png"})), assets=assets)
     with pytest.raises(TransportFailure) as raised:
-        fetch_all(ex, timeouts=Timeouts(connect_s=1, first_byte_s=1, total_s=0.3))
+        fetch_all(ex, runner=run_virtual, timeouts=Timeouts(connect_s=1, first_byte_s=1, total_s=0.3))
     assert raised.value.kind == "timeout"
-    assert time.perf_counter() - started < 1.5  # the body alone takes 2.5 s
+    assert body.closed and 0 < body.sent < body.count
     assert assets.count() == 0
 
 
@@ -782,7 +785,7 @@ def test_all_the_assets_of_one_fetch_share_one_total_deadline() -> None:
     ex, _ = make(JOB, asset_handler([{"state": "ok", "files": files}],
                                     lambda r: httpx.Response(200, stream=Slow(1, 0.12, 16), headers={"content-type": "image/png"})))
     with pytest.raises(TransportFailure) as raised:
-        fetch_all(ex, timeouts=Timeouts(connect_s=1, first_byte_s=1, total_s=0.3))  # 4 x 0.12 s is over 0.3 s together
+        fetch_all(ex, runner=run_virtual, timeouts=Timeouts(connect_s=1, first_byte_s=1, total_s=0.3))  # 4 x 0.12 s is over 0.3 s together
     assert raised.value.kind == "timeout"
 
 
@@ -824,7 +827,8 @@ def timed_job_handler(states, stamps):
 
     def handler(r: httpx.Request) -> httpx.Response:
         if r.method == "GET" and r.url.path == "/jobs/42":
-            stamps.append(time.perf_counter())
+            stamps.append(asyncio.get_running_loop().time())
+            assert len(stamps) <= 3, "polling must yield to its interval and deadline"
         return inner(r)
     return handler
 
@@ -836,9 +840,9 @@ def test_wait_polls_at_the_declared_interval_until_the_job_ends() -> None:
     async def go():
         ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
         return await ex.wait(conn(), ref)
-    status = run(go())
-    assert status.state is JobState.succeeded and len(stamps) == 3
-    assert min(b - a for a, b in zip(stamps, stamps[1:])) >= 0.49  # not faster than interval_s
+    status = run_virtual(go())
+    assert status.state is JobState.succeeded
+    assert stamps == [0, 0.5, 1.0]
 
 
 def test_wait_gives_up_at_max_wait_and_stops_polling() -> None:
@@ -847,13 +851,13 @@ def test_wait_gives_up_at_max_wait_and_stops_polling() -> None:
 
     async def go():
         ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
-        started = time.perf_counter()
+        started = asyncio.get_running_loop().time()
         with pytest.raises(BudgetExceeded) as raised:
             await ex.wait(conn(), ref)
-        return raised.value, time.perf_counter() - started
-    error, elapsed = run(go())
+        return raised.value, asyncio.get_running_loop().time() - started
+    error, elapsed = run_virtual(go())
     assert error.budget == "max_wait_s"
-    assert 0.9 <= elapsed < 2.0 and 2 <= len(stamps) <= 3
+    assert elapsed == 1 and stamps == [0, 0.5]
 
 
 def test_max_wait_also_bounds_a_poll_that_hangs() -> None:
@@ -866,12 +870,12 @@ def test_max_wait_also_bounds_a_poll_that_hangs() -> None:
 
     async def go():
         ref = await ex.submit(conn(), req("render", {"prompt": "x"}))
-        started = time.perf_counter()
+        started = asyncio.get_running_loop().time()
         with pytest.raises(BudgetExceeded) as raised:
             await ex.wait(conn(), ref)
-        return raised.value, time.perf_counter() - started
-    error, elapsed = run(go())
-    assert error.budget == "max_wait_s" and 0.9 <= elapsed < 2.0
+        return raised.value, asyncio.get_running_loop().time() - started
+    error, elapsed = run_virtual(go())
+    assert error.budget == "max_wait_s" and elapsed == 1
 
 
 @pytest.mark.parametrize("state", ["ok", "bad", "gone"])
@@ -1124,7 +1128,8 @@ def test_wait_retries_transient_errors_with_interval_and_deadline(failure, recov
     def handler(r):
         if r.url.path == "/jobs":
             return httpx.Response(202, json={"job": {"id": 42}})
-        stamps.append(time.perf_counter())
+        stamps.append(asyncio.get_running_loop().time())
+        assert len(stamps) <= 2, "polling must yield to its interval and deadline"
         if recover and len(stamps) == 2:
             return httpx.Response(200, json={"state": "ok", "files": []})
         if failure == "transport":
@@ -1140,12 +1145,8 @@ def test_wait_retries_transient_errors_with_interval_and_deadline(failure, recov
             with pytest.raises(BudgetExceeded) as raised:
                 await ex.wait(conn(), ref)
             assert raised.value.budget == "max_wait_s"
-    started = time.perf_counter()
-    run(go())
-    assert len(stamps) >= 2
-    assert all(b - a >= 0.49 for a, b in zip(stamps, stamps[1:]))
-    assert time.perf_counter() - started < 2
-    assert all(t - started < 1.05 for t in stamps)
+    run_virtual(go())
+    assert stamps == [0, 0.5]
 
 
 def test_wait_does_not_retry_client_errors() -> None:

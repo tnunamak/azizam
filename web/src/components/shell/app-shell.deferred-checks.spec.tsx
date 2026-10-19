@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./app-shell";
@@ -101,15 +101,15 @@ describe("shell owner checks", () => {
   }, SHELL_CHECKS_DELAY_MS + 8000);
 
   it("wait for the page, then run, and say Checking meanwhile", async () => {
+    vi.useFakeTimers();
     render(<AppShell><h1>Usage</h1></AppShell>);
-    await waitFor(() => expect(requested).toContain("/me/api/home"));
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(requested).toContain("/me/api/home");
+    await act(async () => { await vi.advanceTimersByTimeAsync(150); });
     expect(requested.filter((path) => ownerChecks.includes(path))).toEqual([]);
-    expect((await screen.findAllByRole("button", { name: /Checking/ })).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: /Checking/ }).length).toBeGreaterThan(0);
 
-    await waitFor(
-      () => expect(requested).toEqual(expect.arrayContaining(ownerChecks)),
-      { timeout: SHELL_CHECKS_DELAY_MS + 3000 },
-    );
+    await act(async () => { await vi.advanceTimersByTimeAsync(SHELL_CHECKS_DELAY_MS); });
+    expect(requested).toEqual(expect.arrayContaining(ownerChecks));
   }, SHELL_CHECKS_DELAY_MS + 8000);
 });

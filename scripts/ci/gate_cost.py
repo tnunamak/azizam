@@ -25,7 +25,7 @@ from pathlib import Path
 # What each gate step waits for, as the job structure in scripts/ci-local makes it. A step
 # starts when its last predecessor finishes, so the critical path follows these edges. Keep
 # this in step with scripts/ci-local: a missing edge makes the critical path too short.
-BARRIER = ("e2e-browser", "fresh-compose", "mcp-conformance")  # the web, fresh and compat jobs
+BARRIER = ("web-unit", "web-build", "e2e-venv", "e2e-browser", "fresh-compose", "mcp-conformance")  # the web, fresh and compat jobs
 GATE_DEPS: dict[str, tuple[str, ...]] = {
     "python-hermetic": (),
     "fresh-venv": (),
@@ -33,8 +33,8 @@ GATE_DEPS: dict[str, tuple[str, ...]] = {
     "web-npm-ci": (),
     "web-unit": ("web-npm-ci",),
     "web-build": ("web-npm-ci",),
-    "e2e-venv": ("web-unit", "web-build"),
-    "e2e-browser": ("e2e-venv",),
+    "e2e-venv": ("web-npm-ci",),
+    "e2e-browser": ("web-npm-ci",),
     "compat-node": (),
     "pi-unit": ("compat-node",),
     "mcp-conformance": ("pi-unit",),

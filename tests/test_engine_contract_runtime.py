@@ -9,6 +9,8 @@ import signal
 import socket
 import sys
 import time
+import threading
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -67,6 +69,48 @@ def process_service(tmp_path: Path, *, delay: float = 0) -> dict:
     }
 
 
+class GatedAsyncio:
+    """Control async sleeps in process-driver timer paths without wall time."""
+
+    def __init__(self):
+        self.sleeps = []
+        self._new_sleep = asyncio.Event()
+
+    async def sleep(self, delay):
+        release = asyncio.Event()
+        self.sleeps.append((delay, release))
+        self._new_sleep.set()
+        await release.wait()
+
+    async def wait_for_sleep(self, index, *, while_running=None):
+        while len(self.sleeps) <= index:
+            self._new_sleep.clear()
+            if len(self.sleeps) > index:
+                break
+            if while_running is None:
+                await self._new_sleep.wait()
+                continue
+            notifier = asyncio.create_task(self._new_sleep.wait())
+            done, _ = await asyncio.wait(
+                {notifier, while_running}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if notifier not in done:
+                notifier.cancel()
+                await asyncio.gather(notifier, return_exceptions=True)
+                raise AssertionError("process timer completed without entering its sleep")
+            await notifier
+        return self.sleeps[index]
+
+    def proxy(self):
+        return SimpleNamespace(
+            sleep=self.sleep,
+            get_running_loop=asyncio.get_running_loop,
+            current_task=asyncio.current_task,
+            Lock=asyncio.Lock,
+            to_thread=asyncio.to_thread,
+        )
+
+
 def test_process_argv_concurrent_start_and_bounded_stop(tmp_path):
     svc = process_service(tmp_path)
     driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
@@ -88,21 +132,63 @@ def test_process_argv_concurrent_start_and_bounded_stop(tmp_path):
 def test_idle_stop_keeps_gateway_event_loop_responsive(tmp_path):
     svc = process_service(tmp_path)
     svc["residency"]["idle_stop_s"] = 0.01
-    svc["process"]["stop_timeout_s"] = 0.35
+    import gateway.engine_process as engine_process
+
     driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
 
     async def scenario():
+        worker_started = asyncio.Event()
+        release_worker = threading.Event()
+        caller_thread = threading.current_thread()
+        invoked_thread = []
+        idle_task = None
+        started_task = None
+        gated_asyncio = GatedAsyncio()
+        terminate_group = driver._terminate_group
+
+        def blocked_termination(*args):
+            invoked_thread.append(threading.current_thread())
+            if invoked_thread[-1] is caller_thread:
+                raise AssertionError("process termination blocked the event loop")
+            loop.call_soon_threadsafe(worker_started.set)
+            release_worker.wait()
+            terminate_group(*args)
+
         try:
             assert await driver.ensure_ready(svc, 2)
-            with patch.object(driver, "_group_alive", return_value=True):
-                started = time.monotonic()
-                await asyncio.sleep(0.05)
-                assert time.monotonic() - started < 0.2
-                await asyncio.sleep(0.4)
+            loop = asyncio.get_running_loop()
+            with patch.object(engine_process, "asyncio", gated_asyncio.proxy()), \
+                 patch.object(driver, "_terminate_group", side_effect=blocked_termination):
+                driver.request_started(svc)
+                driver.request_finished(svc)
+                idle_task = driver._idle_tasks["fixture"]
+                started_task = asyncio.create_task(worker_started.wait())
+                _delay, release_timer = await gated_asyncio.wait_for_sleep(
+                    0, while_running=idle_task
+                )
+                driver._last_use["fixture"] = time.monotonic() - svc["residency"]["idle_stop_s"]
+                release_timer.set()
+                done, _ = await asyncio.wait(
+                    {idle_task, started_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                assert started_task in done, "event loop did not run while termination was pending"
+                assert not idle_task.done()
+                release_worker.set()
+                await idle_task
+                assert invoked_thread and invoked_thread[0] is not caller_thread
         finally:
+            release_worker.set()
+            for _delay, release in gated_asyncio.sleeps:
+                release.set()
+            if started_task is not None and not started_task.done():
+                started_task.cancel()
+            if idle_task is not None:
+                await asyncio.gather(idle_task, return_exceptions=True)
+            if started_task is not None:
+                await asyncio.gather(started_task, return_exceptions=True)
             driver.stop(svc)
 
-    run(scenario())
+    run(asyncio.wait_for(scenario(), timeout=30))
 
 
 def test_process_missing_probe_is_unknown_and_does_not_claim_ready(tmp_path):
@@ -130,23 +216,54 @@ def test_process_readiness_timeout_and_disabled_command_gate(tmp_path):
 def test_process_idle_stop_only_with_gateway_owner_and_shutdown(tmp_path):
     svc = process_service(tmp_path)
     driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
+    import gateway.engine_process as engine_process
 
     async def scenario():
-        assert await driver.ensure_ready(svc, 2)
-        driver.request_started(svc)
-        await asyncio.sleep(0.16)
-        assert await driver.status(svc) == "running"
-        driver.request_finished(svc)
-        await asyncio.sleep(0.16)
-        assert await driver.status(svc) == "stopped"
-        svc["residency"]["idle_owner"] = "engine"
-        assert await driver.ensure_ready(svc, 2)
-        await asyncio.sleep(0.16)
-        assert await driver.status(svc) == "running"
-        driver.shutdown()
-        assert await driver.status(svc) == "stopped"
+        gated_asyncio = GatedAsyncio()
+        try:
+            assert await driver.ensure_ready(svc, 2)
+            initial_idle_task = driver._idle_tasks["fixture"]
 
-    run(scenario())
+            with patch.object(engine_process, "asyncio", gated_asyncio.proxy()):
+                driver.request_started(svc)
+                _delay, release_timer = await gated_asyncio.wait_for_sleep(
+                    0, while_running=initial_idle_task
+                )
+                driver._last_use["fixture"] = (
+                    time.monotonic() - 2 * svc["residency"]["idle_stop_s"]
+                )
+                release_timer.set()
+                await initial_idle_task
+                assert await driver.status(svc) == "running"
+
+                driver.request_finished(svc)
+                idle_task = driver._idle_tasks["fixture"]
+                _delay, release_timer = await gated_asyncio.wait_for_sleep(
+                    1, while_running=idle_task
+                )
+                driver._last_use["fixture"] = (
+                    time.monotonic() - 2 * svc["residency"]["idle_stop_s"]
+                )
+                release_timer.set()
+                await idle_task
+                assert await driver.status(svc) == "stopped"
+
+            svc["residency"]["idle_owner"] = "engine"
+            assert await driver.ensure_ready(svc, 2)
+            assert await driver.status(svc) == "running"
+            driver.shutdown()
+            assert await driver.status(svc) == "stopped"
+        finally:
+            for _delay, release in gated_asyncio.sleeps:
+                release.set()
+            idle_tasks = list(driver._idle_tasks.values())
+            for task in idle_tasks:
+                task.cancel()
+            if idle_tasks:
+                await asyncio.gather(*idle_tasks, return_exceptions=True)
+            driver.shutdown()
+
+    run(asyncio.wait_for(scenario(), timeout=30))
 
 
 def test_process_log_redacts_declared_secret_and_stays_capped(tmp_path):
@@ -157,7 +274,6 @@ def test_process_log_redacts_declared_secret_and_stays_capped(tmp_path):
 
     async def scenario():
         assert await driver.ensure_ready(svc, 2)
-        await asyncio.sleep(0.05)
         driver.shutdown()
 
     run(scenario())
@@ -180,6 +296,11 @@ def test_process_crash_restart_budget_and_orphan_adoption(tmp_path):
     svc["residency"]["idle_owner"] = "engine"
     first = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
 
+    async def reap_supervisor(driver, pid):
+        child = driver._children["fixture"]
+        assert child.pid == pid
+        await asyncio.to_thread(child.wait)
+
     async def scenario():
         assert await first.ensure_ready(svc, 2)
         pid = json.loads((tmp_path / "state" / "fixture.json").read_text())["pid"]
@@ -187,15 +308,15 @@ def test_process_crash_restart_budget_and_orphan_adoption(tmp_path):
         assert await second.ensure_ready(svc, 2)
         assert json.loads((tmp_path / "state" / "fixture.json").read_text())["pid"] == pid
         os.killpg(pid, signal.SIGKILL)
-        await asyncio.sleep(0.05)
+        await reap_supervisor(first, pid)
         assert await second.ensure_ready(svc, 2)
         restarted = json.loads((tmp_path / "state" / "fixture.json").read_text())["pid"]
         os.killpg(restarted, signal.SIGKILL)
-        await asyncio.sleep(0.05)
+        await reap_supervisor(second, restarted)
         assert await second.ensure_ready(svc, 2)
         restarted = json.loads((tmp_path / "state" / "fixture.json").read_text())["pid"]
         os.killpg(restarted, signal.SIGKILL)
-        await asyncio.sleep(0.05)
+        await reap_supervisor(second, restarted)
         assert await second.ensure_ready(svc, 2) is False
 
     try:
@@ -244,17 +365,28 @@ def test_adopted_process_that_never_passes_readiness_is_stopped(tmp_path):
 
 def test_process_readiness_probe_respects_total_deadline(tmp_path):
     svc = process_service(tmp_path)
+    import gateway.engine_process as engine_process
+    now = [0.0]
 
-    class SlowProbe:
+    class ImmediateProbe:
         async def read(self, *_args):
-            await asyncio.sleep(0.08)
             return type("Fact", (), {"known": True, "value": True})()
 
     driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True,
-                           observations=SlowProbe())
-    started = time.monotonic()
-    assert run(driver._ready(svc, 0.01)) is False
-    assert time.monotonic() - started < 0.06
+                           observations=ImmediateProbe())
+    budgets = []
+
+    async def expire_at_deadline(awaitable, *, timeout):
+        budgets.append(timeout)
+        now[0] += timeout
+        if hasattr(awaitable, "close"):
+            awaitable.close()
+        raise asyncio.TimeoutError
+
+    with patch.object(engine_process, "time", SimpleNamespace(monotonic=lambda: now[0])), \
+         patch.object(engine_process.asyncio, "wait_for", side_effect=expire_at_deadline):
+        assert run(driver._ready(svc, 0.01)) is False
+    assert budgets == pytest.approx([0.01])
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Linux process groups")
@@ -352,19 +484,34 @@ def test_stop_recovers_descendant_after_leader_crashes_first(tmp_path):
 
 
 def test_residency_deadline_includes_control_and_observation_wait():
+    import gateway.engine_residency as engine_residency
+
+    now = [0.0]
+    waits = []
+
+    async def initial_observation(_name):
+        return False
+
     async def slow_invoke(_op, _args):
-        await asyncio.sleep(0.08)
+        raise AssertionError("the control operation should be stopped by its deadline")
 
-    async def slow_observe(_name):
-        await asyncio.sleep(0.08)
-        return True
+    async def deadline_wait_for(awaitable, *, timeout):
+        waits.append(timeout)
+        if len(waits) == 1:
+            result = await awaitable
+            now[0] += 0.006
+            return result
+        if hasattr(awaitable, "close"):
+            awaitable.close()
+        raise asyncio.TimeoutError
 
-    controller = ResidencyController(invoke=slow_invoke, observe=slow_observe)
+    controller = ResidencyController(invoke=slow_invoke, observe=initial_observation)
     service = {"residency": {"load": {"op": "load"},
                              "load_deadline": {"stall_s": 0.01, "max_s": 0.02}}}
-    started = time.monotonic()
-    assert run(controller.load(service)) is False
-    assert time.monotonic() - started < 0.06
+    with patch.object(engine_residency, "time", SimpleNamespace(monotonic=lambda: now[0])), \
+         patch.object(engine_residency.asyncio, "wait_for", side_effect=deadline_wait_for):
+        assert run(controller.load(service)) is False
+    assert waits == pytest.approx([0.01, 0.004])
 
 
 def test_declared_http_switch_reaches_fake_peer_and_keeps_scope_locked():
