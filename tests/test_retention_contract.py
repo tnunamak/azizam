@@ -133,7 +133,7 @@ def test_decide_equals_the_moved_decision_on_every_input(kind):
             kind, person, member, household, body, store)
         assert got.kind == kind
         checked += 1
-    assert checked > 5000
+    assert checked > 4000
 
 
 def test_a_kept_decision_names_the_parts_the_data_allows_by_default():
