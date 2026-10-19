@@ -1289,8 +1289,11 @@ async def execute_chunking(
                 # Extraction failure before the first backend attempt may use
                 # the configured explicit setup policy.  After progress it can
                 # never silently replay the original audio.
-                if attempts_started == 0 and _may_send_whole(config, probed):
-                    return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
+                if attempts_started == 0:
+                    if _may_send_whole(config, probed):
+                        return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
+                    if config.setup_failure_policy == "passthrough":
+                        raise SttAudioNotSplittable("split_failed", limit_seconds=config.max_segment_seconds) from error
                 raise SttChunkAttemptError("STT segment extraction failed after chunk progress") from error
 
             attempts_started += 1

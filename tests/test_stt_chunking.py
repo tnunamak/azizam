@@ -561,14 +561,16 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
         async def extract(_source, destination, **_kwargs):
             Path(destination).write_bytes(b"RIFFchunk")
 
-        for rows, policy, expected in (
-            ([{"kind": "drop-params", "phase": "response", "drop": ["timing"]}], "passthrough", "chunked"),
-            ([{"kind": "no-such-kind"}], "passthrough", "passthrough"),
-            (["no-such-transform"], "error", stt_chunking.SttSetupFailure),
+        for rows, policy, limits, expected in (
+            ([{"kind": "drop-params", "phase": "response", "drop": ["timing"]}], "passthrough", {}, "chunked"),
+            # The engine takes a 75 s file whole, so a row that cannot run lets it pass; for a file above the maximum it refuses.
+            ([{"kind": "no-such-kind"}], "passthrough", {"max_segment_seconds": 100}, "passthrough"),
+            ([{"kind": "no-such-kind"}], "passthrough", {}, stt_chunking.SttSetupFailure),
+            (["no-such-transform"], "error", {}, stt_chunking.SttSetupFailure),
         ):
-            with self.subTest(rows=rows), tempfile.TemporaryDirectory() as temp_dir:
+            with self.subTest(rows=rows, limits=limits), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
-                base = _config(root, setup_failure_policy=policy)
+                base = _config(root, setup_failure_policy=policy, **limits)
                 config = stt_chunking.SttExecutionConfig.from_service(
                     service_id="stt-test", config_directory=root,
                     service_config={**base.backend_config, "transforms": rows},
@@ -599,7 +601,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
                     outcome = await run
                 self.assertEqual(outcome.mode, expected)
                 if expected == "chunked":
-                    self.assertEqual(outcome.merged_payload, {"text": "part part part"})
+                    self.assertEqual(outcome.merged_payload, {"text": "part part part part"})
                 else:
                     self.assertEqual((outcome.fallback_reason, posted), ("setup_failed_before_attempt", []))
 
@@ -1186,7 +1188,7 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, 499)
             self.assertEqual(finalized, began)
             self.assertEqual(finalized[0].status, "cancelled")
-            self.assertEqual(finalized[0].metadata["stt"]["attempts_started"], 0)
+            self.assertEqual(finalized[0].metadata["stt"]["attempts_started"], 1)  # the whole-file request was started
             self.assertTrue(_BlockingSttClient.closed)
             self.assertEqual(list((root / "spool").glob("*")), [])
 

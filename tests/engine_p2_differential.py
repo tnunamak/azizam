@@ -264,7 +264,6 @@ async def _observe_stt(proxy: Any, upstream: _Upstream, scratch: Path, only: fro
         execution = replace(execution, spool_dir=spool)
         segment = execution.target_seconds
         duration = execution.threshold_seconds + 1 if chunks > 1 else execution.threshold_seconds - 1
-        silences = [(segment * (i + 1) - 0.5, segment * (i + 1) + 0.5) for i in range(chunks)]
         upstream.stt_payloads = _stt_chunk_payloads(kind, chunks)
         boundary = "harnessboundary"
         fields = [("model", "whisper-1")]
@@ -294,8 +293,8 @@ async def _observe_stt(proxy: Any, upstream: _Upstream, scratch: Path, only: fro
         with ExitStack() as stack:
             stack.enter_context(patch.object(proxy, "_stt_execution_snapshot", return_value=execution))
             stack.enter_context(patch.object(stt_chunking, "probe_audio", AsyncMock(return_value=stt_chunking.ProbedAudio(duration, 16000, 1))))
-            stack.enter_context(patch.object(stt_chunking, "detect_silences", AsyncMock(return_value=silences)))
-            stack.enter_context(patch.object(stt_chunking, "plan_silence_preferred_segments", plan))
+            stack.enter_context(patch.object(stt_chunking, "decode_planning_pcm", AsyncMock()))
+            stack.enter_context(patch.object(stt_chunking, "plan_quietest_frame_segments", plan))
             stack.enter_context(patch.object(stt_chunking, "extract_segment", extract))
             stack.enter_context(patch.object(proxy.receipt_store, "begin"))
             stack.enter_context(patch.object(proxy.receipt_store, "finalize", return_value=True))
