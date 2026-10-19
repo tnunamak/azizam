@@ -23,6 +23,9 @@ baseline's paths and its own. Only these differences are allowed:
   the catch-all or a 405;
 * /admin/api/operator/host-commands is the new owner-only command permission
   (tests/test_admin_owner_holes_round4.py covers its write boundary);
+* GET and PUT /admin/api/settings/sessions (the owner's session settings), POST /auth/api/reauth and
+  POST /auth/api/sign-out-everywhere are new (tests/test_session_lifecycle.py and
+  tests/test_session_settings_api.py cover them); every other method falls to the catch-all as before;
 * POST /admin/api/operator/services/{id}/secret-entries (the owner's secret commands, D27) and
   PUT and DELETE /admin/api/operator/service-registry/excluded/{section}/{id} (fix or remove a record the registry
   leaves out) are new owner routes (tests/test_secret_commands.py, tests/test_excluded_records.py);
@@ -73,6 +76,7 @@ ENGINE_PATHS = ("/admin/api/engine-definitions", "/admin/api/engines/")
 ENGINE_PROTOCOLS_PATH = "/admin/api/engine-protocols"
 DELETED_PRESETS = "/admin/api/operator/service-presets"
 HOST_COMMANDS = "/admin/api/operator/host-commands"
+SESSION_PATHS = {"/admin/api/settings/sessions", "/auth/api/reauth", "/auth/api/sign-out-everywhere"}
 LEFT_OUT_PATHS = ("/admin/api/operator/service-registry/excluded/",)
 THUMBNAIL_PATH, THUMBNAIL_SIBLING = "/v1/assets/sample/thumbnail", "/v1/assets/sample/content"
 REMOVE_MISSING_PATH, REMOVE_MISSING_SIBLING = "/me/api/media/remove-missing", "/me/api/media/sample"
@@ -136,6 +140,8 @@ def _deliberate(key: str) -> str | None:
         return "engines"  # Add engine (gateway/engine_admin.py) replaced the preset list
     if path == HOST_COMMANDS:
         return "host_commands"
+    if path in SESSION_PATHS:
+        return "sessions"
     if re.fullmatch(r"/admin/api/operator/services/[^/]+/secret-entries", path) or path.startswith(LEFT_OUT_PATHS):
         return "secret_entries"  # decisions D27 and D22: the secret commands, and the records the registry leaves out
     if ui_routes.classify(path) is not None:
@@ -234,6 +240,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
                 continue
         if kind == "host_commands" and key not in old:
             continue  # new owner command permission route
+        if kind == "sessions" and key not in old:
+            continue  # new session settings, step-up and sign-out-everywhere routes
         if kind == "secret_entries" and key not in old:
             continue  # new owner routes (the secret commands, and the records the registry leaves out)
         if _now_needs_a_key(old.get(key), new.get(key)):
@@ -275,7 +283,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines", "host_commands", "secret_entries", "native"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines", "host_commands", "sessions", "secret_entries", "native"}:
             continue
         if kind == "engine_protocols" and key not in old:
             assert _method_of(key) != "GET", key

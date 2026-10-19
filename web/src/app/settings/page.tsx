@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Loader2, Puzzle } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
+  adminDownload,
   adminFetch,
   ApiError,
   adminRegistryMutation,
@@ -15,6 +16,7 @@ import {
 import { PageHeader } from "@/components/product/page-header";
 import { SettingRow, SettingsSection } from "@/components/product/setting-row";
 import { ReceiptsSection } from "./receipts";
+import { SessionsSection } from "./sessions";
 import { HouseholdPromptsSection } from "./household-prompts";
 import { SignInSection } from "./sign-in/sign-in-section";
 import { ErrorState } from "@/components/product/error-state";
@@ -1152,7 +1154,26 @@ function AdvancedSection() {
             ) : (
               <>
                 <Button variant="outline" asChild>
-                  <a href={data.export_url} download>
+                  {/* A link, so it still works without scripts; a click saves
+                      the file through adminDownload, which can ask the person to
+                      confirm it is them first. */}
+                  <a
+                    href={data.export_url}
+                    download
+                    onClick={(event) => {
+                      event.preventDefault();
+                      adminDownload(
+                        data.export_url,
+                        "gateway-effective-config.json",
+                      ).catch((failure: unknown) =>
+                        toast.error(
+                          failure instanceof Error && failure.message
+                            ? failure.message
+                            : "The export didn’t download. Try again.",
+                        ),
+                      );
+                    }}
+                  >
                     <Download />
                     Export redacted snapshot
                   </a>
@@ -1180,6 +1201,7 @@ export default function SettingsPage() {
       <div className="page-stack">
         <InstanceSection />
         <SignInSection />
+        <SessionsSection />
         <DefaultsSection />
         <HouseholdPromptsSection />
         <ReceiptsSection />

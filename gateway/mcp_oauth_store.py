@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping
 
+from gateway.session_guard import BrowserSession, begin_write
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS mcp_oauth_clients (
   client_id TEXT PRIMARY KEY,
@@ -289,9 +291,12 @@ class Store:
     # ------------------------------------------------------------- grants
 
     def create_grant(self, *, person_id: str, client: ClientRecord, redirect_uri: str, resource: str,
-                     scope: str) -> GrantRecord:
+                     scope: str, session: BrowserSession | None) -> GrantRecord:
+        """Record that a person approved a client. ``session`` is the browser sign-in that approved it,
+        checked in the insert's own transaction (``gateway/session_guard.py``); ``SessionEnded`` if it ended."""
         grant_id = new_secret("mcg_", 12)
         with self._conn() as conn:
+            begin_write(conn, session)
             conn.execute(
                 "INSERT INTO mcp_oauth_grants(id, person_id, client_id, client_name, redirect_uri, resource, scope, "
                 "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

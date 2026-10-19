@@ -31,7 +31,7 @@ of scope here — this module is the durable substrate those routes call into.
 
 from __future__ import annotations
 
-from gateway import request_connections
+from gateway import request_connections, session_guard
 from gateway.compat import get_env
 from gateway.sqlite_startup import check_quarantine_pending, connect, store_startup
 
@@ -299,6 +299,17 @@ CREATE TABLE IF NOT EXISTS account_sessions (
 CREATE TABLE IF NOT EXISTS account_session_revocations (
  session_id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL
 );
+-- The ids a sign-in has held since its first renewal (decision D35). ``retired_at`` is when an id was
+-- replaced by its successor; the row for the id in use has none. A retired id shown after the grace
+-- window means a copy of the cookie exists, so the whole family is revoked, unless no later id was ever
+-- used (decision D35b): then the response carrying the successor was lost and the sign-in is reissued.
+-- ``used_at`` is the first request that carried the id; ``superseded`` marks an unused id that a reissue
+-- replaced. Rows are added in order, so a later rowid is a later id.
+CREATE TABLE IF NOT EXISTS account_session_lineage (
+ session_id TEXT PRIMARY KEY, family_id TEXT NOT NULL, retired_at INTEGER, expires_at INTEGER NOT NULL,
+ used_at INTEGER, superseded INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS account_session_lineage_family ON account_session_lineage(family_id);
 CREATE TABLE IF NOT EXISTS account_links (
  id TEXT PRIMARY KEY, kind TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
  plan_id TEXT REFERENCES access_plans(id), user_id TEXT REFERENCES users(id), email TEXT,
@@ -421,6 +432,13 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE credentials ADD COLUMN session_id TEXT")
         _revoke_unbound_try_keys(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS credentials_session ON credentials(session_id)")
+    lineage = {row[1] for row in conn.execute("PRAGMA table_info(account_session_lineage)")}
+    if "used_at" not in lineage:
+        # Ids recorded before first use was kept count as used: a stale cookie among them revokes the sign-in, as before.
+        conn.execute("ALTER TABLE account_session_lineage ADD COLUMN used_at INTEGER")
+        conn.execute("UPDATE account_session_lineage SET used_at=COALESCE(retired_at, ?)", (_now(),))
+    if "superseded" not in lineage:
+        conn.execute("ALTER TABLE account_session_lineage ADD COLUMN superseded INTEGER NOT NULL DEFAULT 0")
     # Keys made on a session App before the trigger existed stop working.
     conn.execute(
         "UPDATE credentials SET revoked_at = ? WHERE revoked_at IS NULL "
@@ -1089,10 +1107,14 @@ def set_local_password_verifier(
     user_id: str,
     verifier: str,
     *,
+    session: session_guard.BrowserSession | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Store (or replace) the password verifier attached to a local user.
+
+    ``session`` is the browser sign-in that asked for it, checked in this write's transaction
+    (``gateway/session_guard.py``); none for a write no browser sign-in started.
 
     Raw passwords are never persisted — the caller computes the verifier
     string with :func:`gateway.local_owner.hash_password` and hands us the
@@ -1104,6 +1126,7 @@ def set_local_password_verifier(
         raise ValueError("verifier is required")
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
+        session_guard.begin_write(conn, session)
         existing = conn.execute(
             "SELECT user_id, created_at FROM local_password_credentials "
             "WHERE user_id = ?",
@@ -1886,14 +1909,19 @@ def list_trusted_addresses(
 
 def add_trusted_address(
     app_id: str, address: str, *, note: str | None = None, created_by: str | None = None,
-    max_entries: int, now: int | None = None, path: Path = DB_PATH,
+    max_entries: int, now: int | None = None, session: session_guard.BrowserSession | None = None,
+    path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Add one entry (``address`` is already normalized). A session App takes none:
-    a signed-in person acts through their session, never through an address."""
+    a signed-in person acts through their session, never through an address.
+
+    A trusted address lets a device in with no key, so it is a credential: ``session`` is the browser sign-in
+    that asked, checked in this transaction (decision D41)."""
     ts = _now() if now is None else int(now)
     entry_id = _gen_id("tad")
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
         if conn.execute("SELECT 1 FROM apps WHERE id = ?", (app_id,)).fetchone() is None:
             raise LookupError(f"app {app_id!r} not found")
         if conn.execute("SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)).fetchone():
@@ -1986,10 +2014,19 @@ def create_credential_hash(
     created_by: str | None = None,
     expires_at: int | None = None,
     session_id: str | None = None,
+    session: session_guard.BrowserSession | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Persist a credential hash.
+
+    ``session`` is the browser sign-in that started this write, ``None`` when none did (the CLI, an
+    admin key, a test). Production callers pass it by name every time; the default exists for tests, and
+    ``tests/test_credential_writers_check_the_session.py`` fails when a production call omits it.
+    It is checked inside the write transaction, before the insert, so a sign-out that commits first
+    raises ``SessionEnded`` and one that commits after finds the new key to revoke
+    (``gateway/session_guard.py``). ``session_id`` is a different thing: the sign-in the key is
+    bound to, so that signing out revokes it.
 
     Subject invariants:
 
@@ -2023,39 +2060,51 @@ def create_credential_hash(
             )
 
     ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        session_guard.begin_write(conn, session)
+        record = _insert_credential_in(
+            conn, subject_kind=subject_kind, subject_id=subject_id, app_id=app_id, hash=hash, prefix=prefix,
+            display_name=display_name, scopes=scopes, created_by=created_by, expires_at=expires_at,
+            session_id=session_id, ts=ts)
+        conn.commit()
+    return record
+
+
+def _insert_credential_in(
+    conn: sqlite3.Connection, *, subject_kind: str, subject_id: str, app_id: str | None, hash: str, prefix: str,
+    display_name: str | None, scopes: Iterable[str] | None, created_by: str | None, expires_at: int | None,
+    session_id: str | None, ts: int,
+) -> dict[str, Any]:
+    """Insert one credential row inside the caller's open transaction and return it. The caller commits."""
     cred_id = _gen_id("cred")
     scopes_json = (
         json.dumps(sorted({s for s in scopes if s})) if scopes else None
     )
-    with _conn(path) as conn:
-        if subject_kind in _DATA_PLANE_SUBJECTS and conn.execute(
-            "SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)
-        ).fetchone():
-            raise ValueError("this App is a person's signed-in App and cannot hold API keys")
-        conn.execute(
-            "INSERT INTO credentials(id, subject_kind, subject_id, app_id, "
-            "hash, prefix, display_name, scopes_json, "
-            "created_at, created_by, expires_at, session_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                cred_id,
-                subject_kind,
-                subject_id,
-                app_id,
-                hash,
-                prefix,
-                display_name,
-                scopes_json,
-                ts,
-                created_by,
-                expires_at,
-                session_id,
-            ),
-        )
-        conn.commit()
-        row = conn.execute(
-            "SELECT * FROM credentials WHERE id = ?", (cred_id,)
-        ).fetchone()
+    if subject_kind in _DATA_PLANE_SUBJECTS and conn.execute(
+        "SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)
+    ).fetchone():
+        raise ValueError("this App is a person's signed-in App and cannot hold API keys")
+    conn.execute(
+        "INSERT INTO credentials(id, subject_kind, subject_id, app_id, "
+        "hash, prefix, display_name, scopes_json, "
+        "created_at, created_by, expires_at, session_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            cred_id,
+            subject_kind,
+            subject_id,
+            app_id,
+            hash,
+            prefix,
+            display_name,
+            scopes_json,
+            ts,
+            created_by,
+            expires_at,
+            session_id,
+        ),
+    )
+    row = conn.execute("SELECT * FROM credentials WHERE id = ?", (cred_id,)).fetchone()
     return _credential_row_to_dict(row)
 
 
@@ -2357,45 +2406,99 @@ def assign_admin_role(
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute(
-            "SELECT * FROM admin_role_assignments "
-            "WHERE role = ? AND subject_kind = ? AND subject_id = ? "
-            "AND COALESCE(scope_app_id, '') = COALESCE(?, '')",
-            (role, subject_kind, subject_id, scope_app_id),
-        ).fetchone()
-        confirmed = ts if provenance == "oidc" else None
-        if row is not None:
-            if provenance == "oidc" and row["provenance"] == "manual" and row["revoked_at"] is None:
-                return _row_to_dict(row)  # type: ignore[return-value]
-            if (subject_kind == "service_account" and row["granted_by"]
-                    and row["granted_by"] != granted_by):
-                # A key's authority belongs to whoever granted it. Re-granting
-                # under another name would let a later caller take the key over.
-                conn.rollback()
-                raise PermissionError("this service account was granted by someone else")
-            conn.execute(
-                "UPDATE admin_role_assignments SET revoked_at = NULL, "
-                "granted_at = ?, granted_by = ?, provenance = ?, last_confirmed_at = ? WHERE id = ?",
-                (ts, granted_by, provenance, confirmed, row["id"]),
-            )
-            assignment_id = row["id"]
-        else:
-            cur = conn.execute(
-                "INSERT INTO admin_role_assignments(role, subject_kind, "
-                "subject_id, scope_app_id, granted_at, granted_by, provenance, last_confirmed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (role, subject_kind, subject_id, scope_app_id, ts, granted_by, provenance, confirmed),
-            )
-            assignment_id = cur.lastrowid
-        granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
-        _audit_admin_role(conn, "admin_role.grant", granted, ts, actor=actor,
-                          actor_kind=actor_kind, actor_id=granted_by)
+        out, changed = _assign_admin_role_in(
+            conn, role=role, subject_kind=subject_kind, subject_id=subject_id, scope_app_id=scope_app_id,
+            granted_by=granted_by, provenance=provenance, actor=actor, actor_kind=actor_kind, ts=ts)
+        if changed:
+            conn.commit()
+    return out
+
+
+def _assign_admin_role_in(
+    conn: sqlite3.Connection, *, role: str, subject_kind: str, subject_id: str, scope_app_id: str | None,
+    granted_by: str | None, provenance: str, actor: Any, actor_kind: str, ts: int,
+) -> tuple[dict[str, Any], bool]:
+    """Grant a role inside the caller's open write transaction. Returns the assignment and whether anything
+    changed; the caller commits. A refusal rolls the transaction back before it raises."""
+    row = conn.execute(
+        "SELECT * FROM admin_role_assignments "
+        "WHERE role = ? AND subject_kind = ? AND subject_id = ? "
+        "AND COALESCE(scope_app_id, '') = COALESCE(?, '')",
+        (role, subject_kind, subject_id, scope_app_id),
+    ).fetchone()
+    confirmed = ts if provenance == "oidc" else None
+    if row is not None:
+        if provenance == "oidc" and row["provenance"] == "manual" and row["revoked_at"] is None:
+            return _row_to_dict(row), False  # type: ignore[return-value]
+        if (subject_kind == "service_account" and row["granted_by"]
+                and row["granted_by"] != granted_by):
+            # A key's authority belongs to whoever granted it. Re-granting
+            # under another name would let a later caller take the key over.
+            conn.rollback()
+            raise PermissionError("this service account was granted by someone else")
+        conn.execute(
+            "UPDATE admin_role_assignments SET revoked_at = NULL, "
+            "granted_at = ?, granted_by = ?, provenance = ?, last_confirmed_at = ? WHERE id = ?",
+            (ts, granted_by, provenance, confirmed, row["id"]),
+        )
+        assignment_id = row["id"]
+    else:
+        cur = conn.execute(
+            "INSERT INTO admin_role_assignments(role, subject_kind, "
+            "subject_id, scope_app_id, granted_at, granted_by, provenance, last_confirmed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (role, subject_kind, subject_id, scope_app_id, ts, granted_by, provenance, confirmed),
+        )
+        assignment_id = cur.lastrowid
+    granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
+    _audit_admin_role(conn, "admin_role.grant", granted, ts, actor=actor,
+                      actor_kind=actor_kind, actor_id=granted_by)
+    return _row_to_dict(granted), True  # type: ignore[return-value]
+
+
+def create_admin_key_with_role(
+    *,
+    name: str,
+    description: str | None,
+    role: str,
+    granted_by: str | None,
+    actor: Any,
+    hash: str,
+    prefix: str,
+    display_name: str,
+    created_by: str | None,
+    session: session_guard.BrowserSession | None = None,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Make a service account, grant it ``role`` and give it a key, in one transaction.
+
+    The sign-in that asked (``session``, decision D41) is checked in this transaction first: when it has ended,
+    nothing is made, no account and no role to take back. ``sqlite3.IntegrityError`` when the name is taken.
+    Returns the service account, the assignment and the credential.
+    """
+    if not name:
+        raise ValueError("service account name is required")
+    if role not in {"owner", "admin"}:
+        raise ValueError("role must be one of: owner, admin")
+    ts = _now() if now is None else int(now)
+    svc_id = _gen_id("svc")
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
+        conn.execute(
+            "INSERT INTO service_accounts(id, name, description, created_at) VALUES (?, ?, ?, ?)",
+            (svc_id, name, description, ts),
+        )
+        account = _row_to_dict(conn.execute("SELECT * FROM service_accounts WHERE id = ?", (svc_id,)).fetchone())
+        assignment, _ = _assign_admin_role_in(
+            conn, role=role, subject_kind="service_account", subject_id=svc_id, scope_app_id=None,
+            granted_by=granted_by, provenance="manual", actor=actor, actor_kind="system", ts=ts)
+        credential = _insert_credential_in(
+            conn, subject_kind="service_account", subject_id=svc_id, app_id=None, hash=hash, prefix=prefix,
+            display_name=display_name, scopes=None, created_by=created_by, expires_at=None, session_id=None, ts=ts)
         conn.commit()
-        out = conn.execute(
-            "SELECT * FROM admin_role_assignments WHERE id = ?",
-            (assignment_id,),
-        ).fetchone()
-    return _row_to_dict(out)  # type: ignore[return-value]
+    return account, assignment, credential  # type: ignore[return-value]
 
 
 def reconcile_oidc_admin_roles(
@@ -3078,23 +3181,31 @@ def get_service_registry_json_with_generation(*, path: Path = DB_PATH) -> dict[s
 def write_service_registry(
     value: Mapping[str, Any], *, updated_by: str | None = None,
     expected_generation: int, now: int | None = None,
+    session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Atomically write the active registry and advance its only CAS counter.
 
     This is the sole production writer for ``operator.service_registry``.  It
     intentionally owns no artifact/reload effect: those occur after commit.
+    ``session`` is the browser sign-in that asked for the write (decision D41), checked inside this
+    transaction; None for a write no browser sign-in started.
     """
     if not isinstance(value, Mapping):
         raise ValueError("service registry value must be a mapping")
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        next_generation = write_service_registry_in_transaction(
-            conn, value, updated_by=updated_by,
-            expected_generation=expected_generation, now=ts,
-        )
-        conn.commit()
+        try:
+            session_guard.require_live(conn, session)
+            next_generation = write_service_registry_in_transaction(
+                conn, value, updated_by=updated_by,
+                expected_generation=expected_generation, now=ts,
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     return {"key": "service_registry", "value": dict(value), "updated_at": ts,
             "updated_by": updated_by, "operator_settings_generation": next_generation}
 
@@ -3112,6 +3223,7 @@ def write_service_registry_with_audit(
     audit_target_id: str | None,
     audit_metadata: Mapping[str, Any] | None = None,
     now: int | None = None,
+    session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Commit one registry revision, generation, and audit fact atomically.
@@ -3119,6 +3231,10 @@ def write_service_registry_with_audit(
     This is the production writer for ordinary registry mutations.  Artifact
     publication and reload stay outside this transaction because they observe
     the committed registry rather than participating in SQLite atomicity.
+
+    ``session`` is the browser sign-in that asked for the write (decision D41), checked inside this
+    transaction: a registry write can move where a stored key is sent, and a sign-out that committed first
+    must not be outrun. None for a write no browser sign-in started.
     """
     if not isinstance(value, Mapping):
         raise ValueError("service registry value must be a mapping")
@@ -3126,6 +3242,7 @@ def write_service_registry_with_audit(
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            session_guard.require_live(conn, session)
             next_generation = write_service_registry_in_transaction(
                 conn,
                 value,
@@ -3223,6 +3340,7 @@ def write_service_registry_and_setting_with_audits(
     setting_value: Mapping[str, Any],
     audits: Iterable[Mapping[str, Any]],
     now: int | None = None,
+    session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
     precheck: Callable[[sqlite3.Connection], None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -3235,6 +3353,10 @@ def write_service_registry_and_setting_with_audits(
     lock, before any row is written, and may raise to refuse the whole change;
     a caller that must read other tables consistently with the write reads them
     there. Artifact publication and reload stay with the caller, after the commit.
+
+    ``session`` is the browser sign-in that asked for the write (decision D41), checked inside this
+    transaction: a registry write can move where a stored key is sent, and a sign-out that committed first
+    must not be outrun. None for a write no browser sign-in started.
     """
     setting_name = str(setting_key or "").strip()
     if not setting_name or setting_name in {"service_registry", "prompt_memory"}:
@@ -3246,6 +3368,7 @@ def write_service_registry_and_setting_with_audits(
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            session_guard.require_live(conn, session)
             if precheck is not None:
                 precheck(conn)
             next_generation = write_service_registry_in_transaction(
@@ -3484,6 +3607,7 @@ __all__ = [
     "list_apps",
     "list_apps_for_user",
     "create_credential_hash",
+    "create_admin_key_with_role",
     "revoke_credential",
     "get_credential",
     "find_credential_by_hash",

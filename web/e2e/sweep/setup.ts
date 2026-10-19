@@ -3,6 +3,7 @@
 import { request } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { widenStepUpWindow } from "../fixtures/session-policy";
 import { sweepPaths, sweepTarget } from "./target";
 
 interface Seed {
@@ -59,6 +60,8 @@ export default async function setup() {
   const seed = JSON.parse(await readFile(paths.seedManifest, "utf8")) as Seed;
   const base = target.baseURL;
   const owner = await signIn(base, seed.owner_email, seed.password, paths.ownerState);
+  // The saved owner sign-in outlives the 15-minute step-up window (fixtures/session-policy.ts).
+  await widenStepUpWindow(owner);
   const member = await signIn(base, seed.member_email, seed.password, paths.memberState);
   await member.dispose();
   await writeFile(paths.anonymousState, JSON.stringify({ cookies: [], origins: [] }));

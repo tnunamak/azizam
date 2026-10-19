@@ -105,6 +105,7 @@ def ensure_service_registry(
                     "service_count": len(registry.get("services") or {}),
                     "protocol_frontend_count": len(registry.get("protocol_frontends") or {}),
                 },
+                session=None,  # the gateway seeding its own registry at start: no browser sign-in asked
                 path=path,
             )
         except admin_store.OperatorSettingsGenerationConflict:

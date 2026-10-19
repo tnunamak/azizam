@@ -1340,7 +1340,9 @@ class EngineService:
             secret_id: str | None = None
             if key.source == "pasted" and key.value:
                 secret_id = _new_secret_id(service_id, "api_key")
-                secret_store.put_provider_secret(secret_id, key.value, db_path=self.db_path, approved_origin=origin)
+                secret_store.put_provider_secret(
+                    secret_id, key.value, db_path=self.db_path, approved_origin=origin,
+                    session=getattr(ctx, "browser_session", None))
                 written.append(secret_id)
                 if old_config.get("api_key_secret_id"):
                     retired.append(str(old_config["api_key_secret_id"]))

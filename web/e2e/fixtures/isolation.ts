@@ -90,6 +90,16 @@ export const GLOBAL_SETTINGS: GlobalSetting[] = [
     },
   },
   {
+    name: "sessions",
+    read: async (owner) => {
+      const body = await owner.get("/admin/api/settings/sessions");
+      return { value: body.sessions, revision: body.revision as string };
+    },
+    write: async (owner, value, revision) => {
+      await owner.send("PUT", "/admin/api/settings/sessions", value, revision);
+    },
+  },
+  {
     name: "sign-in",
     read: async (owner) => {
       const body = await owner.get("/admin/api/signin");

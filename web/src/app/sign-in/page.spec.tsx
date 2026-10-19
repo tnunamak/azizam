@@ -293,6 +293,20 @@ it("explains provider failure without rendering untrusted error descriptions", a
   expect(screen.queryByText("untrusted")).toBeNull();
 });
 
+it("says a provider that reports no sign-in time cannot confirm a risky action, and how to confirm instead", async () => {
+  window.history.replaceState(
+    null,
+    "",
+    "/sign-in/?error=no_sign_in_time&return_to=%2Fsettings%2F",
+  );
+  options.oidc = true;
+  mount();
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("doesn’t tell Azizam when you signed in");
+  expect(alert).toHaveTextContent("Confirm with your Azizam password");
+  expect(alert).not.toHaveTextContent("Single sign-on didn’t finish");
+});
+
 it("renders provider text through React escaping", async () => {
   options.oidc = true;
   options.oidc_label = '<img src=x onerror="alert(1)">';

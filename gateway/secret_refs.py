@@ -17,7 +17,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from gateway import secret_store
+from gateway import secret_store, session_guard
 
 _db_path: Path | None = None
 _db_provider: Callable[[], Path] | None = None
@@ -80,21 +80,25 @@ def origin_or_none(url: str) -> str | None:
 
 
 def store(value: str, *, db_path: Path, origin: str | None = None, conn: sqlite3.Connection | None = None,
-          now: int | None = None) -> str:
-    """Store one secret value and return its new reference. With ``conn`` the write joins the caller's transaction."""
+          now: int | None = None, session: session_guard.BrowserSession | None = None) -> str:
+    """Store one secret value and return its new reference. With ``conn`` the write joins the caller's transaction.
+
+    ``session`` is the browser sign-in that asked for it (decision D41), checked in the write's transaction."""
     ref = new_ref()
     secret_store.put_provider_secret(
-        ref, value, db_path=db_path, approved_origin=origin, conn=conn, now=now, allow_short=True, keep_suffix=False)
+        ref, value, db_path=db_path, approved_origin=origin, conn=conn, now=now, allow_short=True, keep_suffix=False,
+        session=session)
     return ref
 
 
-def putter(db_path: Path, conn: sqlite3.Connection | None = None) -> Put:
+def putter(db_path: Path, conn: sqlite3.Connection | None = None, *,
+           session: session_guard.BrowserSession | None = None) -> Put:
     """A ``Put`` that stores into ``db_path`` (inside ``conn``'s transaction when given)."""
     if conn is not None:
         secret_store.ensure_provider_secret_schema_on(conn)
 
     def put(value: str, origin: str | None = None) -> str:
-        return store(value, db_path=db_path, origin=origin, conn=conn)
+        return store(value, db_path=db_path, origin=origin, conn=conn, session=session)
 
     return put
 

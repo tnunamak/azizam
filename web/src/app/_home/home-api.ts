@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api";
+import { REAUTH_REQUIRED_CODE } from "@/lib/reauth";
 import { accountApi } from "@/lib/account-api";
 import { fetchEarly } from "@/lib/early-fetch";
 import {
@@ -125,7 +126,11 @@ export const homeApi = {
     try {
       return (await productApi.home()) as HomeSnapshot;
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401)
+      if (
+        error instanceof ApiError &&
+        error.status === 401 &&
+        error.code !== REAUTH_REQUIRED_CODE
+      )
         return { authenticated: false };
       throw error;
     }

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import time
 from types import SimpleNamespace
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -57,7 +58,7 @@ def people(monkeypatch, tmp_path):
         )
         session = AdminSession(
             subject=user["id"], email=user["email"], role="none",
-            issued_at=1, expires_at=4_000_000_000,
+            issued_at=1, expires_at=4_000_000_000, authenticated_at=time.time(),   # signed in a moment ago
         )
         # Matching App names and plans are intentional: neither is an owner id.
         app = admin_store.create_app(

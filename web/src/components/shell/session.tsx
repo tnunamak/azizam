@@ -3,6 +3,7 @@
 import { createContext, useContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { REAUTH_REQUIRED_CODE } from "@/lib/reauth";
 import { fetchEarly } from "@/lib/early-fetch";
 import { formatPersonName } from "@/lib/format";
 
@@ -58,7 +59,11 @@ export async function fetchViewer(): Promise<Viewer> {
       ),
     };
   } catch (error) {
-    if (!(error instanceof ApiError) || ![401, 403].includes(error.status))
+    if (
+      !(error instanceof ApiError) ||
+      ![401, 403].includes(error.status) ||
+      error.code === REAUTH_REQUIRED_CODE
+    )
       throw error;
     return {
       authenticated: false,

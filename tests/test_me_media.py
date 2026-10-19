@@ -896,7 +896,7 @@ class MeMediaRouterTests(unittest.TestCase):
             redirect_uris=["https://client.example/cb"], grant_types=["authorization_code"],
             auth_method="none", secret_hash=None, metadata={})
         grant = store.create_grant(person_id=person["id"], client=client, redirect_uri="https://client.example/cb",
-                                   resource="https://gw.test/mcp", scope="mcp")
+                                   resource="https://gw.test/mcp", scope="mcp", session=None)
         if revoke:
             store.revoke_grant(grant.id, "person_revoked")
         session = admin_store.ensure_session_app_for_user(person["id"], name="Azizam", path=self.admin_db)

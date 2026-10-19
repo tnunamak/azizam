@@ -23,6 +23,10 @@ ADDED_PATHS: dict[str, str] = {
                "engine record sets native_passthrough, outside the OpenAPI schema",
     "/admin/api/operator/host-commands": "owner-only permission for engines that run host commands "
                                          "(contract D13); tests/test_admin_owner_holes_round4.py covers it",
+    "/admin/api/settings/sessions": "owner settings for sign-in sessions (idle timeout, absolute lifetime, "
+                                    "step-up window); tests/test_session_settings_api.py covers it",
+    "/auth/api/reauth": "password confirmation for risky owner actions (step-up); tests/test_session_lifecycle.py covers it",
+    "/auth/api/sign-out-everywhere": "ends all of a person's sessions; tests/test_session_lifecycle.py covers it",
     "/admin/api/operator/service-registry/excluded": "fix or remove a record the registry leaves out (decision D22); "
                                                      "tests/test_excluded_records.py covers it",
     "/me/api/media/remove-missing": "Library 'Remove missing items' (r64), outside the OpenAPI schema; "

@@ -106,7 +106,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
                                   auth_method="none", secret_hash=None, metadata={})
         self.grant = store.create_grant(person_id=self.person["id"], client=client,
                                         redirect_uri="https://chatgpt.example/cb", resource="https://gw.test/mcp",
-                                        scope=mcp_oauth.SCOPE)
+                                        scope=mcp_oauth.SCOPE, session=None)
         token = mcp_oauth.ACCESS_TOKEN_PREFIX + secrets.token_urlsafe(24)
         store.save_token(token, kind="access", grant_id=self.grant.id, client_id=client.client_id,
                          scope=mcp_oauth.SCOPE, ttl=3600)

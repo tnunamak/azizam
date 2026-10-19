@@ -31,7 +31,9 @@ function signInError(error: Error): string {
 export default function SignInPage() {
   const [returnTo, setReturnTo] = useState<string | null>(null);
   const [reset, setReset] = useState("");
-  const [providerError, setProviderError] = useState(false);
+  const [providerError, setProviderError] = useState<
+    "provider" | "no_sign_in_time" | null
+  >(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [ownerForm, setOwnerForm] = useState(false);
@@ -39,7 +41,10 @@ export default function SignInPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setReturnTo(params.get("return_to") || "/");
-    setProviderError(params.get("error") === "provider");
+    const error = params.get("error");
+    setProviderError(
+      error === "provider" || error === "no_sign_in_time" ? error : null,
+    );
     setReset(
       new URLSearchParams(window.location.hash.slice(1)).get("reset") || "",
     );
@@ -163,10 +168,17 @@ export default function SignInPage() {
             </div>
           ) : (
             <>
-              {providerError && (
+              {providerError === "provider" && (
                 <p role="alert" className="text-body mb-6">
                   Single sign-on didn’t finish. Try again, or ask the person who
                   invited you for help.
+                </p>
+              )}
+              {providerError === "no_sign_in_time" && (
+                <p role="alert" className="text-body mb-6">
+                  Your sign-in provider doesn’t tell Azizam when you signed in,
+                  so Azizam can’t tell that you just confirmed. Confirm with your
+                  Azizam password instead, or use an admin key for this action.
                 </p>
               )}
               {hasProvider && (

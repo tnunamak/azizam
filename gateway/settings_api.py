@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, prompt_memory, receipt_store
+from gateway import admin_store, prompt_memory, receipt_store, session_policy
 from gateway.admin_api import AdminAuth, AdminContext, _require_admin
 from gateway import egress
 from gateway.projection import public_json
@@ -189,6 +189,48 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
     def get_instance(request: Request):
         ctx = guard(request)
         return ctx if isinstance(ctx, JSONResponse) else instance_response()
+
+    def sessions_response() -> JSONResponse:
+        record = admin_store.get_operator_setting(session_policy.SESSION_POLICY_SETTING_KEY, path=admin_path)
+        return JSONResponse({
+            "sessions": session_policy.stored_setting(admin_path),
+            "defaults": session_policy.DEFAULT_SETTING,
+            "bounds": {key: list(bounds) for key, bounds in session_policy.BOUNDS.items()},
+            "revision": admin_store.operator_setting_revision(record),
+            "source": "admin.db", "apply_mode": "live",
+        }, headers={"Cache-Control": "no-store"})
+
+    @router.get("/sessions")
+    def get_sessions(request: Request):
+        ctx = guard(request)
+        return ctx if isinstance(ctx, JSONResponse) else sessions_response()
+
+    @router.put("/sessions")
+    async def put_sessions(request: Request):
+        """How long a sign-in lasts: idle timeout, absolute lifetime and the step-up window."""
+        ctx = guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = session_policy.validate_setting(await request.json())
+        except (ValueError, TypeError) as exc:
+            message = str(exc) if isinstance(exc, session_policy.InvalidSessionPolicy) else "Supply the three session settings as whole numbers."
+            return JSONResponse({"error": {"code": "invalid_sessions", "message": message}}, status_code=400)
+        revision = request.headers.get("if-match")
+        if not revision:
+            return JSONResponse({"error": {"code": "settings_revision_required", "message": "Reload settings and supply If-Match."}}, status_code=428)
+        try:
+            await asyncio.to_thread(
+                admin_store.put_operator_setting_with_audit,
+                session_policy.SESSION_POLICY_SETTING_KEY, body, updated_by=ctx.subject, expected_revision=revision.strip('"'),
+                audit_action="operator.sessions.update", audit_actor_kind=ctx.actor_kind,
+                audit_actor_id=ctx.audit_actor_id, audit_actor_label=ctx.actor_label,
+                audit_target_kind="operator_setting", audit_target_id=session_policy.SESSION_POLICY_SETTING_KEY,
+                audit_metadata=body, path=admin_path,
+            )
+        except admin_store.SettingsConflictError:
+            return JSONResponse({"error": {"code": "settings_conflict", "message": "Settings changed elsewhere; reload to see the latest"}}, status_code=409)
+        return sessions_response()
 
     @router.get("/prompt-memory")
     def get_prompt_memory(request: Request):

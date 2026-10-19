@@ -34,8 +34,13 @@ def begin_browser_login(
     *,
     return_to: str,
     test_id: str = "",
+    reauth: bool = False,
 ) -> Response:
-    """Issue a separate host-only cookie for each ten-minute sign-in flow."""
+    """Issue a separate host-only cookie for each ten-minute sign-in flow.
+
+    ``reauth`` asks the provider to sign the person in again (step-up) rather
+    than reuse its own session.
+    """
     state_value = generate_state()
     binding = secrets.token_urlsafe(32)
     prefix = "__Host-gateway-oidc-" if config.cookie.secure else "gateway-oidc-"
@@ -47,10 +52,11 @@ def begin_browser_login(
         return_to=return_to, redirect_uri=config.redirect_uri,
         browser_cookie_name=cookie_name,
         browser_binding_hash=hashlib.sha256(binding.encode()).hexdigest(),
-        test_id=test_id,
+        test_id=test_id, reauth=reauth,
     )
     response = RedirectResponse(
-        authorization_url(config, state=state.state, nonce=nonce, pkce=pkce),
+        authorization_url(config, state=state.state, nonce=nonce, pkce=pkce,
+                          extra_params={"prompt": "login", "max_age": "0"} if reauth else None),
         status_code=302, headers={"cache-control": "no-store"},
     )
     response.set_cookie(

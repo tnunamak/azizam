@@ -249,7 +249,10 @@ def principals():
         proxy.ADMIN_AUTH.cookie = cookie
         member = admin_store.upsert_oidc_user("https://idp.example", "headless-member",
                                             email="member@example.com", path=case.db)
-        session = session_from_claims({"sub": member["id"], "email": member["email"]}, role="none", cookie=cookie)
+        # A current sign-in, not an 8-hour cookie from before sliding sessions: the first request with one of those
+        # would upgrade it (a write), and the same cookie sent again after the grace window would end the sign-in.
+        session = session_from_claims({"sub": member["id"], "email": member["email"]}, role="none", cookie=cookie,
+                                      idle_seconds=30 * 86400, absolute_seconds=90 * 86400)
         case.member_cookie = (cookie.name, encode_session_cookie(session, signing_key=b"s" * 32))
         case.member_headers = {
             "Accept": "application/json",
@@ -407,7 +410,7 @@ HANDLER_ERRORS = {
     "revision_not_found", "no_active_snapshot", "invalid_retention",
     "settings_revision_required", "registry_revision_required", "litellm_unconfigured",
     "generation_mismatch", "audit_event_not_found", "person_not_found",
-    "invalid_instance", "invalid_prompt_memory",
+    "invalid_instance", "invalid_prompt_memory", "invalid_sessions",
     "address_invalid", "client_id_required", "test_not_passed", "test_not_found", "owner_person_required",
     "invalid_password", "service_not_found", "record_not_found",
 }

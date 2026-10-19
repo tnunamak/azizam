@@ -147,6 +147,19 @@ function seed(state: State) {
     }),
   );
   routes.set("/admin/api/access-plans", reply({ access_plans: [localPlan] }));
+  routes.set(
+    "/admin/api/settings/sessions",
+    reply({
+      sessions: { idle_timeout_days: 30, absolute_lifetime_days: 90, step_up_minutes: 15 },
+      defaults: { idle_timeout_days: 30, absolute_lifetime_days: 90, step_up_minutes: 15 },
+      bounds: {
+        idle_timeout_days: [1, 90],
+        absolute_lifetime_days: [1, 365],
+        step_up_minutes: [1, 1440],
+      },
+      revision: "7",
+    }),
+  );
 }
 const localPlan = {
   id: "plan_local",
@@ -239,6 +252,7 @@ const sent = (method: string, path: string) =>
 const SECTIONS = [
   "Instance",
   "Sign-in",
+  "Sign-in sessions",
   "People and access",
   "Prompts",
   "Receipts",
@@ -348,7 +362,7 @@ describe("settings page states", () => {
     await user.click(screen.getByText("Effective configuration and export"));
     await waitFor(() =>
       expect(screen.getAllByRole("button", { name: "Try again" })).toHaveLength(
-        8,
+        9,
       ),
     );
     for (const name of ["People and access"]) {
