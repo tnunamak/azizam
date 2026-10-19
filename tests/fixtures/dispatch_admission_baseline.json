@@ -6,10 +6,6 @@
       "status": 200,
       "headers": [
         [
-          "x-backend-test",
-          "yes"
-        ],
-        [
           "x-azizam-llm-execution",
           "litellm"
         ],
@@ -35,10 +31,6 @@
     "chat-stream": {
       "status": 200,
       "headers": [
-        [
-          "x-backend-test",
-          "yes"
-        ],
         [
           "x-azizam-llm-execution",
           "litellm"

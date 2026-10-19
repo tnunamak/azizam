@@ -17,7 +17,7 @@ URL fields          the field holds the public endpoint (no user info, no query,
                     "fragment": entry}``. A URL that cannot be read with confidence is stored whole in
                     ``<field>_entries.whole`` and the field is left empty.
 
-This module is management-safe: it builds and walks structure and never decrypts. A single secret value (``lifecycle.admin_key``) is one entry. The legacy shapes (an inline
+This module is management-safe: it builds and walks structure and never decrypts. A single secret value (``lifecycle.admin_key``, ``lifecycle.api_key``) is one entry. The legacy shapes (an inline
 header value, a plain environment value, a command argument that follows a credential flag, a URL with user info)
 are read here once, by the migration and by ingestion, and turned into entries; nothing else reads them.
 """
@@ -31,7 +31,7 @@ import shlex
 from typing import Any, Iterator, Mapping
 from urllib.parse import urlsplit
 
-from gateway import secret_refs
+from gateway import secret_refs, url_binding
 from gateway.secret_refs import Put
 
 COMMAND_KEYS = ("start", "stop", "status", "reload")
@@ -63,9 +63,10 @@ URL_FIELD_PATHS = (
 )
 # A list of mappings whose ``url`` is a URL field too (the models a record lists).
 URL_LIST_PATHS = ("config.models",)
-# A single secret value in a mapping (the admin key of an http load/unload driver).
+# A single secret value in a mapping (the admin key and the API key of an http load/unload driver).
 SCALAR_SECRET_PATHS = (
     "lifecycle.admin_key", "process.legacy_lifecycle.admin_key", "config.lifecycle.admin_key",
+    "lifecycle.api_key", "process.legacy_lifecycle.api_key", "config.lifecycle.api_key",
 )
 HEADER_PATH = "config.headers"
 HEADER_ROW_KEYS = ("id", "name", "secret_ref", "value", "public")
@@ -83,6 +84,46 @@ class UrlRefused(ValueError):
         super().__init__(
             f"{path} is not a URL the gateway can read with confidence (a backslash, a control character or an invalid "
             "port); write it as scheme://host:port/path, with any credentials sent as secret entries.")
+        self.path = path
+
+
+class UrlUnbound(ValueError):
+    """A write put credentials in a URL field that has no address to bind them to (decision D39). The text names the field only."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"{path} holds credentials but is not an absolute http(s) URL and has no base address to join it to "
+            "(a protocol-relative //host/path counts as neither); write it as scheme://host:port/path, or as a path "
+            "on a service that has a base URL or a host and port.")
+        self.path = path
+
+
+class HostUserInfoRefused(ValueError):
+    """A write put user info in ``config.host``. The text names the field only (decision D39)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "config.host is a host name; it cannot hold user info (user:password@). Send the credential as a header or "
+            "a key, or as part of base_url.")
+
+
+class EntryRefused(ValueError):
+    """A write put a read's view of a secret entry, or a malformed entry, where an entry goes. The text names the place only."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"{path} holds what a read shows for a secret entry (or a malformed entry), not an entry. Leave it out to keep "
+            "the stored one, or change it with the secret-entries commands.")
+        self.path = path
+
+
+class ValueRefused(ValueError):
+    """A write put a mapping or a list where an environment value goes. The text names the place and never the value."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"{path} holds a mapping or a list; an environment value is text. Write it as text, or leave it out "
+            "(the gateway never passed a structured value to a process).")
         self.path = path
 
 
@@ -126,20 +167,22 @@ def observation_http_blocks(record: Mapping[str, Any]) -> Iterator[tuple[str, di
 
 
 def url_containers(record: Mapping[str, Any]) -> Iterator[tuple[str, dict[str, Any], str]]:
-    """(path of the field, the mapping that holds it, its key) for every URL field a record can hold."""
+    """(path of the field, the mapping that holds it, its key) for every URL field a record can hold.
+
+    A field counts when its credentials sit beside it even if the public field itself is gone."""
     for path in URL_FIELD_PATHS:
         parent_path, _, key = path.rpartition(".")
         parent = _container(record, parent_path)
-        if parent is not None and key in parent:
+        if parent is not None and (key in parent or key + SECRETS_SUFFIX in parent):
             yield path, parent, key
     for base, http in observation_http_blocks(record):
         for key in ("path", "url"):
-            if key in http:
+            if key in http or key + SECRETS_SUFFIX in http:
                 yield f"{base}.{key}", http, key
     for list_path in URL_LIST_PATHS:
         rows = _get(record, list_path)
         for index, row in enumerate(rows if isinstance(rows, list) else ()):
-            if isinstance(row, dict) and "url" in row:
+            if isinstance(row, dict) and ("url" in row or "url" + SECRETS_SUFFIX in row):
                 yield f"{list_path}[{index}].url", row, "url"
 
 
@@ -148,13 +191,78 @@ def url_containers(record: Mapping[str, Any]) -> Iterator[tuple[str, dict[str, A
 # ---------------------------------------------------------------------------
 
 
-def split_url(value: str) -> tuple[str, dict[str, Any]]:
+_PARAM = re.compile(r";([^;/]*)")
+
+
+def split_path_params(path: str) -> tuple[str, list[tuple[str, str | None]]]:
+    """A path without the values of its ``;name=value`` parameters, and the raw chunks it held, in order.
+
+    A parameter is read like a query chunk: ``name=value`` keeps ``;name`` in the path (the name is public), a bare word
+    (``;token123``) keeps a bare ``;`` because the word may be the credential itself, and an empty chunk (``;;``, a
+    trailing ``;``) is a gap. Every ``;`` of the path is one chunk, so ``_join_params`` gives back the same bytes.
+    """
+    chunks: list[tuple[str, str | None]] = []
+
+    def take(match: re.Match[str]) -> str:
+        text = match.group(1)
+        name, equals, value = text.partition("=")
+        if equals:
+            chunks.append((name, value))
+            return ";" + name
+        chunks.append((text, None))
+        return ";"
+
+    return _PARAM.sub(take, path), chunks
+
+
+def path_param_count(url: str) -> int:
+    """How many ``;`` chunks the path of an address holds (the places ``join_url`` puts path parameters back)."""
+    start = url.find("/", url.index("://") + 3) if "://" in url else url.find("/")
+    return len(_PARAM.findall(url[start:])) if start >= 0 else 0
+
+
+def _params_held(path: str, entries: Any) -> bool:
+    """True when the ``;`` chunks of a public path are the ones ``entries`` already stands for (a second pass changes nothing)."""
+    texts = [match.group(1) for match in _PARAM.finditer(path)]
+    if not isinstance(entries, list) or len(entries) != len(texts):
+        return False
+    for text, entry in zip(texts, entries):
+        if not isinstance(entry, Mapping):
+            return False
+        expected = "" if entry.get("bare") or entry.get("gap") else str(entry.get("name") or "")
+        if text != expected:
+            return False
+    return True
+
+
+def _join_params(public: str, chunks: list[tuple[str, str | None]] | None) -> str:
+    """``public`` with the parameter chunks put back into the path, in order."""
+    if not chunks:
+        return public
+    start = public.find("/", public.index("://") + 3) if "://" in public else public.find("/")
+    if start < 0:
+        return public
+    remaining = iter(chunks)
+
+    def put_back(match: re.Match[str]) -> str:
+        chunk = next(remaining, None)
+        if chunk is None:
+            return match.group(0)
+        name, value = chunk
+        return f";{name}" if value is None else f";{name}={value}"
+
+    return public[:start] + _PARAM.sub(put_back, public[start:])
+
+
+def split_url(value: str, held_params: Any = None) -> tuple[str, dict[str, Any]]:
     """``(public form, credential parts)`` of a URL, an address with user info, or a path with a query.
 
-    The public form has no user info, no query and no fragment. The credential parts are
-    ``{"userinfo": "user:password", "query": [(name, value or None), ...], "fragment": text}``, each present only when
-    the URL had it; the query is the raw chunks of the string, in order. Raises ``AmbiguousUrl`` for text that cannot be read with confidence (an invalid port, a
-    bracket that does not close, a control character).
+    The public form has no user info, no query, no fragment and no path parameter values. The credential parts are
+    ``{"userinfo": "user:password", "params": [(name, value or None), ...], "query": [(name, value or None), ...],
+    "fragment": text}``, each present only when the URL had it; ``params`` and ``query`` are the raw chunks of the
+    string, in order. ``held_params`` are the parameter entries a stored record already has for this field: a public
+    path whose ``;`` chunks they stand for is not read again. Raises ``AmbiguousUrl`` for text that cannot be read with
+    confidence (an invalid port, a bracket that does not close, a control character).
     """
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
         raise AmbiguousUrl("a URL holds a control character")
@@ -173,6 +281,9 @@ def split_url(value: str) -> tuple[str, dict[str, Any]]:
     rest, hash_mark, fragment = rest.partition("#")
     rest, question, query = rest.partition("?")
     authority, slash, path = rest.partition("/")
+    if slash and ";" in path and not _params_held(path, held_params):
+        path, chunks = split_path_params(path)
+        parts["params"] = chunks
     if prefix or _looks_like_authority(authority):
         if "@" in authority:
             userinfo, _, host = authority.rpartition("@")
@@ -204,10 +315,10 @@ def _looks_like_authority(text: str) -> bool:
 
 
 def join_url(public: str, *, userinfo: str | None = None, query: list[tuple[str, str | None]] | None = None,
-             fragment: str | None = None) -> str:
+             fragment: str | None = None, params: list[tuple[str, str | None]] | None = None) -> str:
     """The URL that ``split_url`` took apart: the public form with its credential parts put back, byte for byte."""
-    out = public
-    if userinfo:
+    out = _join_params(public, params)
+    if userinfo is not None:  # an empty user info is still an @ (``http://@host/``)
         if "://" in out:
             scheme, _, rest = out.partition("://")
             out = f"{scheme}://{userinfo}@{rest}"
@@ -220,12 +331,20 @@ def join_url(public: str, *, userinfo: str | None = None, query: list[tuple[str,
     return out
 
 
-def url_entries(public: str, parts: Mapping[str, Any], put: Put) -> dict[str, Any]:
-    """The entries that hold the credential ``parts`` of a URL whose public form is ``public`` (bound to its origin)."""
-    origin = secret_refs.origin_or_none(public)
+def url_entries(public: str, parts: Mapping[str, Any], put: Put, *, base: str | None = None, origin: str | None = None) -> dict[str, Any]:
+    """The entries that hold the credential ``parts`` of a URL whose public form is ``public``.
+
+    Each is bound to the effective origin of the field: ``origin`` when given, else the origin of ``public`` (joined to
+    ``base`` when it is a path).
+    """
+    origin = origin if origin is not None else url_binding.field_origin(public, base)
     held: dict[str, Any] = {}
     if "userinfo" in parts:
-        held["userinfo"] = secret_refs.entry(put(parts["userinfo"], origin))
+        # an empty user info holds nothing to store, but it is part of the bytes: it gets a marker like an empty fragment
+        held["userinfo"] = (secret_refs.entry(put(parts["userinfo"], origin)) if parts["userinfo"]
+                            else {"id": secret_refs.new_entry_id(), "empty": True})
+    if "params" in parts:
+        held["params"] = [_query_entry(name, item, put, origin) for name, item in parts["params"]]
     if "query" in parts:
         held["query"] = [_query_entry(name, item, put, origin) for name, item in parts["query"]]
     if "fragment" in parts:
@@ -254,15 +373,17 @@ def query_chunks(entries: Any, resolve: Any) -> list[tuple[str, str | None]]:
     """The raw chunks a stored query holds, in order; ``resolve(ref)`` gives a stored value."""
     chunks: list[tuple[str, str | None]] = []
     for item in entries if isinstance(entries, list) else ():
-        if not isinstance(item, Mapping):
-            continue
-        if secret_refs.is_secret_entry(item):
+        if isinstance(item, Mapping) and secret_refs.is_secret_entry(item):
             value = resolve(item["secret_ref"])
             chunks.append((value, None) if item.get("bare") else (str(item.get("name") or ""), value))
-        elif item.get("empty"):
+        elif isinstance(item, Mapping) and item.get("empty"):
             chunks.append((str(item.get("name") or ""), ""))
-        elif item.get("gap"):
+        elif isinstance(item, Mapping) and item.get("gap"):
             chunks.append(("", None))
+        else:
+            # A chunk with no reference (a read written back) cannot be rebuilt: the resolver refuses it, so the URL is not
+            # sent with a part missing.
+            resolve(item.get("secret_ref") if isinstance(item, Mapping) else None)
     return chunks
 
 
@@ -281,28 +402,43 @@ def endpoint_origin(config: Any) -> str | None:
     return None
 
 
-def externalize_url(container: dict[str, Any], key: str, put: Put, *, reject_ambiguous: bool = False) -> bool:
+def externalize_url(container: dict[str, Any], key: str, put: Put, *, reject_ambiguous: bool = False,
+                    base: str | None = None, path: str = "", strict: bool | None = None) -> bool:
     """Move the credentials out of ``container[key]`` into the store. True when it changed anything. Idempotent.
 
-    A URL that cannot be read with confidence is stored whole as one private value and the field is left empty
-    (a record that exists already must not lose it); with ``reject_ambiguous`` (a new write) it raises
-    ``AmbiguousUrl`` instead, so the caller is told to fix it.
+    The credentials are bound to the effective origin of the field: its own when it is an absolute http(s) URL, else (on a
+    ``strict`` write, the owner's) the origin of ``base`` (decisions D39 and D42); a path in a record that exists already
+    (a migration) is bound to nothing. A URL that cannot be read with confidence is stored whole as one private value and
+    the field is left empty (a record that exists already must not lose it); with ``reject_ambiguous`` (a new write) it
+    raises ``AmbiguousUrl`` instead, so the caller is told to fix it. With ``reject_ambiguous`` a field with no origin to
+    bind to (a protocol-relative address, a path with no base) raises ``UrlUnbound`` (also with ``strict``, which defaults
+    to ``reject_ambiguous``); a stored one (a migration) is kept unbound, and the runtime never puts it back.
     """
+    strict = reject_ambiguous if strict is None else strict
     value = container.get(key)
     if not isinstance(value, str) or not value:
         return False
+    existing = container.get(key + SECRETS_SUFFIX)
     try:
-        public, parts = split_url(value)
+        public, parts = split_url(value, existing.get("params") if isinstance(existing, Mapping) else None)
     except AmbiguousUrl:
         if reject_ambiguous:
             raise
+        origin = url_binding.field_origin(value, base if strict else None)
+        if origin is None and strict:
+            raise UrlUnbound(path or key)
         container[key] = ""
-        container[key + SECRETS_SUFFIX] = {"whole": secret_refs.entry(put(value, None))}
+        container[key + SECRETS_SUFFIX] = {"whole": secret_refs.entry(put(value, origin))}
         return True
     if not parts:
         return False
-    held = url_entries(public, parts, put)
-    existing = container.get(key + SECRETS_SUFFIX)
+    # A path takes the origin of a base only on a write that says so (``strict``: a new write by the owner). A record that
+    # exists already (a migration) keeps a path's credentials bound to nothing: the base it sits on may have been moved by
+    # someone other than the owner, so the address it has today is not what the owner meant (decision D42).
+    origin = url_binding.field_origin(public, base if strict else None)
+    if origin is None and strict:
+        raise UrlUnbound(path or key)
+    held = url_entries(public, parts, put, origin=origin)
     container[key] = public
     container[key + SECRETS_SUFFIX] = {**(existing if isinstance(existing, Mapping) else {}), **held}
     return True
@@ -408,6 +544,17 @@ def _entry_keeping_id(ref: str, previous: Any, **public: Any) -> dict[str, Any]:
     return entry
 
 
+def _env_is_structured(value: Any) -> bool:
+    """True for an environment value that is a non-empty mapping or list once a ``{"value": ...}`` wrapper is taken off.
+
+    The runtime never passed such a value to a process (it skipped it), so a write that names one is refused; a stored
+    one is kept by the migration as the text it would have been.
+    """
+    if isinstance(value, Mapping) and "value" in value:
+        value = value["value"]
+    return isinstance(value, (list, Mapping)) and bool(value)
+
+
 def _env_text(value: Any) -> str:
     """The text an environment value is stored as; nothing for a switch or an empty value."""
     if isinstance(value, Mapping) and "value" in value:
@@ -424,7 +571,8 @@ def externalize_service(record: Mapping[str, Any], put: Put, *, reject_ambiguous
     public). Environment: a legacy value, in whatever shape, becomes a secret value. Commands: an argument that follows
     a credential flag (or sits after ``=`` in one) becomes an entry, and a command line that holds one becomes an
     argument list. URLs: user info and query values move beside the field. A record with none of these comes back
-    equal to the one that went in. With ``reject_ambiguous`` a URL that cannot be read raises ``AmbiguousUrl``.
+    equal to the one that went in. With ``reject_ambiguous`` (a new write) a URL that cannot be read raises ``UrlRefused``
+    and an environment value that is a mapping or a list raises ``ValueRefused``.
     """
     out = copy.deepcopy(dict(record))
     moved: list[str] = []
@@ -477,9 +625,14 @@ def externalize_service(record: Mapping[str, Any], put: Put, *, reject_ambiguous
                     continue
                 if secret_refs.is_secret_entry(value) and "value" not in value:
                     continue
+                if reject_ambiguous and _env_is_structured(value):
+                    raise ValueRefused(f"{path}.env.{str(name)[:64]}")
                 text = _env_text(value)
                 if text:
-                    env[name] = _entry_keeping_id(put(text, None), value)
+                    # A stored mapping or list is kept as the JSON text it would have been, and marked: the runtime never
+                    # passed such a value to a process, and does not start one with its text either (decision D39).
+                    marks = {"structured": True} if _env_is_structured(value) else {}
+                    env[name] = _entry_keeping_id(put(text, None), value, **marks)
                     moved.append(f"{path}.env.{name}")
 
     for path in COMMAND_CONTAINERS:
@@ -496,13 +649,18 @@ def externalize_service(record: Mapping[str, Any], put: Put, *, reject_ambiguous
         parent_path, _, key = path.rpartition(".")
         parent = _container(out, parent_path)
         value = parent.get(key) if parent is not None else None
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            value = str(value)  # a key a YAML file wrote as a number is as much a secret as one written as text
         if isinstance(value, str) and value:
             parent[key] = secret_refs.entry(put(value, None))
             moved.append(path)
 
     for path, parent, key in list(url_containers(out)):
+        if reject_ambiguous and path == "config.host" and isinstance(parent.get(key), str) and "@" in parent[key] \
+                and _looks_like_authority(parent[key]):
+            raise HostUserInfoRefused()
         try:
-            if externalize_url(parent, key, put, reject_ambiguous=reject_ambiguous):
+            if externalize_url(parent, key, put, reject_ambiguous=reject_ambiguous, base=url_binding.base_of(out, path), path=path):
                 moved.append(path)
         except AmbiguousUrl:
             raise UrlRefused(path) from None
@@ -552,6 +710,28 @@ def legacy_secret_texts(record: Any) -> list[str]:
     except Exception:  # noqa: BLE001 - a record of a shape this walk cannot read has nothing it can name
         return []
     return sorted({text for text in found if len(text) >= 4}, key=len, reverse=True)
+
+
+def typed_value_texts(record: Any, *, minimum: int = 8) -> list[str]:
+    """The longer text values a record holds in its plain slots (not its id or name), longest first.
+
+    An error about a record the registry leaves out can quote a value of a slot that is not a secret slot: text typed into
+    a numeric field, say. The caller scrubs these from the message, so naming the record is enough to find it.
+    """
+    found: set[str] = set()
+
+    def walk(node: Any, key: str = "") -> None:
+        if isinstance(node, Mapping):
+            for name, item in node.items():
+                walk(item, str(name))
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                walk(item, key)
+        elif isinstance(node, str) and len(node) >= minimum and key not in ("id", "name"):
+            found.add(node)
+
+    walk(record)
+    return sorted(found, key=len, reverse=True)
 
 
 def inline_carriers(record: Mapping[str, Any]) -> list[str]:
@@ -726,7 +906,70 @@ def ingest_service(
     # A read hides the settings no type classifies (decision D34); a write built from a read does not carry them, so
     # the stored ones are kept. The count a read shows is never stored.
     projection.retain_hidden(projection_types.SERVICE_RECORD, record, stored)
+    refuse_echoed_views(record)
     return externalize_service(record, put, reject_ambiguous=True)
+
+
+def _is_view(item: Any) -> bool:
+    """What a read shows for a secret entry: a mapping that says whether it is configured and holds no reference."""
+    return isinstance(item, Mapping) and "configured" in item and not secret_refs.is_ref(item.get("secret_ref"))
+
+
+def _walk_views(node: Any, path: str) -> None:
+    if _is_view(node):
+        raise EntryRefused(path)
+    if isinstance(node, Mapping):
+        for key, item in node.items():
+            _walk_views(item, f"{path}.{str(key)[:64]}")
+    elif isinstance(node, (list, tuple)):
+        for index, item in enumerate(node):
+            _walk_views(item, f"{path}[{index}]")
+
+
+def _url_entries_malformed(held: Any) -> bool:
+    """True when ``<field>_entries`` is not a shape the migration and ingestion write: every part is an entry that holds
+    a reference, or (for a fragment or a query chunk) an empty or gap marker."""
+    if not isinstance(held, Mapping):
+        return True
+
+    def entry(item: Any) -> bool:
+        return secret_refs.is_secret_entry(item)
+
+    def marker(item: Any, key: str) -> bool:
+        return isinstance(item, Mapping) and item.get(key) is True
+
+    for part, item in held.items():
+        if part == "whole":
+            if not entry(item):
+                return True
+        elif part in ("userinfo", "fragment"):
+            if not (entry(item) or marker(item, "empty")):
+                return True
+        elif part in ("query", "params"):
+            if not isinstance(item, list) or not all(entry(chunk) or marker(chunk, "empty") or marker(chunk, "gap") for chunk in item):
+                return True
+        else:
+            return True
+    return False
+
+
+def refuse_echoed_views(record: Mapping[str, Any]) -> None:
+    """Raise ``EntryRefused`` when a carrier of ``record`` holds a read's view of an entry or a malformed ``_entries`` part.
+
+    A view (``{"id", "configured"}``) written where no stored entry has that id would otherwise become a secret whose
+    value is the view's text, or a URL part that cannot be rebuilt when the engine is called.
+    """
+    for path, parent, key, policy_name in carrier_slots(record):
+        if key not in parent:
+            continue
+        value = parent[key]
+        if policy_name == "url_entries":
+            if value in (None, {}, ""):
+                continue
+            if _url_entries_malformed(value):
+                raise EntryRefused(path)
+        else:
+            _walk_views(value, path)
 
 
 # ---------------------------------------------------------------------------

@@ -508,7 +508,7 @@ class ResponsesConformanceTests(unittest.TestCase):
                     r = self.create(b"", {"input": "hi", "stream": True})
                 events = parse_events(r.text)
                 error = next(e for e in events if e["type"] == "error")
-                self.assertEqual(error["message"], "backend read failed")
+                self.assertEqual(error["message"], "The engine failed while handling this request.")   # not the exception text
                 self.assertIsNone(error["param"])
                 self.assertNotIn("error", error)
                 self.assertEqual([e["sequence_number"] for e in events], list(range(1, len(events) + 1)))

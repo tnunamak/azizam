@@ -24,7 +24,7 @@ from gateway.litellm_substrate import (
 
 def _header(row: Mapping[str, Any], origin: str | None) -> str | None:
     try:
-        return runtime_secrets.resolve(row["secret_ref"], origin=origin)
+        return runtime_secrets.resolve(row.get("secret_ref"), origin=origin)
     except runtime_secrets.SecretUnavailable:
         return None
 

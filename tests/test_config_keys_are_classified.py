@@ -157,3 +157,142 @@ def test_a_write_that_names_a_hidden_key_replaces_it_and_a_stale_count_is_never_
     assert written["config"]["zz_note"] == "new" and "hidden_settings" not in written["config"]
     first, _ = record_carriers.ingest_service(_record(hidden_settings=1), None, put)
     assert "hidden_settings" not in first["config"]
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Review L2: the scan above names the receivers `config` and `cfg` in a short list of files. A key read through any other
+# name (`lifecycle.get("api_key")`, `bcfg.get("preset")`) or in any other file escaped it. These two scans do not depend on
+# the receiver being named config: one follows the other blocks of a record by the names production gives them, in every
+# production file; the other sweeps every file for a key that names a credential.
+# ---------------------------------------------------------------------------------------------------------------------
+
+# Receiver names that hold one block of a service record anywhere in production, with the type that classifies the block.
+BLOCK_RECEIVERS = {
+    "lifecycle": projection_types.LIFECYCLE, "legacy_lifecycle": projection_types.LIFECYCLE,
+    "dc": projection_types.DRIVER_CONFIG, "driver_config": projection_types.DRIVER_CONFIG,
+    "bcfg": projection_types.BACKEND_VIEW, "raw_cfg": projection_types.BACKEND_VIEW,
+    "backend_cfg": projection_types.BACKEND_VIEW, "backend_config": projection_types.BACKEND_VIEW,
+    "service_config": projection_types.BACKEND_VIEW,
+}
+# A name from the table that holds some other mapping in one file, with the reason.
+NOT_A_RECORD_BLOCK = {
+    ("gateway/config_sources.py", "lifecycle"): "the descriptor of a config source (authored_via, stored_in), not a record's lifecycle",
+}
+# Functions that read one key of a mapping given as their first argument (`runtime_secrets.scalar(lifecycle, "api_key")`).
+KEY_READING_CALLS = frozenset({"scalar", "url"})
+# Keys that name a credential and are read from a mapping that is not a service record or one of its blocks, with the reason.
+# Everything else a production file reads under a credential-like name must be a field some projection type classifies.
+CREDENTIAL_NAMES_OF_OTHER_THINGS = {
+    "AZIZAM_SUPERVISOR_REDACT_ENV": "the name of an environment variable read from os.environ",
+    "client_secret_env": "a setting of the OIDC provider (admin settings), not of a service",
+    "signing_key_env": "a setting of the OIDC provider (admin settings), not of a service",
+    "session_signing_key_env": "a setting of the OIDC provider (admin settings), not of a service",
+    "provider_secret_id": "a provider's secret id read by the router sidecar from the provider record it was handed",
+    "secret_env": "a native credential's environment variable, inside connection.credentials (classified as a whole)",
+    "secret_ref": "the reference an entry holds; every projection reads it through its entry policies",
+    "source_ref": "a config source's own descriptor",
+    "voice_ref": "a voice reference in a request, not a service setting",
+}
+
+
+def _production_files() -> list[str]:
+    roots = [ROOT / "proxy.py", *sorted((ROOT / "gateway").rglob("*.py")), *sorted(ROOT.glob("*.py"))]
+    return sorted({str(path.relative_to(ROOT)) for path in roots})
+
+
+def _every_read(source: str):
+    """(receiver name or None, key, line) for each `x.get("k")`, `x["k"]`, `x.pop("k")` and `runtime_secrets.scalar(x, "k")`."""
+    def receiver(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        return None
+
+    for node in ast.walk(ast.parse(source)):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("get", "pop", "setdefault")
+                and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+            yield receiver(node.func.value), node.args[0].value, node.lineno
+        elif isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+            yield receiver(node.value), node.slice.value, node.lineno
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in KEY_READING_CALLS
+              and isinstance(node.func.value, ast.Name) and node.func.value.id == "runtime_secrets"
+              and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)):
+            yield receiver(node.args[0]), node.args[1].value, node.lineno
+
+
+def _block_reads(read_file=lambda relative: (ROOT / relative).read_text(), files=None) -> dict[tuple[str, str], set[str]]:
+    found: dict[tuple[str, str], set[str]] = {}
+    for relative in files or _production_files():
+        for who, key, _line in _every_read(read_file(relative)):
+            if who in BLOCK_RECEIVERS and (relative, who) not in NOT_A_RECORD_BLOCK:
+                found.setdefault((who, key), set()).add(relative)
+    return found
+
+
+def test_every_key_production_reads_from_a_record_block_under_any_file_is_classified():
+    unclassified = {f"{who}.{key}": sorted(files) for (who, key), files in _block_reads().items()
+                    if key not in BLOCK_RECEIVERS[who].fields}
+    assert not unclassified, (
+        f"production code reads these keys of a record block and its projection type does not classify them: {unclassified}. "
+        "Add each to the type in gateway/projection_types.py (decision D34), or list the receiver in NOT_A_RECORD_BLOCK.")
+
+
+def test_the_block_scan_sees_the_driver_keys_and_would_flag_an_unclassified_one():
+    reads = _block_reads()
+    assert {("lifecycle", "admin_key"), ("lifecycle", "api_key"), ("dc", "admin_key_env"), ("dc", "api_key_env"),
+            ("dc", "load_url")} <= set(reads), sorted(reads)
+    fake = "def f(lifecycle, dc):\n    return lifecycle.get('brand_new_key'), dc['another_new_key'], runtime_secrets.scalar(lifecycle, 'third_new_key')\n"
+    seen = _block_reads(read_file=lambda _relative: fake, files=["fake.py"])
+    assert {key for _who, key in seen} == {"brand_new_key", "another_new_key", "third_new_key"}
+    assert not {key for _who, key in seen} & (set(projection_types.LIFECYCLE.fields) | set(projection_types.DRIVER_CONFIG.fields))
+
+
+def _every_field_name() -> set[str]:
+    from gateway.projection import Alt, Dict, Obj, Seq
+
+    names: set[str] = set()
+    seen: set[int] = set()
+
+    def walk(policy) -> None:
+        if policy is None or id(policy) in seen:
+            return
+        seen.add(id(policy))
+        if isinstance(policy, Obj):
+            names.update(policy.fields)
+            for field in policy.fields.values():
+                walk(field)
+            walk(policy.extras)
+        elif isinstance(policy, Seq):
+            walk(policy.item)
+        elif isinstance(policy, Dict):
+            walk(policy.value)
+        elif isinstance(policy, Alt):
+            for option in policy.options:
+                walk(option)
+
+    for obj in projection.TYPES.values():
+        walk(obj)
+    return names
+
+
+def test_every_credential_named_key_production_reads_is_classified_by_some_type_or_reviewed():
+    from gateway.service_registry import _names_credential
+
+    classified = _every_field_name()
+    unreviewed: dict[str, list[str]] = {}
+    for relative in _production_files():
+        for _who, key, _line in _every_read((ROOT / relative).read_text()):
+            if _names_credential(key) and key not in classified and key not in CREDENTIAL_NAMES_OF_OTHER_THINGS:
+                unreviewed.setdefault(key, []).append(relative)
+    assert not unreviewed, (
+        f"production code reads these credential-named keys and no projection type has a field of that name: {unreviewed}. "
+        "Declare the carrier in gateway/projection_types.py, or add the key to CREDENTIAL_NAMES_OF_OTHER_THINGS with the reason.")
+
+
+def test_the_credential_review_list_has_no_stale_entry():
+    from gateway.service_registry import _names_credential
+
+    read = {key for relative in _production_files() for _who, key, _line in _every_read((ROOT / relative).read_text())}
+    assert set(CREDENTIAL_NAMES_OF_OTHER_THINGS) <= read, sorted(set(CREDENTIAL_NAMES_OF_OTHER_THINGS) - read)
+    assert all(_names_credential(key) or key.startswith("AZIZAM_") for key in CREDENTIAL_NAMES_OF_OTHER_THINGS)

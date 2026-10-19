@@ -158,6 +158,6 @@ def test_the_admin_schema_migration_keeps_a_native_process_and_refuses_a_mixed_r
         conn.execute("INSERT INTO operator_settings(key,value_json,updated_at) VALUES ('service_registry',?,0)", (json.dumps(mixed),))
     admin_store.init_db(other)  # a refused record no longer stops the gateway from starting
     with sqlite3.connect(other) as conn:
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 11
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == admin_store.SCHEMA_VERSION
         stored = json.loads(conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0])
     assert stored["services"]["engine-a"]["migration_refused"]

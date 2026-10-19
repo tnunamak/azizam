@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from gateway import log_scrub
 from gateway.admin_oidc import IDTokenClaimsError, OIDCConfig, SignInRefused, validate_id_token_claims
 from gateway.signin_admin import norm_issuer
 from gateway.signin_rules import Claims
@@ -161,6 +163,12 @@ def fail(run: TestRun, cause: str, detail: str = "", raw: str = "") -> None:
     run.details = raw or detail
 
 
+def _oauth_code(value: Any) -> str:
+    """The OAuth ``error`` code of a provider's reply when it is one of the short lower-case codes the standard names."""
+    text = str(value or "")
+    return text if re.fullmatch(r"[a-z][a-z_]{0,39}", text) else ""
+
+
 def _says_redirect(*texts: str) -> bool:
     return any("redirect" in (text or "").lower() for text in texts)
 
@@ -171,14 +179,16 @@ def _describe_http_error(exc: httpx.HTTPStatusError) -> tuple[str, str]:
         body = exc.response.json()
     except ValueError:
         body = {}
-    error = str(body.get("error") or "") if isinstance(body, Mapping) else ""
+    error = _oauth_code(body.get("error") if isinstance(body, Mapping) else None)
     description = str(body.get("error_description") or "") if isinstance(body, Mapping) else ""
-    detail = f"{exc.response.status_code} {error} {description}".strip()
+    # The provider's own words (``error_description``) are read to tell the causes apart and never shown: a provider
+    # echoes what it was sent, and this request carried the client secret (decision D44).
+    detail = f"{exc.response.status_code} {error}".strip()
     if _says_redirect(error, description):
         return "redirect_not_allowed", detail
     if exc.response.status_code == 401 or error in {"invalid_client", "unauthorized_client"}:
         return "wrong_secret", detail
-    return "refused", description or error or f"the provider answered {exc.response.status_code}"
+    return "refused", error or f"the provider answered {exc.response.status_code}"
 
 
 async def finish(
@@ -198,9 +208,11 @@ async def finish(
 
     cfg = run.cfg
     if error:
-        raw = f"error={error}" + (f"\nerror_description={error_description}" if error_description else "")
+        # The provider sent these through the owner's browser on the sign-in redirect, which carried no secret; they are
+        # shown to the owner with the registered secrets removed. (The token request's reply is not shown: see below.)
+        raw = log_scrub.scrub(f"error={error}" + (f"\nerror_description={error_description}" if error_description else ""), limit=600)
         cause = "redirect_not_allowed" if _says_redirect(error, error_description or "") else "refused"
-        fail(run, cause, error_description or error, raw)
+        fail(run, cause, log_scrub.scrub(error_description or error, limit=300), raw)
         return
     try:
         tokens = await exchange_code(code, config=cfg, pkce=PKCEPair(verifier=pkce_verifier, challenge="already-sent"))

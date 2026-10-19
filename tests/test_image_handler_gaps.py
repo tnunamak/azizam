@@ -220,6 +220,8 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
                     ), timeout=HANG_BOUND_SECONDS)
                 self.assertEqual(response.status_code, status, response.body)
                 self.assertIn(message, json.loads(response.body)["error"]["message"])
+                # what the engine said is not passed on (decision D44)
+                self.assertNotIn(str(values.get("text") or "\x00"), json.loads(response.body)["error"]["message"])
                 if fake is not None:
                     self.assertEqual(len(fake.requests), 1)
                     self.assertIn(b'filename="source.png"', fake.requests[0].body)
@@ -232,7 +234,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
         self.workflow["_meta"]["image_nodes"] = ["i", "j"]
         self.workflow["j"] = {"inputs": {"image": ""}}
         for scenario, values, message in (
-            ("upload-second-text-reply", {"status": 503, "text": "second upload failed"}, "second upload failed"),
+            ("upload-second-text-reply", {"status": 503, "text": "second upload failed R8-ENGINE-TEXT"}, "Image upload failed"),
             ("upload-second-json-reply", {"status": 200, "reply": {}}, "No filename returned"),
         ):
             with self.subTest(message=message):
@@ -244,6 +246,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
                     )
                 self.assertEqual(response.status_code, 502, response.body)
                 self.assertIn(message, json.loads(response.body)["error"]["message"])
+                self.assertNotIn("R8-ENGINE-TEXT", response.body.decode())
                 self.assertEqual(len(fake.requests), 2)
                 self.assertIn(b'filename="second.png"', fake.calls("second")[0].body)
                 generate.assert_not_awaited()

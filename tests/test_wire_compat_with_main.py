@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 import proxy
-from gateway import admin_store, litellm_runtime, record_carriers, runtime_secrets, secret_refs, service_registry
+from gateway import admin_store, litellm_runtime, record_carriers, runtime_secrets, secret_refs, secret_store, service_registry
 from gateway.engine_observations import ObservationReader
 from gateway.engine_process import ProcessDriver
 from gateway.lifecycle_drivers import CommandDriver
@@ -101,9 +101,16 @@ def test_the_process_driver_starts_the_same_argument_list_with_the_same_environm
     assert {"argv": argv, "port": port, "env": {key: environment[key] for key in RECORDS["engine-proc"]["process"]["env"]}} == GOLDEN["process"]
 
 
-def test_a_readiness_probe_requests_the_same_url(migrated):
+def test_a_readiness_probe_requests_the_same_url_once_the_owner_has_confirmed_the_address(migrated):
+    """A path's credentials in a record that exists already are bound to no address (decision D42): the probe sends
+    nothing until the owner confirms the address, and then requests exactly the URL main requested."""
     svc = {**migrated["engine-proc"], "connection": {"address": "http://127.0.0.1:8192"}}
     FakeClient.seen.clear()
+    asyncio.run(ObservationReader(client_factory=FakeClient).read(svc, "process_ready"))
+    assert FakeClient.seen == [], "a credential bound to no address is not sent"
+    refs = record_carriers.refs_in(svc["observations"]["process_ready"]["http"]["path_entries"])
+    assert refs
+    secret_store.bind_provider_secrets([(ref, "http://127.0.0.1:8192") for ref in refs], db_path=runtime_secrets.database())
     asyncio.run(ObservationReader(client_factory=FakeClient).read(svc, "process_ready"))
     assert FakeClient.seen == GOLDEN["probe"]
 

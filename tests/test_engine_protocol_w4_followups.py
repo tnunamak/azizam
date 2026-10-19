@@ -73,8 +73,10 @@ def test_upstream_excerpt_counts_characters_and_never_splits_utf8():
     from gateway.engine_protocol.errors import UpstreamError
     with pytest.raises(UpstreamError) as raised:
         run(ex.invoke(conn(),req('models')))
-    assert str(raised.value).split(': ',1)[1]=='é'*160
-    assert '\ufffd' not in str(raised.value)
+    # the engine's words are kept apart from the error's text (decision D44)
+    assert raised.value.excerpt=='é'*160
+    assert 'é' not in str(raised.value) and str(raised.value)=='The engine answered 503.'
+    assert '\ufffd' not in raised.value.excerpt
 
 
 def test_lone_surrogate_in_path_is_a_normal_mapping_refusal():

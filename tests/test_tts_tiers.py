@@ -338,7 +338,7 @@ class TtsStreamingTests(RouteCase):
         self.use_upstream(lambda r: httpx.Response(400, json={"error": {"message": "bad voice"}}))
         resp = self._post(response_format="pcm")
         self.assertEqual(resp.status_code, 400)
-        self.assertEqual(resp.json()["error"]["message"], "bad voice")
+        self.assertEqual(resp.json()["error"]["message"], "The engine rejected the request.")  # the engine's words are not passed on (D44)
 
     def test_engine_that_cannot_stream_still_answers_an_sse_request(self) -> None:
         self.use_upstream(lambda r: httpx.Response(200, content=WAV, headers={"content-type": "audio/wav"}))

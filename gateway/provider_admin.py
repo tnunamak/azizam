@@ -9,6 +9,7 @@ API projections never return their values.
 from __future__ import annotations
 
 from gateway.compat import get_env
+from gateway import log_scrub
 
 import hmac
 import math
@@ -211,7 +212,7 @@ def create_provider_admin_router(
                 expected_generation = _expected_registry_generation(store, body)
                 provider_id = service_registry.canonical_provider_id(service["id"])
                 if provider_id in (store.get_service_registry().get("services") or {}) or provider_id in _remote_providers(store):
-                    raise _RouteError(status.HTTP_409_CONFLICT, "provider_exists", f"provider {provider_id!r} already exists")
+                    raise _RouteError(status.HTTP_409_CONFLICT, "provider_exists", "a provider with that id already exists")
                 create_caps = _normalize_caps(body.get("caps") if isinstance(body.get("caps"), Mapping) else body)
                 config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
                 secret_id = str(config.get("api_key_secret_id") or "").strip()
@@ -403,6 +404,7 @@ def create_provider_admin_router(
             service = provider_configuration.provider_service_from_body(body)
             config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
             api_key = str(body.get("api_key") or "") if body.get("key_mode") != "env" else get_env(str(config.get("api_key_env") or ""), "")
+            log_scrub.remember(api_key, "provider-test-key")
             result = await provider_listing.probe_provider(config, api_key)
         except provider_configuration.ProviderConfigurationError as exc:
             return _RouteError(exc.status_code, exc.code, exc.message).as_response()
@@ -440,6 +442,7 @@ def create_provider_admin_router(
                 if api_key_env and not _provider_env_ref_origin_matches(config):
                     raise provider_listing.ProviderListingError("The provider key is approved for a different endpoint. Re-enter the key for this endpoint before running Gateway check.")
                 api_key = get_env(api_key_env, "")
+            log_scrub.remember(api_key, log_scrub.secret_source(secret_id) if secret_id else f"env:{api_key_env}")
             result = await provider_listing.probe_provider(config, api_key)
         except provider_listing.ProviderListingError as exc:
             with secret_store.provider_mutation_lock(_admin_db_path(store)):

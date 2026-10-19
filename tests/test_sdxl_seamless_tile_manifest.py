@@ -311,7 +311,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
 
         err, images = await proxy._graph_run_round(
             _Client(),  # type: ignore[arg-type]
-            {},
+            {"45": {"class_type": "Image Seamless Texture"}},
             {},
             "test error",
         )
@@ -490,16 +490,19 @@ class TestComfyExecutionErrorParsing(unittest.TestCase):
             "outputs": {},
         }
 
+        graph = {"45": {"class_type": "Image Seamless Texture"}}
         self.assertEqual(
-            proxy._graph_error_message(job),
+            proxy._graph_error_message(job, graph),
             "ComfyUI Image Seamless Texture node 45: execution failed",
         )
         self.assertEqual(
-            proxy._graph_history_state(job),
+            proxy._graph_history_state(job, graph),
             ("failed", "ComfyUI Image Seamless Texture node 45: execution failed"),
         )
+        # without the graph the gateway submitted, the engine's node name is not repeated
+        self.assertEqual(proxy._graph_error_message(job), "ComfyUI execution error: execution failed")
         self.assertEqual(proxy._job_status_from_history(job), ("failed", 100))
-        for summary in (proxy._graph_error_message(job), proxy._graph_history_state(job)[1]):
+        for summary in (proxy._graph_error_message(job, graph), proxy._graph_history_state(job, graph)[1]):
             self.assertNotIn("0.7", summary)
             self.assertNotIn(raw_exception, summary)
             self.assertNotIn(private_prompt, summary)

@@ -45,6 +45,11 @@ def _select(document: Any, pointer: str) -> Any:
     return values if "*" in pointer.split("/") else values[0]
 
 
+def _join_path(address: str, path: str) -> str:
+    """The address of a declared probe: its path on the service's address (a path never changes the host)."""
+    return urljoin(address.rstrip("/") + "/", path.lstrip("/"))
+
+
 class ObservationReader:
     """Read one declared HTTP fact without guessing from another fact."""
 
@@ -62,18 +67,20 @@ class ObservationReader:
         if not isinstance(http, Mapping) or not isinstance(address, str):
             return UNKNOWN
         path = http.get("path")
-        if isinstance(path, str) and http.get("path_entries"):
-            try:
-                path = runtime_secrets.url(http, "path")  # the query credentials the record stores for this probe
-            except runtime_secrets.SecretUnavailable:
-                return UNKNOWN
         expected = http.get("expect", 200)
-        if not isinstance(path, str) or not path.startswith("/") or not isinstance(expected, int):
+        held = http.get("path_entries")
+        whole = isinstance(held, Mapping) and bool(held.get("whole"))
+        if not (isinstance(path, str) and (path.startswith("/") or whole)) or not isinstance(expected, int):
             return UNKNOWN
         origin = urlsplit(address)
         if origin.scheme not in {"http", "https"} or not origin.netloc:
             return UNKNOWN
-        url = urljoin(address.rstrip("/") + "/", path.lstrip("/"))
+        try:
+            # The query credentials the record stores for this probe are put back only when the address they make has the
+            # origin they were stored for (decision D39).
+            url = runtime_secrets.url(http, "path", base=address, join=_join_path)
+        except runtime_secrets.SecretUnavailable:
+            return UNKNOWN
         if urlsplit(url).netloc != origin.netloc:
             return UNKNOWN
         try:

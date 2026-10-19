@@ -64,18 +64,32 @@ class TransportFailure(ProtocolError):
 
 
 class UpstreamError(ProtocolError):
-    """The engine answered with a non-success status. ``advice`` comes from the description's error rows."""
+    """The engine answered with a non-success status. ``advice`` comes from the description's error rows.
+
+    ``message`` is the gateway's own sentence ("The engine answered 502."). What the engine said is kept apart, in
+    ``excerpt`` and ``body``, and no ``str()``, ``repr()`` or log line of this error shows either (decision D44): the text
+    is the engine's, and an engine echoes what it was sent. A message that contains the start of the body is refused here,
+    so a caller cannot put the text back by building the message from it.
+    """
 
     code = "upstream_error"
 
     def __init__(self, status: int, message: str, *, body: bytes = b"", headers: dict[str, str] | None = None,
-                 advice_code: str | None = None, advice: str | None = None) -> None:
+                 advice_code: str | None = None, advice: str | None = None, excerpt: str = "") -> None:
+        for said in (excerpt, body.decode("utf-8", "replace") if body else ""):
+            said = " ".join(said.split())[:24]
+            if len(said) >= 8 and said in " ".join(message.split()):
+                raise ValueError("an upstream error message must not hold the upstream's text; pass it as excerpt")
         super().__init__(message)
         self.status = status
         self.body = body
         self.headers = headers or {}
         self.advice_code = advice_code
         self.advice = advice
+        self.excerpt = excerpt
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(status={self.status}, code={self.code!r})"
 
 
 class MalformedResponse(ProtocolError):

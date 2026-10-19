@@ -19,10 +19,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"error\": {\"message\": \"TTS backend unavailable at http://127.0.0.1:8002\", \"type\": \"api_error\", \"code\": \"tts_backend_unavailable\"}}"
+          "text": "{\"error\": {\"message\": \"TTS backend unavailable.\", \"type\": \"api_error\", \"code\": \"tts_backend_unavailable\"}}"
         },
         "headers": {
-          "content-length": "130",
+          "content-length": "106",
           "content-type": "application/json",
           "x-azizam-fallback": "supertonic->omnivoice (connection_refused)",
           "x-request-id": "<req:1>"

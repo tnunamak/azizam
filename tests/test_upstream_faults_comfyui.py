@@ -80,7 +80,7 @@ def test_history_cut_across_wire_chunks_is_read_whole(fake_upstreams, monkeypatc
     _expect_forwarded_round(fake)
 
 
-def test_submit_rate_limit_becomes_a_502_that_carries_the_upstream_body(fake_upstreams, monkeypatch) -> None:
+def test_submit_rate_limit_becomes_a_502_that_does_not_carry_the_upstream_body(fake_upstreams, monkeypatch) -> None:
     fake = _serve(fake_upstreams, monkeypatch, "prompt-rate-limited")
 
     error, images = asyncio.run(_round(fake_upstreams))
@@ -88,8 +88,8 @@ def test_submit_rate_limit_becomes_a_502_that_carries_the_upstream_body(fake_ups
     assert images == []
     status, body = _error(error)
     assert status == 502
-    upstream_body = json.dumps({"error": {"type": "rate_limited", "message": "too many requests"}})
-    assert body == {"error": {"message": f"ComfyUI error: {upstream_body}", "type": "api_error"}}
+    # the engine's words are not passed on (decision D44)
+    assert body == {"error": {"message": "ComfyUI: The engine refused this request.", "type": "api_error", "param": None, "code": None}}
     [submit] = fake.calls("prompt")
     assert submit.json["prompt"] == WORKFLOW
 

@@ -55,11 +55,7 @@ def _lower(headers: httpx.Headers) -> dict[str, str]:
 
 
 def _failure(error: Exception) -> TransportFailure:
-    if isinstance(error, httpx.TimeoutException):
-        return TransportFailure("timeout", str(error))
-    if isinstance(error, httpx.ConnectError):
-        return TransportFailure("unreachable", str(error))
-    return TransportFailure("aborted", str(error))
+    return failure(error)
 
 
 class InlineTtsAdapter:
@@ -120,7 +116,7 @@ class InlineTtsAdapter:
                     async for chunk in raw_chunks:
                         yield chunk
                 except (httpx.TransportError, httpx.StreamError) as error:
-                    raise TransportFailure("aborted", repr(error)) from error
+                    raise TransportFailure("aborted", f"The connection to the engine broke ({type(error).__name__}).") from error
 
             async def close() -> None:
                 await response.aclose()

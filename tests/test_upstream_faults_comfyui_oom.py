@@ -61,13 +61,15 @@ def test_an_out_of_memory_round_on_a_busy_engine_unloads_nothing_and_reports_the
     response, fake = _generate(fake_upstreams, monkeypatch, "image-oom-busy-queue")
 
     assert response.status_code == 502
-    assert "CUDA out of memory" in json.loads(response.body)["error"]["message"]
+    # the engine's own text is not passed on; the gateway says what it understood (decision D44)
+    assert json.loads(response.body)["error"]["message"] == "ComfyUI: The engine ran out of memory. Try a smaller request."
+    assert "CUDA" not in response.body.decode()
     assert "X-ComfyUI-Models-Freed" not in response.headers
     assert _order(fake) == ["prompt-oom", "queue"]
 
 
-def test_a_refused_background_removal_round_is_retried_without_it_and_the_upstream_text_is_reported(fake_upstreams, monkeypatch) -> None:
-    """The fallback's reason is the ComfyUI error text the failed round carried (the batcher's RMBG fallback)."""
+def test_a_refused_background_removal_round_is_retried_without_it_and_the_gateways_reason_is_reported(fake_upstreams, monkeypatch) -> None:
+    """The fallback's reason is the gateway's sentence for the failed round, not the engine's text (the batcher's RMBG fallback)."""
     events: list[dict] = []
     monkeypatch.setattr(proxy.firehose_metrics, "record_event", lambda kind, message, **fields: events.append({"kind": kind, **fields}))
     fake = fake_upstreams.asgi(load_scenario("comfyui/image-rmbg-fails-then-completes"))
@@ -96,4 +98,5 @@ def test_a_refused_background_removal_round_is_retried_without_it_and_the_upstre
     assert fake.calls("prompt-failed")[0].json["prompt"] == WORKFLOW
     assert fake.calls("prompt")[0].json["prompt"] == fallback
     [event] = [event for event in events if event["kind"] == "image_background_removal_fallback"]
-    assert event["reason"] == "ComfyUI error: RMBG node exploded"
+    assert event["reason"] == "ComfyUI: The engine refused this request."
+    assert "exploded" not in str(event)

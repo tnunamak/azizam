@@ -43,13 +43,13 @@ DRIVER_CONFIG = Obj("DriverConfig", {
     # what the lifecycle drivers read (``gateway/lifecycle_drivers.py`` documents each driver's keys)
     **{key: ANY_SCALAR for key in (
         "container", "compose_file", "compose_service", "scope", "unit", "dropin", "swap_strategy", "health_timeout_s",
-        "admin_header", "admin_key_env", "load_body_params", "precheck", "activation_requires_absolute_path", "load_timeout_s", "success_marker", "timeout_s", "cwd")},
+        "admin_header", "admin_key_env", "api_key_env", "activation_model_key", "load_body_params", "precheck", "activation_requires_absolute_path", "load_timeout_s", "success_marker", "timeout_s", "cwd")},
     **{key: JSON for key in ("activation_env_keys", "activation_profiles")},
 }, extras=HIDDEN)
 
 LIFECYCLE = Obj("Lifecycle", {
     "type": SHORT, "managed": BOOL, "service_name": STR, "driver": SHORT, "driver_config": DRIVER_CONFIG,
-    "admin_key": SCALAR_SECRET,
+    "admin_key": SCALAR_SECRET, "api_key": SCALAR_SECRET,
 }, extras=HIDDEN)
 
 PROCESS = Obj("Process", {
@@ -66,7 +66,7 @@ PROCESS = Obj("Process", {
 # Plain settings (a name, a number, a switch, an environment variable's *name*): public scalars.
 CONFIG_SCALAR_KEYS = (
     "probe_with_inference_connection", "port", "base_path", "path_prefix", "scheme", "protocol", "native_passthrough", "definition", "definition_version",
-    "timeout", "api_key_env", "api_key_ref", "credential_origin", "model_policy_schema_version", "name", "enabled", "role",
+    "timeout", "api_key_env", "api_key_ref", "credential_origin", "driver_credential_origin", "pin_loaded_model", "preset", "downstream_service", "model_policy_schema_version", "name", "enabled", "role",
     "priority", "managed", "base_url_env", "api_base_env", "default_model", "activation_model", "model_id", "model",
     "execution_substrate", "paid_remote", "remote_provider", "preset_id", "provider_id", "provider_type", "cost_class",
     "cost_model", "litellm_model", "litellm_provider", "provider_adapter", "concurrency_limit", "id_param", "cost_path",
@@ -231,7 +231,7 @@ OVERRIDES = register(Obj("Overrides", {
 ENGINE_VIEW = register(Obj("EngineView", {
     "service_id": STR, "definition": STR, "definition_version": ANY_SCALAR, "inferred": BOOL, "name": STR,
     "enabled": BOOL, "locked": BOOL, "editable": BOOL, "not_editable_reason": STR, "lifecycle_editable": BOOL,
-    "values": JSON, "key": JSON, "capabilities": JSON, "models": JSON, "tests": JSON, "check": JSON, "calls": JSON,
+    "values": JSON, "key": JSON, "url_credentials": JSON, "capabilities": JSON, "models": JSON, "tests": JSON, "check": JSON, "calls": JSON,
     "other_settings": JSON, "record": JSON, "v2": JSON, "access": JSON,
     "reply_timeout": JSON, "attention": JSON, "request_path": JSON, "credential_destination": STR,
     "ignored_headers": JSON, "unsupported_fields": JSON, "can_edit_offerings": BOOL, "offering_edit_reason": ANY_SCALAR,
@@ -384,9 +384,38 @@ def excluded_view(section: str, record_id: str, error: str, record: Any, *, conf
     }
     if parsed:
         out["record"] = shown.tree
+        blanked = _blank_invalid_numbers(record, out["record"]) if section == "services" else []
+        if blanked:
+            out["failed_fields"] = blanked
     else:
         out["failed_fields"] = failed_fields
     return out
+
+
+def _blank_invalid_numbers(raw: dict[str, Any], shown: dict[str, Any]) -> list[str]:
+    """Take a port or priority that is not a number out of a left-out record's view, and name the fields.
+
+    The record is left out because of that value, and the value may be text typed in the wrong slot (a key pasted into
+    the port field), so the view does not repeat it: the operator types the field again. Returns the fields blanked.
+    """
+    from gateway import service_registry
+
+    blanked: list[str] = []
+    config = raw.get("config") if isinstance(raw.get("config"), dict) else {}
+    shown_config = shown.get("config") if isinstance(shown.get("config"), dict) else {}
+    for field in ("port", "priority"):
+        try:
+            service_registry.validate_service_numbers("x", {field: config.get(field)})
+        except ValueError:
+            shown_config.pop(field, None)
+            blanked.append(field)
+    try:
+        service_registry._priority("x", raw.get("priority"))
+    except ValueError:
+        shown.pop("priority", None)
+        if "priority" not in blanked:
+            blanked.append("priority")
+    return blanked
 
 
 def project_body(body: Any, *, configured=None) -> Projection:

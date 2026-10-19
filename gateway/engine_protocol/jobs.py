@@ -45,7 +45,8 @@ async def run(runtime, op, body, *, job_id):
                 if status.state == JobState.succeeded:
                     return await adapter.fetch_assets(conn, ref, status)
                 if status.state in (JobState.failed, JobState.cancelled):
-                    raise ProtocolError(status.detail or 'The upstream job did not succeed.', code='upstream_job_failed')
+                    # status.detail is what the engine said about the failure; it stays in the status and out of the error (decision D44).
+                    raise ProtocolError('The upstream job did not succeed.', code='upstream_job_failed')
                 await asyncio.sleep(spec.poll.interval_s)
     except TimeoutError:
         await adapter.cancel(conn, ref)

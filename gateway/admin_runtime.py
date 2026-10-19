@@ -27,6 +27,7 @@ from typing import Any, Iterable, Mapping
 
 from fastapi import Request, status
 
+from gateway import log_scrub
 from gateway import admin_store, browser_sessions, engine_check, step_up, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
 from gateway import session_guard
@@ -1462,6 +1463,8 @@ class AdminSQLiteStore:
                     secret_refs.delete(ref, db_path=self.path)
                 raise
             if not outcome.changed:
+                if outcome.confirm:
+                    self._bind_confirmed(sid, outcome.confirm, outcome.confirmations, commands, actor, expected_generation)
                 return {**(snapshot or {}), "value": registry,
                         "excluded": self.get_service_registry_exclusions()}
             registry["services"][sid] = new_record
@@ -1479,9 +1482,51 @@ class AdminSQLiteStore:
                 pending = error
             for ref in outcome.retired:
                 secret_refs.delete(ref, db_path=self.path)
+            if outcome.confirm:
+                self._bind_confirmed(sid, outcome.confirm, outcome.confirmations, commands, actor, None)
             if saved is None:
                 raise pending
             return saved
+
+    def _bind_confirmed(self, service_id: str, confirm: list[tuple[str, Any]], confirmations: list[tuple[str, str]],
+                        commands: list[dict[str, Any]], actor: AdminContext, expected_generation: int | None) -> None:
+        """Bind the stored credentials of the URL fields the owner confirmed to the address each has now (decision D42).
+
+        All or none, in one transaction (``secret_store.bind_provider_secrets``). The ``guard`` runs inside it, so what it
+        reads is what is there at the moment of the write: the registry generation is the one the owner's engine view came
+        from (when the call changed nothing else), and each field would still bind to the destination the owner reviewed.
+        Either failing binds nothing. The first thing ``guard`` does is check the signed-in session
+        (``session_guard.require_live``), in this same transaction. Only the owner reaches this: ``apply_secret_commands`` refuses any command
+        but ``retain`` for anyone else. The audit entry names the service and the carriers, never a value or a reference.
+        """
+        def guard(conn: sqlite3.Connection) -> None:
+            session_guard.require_live(conn, actor.browser_session)   # a sign-out that committed first binds nothing
+            row = conn.execute("SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key=?",
+                               (SERVICE_REGISTRY_SETTING_KEY,)).fetchone()
+            if expected_generation is not None and (int(row[0]) if row else 0) != expected_generation:
+                raise admin_store.OperatorSettingsGenerationConflict("the service registry changed")
+            document = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (SERVICE_REGISTRY_SETTING_KEY,)).fetchone()
+            registry = service_registry.read_registry(json.loads(document[0]))[0] if document else {}
+            record = (registry.get("services") or {}).get(service_id)
+            for carrier, reviewed in confirmations:
+                if record is None or secret_commands.reviewed_destination(record, carrier) != reviewed:
+                    raise secret_commands.CommandError(
+                        "destination_changed", "the address this field would bind to is not the one you reviewed; "
+                        "read the engine again and confirm the address it shows now")
+
+        try:
+            changed = secret_store.bind_provider_secrets(confirm, db_path=self.path, guard=guard)
+        except (secret_commands.CommandError, admin_store.OperatorSettingsGenerationConflict):
+            raise
+        except (KeyError, ValueError, OSError, sqlite3.Error):
+            raise ValueError("a stored credential could not be bound to this address; enter it again") from None
+        admin_store.record_audit(
+            "operator.service.address_confirmed",
+            actor_kind=actor.actor_kind, actor_id=actor.audit_actor_id, actor_label=actor.actor_label,
+            target_kind="service", target_id=service_id,
+            metadata={"carriers": sorted({carrier for carrier, _ in confirmations}), "bound": changed},
+            path=self.path,
+        )
 
     def set_service_enabled(
         self, *, service_id: str, enabled: bool, actor: AdminContext,
@@ -1827,6 +1872,7 @@ class AdminSQLiteStore:
         if ref:
             try:
                 value["client_secret"] = secret_store.get_provider_secret(str(ref), db_path=self.path)
+                log_scrub.remember(value["client_secret"], str(ref))
             except Exception as exc:  # noqa: BLE001
                 print(f"[admin_runtime] OIDC client secret unreadable: {type(exc).__name__}", flush=True)
         return value

@@ -143,13 +143,14 @@ def test_a_view_reply_never_parses_json() -> None:
     (httpx.ReadTimeout("slow"), "timeout"), (httpx.ConnectTimeout("slow"), "timeout"),
     (httpx.ConnectError("refused"), "unreachable"), (httpx.RemoteProtocolError("dropped"), "aborted"),
 ])
-def test_transport_errors_are_typed_failures_with_the_original_text(error: Exception, kind: str) -> None:
+def test_transport_errors_are_typed_failures_that_name_the_class_and_not_the_text(error: Exception, kind: str) -> None:
     def fail(method, url, kwargs):
         raise error
 
     with pytest.raises(TransportFailure) as raised:
         run(session(RecordingClient(fail)).queue())
-    assert raised.value.kind == kind and str(raised.value) == str(error) and raised.value.__cause__ is error
+    assert raised.value.kind == kind and raised.value.__cause__ is error
+    assert type(error).__name__ in str(raised.value) and str(error) not in str(raised.value)  # decision D44
 
 
 def test_an_error_that_is_not_from_httpx_passes_through_unchanged() -> None:
@@ -193,7 +194,8 @@ def test_submit_names_a_refusal_and_a_missing_prompt_id() -> None:
 
     with pytest.raises(UpstreamError) as refused:
         run(go(RecordingClient(lambda m, u, k: Response(400, content=b"bad prompt"))))
-    assert (refused.value.status, str(refused.value)) == (400, "bad prompt")
+    # what the engine said is kept apart from the error's text (decision D44)
+    assert (refused.value.status, str(refused.value), refused.value.excerpt) == (400, "The prompt answered HTTP 400.", "bad prompt")
     with pytest.raises(MalformedResponse):
         run(go(RecordingClient(lambda m, u, k: Response(200, {"node_errors": {}}))))
     with pytest.raises(UnknownOperation):
@@ -217,7 +219,9 @@ def test_poll_maps_a_history_entry_to_a_job_state() -> None:
     status = run(adapter.poll(CONN, ref, session=session(history(done))))
     assert status.state is JobState.succeeded and len(status.assets) == 1
     bad = run(adapter.poll(CONN, ref, session=session(history(failed))))
-    assert (bad.state, bad.detail) == (JobState.failed, "ComfyUI KSampler node 7: execution failed")
+    assert (bad.state, bad.detail) == (JobState.failed, "ComfyUI execution error: execution failed")
+    named = run(adapter.poll(CONN, ref, session=session(history(failed)), graph={"7": {"class_type": "KSampler"}}))
+    assert (named.state, named.detail) == (JobState.failed, "ComfyUI KSampler node 7: execution failed")
     with pytest.raises(UpstreamError):
         run(adapter.poll(CONN, ref, session=session(history(done, status=500))))
 
@@ -316,10 +320,13 @@ def test_health_is_failing_when_the_engine_cannot_be_reached(fake_upstreams) -> 
 
     serve(fake_upstreams, refuse)
     health = run(NodeGraphAdapter().health(CONN))
-    assert health.state == "failing" and health.detail.startswith("unreachable")
+    assert health.state == "failing" and health.detail.startswith("unreachable") and "refused" not in health.detail
 
 
 # --- what the engine's answers mean ------------------------------------------------------------------------------
+
+
+GRAPH = {"4": {"class_type": "KSampler"}, "12": {"class_type": "VAEDecode"}}
 
 
 @pytest.mark.parametrize("job,expected", [
@@ -328,13 +335,18 @@ def test_health_is_failing_when_the_engine_cannot_be_reached(fake_upstreams) -> 
     ({"status": {"status_str": "success"}}, None),
     ({"status": {"status_str": "error"}}, "L execution failed"),
     ({"status": {"messages": [["execution_error", {}]]}}, "L execution error: execution failed"),
-    ({"status": {"messages": [["execution_error", {"node_id": " 4 "}]]}}, "L node 4: execution failed"),
-    ({"status": {"messages": [["execution_error", {"node_type": "VAEDecode"}]]}}, "L VAEDecode: execution failed"),
-    ({"status": {"messages": [["execution_error", {"node_type": "X" * 600, "node_id": "1"}]]}}, ("L " + "X" * 600 + " node 1: execution failed")[:500]),
+    # a node is named by the label of the graph the gateway submitted, found by the id the engine gave
+    ({"status": {"messages": [["execution_error", {"node_id": "4"}]]}}, "L KSampler node 4: execution failed"),
+    ({"status": {"messages": [["execution_error", {"node_id": 12, "node_type": "Engine says this"}]]}}, "L VAEDecode node 12: execution failed"),
+    # an id the gateway did not submit, and every type the engine names, are the engine's text and are not repeated
+    ({"status": {"messages": [["execution_error", {"node_id": " 4 "}]]}}, "L execution error: execution failed"),
+    ({"status": {"messages": [["execution_error", {"node_type": "VAEDecode"}]]}}, "L execution error: execution failed"),
+    ({"status": {"messages": [["execution_error", {"node_type": "X" * 600, "node_id": "1"}]]}}, "L execution error: execution failed"),
+    ({"status": {"messages": [["execution_error", {"node_type": "A node: bad key sk-1", "node_id": "1"}]]}}, "L execution error: execution failed"),
     ({"status": "weird"}, None),
 ])
 def test_execution_errors_read_as_they_always_did(job: Any, expected: str | None) -> None:
-    assert node_graph.execution_error_message(job, "L") == expected
+    assert node_graph.execution_error_message(job, "L", GRAPH) == expected
 
 
 def test_error_node_state_queue_and_output_helpers() -> None:
@@ -383,7 +395,7 @@ def test_pushed_messages_become_typed_events() -> None:
     assert (stepping.kind, stepping.detail) == ("progress", "5")
     assert event(ref, {"type": "progress", "data": {"value": 5, "max": 20, "node": "5"}}).progress == 0.25
     assert event(ref, {"type": "progress", "data": {"value": 0, "max": 0}}).progress is None
-    assert event(ref, {"type": "execution_error", "data": {"exception_message": "boom"}}).detail == "boom"
+    assert event(ref, {"type": "execution_error", "data": {"exception_message": "boom"}}).detail == "execution failed"
     assert event(ref, {"type": "execution_interrupted", "data": {}}).state is JobState.cancelled
     assert event(ref, {"type": "status", "data": {}}) is None
 

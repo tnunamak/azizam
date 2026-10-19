@@ -228,12 +228,20 @@ def public_url(text: str) -> str:
         rest = rest.split("#", 1)[0].split("?", 1)[0]
         authority, slash, path = rest.partition("/")
         authority = authority.rpartition("@")[2]
-        return f"{scheme}://{authority}{slash}{path}"
+        return f"{scheme}://{authority}{slash}{_without_param_values(path)}"
     if "@" in text.split("/", 1)[0] and " " not in text.split("/", 1)[0] and not text.startswith("/"):
         text = text.rpartition("@")[2]
     if text.startswith("/") or "?" in text:
         text = text.split("#", 1)[0].split("?", 1)[0]
-    return scrub_userinfo(text)
+    head, slash, path = text.partition("/")
+    return scrub_userinfo(f"{head}{slash}{_without_param_values(path)}")
+
+
+def _without_param_values(path: str) -> str:
+    """A path with the value of each ``;name=value`` parameter taken out (``;name`` stays), and a bare ``;word`` cut to ``;``."""
+    from gateway import record_carriers
+
+    return record_carriers.split_path_params(path)[0]
 
 
 _USERINFO = re.compile(r"(\b[A-Za-z][A-Za-z0-9+.-]*://)[^\s/@'\"<>]+@")
@@ -348,13 +356,17 @@ def _url_entries(walk: _Walk, value: Any, path: str) -> Any:
     for key in ("userinfo", "fragment", "whole"):
         item = value.get(key)
         if secret_refs.is_secret_entry(item):
-            out[key] = _configured_entry(walk, item, item["secret_ref"], _path(path, key))
-    query = value.get("query")
-    if isinstance(query, list):
-        out["query"] = [
-            _configured_entry(walk, item, item["secret_ref"], f"{path}.query[{index}]",
-                              name=item["name"][:MAX_KEY] if isinstance(item.get("name"), str) else None)
-            for index, item in enumerate(query) if secret_refs.is_secret_entry(item)]
+            # a URL kept whole has no public part, so the label its owner gave it is what a page can show
+            label = item.get("label") if key == "whole" and isinstance(item.get("label"), str) and item["label"] else None
+            out[key] = _configured_entry(walk, item, item["secret_ref"], _path(path, key),
+                                         label=label[:MAX_KEY] if label else None)
+    for part in ("params", "query"):
+        chunks = value.get(part)
+        if isinstance(chunks, list):
+            out[part] = [
+                _configured_entry(walk, item, item["secret_ref"], f"{path}.{part}[{index}]",
+                                  name=item["name"][:MAX_KEY] if isinstance(item.get("name"), str) else None)
+                for index, item in enumerate(chunks) if secret_refs.is_secret_entry(item)]
     return out
 
 
