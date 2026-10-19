@@ -300,6 +300,9 @@ class SttChunkMergeTests(unittest.TestCase):
             self.assertEqual(declared.chunk_above_seconds, 40.0)
             with self.assertRaises(stt_chunking.SttConfigurationError):
                 _config(root, target_seconds=30, threshold_seconds=60, max_segment_seconds=20)
+            # Keys of the silence-based planner are no longer read; a record that still holds them gets the defaults.
+            legacy = _config(root, target_seconds=30, threshold_seconds=40, silence_search_seconds=10, silence_noise_db="-30dB", silence_min_seconds=0.5)
+            self.assertEqual((legacy.search_seconds, legacy.max_segment_seconds), (2.0, 34.0))
 
     def test_sdk_exact_usage_null_integer_and_optional_detail_contracts(self) -> None:
         parsed = [

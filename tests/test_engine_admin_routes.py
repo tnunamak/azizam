@@ -354,6 +354,40 @@ def test_other_settings_are_kept_and_listed(gateway, fake_upstreams):
     assert config["probe_interval_s"] == 30 and config["legacy_note"] == "bought 2025" and config["note"] == "a classified key"
 
 
+def test_stt_long_audio_fields_round_trip_and_the_view_says_where_the_maximum_came_from(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    _silent(fake_upstreams, "ears.fk.test")
+    assert _create(owner, {"definition": "openai-compatible", "name": "ears", "disabled": True,
+                           "values": {"address": "http://ears.fk.test/v1"}}).status_code == 201
+    chunking = {"enabled": True, "threshold_seconds": 40, "target_seconds": 30, "search_seconds": 2,
+                "max_segment_seconds": 40, "native_long_audio": False}
+    registry = _registry(gateway)
+    registry["services"]["ears"]["config"]["chunking"] = dict(chunking)
+    _put_registry(gateway, registry)
+    view = owner.get("/admin/api/engines/ears").json()["engine"]
+    assert view["other_settings"]["chunking"] == chunking
+    assert view["stt_chunking"] == {
+        "enabled": True, "cut_files_longer_than_seconds": 40.0, "target_seconds": 30.0, "search_seconds": 2.0,
+        "max_segment_seconds": 40.0, "max_segment_source": "saved on this engine", "native_long_audio": False,
+    }
+    # The operator registry (REST, and the MCP tools that read it) returns the same fields.
+    assert _record(gateway, "ears")["config"]["chunking"] == chunking
+    # Saving the page without touching them keeps them.
+    assert _edit(owner, "ears", {"definition": "openai-compatible", "name": "Ears", "disabled": True, "values": {}}).status_code == 200
+    assert _record(gateway, "ears")["config"]["chunking"] == chunking
+    # A record with no hard maximum is shown the default and told it is one.
+    registry = _registry(gateway)
+    del registry["services"]["ears"]["config"]["chunking"]["max_segment_seconds"]
+    _put_registry(gateway, registry)
+    shown = owner.get("/admin/api/engines/ears").json()["engine"]["stt_chunking"]
+    assert shown["max_segment_seconds"] == 34.0 and shown["max_segment_source"].startswith("default")
+    # A record with no chunking block has no long-audio view.
+    registry = _registry(gateway)
+    del registry["services"]["ears"]["config"]["chunking"]
+    _put_registry(gateway, registry)
+    assert owner.get("/admin/api/engines/ears").json()["engine"]["stt_chunking"] is None
+
+
 def test_the_check_route_persists_nothing(gateway, fake_upstreams):
     owner, *_ = owner_and_admin(gateway)
     fake = _serve(fake_upstreams, "family-b-embedding-server")
