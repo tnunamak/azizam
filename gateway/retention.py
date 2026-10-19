@@ -141,6 +141,8 @@ def _where(path) -> str:
 def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
     errors: list[str] = []
     seconds = data["retention_choices"]
+    if data["household"]["never_keep"]:
+        errors.append("household/never_keep: slice 5 adds startup erasure; slice 1 accepts this switch through the owner setting only")
     seen_in: dict[str, str] = {}
     if set(data["groups"]) != {GROUP_PROMPTS}:
         errors.append("groups: slice 5 adds another group; slice 1 enforces only prompts")
@@ -324,12 +326,22 @@ def household(document: Mapping[str, Any] | None) -> dict[str, Any]:
 
 
 def normalize_period(value: str, *, kind: str, owner_cap: bool) -> str:
-    """Map a stored choice removed from this group's choices to its current default."""
+    """Use the nearest allowed period no longer than a removed choice, or the shortest available."""
     contract = bundled()
-    if value in contract.choices(kind):
+    choices = contract.choices(kind)
+    if value in choices:
         return value
-    field = "default_cap" if owner_cap else "default_retention"
-    return contract.group(kind)[field]
+    seconds = contract.seconds_map()
+    if value not in seconds:
+        field = "default_cap" if owner_cap else "default_retention"
+        return contract.group(kind)[field]
+    original = seconds[value]
+    shorter = [choice for choice in choices if seconds[choice] is not None and
+               (original is None or seconds[choice] <= original)]
+    if shorter:
+        return max(shorter, key=lambda choice: seconds[choice])
+    # No allowed period is short enough; choose the shortest available.
+    return min(choices, key=lambda choice: float("inf") if seconds[choice] is None else seconds[choice])
 
 
 def effective_period(member_period: str, cap: str, kind: str = LIBRARY_PROMPT) -> str:

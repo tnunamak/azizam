@@ -1612,13 +1612,15 @@ the build chose a form that the text above leaves open:
   its existing routes enforce. It refuses `maker_signed_in`, a changed parts
   set and a second or renamed group with a reason naming slice 5. A narrower
   reader value cannot silently leave key-based Library downloads available.
-- If a bundled period is removed, an older stored member choice maps to the
-  group's current `default_retention`, and an older stored household cap maps
-  to `default_cap`. The same normalization feeds the settings view, request
-  decision and writer. On restart, prompt deadlines for affected rows are
-  shortened to the new effective period; earlier deadlines never lengthen.
+- If a bundled period is removed, an older stored member choice or household
+  cap maps to the longest remaining choice no longer than it. If none exists,
+  it maps to the shortest remaining choice. The same normalization feeds the
+  settings view, request decision and writer. On restart, every finite
+  effective period shortens saved prompt deadlines where needed, including
+  changed defaults and choice durations; earlier deadlines never lengthen.
   The bundled file is pinned for the process lifetime so this repair precedes
-  serving requests under the new contract.
+  serving requests under the new contract. Slice 1 refuses a bundled
+  `household.never_keep: true`; the owner's setting can erase existing prompts.
 - Schema 14 keeps unknown legacy setting fields under `legacy_unclassified`
   in storage. The owner and member settings API projections omit them, in line
   with D34; later settings edits preserve them.

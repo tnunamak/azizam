@@ -9,6 +9,7 @@ a workflow graph.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import stat
 import time
@@ -288,27 +289,38 @@ def tighten_retention(period: str, *, person_id: str | None = None,
         conn.close()
 
 
-def tighten_removed_periods(*, admin_path: Path, path: Path | None = None) -> int:
-    """On startup, shorten old prompts when a bundled choice was removed.
+def tighten_contract_periods(*, admin_path: Path, path: Path | None = None) -> int:
+    """On startup, apply the current contract's shorter deadlines to saved prompts.
 
     Stored member and household choices stay unchanged. The same normalized
     period used for display and new writes determines the older rows' ceiling.
     Settings writes wait on the admin lock while this update runs.
     """
     contract = retention.bundled()
-    choices = set(contract.choices(retention.LIBRARY_PROMPT))
     admin_conn = connect(admin_path, timeout=5)
     try:
         admin_conn.execute("BEGIN IMMEDIATE")
         row = admin_conn.execute("SELECT value_json FROM operator_settings WHERE key=?",
                                  (retention.SETTING_KEY,)).fetchone()
-        document = json.loads(row[0]) if row else {}
-        group = document.get("groups", {}).get(retention.GROUP_PROMPTS, {})
-        cap = group.get("retention_cap", contract.household_defaults(retention.LIBRARY_PROMPT)["retention_cap"])
+        cap = contract.household_defaults(retention.LIBRARY_PROMPT)["retention_cap"]
+        if row:
+            try:
+                document = json.loads(row[0])
+                if not isinstance(document, Mapping):
+                    raise ValueError("setting must be an object")
+                groups = document.get("groups", {})
+                if not isinstance(groups, Mapping):
+                    raise ValueError("groups must be an object")
+                group = groups.get(retention.GROUP_PROMPTS, {})
+                if not isinstance(group, Mapping):
+                    raise ValueError("prompts must be an object")
+                stored_cap = group.get("retention_cap", cap)
+                if not isinstance(stored_cap, str):
+                    raise ValueError("retention cap must be a string")
+                cap = stored_cap
+            except (TypeError, ValueError):
+                logging.getLogger(__name__).warning("invalid stored retention setting; using bundled defaults")
         members = admin_conn.execute("SELECT user_id, retention FROM prompt_memory_preferences").fetchall()
-        if cap in choices and all(period in choices for _, period in members):
-            admin_conn.commit()
-            return 0
 
         media_conn = _connect(path)
         try:
@@ -324,14 +336,11 @@ def tighten_removed_periods(*, admin_path: Path, path: Path | None = None) -> in
                     (seconds, seconds, *args),
                 ).rowcount
 
-            if cap not in choices:
-                cap_period = retention.normalize_period(cap, kind=retention.LIBRARY_PROMPT, owner_cap=True)
-                cap_seconds = contract.seconds_map()[cap_period]
-                if cap_seconds is not None:
-                    shorten(cap_seconds)
+            cap_period = retention.normalize_period(cap, kind=retention.LIBRARY_PROMPT, owner_cap=True)
+            cap_seconds = contract.seconds_map()[cap_period]
+            if cap_seconds is not None:
+                shorten(cap_seconds)
             for person_id, member_period in members:
-                if cap in choices and member_period in choices:
-                    continue
                 period = retention.effective_period(member_period, cap)
                 seconds = contract.seconds_map()[period]
                 if seconds is not None:
