@@ -536,6 +536,11 @@ def test_known_choice_keeps_its_period_when_only_longer_choice_is_offered(monkey
     assert retention.normalize_period("3_months", kind=retention.LIBRARY_PROMPT, owner_cap=False) == "3_months"
 
 
+def test_an_unsaved_null_cap_cannot_count_as_an_unchanged_legacy_choice():
+    with pytest.raises(ValueError, match="retention_cap"):
+        retention.validate_prompts_view({"retention_cap": None})
+
+
 def test_bundled_kill_switch_is_refused_until_startup_erasure_exists():
     data = _bundled_data()
     data["household"]["never_keep"] = True

@@ -319,7 +319,7 @@ def validate_prompts_view(view: Mapping[str, Any], *, existing_cap: str | None =
     if not isinstance(default_remember, bool) or not isinstance(never_keep, bool):
         raise ValueError("prompt memory switches must be booleans")
     choices = contract.choices(LIBRARY_PROMPT)
-    if retention_cap not in choices and retention_cap != existing_cap:
+    if retention_cap not in choices and not (existing_cap is not None and retention_cap == existing_cap):
         raise ValueError("retention_cap must be " + ", ".join(choices[:-1]) + f", or {choices[-1]}")
     return {"default_remember": default_remember, "never_keep": never_keep, "retention_cap": retention_cap}
 
