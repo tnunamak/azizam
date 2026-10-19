@@ -23,13 +23,12 @@ import {
   MAX_MEDIA_LABEL,
   assetIdFromPasted,
 } from "./workflow-input-meta";
-const ASSET_ID = /^(?:asset:)?((?:img|vid|aud)_[0-9a-f]{64})$/;
 
 function previewSource(value: string): string | null {
-  if (/^data:(?:image|video)\//i.test(value) || /^https?:\/\//i.test(value)) return value;
-  const asset = ASSET_ID.exec(value);
-  return asset
-    ? `/me/api/media/${encodeURIComponent(asset[1])}/download?scope=me`
+  // A Library asset id is not an address: its download route answers with a
+  // link, not the bytes, so a pasted id has no preview.
+  return /^data:(?:image|video)\//i.test(value) || /^https?:\/\//i.test(value)
+    ? value
     : null;
 }
 
@@ -186,28 +185,28 @@ export function MediaInput({
     }
   }
 
-  async function pickFromLibrary(assetId: string) {
+  async function pickFromLibrary(pick: LibraryPick) {
     const operation = ++selection.current;
     setFileError(null);
     setLibraryOpen(false);
-    if (!fileMode) {
-      setSource("From your Library");
-      onChange?.(assetId);
-      return;
-    }
-    // A file part needs the bytes: fetch the Library picture into a file.
+    // The request carries the bytes, as it does for "Choose a file". A bare
+    // asset id would only work for the app that made the item, and the
+    // Library lists everything the person made with any of their apps.
     startPending();
     try {
-      const response = await fetch(
-        `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,
-        { credentials: "same-origin" },
-      );
-      if (!response.ok) throw new Error("Library download failed");
-      const blob = await response.blob();
+      const picked = await libraryFile(pick, kind, noun);
       if (selection.current !== operation) return;
-      const type = blob.type || `${kind}/png`;
-      const extension = SUBTYPE.exec(type)?.[1] ?? "png";
-      onFileChange?.(new File([blob], `library-${noun}.${extension}`, { type }));
+      if (picked.size > MAX_MEDIA_BYTES) {
+        setPending(false);
+        setFileError(
+          `That ${noun} is ${megabytes(picked.size)}. Choose one under ${MAX_MEDIA_LABEL}.`,
+        );
+        return;
+      }
+      const reference = fileMode ? null : await readAsDataUri(picked);
+      if (selection.current !== operation) return;
+      if (fileMode) onFileChange?.(picked);
+      else onChange?.(reference ?? undefined);
       setSource("From your Library");
       setPending(false);
     } catch {
@@ -396,7 +395,7 @@ export function MediaInput({
         open={libraryOpen}
         onOpenChange={setLibraryOpen}
         kind={kind}
-        onPick={(assetId) => void pickFromLibrary(assetId)}
+        onPick={(pick) => void pickFromLibrary(pick)}
       />
     </div>
   );
@@ -405,16 +404,60 @@ export function MediaInput({
 type LibraryAsset = {
   asset_id: string;
   kind?: string;
+  media_type?: string | null;
   prompt?: string | null;
   available?: boolean;
+  // Signed links the list carries for showing the item; they are not for sending.
+  thumbnail_url?: string | null;
+  download_url?: string | null;
 };
+
+type LibraryPick = Pick<LibraryAsset, "asset_id" | "media_type">;
 
 type LibraryPage = { assets?: LibraryAsset[]; next_cursor?: string | null };
 
 const PAGE_SIZE = 40;
 
-function downloadUrl(assetId: string) {
-  return `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`;
+/**
+ * The bytes of one Library item as a file. The download route answers with a
+ * short-lived signed link, so this asks for a fresh one and then reads the
+ * file from it, as the Library page does.
+ */
+async function libraryFile(
+  pick: LibraryPick,
+  kind: MediaKind,
+  noun: string,
+): Promise<File> {
+  const link = await fetch(
+    `/me/api/media/${encodeURIComponent(pick.asset_id)}/download?scope=me`,
+    { credentials: "same-origin" },
+  );
+  if (!link.ok) throw new Error("Library download failed");
+  const { download_url: url } = (await link.json()) as {
+    download_url?: string | null;
+  };
+  if (!url) throw new Error("Library download has no link");
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Library download failed");
+  // An error page must not become a picture: the type is the media's own, or
+  // the gateway's declared type when the file comes back as plain bytes.
+  const header = response.headers
+    .get("content-type")
+    ?.split(";")[0]
+    .trim()
+    .toLowerCase();
+  const declared = pick.media_type?.toLowerCase();
+  const type = header?.startsWith(`${kind}/`)
+    ? header
+    : (!header || header === "application/octet-stream") &&
+        declared?.startsWith(`${kind}/`)
+      ? declared
+      : null;
+  if (!type) throw new Error("Library download is not media");
+  const extension = SUBTYPE.exec(type)?.[1] ?? "bin";
+  return new File([await response.blob()], `library-${noun}.${extension}`, {
+    type,
+  });
 }
 
 function LibraryPicker({
@@ -426,7 +469,7 @@ function LibraryPicker({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   kind: MediaKind;
-  onPick: (assetId: string) => void;
+  onPick: (pick: LibraryPick) => void;
 }) {
   const noun = MEDIA_NOUN[kind];
   const [state, setState] = useState<"idle" | "loading" | "error" | "ready">(
@@ -557,25 +600,29 @@ function LibraryPicker({
               const title =
                 asset.prompt?.trim().slice(0, 80) ||
                 `${noun[0].toUpperCase()}${noun.slice(1)} from your Library`;
-              const src = downloadUrl(asset.asset_id);
-              const broken = unshown.has(asset.asset_id);
+              // The list's own signed links show the item; the download route
+              // answers with a link, not an image.
+              const link =
+                (kind === "image" ? asset.thumbnail_url : null) ??
+                asset.download_url;
+              const src = link && !unshown.has(asset.asset_id) ? link : null;
               return (
                 <li key={asset.asset_id}>
                   <button
                     type="button"
                     title={title}
                     aria-label={title}
-                    onClick={() => onPick(asset.asset_id)}
+                    onClick={() => onPick(asset)}
                     className="rounded-media focus-visible:ring-ring/50 bg-muted/40 flex aspect-square w-full items-center justify-center overflow-hidden border focus-visible:ring-[3px] focus-visible:outline-none"
                   >
-                    {broken || kind === "audio" ? (
+                    {kind === "audio" || !src ? (
                       <span className="text-muted-foreground flex flex-col items-center gap-1 p-1 text-xs">
                         {kind === "audio" ? (
                           <Music aria-hidden="true" className="size-6" />
                         ) : (
                           <ImageIcon aria-hidden="true" className="size-6" />
                         )}
-                        {broken ? "Preview unavailable" : null}
+                        {kind !== "audio" && "Preview unavailable"}
                         {kind === "audio" && (
                           <span className="line-clamp-3">{title}</span>
                         )}
