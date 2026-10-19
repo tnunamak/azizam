@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ErrorState } from "@/components/product";
+import { SNIFF_BYTES, sniffKinds } from "@/lib/media-sniff";
 import {
   MEDIA_NOUN,
   withArticle,
@@ -23,13 +24,12 @@ import {
   MAX_MEDIA_LABEL,
   assetIdFromPasted,
 } from "./workflow-input-meta";
-const ASSET_ID = /^(?:asset:)?((?:img|vid|aud)_[0-9a-f]{64})$/;
 
 function previewSource(value: string): string | null {
-  if (/^data:(?:image|video)\//i.test(value) || /^https?:\/\//i.test(value)) return value;
-  const asset = ASSET_ID.exec(value);
-  return asset
-    ? `/me/api/media/${encodeURIComponent(asset[1])}/download?scope=me`
+  // A Library asset id is not an address: its download route answers with a
+  // link, not the bytes, so a pasted id has no preview.
+  return /^data:(?:image|video)\//i.test(value) || /^https?:\/\//i.test(value)
+    ? value
     : null;
 }
 
@@ -101,10 +101,17 @@ export function MediaInput({
   const noun = MEDIA_NOUN[kind];
   const fileMode = onFileChange !== undefined;
   const fileInput = useRef<HTMLInputElement>(null);
-  const selection = useRef(0);
-  useEffect(() => () => {
-    selection.current += 1;
-  }, []);
+  // The one read or download that may still change the form. Anything that
+  // supersedes it (another choice, Remove, a reopened Library, unmount) aborts
+  // its requests, ends its pending state and leaves a late answer unheard.
+  const active = useRef<{ controller: AbortController } | null>(null);
+  useEffect(
+    () => () => {
+      active.current?.controller.abort();
+      active.current = null;
+    },
+    [],
+  );
   const [source, setSource] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -144,6 +151,14 @@ export function MediaInput({
     return () => form.removeEventListener("submit", stop, true);
   }, [pending]);
 
+  function supersede() {
+    active.current?.controller.abort();
+    const next = { controller: new AbortController() };
+    active.current = next;
+    setPending(false);
+    return next;
+  }
+
   function startPending() {
     setPending(true);
     setBlockedSubmit(false);
@@ -152,8 +167,8 @@ export function MediaInput({
   async function choose(file: File | undefined) {
     if (!file) return;
     setFileError(null);
-    // A rejected file must not cancel a pending valid choice, so the selection
-    // generation advances only after the file passes validation.
+    // A rejected file must not cancel a pending valid choice, so only a file
+    // that passes validation supersedes it.
     if (!file.type.startsWith(`${kind}/`)) {
       setFileError(
         `That file is not ${withArticle(noun)}. Choose ${withArticle(noun)} file.`,
@@ -166,7 +181,7 @@ export function MediaInput({
       );
       return;
     }
-    const operation = ++selection.current;
+    const operation = supersede();
     if (fileMode) {
       onFileChange?.(file);
       setSource(file.name);
@@ -175,55 +190,54 @@ export function MediaInput({
     startPending();
     try {
       const value = await readAsDataUri(file);
-      if (selection.current !== operation) return;
+      if (active.current !== operation) return;
       onChange?.(value);
       setSource(file.name);
       setPending(false);
     } catch {
-      if (selection.current !== operation) return;
+      if (active.current !== operation) return;
       setPending(false);
       setFileError(`Could not read that ${noun}. Try another file.`);
     }
   }
 
-  async function pickFromLibrary(assetId: string) {
-    const operation = ++selection.current;
+  async function pickFromLibrary(pick: LibraryPick) {
+    const operation = supersede();
     setFileError(null);
     setLibraryOpen(false);
-    if (!fileMode) {
-      setSource("From your Library");
-      onChange?.(assetId);
-      return;
-    }
-    // A file part needs the bytes: fetch the Library picture into a file.
+    // The request carries the bytes, as it does for "Choose a file". A bare
+    // asset id would only work for the app that made the item, and the
+    // Library lists everything the person made with any of their apps.
     startPending();
     try {
-      const response = await fetch(
-        `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,
-        { credentials: "same-origin" },
+      const picked = await libraryFile(
+        pick,
+        kind,
+        noun,
+        operation.controller.signal,
       );
-      if (!response.ok) throw new Error("Library download failed");
-      const blob = await response.blob();
-      if (selection.current !== operation) return;
-      const type = blob.type || `${kind}/png`;
-      const extension = SUBTYPE.exec(type)?.[1] ?? "png";
-      onFileChange?.(new File([blob], `library-${noun}.${extension}`, { type }));
+      if (active.current !== operation) return;
+      const reference = fileMode ? null : await readAsDataUri(picked);
+      if (active.current !== operation) return;
+      if (fileMode) onFileChange?.(picked);
+      else onChange?.(reference ?? undefined);
       setSource("From your Library");
       setPending(false);
-    } catch {
-      if (selection.current !== operation) return;
+    } catch (error) {
+      if (active.current !== operation) return;
       setPending(false);
       setFileError(
-        `Could not add that ${noun} from your Library. Try another, or choose a file.`,
+        error instanceof TooBigError
+          ? error.message
+          : `Could not add that ${noun} from your Library. Try another, or choose a file.`,
       );
     }
   }
 
   function clear() {
-    selection.current += 1;
+    supersede();
     setSource(null);
     setFileError(null);
-    setPending(false);
     if (fileMode) onFileChange?.(null);
     else onChange?.(undefined);
   }
@@ -294,7 +308,10 @@ export function MediaInput({
               variant="outline"
               size="sm"
               className="max-sm:h-11"
-              onClick={() => setLibraryOpen(true)}
+              onClick={() => {
+                supersede();
+                setLibraryOpen(true);
+              }}
             >
               <Library aria-hidden="true" />
               Choose from Library
@@ -384,7 +401,7 @@ export function MediaInput({
               autoComplete="off"
               onChange={(event) => {
                 const next = assetIdFromPasted(event.currentTarget.value);
-                selection.current += 1;
+                supersede();
                 setSource(null);
                 onChange?.(next || undefined);
               }}
@@ -396,7 +413,7 @@ export function MediaInput({
         open={libraryOpen}
         onOpenChange={setLibraryOpen}
         kind={kind}
-        onPick={(assetId) => void pickFromLibrary(assetId)}
+        onPick={(pick) => void pickFromLibrary(pick)}
       />
     </div>
   );
@@ -405,16 +422,130 @@ export function MediaInput({
 type LibraryAsset = {
   asset_id: string;
   kind?: string;
+  media_type?: string | null;
+  size_bytes?: number | null;
   prompt?: string | null;
   available?: boolean;
+  // Signed links the list carries for showing the item; they are not for sending.
+  thumbnail_url?: string | null;
+  download_url?: string | null;
 };
+
+type LibraryPick = Pick<LibraryAsset, "asset_id" | "media_type" | "size_bytes">;
 
 type LibraryPage = { assets?: LibraryAsset[]; next_cursor?: string | null };
 
 const PAGE_SIZE = 40;
 
-function downloadUrl(assetId: string) {
-  return `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`;
+/** The item is over the size limit; the message is what the person reads. */
+class TooBigError extends Error {
+  constructor(noun: string, bytes?: number | null) {
+    const size = bytes ? `is ${megabytes(bytes)}` : `is over ${MAX_MEDIA_LABEL}`;
+    super(`That ${noun} ${size}. Choose one under ${MAX_MEDIA_LABEL}.`);
+  }
+}
+
+/**
+ * Reads a body without holding more than the media limit: it stops as soon as
+ * the bytes passed the limit (a missing or wrong Content-Length cannot get
+ * round that) or the leading bytes are not the kind of media the input takes.
+ */
+async function readMedia(
+  response: Response,
+  kind: MediaKind,
+  noun: string,
+  knownBytes: number | null,
+  signal: AbortSignal,
+): Promise<Uint8Array[]> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Library download is empty");
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let sniffed = false;
+  const check = () => {
+    const head = new Uint8Array(SNIFF_BYTES);
+    let filled = 0;
+    for (const chunk of chunks) {
+      const part = chunk.subarray(0, SNIFF_BYTES - filled);
+      head.set(part, filled);
+      filled += part.length;
+      if (filled >= SNIFF_BYTES) break;
+    }
+    if (!sniffKinds(head.subarray(0, filled)).includes(kind)) {
+      throw new Error("Library download is not media");
+    }
+    sniffed = true;
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (signal.aborted) throw new Error("Library download was replaced");
+      if (done) break;
+      total += value.length;
+      if (total > MAX_MEDIA_BYTES) throw new TooBigError(noun, knownBytes);
+      chunks.push(value);
+      if (!sniffed && total >= SNIFF_BYTES) check();
+    }
+    if (!sniffed) check();
+  } catch (error) {
+    void reader.cancel().catch(() => {});
+    throw error;
+  }
+  return chunks;
+}
+
+/**
+ * The bytes of one Library item as a file. The download route answers with a
+ * short-lived signed link, so this asks for a fresh one and then reads the
+ * file from it, as the Library page does. The list's size and the response's
+ * Content-Length refuse a too-big item before any of it is read.
+ */
+async function libraryFile(
+  pick: LibraryPick,
+  kind: MediaKind,
+  noun: string,
+  signal: AbortSignal,
+): Promise<File> {
+  if (pick.size_bytes && pick.size_bytes > MAX_MEDIA_BYTES) {
+    throw new TooBigError(noun, pick.size_bytes);
+  }
+  const link = await fetch(
+    `/me/api/media/${encodeURIComponent(pick.asset_id)}/download?scope=me`,
+    { credentials: "same-origin", signal },
+  );
+  if (!link.ok) throw new Error("Library download failed");
+  const { download_url: url } = (await link.json()) as {
+    download_url?: string | null;
+  };
+  if (!url) throw new Error("Library download has no link");
+  const response = await fetch(url, { signal });
+  if (!response.ok) throw new Error("Library download failed");
+  // An error page must not become a picture: the type is the media's own, or
+  // the gateway's declared type when the file comes back as plain bytes. The
+  // bytes themselves are checked as they arrive.
+  const header = response.headers
+    .get("content-type")
+    ?.split(";")[0]
+    .trim()
+    .toLowerCase();
+  const declared = pick.media_type?.toLowerCase();
+  const type = header?.startsWith(`${kind}/`)
+    ? header
+    : (!header || header === "application/octet-stream") &&
+        declared?.startsWith(`${kind}/`)
+      ? declared
+      : null;
+  if (!type) throw new Error("Library download is not media");
+  const length = Number(response.headers.get("content-length"));
+  if (length > MAX_MEDIA_BYTES) {
+    void response.body?.cancel().catch(() => {});
+    throw new TooBigError(noun, length);
+  }
+  const chunks = await readMedia(response, kind, noun, length || null, signal);
+  const extension = SUBTYPE.exec(type)?.[1] ?? "bin";
+  return new File(chunks as BlobPart[], `library-${noun}.${extension}`, {
+    type,
+  });
 }
 
 function LibraryPicker({
@@ -426,7 +557,7 @@ function LibraryPicker({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   kind: MediaKind;
-  onPick: (assetId: string) => void;
+  onPick: (pick: LibraryPick) => void;
 }) {
   const noun = MEDIA_NOUN[kind];
   const [state, setState] = useState<"idle" | "loading" | "error" | "ready">(
@@ -446,6 +577,12 @@ function LibraryPicker({
     if (open) {
       setState("loading");
       setMore("idle");
+    } else {
+      // The list's signed links are not kept once the dialog is closed.
+      setState("idle");
+      setAssets([]);
+      setNextCursor(null);
+      setUnshown(new Set());
     }
   }
 
@@ -485,7 +622,11 @@ function LibraryPicker({
       .catch(() => {
         if (!controller.signal.aborted) setState("error");
       });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      // A "Show more" answer still in flight belongs to a closed list.
+      generation.current += 1;
+    };
     // pageUrl and usable only read `kind`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, attempt, kind]);
@@ -557,25 +698,29 @@ function LibraryPicker({
               const title =
                 asset.prompt?.trim().slice(0, 80) ||
                 `${noun[0].toUpperCase()}${noun.slice(1)} from your Library`;
-              const src = downloadUrl(asset.asset_id);
-              const broken = unshown.has(asset.asset_id);
+              // The list's own signed links show the item; the download route
+              // answers with a link, not an image.
+              const link =
+                (kind === "image" ? asset.thumbnail_url : null) ??
+                asset.download_url;
+              const src = link && !unshown.has(asset.asset_id) ? link : null;
               return (
                 <li key={asset.asset_id}>
                   <button
                     type="button"
                     title={title}
                     aria-label={title}
-                    onClick={() => onPick(asset.asset_id)}
+                    onClick={() => onPick(asset)}
                     className="rounded-media focus-visible:ring-ring/50 bg-muted/40 flex aspect-square w-full items-center justify-center overflow-hidden border focus-visible:ring-[3px] focus-visible:outline-none"
                   >
-                    {broken || kind === "audio" ? (
+                    {kind === "audio" || !src ? (
                       <span className="text-muted-foreground flex flex-col items-center gap-1 p-1 text-xs">
                         {kind === "audio" ? (
                           <Music aria-hidden="true" className="size-6" />
                         ) : (
                           <ImageIcon aria-hidden="true" className="size-6" />
                         )}
-                        {broken ? "Preview unavailable" : null}
+                        {kind !== "audio" && "Preview unavailable"}
                         {kind === "audio" && (
                           <span className="line-clamp-3">{title}</span>
                         )}
