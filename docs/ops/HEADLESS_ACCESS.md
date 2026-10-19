@@ -268,6 +268,12 @@ Selected successful workflows are exercised separately.
 | `POST /admin/api/engines/test` | owner-bearer | denied | `gateway.engine_admin.test_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/engines/access` | owner-bearer | denied | `gateway.engine_admin.engine_access`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/engines/{service_id}` | owner-bearer | denied | `gateway.engine_admin.get_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/engines/{service_id}/stt-measurements` | owner-bearer | denied | `gateway.stt_measurement_api.options`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `POST /admin/api/engines/{service_id}/stt-measurements` | owner-bearer | denied | `gateway.stt_measurement_api.start`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `GET /admin/api/engines/{service_id}/stt-measurements/{job_id}` | owner-bearer | denied | `gateway.stt_measurement_api.progress`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `POST /admin/api/engines/{service_id}/stt-measurements/{job_id}/cancel` | owner-bearer | denied | `gateway.stt_measurement_api.cancel`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `POST /admin/api/engines/{service_id}/stt-measurements/{job_id}/apply` | owner-bearer | denied | `gateway.stt_measurement_api.apply`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `PATCH /admin/api/engines/{service_id}/stt-settings` | owner-bearer | denied | `gateway.stt_measurement_api.configure`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `GET /admin/api/operator/service-registry` | owner-bearer | denied | `gateway.admin_api.get_service_registry`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PUT /admin/api/operator/service-registry` | owner-bearer | denied | `gateway.admin_api.update_service_registry`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/operator/services` | owner-bearer | denied | `gateway.admin_api.add_service`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |

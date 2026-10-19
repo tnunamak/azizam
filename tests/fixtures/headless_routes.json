@@ -313,6 +313,14 @@
   },
   {
     "method": "POST",
+    "path": "/admin/api/engines/access",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.engine_admin.engine_access",
+    "schema": true
+  },
+  {
+    "method": "POST",
     "path": "/admin/api/engines/check",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
@@ -328,19 +336,59 @@
     "schema": true
   },
   {
-    "method": "POST",
-    "path": "/admin/api/engines/access",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.engine_admin.engine_access",
-    "schema": true
-  },
-  {
     "method": "GET",
     "path": "/admin/api/engines/{service_id}",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.engine_admin.get_engine",
+    "schema": true
+  },
+  {
+    "method": "GET",
+    "path": "/admin/api/engines/{service_id}/stt-measurements",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.stt_measurement_api.options",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/engines/{service_id}/stt-measurements",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.stt_measurement_api.start",
+    "schema": true
+  },
+  {
+    "method": "GET",
+    "path": "/admin/api/engines/{service_id}/stt-measurements/{job_id}",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.stt_measurement_api.progress",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/engines/{service_id}/stt-measurements/{job_id}/apply",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.stt_measurement_api.apply",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/engines/{service_id}/stt-measurements/{job_id}/cancel",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.stt_measurement_api.cancel",
+    "schema": true
+  },
+  {
+    "method": "PATCH",
+    "path": "/admin/api/engines/{service_id}/stt-settings",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.stt_measurement_api.configure",
     "schema": true
   },
   {
@@ -409,6 +457,22 @@
   },
   {
     "method": "GET",
+    "path": "/admin/api/operator/host-commands",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.get_host_commands",
+    "schema": true
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/api/operator/host-commands",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.admin_api.update_host_commands",
+    "schema": true
+  },
+  {
+    "method": "GET",
     "path": "/admin/api/operator/litellm-config",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
@@ -437,22 +501,6 @@
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.delete_litellm_keys",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/operator/host-commands",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.admin_api.update_host_commands",
-    "schema": true
-  },
-  {
-    "method": "GET",
-    "path": "/admin/api/operator/host-commands",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.get_host_commands",
     "schema": true
   },
   {
@@ -493,6 +541,22 @@
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.update_service_registry",
+    "schema": true
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/api/operator/service-registry/excluded/{section}/{record_id}",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.remove_excluded_record",
+    "schema": true
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/api/operator/service-registry/excluded/{section}/{record_id}",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.admin_api.fix_excluded_record",
     "schema": true
   },
   {
@@ -541,6 +605,14 @@
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.set_service_enabled",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/admin/api/operator/services/{service_id}/secret-entries",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to change a secret",
+    "handler": "gateway.admin_api.change_secret_entries",
     "schema": true
   },
   {
@@ -993,18 +1065,18 @@
   },
   {
     "method": "POST",
-    "path": "/auth/api/reauth",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "gateway.accounts_api.reauth",
-    "schema": true
-  },
-  {
-    "method": "POST",
     "path": "/auth/api/password-reset",
     "auth": "browser/public",
     "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
     "handler": "gateway.accounts_api.reset",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/auth/api/reauth",
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "gateway.accounts_api.reauth",
     "schema": true
   },
   {
@@ -1209,18 +1281,18 @@
   },
   {
     "method": "POST",
-    "path": "/me/api/media/remove-missing",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_media.remove_missing_media",
-    "schema": false
-  },
-  {
-    "method": "POST",
     "path": "/me/api/media/confirm-folder",
     "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",
     "handler": "gateway.me_media.confirm_media_folder",
+    "schema": false
+  },
+  {
+    "method": "POST",
+    "path": "/me/api/media/remove-missing",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_media.remove_missing_media",
     "schema": false
   },
   {
@@ -1273,18 +1345,18 @@
   },
   {
     "method": "GET",
-    "path": "/me/api/profile/avatars",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "gateway.me_avatar.list_avatars",
-    "schema": false
-  },
-  {
-    "method": "GET",
     "path": "/me/api/profile/avatar/picture",
     "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",
     "handler": "gateway.me_avatar.get_picture",
+    "schema": false
+  },
+  {
+    "method": "GET",
+    "path": "/me/api/profile/avatars",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.list_avatars",
     "schema": false
   },
   {
@@ -1422,29 +1494,5 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "proxy.status_dashboard_raw",
     "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/admin/api/operator/services/{service_id}/secret-entries",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to change a secret",
-    "handler": "gateway.admin_api.change_secret_entries",
-    "schema": true
-  },
-  {
-    "method": "PUT",
-    "path": "/admin/api/operator/service-registry/excluded/{section}/{record_id}",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.fix_excluded_record",
-    "schema": true
-  },
-  {
-    "method": "DELETE",
-    "path": "/admin/api/operator/service-registry/excluded/{section}/{record_id}",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "gateway.admin_api.remove_excluded_record",
-    "schema": true
   }
 ]

@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+import math
+from typing import Any, Mapping
 from urllib.parse import quote
 
 from fastapi import Request
@@ -46,6 +47,17 @@ async def operate(runner: Measurements, ctx: Any, service_id: str, action: str, 
     record, generation = await asyncio.to_thread(runner.record, service_id)
     if action == "options":
         options = await asyncio.to_thread(runner.options)
+        resources = record.get("resources") or (record.get("config") or {}).get("resources") or {}
+        if not isinstance(resources, Mapping):
+            resources = {}
+        gpu_required = resources.get("gpu_required")
+        estimate = resources.get("vram_gb_estimate")
+        measurement_ready = isinstance(gpu_required, bool) and (
+            not gpu_required or (isinstance(estimate, (int, float)) and not isinstance(estimate, bool) and estimate > 0))
+        saved_chunking = (record.get("config") or {}).get("chunking") or {}
+        saved_limit = saved_chunking.get("max_segment_seconds") if isinstance(saved_chunking, Mapping) else None
+        known_limit = (isinstance(saved_limit, (int, float)) and not isinstance(saved_limit, bool)
+                       and math.isfinite(saved_limit) and saved_limit > 0)
         try:
             execution = stt_chunking.SttExecutionConfig.from_service(service_id=service_id, service_config=record.get("config", {}), config_directory=Path.cwd())
         except stt_chunking.SttConfigurationError as error:
@@ -56,13 +68,22 @@ async def operate(runner: Measurements, ctx: Any, service_id: str, action: str, 
             settings = {"target_seconds": defaults["target_seconds"],
                         "search_seconds": defaults["search_seconds"],
                         "max_segment_seconds": max_segment,
-                        "native_long_audio": False}
+                        "native_long_audio": False,
+                        "native_long_audio_offline": False,
+                        "native_long_audio_streaming": False}
             note = f"Saved STT settings need repair ({error}). Safe bundled values are shown; edit the invalid setting and save."
         else:
-            settings = {k: getattr(execution, k) for k in ("target_seconds", "search_seconds", "max_segment_seconds", "native_long_audio")}
+            settings = {k: getattr(execution, k) for k in ("target_seconds", "search_seconds", "max_segment_seconds",
+                "native_long_audio", "native_long_audio_offline", "native_long_audio_streaming")}
             note = execution.chunking_view()["note"]
+        safe_trial_seconds = settings["max_segment_seconds"]
+        trial_lengths = [length for length in options["policy"]["lengths"] if length <= safe_trial_seconds]
+        trial_lengths_note = None if len(set(trial_lengths)) >= 2 else (
+            "There are fewer than two default trial lengths within the current safe piece limit. Enter two shorter lengths to measure.")
         return {**options, "job": public_job(await asyncio.to_thread(runner.get, service_id)),
                 "settings": settings, "settings_note": note,
+                "measurement_ready": measurement_ready, "known_limit": known_limit,
+                "trial_lengths": trial_lengths, "trial_lengths_note": trial_lengths_note,
                 "revision": f'"os-{generation}"', "commands": owner_commands(service_id, revision=f'"os-{generation}"', settings=settings)}
     if action == "start":
         return {"job": public_job(await runner.start(ctx, service_id, body or {}))}

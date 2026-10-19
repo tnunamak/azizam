@@ -126,6 +126,8 @@ class McpDeps:
     authorization_servers: Callable[[Request], list[str]] = lambda _request: []
     scopes: tuple[str, ...] = ()
     stt_measurement: Callable[..., Awaitable[dict]] | None = None
+    # The owner-only operator tool is omitted from discovery unless this check passes.
+    owner_visible: Callable[[Request, Any], bool] = lambda _request, _auth: False
 
 
 # ------------------------------------------------------------------ JSON-RPC
@@ -232,7 +234,9 @@ TOOLS.append({
         "inputs": {"type": "object", "properties": {"sample_ids": {"type": "array", "items": {"type": "string"}},
             "lengths": {"type": "array", "items": {"type": "number"}}, "search_widths": {"type": "array", "items": {"type": "number"}}, "model": {"type": "string"}}, "additionalProperties": False},
         "settings": {"type": "object", "properties": {"target_seconds": {"type": "number", "exclusiveMinimum": 0},
-            "search_seconds": {"type": "number", "minimum": 0}, "max_segment_seconds": {"type": "number", "exclusiveMinimum": 0}, "native_long_audio": {"type": "boolean"}}, "additionalProperties": False},
+            "search_seconds": {"type": "number", "minimum": 0}, "max_segment_seconds": {"type": "number", "exclusiveMinimum": 0},
+            "native_long_audio": {"type": "boolean"}, "native_long_audio_offline": {"type": "boolean"},
+            "native_long_audio_streaming": {"type": "boolean"}}, "additionalProperties": False},
     }, "required": ["service_id", "action"], "additionalProperties": False},
     "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
 })
@@ -670,9 +674,11 @@ async def handle_message(deps: McpDeps, request: Request, auth: Any, msg: Mappin
             "instructions": INSTRUCTIONS, "ttlMs": 3600000, "cacheScope": "public",
         }
     elif method == "tools/list":
-        result = {"tools": [tool for tool in TOOLS if tool["name"] != "stt_measurement" or deps.stt_measurement is not None]}
+        owner_can_measure = (deps.stt_measurement is not None
+                             and deps.owner_visible(request, auth))
+        result = {"tools": [tool for tool in TOOLS if tool["name"] != "stt_measurement" or owner_can_measure]}
         if modern:
-            result.update(ttlMs=300000, cacheScope="public")
+            result.update(ttlMs=300000, cacheScope="private" if owner_can_measure else "public")
     elif method == "tools/call":
         name = params.get("name")
         if not isinstance(name, str) or name not in {t["name"] for t in TOOLS}:

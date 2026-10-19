@@ -112,6 +112,17 @@ def test_the_shipped_manifest_loads_and_names_only_https_sources():
     assert ami[0] == ami[1]
 
 
+def test_earnings21_sources_are_pinned_to_a_commit() -> None:
+    import re
+
+    spec = next(spec for spec in stt_samples.load_manifest() if spec.id == "earnings21-4366522")
+    for source in spec.sources:
+        assert re.fullmatch(
+            r"https://raw\.githubusercontent\.com/revdotcom/speech-datasets/[0-9a-f]{40}/earnings21/.+",
+            source.url,
+        )
+
+
 def test_a_good_manifest_gives_specs(tmp_path):
     spec = _one(tmp_path, _sample([_source("audio", b"a"), _source("transcript", b"t"), _source("segments", b"s")]))
     assert spec.id == "call-1"

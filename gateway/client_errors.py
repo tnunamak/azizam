@@ -138,8 +138,8 @@ GATEWAY_CODES = frozenset({
     "invalid_gateway_extensions", "invalid_instance", "invalid_mask_dimensions", "invalid_native_path", "invalid_prompt_memory",
     "invalid_prompt_memory_settings", "invalid_prompt_mode", "invalid_request", "invalid_request_error", "invalid_retention", "invalid_sessions",
     "invalid_shots", "invalid_source", "invalid_stt_chunk_response", "invalid_stt_stream_response", "invalid_workflow_extension",
-    "job_canceled", "litellm_unconfigured", "login_required", "long_video_not_supported", "malformed_response",
-    "media_job_assets_missing", "media_job_not_found", "media_job_not_ready", "media_payload_capacity", "method_not_allowed",
+    "generation_mismatch", "job_canceled", "litellm_unconfigured", "login_required", "long_video_not_supported", "malformed_response",
+    "media_job_assets_missing", "media_job_not_found", "media_job_not_ready", "media_payload_capacity", "measurement_engine_offline", "method_not_allowed",
     "missing_file", "missing_required_image", "model_policy_schema_unavailable", "model_switch_deferred", "native_ambiguous_path",
     "native_credential_origin_mismatch", "native_credential_unavailable", "native_destination_blocked", "native_not_allowed",
     "native_not_enabled", "native_owner_only", "native_remote_forbidden", "native_request_too_large", "no_access",
@@ -331,9 +331,9 @@ def client_error(
 
 
 _STT_SPLIT_REASONS = {
-    "unknown_duration": (422, ""),
+    "unknown_duration": (422, "its duration could not be determined"),
     "unreadable_media": (422, "could not be read as audio"),
-    "split_failed": (502, "could not be cut by the gateway just now"),
+    "split_failed": (502, "could not be cut by the gateway"),
     "unsupported_request": (422, "uses request options that cannot be preserved across pieces"),
 }
 
@@ -344,11 +344,11 @@ def stt_audio_cannot_be_split(reason: str, limit_seconds: float) -> Response:
     if not math.isfinite(limit_seconds) or limit_seconds <= 0:
         raise ValueError("The STT hard maximum must be finite and positive")
     if reason == "unknown_duration":
-        message = (f"The gateway could not determine this audio's duration, so it could not verify the "
-                   f"{limit_seconds:g}-second limit. The audio was not sent to the transcription engine.")
+        message = (f"The gateway could not determine this audio's duration, so it could not verify the recorded or "
+                   f"measured {limit_seconds:g}-second maximum. The audio was not sent to the transcription engine.")
     else:
-        message = (f"This audio is longer than {limit_seconds:g} seconds, the most this transcription engine "
-                   f"takes at once, and it {why}, so the gateway did not send it whole.")
+        message = (f"This audio exceeds the recorded or measured {limit_seconds:g}-second maximum and {why}, "
+                   f"so the gateway did not send it whole.")
     return _response(status, {
         "message": message,
         "type": "api_error" if status >= 500 else "invalid_request_error",

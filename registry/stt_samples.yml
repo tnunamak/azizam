@@ -137,15 +137,15 @@ samples:
     timing: segment-interpolated
     sources:
       - name: audio
-        url: https://raw.githubusercontent.com/revdotcom/speech-datasets/main/earnings21/media/4366522.mp3
+        url: https://raw.githubusercontent.com/revdotcom/speech-datasets/c05ab6fd8b4b627d123c922a22a39e993dd37635/earnings21/media/4366522.mp3
         sha256: 143073661592bc19ab931de1f5cf564adbfd2777c65837cacfa98572c6b1e09e
         bytes: 9088686
       - name: transcript
-        url: https://raw.githubusercontent.com/revdotcom/speech-datasets/main/earnings21/transcripts/nlp_references/4366522.nlp
+        url: https://raw.githubusercontent.com/revdotcom/speech-datasets/c05ab6fd8b4b627d123c922a22a39e993dd37635/earnings21/transcripts/nlp_references/4366522.nlp
         sha256: 53eab8ef960f999d6fb0a55af583cdfb7210e1a17ae164b07c7855bffeebcbf8
         bytes: 96239
       - name: segments
-        url: https://raw.githubusercontent.com/revdotcom/speech-datasets/main/earnings21/rttms/4366522.rttm
+        url: https://raw.githubusercontent.com/revdotcom/speech-datasets/c05ab6fd8b4b627d123c922a22a39e993dd37635/earnings21/rttms/4366522.rttm
         sha256: 2c60f70d87784d4b29ee539fbdacec9fd5b98c950d861b73799b6d12c73feebe
         bytes: 26228
     recipe:

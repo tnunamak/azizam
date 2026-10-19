@@ -1,4 +1,4 @@
-"""One-time upgrade of stored transcription records to the D47 cut planner (admin schema version 14).
+"""One-time upgrade of stored transcription records to the D47 cut planner (admin schema version 15).
 
 The rules are data (``registry/stt_chunking_upgrades.yml``): a record whose ``chunking`` block holds exactly the
 listed old values gets the new keys. No record outside a rule changes.

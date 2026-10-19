@@ -300,6 +300,11 @@ class GatewayRig:
         # The VRAM probe samples on a real-time timer; one sample before and one after a round is the
         # deterministic part (a round that outlasts the interval would add a timer-driven /system_stats).
         patch(proxy, "_VRAM_PROBE_INTERVAL_MIN_S", 3600.0)
+        # Adapter traces must not depend on host GPU tooling. The probe starts an immediate sample,
+        # so leave its hardware observations unknown in this hermetic scenario rig.
+        patch(proxy, "_resolve_gpu0_uuid", lambda: None)
+        patch(proxy, "_resolve_comfy_pids", lambda: set())
+        patch(proxy, "_sample_comfy_vram_bytes", lambda *_args: None)
         patch(proxy, "_service_availability_response", lambda *a, **k: None)
         # The access plan keeps media metadata off, so stored bytes carry no per-request provenance.
         owner = identity(everything(media_metadata="none", receipt_detail="full"))

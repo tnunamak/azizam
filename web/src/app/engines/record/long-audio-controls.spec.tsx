@@ -17,14 +17,18 @@ const options = {
     search_seconds: 2,
     max_segment_seconds: 40,
     native_long_audio: false,
+    native_long_audio_offline: false,
+    native_long_audio_streaming: false,
   },
   policy: {
     sample_ids: ["sample"],
     lengths: [20, 40],
     search_widths: [0, 2],
+    recommendation: { target_margin: 0.75 },
     deadline_seconds: 600,
     max_download_bytes: 1000000,
   },
+  trial_lengths: [20, 30, 40],
   samples: [
     {
       id: "sample",
@@ -78,6 +82,18 @@ describe("Long-audio operator controls", () => {
     });
   });
 
+  it("saves native long-audio handling separately for offline and streaming modes", async () => {
+    const user = mount();
+    await user.click(await screen.findByLabelText("Offline mode uses native long audio"));
+    await user.click(screen.getByLabelText("Streaming mode uses native long audio"));
+    await user.click(screen.getByRole("button", { name: "Save long-audio settings" }));
+    const writes = request.mock.calls.filter(([, init]) => init?.method);
+    expect(JSON.parse(writes[0][1].body)).toEqual({
+      native_long_audio_offline: true,
+      native_long_audio_streaming: true,
+    });
+  });
+
   it("starts measurement with manifest samples and exact-cut baseline, without saving", async () => {
     const user = mount();
     await user.click(
@@ -90,12 +106,89 @@ describe("Long-audio operator controls", () => {
     expect(writes[0][0]).toBe("/admin/api/engines/speech/stt-measurements");
     expect(JSON.parse(writes[0][1].body)).toEqual({
       sample_ids: ["sample"],
-      lengths: [20, 40],
+      lengths: [20, 30, 40],
       search_widths: [0, 2],
     });
     expect(
       screen.queryByRole("button", { name: "Apply recommended settings" }),
     ).toBeNull();
+  });
+
+  it("shows resource prerequisites and an unknown hard limit before offering measurement", async () => {
+    const user = mount({ ...options, measurement_ready: false, known_limit: false });
+    expect(await screen.findByText(/Declare engine resource requirements before measuring/)).toBeVisible();
+    expect(screen.getByText(/No measured hard limit is recorded/)).toBeVisible();
+    await user.click(screen.getByText("Measurement samples and trials"));
+    expect(screen.getByText(/current planner's safe piece limit of 40 seconds/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Measure long-audio settings" })).toBeEnabled();
+  });
+
+  it("accepts a hard maximum equal to target and validates search width against half the target", async () => {
+    const user = mount();
+    const maximum = await screen.findByLabelText("Longest piece (seconds)");
+    await user.clear(maximum);
+    await user.type(maximum, "30");
+    expect(screen.getByRole("button", { name: "Save long-audio settings" })).toBeEnabled();
+    const search = screen.getByLabelText("Search either side of each cut (seconds)");
+    await user.clear(search);
+    await user.type(search, "16");
+    expect(screen.getByRole("button", { name: "Save long-audio settings" })).toBeDisabled();
+  });
+
+  it("limits measurement trials to the current hard maximum", async () => {
+    const user = mount();
+    const lengths = await screen.findByLabelText("Piece lengths, seconds (comma-separated)");
+    expect(lengths).toHaveValue("20, 30, 40");
+    await user.clear(lengths);
+    await user.type(lengths, "20, 45");
+    expect(screen.getByRole("button", { name: "Measure long-audio settings" })).toBeDisabled();
+  });
+
+  it("explains when fewer than two configured trial lengths fit the current limit", async () => {
+    const user = mount({
+      ...options,
+      trial_lengths: [],
+      trial_lengths_note: "There are fewer than two default trial lengths within the current safe piece limit.",
+    });
+    await user.click(await screen.findByText("Measurement samples and trials"));
+    expect(await screen.findByText(/fewer than two default trial lengths within/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Measure long-audio settings" })).toBeDisabled();
+    const lengths = screen.getByLabelText("Piece lengths, seconds (comma-separated)");
+    await user.clear(lengths);
+    await user.type(lengths, "20, 30");
+    expect(screen.getByRole("button", { name: "Measure long-audio settings" })).toBeEnabled();
+  });
+
+  it("limits trial search widths to half the target", async () => {
+    const user = mount();
+    const widths = await screen.findByLabelText("Search widths, seconds (comma-separated)");
+    await user.clear(widths);
+    await user.type(widths, "0, 16");
+    expect(screen.getByRole("button", { name: "Measure long-audio settings" })).toBeDisabled();
+  });
+
+  it("caps search widths using the conservative target implied by trial lengths", async () => {
+    const user = mount();
+    await user.click(await screen.findByText("Measurement samples and trials"));
+    expect(screen.getByText(/Search width is capped at half the conservative trial target/)).toBeVisible();
+    expect(screen.getByText(/Maximum width: 7\.5 seconds/)).toBeVisible();
+    const widths = screen.getByLabelText("Search widths, seconds (comma-separated)");
+    await user.clear(widths);
+    await user.type(widths, "0, 8");
+    expect(screen.getByRole("button", { name: "Measure long-audio settings" })).toBeDisabled();
+  });
+
+  it("applies the policy search-width cap without halving it", async () => {
+    const user = mount({
+      ...options,
+      policy: { ...options.policy, max_trial_seconds: 5 },
+    });
+    await user.click(await screen.findByText("Measurement samples and trials"));
+    expect(screen.getByText(/Maximum width: 5 seconds/)).toBeVisible();
+    const widths = screen.getByLabelText("Search widths, seconds (comma-separated)");
+    await user.clear(widths);
+    await user.type(widths, "0, 4");
+    expect(screen.queryByText("Choose at least two distinct search widths within the planner limit.")).toBeNull();
   });
 
   it("resumes durable progress and cancels the stored job", async () => {
@@ -178,7 +271,10 @@ describe("Long-audio operator controls", () => {
 });
 
 it("patches only an edited target and leaves derived defaults unpinned", async () => {
-  const user = mount();
+  const user = mount({
+    ...options,
+    settings: { ...options.settings, max_segment_seconds: 60 },
+  });
   const input = await screen.findByLabelText("Distance between cuts (seconds)");
   await user.clear(input);
   await user.type(input, "50");

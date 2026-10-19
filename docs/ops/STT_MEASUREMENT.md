@@ -1,10 +1,14 @@
 # Measure long-audio settings
 
 The owner can edit target seconds, search width (including zero), the hard
-maximum, and native long-audio handling beside **Check now** on the engine page.
+maximum, and native long-audio handling for offline and streaming requests
+beside **Check now** on the engine page. A record with no saved or measured hard
+maximum has no known engine limit: Azizam sends requests it cannot cut whole,
+and the page offers measurement. A saved maximum protects even uncut requests,
+unless the record permits native long audio for that request mode.
 Saving sends only changed fields, so effective defaults and derived values stay
 unwritten. A target that reaches the old cut threshold raises that threshold
-to the effective hard maximum (or target plus one second for exact cuts). An
+above the target (or above the effective hard maximum for exact cuts). An
 explicit threshold supplied in the REST patch is preserved and validated. An
 explicitly saved hard maximum still constrains the target.
 Saving these fields does not run a measurement.
@@ -27,7 +31,8 @@ start the service.
 Declare `resources.gpu_required` on the service record before starting. For GPU
 engines, also declare a positive `resources.vram_gb_estimate`. Before each
 transcription the job checks measured GPU memory and utilization, and the shared
-media queue's queued/running work. It waits for headroom and an empty queue;
+media queue's queued/running work and in-flight live STT. It waits for headroom
+and idle live STT;
 unknown GPU or queue facts do not admit work. Set `resources.gpu.devices` to
 bind the check to specific GPU indices. Without a binding, it conservatively
 requires headroom on every reported GPU.
@@ -47,28 +52,31 @@ Running jobs stop when the owner's role is removed or the MCP connection that
 started them is revoked.
 The recommendation is a **gross-harm screen**, not proof of no harm or a claim
 that widths are equivalent. The owner-editable default noninferiority margins
-are 3 percentage points for both length and seam-minus-noise comparisons.
+are 1 percentage point for length and 3 points for seam-minus-noise comparisons.
+Trials are bounded to 120 seconds and to the current planner's safe piece limit;
+the default length choices are filtered to that limit. If fewer than two fit,
+the page explains what must change before measurement can start.
 
 Length trials compare the same reference words inside pieces at each length
 against the shortest successful length. Each recording contributes separate
 30-second blocks; bootstrap resampling uses blocks, not individual words. The
-longest length whose paired upper CI is within the margin is eligible, but a
-shorter length that is confidently worse caps the maximum. At least
+longest length whose paired upper CI is within the margin is eligible only when
+every attempted shorter length also passes. A failed, sparse, or inconclusive
+shorter trial prevents recommending a longer maximum. At least
 two lengths must have 12 blocks and 500 common interior words each. Shared engine
 deletions cancel in this comparison. Raw deletion rates and their intervals stay
 in `deletions_by_length`; its `paired_deletion`, `baseline_length`, `state` and
-`reason` fields explain selection. An inconclusive earlier row does not cap later rows.
+`reason` fields explain selection.
 
 Seam trials compare cut versus no-cut errors on the same reference words. The
 `difference` interval bootstraps seam excess minus noise excess directly, rather
 than subtracting marginal CI endpoints. Each width requires at least 20 seam
 pairs and 20 noise pairs, with 200 words in each set. A width qualifies when the
-upper difference CI is within the margin. If the current record width qualifies
-and no supported alternative has a clearly separated lower interval, keep it.
-When one does, choose the supported alternative with the lowest upper interval
-bound, using narrower width to break ties. If the current width was not tested
-or did not qualify, choose the narrowest supported width. Requested widths are
-tested unchanged.
+upper difference CI is within the margin. Among qualifying widths, choose the
+lowest upper interval bound. Keep the current width when it ties for that bound;
+otherwise use the narrower width to break a tie. Requested widths are tested
+unchanged within the safe range of the current target and the smallest possible
+trial target. Widths outside that range are rejected before a job starts.
 
 Reports include `recommendation_state` and per-trial `state`/`reason`: recommended
 means the screen passed; inconclusive means counts are insufficient or the CI
@@ -84,7 +92,7 @@ changes saved settings.
 
 REST paths under `/admin/api/engines/{service_id}`:
 
-- `PATCH /stt-settings`: edit the four fields independently; requires `If-Match`.
+- `PATCH /stt-settings`: edit target, search, hard maximum, and native long-audio fields independently; requires `If-Match`.
 - `GET /stt-measurements`: sample choices, policy, latest job, revision and shell commands.
 - `POST /stt-measurements`: start; optional `sample_ids`, `lengths`, `search_widths`, `model`.
 - `GET /stt-measurements/{job_id}`: progress, report and generated owner REST commands.
@@ -94,7 +102,8 @@ The engine page generates curl commands using `AZIZAM_BASE` and
 `AZIZAM_OWNER_KEY` placeholders. Browser writes use the existing CSRF check.
 MCP exposes `stt_measurement` with `options`, `configure`, `start`, `status`,
 `cancel`, and `apply`. Configure/apply take `revision`. MCP operator access
-requires owner OAuth; ordinary App keys do not grant management access.
+requires owner OAuth; ordinary App keys do not grant management access or see
+the operator tool in `tools/list`.
 
 The bundled GPU transcription service declares its resource estimate in
 `proxy_config.yml`; no engine-specific requirement is in code. Existing registry
@@ -112,8 +121,9 @@ Replace `3.2` with that engine's declared demand in GB. CPU services use
 `{"resources":{"gpu_required":false}}`. This goes through the normal service
 record validation, owner authorization, compare-and-swap and hot reload.
 
-The default grid uses AMI, ICSI and Earnings21, 300 seconds each: 153 gateway
-requests within the 160-request and 512 MB download caps. Synthetic noisy-engine
+The sample manifest includes AMI, ICSI and Earnings21. Each default trial uses
+up to 300 seconds of its recording, within the request and 512 MB download caps.
+Synthetic noisy-engine
 tests with 10% shared deletions and about 3% run-to-run disagreement show this
 grid can meet the paired evidence gates. This is a reproducible feasibility
 check, not real-engine validation. Real speech may still

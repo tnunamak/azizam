@@ -32,6 +32,8 @@ try:
     import proxy  # noqa: E402
     import route_graph  # noqa: E402
 
+    # proxy.py may have cached a schema before the owner surface was mounted.
+    proxy.app.openapi_schema = None
     data = route_graph.capture(proxy)
     Path(sys.argv[1]).write_text(json.dumps(data, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
     print(len(data["routes"]), "routes,", len(data["dispatch"]), "probed paths")

@@ -1203,7 +1203,13 @@ class EngineService:
         config["chunking"] = chunking
         try:
             if apply_recommendation:
-                chunking.update(enabled=True, threshold_seconds=chunking["max_segment_seconds"])
+                target = chunking.get("target_seconds", stt_chunking.bundled_chunking_defaults()["target_seconds"])
+                target_for_threshold = target if isinstance(target, (int, float)) and not isinstance(target, bool) else 0
+                threshold = max(
+                    chunking["max_segment_seconds"],
+                    target_for_threshold + max(1, target_for_threshold * .01),
+                )
+                chunking.update(enabled=True, threshold_seconds=threshold)
             elif "target_seconds" in patch and "threshold_seconds" not in patch:
                 threshold = chunking.get("threshold_seconds", stt_chunking.bundled_chunking_defaults()["threshold_seconds"])
                 if isinstance(threshold, (int, float)) and patch["target_seconds"] >= threshold:

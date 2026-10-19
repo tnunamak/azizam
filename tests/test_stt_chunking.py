@@ -528,7 +528,10 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temp_dir)
             source = root / "source.wav"
             source.write_bytes(b"source")
-            config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=40, max_duration_seconds=3000, **limits)
+            config_limits = dict(limits)
+            max_segment_seconds = config_limits.pop("max_segment_seconds", 40)
+            config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=max_segment_seconds,
+                             max_duration_seconds=3000, **config_limits)
             posts = []
 
             async def post(_path, filename):
@@ -571,9 +574,55 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 422)
         message = json.loads(response.body)["error"]["message"]
         self.assertIn("could not determine", message)
-        self.assertIn("40-second limit", message)
+        self.assertIn("40-second maximum", message)
         self.assertNotIn("longer than", message)
         self.assertNotIn("secret", message)
+        self.assertIn("recorded or measured", message)
+        self.assertNotIn("just now", message)
+
+    async def test_missing_declared_maximum_does_not_refuse_a_request_that_cannot_be_cut(self) -> None:
+        result, posts = await self._run_unplannable(
+            probed=stt_chunking.ProbedAudio(1320, 16000, 1), decode_error=stt_chunking.SttSetupFailure("x"),
+            max_segment_seconds=None,
+        )
+        self.assertEqual((result.mode, result.fallback_reason, posts), ("passthrough", "setup_failed_before_attempt", []))
+
+    async def test_uncut_upload_without_a_recorded_or_measured_maximum_is_allowed_whole(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=None)
+            with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(4000, 16000, 1))):
+                await stt_chunking.guard_uncut_uploads(
+                    [root / "upload.wav"], config=config, cancellation_waiters=(),
+                    deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
+                )
+
+    async def test_planner_uses_decoded_pcm_length_when_probe_duration_is_shorter(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.wav"
+            source.write_bytes(b"source")
+            config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=40, max_duration_seconds=150)
+            posted = []
+
+            async def fake_decode(_source, destination, **_kwargs):
+                Path(destination).write_bytes(b"\0\0" * (75 * 16_000))
+
+            async def extract(_source, destination, *, start_seconds, end_seconds, **_kwargs):
+                posted.append((start_seconds, end_seconds))
+                Path(destination).write_bytes(b"chunk")
+
+            with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(45, 8000, 1))), \
+                 patch.object(stt_chunking, "decode_planning_pcm", new=AsyncMock(side_effect=fake_decode)), \
+                 patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)), \
+                 patch.object(stt_chunking, "quietest_frame_reader", return_value=lambda _lo, _hi, near: near):
+                outcome = await stt_chunking.execute_chunking(
+                    source_path=source, source_stem="source", fields=[("response_format", "json")], config=config,
+                    post_file=AsyncMock(return_value=stt_chunking.UpstreamResponse(200, b'{"text":"x"}', {})),
+                    cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
+                )
+            self.assertEqual(outcome.mode, "chunked")
+            self.assertAlmostEqual(posted[-1][1], 75, delta=0.01)
 
     async def test_a_file_the_engine_takes_whole_or_a_native_long_audio_engine_still_passes_through(self) -> None:
         short_file = stt_chunking.ProbedAudio(41, 16000, 1)  # above the 40 s threshold, not above the 40 s... see below
@@ -698,9 +747,11 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
 
         for rows, policy, limits, expected in (
             ([{"kind": "drop-params", "phase": "response", "drop": ["timing"]}], "passthrough", {}, "chunked"),
-            # The engine takes a 75 s file whole, so a row that cannot run lets it pass; for a file above the maximum it refuses.
+            # A larger declared maximum allows the whole 75 s upload; an unknown maximum allows today's whole-file fallback.
             ([{"kind": "no-such-kind"}], "passthrough", {"max_segment_seconds": 100}, "passthrough"),
-            ([{"kind": "no-such-kind"}], "passthrough", {}, stt_chunking.SttSetupFailure),
+            # This invalid chunk-only transform cannot justify refusing a whole upload when no maximum is known.
+            ([{"kind": "no-such-kind"}], "passthrough", {}, "passthrough"),
+            ([{"kind": "no-such-kind"}], "passthrough", {"max_segment_seconds": 40}, stt_chunking.SttSetupFailure),
             (["no-such-transform"], "error", {}, stt_chunking.SttSetupFailure),
         ):
             with self.subTest(rows=rows, limits=limits), tempfile.TemporaryDirectory() as temp_dir:
@@ -859,12 +910,15 @@ class RequestWorkspaceIsolationTests(unittest.IsolatedAsyncioTestCase):
                     receive,
                 )
 
+            async def decode_for_planning(_source: Path, destination: Path, **_kwargs: object) -> None:
+                Path(destination).write_bytes(b"\0\0" * (75 * 16_000))
+
             with (
                 patch.object(proxy, "_stt_execution_snapshot", return_value=config),
                 patch.object(proxy.httpx, "AsyncClient", Client),
                 patch.object(stt_chunking, "GLOBAL_STT_RESOURCE_GATE", stt_chunking.SttResourceGate()),
                 patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(75, 8000, 1))),
-                patch.object(stt_chunking, "decode_planning_pcm", new=AsyncMock()),
+                patch.object(stt_chunking, "decode_planning_pcm", new=AsyncMock(side_effect=decode_for_planning)),
                 patch.object(stt_chunking, "plan_quietest_frame_segments", return_value=[(0.0, 1.0), (1.0, 2.0)]),
                 patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)),
                 patch.object(proxy.receipt_store, "begin"),
@@ -1488,7 +1542,9 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("connection", response.headers)
                 self.assertEqual(len(received), 1)
                 self.assertTrue(str(received[0].url).endswith("/v1/audio/transcriptions"))
-                self.assertEqual(probe.await_count, 1)
+                # Eligible short audio is probed for planning; an ineligible envelope without a declared
+                # maximum goes straight through without a duration probe.
+                self.assertEqual(probe.await_count, 1 if kind == "short" else 0)
                 self.assertEqual(list((root / "spool").glob("*")), [])
 
     async def test_an_ineligible_long_request_is_refused_before_an_upstream_attempt(self) -> None:
@@ -1590,7 +1646,8 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, status)
                 payload = json.loads(response.body)["error"]
                 self.assertEqual(payload["code"], "stt_audio_cannot_be_split")
-                self.assertIn("longer than 40 seconds", payload["message"])
+                self.assertIn("recorded or measured 40-second maximum", payload["message"])
+                self.assertNotIn("longer than", payload["message"])
                 self.assertNotIn("secret-path", response.body.decode())
                 self.assertNotIn("sk-1234", response.body.decode())
                 self.assertEqual((finalized[0].status, finalized[0].metadata["stt"]["attempts_started"]), ("failed", 0))

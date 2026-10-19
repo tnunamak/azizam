@@ -126,7 +126,8 @@ class Run:
 
     def seams(self) -> list[float]:
         """Cut times on the recording's own clock."""
-        return [end + self.offset for _start, end in self.segments[:-1]]
+        start_cut = [self.offset] if self.offset > 0 else []
+        return start_cut + [end + self.offset for _start, end in self.segments[:-1]]
 
 
 @dataclass
@@ -136,14 +137,17 @@ class Scored:
     run: Run
     alignment: Alignment
     mids: list[float]
+    reference_indexes: list[int]
 
     def window(self, centre: float, half: float) -> range:
         return range(bisect_left(self.mids, centre - half), bisect_left(self.mids, centre + half))
 
 
 def score_run(reference: Sequence[RefWord], run: Run) -> Scored:
-    alignment = align([w.word for w in reference], run.words)
-    return Scored(run, alignment, [w.mid for w in reference])
+    end = run.offset + max((segment_end for _start, segment_end in run.segments), default=0.0)
+    selected = [(index, word) for index, word in enumerate(reference) if run.offset <= word.mid < end]
+    alignment = align([word.word for _index, word in selected], run.words)
+    return Scored(run, alignment, [word.mid for _index, word in selected], [index for index, _word in selected])
 
 
 @dataclass(frozen=True)
@@ -167,15 +171,19 @@ class Estimate:
 def _pairs(first: Scored, second: Scored, points: Sequence[float], half: float, clear: float) -> list[tuple[int, int, int]]:
     """For each place: (errors in ``first``, errors in ``second``, words) over the same reference words."""
     out: list[tuple[int, int, int]] = []
+    clear = max(clear, 2.0 * half)
     other_seams = second.run.seams()
+    second_indexes = {reference_index: index for index, reference_index in enumerate(second.reference_indexes)}
     for point in points:
         # The second run must have no cut near the place, or the comparison is not "cut against no cut".
         if any(abs(point - seam) < clear for seam in other_seams):
             continue
-        indexes = first.window(point, half)
+        indexes = [index for index in first.window(point, half)
+                   if first.reference_indexes[index] in second_indexes]
         if len(indexes) == 0:
             continue
-        out.append((sum(first.alignment.errors(i) for i in indexes), sum(second.alignment.errors(i) for i in indexes), len(indexes)))
+        out.append((sum(first.alignment.errors(i) for i in indexes),
+                    sum(second.alignment.errors(second_indexes[first.reference_indexes[i]]) for i in indexes), len(indexes)))
     return out
 
 
@@ -212,8 +220,10 @@ def seam_pairs(
         pairs += _pairs(here, there, seams, half, clear)
         if placebo_offset is not None:
             places = [seam + placebo_offset for seam in seams]
-            # Away from every cut in both runs, so neither run is paying for one.
-            places = [p for p in places if all(abs(p - s) >= clear for s in seams)]
+            # Keep each placebo window disjoint from every cut window in both runs.
+            all_seams = seams + there.run.seams()
+            separation = max(clear, 2.0 * half)
+            places = [p for p in places if all(abs(p - s) >= separation for s in all_seams)]
             placebo += _pairs(here, there, places, half, clear)
     return pairs, placebo
 
@@ -378,24 +388,25 @@ def seam_evidence(row: Mapping, policy: Mapping) -> dict[str, str]:
 
 def select_length(length_rows: Sequence[Mapping], *, policy: Mapping,
                   failed_above: float | None = None) -> tuple[float, list[str]] | None:
-    """Longest supported maximum below the first measured length that is confidently worse."""
-    eligible = [row for row in length_rows if not row.get("failed")
-                and (failed_above is None or row["length"] < failed_above)]
-    measured = [row for row in eligible if row.get("paired_deletion", {}).get("points", 0) >= policy["min_length_blocks"]
-                and row.get("paired_deletion", {}).get("words", 0) >= policy["min_length_words"]]
-    if len({row["length"] for row in measured}) < policy["min_length_rows"]:
+    """Longest measured maximum for which every measured length through it passes."""
+    attempted = [row for row in length_rows if failed_above is None or row["length"] < failed_above]
+    evidenced = [row for row in attempted if not row.get("failed")
+                 and row.get("paired_deletion", {}).get("points", 0) >= policy["min_length_blocks"]
+                 and row.get("paired_deletion", {}).get("words", 0) >= policy["min_length_words"]]
+    if len({row["length"] for row in evidenced}) < policy["min_length_rows"]:
         return None
-    regressions = [row["length"] for row in measured if length_evidence(row, policy)["state"] == "confidently_worse"]
-    boundary = min(regressions) if regressions else math.inf
-    supported = [row for row in measured if row["length"] < boundary
-                 and length_evidence(row, policy)["state"] == "recommended"]
+    supported = [row for row in evidenced if length_evidence(row, policy)["state"] == "recommended"
+                 and all(length_evidence(other, policy)["state"] == "recommended"
+                         for other in attempted if other["length"] <= row["length"])]
     if not supported:
         return None
     chosen = max(supported, key=lambda row: row["length"])
     reasons = [f"Maximum {chosen['length']:g} s against shortest successful {chosen['baseline_length']:g} s: "
                + length_evidence(chosen, policy)["reason"], "Gross-harm screen only; this does not prove no harm."]
-    if regressions:
-        reasons.append(f"A confidently worse measured length at {boundary:g} s bounds this maximum.")
+    blockers = [row["length"] for row in attempted if row["length"] <= chosen["length"]
+                and length_evidence(row, policy)["state"] != "recommended"]
+    if blockers:
+        reasons.append(f"A non-passing measured length at {min(blockers):g} s bounds this maximum.")
     return float(chosen["length"]), reasons
 
 
@@ -414,13 +425,13 @@ def recommend(length_rows: Sequence[Mapping], search_rows: Sequence[Mapping], *,
     supported = [row for row in search_rows if seam_evidence(row, policy)["state"] == "recommended"]
     if not supported:
         return None
-    chosen = min(supported, key=lambda row: row["search"])
     current = next((row for row in supported if row["search"] == current_search), None)
-    # Retain the owner's width unless a supported alternative has a clearly
-    # separated benefit interval. Overlap does not establish a width winner.
-    if current is not None:
-        better = [row for row in supported if row["difference"]["high_pp"] < current["difference"]["low_pp"]]
-        chosen = min(better, key=lambda row: (row["difference"]["high_pp"], row["search"])) if better else current
+    # The upper interval bound is the conservative tie-break. Keep the current
+    # setting only when its evidence is tied for best; a missing/unsupported
+    # current setting never silently turns into zero width.
+    best_high = min(row["difference"]["high_pp"] for row in supported)
+    tied = [row for row in supported if row["difference"]["high_pp"] == best_high]
+    chosen = current if current in tied else min(tied, key=lambda row: row["search"])
     maximum, reasons = length
     reasons.append(f"Search {chosen['search']:g} s: " + seam_evidence(chosen, policy)["reason"])
     return Recommendation(target_for_maximum(maximum, policy), float(chosen["search"]), maximum, reasons)

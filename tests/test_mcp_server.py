@@ -276,6 +276,34 @@ def test_legacy_tools_list_has_exactly_the_three_meta_tools(env):
     assert all(t["inputSchema"]["type"] == "object" for t in tools)
 
 
+def test_owner_only_stt_measurement_tool_is_not_listed_to_nonowners():
+    state = {"owner": False}
+    def authenticate(_request, _path):
+        return SimpleNamespace(identity="k")
+
+    deps = McpDeps(authenticate=authenticate, call=Core().call, catalog=lambda: CATALOG,
+        aliases=lambda: ALIASES, store_asset=lambda *a: {}, read_asset=lambda *a: None,
+        public_base_url=lambda r: "https://gw.test", stt_measurement=lambda *a: {},
+        owner_visible=lambda _request, _auth: state["owner"])
+    app = FastAPI()
+    mcp_server.register_mcp_routes(app, deps)
+    client = TestClient(app)
+    response = client.post("/mcp", headers=H,
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert "stt_measurement" not in {tool["name"] for tool in response.json()["result"]["tools"]}
+    state["owner"] = True
+    owner_response = client.post("/mcp", headers=H,
+        json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    assert "stt_measurement" in {tool["name"] for tool in owner_response.json()["result"]["tools"]}
+
+
+def test_stt_measurement_mcp_settings_schema_exposes_native_audio_by_mode():
+    tool = next(tool for tool in mcp_server.TOOLS if tool["name"] == "stt_measurement")
+    settings = tool["inputSchema"]["properties"]["settings"]["properties"]
+    assert "native_long_audio_offline" in settings
+    assert "native_long_audio_streaming" in settings
+
+
 def test_legacy_unknown_method_is_a_200_json_rpc_error(env):
     resp = rpc(env, "resources/list")
     assert resp.status_code == 200 and resp.json()["error"]["code"] == mcp_server.METHOD_NOT_FOUND

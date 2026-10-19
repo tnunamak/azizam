@@ -288,7 +288,7 @@ def main() -> None:
                         help="a source tree to test; repeat for a comparison")
     parser.add_argument("--chunking", action="append", default=[], metavar="NAME=JSON", help="the arm's chunking block")
     parser.add_argument("--engine-port", type=int, default=8017)
-    parser.add_argument("--model", default="parakeet-tdt-0.6b-v3")
+    parser.add_argument("--model", required=True, help="model offered by the selected engine")
     parser.add_argument("--phases", type=lambda v: [float(x) for x in v.split(",")], default=[0.0, 7.5],
                         help="start offsets of the first run of each pair; the second starts half a target later")
     parser.add_argument("--hard-max", type=float, default=None, help="the longest piece an arm may send (for the acceptance lines)")

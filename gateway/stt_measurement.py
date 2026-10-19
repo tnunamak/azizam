@@ -32,7 +32,8 @@ from gateway import stt_chunking, stt_measure as measure, stt_samples
 from gateway.engine_admin import EngineRouteError, EngineService
 
 POLICY = Path(__file__).resolve().parent.parent / "registry/stt_measurement.yml"
-SETTING_KEYS = frozenset({"target_seconds", "search_seconds", "max_segment_seconds", "native_long_audio"})
+SETTING_KEYS = frozenset({"target_seconds", "search_seconds", "max_segment_seconds", "native_long_audio",
+                         "native_long_audio_offline", "native_long_audio_streaming"})
 TERMINAL = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
 # This context is created only by the authenticated operator worker, never by an HTTP header.
 TRIAL: contextvars.ContextVar[dict | None] = contextvars.ContextVar("stt_measurement_trial", default=None)
@@ -59,7 +60,7 @@ def observe_reply(status: int, mode: str) -> None:
         trial["upstream_status"] = status
 
 
-def gpu_admission(record: Mapping[str, Any], gpus: list[dict] | None, queue_depth: int | None, policy: dict, *, resident_mb: Mapping[int, int] | None = None) -> dict:
+def gpu_admission(record: Mapping[str, Any], gpus: list[dict] | None, queue_depth: int | None, policy: dict, *, resident_mb: Mapping[int, int] | None = None, live_stt: int = 0) -> dict:
     """Conservative admission from declared demand, measured headroom and the shared media queue.
 
     Honor the service record's GPU device indices. Without a binding, require
@@ -77,6 +78,9 @@ def gpu_admission(record: Mapping[str, Any], gpus: list[dict] | None, queue_dept
     reason = "Waiting for current GPU and shared media queue facts."
     if not gpus or queue_depth is None:
         return {"admitted": False, "reason": reason, "gpu_required": True}
+    if isinstance(live_stt, bool) or not isinstance(live_stt, int) or live_stt < 0:
+        return {"admitted": False, "reason": "Waiting for current live STT activity facts.", "gpu_required": True}
+    queue_depth += live_stt
     gpu_config = resources.get("gpu") or {}
     devices = gpu_config.get("devices") if isinstance(gpu_config, Mapping) else None
     if devices is not None:
@@ -95,8 +99,8 @@ def gpu_admission(record: Mapping[str, Any], gpus: list[dict] | None, queue_dept
         resident = (resident_mb or {}).get(gpu.get("index"), 0)
         if isinstance(resident, bool) or not isinstance(resident, int) or not 0 <= resident <= used:
             resident = 0  # Unverified attribution earns no credit.
-        # The estimate is total engine demand, not additional demand on top of
-        # its already-resident allocation. Other services never earn this credit.
+        # Count only this service's verified resident allocation against the estimate.
+        # The estimate is total engine demand, not extra demand on top of this allocation.
         additional = max(0, math.ceil(estimate * 1024) - resident)
         claim = ResourceClaim(gpu_required=True, vram_mb=additional + policy["gpu_min_free_mb"], queue_class=QueueClass.BACKGROUND)
         decision = evaluate_admission(AdmissionRequest("stt-measurement", claim), CapacitySnapshot(
@@ -113,12 +117,12 @@ def fingerprint(record: Mapping[str, Any]) -> str:
 
 def settings_patch(body: Any) -> dict:
     if not isinstance(body, dict) or not body or set(body) - (SETTING_KEYS | {"threshold_seconds"}):
-        raise EngineRouteError(400, "invalid_stt_settings", "Use only target_seconds, threshold_seconds, search_seconds, max_segment_seconds and native_long_audio.")
+        raise EngineRouteError(400, "invalid_stt_settings", "Use only target_seconds, threshold_seconds, search_seconds, max_segment_seconds and native long-audio settings.")
     patch = dict(body)
     for key, value in patch.items():
-        if key == "native_long_audio":
+        if key in {"native_long_audio", "native_long_audio_offline", "native_long_audio_streaming"}:
             if not isinstance(value, bool):
-                raise EngineRouteError(400, "invalid_stt_settings", "native_long_audio must be a boolean.")
+                raise EngineRouteError(400, "invalid_stt_settings", f"{key} must be a boolean.")
         elif isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or (value < 0 if key == "search_seconds" else value <= 0):
             raise EngineRouteError(400, "invalid_stt_settings", "Target and maximum must be positive; search width may be zero. All times must be finite seconds.")
     return patch
@@ -238,18 +242,37 @@ class Measurements:
             record, generation = self.record(service_id)
             options = self.options()
             policy = options["policy"]
+            current = stt_chunking.SttExecutionConfig.from_service(
+                service_id=service_id, service_config=record.get("config", {}), config_directory=Path.cwd())
+            safe_trial_seconds = current.max_segment_seconds
             ids = body.get("sample_ids", policy["sample_ids"])
-            lengths = body.get("lengths", policy["lengths"])
+            if "lengths" not in body:
+                lengths = [length for length in policy["lengths"] if length <= safe_trial_seconds]
+                if len(set(lengths)) < 2:
+                    raise EngineRouteError(400, "invalid_measurement",
+                        "Fewer than two default trial lengths fit the current safe piece limit; choose two shorter lengths explicitly.")
+            else:
+                lengths = body["lengths"]
             widths = body.get("search_widths", policy["search_widths"])
             if not isinstance(ids, list) or not ids or len(ids) > policy["max_samples"] or any(not isinstance(s, str) for s in ids) or len(set(ids)) != len(ids) or any(
                     not isinstance(s, str) or s not in {x["id"] for x in options["samples"]} for s in ids):
                 raise EngineRouteError(400, "invalid_measurement", "Choose distinct sample ids from the manifest, within the sample limit.")
-            for values, allow_zero in ((lengths, False), (widths, True)):
-                if not isinstance(values, list) or not 2 <= len(values) <= 6 or any(
-                    isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not (0 if allow_zero else policy["min_trial_seconds"]) <= v <= policy["max_trial_seconds"] for v in values):
-                    raise EngineRouteError(400, "invalid_measurement", "Choose two to six finite trial values within the seconds limit; search widths may include zero.")
-                if len(set(values)) < 2:
-                    raise EngineRouteError(400, "invalid_measurement", "Choose at least two distinct lengths and search widths.")
+            max_length = min(policy["max_trial_seconds"], safe_trial_seconds)
+            if not isinstance(lengths, list) or not 2 <= len(lengths) <= 6 or any(
+                isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+                or not policy["min_trial_seconds"] <= v <= max_length for v in lengths):
+                raise EngineRouteError(400, "invalid_measurement", "Choose two to six distinct finite lengths within the current safe piece limit and search widths no greater than half the target; widths may include zero.")
+            if len(set(lengths)) < 2:
+                raise EngineRouteError(400, "invalid_measurement", "Choose at least two distinct lengths and search widths.")
+            conservative_target = measure.target_for_maximum(min(lengths), policy["recommendation"])
+            max_width = min(policy["max_trial_seconds"], current.target_seconds / 2, conservative_target / 2)
+            if not isinstance(widths, list) or not 2 <= len(widths) <= 6 or any(
+                isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+                or not 0 <= v <= max_width for v in widths):
+                raise EngineRouteError(400, "invalid_measurement",
+                    "Choose two to six distinct finite search widths that fit half the conservative trial target; widths may include zero.")
+            if len(set(widths)) < 2:
+                raise EngineRouteError(400, "invalid_measurement", "Choose at least two distinct lengths and search widths.")
             projected = len(ids) * (sum(int(policy["audio_seconds_per_sample"] // length) for length in set(lengths)) + 2 * len(set(widths)))
             if projected > policy["max_gateway_requests"]:
                 raise EngineRouteError(400, "measurement_budget", "These trials exceed the request budget; choose fewer trial values.")
@@ -519,7 +542,7 @@ class Measurements:
         return {"deletions_by_length": rows, "seam_excess": searches, "recommendation": rec,
                 "recommendation_state": state, "recommendation_note": recommendation_note,
                 "recommendation_policy": dict(recommendation_policy), "samples": metadata,
-                "note": "Human transcripts; paired length differences use common interior reference words against the shortest successful length, bootstrapped in recording-local time blocks. Seam-minus-noise uses a difference bootstrap. Search widths are tested as requested; the current width is preferred when supported intervals overlap. Word timing may be interpolated. No settings were applied."}
+                "note": "Human transcripts; paired length differences use common interior reference words against the shortest successful length, bootstrapped in recording-local time blocks. Seam-minus-noise uses a difference bootstrap. Search widths are tested as requested; among supported widths, recommendations use the lowest paired upper confidence bound, retaining the current width only on a tie. Word timing may be interpolated. No settings were applied."}
 
 
 

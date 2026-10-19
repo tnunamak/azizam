@@ -14446,6 +14446,7 @@ def _mount_mcp(app: FastAPI) -> None:
             authenticate=lambda request, path: authenticate_request(request, path),
             call=_mcp_dispatch_call,
             stt_measurement=_mcp_stt_measurement,
+            owner_visible=_mcp_stt_measurement_visible,
             catalog=_mcp_catalog,
             aliases=lambda: _gateway_aliases_provider(),
             visible=lambda _request, auth, entry: isinstance(auth, AuthContext) and _category_entry_visible(auth, entry),
@@ -15430,13 +15431,21 @@ async def _operator_stt_admit(ctx, service_id: str) -> dict:
     if resources.get("gpu_required") is not True:
         return stt_measurement.gpu_admission(record, None, None, policy)
     gpus, depth = await asyncio.gather(asyncio.to_thread(status_endpoint._gpus_raw), asyncio.to_thread(_media_job_queue_depth))
+    # Gate acquire/release are synchronous in gateway coroutines on this event loop,
+    # so this snapshot cannot interleave with either counter update.
+    live_stt = stt_chunking.GLOBAL_STT_RESOURCE_GATE._active
+    current_task = asyncio.current_task()
+    measurement_waiters = sum(not task.done() and task is not current_task
+                              for task in STT_MEASUREMENTS.tasks.values())
+    if depth is not None:
+        depth += measurement_waiters
     attribution = await asyncio.to_thread(status_endpoint._vram_attribution, gpus, config)
     resident = {gpu["index"]: sum(row.get("used_mb", 0) for row in gpu.get("services", [])
                                   if row.get("service") == service_id
                                   and service_id != "desktop"
                                   and not str(row.get("service", "")).startswith("__"))
                 for gpu in attribution.get("per_gpu", [])}
-    return stt_measurement.gpu_admission(record, gpus, depth, policy, resident_mb=resident)
+    return stt_measurement.gpu_admission(record, gpus, depth, policy, resident_mb=resident, live_stt=live_stt)
 
 
 async def _operator_stt_preflight(ctx, service_id: str, model: str | None) -> None:
@@ -15459,6 +15468,15 @@ def _operator_stt_owner_active(ctx) -> bool:
         return False
     connection_id = getattr(ctx, "connection_id", None)
     return not connection_id or (MCP_OAUTH_ENABLED and MCP_OAUTH.connection_active(connection_id, person_id))
+
+
+def _mcp_stt_measurement_visible(_request, auth) -> bool:
+    identity = getattr(auth, "identity", None)
+    person_id = getattr(identity, "person_id", None)
+    connection_id = getattr(identity, "connection_id", None)
+    return bool(connection_id and MCP_OAUTH_ENABLED and person_id
+                and MCP_OAUTH.connection_active(connection_id, person_id)
+                and "owner" in admin_store.effective_admin_roles("user", person_id, path=ADMIN_STORE.path))
 
 
 STT_MEASUREMENTS = stt_measurement.Measurements(ADMIN_STORE, _operator_stt_transcribe, admit=_operator_stt_admit,

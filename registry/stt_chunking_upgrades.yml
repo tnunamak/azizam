@@ -12,6 +12,25 @@ upgrades:
     service_id: stt-parakeet-gpu
     when: {enabled: true, target_seconds: 30, threshold_seconds: 40, silence_search_seconds: 10}
     allowed: {silence_noise_db: [null, "-30dB"], silence_min_seconds: [null, 0.5]}
-    absent: [search_seconds, max_segment_seconds, native_long_audio]
+    absent: [search_seconds, max_segment_seconds, native_long_audio, native_long_audio_offline, native_long_audio_streaming]
     set: {search_seconds: 2, max_segment_seconds: 40}
     drop: [silence_search_seconds, silence_noise_db, silence_min_seconds]
+  - note: >-
+      Default-only allowance for long offline recordings on the seeded diarization service. It applies only while
+      its safety and lifecycle budgets still match the shipped record; operators who changed those values keep
+      their choice.
+    service_id: stt-diarize
+    when: {enabled: false, backend_timeout_seconds: 1800, deadline_seconds: 2400, max_duration_seconds: 14400,
+           max_field_bytes: 8388608}
+    allowed: {spool_dir: [null, data/stt-spool]}
+    absent: [native_long_audio, native_long_audio_offline, native_long_audio_streaming]
+    set: {native_long_audio_offline: true, native_long_audio_streaming: false}
+  - note: >-
+      Default-only allowance for streaming on the seeded streaming transcription service. It applies only while
+      its cut and request budgets still match the shipped record; operators who changed those values keep their choice.
+    service_id: stt-nemotron
+    when: {enabled: true, target_seconds: 60, threshold_seconds: 110, silence_search_seconds: 30, max_segments: 64,
+           max_duration_seconds: 3600, backend_timeout_seconds: 180, deadline_seconds: 360}
+    allowed: {spool_dir: [null, data/stt-spool]}
+    absent: [native_long_audio, native_long_audio_offline, native_long_audio_streaming]
+    set: {native_long_audio_offline: false, native_long_audio_streaming: true}

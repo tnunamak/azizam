@@ -12,6 +12,8 @@ interface Settings {
   search_seconds: number;
   max_segment_seconds: number;
   native_long_audio: boolean;
+  native_long_audio_offline: boolean;
+  native_long_audio_streaming: boolean;
 }
 interface Estimate {
   excess_pp: number;
@@ -43,11 +45,18 @@ interface Job {
 }
 interface Options {
   revision: string;
+  measurement_ready?: boolean;
+  known_limit?: boolean;
+  trial_lengths?: number[];
+  trial_lengths_note?: string | null;
   settings: Settings;
   settings_note?: string;
   policy: {
     sample_ids: string[];
     lengths: number[];
+    min_trial_seconds?: number;
+    max_trial_seconds?: number;
+    recommendation?: { target_margin: number };
     search_widths: number[];
     deadline_seconds: number;
     max_download_bytes: number;
@@ -114,6 +123,44 @@ export function LongAudioControls({
     ),
   );
   const hasSettingChanges = Object.keys(settingChanges).length > 0;
+  const settingsValid = !!settings
+    && Number.isFinite(settings.target_seconds)
+    && settings.target_seconds > 0
+    && Number.isFinite(settings.search_seconds)
+    && settings.search_seconds >= 0
+    && settings.search_seconds <= settings.target_seconds / 2
+    && Number.isFinite(settings.max_segment_seconds)
+    && settings.max_segment_seconds >= settings.target_seconds;
+  const safeTrialSeconds = settings?.max_segment_seconds ?? 0;
+  const defaultLengths = options?.trial_lengths ?? [];
+  const trialLengthValues = lengths === null
+    ? defaultLengths
+    : lengths.split(",").map((value) => Number(value.trim()));
+  const trialLengthsValid = !!options && trialLengthValues.length >= 2
+    && new Set(trialLengthValues).size === trialLengthValues.length
+    && trialLengthValues.every((length) => Number.isFinite(length)
+      && length >= (options.policy.min_trial_seconds ?? 1)
+      && length <= (options.policy.max_trial_seconds ?? 120)
+      && length <= safeTrialSeconds);
+  const conservativeTrialTarget = trialLengthValues.length > 0
+    && trialLengthValues.every(Number.isFinite)
+    ? Math.max(1, Math.floor(Math.min(...trialLengthValues)
+      * (options?.policy.recommendation?.target_margin ?? 0.75)))
+    : settings?.target_seconds ?? 0;
+  const maxTrialSearchWidth = Math.min(
+    options?.policy.max_trial_seconds ?? 120,
+    (settings?.target_seconds ?? 0) / 2,
+    conservativeTrialTarget / 2,
+  );
+  const searchWidthValues = widths === null
+    ? options?.policy.search_widths ?? []
+    : widths.split(",").map((value) => Number(value.trim()));
+  const searchWidthsValid = !!settings && searchWidthValues.length >= 2
+    && new Set(searchWidthValues).size === searchWidthValues.length
+    && searchWidthValues.every((width) => Number.isFinite(width)
+      && width >= 0
+      && width <= maxTrialSearchWidth
+      && width <= (options?.policy.max_trial_seconds ?? 120));
 
   async function action(
     path: string,
@@ -174,9 +221,27 @@ export function LongAudioControls({
       {query.error && <p role="alert">{query.error.message}</p>}
       {options && settings && (
         <>
+          {options.measurement_ready === false && (
+            <p className="text-meta text-muted-foreground">
+              Declare engine resource requirements before measuring. Set
+              resources.gpu_required, and add resources.vram_gb_estimate for a
+              GPU engine.
+            </p>
+          )}
+          {options.known_limit === false && (
+            <p className="text-meta text-muted-foreground">
+              No measured hard limit is recorded for this engine. Measure
+              long-audio settings to get evidence before declaring a limit.
+            </p>
+          )}
           {options.settings_note && (
             <p className="text-meta text-muted-foreground">
               {options.settings_note}
+            </p>
+          )}
+          {hasSettingChanges && !settingsValid && (
+            <p role="alert" className="text-meta text-destructive">
+              The hard maximum must be at least the target. Search width cannot exceed half the target.
             </p>
           )}
           <fieldset
@@ -189,6 +254,11 @@ export function LongAudioControls({
                 <Input
                   type="number"
                   min={key === "search_seconds" ? "0" : "0.001"}
+                  max={key === "search_seconds"
+                    ? settings.target_seconds / 2
+                    : key === "target_seconds"
+                      ? settings.max_segment_seconds
+                      : undefined}
                   step="any"
                   value={settings[key]}
                   onChange={(event) =>
@@ -200,6 +270,7 @@ export function LongAudioControls({
             <label className="text-meta flex items-center gap-2">
               <input
                 type="checkbox"
+                aria-label="Engine handles long audio natively"
                 checked={settings.native_long_audio}
                 onChange={(event) =>
                   setDraft({
@@ -208,7 +279,27 @@ export function LongAudioControls({
                   })
                 }
               />
-              Engine handles long audio natively
+              Legacy fallback: use native long audio in modes without an override
+            </label>
+            <p className="text-meta text-muted-foreground">
+              Mode-specific values override this legacy fallback. Declare
+              native handling separately for offline and streaming requests.
+            </p>
+            <label className="text-meta flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={settings.native_long_audio_offline}
+                onChange={(event) => setDraft({ ...draft, native_long_audio_offline: event.target.checked })}
+              />
+              Offline mode uses native long audio
+            </label>
+            <label className="text-meta flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={settings.native_long_audio_streaming}
+                onChange={(event) => setDraft({ ...draft, native_long_audio_streaming: event.target.checked })}
+              />
+              Streaming mode uses native long audio
             </label>
             <p className="text-meta text-muted-foreground">
               Save these values directly, or measure public speech to get a
@@ -218,7 +309,7 @@ export function LongAudioControls({
               type="button"
               variant="outline"
               size="sm"
-              disabled={!hasSettingChanges}
+              disabled={!hasSettingChanges || !settingsValid}
               onClick={() =>
                 void action("/stt-settings", "PATCH", settingChanges, true)
               }
@@ -264,16 +355,43 @@ export function LongAudioControls({
               <label className="text-meta">
                 Piece lengths, seconds (comma-separated)
                 <Input
-                  value={lengths ?? options.policy.lengths.join(", ")}
+                  value={lengths ?? defaultLengths.join(", ")}
+                  aria-label="Piece lengths, seconds (comma-separated)"
+                  aria-describedby="stt-measurement-length-limit"
                   onChange={(event) => setLengths(event.target.value)}
                 />
+                <span id="stt-measurement-length-limit" className="text-meta text-muted-foreground">
+                  Trials cannot exceed the current planner&apos;s safe piece limit of{" "}
+                  {safeTrialSeconds} seconds.
+                </span>
+                {options.trial_lengths_note && (
+                  <span className="text-meta text-muted-foreground">
+                    {options.trial_lengths_note}
+                  </span>
+                )}
+                {!trialLengthsValid && (
+                  <span role="alert" className="text-meta text-destructive">
+                    Choose at least two distinct trial lengths within the current safe piece limit.
+                  </span>
+                )}
               </label>
               <label className="text-meta">
                 Search widths, seconds (comma-separated)
                 <Input
                   value={widths ?? options.policy.search_widths.join(", ")}
+                  aria-label="Search widths, seconds (comma-separated)"
                   onChange={(event) => setWidths(event.target.value)}
                 />
+                <span className="text-meta text-muted-foreground">
+                  Search width is capped at half the conservative trial target
+                  ({conservativeTrialTarget} seconds), derived from the shortest
+                  trial length and recommendation margin. Maximum width: {maxTrialSearchWidth} seconds.
+                </span>
+                {!searchWidthsValid && (
+                  <span role="alert" className="text-meta text-destructive">
+                    Choose at least two distinct search widths within the planner limit.
+                  </span>
+                )}
               </label>
             </fieldset>
           </details>
@@ -291,18 +409,12 @@ export function LongAudioControls({
               type="button"
               variant="outline"
               size="sm"
-              disabled={busy || running || locked || hasSettingChanges}
+              disabled={busy || running || locked || hasSettingChanges || !settingsValid || !trialLengthsValid || !searchWidthsValid}
               onClick={() =>
                 void action("/stt-measurements", "POST", {
                   sample_ids: samples ?? options.policy.sample_ids,
-                  lengths:
-                    lengths === null
-                      ? options.policy.lengths
-                      : lengths.split(",").map(Number),
-                  search_widths:
-                    widths === null
-                      ? options.policy.search_widths
-                      : widths.split(",").map(Number),
+                  lengths: trialLengthValues,
+                  search_widths: searchWidthValues,
                 })
               }
             >

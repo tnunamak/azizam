@@ -4,6 +4,7 @@ from __future__ import annotations
 import itertools
 import random
 from pathlib import Path
+import pytest
 import yaml
 
 POLICY = yaml.safe_load((Path(__file__).resolve().parents[1] / "registry/stt_measurement.yml").read_text())["recommendation"]
@@ -82,7 +83,9 @@ def test_a_cost_at_the_cuts_shows_as_excess_and_the_noise_floor_is_flat() -> Non
 def test_no_cost_at_the_cuts_gives_an_interval_around_zero() -> None:
     reference = _recording()
     first = m.score_run(reference, _run(reference, offset=0.0))
-    second = m.score_run(reference, _run(reference, offset=15.0))
+    # 15.2 s is a word boundary in this synthetic reference. Avoid modeling a
+    # partial leading word as a perfect transcript while still staggering cuts.
+    second = m.score_run(reference, _run(reference, offset=15.2))
     excess, placebo = m.seam_excess(first, second, placebo_offset=7.5, resamples=500)
     assert excess.value_pp == 0.0 and excess.includes_zero() and placebo.includes_zero()
 
@@ -114,10 +117,10 @@ def _search(width=2, **estimate):
     return {"search": width, **_estimate(), "noise": _estimate(), "difference": _estimate(points=60, words=2400, **estimate)}
 
 
-def test_confidently_worse_length_bounds_the_planners_reachable_piece_sizes():
+def test_each_measured_length_through_the_maximum_must_pass():
     from gateway import stt_chunking
     rows = [_length(20), _length(30, low=-2, high=5), _length(40), _length(50, value=6, low=4, high=8), _length(60)]
-    assert m.select_length(rows, policy=POLICY)[0] == 40
+    assert m.select_length(rows, policy=POLICY)[0] == 20
     assert m.length_evidence(rows[1], POLICY)["state"] == "inconclusive"
     assert m.length_evidence(rows[3], POLICY)["state"] == "confidently_worse"
     assert m.select_length(rows, policy=POLICY, failed_above=40)[0] == 20
@@ -156,6 +159,58 @@ def test_width_selection_chooses_the_separated_winner_not_an_overlapping_narrowe
     searches[0]["difference"] = _estimate(value=-.5, low=-1.5, high=.5, points=60, words=2400)
     searches[2]["difference"] = _estimate(value=-3, low=-3.5, high=-2.5, points=60, words=2400)
     assert m.recommend(rows, searches, policy=POLICY, current_search=2).search_seconds == 5
+
+
+def test_recommendation_requires_every_measured_length_through_maximum_to_pass():
+    rows = [_length(20), _length(30, low=-.5, high=.9), _length(40, low=-.3, high=1.2),
+            _length(50, value=2, low=.8, high=3.4), _length(60, value=1.5, low=.2, high=2.9)]
+    choice = m.select_length(rows, policy=POLICY)
+    assert choice is None or choice[0] <= 40
+
+
+@pytest.mark.parametrize("middle", [
+    {"length": 30, "failed": True, "paired_deletion": _estimate()},
+    {"length": 30, "paired_deletion": _estimate(points=1, words=1)},
+])
+def test_failed_or_sparse_attempted_length_blocks_longer_recommendation(middle):
+    choice = m.select_length([_length(20), middle, _length(40)], policy=POLICY)
+    assert choice is not None and choice[0] == 20
+
+
+def test_length_margin_is_one_percentage_point():
+    row = _length(60, value=2.5, low=2.1, high=2.95)
+    assert POLICY["length_noninferiority_pp"] == 1.0
+    assert m.length_evidence(row, POLICY)["state"] == "confidently_worse"
+
+
+def test_unsupported_current_width_uses_lowest_upper_interval_not_zero_width():
+    rows = [_length(20), _length(40)]
+    searches = [_search(0, value=2.0, low=1.0, high=2.9), _search(1, value=1.2, low=.2, high=2.2),
+                _search(2, value=.6, low=-.3, high=1.4), _search(5, value=.5, low=-.4, high=1.3)]
+    assert m.recommend(rows, searches, policy=POLICY, current_search=None).search_seconds == 5
+    assert m.recommend(rows, searches, policy=POLICY, current_search=7).search_seconds == 5
+
+
+def test_offset_run_trims_reference_and_treats_its_start_as_a_cut():
+    reference = _recording(30, step=1)
+    run = m.Run([word.word for word in reference if word.mid >= 10], [(0, 10), (10, 20)], offset=10)
+    scored = m.score_run(reference, run)
+    assert len(scored.mids) == len(run.words)
+    assert scored.mids[0] >= 10
+    assert 10 in scored.run.seams()
+
+
+def test_seam_clearance_and_placebo_windows_do_not_overlap_cut_windows():
+    first = m.score_run(_recording(100, step=.5), m.Run([], [(0, 50), (50, 100)]))
+    second = m.score_run(_recording(100, step=.5), m.Run([], [(0, 53), (53, 100)]))
+    pairs, placebo = m.seam_pairs(first, second, half=2, placebo_offset=2)
+    assert not pairs
+    assert not placebo
+
+
+def test_default_trial_duration_cap_is_two_minutes():
+    data = yaml.safe_load((Path(__file__).resolve().parents[1] / "registry/stt_measurement.yml").read_text())
+    assert data["max_trial_seconds"] == 120
 
 
 def test_broad_raw_intervals_do_not_reject_supported_paired_evidence():

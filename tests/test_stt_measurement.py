@@ -13,6 +13,7 @@ from gateway.admin_api import AdminContext
 from gateway.stt_measurement_api import operate, public_job
 from tests.test_engine_admin_routes import _put_registry, _registry
 from tests.test_signin_who_can_enter import gateway, owner_and_admin, csrf_for  # noqa: F401
+from tests.support.fake_upstream.async_client_stub import install_async_client_stub
 
 
 @pytest.fixture
@@ -22,7 +23,7 @@ def setup(gateway, monkeypatch):
     record = service_registry.service_from_backend_config("speech-test", {
         "name": "Speech test", "host": "speech.fk.test", "port": 80,
         "capabilities": ["audio", "transcriptions"], "default_model": "test-model",
-        "chunking": {"enabled": True, "target_seconds": 30, "threshold_seconds": 40,
+        "chunking": {"enabled": True, "target_seconds": 36, "threshold_seconds": 40,
                      "search_seconds": 2, "max_segment_seconds": 40},
         "operator_note": "keep this field",
     }, source="ui")
@@ -56,6 +57,58 @@ def test_owner_settings_route_uses_real_store_cas_and_keeps_unnamed_config(setup
     assert after["services"]["speech-test"]["config"]["chunking"] == {**before["services"]["speech-test"]["config"]["chunking"], **body}
     assert after["services"]["speech-test"]["config"]["operator_note"] == "keep this field"
     assert owner.patch(path, headers={**csrf_for(owner), "If-Match": f'"os-{generation}"'}, json=body).status_code == 409
+
+
+@pytest.mark.parametrize("mode", ["offline", "streaming"])
+def test_mode_specific_native_audio_setting_can_be_configured(setup, mode):
+    gw, owner, _, runner, _ = setup
+    generation = runner.record("speech-test")[1]
+    response = owner.patch("/admin/api/engines/speech-test/stt-settings",
+        headers={**csrf_for(owner), "If-Match": f'"os-{generation}"'},
+        json={f"native_long_audio_{mode}": True})
+    assert response.status_code == 200, response.text
+    saved = runner.record("speech-test")[0]["config"]["chunking"]
+    assert saved[f"native_long_audio_{mode}"] is True
+
+
+def test_omitted_trial_lengths_use_only_values_within_the_current_safe_cap(setup, monkeypatch):
+    gw, _, _, runner, ctx = setup
+    registry, _ = gw.proxy.ADMIN_STORE.get_service_registry_snapshot()
+    registry["services"]["speech-test"]["config"]["chunking"].update(
+        target_seconds=30, search_seconds=2, max_segment_seconds=40)
+    _put_registry(gw, registry)
+    async def finish(*_args):
+        return None
+    monkeypatch.setattr(runner, "_run", finish)
+
+    async def scenario():
+        job = await runner.start(ctx, "speech-test", {"sample_ids": ["ami-TS3003a"]})
+        await runner.tasks[job["id"]]
+        return job
+
+    job = asyncio.run(scenario())
+    assert job["lengths"] == [20, 30, 40]
+
+
+def test_options_returns_only_safe_default_trial_lengths(setup):
+    gw, _, _, runner, ctx = setup
+    registry, _ = gw.proxy.ADMIN_STORE.get_service_registry_snapshot()
+    registry["services"]["speech-test"]["config"]["chunking"].update(
+        target_seconds=30, search_seconds=2, max_segment_seconds=40)
+    _put_registry(gw, registry)
+    options = asyncio.run(operate(runner, ctx, "speech-test", "options"))
+    assert options["trial_lengths"] == [20, 30, 40]
+
+
+def test_options_explains_when_fewer_than_two_default_lengths_fit(setup):
+    gw, _, _, runner, ctx = setup
+    registry, _ = gw.proxy.ADMIN_STORE.get_service_registry_snapshot()
+    registry["services"]["speech-test"]["config"]["chunking"].update(
+        target_seconds=20, search_seconds=0, max_segment_seconds=20)
+    _put_registry(gw, registry)
+    options = asyncio.run(operate(runner, ctx, "speech-test", "options"))
+    assert options["trial_lengths"] == [20]
+    assert "fewer than two" in options["trial_lengths_note"]
 
 
 @pytest.mark.parametrize("body", [{"target_seconds": 0}, {"search_seconds": -1}, {"native_long_audio": "yes"}, {"other": 1}, {"max_segment_seconds": 10}])
@@ -137,6 +190,54 @@ def test_start_preflight_runs_before_sample_preparation(setup, monkeypatch):
     assert calls == [("speech-test", None)]
 
 
+def test_trial_length_above_current_hard_maximum_is_rejected_before_job_creation(setup):
+    gw, _, _, runner, ctx = setup
+    registry, _ = gw.proxy.ADMIN_STORE.get_service_registry_snapshot()
+    registry["services"]["speech-test"]["config"]["chunking"].update(target_seconds=30, search_seconds=2)
+    _put_registry(gw, registry)
+    with pytest.raises(sm.EngineRouteError, match="current safe piece limit"):
+        asyncio.run(runner.start(ctx, "speech-test", {
+            "sample_ids": ["ami-TS3003a"], "lengths": [20, 45], "search_widths": [0, 2]}))
+    assert runner.get("speech-test") is None
+
+
+def test_declared_hard_maximum_is_a_valid_measured_trial_length(setup, monkeypatch):
+    _, _, _, runner, ctx = setup
+    async def finish(*_args):
+        return None
+    monkeypatch.setattr(runner, "_run", finish)
+
+    async def scenario():
+        job = await runner.start(ctx, "speech-test", {
+            "sample_ids": ["ami-TS3003a"], "lengths": [20, 40], "search_widths": [0, 2]})
+        await runner.tasks[job["id"]]
+        return job
+
+    job = asyncio.run(scenario())
+    assert job["lengths"] == [20, 40]
+
+
+def test_trial_search_width_above_half_the_current_target_is_rejected(setup):
+    _, _, _, runner, ctx = setup
+    with pytest.raises(sm.EngineRouteError, match="search widths"):
+        asyncio.run(runner.start(ctx, "speech-test", {
+            "sample_ids": ["ami-TS3003a"], "lengths": [20, 40], "search_widths": [0, 19]}))
+    assert runner.get("speech-test") is None
+
+
+def test_search_width_that_cannot_fit_the_shortest_possible_trial_target_is_rejected(setup, monkeypatch):
+    _, _, _, runner, ctx = setup
+    async def finish(*_args):
+        return None
+    monkeypatch.setattr(runner, "_run", finish)
+    # A 20 s recommended maximum yields a 15 s target. Width 8 is below half
+    # the current 30 s target, but from_service would clamp it to 7.5 s.
+    with pytest.raises(sm.EngineRouteError, match="conservative trial target"):
+        asyncio.run(runner.start(ctx, "speech-test", {
+            "sample_ids": ["ami-TS3003a"], "lengths": [20, 40], "search_widths": [0, 8]}))
+    assert runner.get("speech-test") is None
+
+
 def test_revoked_mcp_connection_stops_a_running_measurement(setup, monkeypatch):
     gw, _, _, runner, ctx = setup
     ctx = AdminContext(subject=ctx.subject, actor_id=ctx.actor_id, roles=ctx.roles, connection_id="grant-test")
@@ -187,6 +288,7 @@ def test_gpu_admission_credits_only_real_service_rows(setup, monkeypatch):
     monkeypatch.setattr(gw.proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
     monkeypatch.setattr(status_endpoint, "_gpus_raw", lambda: [{"index": 0}])
     monkeypatch.setattr(gw.proxy, "_media_job_queue_depth", lambda: 0)
+    monkeypatch.setattr(gw.proxy.stt_chunking.GLOBAL_STT_RESOURCE_GATE, "_active", 2)
     monkeypatch.setattr(status_endpoint, "_vram_attribution", lambda *_: {"per_gpu": [{"index": 0, "services": [
         {"service": "speech-test", "used_mb": 700}, {"service": "desktop", "used_mb": 900},
         {"service": "__unattributed", "used_mb": 600}, {"service": "__headroom", "used_mb": 1000},
@@ -195,6 +297,7 @@ def test_gpu_admission_credits_only_real_service_rows(setup, monkeypatch):
     monkeypatch.setattr(sm, "gpu_admission", lambda *args, **kwargs: captured.update(kwargs) or {"admitted": True})
     asyncio.run(gw.proxy._operator_stt_admit(ctx, "speech-test"))
     assert captured["resident_mb"] == {0: 700}
+    assert captured["live_stt"] == 2
     registry["services"]["__unattributed"] = registry["services"].pop("speech-test")
     asyncio.run(gw.proxy._operator_stt_admit(ctx, "__unattributed"))
     assert captured["resident_mb"] == {0: 0}
@@ -216,7 +319,7 @@ def test_durable_progress_interrupted_restart_and_explicit_stale_apply(setup):
     job.update(status="succeeded", report={"recommendation": {"target_seconds": 25, "search_seconds": 0, "max_segment_seconds": 35, "native_long_audio": False}})
     runner._save(job)
     before, generation = gw.proxy.ADMIN_STORE.get_service_registry_snapshot()
-    assert before["services"]["speech-test"]["config"]["chunking"]["target_seconds"] == 30
+    assert before["services"]["speech-test"]["config"]["chunking"]["target_seconds"] == 36
     assert "fingerprint" not in public_job(job)
     assert runner.apply(ctx, "speech-test", job["id"], generation)["settings"]["target_seconds"] == 25
     with pytest.raises(sm.EngineRouteError, match="changed"):
@@ -475,6 +578,14 @@ def test_gpu_admission_requires_declared_resource_data_and_cpu_needs_no_gpu():
     assert sm.gpu_admission({"resources": {"gpu_required": False}}, None, None, {})["admitted"]
 
 
+def test_gpu_admission_yields_to_live_stt_even_when_gpu_headroom_is_free():
+    record = {"resources": {"gpu_required": True, "vram_gb_estimate": 4}}
+    gpu = [{"index": 0, "memory_total_mb": 16000, "memory_used_mb": 1000, "instantaneous_util_pct": 0}]
+    policy = {"max_gpu_utilization_pct": 60, "gpu_min_free_mb": 128}
+    result = sm.gpu_admission(record, gpu, 0, policy, live_stt=1)
+    assert not result["admitted"]
+
+
 def test_cancellation_interrupts_gpu_admission_wait(setup, monkeypatch):
     _, _, _, runner, ctx = setup
     entered = asyncio.Event()
@@ -693,15 +804,11 @@ def test_http_failure_requires_trusted_upstream_size_evidence(setup, monkeypatch
     import httpx
     gw, _, _, _, ctx = setup
     _gateway_trial_config(gw, monkeypatch)
-    class Client:
-        def __init__(self, **kwargs): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *args): pass
-        async def post(self, *args, **kwargs):
-            if observed:
-                sm.observe_reply(status, "direct")
-            return httpx.Response(status, json={"error": {"code": "stt_backend_error", "message": "private upstream words"}})
-    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    async def post(*args, **kwargs):
+        if observed:
+            sm.observe_reply(status, "direct")
+        return httpx.Response(status, json={"error": {"code": "stt_backend_error", "message": "private upstream words"}})
+    install_async_client_stub(monkeypatch, post)
     audio = tmp_path / "synthetic.wav"
     audio.write_bytes(b"synthetic")
     async def scenario():
@@ -720,12 +827,9 @@ def test_http_transport_timeout_is_not_evidence_of_unsafe_length(setup, monkeypa
     import httpx
     gw, _, _, _, ctx = setup
     _gateway_trial_config(gw, monkeypatch)
-    class Client:
-        def __init__(self, **kwargs): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *args): pass
-        async def post(self, *args, **kwargs): raise httpx.ReadTimeout("private details")
-    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    async def post(*args, **kwargs):
+        raise httpx.ReadTimeout("private details")
+    install_async_client_stub(monkeypatch, post)
     audio = tmp_path / "synthetic.wav"
     audio.write_bytes(b"synthetic")
     async def scenario():
@@ -807,8 +911,9 @@ def test_default_measurement_pairs_shared_deletions_and_reports_abstention(setup
             assert report["recommendation"] is None and report["recommendation_state"] == "inconclusive"
         else:
             assert report["recommendation_state"] == "recommended"
-            assert report["recommendation"]["max_segment_seconds"] == 60
-            assert report["recommendation"]["search_seconds"] == 2
+            assert report["recommendation"]["max_segment_seconds"] == 50
+            assert next(row for row in report["deletions_by_length"] if row["length"] == 60)["state"] != "recommended"
+            assert report["recommendation"]["search_seconds"] == 1
             assert all(row["paired_deletion"]["words"] >= policy["recommendation"]["min_length_words"] for row in report["deletions_by_length"])
             assert any(row["high_pct"] - row["low_pct"] > 1 for row in report["deletions_by_length"])
     asyncio.run(scenario())

@@ -3,7 +3,8 @@
 The tests plant a distinct text in every carrier (header value, environment value, command argument after a
 credential flag, command line, URL user info and query, probe path query, package source URL), run the move, and
 check three things: no planted text is left in the record, each is stored apart and resolves to exactly what the
-legacy record sent, and a record with nothing to move comes back equal with nothing written.
+legacy record sent, and a record with nothing to move creates no secret or key. The later D47 default-only
+service upgrade is checked separately.
 """
 
 from __future__ import annotations
@@ -21,6 +22,24 @@ FIXTURE = Path(__file__).parent / "fixtures" / "live_shaped_registry.json"
 S = {name: f"SEED-{name}" for name in (
     "header", "env", "argv-flag", "argv-eq", "argv-attached", "line", "user", "password", "query", "fragment",
     "probe", "package-user", "package-query")}
+
+
+def _schema15_expected_registry(registry: dict) -> dict:
+    """The three default-only D47 seed changes that also run on old stores."""
+    expected = copy.deepcopy(registry)
+    parakeet = expected["services"]["stt-parakeet-gpu"]["config"]["chunking"]
+    for old_key in ("silence_search_seconds", "silence_noise_db", "silence_min_seconds"):
+        parakeet.pop(old_key, None)
+    parakeet.update(search_seconds=2, max_segment_seconds=40)
+    expected["services"]["stt-diarize"]["config"]["chunking"].update(
+        native_long_audio_offline=True,
+        native_long_audio_streaming=False,
+    )
+    expected["services"]["stt-nemotron"]["config"]["chunking"].update(
+        native_long_audio_offline=False,
+        native_long_audio_streaming=True,
+    )
+    return expected
 
 
 @pytest.fixture
@@ -206,23 +225,24 @@ def test_the_schema_11_migration_moves_the_inline_secrets_once_and_audits_counts
     runtime_secrets.configure(None)
 
 
-def test_the_schema_11_migration_on_a_live_shaped_registry_is_a_no_op(tmp_path):
+def test_the_schema_11_migration_on_a_live_shaped_registry_does_not_externalize_or_create_a_key(tmp_path):
     path = tmp_path / "admin.db"
     registry = json.loads(FIXTURE.read_text())
     _v10_database(path, registry)
-    before = json.dumps(registry)
+    expected = json.dumps(_schema15_expected_registry(registry))
 
     admin_store.init_db(path)
 
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == admin_store.SCHEMA_VERSION
-        assert conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0] == before
-        assert conn.execute("SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key='service_registry'").fetchone()[0] == 1
+        assert conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0] == expected
+        assert conn.execute("SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key='service_registry'").fetchone()[0] == 2
         assert conn.execute("SELECT count(*) FROM audit_events WHERE action='operator.secrets.externalize'").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM audit_events WHERE action='operator.stt_chunking.migrate'").fetchone()[0] == 1
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         count = conn.execute("SELECT count(*) FROM provider_secrets").fetchone()[0] if "provider_secrets" in tables else 0
     assert count == 0
-    assert not (tmp_path / secret_store.DEFAULT_KEY_FILE).exists(), "a migration with nothing to move must not create a key"
+    assert not (tmp_path / secret_store.DEFAULT_KEY_FILE).exists(), "a migration with no secrets must not create a key"
 
 
 def test_the_admin_key_of_a_load_unload_driver_is_one_entry(db):

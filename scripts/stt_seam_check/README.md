@@ -28,7 +28,7 @@ scripts/stt-seam-check \
   --recordings earnings21/4366522,icsi/Bdb001_first30min,ami/TS3003a,ami/ES2014a \
   --arm current=/path/to/old/tree --arm d47=$PWD \
   --chunking 'current={...old chunking block...}' --chunking 'd47={...new chunking block...}' \
-  --engine-port 8017 --hard-max 40 --out ~/Documents/azizam/stt-seam-eval/runs/$(date +%F)
+  --engine-port 8017 --model <engine-model-id> --hard-max 40 --out ~/Documents/azizam/stt-seam-eval/runs/$(date +%F)
 ```
 
 Use the repo's venv Python (it needs `httpx`, `PyYAML` and `uvicorn`). Outputs: `REPORT.md`, `results.json`, `raw/` (per

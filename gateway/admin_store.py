@@ -47,7 +47,7 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 # Schema 7 replaced profiles with access plans (gateway.access_plan_migration).
 _PRE_ACCESS_PLANS_VERSION = 6
 _ACCESS_PLANS_VERSION = 7
@@ -65,9 +65,9 @@ _SECRET_REFS_VERSION = 11
 _DRIVER_KEY_ORIGIN_VERSION = 12
 # Schema 13 binds the credentials stored with each URL field to its effective origin (gateway.url_binding_migration).
 _URL_BINDING_VERSION = 13
-# Schema 14 moves a stored transcription record from the silence-based cut planner to the quietest-frame planner
+# Schema 15 adds mode-specific long-audio defaults to matching transcription records
 # (gateway.stt_chunking_upgrade; the rules are registry/stt_chunking_upgrades.yml).
-_STT_CHUNKING_VERSION = 14
+_STT_CHUNKING_VERSION = 15
 # The OIDC client secret lives in the encrypted secret store; the
 # oidc_provider_config setting holds only this reference to it.
 OIDC_CLIENT_SECRET_REF = "client_secret_ref"

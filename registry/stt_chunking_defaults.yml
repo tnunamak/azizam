@@ -4,10 +4,11 @@
 # Core code holds no engine-derived number: a value that is right for one engine belongs in that engine's record
 # (or in what the "measure long-audio settings" action recommends for it), not here.
 #
-# threshold_seconds: files longer than this are cut (and a file longer than max_segment_seconds is always cut).
+# threshold_seconds: eligible files longer than this are planned for cutting.
 # target_seconds: distance between cuts.
 # search_seconds: how far from a target the quietest 20 ms frame is looked for (subject to the hard maximum).
-# max_segment_seconds: the longest piece the engine is sent. `derive` means target plus twice the search width.
+# max_segment_seconds: the planner's ceiling. `derive` means target plus twice the search width; only a maximum
+# saved on the service record authorizes refusal of an uncut request.
 defaults:
   threshold_seconds: 720
   target_seconds: 480

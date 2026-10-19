@@ -293,7 +293,14 @@ async def _observe_stt(proxy: Any, upstream: _Upstream, scratch: Path, only: fro
         with ExitStack() as stack:
             stack.enter_context(patch.object(proxy, "_stt_execution_snapshot", return_value=execution))
             stack.enter_context(patch.object(stt_chunking, "probe_audio", AsyncMock(return_value=stt_chunking.ProbedAudio(duration, 16000, 1))))
-            stack.enter_context(patch.object(stt_chunking, "decode_planning_pcm", AsyncMock()))
+            async def decode_planning_pcm(_source: Path, destination: Path, **_kwargs: Any) -> None:
+                # The planner now measures the decoded signal.  Model ffmpeg's
+                # 16 kHz mono s16le output so this route harness exercises the
+                # real duration calculation instead of an empty AsyncMock file.
+                with destination.open("wb") as pcm:
+                    pcm.truncate(int(duration * 16_000 * 2))
+
+            stack.enter_context(patch.object(stt_chunking, "decode_planning_pcm", decode_planning_pcm))
             stack.enter_context(patch.object(stt_chunking, "plan_quietest_frame_segments", plan))
             stack.enter_context(patch.object(stt_chunking, "extract_segment", extract))
             stack.enter_context(patch.object(proxy.receipt_store, "begin"))
