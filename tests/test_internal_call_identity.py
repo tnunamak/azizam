@@ -22,7 +22,7 @@ from fastapi.routing import APIRoute
 
 import proxy
 from gateway import accounts, admin_store
-from gateway.receipts import RouteReceipt
+from gateway.receipts import RouteReceipt, new_request_id
 from tests.support.access import store_plan
 
 
@@ -125,7 +125,7 @@ class ChildReceiptIdentityTests(unittest.TestCase):
 
     def test_unknown_parent_records_no_app(self) -> None:
         child = RouteReceipt(protocol="openai.chat", path="/v1/chat/completions", intent="chat.generate",
-                             parent_request_id="req_unknown")
+                             parent_request_id=new_request_id())
         self.assertIsNone(child.app_id)
 
 
