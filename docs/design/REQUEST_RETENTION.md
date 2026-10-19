@@ -1608,6 +1608,21 @@ live 5000 or 15000 services.
 **Slice 1 as built.** Slice 1 changes no decision. These points are where
 the build chose a form that the text above leaves open:
 
+- The slice 1 validator accepts only the reader, parts and group values that
+  its existing routes enforce. It refuses `maker_signed_in`, a changed parts
+  set and a second or renamed group with a reason naming slice 5. A narrower
+  reader value cannot silently leave key-based Library downloads available.
+- If a bundled period is removed, an older stored member choice maps to the
+  group's current `default_retention`, and an older stored household cap maps
+  to `default_cap`. The same normalization feeds the settings view, request
+  decision and writer. On restart, prompt deadlines for affected rows are
+  shortened to the new effective period; earlier deadlines never lengthen.
+  The bundled file is pinned for the process lifetime so this repair precedes
+  serving requests under the new contract.
+- Schema 14 keeps unknown legacy setting fields under `legacy_unclassified`
+  in storage. The owner and member settings API projections omit them, in line
+  with D34; later settings edits preserve them.
+
 - The household policy is operator setting `retention`. Admin schema 14 moves
   `prompt_memory` to it (`gateway/retention_migration.py`) and an older gateway
   refuses the database, so a rollback cannot read the kill switch as unset. The

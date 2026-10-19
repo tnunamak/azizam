@@ -102,6 +102,9 @@ Changing a member's retention or the owner cap shortens existing deadlines;
 it does not lengthen an earlier deadline. Prompt-bearing writes recheck these
 settings under an admin database write lock, so an in-flight generation cannot
 restore a prompt after the owner switches memory off.
+If a registry update removes a stored period choice, that choice resolves to
+the current member or household default. The gateway applies the same period
+to settings display, new writes and existing prompt deadlines on restart.
 
 | Viewer | Own asset prompt/title | Another person's prompt/title | Full workflow download |
 | --- | --- | --- | --- |

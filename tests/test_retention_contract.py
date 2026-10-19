@@ -478,6 +478,19 @@ def test_removed_stored_period_has_one_display_decision_and_writer_deadline(tmp_
     assert prompt_memory.get("removed-period-asset", person, path=media_path)["kept_until"] == expected_deadline
     from gateway import settings_api
     assert settings_api.prompt_memory_settings(admin_path)["retention_cap"] == "3_months"
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from gateway.admin_oidc import AdminSession
+    from gateway.me_prompt_memory import create_me_prompt_memory_router
+    app = FastAPI()
+    app.include_router(create_me_prompt_memory_router(
+        session_provider=lambda request: AdminSession(subject=person, role="none", email=None,
+                                                      issued_at=time.time(), expires_at=time.time() + 60),
+        admin_db_path=admin_path, prompt_memory_path=media_path,
+        household_provider=lambda: prompt_memory.household_settings(admin_path=admin_path)))
+    response = TestClient(app).get("/me/api/prompt-memory")
+    assert response.status_code == 200
+    assert response.json()["prompt_memory"]["effective_retention"] == "3_months"
 
 
 def test_removed_period_shortens_existing_prompt_deadlines(tmp_path, monkeypatch):
