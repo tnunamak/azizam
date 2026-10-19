@@ -630,6 +630,65 @@ def test_startup_repair_reads_policy_while_another_writer_holds_admin_lock(tmp_p
         assert prompt_memory.tighten_contract_periods(admin_path=admin_path, path=media_path) == 1
 
 
+@pytest.mark.parametrize("owner_cap", [False, True])
+def test_deleted_stored_period_uses_shortest_finite_offered_choice(monkeypatch, owner_cap):
+    data = _bundled_data()
+    data["groups"]["prompts"].update(choices=["never", "3_months"],
+                                      default_retention="never", default_cap="never")
+    del data["retention_choices"]["1_year"]
+    contract = retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
+    monkeypatch.setattr(retention, "bundled", lambda: contract)
+    assert retention.normalize_period("1_year", kind=retention.LIBRARY_PROMPT, owner_cap=owner_cap) == "3_months"
+    member = {"remember": True, "retention": "never" if owner_cap else "1_year"}
+    household = {"retention_cap": "1_year" if owner_cap else "never"}
+    decision = retention.decide(retention.LIBRARY_PROMPT, person_id="person", member=member,
+                                household_policy=household, request_body={}, now=NOW)
+    assert decision.kept_until == NOW + 90 * 86400
+
+
+def test_known_stored_period_stays_exact_when_not_offered(tmp_path, monkeypatch):
+    from gateway import settings_api
+    from gateway.me_prompt_memory import _member_settings
+    data = _bundled_data()
+    data["groups"]["prompts"].update(choices=["never", "1_year"],
+                                      default_retention="never", default_cap="never")
+    contract = retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
+    monkeypatch.setattr(retention, "bundled", lambda: contract)
+    assert retention.normalize_period("3_months", kind=retention.LIBRARY_PROMPT, owner_cap=False) == "3_months"
+    admin_path = tmp_path / "admin.db"
+    admin_store.init_db(admin_path)
+    person = admin_store.upsert_oidc_user("iss", "legacy-choice", path=admin_path)["id"]
+    with sqlite3.connect(admin_path) as conn:
+        conn.execute("UPDATE prompt_memory_preferences SET retention='3_months' WHERE user_id=?", (person,))
+        conn.execute("INSERT INTO operator_settings(key,value_json,updated_at) VALUES('retention',?,1)",
+                     (json.dumps({"groups": {"prompts": {"retention_cap": "3_months"}}}),))
+    assert _member_settings(person, path=admin_path)["retention"] == "3_months"
+    assert settings_api.prompt_memory_settings(admin_path)["retention_cap"] == "3_months"
+    assert contract.public()["known_unoffered"] == [{"id": "3_months", "seconds": 90 * 86400}]
+
+
+def test_startup_tightens_saved_prompts_without_a_preference_row(tmp_path, monkeypatch):
+    from gateway import prompt_memory
+    admin_path, media_path = tmp_path / "admin.db", tmp_path / "media.db"
+    admin_store.init_db(admin_path)
+    person = admin_store.upsert_oidc_user("iss", "missing-preference", path=admin_path)["id"]
+    with sqlite3.connect(admin_path) as conn:
+        conn.execute("DELETE FROM prompt_memory_preferences WHERE user_id=?", (person,))
+    created = int(time.time()) - 86400
+    prompt_memory._connect(media_path).close()
+    with sqlite3.connect(media_path) as conn:
+        conn.execute("INSERT INTO asset_prompts VALUES(?,?,?,?,?,?)", ("asset", person, "prompt", None, created, None))
+    data = _bundled_data()
+    data["groups"]["prompts"]["default_retention"] = "3_months"
+    contract = retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
+    monkeypatch.setattr(retention, "bundled", lambda: contract)
+    assert prompt_memory.tighten_contract_periods(admin_path=admin_path, path=media_path) == 1
+    with sqlite3.connect(media_path) as conn:
+        assert conn.execute("SELECT kept_until FROM asset_prompts WHERE asset_id='asset'").fetchone()[0] == (
+            created + 90 * 86400)
+    assert admin_store.get_prompt_memory_preference(person, path=admin_path) is None
+
+
 def test_a_missing_file_stops_startup_with_a_plain_message(tmp_path, monkeypatch):
     import asyncio
     import proxy
