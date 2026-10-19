@@ -58,12 +58,14 @@ were still stored.
   its surviving jobs end; `fuser -v ~/.tmp/azizam-ci.lock` lists them. Do
   not wrap `ci-local` in `flock` on the same file: the inner lock would wait
   for the outer one forever.
-- Each step has a 1200-second wall-clock limit. GNU `timeout` sends TERM at
-  that limit and KILL 20 seconds later. `ci-local` tracks the timeout process
-  group and kills remaining descendants on expiry or interruption, even when
-  their command lines do not name the run directory. The step receipt records
-  exit 124 or 137 and names the timed-out step. This cap is above the normal
-  whole-gate duration.
+- Each step has a 1200-second wall-clock limit. Set
+  `AZIZAM_CI_STEP_TIMEOUT_S` to a positive number of seconds for a test run;
+  values above 3600 are clamped to 3600. GNU `timeout` sends TERM at the
+  limit and KILL 20 seconds later. On interruption, `ci-local` stops job
+  supervisors before sweeping their recorded timeout process groups, so a
+  multi-step job cannot start an unrecorded next step. It also sweeps remaining
+  descendants on expiry. Exit 124, or exit 137 after the configured limit,
+  reports a timeout; an earlier exit 137 reports SIGKILL (possibly OOM).
 - The hosted workflow runs only when started by hand
   (`gh workflow run CI --ref <branch>`). It uploads diagnostics only when a
   job fails, keeps them 1 day, and cancels an older run on the same ref.

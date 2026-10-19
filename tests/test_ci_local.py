@@ -281,18 +281,35 @@ def test_failed_runs_keep_logs_without_scratch(world: World) -> None:
     assert world.run_dirs() == []
 
 
-@pytest.mark.parametrize("timeout_rc", [124, 137])
-def test_a_timed_out_step_fails_with_its_name_and_receipt(world: World, timeout_rc: int) -> None:
+@pytest.mark.parametrize("timeout_rc, limit, delay, message", [
+    (124, "1200", "", "exceeded the 1200-second step limit"),
+    (137, "1200", "", "was killed by SIGKILL (possibly OOM)"),
+    (137, "0.2", "sleep .3", "exceeded the 0.2-second step limit"),
+])
+def test_a_timed_out_step_fails_with_its_name_and_receipt(
+    world: World, timeout_rc: int, limit: str, delay: str, message: str
+) -> None:
     timeout = world.bin / "timeout"
     timeout.write_text("#!/usr/bin/env bash\n"
-                       f"if [[ $* == *run-hermetic-pytest.sh* ]]; then exit {timeout_rc}; fi\n"
-                       "while [[ $1 != 1200s ]]; do shift; done\n"
+                       f"if [[ $* == *run-hermetic-pytest.sh* ]]; then {delay + '; ' if delay else ''}exit {timeout_rc}; fi\n"
+                       f"while [[ $1 != {limit}s ]]; do shift; done\n"
                        "shift; exec \"$@\"\n")
     timeout.chmod(0o755)
-    result = world.run()
+    result = world.run(AZIZAM_CI_STEP_TIMEOUT_S=limit)
     assert result.returncode == 1, result.stdout + result.stderr
-    assert "python-hermetic exceeded the 1200-second step limit" in result.stdout
+    assert f"python-hermetic {message}" in result.stdout
     assert f"python-hermetic\t{timeout_rc}\t" in (world.receipts / "steps.tsv").read_text()
+
+
+def test_step_limit_is_clamped_to_one_hour(world: World) -> None:
+    timeout = world.bin / "timeout"
+    timeout.write_text("#!/usr/bin/env bash\n"
+                       "[[ $* == *3600s* ]] || exit 92\n"
+                       "while [[ $1 != 3600s ]]; do shift; done\n"
+                       "shift; exec \"$@\"\n")
+    timeout.chmod(0o755)
+    result = world.run(AZIZAM_CI_STEP_TIMEOUT_S="9000")
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def _step_with_unrelated_grandchild(world: World) -> Path:
@@ -322,11 +339,52 @@ def test_interrupt_kills_step_grandchild_without_run_dir_in_command_line(world: 
     assert world.lock_is_free(), "the grandchild must release the host lock"
 
 
+def test_interrupt_stops_multistep_jobs_before_sweeping_step_groups(world: World) -> None:
+    # fresh-venv can finish while cleanup sweeps timeout groups. Its still-live
+    # supervisor would then start fresh-compose in a group the sweep never saw.
+    uv = world.bin / "uv"
+    uv.write_text("#!/usr/bin/env bash\n"
+                  "if [[ $1 == python ]]; then echo /usr/bin/python3\n"
+                  "elif [[ $1 == venv ]]; then\n"
+                  "  for arg; do dir=$arg; done; mkdir -p \"$dir/bin\"\n"
+                  "  ln -sf /usr/bin/python3 \"$dir/bin/python\"\n"
+                  "  sleep 80 & echo $! > \"$HOME/venv-grandchild.pid\"\n"
+                  "  wait $!\n"
+                  "fi\n")
+    fresh = world.repo / "scripts/e2e/fresh_instance.sh"
+    fresh.write_text("#!/usr/bin/env bash\n"
+                     "if [[ ${1:-} == --compose ]]; then\n"
+                     "  bash -c 'trap \"\" TERM; exec sleep 85' &\n"
+                     "  echo $! > \"$HOME/compose-grandchild.pid\"\n"
+                     "  wait $!\n"
+                     "fi\n")
+    _git(world.repo, "add", "scripts/e2e/fresh_instance.sh")
+    _git(world.repo, "commit", "-qm", "multi-step interrupt fixture")
+    process = world.start(AZIZAM_CI_STEP_TIMEOUT_S="60")
+    try:
+        first_child = world.home / "venv-grandchild.pid"
+        deadline = time.monotonic() + 30
+        while not first_child.is_file() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert first_child.is_file(), "the first step did not start"
+        subprocess.run(["bash", "-c", SIGNAL_CONTROLLER.format("TERM")], env=world.env(), check=True)
+        assert process.wait(timeout=40) == 143
+        assert _grandchild_has_exited(first_child)
+        next_child = world.home / "compose-grandchild.pid"
+        assert not next_child.exists() or _grandchild_has_exited(next_child)
+        assert world.lock_is_free(), "a later step still holds the host lock"
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=10)
+        process.stdout.close()
+
+
 def test_expiry_kills_step_grandchild_without_run_dir_in_command_line(world: World) -> None:
     grandchild = _step_with_unrelated_grandchild(world)
     result = world.run(AZIZAM_CI_STEP_TIMEOUT_S="0.2")
     assert result.returncode == 1, result.stdout + result.stderr
-    assert "python-hermetic exceeded the 1200-second step limit" in result.stdout
+    assert "python-hermetic exceeded the 0.2-second step limit" in result.stdout
     assert grandchild.is_file() and _grandchild_has_exited(grandchild)
     assert world.lock_is_free(), "the grandchild must release the host lock"
 

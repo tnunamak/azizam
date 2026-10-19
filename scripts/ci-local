@@ -42,6 +42,22 @@ if [[ ! $seed =~ ^[0-9]{1,9}$ ]]; then
   echo "--order-seed must be an integer from 0 to 999999999" >&2
   exit 2
 fi
+step_limit_s=${AZIZAM_CI_STEP_TIMEOUT_S:-1200}
+if [[ ! $step_limit_s =~ ^([0-9]{1,9})(\.([0-9]{1,6}))?$ ]]; then
+  echo "AZIZAM_CI_STEP_TIMEOUT_S must be a positive number of seconds" >&2
+  exit 2
+fi
+whole_seconds=${BASH_REMATCH[1]}
+fraction_us=${BASH_REMATCH[3]:-}000000
+step_limit_us=$((10#$whole_seconds * 1000000 + 10#${fraction_us:0:6}))
+if ((step_limit_us == 0)); then
+  echo "AZIZAM_CI_STEP_TIMEOUT_S must be greater than zero" >&2
+  exit 2
+fi
+if ((step_limit_us > 3600000000)); then
+  step_limit_s=3600
+  step_limit_us=3600000000
+fi
 if [[ -n $closes_nightly_red && ! $closes_nightly_red =~ ^[1-9][0-9]*$ ]]; then
   echo "--closes-nightly-red must be an issue number" >&2
   exit 2
@@ -163,18 +179,20 @@ stop_recorded_groups() {
   local file pgid
   for file in "$step_groups"/$1; do
     [[ -f $file ]] || continue
-    read -r pgid < "$file"
-    [[ $pgid =~ ^[1-9][0-9]*$ ]] && stop_step_group "$pgid"
+    read -r pgid < "$file" || pgid=
+    if [[ $pgid =~ ^[1-9][0-9]*$ && $pgid != 1 ]]; then stop_step_group "$pgid"; fi
+    rm -f -- "$file"
   done
 }
 cleanup() {
   local pid directory deadline=$((SECONDS + 20))
   trap '' INT TERM
-  # timeout uses a second process group. Kill it before removing the outer
-  # supervisor; its descendants need not mention $run in their command lines.
-  stop_recorded_groups '*'
+  # Stop supervisors first: a live multi-step job could start another timeout
+  # group after the recorded-group sweep has already expanded its file list.
   # Every background job has its own session: never kill the caller's group.
   for pid in "${pids[@]}"; do kill -TERM -- "-$pid" 2>/dev/null || true; done
+  # timeout uses a second process group. Its descendants need not mention $run.
+  stop_recorded_groups '*'
   for pid in "${pids[@]}"; do
     while kill -0 -- "-$pid" 2>/dev/null && ((SECONDS < deadline)); do sleep .2; done
     kill -KILL -- "-$pid" 2>/dev/null || true
@@ -213,18 +231,21 @@ if [[ -x $gate_time ]]; then cost_mode=gnu-time; fi
 failed=0
 step() {
   local name=$1; shift
-  local start=$SECONDS rc=0
+  local start=$SECONDS start_us=${EPOCHREALTIME/./} rc=0 elapsed_us
   echo "== $name"
   # Run in the background and wait: a trapped INT or TERM interrupts wait at
   # once, while a foreground child would make bash defer or drop the signal.
   ( measure_step "$name" "$@" ) > "$receipts/logs/$name.log" 2>&1 &
   wait "$!" || rc=$?
+  elapsed_us=$(( ${EPOCHREALTIME/./} - start_us ))
   # One writer per file; aggregation happens only after every job is reaped.
   printf '%s\t%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" "$(cost_columns "$name")" > "$receipts/steps/$name.tsv"
   if ((rc)); then
     failed=1
-    if ((rc == 124 || rc == 137)); then
-      echo "   FAILED: $name exceeded the 1200-second step limit: $receipts/logs/$name.log"
+    if ((rc == 124 || (rc == 137 && elapsed_us >= step_limit_us))); then
+      echo "   FAILED: $name exceeded the ${step_limit_s}-second step limit: $receipts/logs/$name.log"
+    elif ((rc == 137)); then
+      echo "   FAILED: $name was killed by SIGKILL (possibly OOM): $receipts/logs/$name.log"
     else
       echo "   FAILED (exit $rc): $receipts/logs/$name.log"
     fi
@@ -239,10 +260,10 @@ measure_step() {
   local cost=$receipts/steps/$name.cost
   local group_file=$step_groups/${CI_JOB_PID:-main}.$name deadline_pid rc=0
   if [[ $cost_mode == gnu-time ]] && : > "$cost" 2>/dev/null; then
-    timeout --signal=TERM --kill-after=20s "${AZIZAM_CI_STEP_TIMEOUT_S:-1200}s" \
+    timeout --signal=TERM --kill-after=20s "${step_limit_s}s" \
       "$gate_time" -q -o "$cost" -f '%e %U %S %M' "$@" &
   else
-    timeout --signal=TERM --kill-after=20s "${AZIZAM_CI_STEP_TIMEOUT_S:-1200}s" \
+    timeout --signal=TERM --kill-after=20s "${step_limit_s}s" \
       python3 -I "$repo/scripts/ci/gate_cost.py" run "$cost" -- "$@" &
   fi
   deadline_pid=$!
@@ -274,7 +295,7 @@ cleanup_step() {
     rm -rf -- "$@"
   fi
 }
-export receipts work skip_compose py_workers run seed repo gate_time cost_mode step_groups
+export receipts work skip_compose py_workers run seed repo gate_time cost_mode step_groups step_limit_s step_limit_us
 export -f step cleanup_step measure_step cost_columns stop_step_group
 start_job() {
   local directory=$1; shift
