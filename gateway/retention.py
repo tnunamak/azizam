@@ -199,27 +199,28 @@ def parse_contract(data: Any, *, schema: Mapping[str, Any], source: str = "<memo
     return Contract(data=copy.deepcopy(data), source=source)
 
 
-_MEMO: dict[tuple[Path, Path], tuple[tuple[int, int], Contract]] = {}
+_MEMO: dict[tuple[Path, Path], Contract] = {}
 
 
 def load_contract(path: Path = BUNDLED_PATH, schema_path: Path = SCHEMA_PATH) -> Contract:
-    """Read and validate the bundled file. It is parsed again only when a file changes."""
+    """Read and validate the bundled file once per process; edits apply after restart and deadline repair."""
+    cached = _MEMO.get((path, schema_path))
+    if cached is not None:
+        return cached
     try:
-        signature = (path.stat().st_mtime_ns, schema_path.stat().st_mtime_ns)
+        path.stat()
+        schema_path.stat()
     except OSError as exc:
         raise RetentionDataError(
             f"{path}: cannot read the retention file ({exc.strerror or exc}); the gateway keeps no default of its own"
         ) from None
-    cached = _MEMO.get((path, schema_path))
-    if cached is not None and cached[0] == signature:
-        return cached[1]
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, yaml.YAMLError) as exc:
         raise RetentionDataError(f"{path}: cannot read the retention file ({exc})") from None
     contract = parse_contract(data, schema=schema, source=str(path))
-    _MEMO[(path, schema_path)] = (signature, contract)
+    _MEMO[(path, schema_path)] = contract
     return contract
 
 
@@ -262,7 +263,7 @@ def prompts_view(document: Mapping[str, Any] | None) -> dict[str, Any]:
         if "default_keep" in group:
             view["default_remember"] = group["default_keep"]
         if "retention_cap" in group:
-            view["retention_cap"] = group["retention_cap"]
+            view["retention_cap"] = normalize_period(group["retention_cap"], kind=LIBRARY_PROMPT, owner_cap=True)
     return view
 
 
@@ -322,7 +323,7 @@ def household(document: Mapping[str, Any] | None) -> dict[str, Any]:
 # ---------------------------------------------------------------------- periods
 
 
-def _normalize_period(value: str, *, kind: str, owner_cap: bool) -> str:
+def normalize_period(value: str, *, kind: str, owner_cap: bool) -> str:
     """Map a stored choice removed from this group's choices to its current default."""
     contract = bundled()
     if value in contract.choices(kind):
@@ -335,8 +336,8 @@ def effective_period(member_period: str, cap: str, kind: str = LIBRARY_PROMPT) -
     """The shorter normalized period; display, decisions and writes use this same result."""
     contract = bundled()
     seconds = contract.seconds_map()
-    periods = (_normalize_period(member_period, kind=kind, owner_cap=False),
-               _normalize_period(cap, kind=kind, owner_cap=True))
+    periods = (normalize_period(member_period, kind=kind, owner_cap=False),
+               normalize_period(cap, kind=kind, owner_cap=True))
     finite = [value for value in periods if seconds[value] is not None]
     if not finite:
         return contract.no_expiry(kind)

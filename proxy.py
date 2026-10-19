@@ -12705,6 +12705,8 @@ async def lifespan(app: FastAPI):
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
+    await asyncio.to_thread(prompt_memory.tighten_removed_periods,
+                            admin_path=ADMIN_DB_PATH, path=media_jobs.DB_PATH)
     await asyncio.to_thread(_adopt_bootstrap_signin_lists)
     await asyncio.to_thread(_migrate_host_command_permission)
     from gateway.lifecycle_drivers import _process_driver

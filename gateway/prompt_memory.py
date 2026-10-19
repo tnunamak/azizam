@@ -288,6 +288,70 @@ def tighten_retention(period: str, *, person_id: str | None = None,
         conn.close()
 
 
+def tighten_removed_periods(*, admin_path: Path, path: Path | None = None) -> int:
+    """On startup, shorten old prompts when a bundled choice was removed.
+
+    Stored member and household choices stay unchanged. The same normalized
+    period used for display and new writes determines the older rows' ceiling.
+    Settings writes wait on the admin lock while this update runs.
+    """
+    contract = retention.bundled()
+    choices = set(contract.choices(retention.LIBRARY_PROMPT))
+    admin_conn = connect(admin_path, timeout=5)
+    try:
+        admin_conn.execute("BEGIN IMMEDIATE")
+        row = admin_conn.execute("SELECT value_json FROM operator_settings WHERE key=?",
+                                 (retention.SETTING_KEY,)).fetchone()
+        document = json.loads(row[0]) if row else {}
+        group = document.get("groups", {}).get(retention.GROUP_PROMPTS, {})
+        cap = group.get("retention_cap", contract.household_defaults(retention.LIBRARY_PROMPT)["retention_cap"])
+        members = admin_conn.execute("SELECT user_id, retention FROM prompt_memory_preferences").fetchall()
+        if cap in choices and all(period in choices for _, period in members):
+            admin_conn.commit()
+            return 0
+
+        media_conn = _connect(path)
+        try:
+            changed = 0
+
+            def shorten(seconds: int, person_id: str | None = None) -> None:
+                nonlocal changed
+                where = " AND person_id=?" if person_id else ""
+                args: tuple[Any, ...] = (person_id,) if person_id else ()
+                changed += media_conn.execute(
+                    "UPDATE asset_prompts SET kept_until=created_at+? "
+                    "WHERE (kept_until IS NULL OR kept_until>created_at+?)" + where,
+                    (seconds, seconds, *args),
+                ).rowcount
+
+            if cap not in choices:
+                cap_period = retention.normalize_period(cap, kind=retention.LIBRARY_PROMPT, owner_cap=True)
+                cap_seconds = contract.seconds_map()[cap_period]
+                if cap_seconds is not None:
+                    shorten(cap_seconds)
+            for person_id, member_period in members:
+                if cap in choices and member_period in choices:
+                    continue
+                period = retention.effective_period(member_period, cap)
+                seconds = contract.seconds_map()[period]
+                if seconds is not None:
+                    shorten(seconds, person_id)
+            media_conn.execute("DELETE FROM asset_prompts WHERE kept_until<=?", (int(time.time()),))
+            media_conn.commit()
+        except Exception:
+            media_conn.rollback()
+            raise
+        finally:
+            media_conn.close()
+        admin_conn.commit()
+        return changed
+    except Exception:
+        admin_conn.rollback()
+        raise
+    finally:
+        admin_conn.close()
+
+
 def get(asset_id: str, person_id: str | None, *, path: Path | None = None) -> dict[str, Any] | None:
     if not person_id:
         return None
