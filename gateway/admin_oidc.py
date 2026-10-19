@@ -168,7 +168,11 @@ class CookieConfig:
     """Settings for the signed admin-session cookie."""
 
     name: str = "opx_admin_session"
-    max_age_seconds: int = 60 * 60 * 8  # 8h default — admins re-auth daily-ish
+    # Not the session lifetime: that is the owner's session policy
+    # (gateway.session_policy). This is how long a role the identity provider
+    # granted stays confirmed after a sign-in, and the lifetime of a session
+    # built without a policy.
+    max_age_seconds: int = 60 * 60 * 8
     secure: bool = True
     http_only: bool = True
     same_site: str = "lax"  # "lax" | "strict" | "none"
@@ -511,6 +515,8 @@ class StateRecord:
     # Set for a test sign-in from Settings: the callback records what came
     # back for that test and signs no one in.
     test_id: str = ""
+    # Set when the person is confirming a sign-in they already have (step-up).
+    reauth: bool = False
 
 
 def record_state(
@@ -523,6 +529,7 @@ def record_state(
     browser_cookie_name: str = "",
     browser_binding_hash: str = "",
     test_id: str = "",
+    reauth: bool = False,
     state: str | None = None,
     now: float | None = None,
     max_age_seconds: int = 600,
@@ -545,6 +552,7 @@ def record_state(
         browser_cookie_name=browser_cookie_name,
         browser_binding_hash=browser_binding_hash,
         test_id=test_id,
+        reauth=reauth,
     )
     store[record.state] = record
     return record
@@ -762,6 +770,13 @@ def access_names_from_oidc_claims(
 # ---------------------------------------------------------------------------
 
 
+# ``AdminSession.authenticated_at`` when the identity provider's ID token carried no ``auth_time``: the
+# epoch, older than any step-up window, so the session is never recent (decision D40). ``None`` is
+# different: a password or key sign-in, or a cookie from before sliding sessions, whose issue time is when
+# the person proved who they are.
+AUTH_TIME_UNKNOWN = 0.0
+
+
 @dataclass(frozen=True)
 class AdminSession:
     """The minimal payload we trust into a signed cookie.
@@ -778,13 +793,42 @@ class AdminSession:
     issued_at: float
     expires_at: float
     session_id: str = ""
+    # Sliding-session fields. None marks a cookie issued before sliding
+    # sessions: it was last renewed and last authenticated when it was issued,
+    # and has no absolute deadline of its own.
+    absolute_expires_at: float | None = None
+    renewed_at: float | None = None
+    authenticated_at: float | None = None
+    # False for a session that must end at its expiry (a browser session claimed with an admin key).
+    renewable: bool = True
+    # The first id of this sign-in. Every renewal issues a new ``session_id`` (decision D35) but keeps
+    # the family, which the server revokes as a whole. Empty for a session that was never renewed.
+    family: str = ""
+
+    @property
+    def family_id(self) -> str:
+        """What a sign-in is called across its renewals: its first session id."""
+        return self.family or self.session_id
+
+    @property
+    def last_renewed(self) -> float:
+        return self.issued_at if self.renewed_at is None else self.renewed_at
+
+    @property
+    def last_authenticated(self) -> float:
+        return self.issued_at if self.authenticated_at is None else self.authenticated_at
+
+    @property
+    def latest_expiry(self) -> float:
+        """The latest moment any copy of this session could still be valid."""
+        return max(self.expires_at, self.absolute_expires_at or 0.0)
 
     def is_expired(self, now: float | None = None) -> bool:
         current = now if now is not None else time.time()
         return current >= self.expires_at
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "sub": self.subject,
             "email": self.email,
             "role": self.role,
@@ -792,6 +836,15 @@ class AdminSession:
             "exp": int(self.expires_at),
             "sid": self.session_id,
         }
+        for key, value in (("aexp", self.absolute_expires_at), ("rat", self.renewed_at),
+                           ("aat", self.authenticated_at)):
+            if value is not None:
+                data[key] = int(value)
+        if not self.renewable:
+            data["rn"] = 0
+        if self.family and self.family != self.session_id:
+            data["fid"] = self.family
+        return data
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "AdminSession":
@@ -809,9 +862,38 @@ class AdminSession:
                 issued_at=float(data["iat"]),
                 expires_at=float(data["exp"]),
                 session_id=session_id,
+                absolute_expires_at=_optional_float(data.get("aexp")),
+                renewed_at=_optional_float(data.get("rat")),
+                authenticated_at=_optional_float(data.get("aat")),
+                renewable=data.get("rn", 0 if _is_key_claim(data) else 1) != 0,
+                family=str(data.get("fid") or ""),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise SessionError(f"malformed session payload: {exc}") from exc
+
+
+def _optional_float(value: Any) -> float | None:
+    return None if value is None else float(value)
+
+
+# A browser session claimed with an admin key is not a person's sign-in (see ``/setup/claim``). Its
+# subject names a service account, or its email is this label.
+SERVICE_ACCOUNT_SESSION_PREFIX = "service_account:"
+KEY_CLAIM_EMAIL = "local-admin"
+
+
+def new_session_id() -> str:
+    return _b64url(secrets.token_bytes(16))
+
+
+def _is_key_claim(data: Mapping[str, Any]) -> bool:
+    """Whether a payload without ``rn`` was issued by a key claim.
+
+    Cookies from before sliding sessions carry no ``rn``, and a key claim lasts its eight hours and
+    never renews. A cookie without ``rn`` that a key claim could have made is not renewable; a
+    person's sign-in is upgraded once, as before.
+    """
+    return str(data.get("sub") or "").startswith(SERVICE_ACCOUNT_SESSION_PREFIX) or data.get("email") == KEY_CLAIM_EMAIL
 
 
 # A short version tag so we can rotate the cookie format without silently
@@ -825,22 +907,41 @@ def session_from_claims(
     role: str,
     cookie: CookieConfig,
     now: float | None = None,
+    idle_seconds: int | None = None,
+    absolute_seconds: int | None = None,
 ) -> AdminSession:
     """Build an :class:`AdminSession` from validated ID-token claims.
 
     Only the subject + email are pulled from the claims. The role is
     decided by the caller (typically via :func:`bootstrap_admin_role`).
+
+    With ``idle_seconds`` and ``absolute_seconds`` (the session policy) the
+    session can be renewed until its absolute deadline. Without them it lives
+    ``cookie.max_age_seconds`` and is never renewed.
     """
     if role not in AdminRole.ALL:
         raise SessionError(f"invalid role {role!r}")
     issued = now if now is not None else time.time()
+    session_id = new_session_id()
+    if idle_seconds is None or absolute_seconds is None:
+        return AdminSession(
+            subject=str(claims["sub"]),
+            email=str(claims["email"]).strip().lower(),
+            role=role,
+            issued_at=issued,
+            expires_at=issued + cookie.max_age_seconds,
+            session_id=session_id,
+        )
     return AdminSession(
         subject=str(claims["sub"]),
         email=str(claims["email"]).strip().lower(),
         role=role,
         issued_at=issued,
-        expires_at=issued + cookie.max_age_seconds,
-        session_id=_b64url(secrets.token_bytes(16)),
+        expires_at=issued + min(idle_seconds, absolute_seconds),
+        session_id=session_id,
+        absolute_expires_at=issued + absolute_seconds,
+        renewed_at=issued,
+        authenticated_at=issued,
     )
 
 
@@ -865,7 +966,8 @@ def csrf_token_for_session(session: AdminSession, *, signing_key: bytes) -> str:
     """Return the same-origin mutation token for a signed browser session."""
     if len(signing_key) < _MIN_SIGNING_KEY_BYTES:
         raise SessionError("signing_key too short")
-    session_nonce = session.session_id or (
+    # The family, not the id: a renewal keeps the token the open page already holds.
+    session_nonce = session.family_id or (
         f"{session.subject}:{int(session.issued_at)}:{int(session.expires_at)}"
     )
     mac = hmac.new(

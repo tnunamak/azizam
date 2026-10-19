@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from gateway import admin_store, request_connections, sqlite_startup
+from gateway import admin_store, request_connections, session_guard, sqlite_startup
 from gateway.admin_runtime import generate_app_api_key, is_human_user_record
 from gateway.local_owner import verify_password as verify_legacy_password
 from gateway.runtime_auth import hash_api_key
@@ -131,62 +131,262 @@ def ensure_access_row(conn: sqlite3.Connection, user_id: str) -> None:
     conn.execute("INSERT OR IGNORE INTO account_access(user_id) VALUES(?)", (user_id,))
 
 
-def session_allowed(user_id: str, session_id: str, *, path: Path) -> bool:
-    with connection(path) as conn:
-        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='account_session_revocations'").fetchone():
-            if conn.execute("SELECT 1 FROM account_session_revocations WHERE session_id=? AND expires_at>?",
-                            (session_id, int(time.time()))).fetchone():
-                return False
-        row = conn.execute("SELECT * FROM account_access WHERE user_id=?", (user_id,)).fetchone()
-        if not row:
-            # Service-account sessions have no access row. A person without one
-            # still cannot generate: the runtime treats them as disabled.
-            return True
+# A renewal replaces the session id (decision D35). The old id still works for this long, so a request
+# already in flight when the browser swaps cookies is not refused; after it, the old id is a stolen copy.
+ROTATION_GRACE_SECONDS = 60
+
+# ``lost`` is a retired id shown after its grace window whose successor no request has ever carried: the
+# response with the successor was lost, so the person is still the only holder (decision D35b).
+LIVE, GRACE, LOST, REUSED, DENIED = "live", "grace", "lost", "reused", "denied"
+
+
+def _tables(conn: sqlite3.Connection) -> set[str]:
+    return {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE name IN ('account_session_revocations','account_session_lineage')")}
+
+
+def _successor_used(conn: sqlite3.Connection, family_id: str, retired_rowid: int) -> bool:
+    """Whether any id minted after a retired one (rows are added in order, so a later rowid is a later id) was ever used."""
+    return conn.execute("SELECT 1 FROM account_session_lineage WHERE family_id=? AND rowid>? AND used_at IS NOT NULL",
+                        (family_id, retired_rowid)).fetchone() is not None
+
+
+def session_verdict_in(conn: sqlite3.Connection, user_id: str, session_id: str, family_id: str | None = None, *,
+                       now: float | None = None, note_use: bool = False) -> str:
+    """What a session id is worth right now: ``live``, ``grace`` (retired a moment ago), ``lost``, ``reused`` or ``denied``.
+
+    A retired id shown after its grace window is ``lost`` when no later id of the sign-in has been used (the
+    response that carried the successor never arrived; the caller issues a new one) and ``reused`` otherwise
+    (two holders: the caller revokes the family). An id that a later reissue replaced unused is always ``reused``.
+
+    ``note_use`` records the first request that carries a live id (one write per id, none after).
+    """
+    ts = int(time.time() if now is None else now)
+    family = family_id or session_id
+    present = _tables(conn)
+    if "account_session_revocations" in present:
+        if conn.execute("SELECT 1 FROM account_session_revocations WHERE session_id IN (?,?) AND expires_at>?",
+                        (session_id, family, ts)).fetchone():
+            return DENIED
+    row = conn.execute("SELECT * FROM account_access WHERE user_id=?", (user_id,)).fetchone()
+    if row:
         if row["disabled_at"] is not None or row["removed_at"] is not None:
-            return False
-        if not row["require_registered_session"]:
-            return True
-        return conn.execute("SELECT 1 FROM account_sessions WHERE user_id=? AND session_id=? AND expires_at>?",
-                            (user_id, session_id, int(time.time()))).fetchone() is not None
+            return DENIED
+        if row["require_registered_session"] and conn.execute(
+                "SELECT 1 FROM account_sessions WHERE user_id=? AND session_id=? AND expires_at>?",
+                (user_id, session_id, ts)).fetchone() is None:
+            return DENIED
+    # Service-account sessions have no access row. A person without one still cannot
+    # generate: the runtime treats them as disabled.
+    if "account_session_lineage" in present:
+        row = conn.execute("SELECT rowid, retired_at, used_at, superseded FROM account_session_lineage WHERE session_id=?",
+                           (session_id,)).fetchone()
+        if row is None:
+            return LIVE
+        if row["retired_at"] is None:
+            if note_use and row["used_at"] is None:
+                conn.execute("UPDATE account_session_lineage SET used_at=? WHERE session_id=? AND used_at IS NULL",
+                             (ts, session_id))
+            return LIVE
+        if row["superseded"]:
+            return REUSED
+        if ts <= row["retired_at"] + ROTATION_GRACE_SECONDS:
+            return GRACE
+        return REUSED if _successor_used(conn, family, row["rowid"]) else LOST
+    return LIVE
 
 
-def revoke_session(session_id: str, expires_at: int, *, path: Path) -> None:
-    """Deny replay of signed cookies, including pre-registration sessions."""
+def session_verdict(user_id: str, session_id: str, family_id: str | None = None, *, path: Path,
+                    now: float | None = None, note_use: bool = False) -> str:
+    with connection(path) as conn:
+        return session_verdict_in(conn, user_id, session_id, family_id, now=now, note_use=note_use)
+
+
+def session_allowed(user_id: str, session_id: str, *, path: Path, family_id: str | None = None) -> bool:
+    return session_verdict(user_id, session_id, family_id, path=path) in {LIVE, GRACE}
+
+
+def require_live_session_in(conn: sqlite3.Connection, user_id: str, session_id: str, family_id: str | None = None, *,
+                            expires_at: float | None = None, absolute_expires_at: float | None = None,
+                            now: float | None = None) -> None:
+    """Refuse inside the caller's transaction when the session was revoked, retired or ran out; used before a mint.
+
+    A session that ran out is refused whatever ``require_registered_session`` says: its idle deadline
+    (``expires_at``, from the cookie and from the stored rows of the id) or its absolute deadline has passed.
+    A request that was already in flight when its session expired must not make a lasting credential.
+    """
+    ts = time.time() if now is None else now
+    if (expires_at is not None and ts >= expires_at) or (absolute_expires_at is not None and ts >= absolute_expires_at):
+        raise AccountError("login_required", "Sign in again to do this.", 401)
+    for table in ("account_sessions", "account_session_lineage"):
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is None:
+            continue
+        row = conn.execute(f"SELECT expires_at FROM {table} WHERE session_id=?", (session_id,)).fetchone()  # noqa: S608 - fixed names
+        if row is not None and ts >= row[0]:
+            raise AccountError("login_required", "Sign in again to do this.", 401)
+    if session_verdict_in(conn, user_id, session_id, family_id, now=ts) != LIVE:
+        raise AccountError("login_required", "Sign in again to do this.", 401)
+
+
+def family_of_in(conn: sqlite3.Connection, session_id: str) -> str:
+    if "account_session_lineage" not in _tables(conn):
+        return session_id
+    row = conn.execute("SELECT family_id FROM account_session_lineage WHERE session_id=?", (session_id,)).fetchone()
+    return row[0] if row else session_id
+
+
+def rotate_session(user_id: str, old_id: str, family_id: str, new_id: str, *, old_expires_at: int, expires_at: int,
+                   path: Path, now: float | None = None) -> bool:
+    """Replace a session id by a new one in the same family; retire the old one for reuse detection.
+
+    One transaction with the checks, so a sign-out that commits first leaves nothing to resurrect. Returns
+    False, changing nothing, when the old id is no longer the live one: revoked, retired by another request
+    (that request's cookie wins) or the person is disabled. This also registers a session that had no
+    server-side record (a cookie from before sliding sessions).
+    """
+    ts = int(time.time() if now is None else now)
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        conn.execute("DELETE FROM account_session_revocations WHERE expires_at<=?", (int(time.time()),))
+        if session_verdict_in(conn, user_id, old_id, family_id, now=ts) != LIVE:
+            return False
+        if conn.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone() is None:
+            return False  # no person to record it for; the session runs out as it was
+        _retire_and_register(conn, user_id, old_id, family_id, new_id, old_expires_at, expires_at, ts)
+    return True
+
+
+def _retire_and_register(conn: sqlite3.Connection, user_id: str, old_id: str, family_id: str, new_id: str,
+                         old_expires_at: int, expires_at: int, ts: int) -> None:
+    """Retire ``old_id`` as of ``ts`` (it has just been shown, so it counts as used) and register ``new_id``."""
+    conn.execute("DELETE FROM account_sessions WHERE expires_at<=?", (ts,))
+    conn.execute("DELETE FROM account_session_lineage WHERE expires_at<=?", (ts,))
+    conn.execute("INSERT INTO account_session_lineage(session_id,family_id,retired_at,expires_at,used_at) VALUES(?,?,?,?,?) "
+                 "ON CONFLICT(session_id) DO UPDATE SET retired_at=excluded.retired_at, "
+                 "used_at=COALESCE(used_at, excluded.used_at)", (old_id, family_id, ts, old_expires_at, ts))
+    conn.execute("INSERT INTO account_session_lineage(session_id,family_id,retired_at,expires_at) VALUES(?,?,NULL,?)",
+                 (new_id, family_id, expires_at))
+    conn.execute("INSERT INTO account_sessions VALUES(?,?,?) ON CONFLICT(session_id) "
+                 "DO UPDATE SET expires_at=MAX(expires_at, excluded.expires_at)", (new_id, user_id, expires_at))
+
+
+def reissue_session(user_id: str, old_id: str, family_id: str, new_id: str, *, old_expires_at: int, expires_at: int,
+                    path: Path, now: float | None = None) -> bool:
+    """Rotate again from a retired id whose successor was never used (decision D35b): the response was lost.
+
+    One transaction that decides again from the stored state, so concurrent requests with the same retired
+    id mint exactly one successor. The request that commits first returns True. The state it leaves, with
+    ``old_id`` retired again as of ``now``, makes every later or concurrent request with ``old_id`` ``grace``:
+    served, given no cookie, never renewed. Its answer is False, changing nothing, so the caller issues none.
+
+    The unused successor is marked superseded and unregistered: its cookie, if it ever arrives, is a second
+    holder and ``session_verdict_in`` calls it ``reused``. The family, and so the CSRF token and the Try keys,
+    stay.
+    """
+    ts = int(time.time() if now is None else now)
+    with connection(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if session_verdict_in(conn, user_id, old_id, family_id, now=ts) != LOST:
+            return False
+        if conn.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone() is None:
+            return False
+        superseded = [row[0] for row in conn.execute(
+            "SELECT session_id FROM account_session_lineage WHERE family_id=? AND retired_at IS NULL", (family_id,))]
+        for unused in superseded:
+            conn.execute("UPDATE account_session_lineage SET retired_at=?, superseded=1 WHERE session_id=?", (ts, unused))
+            conn.execute("DELETE FROM account_sessions WHERE session_id=?", (unused,))
+        _retire_and_register(conn, user_id, old_id, family_id, new_id, old_expires_at, expires_at, ts)
+    return True
+
+
+def revoke_family_in(conn: sqlite3.Connection, family_id: str, expires_at: int, *, session_id: str | None = None) -> None:
+    """End every id of one sign-in and the keys bound to it, inside the caller's transaction."""
+    ts = int(time.time())
+    ids = {family_id, session_id or family_id}
+    if "account_session_lineage" in _tables(conn):
+        ids |= {row[0] for row in conn.execute("SELECT session_id FROM account_session_lineage WHERE family_id=?", (family_id,))}
+        conn.execute("DELETE FROM account_session_lineage WHERE family_id=?", (family_id,))
+    conn.execute("DELETE FROM account_session_revocations WHERE expires_at<=?", (ts,))
+    for revoked in {family_id, session_id or family_id}:
         conn.execute("INSERT INTO account_session_revocations VALUES(?,?) "
                      "ON CONFLICT(session_id) DO UPDATE SET expires_at=MAX(expires_at, excluded.expires_at)",
-                     (session_id, expires_at))
-        conn.execute("DELETE FROM account_sessions WHERE session_id=?", (session_id,))
-        # Keys bound to this sign-in (the Try page's) end with it.
-        conn.execute("UPDATE credentials SET revoked_at=? WHERE session_id=? AND revoked_at IS NULL",
-                     (int(time.time()), session_id))
+                     (revoked, expires_at))
+    marks = ",".join("?" * len(ids))
+    conn.execute(f"DELETE FROM account_sessions WHERE session_id IN ({marks})", tuple(ids))
+    # Keys bound to this sign-in (the Try page's) end with it.
+    conn.execute(f"UPDATE credentials SET revoked_at=? WHERE session_id IN ({marks}) AND revoked_at IS NULL",
+                 (ts, *ids))
 
 
-def revoke_person_sessions(user_id: str, *, path: Path) -> None:
+def revoke_session(session_id: str, expires_at: int, *, path: Path, family_id: str | None = None) -> None:
+    """Deny replay of signed cookies, including pre-registration sessions, for the whole sign-in."""
+    with connection(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        revoke_family_in(conn, family_id or family_of_in(conn, session_id), expires_at, session_id=session_id)
+
+
+def revoke_person_sessions(user_id: str, *, path: Path, keep: tuple[str, int] | None = None) -> None:
     """End every signed-in session of a person, including ones never registered.
 
     From now on only registered sessions count for this person, and none is
     left, so each cookie they hold stops working. Signing in again registers a
     new session. Keys bound to their sign-ins end with them.
+
+    ``keep`` is a ``(session_id, expires_at)`` pair to leave signed in: the
+    session that is making a change, such as setting a password.
     """
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        revoke_person_sessions_in(conn, user_id)
+        revoke_person_sessions_in(conn, user_id, keep=keep)
 
 
-def revoke_person_sessions_in(conn: sqlite3.Connection, user_id: str) -> None:
+def revoke_person_sessions_in(conn: sqlite3.Connection, user_id: str, *,
+                              keep: tuple[str, int] | None = None) -> None:
     """``revoke_person_sessions`` inside a transaction the caller owns and commits."""
     ensure_access_row(conn, user_id)
     conn.execute("UPDATE account_access SET require_registered_session=1 WHERE user_id=?", (user_id,))
+    kept_id = keep[0] if keep else None
+    kept_family = family_of_in(conn, kept_id) if kept_id else None
     session_ids = [row[0] for row in conn.execute(
-        "SELECT session_id FROM account_sessions WHERE user_id=?", (user_id,))]
-    conn.execute("DELETE FROM account_sessions WHERE user_id=?", (user_id,))
+        "SELECT session_id FROM account_sessions WHERE user_id=? AND session_id IS NOT ?", (user_id, kept_id))]
+    conn.execute("DELETE FROM account_sessions WHERE user_id=? AND session_id IS NOT ?", (user_id, kept_id))
+    if keep:
+        # Only registered sessions count now, so the one that stays must be registered.
+        conn.execute("INSERT INTO account_sessions VALUES(?,?,?) ON CONFLICT(session_id) "
+                     "DO UPDATE SET expires_at=MAX(expires_at, excluded.expires_at)", (keep[0], user_id, keep[1]))
     now = int(time.time())
-    for session_id in session_ids:
-        conn.execute("UPDATE credentials SET revoked_at=? WHERE session_id=? AND revoked_at IS NULL",
-                     (now, session_id))
+    bound = {family_of_in(conn, session_id) for session_id in session_ids} | set(session_ids)
+    # A sign-in that never had a record (a cookie from before sliding sessions) still bound keys to itself.
+    bound |= {row[0] for row in conn.execute(
+        "SELECT DISTINCT c.session_id FROM credentials c JOIN apps a ON a.id=c.app_id "
+        "WHERE a.owner_user_id=? AND c.session_id IS NOT NULL AND c.revoked_at IS NULL", (user_id,))}
+    bound -= {kept_id, kept_family}
+    for session_id in bound:
+        conn.execute("UPDATE credentials SET revoked_at=? WHERE session_id=? AND revoked_at IS NULL", (now, session_id))
+
+
+def has_password(user_id: str, *, path: Path) -> bool:
+    with connection(path) as conn:
+        return conn.execute("SELECT 1 FROM local_password_credentials WHERE user_id=?", (user_id,)).fetchone() is not None
+
+
+def confirm_password(user_id: str, password: str, ip: str, *, path: Path) -> None:
+    """Prove a signed-in person still knows their password (step-up).
+
+    Shares the sign-in throttle, so confirming is no cheaper to guess than signing in. The throttle
+    comes first and counts every attempt, also from a person who has no password: that attempt
+    is refused without running the password hash.
+    """
+    with connection(path) as conn:
+        row = conn.execute("SELECT u.email,p.verifier FROM users u LEFT JOIN local_password_credentials p "
+                           "ON p.user_id=u.id WHERE u.id=?", (user_id,)).fetchone()
+    throttle(ip, (row["email"] if row else None) or user_id, path=path)
+    if row is None or row["verifier"] is None:
+        raise AccountError("password_not_set", "This account has no password. Sign in again with your identity provider.", 409)
+    if not verify_password(password, row["verifier"]):
+        raise AccountError("invalid_password", "That password is not right.", 401)
+    state = access(user_id, path=path)
+    if state and (state["disabled_at"] is not None or state["removed_at"] is not None):
+        raise AccountError("account_disabled", "This account is disabled.", 403)
 
 
 def record_signin_refusal(user_id: str, *, path: Path) -> None:
@@ -272,7 +472,10 @@ def _public_link(row) -> dict:
 
 def create_link(kind: str, actor: str, *, path: Path, plan_id: str | None = None,
                 user_id: str | None = None, email: str | None = None, expires_in: int = 604800, token_factory: Callable[[str], str] | None = None,
-                actor_kind: str = "user", actor_label: str | None = None) -> tuple[dict, str]:
+                actor_kind: str = "user", actor_label: str | None = None,
+                session: session_guard.BrowserSession | None = None) -> tuple[dict, str]:
+    """Record an invitation or reset link. ``session`` is the browser sign-in that asked for it, checked in
+    the insert's transaction (``gateway/session_guard.py``); none for a write no browser sign-in started."""
     if kind not in {"invite", "reset"}:
         raise AccountError("invalid_link", "Invalid link type.")
     if isinstance(expires_in, bool) or not isinstance(expires_in, int) or not 60 <= expires_in <= 30 * 86400:
@@ -282,6 +485,10 @@ def create_link(kind: str, actor: str, *, path: Path, plan_id: str | None = None
     token = token_factory(link_id) if token_factory else secrets.token_urlsafe(32)
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        try:
+            session_guard.require_live(conn, session)
+        except session_guard.SessionEnded as ended:
+            raise AccountError(ended.code, ended.message, ended.status_code) from None
         if kind == "invite":
             _valid_plan(conn, plan_id)
         else:

@@ -68,7 +68,10 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
            'PYTHONPATH': str(REPO), 'PYTHONDONTWRITEBYTECODE': '1',
            'AZIZAM_CONFIG_PATH': str(config), 'AZIZAM_GRACEFUL_SHUTDOWN_S': '1',
            'AZIZAM_LITELLM_BASE_URL': f'http://127.0.0.1:{ENGINE_PORT}',
-           'XDG_CONFIG_HOME': str(home / '.config'), 'XDG_CACHE_HOME': str(home / '.cache')}
+           'XDG_CONFIG_HOME': str(home / '.config'), 'XDG_CACHE_HOME': str(home / '.cache'),
+           # A fixed signing key, so the step-up journey (web/e2e/step-up.spec.ts) can forge a
+           # session whose last password check is days old. Test-only; a household run sets its own.
+           'AZIZAM_ADMIN_SESSION_KEY': 'ui-e2e-fixture-session-key-not-production'}
     if os.environ.get('UI_E2E_AVATAR_PICTURE'):
         env['UI_E2E_AVATAR_PICTURE'] = os.environ['UI_E2E_AVATAR_PICTURE']
     if os.environ.get('UI_E2E_ALLOWED_PORTS'):

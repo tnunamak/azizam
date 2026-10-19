@@ -23,7 +23,7 @@ Run a gateway, connect engines and providers, and give people access.
 | Operate, back up, upgrade or troubleshoot | [Operator guide](guides/OPERATOR.md) |
 | Understand which settings apply live | [Configuration ownership](CONFIG_SOURCE_OF_TRUTH.md), [bootstrap configuration](../CONFIG.md) |
 | Configure paid models and resolve charges | [Remote providers](REMOTE_PROVIDERS.md), [reconciliation](ops/PROVIDER_RECONCILIATION.md) |
-| Share access and publish safely | [Accounts and invites](PEOPLE_AND_ACCOUNTS.md), [reverse proxy](REVERSE_PROXY.md), [security policy](../SECURITY.md) |
+| Share access and publish safely | [Accounts and invites](PEOPLE_AND_ACCOUNTS.md), [sign-in sessions](ops/SIGN_IN_SESSIONS.md), [reverse proxy](REVERSE_PROXY.md), [security policy](../SECURITY.md) |
 
 ## Member
 

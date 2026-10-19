@@ -27,15 +27,16 @@ from typing import Any, Iterable, Mapping
 
 from fastapi import Request, status
 
-from gateway import admin_store, engine_check, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
+from gateway import admin_store, browser_sessions, engine_check, step_up, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
+from gateway import session_guard
 from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
+    SERVICE_ACCOUNT_SESSION_PREFIX,
     CookieConfig,
     OIDCConfigError,
     SessionError,
     csrf_token_for_session,
-    decode_session_cookie,
     load_oidc_config,
     validate_oidc_display_name,
 )
@@ -53,7 +54,6 @@ ADMIN_KEY_PREFIX = "oak_"
 ADMIN_CONTROL_ROLES = frozenset({"owner", "admin", "superadmin"})
 ADMIN_KEY_CREATABLE_ROLES = frozenset({"owner", "admin"})
 _ROLE_RANK = {"admin": 1, "superadmin": 2, "owner": 3}
-SERVICE_ACCOUNT_SESSION_PREFIX = "service_account:"
 LOCAL_ADMIN_KEY_ISSUER = "local-admin-key"
 SERVICE_AVAILABILITY_OVERRIDES_KEY = "service_availability_overrides"
 MEDIA_JOB_ADMISSION_OVERRIDES_KEY = "media_job_admission_overrides"
@@ -576,7 +576,7 @@ class AdminSQLiteStore:
             record = admin_store.add_trusted_address(
                 app_id, address, note=str(data.get("note") or "")[:200],
                 created_by=actor.audit_actor_id, max_entries=trusted_addresses.MAX_ENTRIES_PER_APP,
-                path=self.path,
+                session=actor.browser_session, path=self.path,
             )
         except LookupError:
             return None
@@ -638,6 +638,7 @@ class AdminSQLiteStore:
             display_name=str(data.get("label") or data.get("name") or "API key"),
             scopes=data.get("scopes") if isinstance(data.get("scopes"), list) else None,
             created_by=actor.audit_actor_id if actor.actor_kind == "user" else "",
+            session=actor.browser_session,
             path=self.path,
         )
         admin_store.record_audit(
@@ -668,32 +669,26 @@ class AdminSQLiteStore:
             raise PermissionError("owner role required to mint owner keys")
         # A key always gets a service account of its own. Reusing one by name
         # would let a caller take over a key that someone else minted.
+        # The account, its role and its key are made in one transaction that first checks the sign-in
+        # (decision D41): when the sign-in has ended nothing exists, so there is no role to take back.
+        api_key = generate_admin_api_key()
+        minter = f"{actor.actor_kind}:{actor.audit_actor_id}"
         try:
-            service_account = admin_store.create_service_account(
-                name, description="Owner for an admin automation key created from the dashboard.",
+            service_account, assignment, credential = admin_store.create_admin_key_with_role(
+                name=name,
+                description="Owner for an admin automation key created from the dashboard.",
+                role=role,
+                granted_by=actor.audit_actor_id,
+                actor=actor,
+                hash=hash_api_key(api_key),
+                prefix=_key_prefix(api_key),
+                display_name=f"{name} admin automation key",
+                created_by=minter,
+                session=actor.browser_session,
                 path=self.path,
             )
         except sqlite3.IntegrityError:
             raise AdminKeyNameTaken(f"a key named {name!r} already exists; choose another name") from None
-        minter = f"{actor.actor_kind}:{actor.audit_actor_id}"
-        assignment = admin_store.assign_admin_role(
-            role=role,
-            subject_kind="service_account",
-            subject_id=service_account["id"],
-            granted_by=actor.audit_actor_id,
-            actor=actor,
-            path=self.path,
-        )
-        api_key = generate_admin_api_key()
-        credential = admin_store.create_credential_hash(
-            subject_kind="service_account",
-            subject_id=service_account["id"],
-            hash=hash_api_key(api_key),
-            prefix=_key_prefix(api_key),
-            display_name=f"{name} admin automation key",
-            created_by=minter,
-            path=self.path,
-        )
         admin_store.record_audit(
             "admin_key.create",
             actor_kind=actor.actor_kind,
@@ -843,11 +838,16 @@ class AdminSQLiteStore:
                 raise PermissionError("Only the owner can add a secret.")
 
             def put(value: str, origin: str | None = None) -> str:
-                ref = secret_refs.store(value, db_path=self.path, origin=origin)
+                ref = secret_refs.store(value, db_path=self.path, origin=origin, session=actor.browser_session)
                 created.append(ref)
                 return ref
 
-            record, _ = record_carriers.ingest_service(record, stored, put)
+            try:
+                record, _ = record_carriers.ingest_service(record, stored, put)
+            except BaseException:
+                # A sign-out between two puts refuses the second; the first must not stay behind.
+                self._discard_secrets(created)
+                raise
         try:
             if section == "services" and isinstance(record, Mapping) and service_registry.is_litellm_service_record(held.id, record):
                 raise ValueError(f"service {held.id!r} is a managed substrate; remove it and the gateway restores its own")
@@ -1021,6 +1021,11 @@ class AdminSQLiteStore:
                 raise PermissionError(
                     "Only the owner can attach a key to a service, move a service that has one, "
                     "or set a lifecycle driver on a service.")
+            # Where a stored key is sent is the thing a stolen session must not move (decision D36).
+            step_up.require_recent(
+                authenticated_at=actor.authenticated_at, subject=actor.subject,
+                window_seconds=browser_sessions.policy(self.path).step_up_seconds,
+            )
             value = service_registry.bind_credential_origins(value, changed)
         self._refuse_blocked_native_hosts(before, value)
         return value
@@ -1071,7 +1076,7 @@ class AdminSQLiteStore:
         created: list[str] = []
 
         def put(value: str, origin: str | None = None) -> str:
-            ref = secret_refs.store(value, db_path=self.path, origin=origin)
+            ref = secret_refs.store(value, db_path=self.path, origin=origin, session=actor.browser_session)
             created.append(ref)
             return ref
 
@@ -1131,6 +1136,7 @@ class AdminSQLiteStore:
                 "workflow_count": len(value.get("workflows") or {}),
                 "capability_count": len(value.get("capabilities") or {}),
             },
+            session=actor.browser_session,
             path=self.path,
         )
         return record
@@ -1216,6 +1222,7 @@ class AdminSQLiteStore:
             audit_metadata={
                 "service_count": len(value.get("services") or {}), **(extra or {})
             },
+            session=actor.browser_session,
             path=self.path,
         )
         return record
@@ -1439,11 +1446,19 @@ class AdminSQLiteStore:
             record = (registry.get("services") or {}).get(sid)
             if record is None:
                 raise ValueError(f"service {sid!r} not found")
-            put = secret_refs.putter(self.path)
+            stored_put = secret_refs.putter(self.path, session=actor.browser_session)
+            made: list[str] = []
+
+            def put(value: str, origin: str | None = None) -> str:
+                ref = stored_put(value, origin)
+                made.append(ref)
+                return ref
+
             try:
                 new_record, outcome = secret_commands.apply_commands(record, commands, put)
-            except secret_commands.CommandError as error:
-                for ref in getattr(error, "created", ()):
+            except BaseException:
+                # Any error, a sign-out between two puts included, takes back what this call stored.
+                for ref in made:
                     secret_refs.delete(ref, db_path=self.path)
                 raise
             if not outcome.changed:
@@ -1590,7 +1605,7 @@ class AdminSQLiteStore:
         created: list[str] = []
 
         def put(value: str, origin: str | None = None) -> str:
-            ref = secret_refs.store(value, db_path=self.path, origin=origin)
+            ref = secret_refs.store(value, db_path=self.path, origin=origin, session=actor.browser_session)
             created.append(ref)
             return ref
 
@@ -1656,6 +1671,7 @@ class AdminSQLiteStore:
                         },
                     },
                 ],
+                session=actor.browser_session,
                 path=self.path,
             )
         except BaseException:
@@ -1734,6 +1750,7 @@ class AdminSQLiteStore:
                 "target_id": package_id,
                 "metadata": {"affected_records": affected},
             }],
+            session=actor.browser_session,
             path=self.path,
         )
         # What a removal took out of the registry and the index no longer needs its secrets: the entries of the removed
@@ -1846,6 +1863,8 @@ class AdminSQLiteStore:
                 f"unknown oidc_provider_config fields: {sorted(unknown)}"
             )
         conn = tx.conn
+        # The issuer and the client secret decide who may sign in: a sign-out that committed first stops the write.
+        session_guard.require_live(conn, actor.browser_session)
         current = admin_store.get_operator_setting_in(conn, OIDC_PROVIDER_SETTING_KEY)
         current_revision = admin_store.operator_setting_revision(current)
         if expected_revision is not None and expected_revision != current_revision:
@@ -1872,7 +1891,8 @@ class AdminSQLiteStore:
             # A fresh id per write: a rejected settings write leaves the
             # current reference pointing at the current secret.
             new_ref = f"oidc-client-secret-{secrets.token_hex(8)}"
-            secret_store.put_provider_secret(new_ref, new_secret, db_path=self.path, conn=conn)
+            secret_store.put_provider_secret(
+                new_ref, new_secret, db_path=self.path, conn=conn, session=actor.browser_session)
             merged.pop("client_secret", None)
             merged[OIDC_CLIENT_SECRET_REF] = new_ref
 
@@ -2120,16 +2140,11 @@ class AdminAuthenticator:
             token = request.cookies.get(self.cookie.name)
             if token:
                 try:
-                    session = decode_session_cookie(
-                        token,
-                        signing_key=self.signing_key,
+                    # A revoked or ended session is no session: a bearer key
+                    # sent beside a stale cookie still authenticates.
+                    session = browser_sessions.read(
+                        token, signing_key=self.signing_key, path=self.store.path,
                     )
-                    from gateway.accounts import session_allowed
-
-                    if not session_allowed(session.subject, session.session_id, path=self.store.path):
-                        # A revoked session is no session: a bearer key sent
-                        # beside a stale cookie still authenticates.
-                        raise SessionError("session revoked or account disabled")
                     subject_kind, subject_id = session_admin_role_subject(
                         session.subject
                     )
@@ -2150,6 +2165,12 @@ class AdminAuthenticator:
                                 session,
                                 signing_key=self.signing_key,
                             ),
+                            session_id=session.session_id,
+                            session_family=session.family_id,
+                            session_absolute_expires_at=(
+                                None if session.absolute_expires_at is None else int(session.absolute_expires_at)),
+                            session_expires_at=int(session.expires_at),
+                            authenticated_at=int(session.last_authenticated),
                         )
                     raise AdminAuthError(
                         "admin role required",
@@ -2451,6 +2472,7 @@ def create_admin_service_account_key(
         prefix=_key_prefix(api_key),
         display_name=f"{name} admin key",
         created_by=admin_store.OPERATOR_GRANTOR,
+        session=None,  # the operator's CLI: no browser sign-in
         path=path,
     )
     admin_store.record_audit(

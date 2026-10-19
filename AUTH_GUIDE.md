@@ -140,6 +140,10 @@ The normal way to gain admin access on a fresh deployment is `/setup`: OIDC
 when available, or a local owner account when the operator has not configured
 an IdP. From there, everything is dashboard-driven.
 
+Browser sign-ins renew while in use (30 days idle, 90 days absolute, by default),
+can be ended everywhere, and ask for a password again before risky owner
+actions. See [Sign-in sessions](docs/ops/SIGN_IN_SESSIONS.md).
+
 ### Recovery / headless admin key
 
 If OIDC is unreachable or misconfigured, or you are provisioning the

@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SignOutEverywhereSection } from "./sign-out-everywhere";
 import { accountApi } from "@/lib/account-api";
 import { useOwnerName } from "@/lib/use-owner-name";
 import {
@@ -66,7 +67,10 @@ export default function AccountPage() {
             action={{ label: "Sign in", href: "/sign-in/" }}
           />
         ) : (
-          <PromptsSection />
+          <>
+            <PromptsSection />
+            <SignOutEverywhereSection />
+          </>
         )}
       </div>
     </div>

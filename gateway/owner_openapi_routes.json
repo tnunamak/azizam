@@ -354,6 +354,14 @@
     "tag": "settings",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
   },
+  "GET /admin/api/settings/sessions": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+  },
+  "PUT /admin/api/settings/sessions": {
+    "tag": "settings",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+  },
   "GET /admin/api/setup-progress": {
     "tag": "status",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
