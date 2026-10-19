@@ -49,6 +49,7 @@ import {
   listFactClass,
 } from "@/components/product/list-card";
 import { PersonMark } from "@/components/product/person-mark";
+import { useAvatarDirectory } from "@/lib/use-avatars";
 import {
   peopleApi,
   grantLabel,
@@ -110,6 +111,7 @@ function Loading({ label }: { label: string }) {
 export default function PeoplePage() {
   const client = useQueryClient();
   const owner = useViewer().role === "owner";
+  const avatars = useAvatarDirectory();
   const container = useRef<HTMLDivElement>(null);
   const invoker = useRef<HTMLElement | null>(null);
   const restoreFocus = (event: Event) => {
@@ -528,6 +530,8 @@ export default function PeoplePage() {
                     leading={
                       <PersonMark
                         name={name || person.email || "?"}
+                        personId={person.id}
+                        avatar={avatars?.[person.id]}
                         size="md"
                       />
                     }

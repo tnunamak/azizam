@@ -29,7 +29,8 @@ REGISTRY_PATH = Path(__file__).with_name("ui_pages.json")
 _REGISTRY = json.loads(REGISTRY_PATH.read_text())
 PAGES: dict[str, str] = _REGISTRY["pages"]
 # Root files of the export, served to anyone: browsers fetch icons without
-# credentials, and link previews fetch the Open Graph image from outside.
+# credentials, link previews fetch the Open Graph image from outside, and a
+# crawler fetches robots.txt (public so that it reads "Disallow: /" and not a 401).
 ROOT_FILES: frozenset[str] = frozenset(_REGISTRY["files"])
 if any("/" in name or name in PAGES for name in ROOT_FILES):
     raise ValueError(f"{REGISTRY_PATH.name}: a root file must be a bare file name, not a page")

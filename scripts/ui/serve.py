@@ -69,6 +69,8 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
            'AZIZAM_CONFIG_PATH': str(config), 'AZIZAM_GRACEFUL_SHUTDOWN_S': '1',
            'AZIZAM_LITELLM_BASE_URL': f'http://127.0.0.1:{ENGINE_PORT}',
            'XDG_CONFIG_HOME': str(home / '.config'), 'XDG_CACHE_HOME': str(home / '.cache')}
+    if os.environ.get('UI_E2E_AVATAR_PICTURE'):
+        env['UI_E2E_AVATAR_PICTURE'] = os.environ['UI_E2E_AVATAR_PICTURE']
     if os.environ.get('UI_E2E_ALLOWED_PORTS'):
         env['UI_E2E_ALLOWED_PORTS'] = os.environ['UI_E2E_ALLOWED_PORTS']
     for name, filename in {
