@@ -689,6 +689,18 @@ def test_startup_tightens_saved_prompts_without_a_preference_row(tmp_path, monke
     assert admin_store.get_prompt_memory_preference(person, path=admin_path) is None
 
 
+def test_startup_repair_failure_does_not_stop_gateway_boot(monkeypatch, capsys):
+    import asyncio
+    import proxy
+
+    async def unavailable(*_args, **_kwargs):
+        raise sqlite3.OperationalError("synthetic busy database")
+
+    monkeypatch.setattr(proxy.asyncio, "to_thread", unavailable)
+    asyncio.run(proxy._repair_prompt_deadlines_at_startup())
+    assert "prompt deadline repair pending: OperationalError" in capsys.readouterr().out
+
+
 def test_a_missing_file_stops_startup_with_a_plain_message(tmp_path, monkeypatch):
     import asyncio
     import proxy
