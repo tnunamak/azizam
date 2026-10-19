@@ -489,6 +489,94 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(outcome.merged_payload, {"text": "repeat repeat repeat repeat"})
                 self.assertFalse(any(root.glob("planning-*")))
 
+    async def _run_unplannable(self, *, probed, decode_error=None, probe_error=None, **limits):
+        """Run execute_chunking on a file whose planning fails; return (outcome or raised error, posts)."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.wav"
+            source.write_bytes(b"source")
+            config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=40, max_duration_seconds=3000, **limits)
+            posts = []
+
+            async def post(_path, filename):
+                posts.append(filename)
+                return stt_chunking.UpstreamResponse(200, b'{"text":"x"}', {})
+
+            patches = [patch.object(stt_chunking, "probe_audio", new=AsyncMock(
+                return_value=probed, side_effect=probe_error))]
+            patches.append(patch.object(stt_chunking, "decode_planning_pcm", new=AsyncMock(side_effect=decode_error)))
+            with patches[0], patches[1]:
+                try:
+                    result = await stt_chunking.execute_chunking(
+                        source_path=source, source_stem="source", fields=[("response_format", "json")], config=config,
+                        post_file=post, cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
+                    )
+                except stt_chunking.SttExecutionError as error:
+                    result = error
+            return result, posts
+
+    async def test_a_file_above_the_maximum_that_cannot_be_planned_is_refused_not_sent_whole(self) -> None:
+        long_file = stt_chunking.ProbedAudio(1320, 16000, 1)
+        for name, kwargs, reason in (
+            ("probe finds no readable audio", {"probed": None, "probe_error": stt_chunking.SttMediaCommandFailed("x")}, "unreadable_media"),
+            ("decoder rejects the file", {"probed": long_file, "decode_error": stt_chunking.SttMediaCommandFailed("x")}, "unreadable_media"),
+            ("a local tool is missing", {"probed": long_file, "decode_error": stt_chunking.SttSetupFailure("x")}, "split_failed"),
+            ("the decoded audio cannot be read", {"probed": long_file, "decode_error": OSError("disk")}, "split_failed"),
+        ):
+            with self.subTest(name):
+                result, posts = await self._run_unplannable(**kwargs)
+                self.assertIsInstance(result, stt_chunking.SttAudioNotSplittable)
+                self.assertEqual((result.reason, result.limit_seconds, posts), (reason, 40.0, []))
+
+    async def test_a_file_the_engine_takes_whole_or_a_native_long_audio_engine_still_passes_through(self) -> None:
+        short_file = stt_chunking.ProbedAudio(41, 16000, 1)  # above the 40 s threshold, not above the 40 s... see below
+        for name, kwargs in (
+            ("native long-audio engine", {"probed": stt_chunking.ProbedAudio(1320, 16000, 1), "decode_error": stt_chunking.SttSetupFailure("x"), "native_long_audio": True}),
+            ("a hard maximum above the file", {"probed": short_file, "decode_error": stt_chunking.SttSetupFailure("x"), "max_segment_seconds": 60}),
+        ):
+            with self.subTest(name):
+                limits = {key: kwargs.pop(key) for key in ("native_long_audio", "max_segment_seconds") if key in kwargs}
+                if "max_segment_seconds" in limits:
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        root = Path(temp_dir)
+                        source = root / "source.wav"
+                        source.write_bytes(b"source")
+                        config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=60)
+                        with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=short_file)), patch.object(
+                            stt_chunking, "decode_planning_pcm", new=AsyncMock(side_effect=stt_chunking.SttSetupFailure("x"))
+                        ):
+                            result = await stt_chunking.execute_chunking(
+                                source_path=source, source_stem="source", fields=[("response_format", "json")], config=config,
+                                post_file=AsyncMock(), cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
+                            )
+                else:
+                    result, _posts = await self._run_unplannable(**kwargs, **limits)
+                self.assertEqual((result.mode, result.attempts_started, result.fallback_reason), ("passthrough", 0, "setup_failed_before_attempt"))
+
+    async def test_the_error_policy_still_raises_the_setup_failure_itself(self) -> None:
+        result, posts = await self._run_unplannable(
+            probed=stt_chunking.ProbedAudio(1320, 16000, 1), decode_error=stt_chunking.SttSetupFailure("x"), setup_failure_policy="error",
+        )
+        self.assertIs(type(result), stt_chunking.SttSetupFailure)
+        self.assertEqual(posts, [])
+
+    async def test_a_short_file_is_not_decoded_for_planning(self) -> None:
+        decode = AsyncMock()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.wav"
+            source.write_bytes(b"source")
+            with patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(40, 16000, 1))), patch.object(
+                stt_chunking, "decode_planning_pcm", new=decode,
+            ):
+                outcome = await stt_chunking.execute_chunking(
+                    source_path=source, source_stem="source", fields=[("response_format", "json")],
+                    config=_config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=40),
+                    post_file=AsyncMock(), cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10, on_cancel=None,
+                )
+        self.assertEqual((outcome.mode, outcome.fallback_reason), ("passthrough", "below_threshold"))
+        decode.assert_not_awaited()
+
     async def test_media_child_is_killed_and_reaped_on_task_cancellation(self) -> None:
         class BlockingReader:
             def __init__(self, entered: asyncio.Event) -> None:
@@ -1334,15 +1422,19 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
                     receive,
                 )
                 probe = AsyncMock(return_value=stt_chunking.ProbedAudio(2, 8000, 1))
+                finalized = []
                 with (
                     patch.object(proxy, "_stt_execution_snapshot", return_value=config),
                     patch.object(proxy.httpx, "AsyncClient", side_effect=client_factory),
                     patch.object(stt_chunking, "probe_audio", new=probe),
                     patch.object(proxy.receipt_store, "begin"),
-                    patch.object(proxy.receipt_store, "finalize", return_value=True),
+                    patch.object(proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True),
                 ):
                     response = await proxy.proxy_stt_request(request, access_context())
 
+                # The whole-file request is an upstream attempt, so the receipt does not say "0 attempts".
+                self.assertEqual((finalized[0].metadata["stt"]["attempts_started"], finalized[0].metadata["stt"]["chunked"]), (1, False))
+                self.assertNotIn("chunk_attempts", finalized[0].metadata["stt"])
                 self.assertEqual(response.status_code, 203)
                 self.assertEqual(response.body, b'{"text":"direct","segments":[]}')
                 self.assertEqual(response.headers["x-local-transport"], "yes")
@@ -1350,6 +1442,52 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(received), 1)
                 self.assertTrue(str(received[0].url).endswith("/v1/audio/transcriptions"))
                 self.assertEqual(probe.await_count, 1 if kind == "short" else 0)
+                self.assertEqual(list((root / "spool").glob("*")), [])
+
+    async def test_the_route_refuses_a_long_unplannable_file_in_the_gateways_words_and_posts_nothing(self) -> None:
+        for reason, error, status in (
+            ("unreadable_media", stt_chunking.SttMediaCommandFailed("secret-path /srv/x ffmpeg said sk-1234"), 422),
+            ("split_failed", stt_chunking.SttSetupFailure("secret-path /srv/x"), 502),
+        ):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                config = _config(root, target_seconds=30, threshold_seconds=40, max_segment_seconds=40, max_duration_seconds=3000)
+                body, content_type = _multipart_body(content=b"RIFF-long", fields=(("model", "whisper-1"),))
+                sent = False
+
+                async def receive():
+                    nonlocal sent
+                    if not sent:
+                        sent = True
+                        return {"type": "http.request", "body": body, "more_body": False}
+                    await asyncio.Future()
+
+                class NeverCalled:
+                    def __init__(self, *args, **kwargs):
+                        raise AssertionError("the engine must not be contacted")
+
+                request = Request(
+                    {"type": "http", "method": "POST", "path": "/v1/audio/transcriptions", "headers": [(b"content-type", content_type.encode())]},
+                    receive,
+                )
+                finalized = []
+                with (
+                    patch.object(proxy, "_stt_execution_snapshot", return_value=config),
+                    patch.object(proxy.httpx, "AsyncClient", NeverCalled),
+                    patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(1320, 16000, 1))),
+                    patch.object(stt_chunking, "decode_planning_pcm", new=AsyncMock(side_effect=error)),
+                    patch.object(proxy.receipt_store, "begin"),
+                    patch.object(proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True),
+                ):
+                    response = await proxy.proxy_stt_request(request, access_context())
+
+                self.assertEqual(response.status_code, status)
+                payload = json.loads(response.body)["error"]
+                self.assertEqual(payload["code"], "stt_audio_cannot_be_split")
+                self.assertIn("longer than 40 seconds", payload["message"])
+                self.assertNotIn("secret-path", response.body.decode())
+                self.assertNotIn("sk-1234", response.body.decode())
+                self.assertEqual((finalized[0].status, finalized[0].metadata["stt"]["attempts_started"]), ("failed", 0))
                 self.assertEqual(list((root / "spool").glob("*")), [])
 
     async def test_decoded_direct_success_error_and_redirect_drop_representation_headers(self) -> None:

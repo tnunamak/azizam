@@ -49,10 +49,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"text\": \"part 1 part 2 part 3\"}"
+          "text": "{\"text\": \"part 1 part 2 part 3 part 4\"}"
         },
         "headers": {
-          "content-length": "32",
+          "content-length": "39",
           "content-type": "application/json"
         },
         "status": 200
@@ -86,9 +86,9 @@
           {
             "body": {
               "kind": "binary",
-              "len": 328078,
-              "magic": "5249464686010500",
-              "sha256": "01524055da3c154c21744dad6f5a8d37a50360870eec80d0c3bb520ab3fee516"
+              "len": 320398,
+              "magic": "5249464686e30400",
+              "sha256": "2813c8f1f2cca6dfc7112805ac2607b7a2c8ab26a47a0b40bd2f9039af4e1872"
             },
             "crlf_after_body": true,
             "headers": "Content-Disposition: form-data; name=\"file\"; filename=\"long.chunk000.wav\"\r\nContent-Type: audio/wav"
@@ -100,7 +100,7 @@
         "accept": "*/*",
         "accept-encoding": "identity",
         "connection": "keep-alive",
-        "content-length": "328462",
+        "content-length": "320782",
         "content-type": "multipart/form-data; boundary=<boundary>",
         "host": "127.0.0.1:5092"
       },
@@ -140,7 +140,7 @@
               "kind": "binary",
               "len": 320078,
               "magic": "5249464646e20400",
-              "sha256": "ccc4c761f1c39c1b2c99e8d5ccd06469c23629f5c55e6242e22fe9d0f66e77d5"
+              "sha256": "58b07a9dbf7d5edda7c1a6f324da8ea3958764430c3e4fc989b2f90b1a6c213c"
             },
             "crlf_after_body": true,
             "headers": "Content-Disposition: form-data; name=\"file\"; filename=\"long.chunk001.wav\"\r\nContent-Type: audio/wav"
@@ -190,9 +190,9 @@
           {
             "body": {
               "kind": "binary",
-              "len": 552078,
-              "magic": "52494646866c0800",
-              "sha256": "144c7624709dfb528bae0e0dfbdbced9df90678735e99637fd87a9174fc305d6"
+              "len": 320078,
+              "magic": "5249464646e20400",
+              "sha256": "93e45ecfdeda047c6ba76cbccccfd63bb4e6e79a1364eb87af410c53b5944b66"
             },
             "crlf_after_body": true,
             "headers": "Content-Disposition: form-data; name=\"file\"; filename=\"long.chunk002.wav\"\r\nContent-Type: audio/wav"
@@ -204,7 +204,59 @@
         "accept": "*/*",
         "accept-encoding": "identity",
         "connection": "keep-alive",
-        "content-length": "552462",
+        "content-length": "320462",
+        "content-type": "multipart/form-data; boundary=<boundary>",
+        "host": "127.0.0.1:5092"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/v1/audio/transcriptions",
+      "query": [],
+      "step": 0,
+      "to": "127.0.0.1:5092"
+    },
+    {
+      "body": {
+        "boundary": "<boundary>",
+        "epilogue": "\r\n",
+        "kind": "multipart",
+        "parts": [
+          {
+            "body": {
+              "kind": "text",
+              "text": "json"
+            },
+            "crlf_after_body": true,
+            "headers": "Content-Disposition: form-data; name=\"response_format\""
+          },
+          {
+            "body": {
+              "kind": "text",
+              "text": "parakeet-tdt-0.6b-v3"
+            },
+            "crlf_after_body": true,
+            "headers": "Content-Disposition: form-data; name=\"model\""
+          },
+          {
+            "body": {
+              "kind": "binary",
+              "len": 239758,
+              "magic": "5249464686a80300",
+              "sha256": "65ff5107779b7837fe53f463c754c22b1bc5a16578f6c365344daf6920ef4eb3"
+            },
+            "crlf_after_body": true,
+            "headers": "Content-Disposition: form-data; name=\"file\"; filename=\"long.chunk003.wav\"\r\nContent-Type: audio/wav"
+          }
+        ],
+        "preamble": ""
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "identity",
+        "connection": "keep-alive",
+        "content-length": "240142",
         "content-type": "multipart/form-data; boundary=<boundary>",
         "host": "127.0.0.1:5092"
       },
@@ -269,7 +321,8 @@
           "metadata": {
             "status_code": 200,
             "stt": {
-              "attempts_started": 3,
+              "attempts_started": 4,
+              "chunk_attempts": 4,
               "chunked": true,
               "field_count": 2,
               "file_count": 1
