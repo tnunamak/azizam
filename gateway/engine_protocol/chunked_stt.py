@@ -37,10 +37,11 @@ driver. Inventory, jobs and recovery are not implemented.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable, Literal, Mapping, Sequence
+from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, Literal, Mapping, Sequence
 
 import httpx
 
@@ -151,6 +152,21 @@ async def _nothing_to_close() -> None:
     return None
 
 
+@contextlib.contextmanager
+def _backend_errors(label: str) -> Iterator[None]:
+    """Map an httpx failure talking to the engine onto the gateway's typed backend errors."""
+    try:
+        yield
+    except httpx.TimeoutException as error:
+        raise stt_chunking.SttBackendTimeout(f"{label} timed out") from error
+    except httpx.ConnectError as error:
+        raise stt_chunking.SttBackendUnavailable(f"{label} is unavailable") from error
+    except httpx.TransportError as error:
+        # Reset/closed/protocol error after the connection was made: the engine died
+        # mid-request (typically a GPU out-of-memory kill). Another engine may serve it.
+        raise stt_chunking.SttBackendConnectionLost(f"{label} dropped the connection") from error
+
+
 class _RunWire:
     """The requests of one run, over the run's one client."""
 
@@ -162,7 +178,7 @@ class _RunWire:
 
     async def send_files(self, files: list[tuple[str, tuple[str, Any, str]]]) -> stt_chunking.UpstreamResponse:
         run, client = self._run, self._client
-        try:
+        with _backend_errors(self._label):
             outgoing = client.build_request("POST", self._url, headers=run.headers, data=run.multipart_fields, files=files)
             upstream = await stt_chunking.await_with_cancellation(
                 client.send(outgoing, stream=True),
@@ -177,14 +193,6 @@ class _RunWire:
             finally:
                 await run.cleanup.release("upstream_response", upstream.aclose)
             return stt_chunking.UpstreamResponse(upstream.status_code, body, dict(upstream.headers))
-        except httpx.TimeoutException as error:
-            raise stt_chunking.SttBackendTimeout(f"{self._label} timed out") from error
-        except httpx.ConnectError as error:
-            raise stt_chunking.SttBackendUnavailable(f"{self._label} is unavailable") from error
-        except httpx.TransportError as error:
-            # Reset/closed/protocol error after the connection was made: the engine died
-            # mid-request (typically a GPU out-of-memory kill). Another engine may serve it.
-            raise stt_chunking.SttBackendConnectionLost(f"{self._label} dropped the connection") from error
 
     async def post_file(self, path: Path, filename: str, media_type: str) -> stt_chunking.UpstreamResponse:
         handle = path.open("rb")
@@ -245,21 +253,20 @@ class _RunWire:
             "POST", self._url, headers=run.headers, data=run.multipart_fields,
             files=[("file", (filename, handle, "audio/wav" if run.wav16k_input else "application/octet-stream"))],
         )
-        try:
+        # Before the first event byte nothing has reached the caller, so a lost connection
+        # still lets the tier hand the whole upload to its next engine.
+        with _backend_errors(self._label):
             upstream = await stt_chunking.await_with_cancellation(
                 client.send(outgoing, stream=True),
                 cancellation_waiters=run.cancellation_waiters, deadline_at=run.deadline_at, on_cancel=run.on_cancel,
             )
-        except httpx.TimeoutException as error:
-            raise stt_chunking.SttBackendTimeout(f"{self._label} timed out") from error
-        except httpx.ConnectError as error:
-            raise stt_chunking.SttBackendUnavailable(f"{self._label} is unavailable") from error
         run.cleanup.add("upstream_response", upstream.aclose)
         if upstream.status_code != 200:
-            body = await stt_chunking.read_bounded_response(
-                upstream, max_bytes=run.execution.max_response_bytes,
-                cancellation_waiters=run.cancellation_waiters, deadline_at=run.deadline_at, on_cancel=run.on_cancel,
-            )
+            with _backend_errors(self._label):
+                body = await stt_chunking.read_bounded_response(
+                    upstream, max_bytes=run.execution.max_response_bytes,
+                    cancellation_waiters=run.cancellation_waiters, deadline_at=run.deadline_at, on_cancel=run.on_cancel,
+                )
             return _transcript(stt_chunking.UpstreamResponse(upstream.status_code, body, dict(upstream.headers)), "stream_refused")
         return StreamReply(upstream.status_code, lower_headers(upstream.headers), _BoundedRelay(self._label, upstream, run),
                            _nothing_to_close)
