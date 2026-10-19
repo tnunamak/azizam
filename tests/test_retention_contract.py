@@ -581,6 +581,31 @@ def test_startup_repair_tolerates_corrupt_stored_setting(tmp_path, caplog, store
     assert caplog.text.count("invalid stored retention setting") == 1
 
 
+@pytest.mark.parametrize("remove_from_vocabulary", [False, True])
+def test_maintenance_uses_normalized_member_period(tmp_path, monkeypatch, remove_from_vocabulary):
+    import proxy
+    from gateway import media_jobs, prompt_memory
+    admin_path, media_path = tmp_path / "admin.db", tmp_path / "media.db"
+    admin_store.init_db(admin_path)
+    person = admin_store.upsert_oidc_user("iss", "maintenance", path=admin_path)["id"]
+    with sqlite3.connect(admin_path) as conn:
+        conn.execute("UPDATE prompt_memory_preferences SET retention='1_year' WHERE user_id=?", (person,))
+    monkeypatch.setattr(proxy.ADMIN_STORE, "path", admin_path)
+    monkeypatch.setattr(media_jobs, "DB_PATH", media_path)
+    data = _bundled_data()
+    data["groups"]["prompts"].update(choices=["never"], default_retention="never", default_cap="never")
+    if remove_from_vocabulary:
+        del data["retention_choices"]["1_year"]
+    contract = retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
+    monkeypatch.setattr(retention, "bundled", lambda: contract)
+    decision = prompt_memory.decide_for_person(person, None, admin_path=admin_path)
+    assert decision.kept_until is None
+    assert prompt_memory.put("asset", person, "prompt", kept_until=None, created_at=int(time.time()),
+                             path=media_path, admin_path=admin_path)
+    proxy._maintain_person_prompt_memory(person)
+    assert prompt_memory.get("asset", person, path=media_path)["kept_until"] is None
+
+
 def test_a_missing_file_stops_startup_with_a_plain_message(tmp_path, monkeypatch):
     import asyncio
     import proxy
