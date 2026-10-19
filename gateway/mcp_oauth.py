@@ -80,6 +80,9 @@ from gateway.mcp_oauth_store import ClientRecord, GrantRecord, Store, digest, ne
 SCOPE = "mcp"
 OFFLINE_ACCESS = "offline_access"
 SCOPES_SUPPORTED = (SCOPE, OFFLINE_ACCESS)
+# A capability the consent gives and the grant records: renaming the person's own apps and keys. A client cannot
+# ask for it (``get_allowed_scope`` drops it) and grants made before it existed lack it, so they never gain it.
+RENAME_SCOPE = "mcp:rename"
 ACCESS_TOKEN_PREFIX = "azm_at_"
 REFRESH_TOKEN_PREFIX = "azm_rt_"
 CLIENT_ID_PREFIX = "azm_client_"
@@ -758,6 +761,11 @@ class McpOAuth:
         grant = self.deps.store.active_grant(grant_id)
         return grant is not None and grant.person_id == person_id and SCOPE in scope_to_list(grant.scope)
 
+    def grant_allows_rename(self, grant_id: str, person_id: str) -> bool:
+        """Whether the person's consent for this connection included renaming their apps and keys."""
+        grant = self.deps.store.active_grant(grant_id)
+        return grant is not None and grant.person_id == person_id and RENAME_SCOPE in scope_to_list(grant.scope)
+
     # ---- helpers
 
     def _maybe_prune(self) -> None:
@@ -849,7 +857,7 @@ class McpOAuth:
             client = oauth_request.client
             record = self.deps.store.create_grant(
                 person_id=person_id, client=client.record, redirect_uri=grant.redirect_uri,
-                resource=oauth_request.resource, scope=oauth_request.scope, session=session,
+                resource=oauth_request.resource, scope=f"{oauth_request.scope} {RENAME_SCOPE}", session=session,
             )
             user = Person(person_id, record.id)
         status, _body, headers = self.server.create_authorization_response(oauth_request, grant_user=user, grant=grant)
@@ -1034,6 +1042,7 @@ class McpOAuth:
                     "See which media workflows your plan includes",
                     "Make images, video, music, sound and speech within your plan",
                     "Check on and cancel work it started",
+                    "Rename your own apps and keys (names only; no new keys or access)",
                 ],
                 "lasts": "Until you disconnect it on the Connect page",
             }, headers=no_store)

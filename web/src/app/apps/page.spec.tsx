@@ -1025,10 +1025,11 @@ it("does not offer 'Change access plan' to a member", async () => {
   expect(screen.queryByRole("menuitem", { name: "Change access plan" })).toBeNull();
 });
 
-it("offers an administrator no way to enable, rename or trust an address on an App", async () => {
-  // The page lists the signed-in person's own Apps. Re-enabling, renaming and trusted
-  // addresses on other people's Apps (the owner's included) answer 403 for an
-  // administrator, so none of those actions may appear here.
+it("offers an administrator no way to enable or trust an address on an App, but lets them rename their own", async () => {
+  // The page lists the signed-in person's own Apps. Re-enabling and trusted addresses on
+  // other people's Apps (the owner's included) answer 403 for an administrator, so
+  // neither may appear here. Renaming goes through the person's own routes (/me/api), which
+  // accept any signed-in person for their own apps and keys.
   vi.mocked(accountApi.session).mockResolvedValue({
     ...snapshot,
     user: person("admin"),
@@ -1038,9 +1039,10 @@ it("offers an administrator no way to enable, rename or trust an address on an A
   await screen.findByRole("heading", { name: "Guide app" });
   openMenu("Guide app");
   await screen.findByRole("menuitem", { name: "Create another key" });
-  for (const name of [/enable/i, /rename/i, /trusted address/i, /undo/i]) {
+  for (const name of [/enable/i, /trusted address/i, /undo/i]) {
     expect(screen.queryByRole("menuitem", { name })).toBeNull();
   }
+  expect(screen.getByRole("menuitem", { name: "Rename app" })).toBeVisible();
 });
 
 it("retains a rejected new app's name and access plan for a safe retry", async () => {

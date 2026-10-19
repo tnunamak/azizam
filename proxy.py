@@ -136,6 +136,7 @@ from gateway import voice_audio
 from gateway import voices_api
 from gateway import a1111_api
 from gateway import mcp_oauth, mcp_oauth_store, mcp_server, session_guard
+from gateway.workflow_call import CallError
 from gateway import identity_api, identity_scene
 from gateway import likeness as likeness_module
 from gateway import stt_chunking
@@ -235,6 +236,10 @@ from gateway.user_runtime import (
     get_user_app_credential,
     get_user_receipt,
     mint_user_app_key,
+    rename_person_app,
+    rename_person_key,
+    rename_user_app,
+    rename_user_app_key,
     request_user_access,
     revoke_user_app_key,
 )
@@ -14299,6 +14304,34 @@ async def _mcp_dispatch_call(request: Request, method: str, path: str, **kwargs:
         return await http.request(method, path, headers={**forwarded, **headers}, **kwargs)
 
 
+def _mcp_rename(request: Request, auth: Any, tool: str, args: Mapping[str, Any]) -> dict[str, Any]:
+    """``rename_app`` and ``rename_key`` for a person who signed in to the client (an MCP connection).
+
+    The person's own rules apply, as on /me: their own apps and keys, never another person's. An App key is a
+    data-plane credential for one App and has no person who answers for a rename, so it is refused. A connection
+    made before the consent offered renaming lacks the grant's ``mcp:rename`` scope and is refused too. A rename
+    changes a label only (decision D36), so it asks for no recent confirmation.
+    """
+    identity = auth.identity if isinstance(auth, AuthContext) else None
+    if identity is None or not identity.person_id or not identity.connection_id:
+        raise CallError("Renaming works for a client you signed in to, not for an app key. "
+                        "Connect the client from the Connect page, then try again.")
+    if not MCP_OAUTH.grant_allows_rename(identity.connection_id, identity.person_id):
+        raise CallError("This connection was made before renaming could be allowed, so it can't rename apps or keys. "
+                        "Disconnect it on the Connect page and connect it again to allow renaming.",
+                        code="reconnect_required")
+    try:
+        if tool == "rename_app":
+            renamed = rename_person_app(
+                identity.person_id, str(args["app"]), str(args["name"]), via="mcp", path=ADMIN_STORE.path)
+            return {"status": "renamed", "app": {"id": renamed["app"]["id"], "name": renamed["app"]["name"]}}
+        renamed = rename_person_key(
+            identity.person_id, str(args["app"]), str(args["key"]), str(args["name"]), via="mcp", path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        raise CallError(exc.message, code=exc.code) from None
+    return {"status": "renamed", "key": {"id": renamed["id"], "name": renamed["display_name"], "app_id": renamed["app_id"]}}
+
+
 def _mcp_catalog() -> list[dict[str, Any]]:
     records = GATEWAY_WORKFLOW_REGISTRY.records()
     by_id = {record.id: record for record in records}
@@ -14421,6 +14454,7 @@ def _mount_mcp(app: FastAPI) -> None:
             authorization_servers=lambda request: (
                 [MCP_OAUTH.issuer(request)] if MCP_OAUTH_ENABLED and MCP_OAUTH.available(request) else []),
             scopes=(mcp_oauth.SCOPE,) if MCP_OAUTH_ENABLED else (),
+            rename=_mcp_rename,
         ),
         path=MCP_PATH,
     )
@@ -16110,6 +16144,28 @@ async def user_portal_delete_app(app_id: str, request: Request):
     )
 
 
+@app.patch("/me/api/apps/{app_id}", include_in_schema=False)
+async def user_portal_rename_app(app_id: str, request: Request):
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = body.get("name") if isinstance(body, Mapping) else None
+    try:
+        payload = await asyncio.to_thread(
+            rename_user_app, session, app_id, name if isinstance(name, str) else "", path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(status_code=200, content=payload, headers={"cache-control": "no-store"})
+
+
 @app.post("/me/api/apps/{app_id}/keys", include_in_schema=False)
 async def user_portal_mint_key(app_id: str, request: Request):
     try:
@@ -16254,6 +16310,29 @@ async def user_portal_revoke_key(credential_id: str, request: Request):
         content={"credential": credential},
         headers={"cache-control": "no-store"},
     )
+
+
+@app.patch("/me/api/credentials/{credential_id}", include_in_schema=False)
+async def user_portal_rename_key(credential_id: str, request: Request):
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    label = body.get("display_name") if isinstance(body, Mapping) else None
+    try:
+        credential = await asyncio.to_thread(
+            rename_user_app_key, session, credential_id, label if isinstance(label, str) else "",
+            path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(status_code=200, content={"credential": credential}, headers={"cache-control": "no-store"})
 
 
 def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:

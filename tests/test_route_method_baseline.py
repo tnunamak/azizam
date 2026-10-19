@@ -38,6 +38,10 @@ baseline's paths and its own. Only these differences are allowed:
 * /me/api/profile/avatar, /me/api/profile/avatars and /me/api/profile/avatar/picture are new (a person's avatar and the
   sign-in picture served from the gateway; tests/test_me_avatar.py covers them): each answers with its own
   route or that route's 405, and no other method reaches a handler;
+* PATCH /admin/api/apps/{app_id}/keys/{credential_id} is new (an administrator or the owner renames an App's key), and
+  PATCH on /me/api/apps/{app_id} and /me/api/credentials/{credential_id} is new (a person renames their own App or key;
+  tests/test_rename_apps_keys.py covers them): each is a route of its own, and every other method on those paths answers
+  as before;
 * GET and HEAD with an HTML Accept on a first segment no route registers get
   the web app's 404 page (503 here: the sandbox has no web build). The same
   requests without HTML in Accept keep their r18 answer.
@@ -136,6 +140,9 @@ def _deliberate(key: str) -> str | None:
         return "access-plans"
     if path.startswith("/admin/api/apps/") and "/trusted-addresses" in path:
         return "trusted-addresses"  # owner routes added after the baseline (gateway/trusted_addresses.py)
+    if re.fullmatch(r"/admin/api/apps/[^/]+/keys/[^/]+", path) or (
+            _method == "PATCH" and re.fullmatch(r"/me/api/(apps|credentials)/[^/]+", path)):
+        return "rename"  # renaming an App or a key (gateway/admin_api.py rename_key, proxy.py user_portal_rename_*)
     if path == "/admin/api/signin" or path.startswith("/admin/api/signin/"):
         return "signin"  # owner routes added after the baseline (gateway/signin_api.py)
     if path == ENGINE_PROTOCOLS_PATH:
@@ -231,6 +238,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # the access plan API replaced /admin/api/profiles
         if kind == "trusted-addresses":
             continue  # new owner routes; tests/test_trusted_addresses.py covers them
+        if kind == "rename":
+            continue  # new rename routes; tests/test_rename_apps_keys.py covers them
         if kind == "signin":
             continue  # new owner routes; tests/test_signin_settings_api.py and test_signin_test_flow.py cover them
         if kind == "native" and key not in old:
@@ -291,7 +300,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "signin", "engines", "host_commands", "sessions", "secret_entries", "native", "avatar"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "rename", "signin", "engines", "host_commands", "sessions", "secret_entries", "native", "avatar"}:
             continue
         if kind == "engine_protocols" and key not in old:
             assert _method_of(key) != "GET", key

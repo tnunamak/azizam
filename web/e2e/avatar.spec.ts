@@ -30,7 +30,11 @@ async function openPicker(page: Page) {
 const discOf = (scope: ReturnType<Page["locator"]>) =>
   scope.locator("[data-avatar-selection] > span").first();
 
-test("a person changes their avatar from the account menu and it sticks", async ({ page }) => {
+// It saves a choice on the lane owner, whose avatar row avatar-cache.spec.ts also writes and deletes. The two
+// must not run at the same time on one server: a delete between the save and the read-back returns "auto".
+test("a person changes their avatar from the account menu and it sticks", { tag: "@global-state" }, async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   const before = await page.request.get("/me/api/profile/avatar");
   expect(before.ok()).toBe(true);
