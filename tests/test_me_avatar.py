@@ -759,3 +759,56 @@ def test_through_the_route_a_private_host_on_the_allowlist_gets_zero_requests(tm
     avatars.record_sign_in_picture(user["id"], "https://10.0.0.5/photo.png", path=db)
     assert TestClient(app).get("/me/api/profile/avatar/picture").status_code == 404
     assert contacted == []
+
+
+def test_a_pending_picture_request_answers_as_a_new_one_would_when_the_choice_changes(tmp_path: Path) -> None:
+    """An admin's request waits on the fetch; the person then stops sharing it: the wait ends in a 404."""
+    async def scenario() -> tuple[int, int]:
+        release, started = asyncio.Event(), asyncio.Event()
+
+        async def fetcher(_url: str) -> media_fetch.FetchedMedia:
+            started.set()
+            await release.wait()
+            return media_fetch.FetchedMedia(PNG, "p.png", "image/png")
+
+        rig = Rig(tmp_path)
+        alice, boss = rig.person("alice", picture=PICTURE), rig.person("boss")
+        _make_admin(rig, boss)
+        avatars.set_choice(alice, "picture", path=rig.db)
+        app = FastAPI()
+        app.include_router(create_me_avatar_router(
+            session_provider=_session_for({"subject": boss}), mutation_validator=_validator,
+            admin_db_path=rig.db, picture_fetcher=fetcher, cache=PictureCache()))
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
+            pending = asyncio.ensure_future(client.get("/me/api/profile/avatar/picture", params={"person": alice}))
+            await started.wait()
+            avatars.set_choice(alice, "auto", path=rig.db)
+            now = await client.get("/me/api/profile/avatar/picture", params={"person": alice})
+            release.set()
+            waited = await pending
+        assert waited.headers["cache-control"] == "no-store"
+        return waited.status_code, now.status_code
+
+    assert asyncio.run(scenario()) == (404, 404)
+
+
+def test_every_avatar_route_answer_carries_no_store(rig: Rig) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(None).client
+    answers = [client.get(path) for path in ("/me/api/profile/avatar", "/me/api/profile/avatars",
+                                              "/me/api/profile/avatar/picture")]
+    answers.append(client.put("/me/api/profile/avatar", json={"choice": "v1"}, headers=ACTION))
+    assert [a.status_code for a in answers] == [401] * 4
+    client = rig.as_(alice).client
+    answers += [
+        client.put("/me/api/profile/avatar", json={"choice": "v1"}),  # 403: no user-action header
+        client.put("/me/api/profile/avatar", json={"choice": "v1", "x": 1}, headers=ACTION),  # 400
+        client.put("/me/api/profile/avatar", json={"choice": "nope"}, headers=ACTION),  # invalid choice
+        client.put("/me/api/profile/avatar", json={"choice": "picture"}, headers=ACTION),  # no picture stored
+        client.get("/me/api/profile/avatar/picture"),  # 404: nothing to show
+        client.get("/me/api/profile/avatar/picture", params={"person": "someone-else"}),  # 404
+        client.get("/me/api/profile/avatar"), client.get("/me/api/profile/avatars"),
+        client.put("/me/api/profile/avatar", json={"choice": "v2"}, headers=ACTION),
+    ]
+    assert {a.status_code for a in answers[4:]} >= {200, 400, 403, 404}
+    assert [a.headers.get("cache-control") for a in answers] == ["no-store"] * len(answers)
