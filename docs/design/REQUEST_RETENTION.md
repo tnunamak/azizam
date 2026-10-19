@@ -1612,12 +1612,16 @@ the build chose a form that the text above leaves open:
   its existing routes enforce. It refuses `maker_signed_in`, a changed parts
   set and a second or renamed group with a reason naming slice 5. A narrower
   reader value cannot silently leave key-based Library downloads available.
-- If a bundled period is removed, an older stored member choice or household
-  cap maps to the longest remaining choice no longer than it. If none exists,
-  it maps to the shortest remaining choice. The same normalization feeds the
-  settings view, request decision and writer. On restart, every finite
-  effective period shortens saved prompt deadlines where needed, including
-  changed defaults and choice durations; earlier deadlines never lengthen.
+- A stored member period or owner cap keeps its exact meaning while its ID
+  exists in `retention_choices`, even if it leaves the group's offered
+  `choices`. The settings views mark it "(no longer offered)"; it cannot be
+  newly selected. If its ID leaves `retention_choices`, the shortest finite
+  offered choice applies, never `never`. One normalization feeds the settings
+  view, request decision, writer, maintenance and startup repair. On restart,
+  every finite effective period shortens saved prompt deadlines where needed,
+  including people with saved prompts but no preference row, changed defaults
+  and choice durations; earlier deadlines never lengthen. If startup repair
+  fails, the gateway logs the failure and recurring maintenance retries it.
   The bundled file is pinned for the process lifetime so this repair precedes
   serving requests under the new contract. Slice 1 refuses a bundled
   `household.never_keep: true`; the owner's setting can erase existing prompts.

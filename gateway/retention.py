@@ -128,10 +128,15 @@ class Contract:
     def public(self, kind: str = LIBRARY_PROMPT) -> dict[str, Any]:
         """What the settings screens need to draw one group: its choices (listing order) and every default."""
         seconds = self.data["retention_choices"]
-        return {
+        result = {
             "choices": [{"id": name, "seconds": seconds[name]} for name in self.group(kind)["choices"]],
             "defaults": {**self.household_defaults(kind), **self.member_defaults(kind)},
         }
+        unoffered = [{"id": name, "seconds": duration} for name, duration in seconds.items()
+                     if name not in self.group(kind)["choices"]]
+        if unoffered:
+            result["known_unoffered"] = unoffered
+        return result
 
 
 def _where(path) -> str:
@@ -164,6 +169,8 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
         for choice in group["choices"]:
             if choice not in seconds:
                 errors.append(f"groups/{name}/choices: {choice} is not in retention_choices")
+        if not any(seconds.get(choice) is not None for choice in group["choices"] if choice in seconds):
+            errors.append(f"groups/{name}/choices: slice 1 needs a finite choice for deleted stored periods")
         for field in ("default_retention", "default_cap"):
             if group[field] not in group["choices"]:
                 errors.append(f"groups/{name}/{field}: {group[field]} is not one of the group's choices")
@@ -302,7 +309,7 @@ def apply_prompts_view(document: Mapping[str, Any] | None, view: Mapping[str, An
     return document
 
 
-def validate_prompts_view(view: Mapping[str, Any]) -> dict[str, Any]:
+def validate_prompts_view(view: Mapping[str, Any], *, existing_cap: str | None = None) -> dict[str, Any]:
     """The validator for the prompts group's household values. Raises ValueError naming the rule."""
     contract = bundled()
     defaults = contract.household_defaults(LIBRARY_PROMPT)
@@ -312,7 +319,7 @@ def validate_prompts_view(view: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(default_remember, bool) or not isinstance(never_keep, bool):
         raise ValueError("prompt memory switches must be booleans")
     choices = contract.choices(LIBRARY_PROMPT)
-    if retention_cap not in choices:
+    if retention_cap not in choices and retention_cap != existing_cap:
         raise ValueError("retention_cap must be " + ", ".join(choices[:-1]) + f", or {choices[-1]}")
     return {"default_remember": default_remember, "never_keep": never_keep, "retention_cap": retention_cap}
 
@@ -322,26 +329,29 @@ def household(document: Mapping[str, Any] | None) -> dict[str, Any]:
     return {**household_defaults(), **prompts_view(document)}
 
 
+def unoffered_household_cap(document: Mapping[str, Any] | None) -> str | None:
+    """The saved owner cap, if it is no longer selectable."""
+    groups = document.get("groups") if isinstance(document, Mapping) else None
+    group = groups.get(GROUP_PROMPTS) if isinstance(groups, Mapping) else None
+    return unoffered_period(group.get("retention_cap")) if isinstance(group, Mapping) else None
+
+
 # ---------------------------------------------------------------------- periods
 
 
 def normalize_period(value: str, *, kind: str, owner_cap: bool) -> str:
-    """Use the nearest allowed period no longer than a removed choice, or the shortest available."""
+    """Keep known stored IDs; a deleted ID uses the shortest finite offered period."""
     contract = bundled()
-    choices = contract.choices(kind)
-    if value in choices:
-        return value
     seconds = contract.seconds_map()
-    if value not in seconds:
-        field = "default_cap" if owner_cap else "default_retention"
-        return contract.group(kind)[field]
-    original = seconds[value]
-    shorter = [choice for choice in choices if seconds[choice] is not None and
-               (original is None or seconds[choice] <= original)]
-    if shorter:
-        return max(shorter, key=lambda choice: seconds[choice])
-    # No allowed period is short enough; choose the shortest available.
-    return min(choices, key=lambda choice: float("inf") if seconds[choice] is None else seconds[choice])
+    if value in seconds:
+        return value
+    finite = [choice for choice in contract.choices(kind) if seconds[choice] is not None]
+    return min(finite, key=lambda choice: seconds[choice])
+
+
+def unoffered_period(value: Any, *, kind: str = LIBRARY_PROMPT) -> str | None:
+    """Return a saved ID only when the group no longer offers it for selection."""
+    return value if isinstance(value, str) and value not in bundled().choices(kind) else None
 
 
 def effective_period(member_period: str, cap: str, kind: str = LIBRARY_PROMPT) -> str:

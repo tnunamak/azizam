@@ -321,7 +321,7 @@ def tighten_contract_periods(*, admin_path: Path, path: Path | None = None) -> i
                 cap = stored_cap
             except (TypeError, ValueError):
                 logging.getLogger(__name__).warning("invalid stored retention setting; using bundled defaults")
-        members = admin_conn.execute("SELECT user_id, retention FROM prompt_memory_preferences").fetchall()
+        members = dict(admin_conn.execute("SELECT user_id, retention FROM prompt_memory_preferences"))
 
         media_conn = _connect(path)
         try:
@@ -341,7 +341,10 @@ def tighten_contract_periods(*, admin_path: Path, path: Path | None = None) -> i
             cap_seconds = contract.seconds_map()[cap_period]
             if cap_seconds is not None:
                 shorten(cap_seconds)
-            for person_id, member_period in members:
+            person_ids = media_conn.execute("SELECT DISTINCT person_id FROM asset_prompts").fetchall()
+            default_period = contract.member_defaults(retention.LIBRARY_PROMPT)["retention"]
+            for (person_id,) in person_ids:
+                member_period = members.get(person_id, default_period)
                 period = retention.effective_period(member_period, cap)
                 seconds = contract.seconds_map()[period]
                 if seconds is not None:

@@ -22,6 +22,7 @@ import {
   capLabel,
   defaultCap,
   householdPromptMemoryApi,
+  isKnownRetention,
   isRetention,
   isShorter,
   promptMemoryKey,
@@ -30,6 +31,7 @@ import {
   type HouseholdPromptMemory,
   type HouseholdPromptMemoryResponse,
   type Retention,
+  unofferedRetentionNote,
 } from "@/lib/prompt-memory";
 
 const householdKey = ["settings", "prompt-memory"] as const;
@@ -107,6 +109,7 @@ export function HouseholdPromptsSection() {
         ) : (
           <Rows
             value={data.prompt_memory}
+            unofferedCap={data.unoffered?.retention_cap}
             status={purgeStatus(data.prompt_purge)}
             busy={save.isPending}
             onChange={(next) => void save.mutateAsync(next).catch(() => {})}
@@ -118,7 +121,8 @@ export function HouseholdPromptsSection() {
         No Azizam screen shows anyone’s prompts to anyone else, you included.
         You run this gateway, so you could still read its files. Your own choice
         is in{" "}
-        <Link prefetch={false}
+        <Link
+          prefetch={false}
           href="/account"
           className="text-foreground underline underline-offset-4"
         >
@@ -161,18 +165,23 @@ export function HouseholdPromptsSection() {
 
 function Rows({
   value,
+  unofferedCap,
   status,
   busy,
   onChange,
   onAsk,
 }: {
   value: HouseholdPromptMemory;
+  unofferedCap?: Retention;
   status: string | null;
   busy: boolean;
   onChange: (next: HouseholdPromptMemory) => void;
   onAsk: (pending: Pending) => void;
 }) {
-  const cap = isRetention(value.retention_cap) ? value.retention_cap : defaultCap();
+  const cap = isKnownRetention(value.retention_cap)
+    ? value.retention_cap
+    : defaultCap();
+  const legacyNote = unofferedRetentionNote(unofferedCap, cap, capLabel);
   return (
     <>
       <SettingRow
@@ -212,7 +221,8 @@ function Rows({
         // One line on a phone too: the label truncates before the
         // control wraps under it (DESIGN: phone rows are 64).
         className="max-sm:flex-nowrap"
-        description="The longest, for everyone."
+        description={legacyNote ?? "The longest, for everyone."}
+        wrapDescription={Boolean(legacyNote)}
         control={
           <Select
             value={cap}
@@ -228,7 +238,7 @@ function Rows({
               aria-label="Keep prompts for"
               className="sm:min-w-32"
             >
-              <SelectValue />
+              <SelectValue>{capLabel(cap)}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {retentionChoices().map((option) => (

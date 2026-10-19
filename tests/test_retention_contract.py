@@ -93,7 +93,9 @@ def _ref_me_effective(member, household):
         str(member.get("retention") or "never"), str(household.get("retention_cap") or "never"))}
 
 
-PERIODS = ("never", "3_months", "1_year", "bogus")
+# The pre-slice oracle covers values the old gateway accepted. Deleted IDs now
+# use the stricter fallback, which is covered by the focused contract tests.
+PERIODS = ("never", "3_months", "1_year")
 BODIES = (None, {}, {"input": "x"}, {"extensions": {"com.azizam.prompts": {"mode": "forget"}}},
           {"extensions": {"com.azizam.prompts": {"mode": "keep"}}}, {"extensions": "x"},
           {"extensions": {"com.azizam.prompts": {"mode": "forget", "x": 1}}})
@@ -454,6 +456,7 @@ def test_removed_stored_period_has_one_display_decision_and_writer_deadline(tmp_
     from gateway import prompt_memory
     data = _bundled_data()
     data["groups"]["prompts"].update(choices=["3_months"], default_retention="3_months", default_cap="3_months")
+    del data["retention_choices"]["never"]
     contract = retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
     monkeypatch.setattr(retention, "bundled", lambda: contract)
     admin_path = tmp_path / "admin.db"
@@ -504,6 +507,7 @@ def test_removed_period_shortens_existing_prompt_deadlines(tmp_path, monkeypatch
                              created_at=started, path=media_path, admin_path=admin_path)
     data = _bundled_data()
     data["groups"]["prompts"].update(choices=["3_months"], default_retention="3_months", default_cap="3_months")
+    del data["retention_choices"]["never"]
     contract = retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
     monkeypatch.setattr(retention, "bundled", lambda: contract)
     assert prompt_memory.tighten_contract_periods(admin_path=admin_path, path=media_path) == 1
@@ -513,22 +517,22 @@ def test_removed_period_shortens_existing_prompt_deadlines(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize("stored,owner_cap", [("3_months", False), ("3_months", True)])
-def test_removed_choice_uses_nearest_shorter_period_even_if_default_is_never(monkeypatch, stored, owner_cap):
+def test_known_choice_keeps_its_period_when_no_longer_offered(monkeypatch, stored, owner_cap):
     data = _bundled_data()
     data["retention_choices"]["1_month"] = 30 * 86400
     data["groups"]["prompts"].update(choices=["never", "1_year", "1_month"],
                                       default_retention="never", default_cap="never")
     contract = retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
     monkeypatch.setattr(retention, "bundled", lambda: contract)
-    assert retention.normalize_period(stored, kind=retention.LIBRARY_PROMPT, owner_cap=owner_cap) == "1_month"
+    assert retention.normalize_period(stored, kind=retention.LIBRARY_PROMPT, owner_cap=owner_cap) == "3_months"
 
 
-def test_removed_choice_uses_shortest_remaining_when_none_is_shorter(monkeypatch):
+def test_known_choice_keeps_its_period_when_only_longer_choice_is_offered(monkeypatch):
     data = _bundled_data()
     data["groups"]["prompts"].update(choices=["never", "1_year"], default_retention="never", default_cap="never")
     contract = retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
     monkeypatch.setattr(retention, "bundled", lambda: contract)
-    assert retention.normalize_period("3_months", kind=retention.LIBRARY_PROMPT, owner_cap=False) == "1_year"
+    assert retention.normalize_period("3_months", kind=retention.LIBRARY_PROMPT, owner_cap=False) == "3_months"
 
 
 def test_bundled_kill_switch_is_refused_until_startup_erasure_exists():
@@ -593,17 +597,18 @@ def test_maintenance_uses_normalized_member_period(tmp_path, monkeypatch, remove
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", admin_path)
     monkeypatch.setattr(media_jobs, "DB_PATH", media_path)
     data = _bundled_data()
-    data["groups"]["prompts"].update(choices=["never"], default_retention="never", default_cap="never")
+    data["groups"]["prompts"].update(choices=["never", "3_months"], default_retention="never", default_cap="never")
     if remove_from_vocabulary:
         del data["retention_choices"]["1_year"]
     contract = retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
     monkeypatch.setattr(retention, "bundled", lambda: contract)
     decision = prompt_memory.decide_for_person(person, None, admin_path=admin_path)
-    assert decision.kept_until is None
-    assert prompt_memory.put("asset", person, "prompt", kept_until=None, created_at=int(time.time()),
+    expected_days = 90 if remove_from_vocabulary else 365
+    assert decision.kept_until == decision.created_at + expected_days * 86400
+    assert prompt_memory.put("asset", person, "prompt", kept_until=decision.kept_until, created_at=decision.created_at,
                              path=media_path, admin_path=admin_path)
     proxy._maintain_person_prompt_memory(person)
-    assert prompt_memory.get("asset", person, path=media_path)["kept_until"] is None
+    assert prompt_memory.get("asset", person, path=media_path)["kept_until"] == decision.kept_until
 
 
 def test_startup_repair_reads_policy_while_another_writer_holds_admin_lock(tmp_path, monkeypatch):

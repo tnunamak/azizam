@@ -12697,6 +12697,14 @@ def _migrate_host_command_permission() -> None:
     )
 
 
+async def _repair_prompt_deadlines_at_startup() -> None:
+    try:
+        await asyncio.to_thread(prompt_memory.tighten_contract_periods,
+                                admin_path=ADMIN_DB_PATH, path=media_jobs.DB_PATH)
+    except Exception as exc:
+        print(f"[proxy] prompt deadline repair pending: {type(exc).__name__}", flush=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
@@ -12705,9 +12713,8 @@ async def lifespan(app: FastAPI):
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
-    # Complete deadline repair before serving; the recurring maintenance pass retries failures later.
-    await asyncio.to_thread(prompt_memory.tighten_contract_periods,
-                            admin_path=ADMIN_DB_PATH, path=media_jobs.DB_PATH)
+    # Try deadline repair before serving; recurring maintenance retries failures.
+    await _repair_prompt_deadlines_at_startup()
     await asyncio.to_thread(_adopt_bootstrap_signin_lists)
     await asyncio.to_thread(_migrate_host_command_permission)
     from gateway.lifecycle_drivers import _process_driver

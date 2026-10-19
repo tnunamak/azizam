@@ -3561,11 +3561,14 @@ def put_prompt_memory_preference(
     if not user_id:
         raise ValueError("user_id is required")
     choices = retention_contract.bundled().choices(retention_contract.LIBRARY_PROMPT)
-    if retention not in choices:
-        raise ValueError("retention must be one of " + ", ".join(choices))
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute(
+            "SELECT retention FROM prompt_memory_preferences WHERE user_id=?", (user_id,)
+        ).fetchone()
+        if retention not in choices and (current is None or retention != current[0]):
+            raise ValueError("retention must be one of " + ", ".join(choices))
         if validate_in_transaction is not None:
             validate_in_transaction(conn)
         if not remember:

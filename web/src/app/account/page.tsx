@@ -27,6 +27,7 @@ import {
   capLabel,
   defaultCap,
   defaultRetention,
+  isKnownRetention,
   isRetention,
   isShorter,
   keepsForever,
@@ -37,6 +38,7 @@ import {
   withinCap,
   type MemberPromptMemoryResponse,
   type Retention,
+  unofferedRetentionNote,
 } from "@/lib/prompt-memory";
 
 type Pending =
@@ -144,12 +146,30 @@ function PromptsSection() {
 
   const memory = data.prompt_memory;
   const household = memory.household;
-  const cap = isRetention(household.retention_cap)
+  const cap = isKnownRetention(household.retention_cap)
     ? household.retention_cap
     : defaultCap();
-  const retention = isRetention(memory.effective_retention)
+  const retention = isKnownRetention(memory.effective_retention)
     ? memory.effective_retention
     : defaultRetention();
+  const legacyNote = unofferedRetentionNote(
+    data.unoffered?.retention,
+    retention,
+    memberRetentionLabel,
+  );
+  const capLegacyNote = unofferedRetentionNote(
+    data.unoffered?.retention_cap,
+    cap,
+    capLabel,
+  );
+  const retentionDescription =
+    legacyNote || capLegacyNote
+      ? [legacyNote, capLegacyNote && `Gateway limit: ${capLegacyNote}`]
+          .filter(Boolean)
+          .join(" ")
+      : keepsForever(cap)
+        ? "Creations stay in Library."
+        : `Up to ${capLabel(cap).toLowerCase()} here.`;
   const status = purgeStatus(data.prompt_purge);
   const owner = viewer.admin ? null : (ownerName ?? "The gateway owner");
   const busy = save.isPending || remove.isPending;
@@ -182,7 +202,9 @@ function PromptsSection() {
                 />
               ) : (
                 <Button asChild variant="outline">
-                  <Link prefetch={false} href="/settings#prompts">Open Settings</Link>
+                  <Link prefetch={false} href="/settings#prompts">
+                    Open Settings
+                  </Link>
                 </Button>
               )
             }
@@ -214,11 +236,8 @@ function PromptsSection() {
               // One line on a phone too: the label truncates before the
               // control wraps under it (DESIGN: phone rows are 64).
               className="max-sm:flex-nowrap"
-              description={
-                keepsForever(cap)
-                  ? "Creations stay in Library."
-                  : `Up to ${capLabel(cap).toLowerCase()} here.`
-              }
+              description={retentionDescription}
+              wrapDescription={Boolean(legacyNote || capLegacyNote)}
               control={
                 <Select
                   value={retention}
@@ -235,7 +254,7 @@ function PromptsSection() {
                     aria-label="Forget prompts after"
                     className="sm:min-w-32"
                   >
-                    <SelectValue />
+                    <SelectValue>{memberRetentionLabel(retention)}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {retentionChoices().map((value) => (

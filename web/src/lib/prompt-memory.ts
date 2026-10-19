@@ -27,6 +27,8 @@ export interface RetentionChoice {
 export interface RetentionContract {
   /** In the order the screens list them. */
   choices: RetentionChoice[];
+  /** Existing saved periods whose durations are still known, but which cannot be chosen now. */
+  known_unoffered?: RetentionChoice[];
   defaults: {
     default_remember: boolean;
     never_keep: boolean;
@@ -68,12 +70,16 @@ export interface PromptPurge {
 
 export interface MemberPromptMemoryResponse {
   prompt_memory: MemberPromptMemory;
+  /** Raw saved IDs absent from the offered choices, before normalization. */
+  unoffered?: { retention?: Retention; retention_cap?: Retention };
   prompt_purge?: PromptPurge;
   contract?: RetentionContract;
 }
 
 export interface HouseholdPromptMemoryResponse {
   prompt_memory: HouseholdPromptMemory;
+  /** Raw saved IDs absent from the offered choices, before normalization. */
+  unoffered?: { retention?: Retention; retention_cap?: Retention };
   revision: string;
   prompt_purge?: PromptPurge;
   contract?: RetentionContract;
@@ -90,7 +96,9 @@ export const promptMemoryKey = ["account", "prompt-memory"] as const;
 let current: RetentionContract | null = null;
 
 /** Remember the contract a prompt-memory response carries. */
-export function setRetentionContract(next: RetentionContract | null | undefined) {
+export function setRetentionContract(
+  next: RetentionContract | null | undefined,
+) {
   if (next && Array.isArray(next.choices)) current = next;
 }
 
@@ -118,14 +126,21 @@ export function defaultRetention(): Retention {
 
 /** How long a choice keeps prompts; a choice with no deadline is the longest. */
 function length(value: Retention): number {
-  const choice = current?.choices.find((candidate) => candidate.id === value);
+  const choice = knownChoice(value);
   if (!choice) return Number.NaN;
   return choice.seconds ?? Number.POSITIVE_INFINITY;
 }
 
+function knownChoice(value: Retention): RetentionChoice | undefined {
+  return (
+    current?.choices.find((choice) => choice.id === value) ??
+    current?.known_unoffered?.find((choice) => choice.id === value)
+  );
+}
+
 /** True for the choice that keeps prompts with no deadline. */
 export function keepsForever(value: Retention): boolean {
-  return current?.choices.find((choice) => choice.id === value)?.seconds === null;
+  return knownChoice(value)?.seconds === null;
 }
 
 function words(value: Retention): string {
@@ -147,6 +162,24 @@ export function isRetention(value: unknown): value is Retention {
     typeof value === "string" &&
     (current?.choices.some((choice) => choice.id === value) ?? false)
   );
+}
+
+/** Known durations may remain in saved settings after they leave the offered choices. */
+export function isKnownRetention(value: unknown): value is Retention {
+  return typeof value === "string" && knownChoice(value) !== undefined;
+}
+
+/** Explain a saved period that cannot be newly selected, including a deleted ID's fallback. */
+export function unofferedRetentionNote(
+  stored: Retention | undefined,
+  effective: Retention,
+  label: (value: Retention) => string,
+): string | null {
+  if (!stored) return null;
+  const previous = label(stored).toLowerCase();
+  return stored === effective
+    ? `${previous} (no longer offered).`
+    : `Previous choice ${previous} (no longer offered). Using ${label(effective).toLowerCase()}.`;
 }
 
 /** True when `next` keeps prompts for less time than `current`. */
