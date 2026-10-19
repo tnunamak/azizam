@@ -31,8 +31,10 @@ def issue(claims: Mapping[str, Any], *, role: str, cookie: CookieConfig, path: P
 
     ``register=False`` is for a session with no person behind it. ``renewable=False``
     gives it the fixed life ``cookie.max_age_seconds`` and never renews it.
-    ``authenticated_at`` is when the person last really proved who they are, if the
-    identity provider says it was before this sign-in (``auth_time``).
+    ``authenticated_at`` is when the person last really proved who they are. Leave it out when this
+    sign-in is the proof (a password, an admin key). Pass the provider's ``auth_time`` for a provider
+    sign-in, or ``AUTH_TIME_UNKNOWN`` when the ID token had none (decision D40): the session is signed in
+    but never recent.
     """
     policy = session_policy.load_policy(path)
     if renewable:

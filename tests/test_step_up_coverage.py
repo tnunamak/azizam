@@ -2,16 +2,17 @@
 how people sign in asks a stale session to confirm it is them (gateway/step_up.py).
 
 The routes come from the running app, not from a list kept here. A route is risky when its path names one
-of those jobs, or when its handler's own code calls one of the functions that do them. Each risky route
+of those jobs, or when its handler calls one of the functions that do them, directly or through the repo's
+own helpers (tests/support/call_graph.py follows resolvable calls, four steps deep). Each risky route
 has to be in gateway/step_up.py, or be listed below with the reason it is safe. A new route that does
 one of these jobs therefore fails this test until someone decides.
 """
-import inspect
 import re
 
 import pytest
 
 from gateway import step_up
+from tests.support import call_graph
 
 # The jobs, as paths: (pattern, what it does, methods). "*" stands for one path segment.
 CHANGES = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -46,6 +47,12 @@ RISKY_CALLS = (
 # Risky by the rules above and safe, with the reason. A stale entry (the route is gone, or no longer
 # looks risky) fails too, so this list cannot grow quietly.
 REVIEWED_SAFE = {
+    ("DELETE", "/admin/api/providers/*"): "removing a provider moves no credential; the write goes through "
+        "_persist_service_registry like removing a service",
+    ("POST", "/admin/api/operator/services/*/enabled"): "switches a service on or off; its write goes through "
+        "_persist_service_registry, which settles credential bindings and asks before any moves",
+    ("PUT", "/admin/api/providers/*/models"): "edits a provider's model list and prices; the body cannot carry a "
+        "credential, and the write goes through _persist_service_registry, which asks before any binding moves",
     ("DELETE", "/admin/api/operator/services/*"): "removing a service moves no credential",
     ("DELETE", "/admin/api/operator/service-registry/excluded/*/*"): "dropping a left-out record moves no credential",
 }
@@ -70,10 +77,13 @@ def risky_reason(method: str, path: str, handler) -> str | None:
     for pattern, reason, methods in RISKY_PATHS:
         if method in methods and re.search(pattern, path):
             return reason
-    source = inspect.getsource(handler)
-    for call in RISKY_CALLS:
-        if call in source:
-            return f"its handler calls {call.rstrip('(')}"
+    # The handler's own code first, then every helper it reaches (call_graph.reach: repo functions only, a
+    # few calls deep, cycle-safe), so a risky call one helper down is found too.
+    risky = {call.rstrip("(") for call in RISKY_CALLS}
+    for function, chain in call_graph.reach(handler).items():
+        if called := sorted(risky & call_graph.call_names(function)):
+            via = " via " + " -> ".join(step.__qualname__ for step in chain) if chain else ""
+            return f"its handler calls {called[0]}{via}"
     return None
 
 
@@ -100,7 +110,7 @@ def test_every_risky_route_is_in_the_step_up_list_or_reviewed_as_safe(routes):
     assert unclassified == [], (
         "These routes do something a stolen session must not be able to do, and no step-up covers them. "
         "Add each to gateway/step_up.py (SENSITIVE_ROUTES, or HANDLER_GATED when only some requests are risky), "
-        "or to REVIEWED_SAFE here with the reason.")
+        "or to REVIEWED_SAFE here with the reason.\n" + "\n".join(map(str, unclassified)))
 
 
 def test_the_reviewed_safe_list_has_no_stale_entries(routes):
@@ -162,3 +172,73 @@ def test_every_registry_write_of_the_store_passes_the_step_that_asks_before_a_cr
     assert "_settle_credential_bindings" in _calls(methods["_persist_service_registry"])
     settle = ast.unparse(methods["_settle_credential_bindings"])
     assert "require_recent" in settle and settle.index("require_recent") > settle.index("credential_binding_changes")
+
+
+# -- the detector follows helpers ---------------------------------------------------------------------
+
+def _helper_makes_a_key():
+    return mint_user_app_key()  # noqa: F821  (read as text, never run)
+
+
+def _handler_one_helper_deep():
+    return _helper_makes_a_key()
+
+
+def _handler_that_only_reads():
+    return _quiet_helper()
+
+
+def _quiet_helper():
+    return 1
+
+
+def _cycle_a():
+    return _cycle_b()
+
+
+def _cycle_b():
+    return _cycle_a()
+
+
+def _chain_0():
+    return _chain_1()
+
+
+def _chain_1():
+    return _chain_2()
+
+
+def _chain_2():
+    return _chain_3()
+
+
+def _chain_3():
+    return _chain_4()
+
+
+def _chain_4():
+    return _chain_5()
+
+
+def _chain_5():
+    return mint_user_app_key()  # noqa: F821
+
+
+def test_a_risky_call_one_helper_deep_is_found():
+    reason = risky_reason("POST", "/x", _handler_one_helper_deep)
+
+    assert reason == "its handler calls mint_user_app_key via _helper_makes_a_key"
+
+
+def test_a_handler_whose_helpers_are_quiet_is_not_risky():
+    assert risky_reason("POST", "/x", _handler_that_only_reads) is None
+
+
+def test_a_cycle_of_helpers_ends():
+    assert risky_reason("POST", "/x", _cycle_a) is None
+
+
+def test_the_search_is_bounded():
+    # The key is five calls down: past the default depth of four, inside five.
+    assert risky_reason("POST", "/x", _chain_0) is None
+    assert len(call_graph.reach(_chain_0, depth=5)) == 6

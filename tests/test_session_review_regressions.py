@@ -342,7 +342,7 @@ def test_a_provider_that_omits_auth_time_does_not_confirm_a_step_up(sg):
 
     _, callback = through_provider(sg, client, reauth=True, auth_time=None)
 
-    assert callback.status_code == 303 and callback.headers["location"].startswith("/sign-in/?error=provider")
+    assert callback.status_code == 303 and callback.headers["location"].startswith("/sign-in/?error=no_sign_in_time")
     assert asks_again(client.get("/admin/api/settings/effective/export"))
 
 

@@ -148,7 +148,10 @@ where noted (decision D36).
 The lists are `SENSITIVE_ROUTES` (the middleware asks) and `HANDLER_GATED` (the handler asks,
 because only some requests to the route are risky) in `gateway/step_up.py`.
 `tests/test_step_up_coverage.py` finds the risky routes in the running app, by path and by the calls a
-handler makes, and fails for one that is in neither list and has not been reviewed as safe.
+handler makes (and the calls those make, up to four steps down, through the repo's own functions it can
+resolve: `tests/support/call_graph.py`), and fails for one that is in neither list and has not been
+reviewed as safe. It cannot follow a call through a local variable or a table of callbacks; a handler that
+does its risky work that way must be listed by hand.
 
 The response names the ways to confirm:
 
@@ -165,11 +168,35 @@ The response names the ways to confirm:
   the person in again (`prompt=login`, `max_age=0`). The provider must report
   `auth_time`, from after the request began; a response without it, or with an
   older one, does not confirm anyone. The sign-in must be by the same person. The
-  new session replaces the old one. An ordinary provider sign-in also counts as
-  confirmed only as far as the provider says: with `auth_time`, a silent single
-  sign-on that reuses an older login does not count as a recent sign-in. An ordinary
-  sign-in (not a confirmation) from a provider that sends no `auth_time` is still taken at its
-  word; only an explicit confirmation requires the claim.
+  new session replaces the old one. **Clock-skew allowance:** the provider's clock is not ours,
+  so an `auth_time` up to 60 seconds before the request began still counts
+  (`AUTH_TIME_CLOCK_SKEW_SECONDS` in `proxy.py`; decision D40). One older than that does not.
+- `sign_in`: neither is possible for this session (for example it came from an
+  admin key claim). Sign in again.
+
+### A provider that does not report the sign-in time (decision D40)
+
+An ordinary provider sign-in records `auth_time` from the ID token as the time the person
+authenticated. A provider may leave `auth_time` out of an ordinary sign-in (OpenID Connect requires
+it only when the client asked with `max_age`). Then Azizam does not know when the person signed in,
+and it does not guess "now": the person is **signed in, but never recent**. Every action in the list above
+asks them to confirm, until they confirm with their Azizam password, or through the provider when it
+reports `auth_time` for the explicit confirmation (which asks with `max_age=0`).
+
+If the provider answers the explicit confirmation with no `auth_time` too, nobody can be confirmed
+through it. The person returns to the sign-in page with a plain message: the sign-in provider does not
+tell Azizam when they signed in, so Azizam cannot tell they just confirmed; confirm with the Azizam
+password instead, or use an admin key. A person with no password and such a provider cannot set a
+password in the browser (setting one is also a confirmed action). An admin key does it, or the
+provider's administrator turns on `auth_time` for this client. Sign-ins by password or by an admin key
+are not affected: the sign-in itself is the proof.
+
+### Making a credential after signing out (decision D41)
+
+Every credential a browser sign-in creates (an App key, an admin key, a Try key, a lasting MCP
+connection, an invitation or reset link, the owner's password) checks, inside the database transaction
+that writes it, that the sign-in is still live. A request that passed its cookie check a moment before
+"Sign out everywhere" committed therefore gets `401` (`login_required`) and writes nothing.
 - `sign_in`: neither is possible for this session (for example it came from an
   admin key claim). Sign in again.
 

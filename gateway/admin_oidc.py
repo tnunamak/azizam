@@ -770,6 +770,13 @@ def access_names_from_oidc_claims(
 # ---------------------------------------------------------------------------
 
 
+# ``AdminSession.authenticated_at`` when the identity provider's ID token carried no ``auth_time``: the
+# epoch, older than any step-up window, so the session is never recent (decision D40). ``None`` is
+# different: a password or key sign-in, or a cookie from before sliding sessions, whose issue time is when
+# the person proved who they are.
+AUTH_TIME_UNKNOWN = 0.0
+
+
 @dataclass(frozen=True)
 class AdminSession:
     """The minimal payload we trust into a signed cookie.

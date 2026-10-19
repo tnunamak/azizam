@@ -16,7 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from gateway import mcp_oauth
+from gateway import accounts, admin_store, mcp_oauth
 from gateway.mcp_oauth import McpOAuth, McpOAuthDeps
 from gateway.mcp_oauth_store import Store
 
@@ -26,9 +26,19 @@ CALLBACK = "https://client.example/callback"
 CIMD_ID = "https://client.example/oauth/client.json"
 
 
+class FakeSession(str):
+    """A signed-in person's id that also carries the sign-in ids a real ``AdminSession`` has."""
+
+    session_id = "test-session"
+    family_id = "test-session"
+
+
 class World:
     def __init__(self, tmp_path) -> None:
         self.db = tmp_path / "admin.db"
+        # The consent checks the sign-in against the account tables (decision D41), so they must exist.
+        admin_store.init_db(self.db)
+        accounts.initialize(self.db)
         self.now = 1_800_000_000.0
         self.store = Store(lambda: self.db, clock=lambda: self.now)
         self.people = {"usr_a": {"id": "usr_a", "email": "a@example.org", "display_name": "Ann"},
@@ -39,7 +49,7 @@ class World:
         self.audits: list[tuple[str, dict]] = []
         self.oauth = McpOAuth(McpOAuthDeps(
             public_base_url=lambda r: BASE,
-            session=lambda r: r.headers.get("x-test-person") or None,
+            session=lambda r: FakeSession(r.headers["x-test-person"]) if r.headers.get("x-test-person") else None,
             person=lambda session: self.people.get(session),
             check_action=lambda r, s: None if r.headers.get("x-test-csrf") == "ok" else JSONResponse(
                 {"error": {"code": "user_csrf_required"}}, status_code=403),

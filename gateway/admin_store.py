@@ -31,7 +31,7 @@ of scope here — this module is the durable substrate those routes call into.
 
 from __future__ import annotations
 
-from gateway import request_connections
+from gateway import request_connections, session_guard
 from gateway.compat import get_env
 from gateway.sqlite_startup import check_quarantine_pending, connect, store_startup
 
@@ -1107,10 +1107,14 @@ def set_local_password_verifier(
     user_id: str,
     verifier: str,
     *,
+    session: session_guard.BrowserSession | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Store (or replace) the password verifier attached to a local user.
+
+    ``session`` is the browser sign-in that asked for it, checked in this write's transaction
+    (``gateway/session_guard.py``); none for a write no browser sign-in started.
 
     Raw passwords are never persisted — the caller computes the verifier
     string with :func:`gateway.local_owner.hash_password` and hands us the
@@ -1122,6 +1126,7 @@ def set_local_password_verifier(
         raise ValueError("verifier is required")
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
+        session_guard.begin_write(conn, session)
         existing = conn.execute(
             "SELECT user_id, created_at FROM local_password_credentials "
             "WHERE user_id = ?",
@@ -2004,14 +2009,19 @@ def create_credential_hash(
     created_by: str | None = None,
     expires_at: int | None = None,
     session_id: str | None = None,
-    precheck: Callable[[sqlite3.Connection], None] | None = None,
+    session: session_guard.BrowserSession | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Persist a credential hash.
 
-    ``precheck`` runs inside the write transaction, before the insert: a sign-out that commits first
-    makes it raise, and one that commits after finds the new key to revoke.
+    ``session`` is the browser sign-in that started this write, ``None`` when none did (the CLI, an
+    admin key, a test). Production callers pass it by name every time; the default exists for tests, and
+    ``tests/test_credential_writers_check_the_session.py`` fails when a production call omits it.
+    It is checked inside the write transaction, before the insert, so a sign-out that commits first
+    raises ``SessionEnded`` and one that commits after finds the new key to revoke
+    (``gateway/session_guard.py``). ``session_id`` is a different thing: the sign-in the key is
+    bound to, so that signing out revokes it.
 
     Subject invariants:
 
@@ -2050,13 +2060,7 @@ def create_credential_hash(
         json.dumps(sorted({s for s in scopes if s})) if scopes else None
     )
     with _conn(path) as conn:
-        if precheck is not None:
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                precheck(conn)
-            except BaseException:
-                conn.rollback()
-                raise
+        session_guard.begin_write(conn, session)
         if subject_kind in _DATA_PLANE_SUBJECTS and conn.execute(
             "SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)
         ).fetchone():

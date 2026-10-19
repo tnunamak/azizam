@@ -29,6 +29,7 @@ from fastapi import Request, status
 
 from gateway import admin_store, browser_sessions, engine_check, step_up, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
+from gateway.session_guard import SessionEnded
 from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
     SERVICE_ACCOUNT_SESSION_PREFIX,
@@ -637,6 +638,7 @@ class AdminSQLiteStore:
             display_name=str(data.get("label") or data.get("name") or "API key"),
             scopes=data.get("scopes") if isinstance(data.get("scopes"), list) else None,
             created_by=actor.audit_actor_id if actor.actor_kind == "user" else "",
+            session=actor.browser_session,
             path=self.path,
         )
         admin_store.record_audit(
@@ -684,15 +686,23 @@ class AdminSQLiteStore:
             path=self.path,
         )
         api_key = generate_admin_api_key()
-        credential = admin_store.create_credential_hash(
-            subject_kind="service_account",
-            subject_id=service_account["id"],
-            hash=hash_api_key(api_key),
-            prefix=_key_prefix(api_key),
-            display_name=f"{name} admin automation key",
-            created_by=minter,
-            path=self.path,
-        )
+        try:
+            credential = admin_store.create_credential_hash(
+                subject_kind="service_account",
+                subject_id=service_account["id"],
+                hash=hash_api_key(api_key),
+                prefix=_key_prefix(api_key),
+                display_name=f"{name} admin automation key",
+                created_by=minter,
+                session=actor.browser_session,
+                path=self.path,
+            )
+        except SessionEnded:
+            # The sign-in ended after the role was granted and before the key was made: take the role back, so
+            # the account is left holding nothing.
+            admin_store.revoke_admin_role(
+                assignment["id"], actor_kind="system", actor_id="session_guard", path=self.path)
+            raise
         admin_store.record_audit(
             "admin_key.create",
             actor_kind=actor.actor_kind,
@@ -2150,6 +2160,7 @@ class AdminAuthenticator:
                                 signing_key=self.signing_key,
                             ),
                             session_id=session.session_id,
+                            session_family=session.family_id,
                             session_expires_at=int(session.expires_at),
                             authenticated_at=int(session.last_authenticated),
                         )
@@ -2453,6 +2464,7 @@ def create_admin_service_account_key(
         prefix=_key_prefix(api_key),
         display_name=f"{name} admin key",
         created_by=admin_store.OPERATOR_GRANTOR,
+        session=None,  # the operator's CLI: no browser sign-in
         path=path,
     )
     admin_store.record_audit(

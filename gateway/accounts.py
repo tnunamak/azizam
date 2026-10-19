@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from gateway import admin_store, request_connections, sqlite_startup
+from gateway import admin_store, request_connections, session_guard, sqlite_startup
 from gateway.admin_runtime import generate_app_api_key, is_human_user_record
 from gateway.local_owner import verify_password as verify_legacy_password
 from gateway.runtime_auth import hash_api_key
@@ -456,7 +456,10 @@ def _public_link(row) -> dict:
 
 def create_link(kind: str, actor: str, *, path: Path, plan_id: str | None = None,
                 user_id: str | None = None, email: str | None = None, expires_in: int = 604800, token_factory: Callable[[str], str] | None = None,
-                actor_kind: str = "user", actor_label: str | None = None) -> tuple[dict, str]:
+                actor_kind: str = "user", actor_label: str | None = None,
+                session: session_guard.BrowserSession | None = None) -> tuple[dict, str]:
+    """Record an invitation or reset link. ``session`` is the browser sign-in that asked for it, checked in
+    the insert's transaction (``gateway/session_guard.py``); none for a write no browser sign-in started."""
     if kind not in {"invite", "reset"}:
         raise AccountError("invalid_link", "Invalid link type.")
     if isinstance(expires_in, bool) or not isinstance(expires_in, int) or not 60 <= expires_in <= 30 * 86400:
@@ -466,6 +469,10 @@ def create_link(kind: str, actor: str, *, path: Path, plan_id: str | None = None
     token = token_factory(link_id) if token_factory else secrets.token_urlsafe(32)
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        try:
+            session_guard.require_live(conn, session)
+        except session_guard.SessionEnded as ended:
+            raise AccountError(ended.code, ended.message, ended.status_code) from None
         if kind == "invite":
             _valid_plan(conn, plan_id)
         else:

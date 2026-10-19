@@ -12,7 +12,7 @@ import pytest
 
 from gateway import accounts, admin_store, session_policy, step_up
 from gateway.admin_oidc import (
-    AdminSession, CookieConfig, csrf_token_for_session, decode_session_cookie, encode_session_cookie,
+    AUTH_TIME_UNKNOWN, AdminSession, CookieConfig, csrf_token_for_session, decode_session_cookie, encode_session_cookie,
 )
 from gateway.session_policy import DAY, MINUTE
 from tests.support.access import store_plan
@@ -593,8 +593,13 @@ def test_a_non_admin_is_refused_by_the_route_not_asked_to_confirm(sg):
 
 # -- confirming with the identity provider -----------------------------------
 
-def through_provider(g, client, *, reauth=True, sub="owner", email=OWNER, auth_time=None):
-    """Run the provider sign-in the browser would: /login (with reauth=1 for step-up), then the callback."""
+def through_provider(g, client, *, reauth=True, sub="owner", email=OWNER, auth_time="now"):
+    """Run the provider sign-in the browser would: /login (with reauth=1 for step-up), then the callback.
+
+    The provider says the person signed in just now, as Keycloak does. ``auth_time=None`` is a provider whose
+    ID token carries no ``auth_time``."""
+    if auth_time == "now":
+        auth_time = int(time.time())
     params = {"return_to": "/settings/", **({"reauth": "1"} if reauth else {})}
     login = client.get("/login", params=params, follow_redirects=False)
     if "redirect_uri=" not in login.headers["location"]:
@@ -670,12 +675,114 @@ def test_an_ordinary_provider_sign_in_with_a_recent_login_is_a_recent_sign_in(sg
     assert not asks_again(client.get("/admin/api/settings/effective/export"))
 
 
-def test_a_provider_that_reports_no_auth_time_is_taken_at_its_word(sg):
+def test_a_provider_that_reports_no_auth_time_signs_the_person_in_but_not_recently(sg):
+    """Decision D40: an unknown sign-in time is not "now". Signed in, and every risky action asks again."""
     client = sg.client()
 
-    through_provider(sg, client, reauth=False)
+    through_provider(sg, client, reauth=False, auth_time=None)
 
+    assert signed_in_state(client)
+    assert cookie_session(client).authenticated_at == AUTH_TIME_UNKNOWN
+    assert asks_again(client.get("/admin/api/settings/effective/export"))
+
+
+def test_a_sign_in_with_no_auth_time_stays_not_recent_when_the_session_renews(sg):
+    client = sg.client()
+    through_provider(sg, client, reauth=False, auth_time=None)
+    session = cookie_session(client)
+    renewed = session_policy.renewal(session, session_policy.load_policy(sg.path), session.issued_at + 10 * DAY)
+
+    assert renewed is not None and renewed.authenticated_at == AUTH_TIME_UNKNOWN
+    assert not session_policy.is_recently_authenticated(renewed, session_policy.load_policy(sg.path), renewed.renewed_at)
+
+
+def test_a_person_with_no_recent_time_confirms_with_a_password_and_is_recent_after(sg):
+    client = sg.client()
+    through_provider(sg, client, reauth=False, auth_time=None)
+    set_password(sg, OWNER)
+    assert asks_again(client.get("/admin/api/settings/effective/export"))
+
+    confirmed = client.post("/auth/api/reauth", json={"password": PASSWORD}, headers=csrf(client))
+
+    assert confirmed.status_code == 200, confirmed.text
     assert not asks_again(client.get("/admin/api/settings/effective/export"))
+
+
+def test_a_person_with_no_recent_time_confirms_through_a_provider_that_reports_the_time(sg):
+    client = sg.client()
+    through_provider(sg, client, reauth=False, auth_time=None)
+
+    _, callback = through_provider(sg, client, reauth=True, auth_time=int(time.time()))
+
+    assert callback.status_code == 302
+    assert not asks_again(client.get("/admin/api/settings/effective/export"))
+
+
+def test_a_provider_that_never_reports_the_time_cannot_confirm_and_says_why_in_plain_words(sg):
+    client = sg.client()
+    through_provider(sg, client, reauth=False, auth_time=None)
+
+    _, callback = through_provider(sg, client, reauth=True, auth_time=None)
+
+    assert callback.status_code == 303 and callback.headers["location"].startswith("/sign-in/?error=no_sign_in_time")
+    assert asks_again(client.get("/admin/api/settings/effective/export"))
+
+
+def test_the_same_refusal_in_json_names_the_provider_and_the_other_way_to_confirm(sg):
+    client = sg.client()
+    through_provider(sg, client, reauth=False, auth_time=None)
+    login = client.get("/login", params={"return_to": "/settings/", "reauth": "1"}, follow_redirects=False)
+    if "redirect_uri=" not in login.headers["location"]:
+        login = client.get(login.headers["location"], follow_redirects=False)
+    state, record = list(sg.proxy.ADMIN_OIDC_STATES.items())[-1]
+
+    async def verify(token, *, config):
+        return {"iss": config.issuer, "aud": config.client_id, "sub": "owner", "email": OWNER, "email_verified": True,
+                "nonce": record.nonce, "exp": 4_000_000_000, "iat": 1_700_000_000}
+
+    sg.monkeypatch.setattr(sg.proxy, "_oidc_verify_id_token", verify)
+    callback = client.get("/admin/oidc/callback", params={"state": state, "code": "c"}, follow_redirects=False)
+
+    assert callback.status_code == 400
+    error = callback.json()["error"]
+    assert error["code"] == "provider_no_sign_in_time"
+    assert "does not tell Azizam when you signed in" in error["message"] and "password" in error["message"]
+
+
+def test_an_auth_time_that_is_not_a_number_is_no_auth_time(sg):
+    client = sg.client()
+
+    through_provider(sg, client, reauth=False, auth_time=float("nan"))
+
+    assert signed_in_state(client) and cookie_session(client).authenticated_at == AUTH_TIME_UNKNOWN
+
+
+def test_a_reauth_whose_auth_time_is_just_inside_the_clock_skew_allowance_confirms(sg):
+    """Decision D40: the provider's clock may run up to 60 seconds behind ours."""
+    stale = stale_owner(sg)
+
+    _, callback = through_provider(sg, stale, reauth=True, auth_time=int(time.time()) - 45)
+
+    assert callback.status_code == 302
+    assert not asks_again(stale.get("/admin/api/settings/effective/export"))
+
+
+def test_the_clock_skew_allowance_is_sixty_seconds_and_written_down(sg):
+    from pathlib import Path
+
+    doc = (Path(__file__).resolve().parents[1] / "docs" / "ops" / "SIGN_IN_SESSIONS.md").read_text()
+
+    assert sg.proxy.AUTH_TIME_CLOCK_SKEW_SECONDS == 60
+    assert "AUTH_TIME_CLOCK_SKEW_SECONDS" in doc and "60 seconds" in doc
+
+
+def test_a_reauth_whose_auth_time_is_past_the_clock_skew_allowance_does_not_confirm(sg):
+    stale = stale_owner(sg)
+
+    _, callback = through_provider(sg, stale, reauth=True, auth_time=int(time.time()) - 120)
+
+    assert callback.status_code == 303 and callback.headers["location"].startswith("/sign-in/?error=provider")
+    assert asks_again(stale.get("/admin/api/settings/effective/export"))
 
 
 def test_confirming_through_the_provider_as_someone_else_is_refused(sg):

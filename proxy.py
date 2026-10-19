@@ -129,7 +129,7 @@ from gateway import custom_voices
 from gateway import voice_audio
 from gateway import voices_api
 from gateway import a1111_api
-from gateway import mcp_oauth, mcp_oauth_store, mcp_server
+from gateway import mcp_oauth, mcp_oauth_store, mcp_server, session_guard
 from gateway import identity_api, identity_scene
 from gateway import likeness as likeness_module
 from gateway import stt_chunking
@@ -156,6 +156,7 @@ from gateway import category_presets
 from gateway.category_api import create_category_router
 from gateway.setup_api import build_setup_api_router
 from gateway.admin_oidc import (
+    AUTH_TIME_UNKNOWN,
     KEY_CLAIM_EMAIL,
     AdminRole,
     IDTokenClaimsError,
@@ -17065,6 +17066,8 @@ async def setup_create_first_app(request: Request):
             app_error=e.message,
             status_code=e.status_code,
         )
+    except session_guard.SessionEnded as e:
+        return await _setup_page_response(request, app_error=e.message, status_code=e.status_code)
     except Exception as e:  # noqa: BLE001
         return await _setup_page_response(
             request,
@@ -17087,13 +17090,16 @@ async def browser_login(request: Request):
     return await _start_browser_login(request, default_return_to="/")
 
 
-def _browser_signin_failure(request: Request, *, return_to: str | None = None):
-    """Give browser navigations a safe retry page; never forward provider detail."""
+def _browser_signin_failure(request: Request, *, return_to: str | None = None, reason: str = "provider"):
+    """Give browser navigations a safe retry page; never forward provider detail.
+
+    ``reason`` is ours, never the provider's: ``provider`` (it did not finish) or ``no_sign_in_time``
+    (it finished but does not say when the person signed in, so a step-up cannot be confirmed)."""
     if "text/html" not in request.headers.get("accept", ""):
         return None
     target = _safe_admin_return_to(return_to)
     return RedirectResponse(
-        f"/sign-in/?error=provider&return_to={quote(target, safe='')}",
+        f"/sign-in/?error={reason}&return_to={quote(target, safe='')}",
         status_code=303,
         headers={"cache-control": "no-store", "referrer-policy": "no-referrer"},
     )
@@ -17145,6 +17151,8 @@ async def admin_oidc_callback(request: Request):
         claims = await _oidc_verify_id_token(id_token, config=cfg)
         try:
             validate_id_token_claims(claims, config=cfg, expected_nonce=state.nonce)
+            if state.reauth and _provider_auth_time(claims) is None:
+                raise ProviderReportsNoSignInTime(NO_SIGN_IN_TIME_MESSAGE)
             if state.reauth and not _provider_signed_in_again(claims, since=state.created_at):
                 raise ValueError("identity provider reused its own sign-in")
             decision, bootstrap_owner = await _decide_oidc_signin(cfg, claims)
@@ -17222,9 +17230,12 @@ async def admin_oidc_callback(request: Request):
         if previous is not None and previous.subject != str(user["id"]):
             # Confirming is for the person who asked. Someone else's login is not a confirmation.
             raise ValueError("re-authentication was completed by a different person")
+        # Without auth_time the provider has not said when the person signed in, so the time is unknown, not
+        # "now": the session is signed in and never recent (decision D40).
+        provider_time = _provider_auth_time(claims)
         session = browser_sessions.issue(
             session_claims, role=role, cookie=cfg.cookie, path=ADMIN_STORE.path,
-            authenticated_at=_provider_auth_time(claims),
+            authenticated_at=AUTH_TIME_UNKNOWN if provider_time is None else provider_time,
         )
         response = RedirectResponse(_safe_admin_return_to(state.return_to), status_code=302)
         browser_sessions.set_cookie(response, session, cookie=cfg.cookie, signing_key=cfg.signing_key)
@@ -17232,32 +17243,56 @@ async def admin_oidc_callback(request: Request):
             # Confirming a sign-in replaces it: the one it confirms must not linger.
             await asyncio.to_thread(browser_sessions.end, previous, path=ADMIN_STORE.path)
         return clear_browser_binding(response, state)
-    except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError):
+    except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError) as failure:
+        no_time = isinstance(failure, ProviderReportsNoSignInTime)
         response = _browser_signin_failure(
             request, return_to=state.return_to if state else None,
-        ) or Response(
-            content="OIDC authentication failed",
-            status_code=400,
-            media_type="text/plain; charset=utf-8",
+            reason="no_sign_in_time" if no_time else "provider",
         )
+        if response is None and no_time:
+            response = JSONResponse({"error": {"code": "provider_no_sign_in_time", "message": NO_SIGN_IN_TIME_MESSAGE}},
+                                    status_code=400, headers={"cache-control": "no-store"})
+        if response is None:
+            response = Response(
+                content="OIDC authentication failed",
+                status_code=400,
+                media_type="text/plain; charset=utf-8",
+            )
         return clear_browser_binding(response, state) if state else response
 
 
 def _provider_auth_time(claims: Mapping[str, Any]) -> float | None:
     """When the provider says the person last really signed in (``auth_time``), if it says."""
     try:
-        return None if claims.get("auth_time") is None else float(claims["auth_time"])
+        value = None if claims.get("auth_time") is None else float(claims["auth_time"])
     except (TypeError, ValueError):
         return None
+    return value if value is not None and math.isfinite(value) else None
+
+
+# How far before the flow began an ``auth_time`` may fall and still count as "signed in again". The
+# provider's clock and ours are not the same clock; 60 seconds is the usual allowance for skew (the OIDC
+# libraries default to it). Decision D40; docs/ops/SIGN_IN_SESSIONS.md.
+AUTH_TIME_CLOCK_SKEW_SECONDS = 60
 
 
 def _provider_signed_in_again(claims: Mapping[str, Any], *, since: float) -> bool:
     """A step-up sign-in asked for a fresh login (prompt=login, max_age=0). The provider must say,
-    with ``auth_time``, that the person signed in after the flow began. A response without it
-    proves nothing: a provider that ignored the request, or a request stripped of ``prompt`` and
-    ``max_age`` on the way, would look exactly like this."""
+    with ``auth_time``, that the person signed in after the flow began, give or take the clock-skew
+    allowance. A response without it proves nothing: a provider that ignored the request, or a request
+    stripped of ``prompt`` and ``max_age`` on the way, would look exactly like this."""
     auth_time = _provider_auth_time(claims)
-    return auth_time is not None and auth_time >= since - 60
+    return auth_time is not None and auth_time >= since - AUTH_TIME_CLOCK_SKEW_SECONDS
+
+
+class ProviderReportsNoSignInTime(ValueError):
+    """A step-up sign-in came back with no ``auth_time``, although it asked for one with ``max_age=0``."""
+
+
+NO_SIGN_IN_TIME_MESSAGE = (
+    "Your sign-in provider does not tell Azizam when you signed in, so Azizam cannot tell that you just "
+    "confirmed. Confirm with your Azizam password instead, or use an admin key for this action."
+)
 
 
 async def _decide_oidc_signin(cfg, claims: Mapping[str, Any], *, bootstrap_owner: bool | None = None):

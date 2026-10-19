@@ -304,7 +304,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         ctx = owner(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        link, token = accounts.create_link("reset", ctx.audit_actor_id, user_id=user_id, expires_in=body.expires_in, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
+        link, token = accounts.create_link("reset", ctx.audit_actor_id, user_id=user_id, expires_in=body.expires_in, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label, session=ctx.browser_session)
         return {"url": f"/sign-in/#reset={token}", "expires_at": link["expires_at"]}
 
     @router.get("/admin/api/invites")
@@ -324,7 +324,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         if not key:
             raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
         invite, token = accounts.create_link("invite", ctx.audit_actor_id, token_factory=lambda link_id: accounts.invite_token(link_id, key), plan_id=body.access_plan,
-                                             email=body.email, expires_in=body.expires_in, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
+                                             email=body.email, expires_in=body.expires_in, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label, session=ctx.browser_session)
         return {"invite": invite, "url": f"/invite/#token={token}"}
 
     @router.get("/admin/api/invites/{link_id}/link")
