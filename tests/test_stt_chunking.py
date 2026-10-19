@@ -294,7 +294,7 @@ class SttChunkMergeTests(unittest.TestCase):
             undeclared = _config(root, target_seconds=30, threshold_seconds=60)
             self.assertEqual((undeclared.search_seconds, undeclared.max_segment_seconds, undeclared.native_long_audio), (2.0, 34.0, False))  # target + 2 * search: the bundled `derive`
             self.assertFalse(undeclared.max_segment_declared)
-            self.assertEqual(undeclared.chunking_view()["from_bundled_defaults"], ["max_segment_seconds"])
+            self.assertEqual(undeclared.chunking_view()["from_bundled_defaults"], ["search_seconds", "max_segment_seconds"])
             # A file above the hard maximum is always cut, whatever the threshold says.
             self.assertEqual(undeclared.chunk_above_seconds, 34.0)
             self.assertEqual(declared.chunk_above_seconds, 40.0)
