@@ -40,7 +40,7 @@ class World:
             redirect_uris=["https://x.test/cb"], grant_types=["authorization_code"], auth_method="none",
             secret_hash=None, metadata={})
         grant = self.store.create_grant(person_id=person["id"], client=client, redirect_uri="https://x.test/cb",
-                                        resource="https://gw.test/mcp", scope="mcp")
+                                        resource="https://gw.test/mcp", scope="mcp", session=None)
         with admin_store._conn(self.admin) as conn:
             conn.execute("UPDATE mcp_oauth_grants SET created_at = ?, revoked_at = ? WHERE id = ?",
                          (created, revoked, grant.id))

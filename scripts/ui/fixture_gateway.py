@@ -158,6 +158,34 @@ def _mount_settings_restore():
 
 _mount_settings_restore()
 
+
+def _stand_in_for_the_avatar_provider():
+    """Answer a sign-in picture at https://avatars.fixture.example/... from a file, with no network.
+
+    The fixture gateway has no public address to fetch from, and the picture route must never use
+    a private one. Every other URL still goes to the real fetcher, which refuses it here. The bytes
+    end with the URL, so two people's pictures differ (web/e2e/avatar-cache.spec.ts).
+    """
+    picture = os.environ.get("UI_E2E_AVATAR_PICTURE")
+    if not picture:
+        return
+    from gateway import media_fetch
+
+    real = media_fetch.safe_fetch_media
+    prefix = "https://avatars.fixture.example/"
+
+    async def fetch(url, **kwargs):
+        if not url.startswith(prefix):
+            return await real(url, **kwargs)
+        with open(picture, "rb") as handle:
+            data = handle.read() + url.encode()
+        return media_fetch.FetchedMedia(data, "avatar.png", "image/png")
+
+    media_fetch.safe_fetch_media = fetch
+
+
+_stand_in_for_the_avatar_provider()
+
 import uvicorn
 
 # Playwright's request client keeps idle sockets alive with no timeout. With

@@ -1,5 +1,6 @@
 import { networkFetch } from "./network-error";
 import { ApiError, type Credential, type MintedCredential } from "./api";
+import { parseReauth, requestReauth } from "./reauth";
 import {
   rejectPendingCleanup,
   type DeletePromptsResponse,
@@ -32,11 +33,20 @@ export type TrySessionKey = Credential & {
     | { reused: true; api_key?: undefined }
     | { reused: false; api_key: string }
   );
+/** A person's avatar as the gateway stores it. `picture_url` is a gateway path, never the sign-in provider's address. */
+export interface AvatarSetting {
+  choice: string;
+  person_id: string;
+  picture_url: string | null;
+}
 export interface AccountSnapshot {
   authenticated: boolean;
   csrf_token: string;
   user?: {
     id: string;
+    /** The stable id the generated avatar is drawn from. */
+    person_id?: string;
+    avatar?: AvatarSetting;
     email: string | null;
     name: string;
     role: string;
@@ -50,6 +60,8 @@ async function accountRequest<T>(
   path: string,
   init: { method?: string; body?: unknown } = {},
   retried = false,
+  confirmed = false,
+  renewed = false,
 ): Promise<T> {
   const headers = new Headers();
   if (init.body !== undefined) headers.set("content-type", "application/json");
@@ -71,7 +83,23 @@ async function accountRequest<T>(
       payload?.error?.code === "user_csrf_required" &&
       !retried
     )
-      return accountRequest<T>(path, init, true);
+      return accountRequest<T>(path, init, true, confirmed, renewed);
+    // A write answered `login_required` wrote nothing (decision D41), so it is safe to send again once: the
+    // session may have renewed while the request was in flight, and the second try carries the new cookie.
+    if (
+      response.status === 401 &&
+      payload?.error?.code === "login_required" &&
+      init.method &&
+      init.method !== "GET" &&
+      !renewed
+    )
+      return accountRequest<T>(path, init, retried, confirmed, true);
+    // Making a key (or connecting a client) from an old sign-in asks the person to confirm
+    // it is them first, then sends the request once more.
+    const reauth =
+      response.status === 401 && !confirmed ? parseReauth(payload) : null;
+    if (reauth && (await requestReauth(reauth)))
+      return accountRequest<T>(path, init, retried, true, renewed);
     throw new ApiError(
       payload?.error?.code ?? "unexpected_response",
       payload?.error?.message ??
@@ -153,6 +181,19 @@ export const accountApi = {
       method: "PUT",
       body: value,
     }).then(rejectPendingCleanup),
+  /** The signed-in person's avatar choice. */
+  avatar: () => accountRequest<AvatarSetting>("/me/api/profile/avatar"),
+  /** `choice`: auto, v1 to v8, or picture. The gateway refuses anything else. */
+  saveAvatar: (choice: string) =>
+    accountRequest<AvatarSetting>("/me/api/profile/avatar", {
+      method: "PUT",
+      body: { choice },
+    }),
+  /** Avatar choices the viewer may see: their own, and everyone's for an owner or admin. */
+  avatars: () =>
+    accountRequest<{
+      people: Record<string, { choice: string; picture_url: string | null }>;
+    }>("/me/api/profile/avatars").then((r) => r.people),
   /** MCP clients this person connected by signing in. */
   mcpConnections: () =>
     accountRequest<{ connections: McpConnection[] }>(

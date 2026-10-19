@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from gateway import log_scrub, sqlite_startup
+from gateway import log_scrub, session_guard, sqlite_startup
 
 DEFAULT_KEY_FILE = "provider-secrets.key"
 
@@ -117,13 +117,17 @@ def ensure_provider_secret_schema(path: Path) -> None:
         conn.commit()
 
 
-def put_provider_secret(secret_id: str, value: str, *, db_path: Path, key_path: Path | None = None, now: int | None = None, approved_origin: str | None = None, conn: sqlite3.Connection | None = None, allow_short: bool = False, keep_suffix: bool = True) -> SecretStatus:
+def put_provider_secret(secret_id: str, value: str, *, db_path: Path, key_path: Path | None = None, now: int | None = None, approved_origin: str | None = None, conn: sqlite3.Connection | None = None, allow_short: bool = False, keep_suffix: bool = True, session: session_guard.BrowserSession | None = None) -> SecretStatus:
     """Store one secret. With ``conn``, write inside the caller's open transaction and leave the commit to
     the caller; the caller must have run :func:`ensure_provider_secret_schema` before it began.
 
     A provider key must be longer than 4 characters and keeps its last 4 as a display suffix. A secret
     entry of a record (a header, an environment value, a command argument, a URL credential) may be any
     non-empty text (``allow_short``) and keeps no suffix (``keep_suffix=False``): nothing of it is ever shown.
+
+    ``session`` is the browser sign-in that asked for the write (decision D41). It is checked in the write's
+    own transaction, so a sign-out that committed first stores nothing. None for a write no browser started
+    (a migration).
     """
     secret_id = _normalize_secret_id(secret_id)
     approved_origin = _normalize_origin(approved_origin) if approved_origin else None
@@ -159,9 +163,12 @@ def put_provider_secret(secret_id: str, value: str, *, db_path: Path, key_path: 
         timestamp,
     )
     if conn is not None:
+        session_guard.require_live(conn, session)
         conn.execute(insert, row)
     else:
         with closing(sqlite_startup.connect(db_path)) as own:
+            own.row_factory = sqlite3.Row   # the sign-in check reads rows by name
+            session_guard.begin_write(own, session)
             own.execute(insert, row)
             own.commit()
     # Registered at once, committed or not: a value that was never stored is scrubbed for nothing, and a rolled-back
@@ -222,12 +229,13 @@ def bind_provider_secrets(items: "list[tuple[str, Any]]", *, db_path: Path, guar
 
     This is the one function that opens the binding transaction. ``guard(conn)``, when given, runs first, inside it, on the
     same connection (so it reads the registry and the sign-in tables as they are at the moment of the write); whatever it
-    raises ends the call with nothing bound. The destination check of ``confirm_address`` is a guard, and the check that the
-    signed-in session is still live (``session_guard.require_live``, on ``auth/sliding-sessions``) goes in the same place.
+    raises ends the call with nothing bound. The destination check of ``confirm_address`` is a guard, and so is the check that
+    the signed-in session is still live (``session_guard.require_live``).
     """
     ensure_provider_secret_schema(db_path)
     changed = 0
     with closing(sqlite_startup.connect(db_path)) as conn:
+        conn.row_factory = sqlite3.Row   # the sign-in check reads rows by name
         try:
             conn.execute("BEGIN IMMEDIATE")
             transaction_begun(conn)
@@ -251,16 +259,25 @@ def bind_provider_secrets(items: "list[tuple[str, Any]]", *, db_path: Path, guar
     return changed
 
 
-def delete_provider_secret(secret_id: str, *, db_path: Path, conn: sqlite3.Connection | None = None) -> SecretStatus:
-    """Delete one secret. With ``conn``, delete inside the caller's open transaction (see :func:`put_provider_secret`)."""
+def delete_provider_secret(secret_id: str, *, db_path: Path, conn: sqlite3.Connection | None = None,
+                           session: session_guard.BrowserSession | None = None) -> SecretStatus:
+    """Delete one secret. With ``conn``, delete inside the caller's open transaction (see :func:`put_provider_secret`).
+
+    ``session`` is the browser sign-in that asked for the delete, checked in its transaction (decision D41).
+    Leave it out for clean-up of a secret this same request just stored or a save has just replaced: that must
+    run even when the sign-in has ended.
+    """
     secret_id = _normalize_secret_id(secret_id)
     forget = lambda: log_scrub.forget(log_scrub.secret_source(secret_id))  # noqa: E731 - the registry is bounded by the secrets that exist
     if conn is not None:
+        session_guard.require_live(conn, session)
         conn.execute("DELETE FROM provider_secrets WHERE id = ?", (secret_id,))
         _after_commit(conn, forget)  # not before the caller's commit: a rollback leaves the secret stored
         return SecretStatus(secret_id, "missing", None, None)
     ensure_provider_secret_schema(db_path)
     with closing(sqlite_startup.connect(db_path)) as own:
+        own.row_factory = sqlite3.Row   # the sign-in check reads rows by name
+        session_guard.begin_write(own, session)
         own.execute("DELETE FROM provider_secrets WHERE id = ?", (secret_id,))
         own.commit()
     _after_commit(None, forget)

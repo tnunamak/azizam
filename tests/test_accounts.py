@@ -533,7 +533,7 @@ def test_proxy_http_full_member_lifecycle_from_owner_invitation_through_reset_an
                                       redirect_uris=["https://agent.example/cb"], grant_types=["authorization_code"],
                                       auth_method="none", secret_hash=None, metadata={})
     connection = mcp_store.create_grant(person_id=user_id, client=mcp_client, redirect_uri="https://agent.example/cb",
-                                        resource="https://gw.example/mcp", scope="mcp")
+                                        resource="https://gw.example/mcp", scope="mcp", session=None)
     assert admin.delete(f"/admin/api/people/{user_id}", headers=owner_csrf).status_code == 200
     assert member.get("/me/api/session").json()["authenticated"] is False
     assert user_id not in {person["id"] for person in admin.get("/admin/api/people").json()["people"]}

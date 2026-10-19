@@ -61,6 +61,25 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
     const path = new URL(route.request().url()).pathname;
     const body = path.includes("receipts")
       ? { revision: "7", retention_days: null }
+      : path.endsWith("/sessions")
+        ? {
+            revision: "7",
+            sessions: {
+              idle_timeout_days: 30,
+              absolute_lifetime_days: 90,
+              step_up_minutes: 15,
+            },
+            defaults: {
+              idle_timeout_days: 30,
+              absolute_lifetime_days: 90,
+              step_up_minutes: 15,
+            },
+            bounds: {
+              idle_timeout_days: [1, 90],
+              absolute_lifetime_days: [1, 365],
+              step_up_minutes: [1, 1440],
+            },
+          }
       : path.includes("instance")
         ? {
             revision: "7",
@@ -237,7 +256,7 @@ for (const [state, theme, width] of [
           ).toBeVisible();
           await expect(
             page.getByRole("button", { name: "Try again" }),
-          ).toHaveCount(8);
+          ).toHaveCount(9);
           for (const name of ["People and access"]) {
             const retry = page
               .getByRole("region", { name, exact: true })

@@ -808,6 +808,22 @@
     "schema": true
   },
   {
+    "method": "GET",
+    "path": "/admin/api/settings/sessions",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.get_sessions",
+    "schema": true
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/api/settings/sessions",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.settings_api.put_sessions",
+    "schema": true
+  },
+  {
     "method": "POST",
     "path": "/admin/api/setup-dismiss",
     "auth": "session-only",
@@ -977,10 +993,26 @@
   },
   {
     "method": "POST",
+    "path": "/auth/api/reauth",
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "gateway.accounts_api.reauth",
+    "schema": true
+  },
+  {
+    "method": "POST",
     "path": "/auth/api/password-reset",
     "auth": "browser/public",
     "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
     "handler": "gateway.accounts_api.reset",
+    "schema": true
+  },
+  {
+    "method": "POST",
+    "path": "/auth/api/sign-out-everywhere",
+    "auth": "browser/public",
+    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
+    "handler": "gateway.accounts_api.sign_out_everywhere",
     "schema": true
   },
   {
@@ -1221,6 +1253,38 @@
     "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",
     "handler": "gateway.models_catalog.models_catalog",
+    "schema": false
+  },
+  {
+    "method": "GET",
+    "path": "/me/api/profile/avatar",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.get_avatar",
+    "schema": false
+  },
+  {
+    "method": "PUT",
+    "path": "/me/api/profile/avatar",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.put_avatar",
+    "schema": false
+  },
+  {
+    "method": "GET",
+    "path": "/me/api/profile/avatars",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.list_avatars",
+    "schema": false
+  },
+  {
+    "method": "GET",
+    "path": "/me/api/profile/avatar/picture",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.get_picture",
     "schema": false
   },
   {

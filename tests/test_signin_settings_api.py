@@ -891,3 +891,46 @@ def test_a_linked_owner_whose_provider_refuses_them_keeps_their_session(sg):
     assert refused.status_code == 303
     assert owner.get("/admin/api/session").status_code == 200       # the provider cannot lock the owner out
     assert sg.rows("SELECT * FROM account_signin_refusals") == []
+
+
+def sign_out_before_the_write_transaction(sg, monkeypatch, owner_id):
+    """Commit sign-out-everywhere after the request passed its cookie check and before its write transaction opens."""
+    from contextlib import contextmanager
+
+    original = admin_store.transaction
+
+    @contextmanager
+    def sign_out_then_open(*args, **kwargs):
+        accounts.revoke_person_sessions(owner_id, path=sg.path)
+        with original(*args, **kwargs) as tx:
+            yield tx
+
+    monkeypatch.setattr(admin_store, "transaction", sign_out_then_open)
+
+
+def test_a_new_client_secret_is_not_stored_after_sign_out_everywhere(sg, monkeypatch):
+    """Decision D41: the identity provider's client secret and settings are written in a transaction that checks the sign-in."""
+    owner = owner_client(sg)
+    provider_off(sg)
+    snapshot = get_snapshot(owner)
+    before = admin_store.get_operator_setting("oidc_provider_config", path=sg.path)
+    sign_out_before_the_write_transaction(sg, monkeypatch, sg.user(OWNER)["id"])
+
+    refused = save(owner, snapshot, proposal(snapshot, client_secret="a-secret-value"), save_for_later=True)
+
+    assert refused.status_code == 401, refused.text
+    assert admin_store.get_operator_setting("oidc_provider_config", path=sg.path) == before
+    assert "a-secret-value" not in str(sg.rows("SELECT * FROM provider_secrets"))
+
+
+def test_an_identity_provider_setting_is_not_changed_after_sign_out_everywhere(sg, monkeypatch):
+    owner = owner_client(sg)
+    provider_off(sg)
+    snapshot = get_snapshot(owner)
+    before = admin_store.get_operator_setting("oidc_provider_config", path=sg.path)
+    sign_out_before_the_write_transaction(sg, monkeypatch, sg.user(OWNER)["id"])
+
+    refused = save(owner, snapshot, proposal(snapshot, groups_claim="cognito:groups"), save_for_later=True)
+
+    assert refused.status_code == 401, refused.text
+    assert admin_store.get_operator_setting("oidc_provider_config", path=sg.path) == before

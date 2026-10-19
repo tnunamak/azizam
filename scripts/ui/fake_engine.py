@@ -1,5 +1,6 @@
 """Deterministic OpenAI-compatible engine used only by the isolated UI harness."""
 import asyncio
+import hashlib
 import os
 import re
 import time
@@ -176,6 +177,41 @@ def down():
 # answers the OpenAI speech route. Both return fixture media.
 _FIXTURE_MEDIA = os.path.join(os.path.dirname(__file__), "fixtures", "household")
 _COMFY_PROMPTS: dict[str, int] = {}
+
+
+# Files the gateway sent on to the engine, so a browser test can prove the
+# engine got the picture's bytes (not a link or a JSON note about it).
+_UPLOADS: list[dict] = []
+
+
+@app.post("/upload/image")
+async def comfy_upload(request: Request):
+    form = await request.form()
+    for field, part in form.multi_items():
+        if not hasattr(part, "read"):
+            continue
+        data = await part.read()
+        _UPLOADS.append({
+            "field": field,
+            "filename": part.filename,
+            "content_type": part.content_type,
+            "bytes": len(data),
+            "head_hex": data[:8].hex(),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        })
+        return {"name": part.filename, "subfolder": "", "type": "input"}
+    return JSONResponse({"error": "no file part"}, status_code=400)
+
+
+@app.get("/fixture/uploads")
+def fixture_uploads():
+    return {"uploads": _UPLOADS}
+
+
+@app.delete("/fixture/uploads")
+def fixture_uploads_reset():
+    _UPLOADS.clear()
+    return {"uploads": []}
 
 
 @app.post("/prompt")

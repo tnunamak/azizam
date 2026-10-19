@@ -9,6 +9,7 @@ makes the group ``/Trusted`` administrators, no other rules.
 Each answer in the owner's question "Can any of my Keycloak users log in, and
 what access do they get?" is one test below.
 """
+import time
 from dataclasses import replace
 
 from fastapi.testclient import TestClient
@@ -60,8 +61,11 @@ class Gateway:
     def client(self) -> TestClient:
         return TestClient(self.proxy.app, base_url="https://ai.example", client=("127.0.0.1", 50000))
 
-    def sign_in(self, client, *, sub, email, groups=(), email_verified=True):
-        """Run the browser flow. Returns the callback response."""
+    def sign_in(self, client, *, sub, email, groups=(), email_verified=True, auth_time="now"):
+        """Run the browser flow. Returns the callback response.
+
+        The provider says the person signed in just now, as Keycloak does; ``auth_time=None`` is a provider
+        whose ID token carries no ``auth_time`` (decision D40: signed in, but not recent)."""
         login = client.get("/login", params={"return_to": "/"}, follow_redirects=False)
         if "redirect_uri=" not in login.headers["location"]:
             login = client.get(login.headers["location"], follow_redirects=False)
@@ -76,6 +80,8 @@ class Gateway:
                       "exp": 4_000_000_000, "iat": 1_700_000_000}
             if groups:
                 claims["groups"] = list(groups)
+            if auth_time is not None:
+                claims["auth_time"] = int(time.time()) if auth_time == "now" else auth_time
             return claims
 
         self.monkeypatch.setattr(self.proxy, "_oidc_exchange_code", exchange)
@@ -884,7 +890,7 @@ def _mcp_grant(gateway, email):
     client = store.put_client(client_id="c1", kind="dcr", name="Client", redirect_uris=["https://c.example/cb"],
                               grant_types=["authorization_code"], auth_method="none", secret_hash=None, metadata={})
     return store, store.create_grant(person_id=gateway.user(email)["id"], client=client,
-                                     redirect_uri="https://c.example/cb", resource="https://ai.example/mcp", scope="mcp")
+                                     redirect_uri="https://c.example/cb", resource="https://ai.example/mcp", scope="mcp", session=None)
 
 
 def test_a_refused_sign_in_revokes_mcp_connections(gateway):

@@ -13,6 +13,11 @@ import path from "node:path";
 //   gateway that no global setup touched: no owner, no engine (the first-run
 //   release bar). It is not seeded and has no storage state.
 // Each gateway pair owns ten ports: gateway +0, fake engine +1, probes +2..+9.
+// The fixture gateways answer a sign-in picture from this file (scripts/ui/fixture_gateway.py).
+process.env.UI_E2E_AVATAR_PICTURE ??= path.resolve(
+  __dirname,
+  "e2e/fixtures/avatar-picture.png",
+);
 const port = Number(process.env.UI_E2E_PORT ?? "18180");
 const globalPort = port + 10;
 // A second serial server sits past the pool's extra servers (+40, +50).

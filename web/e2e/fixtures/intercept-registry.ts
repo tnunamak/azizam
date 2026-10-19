@@ -144,6 +144,15 @@ const REQUIRED: Record<string, string[]> = {
     "/revision",
   ],
   "/admin/api/settings/receipts": ["/retention_days", "/revision"],
+  "/admin/api/settings/sessions": [
+    "/bounds",
+    "/defaults",
+    "/revision",
+    "/sessions",
+    "/sessions/absolute_lifetime_days",
+    "/sessions/idle_timeout_days",
+    "/sessions/step_up_minutes",
+  ],
   "/admin/api/status": ["/status"],
   "/admin/api/users": [
     "/users",
@@ -354,6 +363,9 @@ export const REGISTRY: Endpoint[] = [
   reads("/admin/api/settings/receipts", {
     required: ["/retention_days", "/revision"],
   }),
+  reads("/admin/api/settings/sessions"),
+  // A risky download: a stub answers it with the step-up refusal (status 401).
+  reads("/admin/api/settings/effective/export", { free: ["/config"] }),
   reads("/admin/api/status", { required: ["/status"] }),
   reads("/admin/api/users", {
     required: [

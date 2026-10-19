@@ -74,6 +74,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from gateway import mcp_oauth_store
+from gateway.session_guard import BrowserSession, SessionEnded
 from gateway.mcp_oauth_store import ClientRecord, GrantRecord, Store, digest, new_secret
 
 SCOPE = "mcp"
@@ -149,6 +150,8 @@ class McpOAuthDeps:
     client_ip: Callable[[Request], str | None]
     fetch_client_document: Callable[[str], Awaitable[tuple[bytes, Mapping[str, str]]]]
     store: Store
+    # A response when the person has not confirmed it is them lately; allowing a client is a lasting grant.
+    require_recent_sign_in: Callable[[Request, Any], Response | None] = lambda request, session: None
     settings: Callable[[], Settings] = Settings
     audit: Callable[..., None] = lambda *args, **kwargs: None
     mcp_path: str = "/mcp"
@@ -829,8 +832,11 @@ class McpOAuth:
                                      list(oauth_request.payload._items), self.settings().request_seconds)
         return "consent", request_id, binding
 
-    def _decide(self, oauth_request: _Request, issuer: str, person_id: str | None) -> tuple[int, dict[str, Any]]:
-        """Finish a consented request: a code (person approved) or access_denied."""
+    def _decide(self, oauth_request: _Request, issuer: str, person_id: str | None,
+                session: BrowserSession | None) -> tuple[int, dict[str, Any]]:
+        """Finish a consented request: a code (person approved) or access_denied.
+
+        ``session`` is the browser sign-in that approved; the grant's insert refuses when it has ended."""
         state = oauth_request.payload.state
         try:
             grant = self.server.get_consent_grant(oauth_request)
@@ -843,7 +849,7 @@ class McpOAuth:
             client = oauth_request.client
             record = self.deps.store.create_grant(
                 person_id=person_id, client=client.record, redirect_uri=grant.redirect_uri,
-                resource=oauth_request.resource, scope=oauth_request.scope,
+                resource=oauth_request.resource, scope=oauth_request.scope, session=session,
             )
             user = Person(person_id, record.id)
         status, _body, headers = self.server.create_authorization_response(oauth_request, grant_user=user, grant=grant)
@@ -1050,6 +1056,10 @@ class McpOAuth:
                 return JSONResponse({"error": {"code": "invalid_decision", "message": "decision must be allow or deny"}},
                                     status_code=400, headers=no_store)
             person_id = str(person["id"])
+            if decision == "allow":
+                stale = await asyncio.to_thread(self.deps.require_recent_sign_in, request, session)
+                if stale is not None:
+                    return stale
             if decision == "allow" and not await asyncio.to_thread(self.deps.person_can_connect, person_id):
                 return JSONResponse({"error": {"code": "no_access",
                                                "message": "Your account can't use AI here yet. Ask the owner for access."}},
@@ -1063,9 +1073,12 @@ class McpOAuth:
             except ClientDocumentError as exc:
                 return JSONResponse({"error": {"code": "invalid_client", "message": str(exc)}}, status_code=400,
                                     headers=no_store)
-            status, payload = await asyncio.to_thread(
-                self._decide, self._request(request, "/oauth/authorize", params), self.issuer(request),
-                person_id if decision == "allow" else None)
+            try:
+                status, payload = await asyncio.to_thread(
+                    self._decide, self._request(request, "/oauth/authorize", params), self.issuer(request),
+                    person_id if decision == "allow" else None, BrowserSession.of(session, person_id))
+            except SessionEnded:
+                return login_required()
             if status == 200:
                 await asyncio.to_thread(self.deps.audit, "mcp.connection." + ("approved" if decision == "allow" else "denied"),
                                         person_id=person_id, client_id=dict(params).get("client_id"))

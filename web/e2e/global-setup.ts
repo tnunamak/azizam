@@ -2,6 +2,7 @@ import { request, type FullConfig } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { buildOracle } from "./fixtures/oracle";
+import { widenStepUpWindow } from "./fixtures/session-policy";
 
 // Each fixture gateway in the config (one per distinct project baseURL, except a
 // fresh one: project metadata `fresh`) gets
@@ -46,6 +47,9 @@ async function seed(baseURL: string, storagePath: string) {
   });
   if (owner.status() !== 303)
     throw new Error(`Owner setup returned HTTP ${owner.status()}`);
+  // This sign-in is saved and reused for hours; keep risky owner actions from
+  // asking for the password again (fixtures/session-policy.ts).
+  await widenStepUpWindow(api);
   const session = await (await api.get("/admin/api/session")).json();
   const headers = { "x-azizam-csrf": session.actor.csrf_token };
   const post = async (url: string, data: unknown, extra = {}) => {

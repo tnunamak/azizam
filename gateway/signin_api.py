@@ -25,6 +25,7 @@ from gateway.admin_oidc import OIDCConfig, OIDCConfigError, StateRecord
 from gateway.oidc_browser_flow import begin_browser_login
 from gateway.admin_store import SettingsConflictError
 from gateway.signin_admin import SignInError, World, norm_issuer
+from gateway.session_guard import SessionEnded
 
 RECOVERY_COMMAND = "./venv/bin/python proxy.py generate-admin-key owner-cli"
 DISCOVERY_PATH = "/.well-known/openid-configuration"
@@ -502,7 +503,7 @@ def create_signin_api(
         if verdict["kind"] != "owner_unlinked":
             raise SignInError("not_linkable", "This sign-in cannot be linked to your account.", 409)
         signin_admin.link_identity(path, run.issuer or run.cfg.issuer, run.subject, ctx.audit_actor_id,
-                                   linked_by=ctx.audit_actor_id)
+                                   linked_by=ctx.audit_actor_id, session=ctx.browser_session)
         return build_snapshot(request, ctx)
 
     # -- save ---------------------------------------------------------------
@@ -663,7 +664,14 @@ def create_signin_api(
         if admin_store.get_user(ctx.audit_actor_id, path=path) is None:
             raise SignInError("owner_person_required", "Sign in as the owner to set a password.", 409)
         verifier = accounts.hash_password(body.password)
-        admin_store.set_local_password_verifier(ctx.audit_actor_id, verifier, path=path)
+        try:
+            admin_store.set_local_password_verifier(
+                ctx.audit_actor_id, verifier, session=ctx.browser_session, path=path)
+        except SessionEnded as ended:
+            raise SignInError(ended.code, ended.message, ended.status_code) from None
+        # A changed password ends every other sign-in; the one making the change stays.
+        keep = (ctx.session_id, ctx.session_expires_at) if ctx.session_id and ctx.session_expires_at else None
+        accounts.revoke_person_sessions(ctx.audit_actor_id, path=path, keep=keep)
         admin_store.record_audit(
             "signin.owner_password.set", actor_kind=ctx.actor_kind, actor_id=ctx.audit_actor_id,
             actor_label=ctx.actor_label, target_kind="user", target_id=ctx.audit_actor_id, path=path)

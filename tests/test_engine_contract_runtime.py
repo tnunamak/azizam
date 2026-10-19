@@ -300,6 +300,14 @@ def test_process_crash_restart_budget_and_orphan_adoption(tmp_path):
         child = driver._children["fixture"]
         assert child.pid == pid
         await asyncio.to_thread(child.wait)
+        # SIGKILL reaches the supervisor and the engine one after the other: the supervisor can be reaped
+        # while the engine still holds its port, and a start then finds the port in use and refuses.
+        # Wait for the condition the restart depends on, with a bound that only a hung kernel reaches.
+        port = svc["process"]["port"]["fixed"]
+        deadline = time.monotonic() + 30
+        while ProcessDriver._port_in_use("127.0.0.1", port):
+            assert time.monotonic() < deadline, "the killed engine still holds its port"
+            await asyncio.sleep(0.005)
 
     async def scenario():
         assert await first.ensure_ready(svc, 2)

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import time
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,7 +25,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import accounts, admin_store, mcp_oauth, media_jobs
+from gateway import accounts, admin_store, mcp_oauth, mcp_oauth_store, media_jobs
 from gateway.receipts import RouteReceipt
 from tests.support.access import store_plan
 
@@ -50,7 +51,8 @@ class McpAuthorizationWiringTests(unittest.TestCase):
             (media_jobs, "DB_PATH", root / "jobs.db"),
             (proxy, "_public_base_url", lambda request: BASE),
             (proxy, "_oidc_session_from_request",
-             lambda request: SimpleNamespace(subject=request.headers["x-test-person"])
+             lambda request: SimpleNamespace(subject=request.headers["x-test-person"], last_authenticated=time.time(),
+                                             session_id="test-session", family_id="test-session")
              if request.headers.get("x-test-person") else None),
             (proxy, "_require_user_action_header", lambda request, session: None),
         ):
@@ -212,6 +214,29 @@ class McpAuthorizationWiringTests(unittest.TestCase):
         forged = {**bearer, "x-azizam-mcp-dispatch": "guess"}
         self.assertEqual(self.client.get("/gateway/v1/media/jobs/mj_missing", headers=forged).status_code, 401)
         self.assertEqual(self.client.get("/v1/models", headers={"x-api-key": token}).status_code, 401)
+
+    def test_a_sign_out_between_the_cookie_check_and_the_grant_leaves_no_connection(self) -> None:
+        """Decision D41: the consent writes a lasting grant, so the sign-in is checked in that write's transaction."""
+        metadata = self.discover()
+        client_id = self.register(metadata)
+        verifier = secrets.token_urlsafe(48)
+        start = self.client.get(urlsplit(metadata["authorization_endpoint"]).path, params={
+            "response_type": "code", "client_id": client_id, "redirect_uri": CALLBACK, "state": "s",
+            "code_challenge": create_s256_code_challenge(verifier), "code_challenge_method": "S256",
+            "resource": f"{BASE}/mcp", "scope": "mcp"})
+        request_id = parse_qs(urlsplit(start.headers["location"]).query)["request"][0]
+        real = mcp_oauth_store.Store.create_grant
+
+        def sign_out_then_grant(store, **kwargs):
+            accounts.revoke_session("test-session", int(time.time()) + 3600, path=self.admin, family_id="test-session")
+            return real(store, **kwargs)
+
+        with patch.object(mcp_oauth_store.Store, "create_grant", sign_out_then_grant):
+            decision = self.client.post(f"/me/api/mcp/requests/{request_id}", json={"decision": "allow"},
+                                        headers={"x-test-person": self.person["id"]})
+
+        self.assertEqual(decision.status_code, 401, decision.text)
+        self.assertEqual(proxy.MCP_OAUTH.deps.store.grants_for_person(self.person["id"]), [])
 
     def test_person_losing_access_is_refused_at_once(self) -> None:
         metadata = self.discover()

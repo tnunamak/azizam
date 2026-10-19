@@ -62,6 +62,9 @@ export function errorCopy(
       "Your access is no longer available. Ask the gateway owner to check your access.",
       "owner-help",
     );
+  // A stale session, not an ended one: the person can still confirm it is them.
+  if (code === "reauth_required")
+    return result("Confirm it’s you to continue.", "retry");
   if (
     status === 401 ||
     ["session_expired", "authentication_required"].includes(code)
