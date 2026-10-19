@@ -27,7 +27,7 @@ from typing import Any, Mapping
 
 import httpx
 
-from gateway import admin_store, secret_store
+from gateway import admin_store, client_errors, secret_store
 from gateway.access_plans import PlanCaps
 from gateway.policy import NO_ACCESS, PolicyRequest, evaluate
 from gateway.service_registry import canonical_provider_id, is_remote_provider_config
@@ -73,7 +73,8 @@ class ProviderError(RuntimeError):
 
     def __init__(self, message: str, *, retry_after: str | None = None) -> None:
         super().__init__(message)
-        self.retry_after = retry_after
+        # A number the gateway writes, never a provider's text (decision D45b).
+        self.retry_after = client_errors.retry_after(retry_after)
 
     def error_body(self) -> dict[str, Any]:
         return {"error": {"code": self.code, "message": str(self)}}

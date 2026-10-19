@@ -4454,7 +4454,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
 
         # TTS returns audio data, stream it back
         content = resp.raw
-        content_type = resp.headers.get("content-type", TTS_RESPONSE_MEDIA_TYPES["wav"])
+        content_type = client_errors.safe_content_type(resp.headers.get("content-type"), TTS_RESPONSE_MEDIA_TYPES["wav"])
         if 200 <= resp.status < 300 and requested_response_format not in {"wav", "mp3"}:
             try:
                 content = await asyncio.to_thread(
@@ -4987,7 +4987,7 @@ def _stt_response_from_upstream(response: stt_chunking.UpstreamResponse, request
         return refusal
     headers = stt_chunking.filtered_response_headers(response.headers)
     body = response.body
-    content_type = response.headers.get("content-type", "application/json")
+    content_type = client_errors.safe_content_type(response.headers.get("content-type"))
 
     # Silence/very short audio legitimately transcribes to "". OpenAI returns
     # {"text": ""} and so do we -- but a falsy-truthiness client treats that as a
@@ -27601,7 +27601,6 @@ _RELAYED_ENGINE_HEADER_NAMES = frozenset({"cache-control", "vary", "x-request-id
                                           "openai-version"})
 _RELAYED_ENGINE_HEADER_PREFIXES = ("x-ratelimit-", "anthropic-ratelimit-")
 _PLAIN_HEADER_VALUE = re.compile(r"^[A-Za-z0-9 ,;=._:/+\-]{0,200}$")
-_SAFE_CONTENT_TYPE = re.compile(r"^([a-z0-9][a-z0-9.+\-]*/[a-z0-9][a-z0-9.+\-]*)(?:\s*;\s*charset=([A-Za-z0-9_\-]{1,32}))?\s*(?:;.*)?$")
 
 
 def _relayed_engine_headers(headers: Mapping[str, str]) -> dict[str, str]:
@@ -27617,14 +27616,6 @@ def _relayed_engine_headers(headers: Mapping[str, str]) -> dict[str, str]:
                 and isinstance(value, str) and _PLAIN_HEADER_VALUE.fullmatch(value):
             out[name] = value
     return out
-
-
-def _safe_content_type(value: str, default: str = "application/json") -> str:
-    """The media type of an engine's reply with its charset, nothing else it wrote in the header."""
-    match = _SAFE_CONTENT_TYPE.fullmatch((value or "").strip().lower()) if value else None
-    if match is None:
-        return default
-    return match.group(1) + (f"; charset={match.group(2)}" if match.group(2) else "")
 
 
 async def _engine_error_response(resp: Any, content: bytes | None, gateway_headers: Mapping[str, str], request_id: str,
@@ -28047,7 +28038,7 @@ async def _forward_current_loaded_openai_request(
                 await cancellation_span.aclose()
                 owner.report(status="cancelled", reason="cancelled")
                 return Response(status_code=499)
-            content_type = _safe_content_type(resp.headers.get("content-type", ""))
+            content_type = client_errors.safe_content_type(resp.headers.get("content-type", ""))
             record_request_shape_stage(
                 receipt.metadata, "backend_egress", body,
                 extra={"status_code": resp.status_code},
@@ -28425,7 +28416,7 @@ async def _forward_litellm_proxy_request(
                 media_type="application/json",
                 headers={"Retry-After": "10"},
             )
-        content_type = _safe_content_type(resp.headers.get("content-type", ""))
+        content_type = client_errors.safe_content_type(resp.headers.get("content-type", ""))
         gateway_headers = {
             "X-Azizam-LLM-Execution": "litellm",
             "X-Azizam-Request-Id": receipt.request_id,
@@ -29281,7 +29272,7 @@ async def _forward_internal_litellm_local_upstream(
             response.headers["Retry-After"] = "10"
             return response
 
-        content_type = resp.headers.get("content-type", "application/json")
+        content_type = client_errors.safe_content_type(resp.headers.get("content-type"))
         excluded = ("content-length", "transfer-encoding", "content-type")
         response_headers = {
             key: value for key, value in resp.headers.items() if key.lower() not in excluded

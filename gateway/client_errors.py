@@ -181,6 +181,15 @@ _UNKNOWN_MODEL = re.compile(
 
 _RETRY_AFTER_NUMBER = re.compile(r"^[0-9]{1,9}(\.[0-9]{1,3})?$")
 _RETRY_AFTER_MAX = 86400
+_SAFE_CONTENT_TYPE = re.compile(r"^([a-z0-9][a-z0-9.+\-]*/[a-z0-9][a-z0-9.+\-]*)(?:\s*;\s*charset=([A-Za-z0-9_\-]{1,32}))?\s*(?:;.*)?$")
+
+
+def safe_content_type(value: str | None, default: str = "application/json") -> str:
+    """The media type of an engine's reply with its charset, nothing else it wrote in the header."""
+    match = _SAFE_CONTENT_TYPE.fullmatch(value.strip().lower()) if isinstance(value, str) and value.strip() else None
+    if match is None:
+        return default
+    return match.group(1) + (f"; charset={match.group(2)}" if match.group(2) else "")
 
 
 def status_reason(status: int) -> str:
