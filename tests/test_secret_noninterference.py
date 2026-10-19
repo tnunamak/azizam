@@ -97,7 +97,12 @@ def test_replacing_every_secret_with_different_bytes_changes_no_management_outpu
     assert changed >= 4, "the control must replace a secret of each kind it can"
     assert set(before) == set(after)
     differing = sorted(path for path in before if before[path] != after[path])
-    assert not differing, f"outputs that depend on a secret's bytes: {differing}"
+    import difflib
+    detail = {path: list(difflib.unified_diff(
+        json.dumps(json.loads(before[path][4:]), sort_keys=True, indent=2).splitlines(),
+        json.dumps(json.loads(after[path][4:]), sort_keys=True, indent=2).splitlines(), n=0,
+    )) for path in differing}
+    assert not differing, f"outputs that depend on a secret's bytes: {detail}"
     assert len(before) > 100 and sum(1 for text in before.values() if text.startswith("200 ")) > 40
 
 

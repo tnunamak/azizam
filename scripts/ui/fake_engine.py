@@ -172,7 +172,7 @@ def down():
 # The household fixture's image and voice engines (D1.5b): the two core member
 # tasks, "Make a picture" and "Read text aloud", must finish in the isolated
 # harness. The gateway always generates images through a ComfyUI API
-# (proxy_comfy_request), so this answers the ComfyUI calls it makes; speech
+# (proxy_graph_image_request), so this answers the ComfyUI calls it makes; speech
 # answers the OpenAI speech route. Both return fixture media.
 _FIXTURE_MEDIA = os.path.join(os.path.dirname(__file__), "fixtures", "household")
 _COMFY_PROMPTS: dict[str, int] = {}

@@ -398,7 +398,7 @@ IMAGES_VARIATIONS_OPENAPI: JsonObjectSchema = {
     "responses": {
         # Routed through a configurable edit-capable workflow (no local
         # model dedicated to "variations" exists) with a fixed generic
-        # prompt -- see proxy_comfy_variations_request in proxy.py.
+        # prompt -- see proxy_graph_image_variations_request in proxy.py.
         "200": {
             "description": "OpenAI-shaped image variation result.",
             "content": {

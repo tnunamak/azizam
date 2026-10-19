@@ -56,7 +56,7 @@ class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
             },
         ):
             with self.subTest(outputs=list(outputs)):
-                output = proxy._extract_video_output({"outputs": outputs})
+                output = proxy._first_video_output({"outputs": outputs})
                 self.assertEqual(output["filename"], "rendered.mp4")
 
     async def test_manifest_video_workflow_runs_against_fake_comfyui(self) -> None:

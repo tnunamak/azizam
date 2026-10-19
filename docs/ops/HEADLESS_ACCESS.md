@@ -189,9 +189,9 @@ verbose output with credentials; it can include request headers.
 ## Registered route inventory
 
 Captured by walking `proxy.app.routes` when the web app moved to `/`. Counts
-are per registered method/path, including trailing-slash aliases: **106
-owner-bearer** (104 JSON/YAML owner API operations, 2 browser/HTML routes),
-**33 session-only**, **2 session-view**, **12 browser/public**; **153 total**.
+are per registered method/path, including trailing-slash aliases: **120
+owner-bearer** (118 JSON/YAML owner API operations, 2 browser/HTML routes),
+**39 session-only**, **2 session-view**, **12 browser/public**; **173 total**.
 
 FastAPI dependency lists are empty on these routes. Auth is an imperative
 handler call or injected callback, shown below. `owner-bearer` rejects app keys
@@ -263,6 +263,7 @@ Selected successful workflows are exercised separately.
 | `GET /admin/api/operator/overrides` | owner-bearer | denied | `gateway.admin_api.list_operator_overrides`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PUT /admin/api/operator/service-availability` | owner-bearer | denied | `gateway.admin_api.update_service_availability_overrides`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/engine-definitions` | owner-bearer | denied | `gateway.engine_admin.get_engine_definitions`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/engine-protocols` | owner-bearer | denied | `gateway.engine_protocol_admin.engine_protocols`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/engines/check` | owner-bearer | denied | `gateway.engine_admin.check_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/engines/test` | owner-bearer | denied | `gateway.engine_admin.test_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/engines/access` | owner-bearer | denied | `gateway.engine_admin.engine_access`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
@@ -400,6 +401,18 @@ For Usage, the broader selector is `person`.
 Ordinary members cannot use `person` selectors.
 Both Jobs endpoints remain own-jobs-only for owners too.
 These routes require a browser session. An owner key does not replace that session.
+
+## Refresh the OpenAPI snapshot
+
+After a reviewed route or schema change, commit the metadata and generator first.
+Run `scripts/run-hermetic-pytest.sh --python-script scripts/generate_headless_fixtures.py`
+and save its output in a private scratch file. Read the line prefixed
+`HEADLESS_OPENAPI_JSON=`, parse the JSON after the prefix, and compare it with
+`tests/fixtures/headless_openapi.json`. Replace only the reviewed operations,
+preserve the existing key order, and use two-space indentation with one final
+newline. Verify the resulting JSON equals the captured schema. The generator verifies
+the registered-route inventory and guide before capture; it does not add routes
+or decide their authorization.
 
 ## Recorded Restish fixture run
 

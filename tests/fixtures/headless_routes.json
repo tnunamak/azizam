@@ -304,6 +304,14 @@
     "schema": true
   },
   {
+    "method": "GET",
+    "path": "/admin/api/engine-protocols",
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.engine_protocol_admin.engine_protocols",
+    "schema": true
+  },
+  {
     "method": "POST",
     "path": "/admin/api/engines/check",
     "auth": "owner-bearer",

@@ -121,7 +121,7 @@ def gateway_app(state: Path):
     patch(status_endpoint, "_HOST_TELEMETRY_DISABLED", True)
     patch(status_endpoint, "_HOTSPOT_DIRS", [("fixture", state / "images")])
     patch(status_endpoint, "_CACHE_TTL_S", 0)  # Every batch exercises a build.
-    patch(proxy.comfy_object_info, "DISK_CACHE_DIR", state / "object_info")
+    patch(proxy.node_info, "DISK_CACHE_DIR", state / "object_info")
     patch(proxy.media_delivery, "DEFAULT_WORKDIR", state / "media_metadata")
     patch(proxy.media_metadata, "_run", ffmpeg_metadata)
 

@@ -61,7 +61,7 @@ describe("duplicate public names use the name that is submitted", () => {
 
   it("the field error names the effective name and marks both fields", () => {
     render(<Harness initial={draftsFromCheck([detected("x", ""), detected("y", "x")])} />);
-    const names = screen.getAllByLabelText("Public name");
+    const names = screen.getAllByLabelText("Name apps use");
     expect(names[0]).toHaveAttribute("aria-invalid", "true");
     expect(names[1]).toHaveAttribute("aria-invalid", "true");
     expect(screen.getAllByText("Two models use the public name “x”. Each needs its own.")).toHaveLength(2);
@@ -87,11 +87,11 @@ describe("the model list on a phone", () => {
     expect(screen.queryByRole("button", { name: /^Remove model/ })).toBeNull();
   });
 
-  it("every Context window field says what to do when the value is not known", () => {
+  it("every Context limit (tokens) field says what to do when the value is not known", () => {
     render(<Harness initial={draftsFromCheck([detected("a"), detected("b")])} />);
-    const fields = screen.getAllByLabelText("Context window");
+    const fields = screen.getAllByLabelText("Context limit (tokens)");
     expect(fields).toHaveLength(2);
-    for (const field of fields) expect(field).toHaveAccessibleDescription("Leave empty if you don’t know.");
-    expect(within(document.body).getAllByText("Leave empty if you don’t know.")).toHaveLength(2);
+    for (const field of fields) expect(field).toHaveAccessibleDescription("The model’s maximum input and output size in tokens. Leave empty if unknown.");
+    expect(within(document.body).getAllByText("The model’s maximum input and output size in tokens. Leave empty if unknown.")).toHaveLength(2);
   });
 });

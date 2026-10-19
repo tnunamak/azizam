@@ -46,7 +46,15 @@ def resolve(registry: Mapping[str, Any], model: Any, op: str) -> Target | None:
     for engine_id, service in (registry.get('services') or {}).items():
         if not opted_in(service):
             continue
-        for offering in offerings_config(service):
+        offerings = offerings_config(service)
+        if not offerings and (service.get("config") or {}).get("models"):
+            # Legacy engine editors store model rows. An explicit protocol opt-in
+            # uses their existing request-field projection without copying state.
+            from gateway.service_registry import normalize_service_record, service_record_v2
+
+            normalized = normalize_service_record(str(engine_id), service)
+            offerings = service_record_v2(normalized, public=False)["offerings"]
+        for offering in offerings:
             if model in {offering.get('id'), f"{engine_id}/{offering.get('id')}"}:
                 matches.append((engine_id, service, offering))
     if not matches:

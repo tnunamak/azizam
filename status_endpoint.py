@@ -2989,7 +2989,7 @@ def _swap_state(proxy_module) -> dict:
 
 def _comfy_ws_state(proxy_module) -> dict:
     return {
-        "connected": bool(getattr(proxy_module, "_comfy_ws_connected", False)),
+        "connected": bool(getattr(proxy_module, "_graph_ws_connected", False)),
         "client_id": getattr(proxy_module, "COMFY_CLIENT_ID", None),
     }
 

@@ -95,7 +95,7 @@ from gateway import (
 from gateway import secret_store, runtime_secrets, projection
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
 from gateway.http_tls import tls_context
-from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
+from gateway import media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
@@ -106,16 +106,25 @@ from gateway import rerank as rerank_api
 from gateway import stable_aliases
 from gateway import model_metadata
 from gateway import engine_check
+from gateway.engine_connection import InferenceConnectionError, inference_connection
 from gateway import speech_stream
 from gateway.engine_protocol import inline_tts as tts_adapter
+from gateway.engine_protocol import node_graph
+from gateway.engine_protocol import reviewed as reviewed_adapters
+from gateway.engine_protocol.types import JobRef, JobState
 from gateway.engine_protocol.errors import (TransportFailure, ProtocolError, MappingError as ProtocolMappingError,
-    UpstreamError as ProtocolUpstreamError)
+    MalformedResponse as ProtocolMalformedResponse, UpstreamError as ProtocolUpstreamError)
 from gateway.engine_protocol.types import StreamReply as ProtocolStreamReply
 from gateway.engine_switch import SwitchUnavailable as ProtocolSwitchUnavailable
 from gateway.engine_protocol.types import CanonicalRequest as AdapterRequest
 from gateway.engine_protocol.types import Connection as AdapterConnection
 from gateway.engine_protocol.types import Reply as AdapterReply
 from gateway.engine_protocol.types import Timeouts as AdapterTimeouts
+from gateway.engine_protocol.errors import UnsupportedByAdapter as ProtocolUnsupportedByAdapter
+from gateway.engine_protocol import node_info
+from gateway.engine_protocol import node_ui_graph
+from gateway.engine_protocol.node_validation import validate_workflow_graph
+from gateway.engine_protocol import chunked_stt
 from gateway import custom_voices
 from gateway import voice_audio
 from gateway import voices_api
@@ -262,7 +271,6 @@ from gateway.chat_extensions import (
     validate_chat_completions_extensions,
     validate_responses_extensions,
 )
-from gateway.comfyui_workflow_validation import validate_comfyui_workflow_graph
 from gateway.transforms import (
     REGISTRY as _TRANSFORM_REGISTRY,
     TransformContext as _TransformContext,
@@ -838,13 +846,18 @@ tts_cfg = config.get("backends", {}).get("tts", {})
 TTS_ENABLED = bool_from_config(tts_cfg.get("enabled"), True)
 TTS_HOST = f"http://{tts_cfg.get('host', '127.0.0.1')}:{tts_cfg.get('port', 8880)}"
 TTS_TIMEOUT = int(tts_cfg.get("timeout", 120))
-# The in-tree speech client, reached through the adapter interface (contract v2.1 section 4).
-_TTS_ADAPTER = tts_adapter.InlineTtsAdapter()
+_TTS_BACKEND_ID = "tts"
 
 
-def _tts_connection(address: str) -> AdapterConnection:
-    """The speech engine at ``address``, with the read timeout every speech call has always had."""
-    return AdapterConnection(address=address, timeouts=AdapterTimeouts(connect_s=10, first_byte_s=TTS_TIMEOUT, total_s=TTS_TIMEOUT))
+def _tts_adapter(service_id: str = _TTS_BACKEND_ID):
+    """The reviewed adapter a speech service's record selects (contract v2.1 section 4); core never branches on what it is."""
+    return reviewed_adapters.adapter_for_backend((config.get("backends") or {}).get(service_id) or {}, "speech")
+
+
+def _tts_connection(address: str, read_s: float | None = None) -> AdapterConnection:
+    """The speech engine at ``address``; the read timeout is every speech call's own unless a call names its own."""
+    read = read_s or TTS_TIMEOUT
+    return AdapterConnection(address=address, timeouts=AdapterTimeouts(connect_s=10, first_byte_s=read, total_s=read))
 
 # STT backend
 stt_cfg = config.get("backends", {}).get("stt", {})
@@ -880,6 +893,31 @@ COMFY_VIDEO_WORKFLOWS_DIR = Path(_video_workflows_dir_cfg)
 if not COMFY_VIDEO_WORKFLOWS_DIR.is_absolute():
     COMFY_VIDEO_WORKFLOWS_DIR = (Path(__file__).parent / _video_workflows_dir_cfg).resolve()
 COMFY_VIDEO_TIMEOUT = int(comfy_cfg.get("video_timeout", 1800))
+_GRAPH_BACKEND_ID = "comfyui"
+# What a finished prompt names, read by the adapter that knows the engine's answers.
+_first_video_output = node_graph.first_video_output
+_first_audio_output = node_graph.first_audio_output
+_queue_prompt_ids = node_graph.queue_prompt_ids
+
+
+def _graph_adapter(capability: str = "images"):
+    """The reviewed adapter the graph backend's record selects (contract v2.1 section 4); core never branches on what it is."""
+    return reviewed_adapters.adapter_for_backend((config.get("backends") or {}).get(_GRAPH_BACKEND_ID) or {}, capability)
+
+
+# The key under a workflow manifest's ``bindings`` that holds the graph engine's artifact: protocol data, read once
+# (catalog listings read it per workflow record).
+_GRAPH_BINDING = _graph_adapter().binding
+
+
+def _graph_connection(first_byte_s: float | None = None) -> AdapterConnection:
+    return AdapterConnection(address=COMFY_HOST, timeouts=AdapterTimeouts(
+        connect_s=10, first_byte_s=first_byte_s or COMFY_TIMEOUT, total_s=first_byte_s or COMFY_TIMEOUT))
+
+
+def _graph(client: Any, capability: str = "images"):
+    """``client`` as a session of the graph adapter: its requests are the adapter's, over the caller's connection."""
+    return _graph_adapter(capability).attach(_graph_connection(), client)
 
 # Image cache + adaptive-batching config (Fix 1 + Fix 2: honest `n`, real URLs).
 images_cfg = config.get("images", {}) or {}
@@ -1336,6 +1374,45 @@ def _backend_base_url(backend: str) -> str:
     return f"http://{cfg.get('host', '127.0.0.1')}:{cfg.get('port')}"
 
 
+def _engine_probe(backend: str, endpoint: str) -> tuple[str, dict[str, str]] | None:
+    """The URL and headers of a GET at one of a service's own probe endpoints.
+
+    Reads the saved record, as the final inference hop does, so an owner edit
+    to the address, prefix, headers or credential reaches the probe too. A
+    service with no saved record keeps the legacy ``http://host:port`` root.
+    See ``engine_read_request`` for the path and credential rules.
+    """
+    from gateway.lifecycle_drivers import engine_read_request
+
+    record = (ADMIN_STORE.get_service_registry().get("services") or {}).get(backend) or {}
+    return engine_read_request(
+        {**record, "config": record.get("config") or {}}, endpoint,
+        fallback_root=_backend_base_url(backend), db_path=ADMIN_DB_PATH,
+    )
+
+
+def _engine_probe_json_sync(backend: str, endpoint: str, timeout: float) -> Any:
+    """The JSON a service returns at a probe endpoint, or None. Redirects are not followed."""
+    probe = _engine_probe(backend, endpoint)
+    if probe is None:
+        return None
+    url, headers = probe
+    with httpx.Client(timeout=timeout, verify=tls_context(), follow_redirects=False) as client:
+        resp = client.get(url, headers=headers)
+    return resp.json() if resp.status_code == 200 else None
+
+
+async def _engine_probe_json(backend: str, endpoint: str, timeout: float) -> Any:
+    """The async form of ``_engine_probe_json_sync``."""
+    probe = _engine_probe(backend, endpoint)
+    if probe is None:
+        return None
+    url, headers = probe
+    async with httpx.AsyncClient(timeout=timeout, verify=tls_context(), follow_redirects=False) as client:
+        resp = await client.get(url, headers=headers)
+    return resp.json() if resp.status_code == 200 else None
+
+
 def _backend_reports_loaded_model_as_path(backend: str) -> bool:
     """True if the service record declares ``loaded_model_identity: path``.
 
@@ -1414,8 +1491,6 @@ def _seed_loaded_state(backend: str) -> None:
     is cold (startup or TTL expiry) — synchronous but cheap relative to a model
     swap.
     """
-    import urllib.request as _urlreq
-
     state_type = ((config.get("backends") or {}).get(backend) or {}).get("state_type", "llama_cpp")
     strategy = _BACKEND_STATE_STRATEGIES.get(state_type)
 
@@ -1424,9 +1499,8 @@ def _seed_loaded_state(backend: str) -> None:
 
     if strategy:
         try:
-            url = f"{_backend_base_url(backend)}{strategy['endpoint']}"
-            with _urlreq.urlopen(url, timeout=2) as resp:
-                data = json.loads(resp.read())
+            data = _engine_probe_json_sync(backend, strategy["endpoint"], 2.0)
+            if isinstance(data, dict):
                 model = _resolve_dot_path(data, strategy["model_key"])
         except Exception:
             pass  # server not up yet, or wrong endpoint — state stays None
@@ -3270,24 +3344,22 @@ async def _activate_prepared_litellm_local_target(
     )
 
 
-async def get_served_model_id(base_url: str) -> str:
-    """The first model id an OpenAI-compatible server lists at ``base_url``."""
+async def served_model_id_for_backend(backend: str) -> str:
+    """The first model id a service lists at its own ``/v1/models``, through its saved connection."""
     try:
-        async with httpx.AsyncClient(verify=tls_context()) as client:
-            resp = await client.get(f"{base_url}/v1/models", timeout=HEALTH_CHECK_TIMEOUT)
-            if resp.status_code != 200:
-                return ""
-            data = resp.json().get("data", [])
-            if data and isinstance(data[0], dict):
-                return data[0].get("id") or ""
+        payload = await _engine_probe_json(backend, "/v1/models", HEALTH_CHECK_TIMEOUT)
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        if data and isinstance(data[0], dict):
+            return data[0].get("id") or ""
     except Exception:
         pass
     return ""
 
 
 async def effective_llm_model_for_host(target_host: str) -> str:
-    if any(_backend_base_url(backend) == target_host for backend in _path_identity_backends()):
-        return await get_served_model_id(target_host)
+    for backend in _path_identity_backends():
+        if _backend_base_url(backend) == target_host:
+            return await served_model_id_for_backend(backend)
     return ""
 
 
@@ -3312,7 +3384,7 @@ async def current_llm_model_for_backend(backend: str) -> str:
         loaded_path = currently_loaded_model(backend)
         if not loaded_path:
             return ""
-        loaded_id = await get_served_model_id(_backend_base_url(backend))
+        loaded_id = await served_model_id_for_backend(backend)
         return loaded_id or os.path.basename(loaded_path) or loaded_path
 
     host = LLM_BACKEND_HOSTS.get(backend)
@@ -3324,11 +3396,7 @@ async def current_llm_model_for_backend(backend: str) -> str:
     if not strategy:
         return ""
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0), verify=tls_context()) as client:
-            resp = await client.get(f"{host}{strategy['endpoint']}")
-        if resp.status_code != 200:
-            return ""
-        data = resp.json()
+        data = await _engine_probe_json(backend, str(strategy["endpoint"]), 2.0)
         if not isinstance(data, dict):
             return ""
         return _resolve_dot_path(data, str(strategy["model_key"])) or ""
@@ -3506,9 +3574,31 @@ async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
 
 
 async def _probe_service_resource_fact(bcfg: Mapping[str, Any]) -> dict[str, Any]:
-    url = _service_resource_probe_url(bcfg)
-    if not url:
-        return {"status": "unknown"}
+    from gateway.lifecycle_drivers import engine_read_request
+
+    if not bcfg.get("probe_with_inference_connection"):
+        # A page read must not change existing health traffic. These probes
+        # historically ignored base_path and carried no inference credential.
+        url, headers = _service_resource_probe_url(bcfg), {}
+        if not url:
+            return {"status": "unknown"}
+    else:
+        probe_config = dict(bcfg)
+        env_name = str(bcfg.get("base_url_env") or bcfg.get("api_base_env") or "").strip()
+        env_base = str(get_env(env_name) or "").strip() if env_name else ""
+        if env_base:
+            probe_config["base_url"] = env_base
+        endpoint = str(bcfg.get("health_endpoint") or "/health").strip() or "/health"
+        absolute = endpoint.startswith(("http://", "https://"))
+        if absolute:
+            # Resolve against the health destination before attaching a key.
+            probe_config["base_url"] = endpoint
+        probe = engine_read_request(probe_config, "" if absolute else endpoint)
+        if probe is None:
+            return {"status": "unknown"}
+        url, headers = probe
+        if absolute:
+            url = endpoint
     try:
         timeout = float(bcfg.get("timeout") or HEALTH_CHECK_TIMEOUT)
     except (TypeError, ValueError):
@@ -3518,7 +3608,7 @@ async def _probe_service_resource_fact(bcfg: Mapping[str, Any]) -> dict[str, Any
     timeout = min(timeout, HEALTH_CHECK_TIMEOUT)
     try:
         async with httpx.AsyncClient(verify=tls_context()) as client:
-            resp = await client.get(url, timeout=timeout)
+            resp = await client.get(url, timeout=timeout, **({"headers": headers} if headers else {}))
             if 200 <= resp.status_code < 300:
                 return {"status": "available"}
             if resp.status_code in {502, 503, 504}:
@@ -3545,6 +3635,8 @@ def _service_resource_probe_config(service_id: str) -> Mapping[str, Any] | None:
         return None
     scfg = service.get("config")
     if isinstance(scfg, Mapping):
+        if service.get("secret_refs"):
+            return {**scfg, "secret_refs": copy.deepcopy(service["secret_refs"])}
         return scfg
     return None
 
@@ -3800,16 +3892,19 @@ async def _probe_voice_quality(reference: Path) -> dict[str, Any] | None:
             reason = "engine_would_not_start"
         else:
             try:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
-                    resp = await client.post(f"{base_url}/v1/audio/voice-check", json={"voice_ref": str(reference)})
-                if resp.status_code == 200:
+                resp = await _tts_adapter(service_id).invoke(
+                    _tts_connection(base_url, 120), "speech.voice_check",
+                    AdapterRequest(op="speech.voice_check", body={"voice_ref": str(reference)}),
+                )
+                if resp.status == 200:
                     data = resp.json()
                     return {"speaker_similarity": float(data["speaker_similarity"]), "encoder": data.get("encoder"), "engine": engine_id}
-                reason = "gpu_busy" if resp.status_code == 503 else f"engine_http_{resp.status_code}"
-                if resp.status_code != 503:
+                reason = "gpu_busy" if resp.status == 503 else f"engine_http_{resp.status}"
+                if resp.status != 503:
                     break
-            except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-                reason = f"engine_error: {type(exc).__name__}"
+            except (TransportFailure, ValueError, KeyError, TypeError) as exc:
+                # A transport failure names the httpx error it came from, as the reason always did.
+                reason = f"engine_error: {type(exc.__cause__ if isinstance(exc, TransportFailure) else exc).__name__}"
         if attempt < 2:
             await asyncio.sleep(5)
     return {"error": reason}
@@ -3835,18 +3930,18 @@ async def _design_voice(instruct: str, script: str, seed: int) -> bytes:
     if not_ready is not None:
         raise custom_voices.VoiceError(503, "backend_unavailable", "The voice design engine could not be started.")
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(180, connect=10)) as client:
-            resp = await client.post(
-                f"{base_url}/v1/audio/speech",
-                json=voice_design.design_request(_voice_design_settings(), script=script, instructions=instruct, seed=seed),
-            )
-    except httpx.HTTPError as exc:
+        resp = await _tts_adapter(service_id).invoke(
+            _tts_connection(base_url, 180), "speech.design",
+            AdapterRequest(op="speech.design", body=voice_design.design_request(
+                _voice_design_settings(), script=script, instructions=instruct, seed=seed)),
+        )
+    except TransportFailure as exc:
         raise custom_voices.VoiceError(502, "backend_error", f"Voice design failed: {exc}") from exc
-    if resp.status_code == 400:
+    if resp.status == 400:
         raise custom_voices.VoiceError(400, "invalid_prompt", "The voice design engine rejected this description.", param="prompt")
-    if resp.status_code != 200:
-        raise custom_voices.VoiceError(502, "backend_error", f"Voice design failed with HTTP {resp.status_code}.")
-    return resp.content
+    if resp.status != 200:
+        raise custom_voices.VoiceError(502, "backend_error", f"Voice design failed with HTTP {resp.status}.")
+    return resp.raw
 
 
 async def _reference_transcript(owner: str | None, meta: Mapping[str, Any], reference: Path) -> str:
@@ -3857,14 +3952,18 @@ async def _reference_transcript(owner: str | None, meta: Mapping[str, Any], refe
     if not isinstance(stt, Mapping) or not stt.get("host"):
         raise custom_voices.VoiceError(503, "backend_unavailable", "Transcribing the voice sample needs the stt service.")
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
-            resp = await client.post(
-                f"http://{stt['host']}:{stt['port']}/v1/audio/transcriptions",
-                files={"file": ("reference.wav", reference.read_bytes(), "audio/wav")},
-                data={"model": str(stt.get("default_model") or "parakeet-tdt-0.6b-v3")},
-            )
-        text = str(resp.json().get("text") or "").strip() if resp.status_code == 200 else ""
-    except (httpx.HTTPError, ValueError, OSError):
+        clip = chunked_stt.SttUpload(
+            op="stt.transcribe",
+            parts={"file": ("reference.wav", reference.read_bytes(), "audio/wav")},
+            body={"model": str(stt.get("default_model") or "parakeet-tdt-0.6b-v3")},
+        )
+        resp = await _stt_adapter(stt).invoke(
+            AdapterConnection(address=f"http://{stt['host']}:{stt['port']}",
+                              timeouts=AdapterTimeouts(connect_s=10, first_byte_s=120, total_s=120)),
+            "stt.transcribe", clip,
+        )
+        text = str(resp.json().get("text") or "").strip() if resp.status == 200 else ""
+    except (TransportFailure, ValueError, OSError):
         text = ""
     if not text:
         raise custom_voices.VoiceError(503, "backend_unavailable", "The voice sample could not be transcribed for this engine.")
@@ -3985,6 +4084,7 @@ async def _stream_tts_upstream(
     stream_format: str,
     response_format: str,
     native_rate: int,
+    service_id: str = _TTS_BACKEND_ID,
 ) -> Response:
     """Forward an engine's PCM stream to the client while it is still synthesizing.
 
@@ -3999,7 +4099,7 @@ async def _stream_tts_upstream(
     # including cancellation.
     try:
         try:
-            upstream = await _TTS_ADAPTER.invoke(
+            upstream = await _tts_adapter(service_id).invoke(
                 _tts_connection(url.removesuffix(tts_adapter.SPEECH_PATH)), "speech.stream",
                 AdapterRequest(op="speech.stream", headers=headers, raw_body=body),
             )
@@ -4290,11 +4390,12 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             stream_format=stream_mode,
             response_format=requested_response_format,
             native_rate=native_rate,
+            service_id=tts_service_id,
         )
 
     try:
         # The adapter owns the HTTP client; the answer handling below is unchanged.
-        resp = await _TTS_ADAPTER.invoke(
+        resp = await _tts_adapter(tts_service_id).invoke(
             _tts_connection(_tts_host), "speech.synthesize",
             AdapterRequest(op="speech.synthesize", headers=headers, raw_body=body),
         )
@@ -4408,6 +4509,18 @@ def audio_translation_unsupported_response() -> Response:
         param="file",
         code="unsupported_audio_translation",
     )
+
+
+def _stt_adapter(record: Mapping[str, Any]):
+    """The reviewed adapter an STT service's record selects (contract v2.1 section 4); core never branches on what it is."""
+    return reviewed_adapters.adapter_for_backend(record, "transcriptions")
+
+
+def _stt_connection(execution: stt_chunking.SttExecutionConfig) -> AdapterConnection:
+    """The STT engine of one execution snapshot, with the timeouts its requests have always had."""
+    return AdapterConnection(address=execution.host, timeouts=AdapterTimeouts(
+        connect_s=min(10.0, execution.timeout_seconds), first_byte_s=execution.timeout_seconds,
+        total_s=execution.timeout_seconds))
 
 
 def _stt_execution_snapshot(
@@ -4855,7 +4968,7 @@ async def proxy_stt_request(
             cancellation_registry().signal(receipt.request_id)
 
     async def execute() -> Response:
-        nonlocal execution
+        nonlocal execution, cleanup_deferred
         try:
             if "multipart/form-data" not in request.headers.get("content-type", ""):
                 return openai_error_response("No file part in the request.", status_code=400, param="file", code="missing_file")
@@ -4976,111 +5089,50 @@ async def proxy_stt_request(
             headers = prepare_downstream_headers(request.headers, auth_context, execution.service_id, f"/v1/audio/{operation}", backend_config=execution.backend_config)
             pop_header(headers, "content-type")
             pop_header(headers, "content-length")
-            url = f"{execution.host}/v1/audio/{operation}"
-            client = httpx.AsyncClient(timeout=httpx.Timeout(execution.timeout_seconds, connect=min(10.0, execution.timeout_seconds)))
-            cleanup.add("http_client", client.aclose)
+            streams = wants_stream and native_stream and len(uploads) == 1
 
-            async def send_files(files: list[tuple[str, tuple[str, Any, str]]]) -> stt_chunking.UpstreamResponse:
-                try:
-                    outgoing = client.build_request("POST", url, headers=headers, data=multipart_fields, files=files)
-                    upstream = await stt_chunking.await_with_cancellation(client.send(outgoing, stream=True), cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation)
-                    cleanup.add("upstream_response", upstream.aclose)
-                    try:
-                        body = await stt_chunking.read_bounded_response(upstream, max_bytes=execution.max_response_bytes, cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation)
-                    finally:
-                        await cleanup.release("upstream_response", upstream.aclose)
-                    return stt_chunking.UpstreamResponse(upstream.status_code, body, dict(upstream.headers))
-                except httpx.TimeoutException as error:
-                    raise stt_chunking.SttBackendTimeout("STT backend timed out") from error
-                except httpx.ConnectError as error:
-                    raise stt_chunking.SttBackendUnavailable("STT backend is unavailable") from error
-                except httpx.TransportError as error:
-                    # Reset/closed/protocol error after the connection was made: the engine died
-                    # mid-request (typically a GPU out-of-memory kill). Another engine may serve it.
-                    raise stt_chunking.SttBackendConnectionLost("STT backend dropped the connection") from error
+            def record_outcome(outcome: stt_chunking.ChunkingOutcome) -> None:
+                # Receipts are core's: the adapter reports the chunking outcome before any later request.
+                receipt.metadata["stt"].update({"attempts_started": outcome.attempts_started, "chunked": outcome.mode == "chunked"})
+                if outcome.fallback_reason:
+                    receipt.add_fallback_reason(outcome.fallback_reason)
+                if outcome.mode == "chunked":
+                    receipt.metadata["status_code"] = 200
+                elif outcome.mode == "upstream_error" and outcome.upstream_response is not None:
+                    receipt.metadata["status_code"] = outcome.upstream_response.status_code
+                elif streams:
+                    receipt.metadata["status_code"] = 200
 
-            async def post_file(path: Path, filename: str, media_type: str) -> stt_chunking.UpstreamResponse:
-                handle = path.open("rb")
-                cleanup.add("chunk_upload_handle", handle.close)
-                try:
-                    return await send_files([("file", (filename, handle, media_type))])
-                finally:
-                    await cleanup.release("chunk_upload_handle", handle.close)
-
-            async def prepared_wav(upload: Any) -> Path:
-                """Decode the upload to 16 kHz mono WAV, the only input audio.cpp engines accept."""
-                destination = workspace / "normalized-16k.wav"
-                cleanup.add("normalized_wav", lambda: destination.unlink(missing_ok=True))
-                try:
-                    await stt_chunking.run_media_command(
-                        [
-                            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                            "-i", os.fspath(stt_chunking.source_path(upload)),
-                            "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le",
-                            os.fspath(destination),
-                        ],
-                        timeout_seconds=execution.timeout_seconds,
-                        cancellation_waiters=waiters,
-                        deadline_at=deadline_at,
-                        on_cancel=signal_cancellation,
-                        max_output_bytes=execution.max_media_output_bytes,
-                    )
-                except stt_chunking.SttMediaCommandFailed as error:
-                    # ffmpeg ran and refused the file: the caller sent something that is not audio.
-                    raise stt_chunking.SttInvalidAudio("STT input is not readable audio") from error
-                size = destination.stat().st_size if destination.exists() else 0
-                if size <= 44:
-                    raise stt_chunking.SttInvalidAudio("STT input holds no decodable audio")
-                if size > execution.max_decoded_bytes:
-                    raise stt_chunking.SttResourceLimitExceeded("Decoded audio exceeds the configured STT limit")
-                return destination
-
-            async def open_stream(path: Path, filename: str) -> Response:
-                """Relay an engine's SSE transcript while it is being produced."""
-                nonlocal cleanup_deferred
-                handle = path.open("rb")
-                cleanup.add("stream_upload_handle", handle.close)
-                outgoing = client.build_request(
-                    "POST", url, headers=headers, data=multipart_fields,
-                    files=[("file", (filename, handle, "audio/wav" if wav16k_input else "application/octet-stream"))],
-                )
-                try:
-                    upstream = await stt_chunking.await_with_cancellation(
-                        client.send(outgoing, stream=True),
-                        cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation,
-                    )
-                except httpx.TimeoutException as error:
-                    raise stt_chunking.SttBackendTimeout("STT backend timed out") from error
-                except httpx.ConnectError as error:
-                    raise stt_chunking.SttBackendUnavailable("STT backend is unavailable") from error
-                cleanup.add("upstream_response", upstream.aclose)
-                if upstream.status_code != 200:
-                    body = await stt_chunking.read_bounded_response(
-                        upstream, max_bytes=execution.max_response_bytes,
-                        cancellation_waiters=waiters, deadline_at=deadline_at, on_cancel=signal_cancellation,
-                    )
-                    return _stt_response_from_upstream(
-                        stt_chunking.UpstreamResponse(upstream.status_code, body, dict(upstream.headers))
-                    )
+            reply = await _stt_adapter(execution.backend_config).invoke(
+                _stt_connection(execution),
+                "stt.translate" if operation == "translations" else "stt.transcribe",
+                chunked_stt.SttRun(
+                    op="stt.translate" if operation == "translations" else "stt.transcribe",
+                    headers=headers,
+                    execution=execution,
+                    fields=fields,
+                    multipart_fields=multipart_fields,
+                    uploads=uploads,
+                    workspace=workspace,
+                    cleanup=cleanup,
+                    cancellation_waiters=waiters,
+                    deadline_at=deadline_at,
+                    on_cancel=signal_cancellation,
+                    on_attempt_started=lambda count: receipt.metadata["stt"].update({"attempts_started": count}),
+                    on_outcome=record_outcome,
+                    wav16k_input=wav16k_input,
+                    stream=streams,
+                ),
+            )
+            if isinstance(reply, ProtocolStreamReply):
+                # Relay the engine's event stream while it is being produced. The adapter reads each
+                # chunk under the run's cancellation, deadline and byte budget; the cleanup owner
+                # (which holds the upstream response) closes when the relay ends.
                 cleanup_deferred = True
 
                 async def relay():
                     try:
-                        total = 0
-                        iterator = upstream.aiter_raw().__aiter__()
-                        while True:
-                            try:
-                                chunk = await stt_chunking.await_with_cancellation(
-                                    iterator.__anext__(),
-                                    cancellation_waiters=waiters,
-                                    deadline_at=deadline_at,
-                                    on_cancel=signal_cancellation,
-                                )
-                            except StopAsyncIteration:
-                                break
-                            total += len(chunk)
-                            if total > execution.max_response_bytes:
-                                raise stt_chunking.SttResponseLimitExceeded("STT backend response exceeds the configured limit")
+                        async for chunk in reply:
                             yield chunk
                     except (ClientDisconnect, stt_chunking.SttCancelled) as error:
                         signal_cancellation()
@@ -5114,62 +5166,16 @@ async def proxy_stt_request(
                     media_type="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
                 )
-
-            async def post_uploads() -> stt_chunking.UpstreamResponse:
-                opened: list[tuple[str, Any, str, str]] = []
+            if reply.mode == "chunked":
+                return Response(content=json.dumps(reply.body), status_code=200, media_type="application/json")
+            upstream = stt_chunking.UpstreamResponse(reply.status, reply.raw, reply.headers)
+            if reply.mode != "direct":
+                return _stt_response_from_upstream(upstream)
+            receipt.metadata["status_code"] = reply.status
+            response = _stt_response_from_upstream(upstream)
+            if wants_stream and not native_stream and reply.status == 200:
                 try:
-                    for index, (name, upload) in enumerate(uploads):
-                        handle = stt_chunking.source_path(upload).open("rb")
-                        opened.append((name, handle, upload.filename or "audio", upload.content_type or "application/octet-stream"))
-                        cleanup.add(f"direct_upload_handle_{index}", handle.close)
-                    return await send_files([(name, (filename, handle, media_type)) for name, handle, filename, media_type in opened])
-                finally:
-                    for index, (_name, handle, _filename, _media_type) in enumerate(opened):
-                        await cleanup.release(f"direct_upload_handle_{index}", handle.close)
-
-            prepared_source: Path | None = None
-            if len(uploads) == 1:
-                _name, upload = uploads[0]
-                if wav16k_input:
-                    prepared_source = await prepared_wav(upload)
-                outcome = await stt_chunking.execute_chunking(
-                    source_path=prepared_source or stt_chunking.source_path(upload),
-                    source_stem=Path(upload.filename or "audio").stem or "audio",
-                    fields=fields,
-                    config=execution,
-                    post_file=lambda path, filename: post_file(path, filename, "audio/wav"),
-                    cancellation_waiters=waiters,
-                    deadline_at=deadline_at,
-                    on_cancel=signal_cancellation,
-                    on_attempt_started=lambda count: receipt.metadata["stt"].update({"attempts_started": count}),
-                    cleanup=cleanup,
-                )
-            else:
-                outcome = stt_chunking.ChunkingOutcome("passthrough", 0, "multiple_files")
-            receipt.metadata["stt"].update({"attempts_started": outcome.attempts_started, "chunked": outcome.mode == "chunked"})
-            if outcome.fallback_reason:
-                receipt.add_fallback_reason(outcome.fallback_reason)
-            if outcome.mode == "chunked":
-                receipt.metadata["status_code"] = 200
-                return Response(content=json.dumps(outcome.merged_payload), status_code=200, media_type="application/json")
-            if outcome.mode == "upstream_error" and outcome.upstream_response is not None:
-                receipt.metadata["status_code"] = outcome.upstream_response.status_code
-                return _stt_response_from_upstream(outcome.upstream_response)
-            if wants_stream and native_stream and len(uploads) == 1:
-                receipt.metadata["status_code"] = 200
-                return await open_stream(
-                    prepared_source or stt_chunking.source_path(uploads[0][1]),
-                    "audio.wav" if prepared_source else (uploads[0][1].filename or "audio"),
-                )
-            if prepared_source is not None:
-                direct = await post_file(prepared_source, "audio.wav", "audio/wav")
-            else:
-                direct = await post_uploads()
-            receipt.metadata["status_code"] = direct.status_code
-            response = _stt_response_from_upstream(direct)
-            if wants_stream and not native_stream and direct.status_code == 200:
-                try:
-                    events = speech_stream.transcript_json_to_sse(json.loads(direct.body))
+                    events = speech_stream.transcript_json_to_sse(json.loads(reply.raw))
                 except (ValueError, TypeError):
                     return _stt_error("STT backend returned an invalid JSON transcript for streaming.", status_code=502, code="invalid_stt_stream_response")
                 return Response(
@@ -5277,7 +5283,7 @@ def _load_ui_workflow(api_path: Path) -> Optional[dict]:
 
     Looks for `<name>.ui.json` next to `<name>.json`. Returns the parsed dict
     if found, else None. Results are cached by absolute path. A twin is only a
-    fallback for the derived workflow (see ``_build_comfy_submit_payload``).
+    fallback for the derived workflow (see ``_build_graph_submit_payload``).
     """
     api_path = Path(api_path).resolve()
     key = str(api_path)
@@ -5299,46 +5305,31 @@ def _load_ui_workflow(api_path: Path) -> Optional[dict]:
         return None
 
 
-def _build_comfy_submit_payload(workflow: dict, **extra: Any) -> dict:
-    """Build the JSON body for POST /prompt, including extra_pnginfo when available.
-
-    Pops the proxy-private `__ui_workflow__` key off `workflow` (added by the
-    workflow loaders) and threads it into `extra_data.extra_pnginfo.workflow`.
-    Without this, ComfyUI saves outputs without the UI-format graph in PNGInfo,
-    so users can't drag the resulting mp4/PNG into ComfyUI's frontend to
-    re-open the generation.
-    """
-    twin = workflow.pop("__ui_workflow__", None)
-    # Derive from the graph actually submitted, so the embedded workflow shows
-    # this request's prompt, seed and sizes. The hand-authored twin is a
-    # fallback only: it carries the template's values, and several twins are
-    # stale (widget values shifted by control_after_generate).
-    ui = _derive_ui_workflow(workflow) or twin
-    if not ui:
-        print("[proxy] WARNING: submitting a ComfyUI prompt without an embedded workflow "
-              "(derivation failed, no UI twin); dragging its output into ComfyUI will not "
+def _build_graph_submit_payload(workflow: dict, **extra: Any) -> dict:
+    """The JSON body of a prompt, with the UI-format graph embedded in its output metadata when one is known."""
+    payload = node_graph.build_submit_payload(workflow, _derive_ui_workflow, **extra)
+    if "extra_data" not in payload:
+        engine = _graph_adapter().label
+        print(f"[proxy] WARNING: submitting a {engine} prompt without an embedded workflow "
+              f"(derivation failed, no UI twin); dragging its output into {engine} will not "
               "reopen the generation", flush=True)
-    payload = {"prompt": workflow}
-    if ui:
-        payload["extra_data"] = {"extra_pnginfo": {"workflow": ui}}
-    payload.update(extra)
     return payload
 
 
-def load_comfy_workflow(model_name: str) -> Optional[dict]:
+def load_graph_workflow(model_name: str) -> Optional[dict]:
     """Load a ComfyUI workflow template by model name.
 
     Attaches the UI-format twin (`<model>.ui.json`) under the private
     `__ui_workflow__` key when present, so submit sites can include it in
     `extra_data.extra_pnginfo.workflow`. The key survives deepcopy and is
-    popped by `_build_comfy_submit_payload`.
+    popped by `_build_graph_submit_payload`.
     """
     workflow_path = COMFY_WORKFLOWS_DIR / f"{model_name}.json"
     if not workflow_path.exists():
-        workflow_path = _comfy_workflow_artifact_path_for_model(model_name)
+        workflow_path = _graph_workflow_artifact_path_for_model(model_name)
     if not workflow_path.exists():
         return None
-    workflow = _load_comfy_workflow_file(workflow_path)
+    workflow = _load_graph_workflow_file(workflow_path)
     if workflow is None:
         return None
     return workflow
@@ -5346,9 +5337,9 @@ def load_comfy_workflow(model_name: str) -> Optional[dict]:
 
 
 
-def _comfy_object_info(class_type: str) -> Optional[dict]:
+def _graph_node_info(class_type: str) -> Optional[dict]:
     """A node type's slot definitions from ComfyUI /object_info (cached), or None."""
-    return comfy_object_info.lookup(COMFY_HOST, class_type)
+    return node_info.lookup(_graph_connection().address, class_type)
 
 
 def _derive_ui_workflow(api: Mapping[str, Any]) -> Optional[dict]:
@@ -5356,36 +5347,36 @@ def _derive_ui_workflow(api: Mapping[str, Any]) -> Optional[dict]:
 
     So generated media embed the 'workflow' chunk/tag (re-openable in the
     ComfyUI frontend). Uses /object_info for each node's slot ordering; see
-    ``gateway.comfy_ui_graph``. Best-effort: None if ComfyUI is unreachable or
+    ``gateway.engine_protocol.node_ui_graph``. Best-effort: None if ComfyUI is unreachable or
     any node type is unknown, in which case the caller falls back to a
     hand-authored twin or omits the chunk.
     """
     try:
-        return comfy_ui_graph.derive_ui_workflow(api, _comfy_object_info)
+        return node_ui_graph.derive_ui_workflow(api, _graph_node_info)
     except Exception as exc:  # noqa: BLE001 - never fail a render over metadata
         print(f"[proxy] UI workflow derivation failed: {type(exc).__name__}: {exc}", flush=True)
         return None
 
 
-def _load_comfy_workflow_file(workflow_path: Path) -> Optional[dict]:
+def _load_graph_workflow_file(workflow_path: Path) -> Optional[dict]:
     with open(workflow_path) as f:
         workflow = json.load(f)
-    errors = validate_comfyui_workflow_graph(workflow)
+    errors = validate_workflow_graph(workflow)
     if errors:
         print(
-            f"[proxy] invalid ComfyUI workflow {workflow_path}: {'; '.join(errors)}",
+            f"[proxy] invalid {_graph_adapter().label} workflow {workflow_path}: {'; '.join(errors)}",
             flush=True,
         )
         return None
     # Hand-authored UI twin: fallback only. The submit step derives the workflow
-    # from the final graph (see _build_comfy_submit_payload).
+    # from the final graph (see _build_graph_submit_payload).
     ui = _load_ui_workflow(workflow_path)
     if ui is not None:
         workflow["__ui_workflow__"] = ui
     return workflow
 
 
-def _comfy_workflow_artifact_path_for_model(model_name: str) -> Path:
+def _graph_workflow_artifact_path_for_model(model_name: str) -> Path:
     try:
         registry = GATEWAY_WORKFLOW_REGISTRY
     except NameError:
@@ -5394,7 +5385,7 @@ def _comfy_workflow_artifact_path_for_model(model_name: str) -> Path:
         bindings = record.manifest.get("bindings")
         if not isinstance(bindings, Mapping):
             continue
-        comfy = bindings.get("comfyui")
+        comfy = bindings.get(_GRAPH_BINDING)
         if not isinstance(comfy, Mapping):
             continue
         artifact = comfy.get("workflow")
@@ -5428,7 +5419,7 @@ async def check_comfy_health() -> bool:
     """Check if ComfyUI backend is healthy."""
     if not COMFY_ENABLED:
         return False
-    return await check_service_health("comfyui")
+    return await check_service_health(_GRAPH_BACKEND_ID)
 
 
 def parse_size(size_str: str) -> tuple[int, int]:
@@ -5733,15 +5724,15 @@ def record_vram_estimate(
     _persist_vram_estimates()
 
 
-async def comfy_vram_snapshot(
+async def graph_vram_snapshot(
     client: httpx.AsyncClient,
 ) -> tuple[Optional[int], Optional[int]]:
-    """Return (free, total) VRAM bytes on GPU0 from ComfyUI /system_stats."""
+    """Return (free, total) VRAM bytes on GPU0 from the engine's system stats."""
     try:
-        resp = await client.get(f"{COMFY_HOST}/system_stats", timeout=HEALTH_CHECK_TIMEOUT)
-        if resp.status_code != 200:
+        reply = await _graph(client).stats(timeout=HEALTH_CHECK_TIMEOUT)
+        if reply.status != 200:
             return None, None
-        payload = resp.json()
+        payload = reply.json()
         devices = payload.get("devices") or []
         if not devices:
             return None, None
@@ -5756,17 +5747,18 @@ async def comfy_vram_snapshot(
         return None, None
 
 
-async def comfy_free_vram_bytes(client: httpx.AsyncClient) -> Optional[int]:
+async def graph_free_vram_bytes(client: httpx.AsyncClient) -> Optional[int]:
     """Backward-compatible: just the free-VRAM read."""
-    free, _ = await comfy_vram_snapshot(client)
+    free, _ = await graph_vram_snapshot(client)
     return free
 
 
-async def _free_comfy_models_if_idle(client: httpx.AsyncClient) -> bool:
-    """Unload ComfyUI models only when its queue has no running execution."""
+async def _free_graph_models_if_idle(client: httpx.AsyncClient) -> bool:
+    """Unload the engine's models only when its queue has no running execution."""
     try:
-        response = await client.get(f"{COMFY_HOST}/queue", timeout=HEALTH_CHECK_TIMEOUT)
-        if response.status_code != 200:
+        graph = _graph(client)
+        response = await graph.queue(timeout=HEALTH_CHECK_TIMEOUT)
+        if response.status != 200:
             return False
         queue = response.json()
         if not isinstance(queue, Mapping):
@@ -5775,18 +5767,14 @@ async def _free_comfy_models_if_idle(client: httpx.AsyncClient) -> bool:
         pending = queue.get("queue_pending")
         if not isinstance(running, list) or not isinstance(pending, list) or running or pending:
             return False
-        response = await client.post(
-            f"{COMFY_HOST}/free",
-            json={"unload_models": True, "free_memory": True},
-            timeout=HEALTH_CHECK_TIMEOUT,
-        )
-        if response.status_code != 200:
+        response = await graph.free({"unload_models": True, "free_memory": True}, timeout=HEALTH_CHECK_TIMEOUT)
+        if response.status != 200:
             return False
-        print("[proxy] ComfyUI idle models unloaded after VRAM exhaustion", flush=True)
+        print(f"[proxy] {_graph_adapter().label} idle models unloaded after VRAM exhaustion", flush=True)
         await asyncio.sleep(1.0)
         return True
-    except (httpx.HTTPError, ValueError, TypeError) as exc:
-        print(f"[proxy] ComfyUI model unload failed: {type(exc).__name__}", flush=True)
+    except (TransportFailure, ValueError, TypeError) as exc:
+        print(f"[proxy] {_graph_adapter().label} model unload failed: {type(exc.__cause__ or exc).__name__}", flush=True)
         return False
 
 
@@ -5995,7 +5983,7 @@ class _VramProbe:
         # Whole-GPU side: keep populating min_free / total via ComfyUI's
         # /system_stats. Cheap, async, and feeds the legacy "system pressure"
         # metric (NOT used by the batcher).
-        free, total = await comfy_vram_snapshot(self._client)
+        free, total = await graph_vram_snapshot(self._client)
         if isinstance(total, int) and self.total is None:
             self.total = total
         if isinstance(free, int):
@@ -7065,45 +7053,9 @@ def has_vision_content(messages) -> bool:
     return False
 
 
-def _comfy_execution_error_message(job: Mapping[str, Any] | None) -> str | None:
-    """Return a safe, short ComfyUI execution error summary if one is present."""
-    status_block = (job or {}).get("status", {}) if isinstance(job, Mapping) else {}
-    if not isinstance(status_block, Mapping):
-        return None
-
-    messages = status_block.get("messages", []) or []
-    for msg in messages:
-        if not (isinstance(msg, (list, tuple)) and msg and msg[0] == "execution_error"):
-            continue
-        payload = msg[1] if len(msg) > 1 and isinstance(msg[1], Mapping) else {}
-        node_type = str(payload.get("node_type") or "").strip()
-        node_id = str(payload.get("node_id") or "").strip()
-
-
-        location = "ComfyUI execution error"
-        if node_type and node_id:
-            location = f"ComfyUI {node_type} node {node_id}"
-        elif node_type:
-            location = f"ComfyUI {node_type}"
-        elif node_id:
-            location = f"ComfyUI node {node_id}"
-
-        return f"{location}: execution failed"[:500]
-
-    status = str(status_block.get("status_str") or status_block.get("status") or "").lower()
-    if status == "error":
-        return "ComfyUI execution failed"
-    return None
-
-
-def _comfy_execution_error_node_id(job: Mapping[str, Any] | None) -> str | None:
-    status_block = (job or {}).get("status", {}) if isinstance(job, Mapping) else {}
-    for msg in (status_block.get("messages", []) or []) if isinstance(status_block, Mapping) else []:
-        if isinstance(msg, (list, tuple)) and msg and msg[0] == "execution_error":
-            payload = msg[1] if len(msg) > 1 and isinstance(msg[1], Mapping) else {}
-            node_id = str(payload.get("node_id") or "").strip()
-            return node_id or None
-    return None
+def _graph_error_message(job: Mapping[str, Any] | None) -> str | None:
+    """A safe, short summary of an execution error in a history entry, or None."""
+    return node_graph.execution_error_message(job, _graph_adapter().label)
 
 
 def _video_job_warnings(record: Mapping[str, Any] | None, job: Mapping[str, Any] | None) -> list[str]:
@@ -7125,7 +7077,7 @@ def _chain_failure_error(record: Mapping[str, Any] | None, job: Mapping[str, Any
     chain = (record or {}).get("chain") if isinstance(record, Mapping) else None
     if not isinstance(chain, Mapping):
         return error
-    index = video_extend.segment_of_node(chain.get("units") or [], _comfy_execution_error_node_id(job) or "")
+    index = video_extend.segment_of_node(chain.get("units") or [], node_graph.execution_error_node_id(job) or "")
     if index is None:
         return error
     total = int(chain.get("segments") or 0)
@@ -7143,73 +7095,58 @@ def _chain_failure_error(record: Mapping[str, Any] | None, job: Mapping[str, Any
     return error
 
 
-def _comfy_prompt_queue_position_from_queue(queue: Mapping[str, Any], prompt_id: str) -> Optional[int]:
-    """Return a 1-based pending queue position for a ComfyUI prompt, if known."""
-    pending = queue.get("queue_pending")
-    if not isinstance(pending, list):
-        return None
-    for index, entry in enumerate(pending, start=1):
-        if isinstance(entry, (list, tuple)) and len(entry) >= 2 and entry[1] == prompt_id:
-            return index
-    return None
-
-
-async def _comfy_prompt_queue_position(
+async def _graph_queue_position(
     client: httpx.AsyncClient,
     prompt_id: str,
     headers: Mapping[str, str],
 ) -> Optional[int]:
     try:
-        response = await client.get(f"{COMFY_HOST}/queue", headers=dict(headers), timeout=HEALTH_CHECK_TIMEOUT)
+        reply = await _graph(client).queue(headers=dict(headers), timeout=HEALTH_CHECK_TIMEOUT)
     except Exception:
         return None
-    if response.status_code != 200:
+    if reply.status != 200:
         return None
     try:
-        queue = response.json()
+        queue = reply.json()
     except Exception:
         return None
     if not isinstance(queue, Mapping):
         return None
-    return _comfy_prompt_queue_position_from_queue(queue, prompt_id)
+    return node_graph.queue_position(queue, prompt_id)
 
 
-async def _cancel_comfy_prompt(
+async def _graph_cancel(
     client: httpx.AsyncClient,
     prompt_id: str,
     headers: Mapping[str, str],
     *,
     reason: str,
 ) -> bool:
+    adapter = _graph_adapter()
     try:
-        response = await client.post(
-            f"{COMFY_HOST}/api/jobs/{prompt_id}/cancel",
-            headers=dict(headers),
-            timeout=HEALTH_CHECK_TIMEOUT,
-        )
+        await adapter.cancel(_graph_connection(), JobRef("graph.submit", prompt_id), headers=dict(headers),
+                             session=_graph(client), timeout=HEALTH_CHECK_TIMEOUT)
+    except ProtocolUpstreamError as e:
+        print(f"[proxy] {adapter.label} cancel failed for {prompt_id} after {reason}: HTTP {e.status}", flush=True)
+        return False
     except Exception as e:
-        print(f"[proxy] ComfyUI cancel failed for {prompt_id} after {reason}: {e}", flush=True)
+        print(f"[proxy] {adapter.label} cancel failed for {prompt_id} after {reason}: {e}", flush=True)
         return False
-    if response.status_code != 200:
-        print(
-            f"[proxy] ComfyUI cancel failed for {prompt_id} after {reason}: HTTP {response.status_code}",
-            flush=True,
-        )
-        return False
-    print(f"[proxy] ComfyUI prompt cancelled after {reason}: {prompt_id}", flush=True)
+    print(f"[proxy] {adapter.label} prompt cancelled after {reason}: {prompt_id}", flush=True)
     return True
 
 
 def _image_generation_timeout_response(queue_position: Optional[int]) -> Response:
+    engine = _graph_adapter().label
     error: dict[str, Any] = {
-        "message": "Image generation timed out before ComfyUI returned an image",
+        "message": f"Image generation timed out before {engine} returned an image",
         "type": "api_error",
         "code": "image_generation_timeout",
     }
     if queue_position is not None:
         error["queue_position"] = queue_position
         error["message"] = (
-            "Image generation timed out before ComfyUI returned an image "
+            f"Image generation timed out before {engine} returned an image "
             f"(queue_position={queue_position})"
         )
     return Response(
@@ -7234,6 +7171,29 @@ def _image_client_disconnected_response(prompt_id: str) -> Response:
     )
 
 
+def _graph_failure_response(error: Exception) -> Response | None:
+    """The answer for a graph engine that timed out or could not be reached, else ``None``.
+
+    The adapter raises ``TransportFailure``; other calls in an image handler's ``try`` (not to the engine) still raise
+    httpx errors, which have always read the same to the caller.
+    """
+    kind = error.kind if isinstance(error, TransportFailure) else None
+    adapter = _graph_adapter()
+    if kind == "timeout" or isinstance(error, httpx.TimeoutException):
+        return Response(
+            content=json.dumps({"error": {"message": f"{adapter.label} request timeout", "type": "api_error"}}),
+            status_code=504,
+            media_type="application/json",
+        )
+    if kind == "unreachable" or isinstance(error, httpx.ConnectError):
+        return Response(
+            content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection()), "type": "api_error"}}),
+            status_code=502,
+            media_type="application/json",
+        )
+    return None
+
+
 async def _request_is_disconnected(request: Request | None) -> bool:
     if request is None or not hasattr(request, "is_disconnected"):
         return False
@@ -7243,7 +7203,7 @@ async def _request_is_disconnected(request: Request | None) -> bool:
         return False
 
 
-async def _comfy_run_round(
+async def _graph_run_round(
     client: httpx.AsyncClient,
     workflow: dict,
     headers: dict,
@@ -7253,7 +7213,7 @@ async def _comfy_run_round(
     request: Request | None = None,
     max_wait_s: int | None = None,
 ) -> tuple[Optional[Response], list[bytes]]:
-    """Submit a single ComfyUI prompt and harvest the resulting image bytes.
+    """Submit a single prompt to the graph engine and harvest the resulting image bytes.
 
     ``max_wait_s`` replaces COMFY_TIMEOUT as the wall-clock limit (queue wait included);
     async jobs pass a long value so a prompt queued behind a video render is not cancelled.
@@ -7263,9 +7223,9 @@ async def _comfy_run_round(
 
     If ``vram_probe`` is provided, it is started before the prompt is
     submitted and stopped after the round completes (including on error).
-    The probe samples ComfyUI's per-process VRAM via nvidia-smi (filtered to
-    the ComfyUI PID set on GPU0); callers read ``marginal_and_state()`` to
-    get flux's marginal contribution and whether the run was warm or cold.
+    The probe samples the engine's per-process VRAM via nvidia-smi (filtered to
+    its PID set on GPU0); callers read ``marginal_and_state()`` to
+    get the model's marginal contribution and whether the run was warm or cold.
     """
     if vram_probe is not None:
         vram_probe.start()
@@ -7277,60 +7237,60 @@ async def _comfy_run_round(
             except Exception as e:
                 print(f"[proxy] VRAM probe stop error: {e}", flush=True)
 
+    adapter = _graph_adapter()
+    graph = _graph(client)
+    engine = adapter.label
     prompt_id: Optional[str] = None
     try:
         try:
-            resp = await client.post(
-                f"{COMFY_HOST}/prompt",
-                headers=headers,
-                json=_build_comfy_submit_payload(workflow),
+            ref = await adapter.submit(
+                graph.conn, "graph.submit",
+                AdapterRequest(op="graph.submit", body=_build_graph_submit_payload(workflow), headers=headers,
+                               params={"session": graph}),
             )
-        except httpx.TimeoutException:
-            return Response(
-                content=json.dumps({"error": {"message": "ComfyUI request timeout", "type": "api_error"}}),
-                status_code=504,
-                media_type="application/json",
-            ), []
-        except httpx.ConnectError:
-            return Response(
-                content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-                status_code=502,
-                media_type="application/json",
-            ), []
-        except httpx.TransportError:
+        except TransportFailure as e:
+            if e.kind == "timeout":
+                return Response(
+                    content=json.dumps({"error": {"message": f"{engine} request timeout", "type": "api_error"}}),
+                    status_code=504,
+                    media_type="application/json",
+                ), []
+            if e.kind == "unreachable":
+                return Response(
+                    content=json.dumps({"error": {"message": adapter.unavailable_message(graph.conn), "type": "api_error"}}),
+                    status_code=502,
+                    media_type="application/json",
+                ), []
             # The peer dropped the connection mid-exchange (e.g. RemoteProtocolError).
             return Response(
-                content=json.dumps({"error": {"message": f"Image backend connection dropped", "type": "api_error"}}),
+                content=json.dumps({"error": {"message": "Image backend connection dropped", "type": "api_error"}}),
                 status_code=502,
                 media_type="application/json",
             ), []
-
-        if resp.status_code != 200:
+        except ProtocolUpstreamError as e:
             return Response(
-                content=json.dumps({"error": {"message": f"ComfyUI error: {resp.text}", "type": "api_error"}}),
+                content=json.dumps({"error": {"message": f"{engine} error: {e}", "type": "api_error"}}),
                 status_code=502,
                 media_type="application/json",
             ), []
-
-        result = resp.json()
-        prompt_id = result.get("prompt_id")
-        if not prompt_id:
+        except ProtocolMalformedResponse:
             return Response(
                 content=json.dumps({"error": {"message": "No prompt_id returned", "type": "api_error"}}),
                 status_code=502,
                 media_type="application/json",
             ), []
 
-        print(f"[proxy] ComfyUI {label} submitted: {prompt_id}", flush=True)
+        prompt_id = ref.id
+        print(f"[proxy] {engine} {label} submitted: {prompt_id}", flush=True)
 
         # Keep the original total sleep budget; history request time was never
         # charged against it. Check immediately, then back off to the old cadence.
         remaining_wait_s = float(max_wait_s or COMFY_TIMEOUT)
         poll_delay_s = 0.0
-        job = None
+        finished = None
         while remaining_wait_s > 0:
             if await _request_is_disconnected(request):
-                await _cancel_comfy_prompt(client, prompt_id, headers, reason="client disconnect")
+                await _graph_cancel(client, prompt_id, headers, reason="client disconnect")
                 return _image_client_disconnected_response(prompt_id), []
             if poll_delay_s:
                 await asyncio.sleep(poll_delay_s)
@@ -7341,58 +7301,34 @@ async def _comfy_run_round(
                 remaining_wait_s,
             )
             try:
-                history_resp = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers)
-            except httpx.TransportError:
+                status = await adapter.poll(graph.conn, ref, headers=headers, session=graph)
+            except (TransportFailure, ProtocolUpstreamError):
                 continue
-            if history_resp.status_code != 200:
-                continue
-            history = history_resp.json()
-            if prompt_id not in history:
-                continue
-            candidate = history[prompt_id]
-            error_message = _comfy_execution_error_message(candidate)
-            if error_message:
+            if status.state is JobState.failed:
                 return Response(
                     content=json.dumps({
                         "error": {
-                            "message": error_message,
+                            "message": status.detail,
                             "type": "api_error",
                         }
                     }),
                     status_code=502,
                     media_type="application/json",
                 ), []
-            if candidate.get("status", {}).get("completed"):
-                job = candidate
+            if status.state is JobState.succeeded:
+                finished = status
                 break
 
-        if job is None:
-            queue_position = await _comfy_prompt_queue_position(client, prompt_id, headers)
-            await _cancel_comfy_prompt(client, prompt_id, headers, reason="image timeout")
+        if finished is None:
+            queue_position = await _graph_queue_position(client, prompt_id, headers)
+            await _graph_cancel(client, prompt_id, headers, reason="image timeout")
             return _image_generation_timeout_response(queue_position), []
 
-        images: list[bytes] = []
-        outputs = job.get("outputs", {})
-        for _node_id, node_output in outputs.items():
-            if "images" not in node_output:
-                continue
-            for img_info in node_output["images"]:
-                filename = img_info.get("filename")
-                subfolder = img_info.get("subfolder", "")
-                img_type = img_info.get("type", "output")
-                params = {"filename": filename, "type": img_type}
-                if subfolder:
-                    params["subfolder"] = subfolder
-                try:
-                    img_resp = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
-                except httpx.TransportError:
-                    continue
-                if img_resp.status_code == 200 and img_resp.content:
-                    images.append(img_resp.content)
+        images = await adapter.fetch_outputs(graph.conn, finished, headers=headers, session=graph)
         return None, images
     except asyncio.CancelledError:
         if prompt_id:
-            await _cancel_comfy_prompt(client, prompt_id, headers, reason="request cancellation")
+            await _graph_cancel(client, prompt_id, headers, reason="request cancellation")
         raise
     finally:
         await _finalize_probe()
@@ -7551,7 +7487,7 @@ async def _generate_images_with_adaptive_batching(
     requests) can scale up safely. Never exceeds free VRAM minus reserve.
     """
     estimate = get_vram_estimate(workflow_name, width, height)
-    free_before = await comfy_free_vram_bytes(client)
+    free_before = await graph_free_vram_bytes(client)
     warnings: list[str] = []
     response_headers: dict[str, str] = {}
     models_freed = False
@@ -7566,7 +7502,7 @@ async def _generate_images_with_adaptive_batching(
 
     while images_remaining > 0 and rounds_run < max_rounds:
         rounds_run += 1
-        free_now = await comfy_free_vram_bytes(client)
+        free_now = await graph_free_vram_bytes(client)
 
         # Sizing model:
         #   - Probe round (rounds_run==1, no estimate): batch_size=1 so we can
@@ -7580,9 +7516,9 @@ async def _generate_images_with_adaptive_batching(
         elif estimate is not None:
             cap = compute_max_batch(free_now, estimate)
             if cap == 0 and IMAGE_FREE_VRAM_ON_EXHAUSTION and not models_freed:
-                models_freed = await _free_comfy_models_if_idle(client)
+                models_freed = await _free_graph_models_if_idle(client)
                 if models_freed:
-                    free_now = await comfy_free_vram_bytes(client)
+                    free_now = await graph_free_vram_bytes(client)
                     cap = compute_max_batch(free_now, estimate)
             # The estimate sizes batches > 1 only. It is measured as the
             # marginal ComfyUI VRAM of a probe run (cold model loads
@@ -7628,7 +7564,7 @@ async def _generate_images_with_adaptive_batching(
         if estimate is None:
             probe = _VramProbe(client)
 
-        err, round_images = await _comfy_run_round(
+        err, round_images = await _graph_run_round(
             client,
             round_workflow,
             headers,
@@ -7643,14 +7579,14 @@ async def _generate_images_with_adaptive_batching(
             except Exception:
                 error_text = ""
             if any(marker in error_text for marker in ("cuda out of memory", "cuda oom", "out of memory", "oom")):
-                models_freed = await _free_comfy_models_if_idle(client)
+                models_freed = await _free_graph_models_if_idle(client)
                 if models_freed:
                     round_workflow = copy.deepcopy(base_workflow)
                     if seed_node and seed_node in round_workflow:
                         inputs = round_workflow[seed_node].get("inputs", {})
                         inputs[seed_field] = round_seed
                     apply_batch_size(round_workflow, meta, 1)
-                    err, round_images = await _comfy_run_round(
+                    err, round_images = await _graph_run_round(
                         client, round_workflow, headers,
                         label=f"image round {rounds_run}/{max_rounds} after model unload",
                         request=request,
@@ -7730,7 +7666,7 @@ async def _generate_images_with_adaptive_batching(
             # Avoid infinite loops if the backend silently returns nothing.
             if rounds_run >= 2 and not images_collected:
                 return Response(
-                    content=json.dumps({"error": {"message": "ComfyUI returned no images", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": f"{_graph_adapter().label} returned no images", "type": "api_error"}}),
                     status_code=502,
                     media_type="application/json",
                 )
@@ -7754,7 +7690,7 @@ async def _generate_images_with_adaptive_batching(
             model_state = "unknown"
             comfy_baseline = 0
             samples_count = probe.samples if probe is not None else 0
-            free_after, _ = await comfy_vram_snapshot(client)
+            free_after, _ = await graph_vram_snapshot(client)
 
             if probe is not None and probe.trustworthy():
                 marginal, model_state = probe.marginal_and_state()
@@ -7872,7 +7808,7 @@ async def _generate_images_with_adaptive_batching(
             response_headers["X-Image-Background-Removal-Source"] = background_removal_decision.source
 
     print(
-        f"[proxy] ComfyUI generated {len(images_collected)}/{n_requested} image(s) "
+        f"[proxy] {_graph_adapter().label} generated {len(images_collected)}/{n_requested} image(s) "
         f"across {rounds_run} round(s)",
         flush=True,
     )
@@ -7896,17 +7832,17 @@ async def proxy_image_request(request, auth_context, receipt=None):
     response = await _try_protocol_request(request, auth_context, "images", receipt=receipt)
     if response is not None:
         return response
-    return await proxy_comfy_request(request, auth_context, receipt=receipt)
+    return await proxy_graph_image_request(request, auth_context, receipt=receipt)
 
 
-async def proxy_comfy_request(
+async def proxy_graph_image_request(
     request: Request,
     auth_context: AuthContext,
     receipt: RouteReceipt | None = None,
 ) -> Response:
     """Handle OpenAI-compatible image generation request via ComfyUI."""
     admission = _dispatch_admission_response(
-        'image.generate', auth_context=auth_context, service_id="comfyui",
+        'image.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -7920,8 +7856,8 @@ async def proxy_comfy_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
-        service_label="ComfyUI",))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
+        service_label=_graph_adapter().label,))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -8017,7 +7953,7 @@ async def proxy_comfy_request(
             media_type="application/json",
         )
     _record_image_input(receipt, "response_format")
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         model_resolution = resolve_model_for_operation("images", model)
     except ModelCompatibilityError as e:
@@ -8077,7 +8013,7 @@ async def proxy_comfy_request(
             quality=quality,
         )
 
-    workflow = load_comfy_workflow(model)
+    workflow = load_graph_workflow(model)
     if not workflow:
         return model_compatibility_error(
             ModelCompatibilityError(
@@ -8207,7 +8143,7 @@ async def proxy_comfy_request(
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
             admission = _dispatch_admission_response(
-                "image.generate", auth_context=auth_context, service_id="comfyui",
+                "image.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
                 service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
@@ -8241,21 +8177,12 @@ async def proxy_comfy_request(
                 output_quality=quality,
                 output_size=effective_size,
             )
-    except httpx.TimeoutException:
-        return Response(
-            content=json.dumps({"error": {"message": "ComfyUI request timeout", "type": "api_error"}}),
-            status_code=504,
-            media_type="application/json"
-        )
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
     except Exception as e:
+        failure = _graph_failure_response(e)
+        if failure is not None:
+            return failure
         return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI proxy error: {str(e)}", "type": "api_error"}}),
+            content=json.dumps({"error": {"message": f"{_graph_adapter().label} proxy error: {str(e)}", "type": "api_error"}}),
             status_code=502,
             media_type="application/json"
         )
@@ -8341,14 +8268,14 @@ async def _identity_edit_alias(
         return identity_api.error(502, "identity_backend_error", f"identity workflow failed: {str(exc) or type(exc).__name__}")
 
 
-async def proxy_comfy_edit_request(
+async def proxy_graph_image_edit_request(
     request: Request,
     auth_context: AuthContext,
     receipt: RouteReceipt | None = None,
 ) -> Response:
     """Handle OpenAI-compatible image edit request via ComfyUI."""
     admission = _dispatch_admission_response(
-        'image.edit', auth_context=auth_context, service_id="comfyui",
+        'image.edit', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -8362,8 +8289,8 @@ async def proxy_comfy_edit_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
-        service_label="ComfyUI",))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
+        service_label=_graph_adapter().label,))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -8501,7 +8428,7 @@ async def proxy_comfy_edit_request(
             media_type="application/json",
         )
     _record_image_input(receipt, "response_format")
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         model_resolution = resolve_model_for_operation("image_edits", model)
     except ModelCompatibilityError as e:
@@ -8534,7 +8461,7 @@ async def proxy_comfy_edit_request(
             request, auth_context, form, form_dict, image_files, str(prompt or ""), response_format,
         )
 
-    workflow = load_comfy_workflow(model)
+    workflow = load_graph_workflow(model)
     if not workflow:
         return model_compatibility_error(
             ModelCompatibilityError(
@@ -8569,7 +8496,7 @@ async def proxy_comfy_edit_request(
             "prompt",
             ignored_reason="workflow does not use prompt",
         )
-    required_route_bound_inputs = _manifest_required_route_bound_inputs(manifest, "comfyui")
+    required_route_bound_inputs = _manifest_required_route_bound_inputs(manifest, _GRAPH_BINDING)
     minimum_image_count = 1 + len(required_route_bound_inputs)
     if len(image_files) < minimum_image_count:
         _record_image_input(receipt, "image[]", rejected_reason="missing_required_image")
@@ -8664,9 +8591,10 @@ async def proxy_comfy_edit_request(
                 image_content = _apply_edit_mask_as_source_alpha(mask_context)
 
             files = {"image": (image_file.filename or "input.png", image_content, "image/png")}
-            upload_resp = await client.post(f"{COMFY_HOST}/upload/image", headers=headers, files=files)
+            graph = _graph(client)
+            upload_resp = await graph.upload(files, headers=headers)
 
-            if upload_resp.status_code != 200:
+            if upload_resp.status != 200:
                 return Response(
                     content=json.dumps({"error": {"message": f"Image upload failed: {upload_resp.text}", "type": "api_error"}}),
                     status_code=502,
@@ -8732,12 +8660,11 @@ async def proxy_comfy_edit_request(
             image_filenames = [uploaded_filename]
             for extra_file in image_files[1:]:
                 extra_content = await extra_file.read()
-                extra_upload_resp = await client.post(
-                    f"{COMFY_HOST}/upload/image",
+                extra_upload_resp = await graph.upload(
+                    {"image": (extra_file.filename or "input.png", extra_content, "image/png")},
                     headers=headers,
-                    files={"image": (extra_file.filename or "input.png", extra_content, "image/png")},
                 )
-                if extra_upload_resp.status_code != 200:
+                if extra_upload_resp.status != 200:
                     return Response(
                         content=json.dumps({"error": {"message": f"Image upload failed: {extra_upload_resp.text}", "type": "api_error"}}),
                         status_code=502,
@@ -8765,12 +8692,8 @@ async def proxy_comfy_edit_request(
             )
             if mask_context is not None and mask_input_name and mask_content is not None:
                 mask_files = {"image": ("normalized-mask.png", mask_context.edit_mask, "image/png")}
-                mask_upload_resp = await client.post(
-                    f"{COMFY_HOST}/upload/image",
-                    headers=headers,
-                    files=mask_files,
-                )
-                if mask_upload_resp.status_code != 200:
+                mask_upload_resp = await graph.upload(mask_files, headers=headers)
+                if mask_upload_resp.status != 200:
                     return Response(
                         content=json.dumps({"error": {"message": f"Mask upload failed: {mask_upload_resp.text}", "type": "api_error"}}),
                         status_code=502,
@@ -8786,7 +8709,7 @@ async def proxy_comfy_edit_request(
                     )
                 workflow = bind_backend_request(
                     manifest,
-                    "comfyui",
+                    _GRAPH_BINDING,
                     workflow,
                     {mask_input_name: uploaded_mask_filename},
                 ).request
@@ -8882,7 +8805,7 @@ async def proxy_comfy_edit_request(
                     seed_field = "noise_seed"
 
             admission = _dispatch_admission_response(
-                "image.edit", auth_context=auth_context, service_id="comfyui",
+                "image.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
                 service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
@@ -8914,21 +8837,12 @@ async def proxy_comfy_edit_request(
                 fixed_seed=_workflow_extension_integer(form_dict, "seed"),
             )
 
-    except httpx.TimeoutException:
-        return Response(
-            content=json.dumps({"error": {"message": "ComfyUI request timeout", "type": "api_error"}}),
-            status_code=504,
-            media_type="application/json"
-        )
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
     except Exception as e:
+        failure = _graph_failure_response(e)
+        if failure is not None:
+            return failure
         return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI edit error: {str(e)}", "type": "api_error"}}),
+            content=json.dumps({"error": {"message": f"{_graph_adapter().label} edit error: {str(e)}", "type": "api_error"}}),
             status_code=502,
             media_type="application/json"
         )
@@ -8970,7 +8884,7 @@ class _OverlayFormRequest:
         return self._form
 
 
-async def proxy_comfy_variations_request(
+async def proxy_graph_image_variations_request(
     request: Request,
     auth_context: AuthContext,
     receipt: RouteReceipt | None = None,
@@ -8979,14 +8893,14 @@ async def proxy_comfy_variations_request(
 
     There is no local model dedicated to "variations" (an unprompted
     creative re-render). Instead this validates the narrower variations
-    field set, then delegates to `proxy_comfy_edit_request` via
+    field set, then delegates to `proxy_graph_image_edit_request` via
     `_OverlayFormRequest` with a fixed generic prompt and the configured
     edit-capable workflow (`images.variations.default_workflow`,
     `proxy_config.yml`), reusing its entire upload/inject/adaptive-batching
     pipeline rather than duplicating it.
     """
     admission = _dispatch_admission_response(
-        'image.variation', auth_context=auth_context, service_id="comfyui",
+        'image.variation', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -9000,8 +8914,8 @@ async def proxy_comfy_variations_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
-        service_label="ComfyUI",))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
+        service_label=_graph_adapter().label,))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -9108,13 +9022,13 @@ async def proxy_comfy_variations_request(
 
     overlay_request = _OverlayFormRequest(request, form, overlay)
     client_requested_model = requested_model or None
-    response = await proxy_comfy_edit_request(
+    response = await proxy_graph_image_edit_request(
         overlay_request,  # type: ignore[arg-type]
         auth_context,
         receipt=receipt,
     )
     if receipt is not None:
-        # proxy_comfy_edit_request just overwrote receipt.requested_model with
+        # proxy_graph_image_edit_request just overwrote receipt.requested_model with
         # the *injected* overlay model (what the edit backend was asked to
         # run) -- from its own point of view that's correct, but here it
         # clobbers what the client actually sent (e.g. "dall-e-2"). Restore
@@ -9523,7 +9437,7 @@ async def _record_event(event: dict) -> None:
             entry["ended_at"] = time.time()
         elif etype == "execution_error":
             entry["status"] = "failed"
-            entry["error"] = _comfy_execution_error_message({"status": {"messages": [["execution_error", data]]}})
+            entry["error"] = _graph_error_message({"status": {"messages": [["execution_error", data]]}})
             entry["ended_at"] = time.time()
 
         entry["updated_at"] = time.time()
@@ -9574,47 +9488,25 @@ _VIDEO_RECONCILE_RETAIN = 5 * 60
 _VIDEO_RECONCILE_HISTORY_LIMIT = 200
 
 
-def _extract_prompt_ids(queue_block: list) -> set[str]:
-    """ComfyUI /queue entries are tuple-like lists: [priority, prompt_id, ...]."""
-    out: set[str] = set()
-    if not isinstance(queue_block, list):
-        return out
-    for entry in queue_block:
-        if isinstance(entry, (list, tuple)) and len(entry) >= 2:
-            pid = entry[1]
-            if isinstance(pid, str) and pid:
-                out.add(pid)
-    return out
+def _graph_history_state(job: dict) -> tuple[str, Optional[str]]:
+    """``(terminal_status, error_text)`` for a history entry: ``failed``, ``running`` or ``succeeded``."""
+    return node_graph.history_state(job, _graph_adapter().label)
 
 
-def _history_terminal_state(job: dict) -> tuple[str, Optional[str]]:
-    """Return (terminal_status, error_text) for a /history entry.
-
-    terminal_status is 'succeeded', 'failed', or 'running' (not yet terminal).
-    """
-    error_message = _comfy_execution_error_message(job)
-    if error_message:
-        return ("failed", error_message)
-
-    status_block = (job or {}).get("status", {}) or {}
-    if not status_block.get("completed"):
-        return ("running", None)
-    return ("succeeded", None)
-
-
-async def _fetch_comfy_state() -> tuple[Optional[set[str]], Optional[dict]]:
-    """Fetch ComfyUI authoritative state: (active_prompt_ids, history_map).
+async def _fetch_graph_state() -> tuple[Optional[set[str]], Optional[dict]]:
+    """Fetch the graph engine's authoritative state: (active_prompt_ids, history_map).
 
     Returns (None, None) on any error. Uses 2s timeouts per the spec.
     """
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=2.0), verify=tls_context()) as client:
-            q_resp = await client.get(f"{COMFY_HOST}/queue")
-            h_resp = await client.get(f"{COMFY_HOST}/history?max_items={_VIDEO_RECONCILE_HISTORY_LIMIT}")
+            graph = _graph(client, "videos")
+            q_resp = await graph.queue()
+            h_resp = await graph.history_page(_VIDEO_RECONCILE_HISTORY_LIMIT)
     except Exception as e:
-        print(f"[proxy] video reconcile: ComfyUI fetch failed ({e})", flush=True)
+        print(f"[proxy] video reconcile: {_graph_adapter('videos').label} fetch failed ({e})", flush=True)
         return (None, None)
-    if q_resp.status_code != 200 or h_resp.status_code != 200:
+    if q_resp.status != 200 or h_resp.status != 200:
         return (None, None)
     # A body that is not the expected JSON object says nothing about the
     # queue: an empty answer here would read as "ComfyUI forgot every prompt"
@@ -9627,8 +9519,8 @@ async def _fetch_comfy_state() -> tuple[Optional[set[str]], Optional[dict]]:
     if not isinstance(q_data, dict) or not isinstance(h_data, dict):
         return (None, None)
     active: set[str] = set()
-    active |= _extract_prompt_ids(q_data.get("queue_running") or [])
-    active |= _extract_prompt_ids(q_data.get("queue_pending") or [])
+    active |= _queue_prompt_ids(q_data.get("queue_running") or [])
+    active |= _queue_prompt_ids(q_data.get("queue_pending") or [])
     return (active, h_data)
 
 
@@ -9640,7 +9532,7 @@ async def _reconcile_video_progress() -> None:
     - In neither: mark failed/orphaned (ComfyUI does not know the prompt_id).
     - Entries with ended_at older than _VIDEO_RECONCILE_RETAIN: garbage-collect.
     """
-    active, history = await _fetch_comfy_state()
+    active, history = await _fetch_graph_state()
     now = time.time()
 
     async with _video_progress_lock:
@@ -9666,7 +9558,7 @@ async def _reconcile_video_progress() -> None:
 
             if prompt_id in history:
                 job = history.get(prompt_id) or {}
-                terminal, err_text = _history_terminal_state(job)
+                terminal, err_text = _graph_history_state(job)
                 if terminal == "succeeded" and current_status != "succeeded":
                     entry["status"] = "succeeded"
                     entry["percent"] = 100
@@ -9686,7 +9578,7 @@ async def _reconcile_video_progress() -> None:
             # have been GC'd from /history but already terminal locally).
             if current_status in ("queued", "running", None):
                 entry["status"] = "failed"
-                entry["error"] = "orphaned: ComfyUI does not report this prompt_id"
+                entry["error"] = f"orphaned: {_graph_adapter('videos').label} does not report this prompt_id"
                 entry.setdefault("ended_at", now)
                 entry["updated_at"] = now
 
@@ -9737,40 +9629,36 @@ async def _reconcile_video_progress_loop(stop_event: asyncio.Event) -> None:
 
 
 # Listener state (so handlers can tell whether the ws is up).
-_comfy_ws_connected = False
+_graph_ws_connected = False
 
 
-async def _comfy_ws_listener(stop_event: asyncio.Event) -> None:
-    """Long-lived websocket subscription to ComfyUI with reconnect+backoff."""
-    global _comfy_ws_connected
-    try:
-        from websockets.asyncio.client import connect as ws_connect
-    except Exception as e:
-        print(f"[proxy] ComfyUI ws listener disabled (websockets import failed: {e})", flush=True)
-        return
+async def _graph_ws_listener(stop_event: asyncio.Event) -> None:
+    """Long-lived subscription to the graph engine's push channel with reconnect+backoff.
 
-    # ComfyUI ws lives at the same host/port as the REST API.
-    ws_url = COMFY_HOST.replace("http://", "ws://").replace("https://", "wss://")
-    ws_url = f"{ws_url}/ws?clientId={COMFY_CLIENT_ID}"
+    The adapter opens the channel (same host/port as the REST API) and decodes its frames: binary preview frames and
+    frames that are not JSON objects never reach here. Core keeps the reconnect loop, the connected flag and the
+    progress records the events feed.
+    """
+    global _graph_ws_connected
+    adapter = _graph_adapter("videos")
+    engine = adapter.label
+    conn = _graph_connection()
     backoff = 1.0
     last_gc = time.time()
 
+    def opened(ws_url: str) -> None:
+        global _graph_ws_connected
+        nonlocal backoff
+        _graph_ws_connected = True
+        backoff = 1.0
+        print(f"[proxy] {engine} ws connected: {ws_url}", flush=True)
+
     while not stop_event.is_set():
         try:
-            async with ws_connect(ws_url, max_size=8 * 1024 * 1024, ping_interval=20, ping_timeout=20) as ws:
-                _comfy_ws_connected = True
-                backoff = 1.0
-                print(f"[proxy] ComfyUI ws connected: {ws_url}", flush=True)
-                async for raw in ws:
+            async with contextlib.aclosing(adapter.watch(conn, COMFY_CLIENT_ID, on_open=opened, stop=stop_event.is_set)) as events:
+                async for evt in events:
                     if stop_event.is_set():
                         break
-                    if isinstance(raw, (bytes, bytearray)):
-                        # Binary frames (preview images). Ignore.
-                        continue
-                    try:
-                        evt = json.loads(raw)
-                    except Exception:
-                        continue
                     try:
                         await _record_event(evt)
                     except Exception as e:
@@ -9780,17 +9668,20 @@ async def _comfy_ws_listener(stop_event: asyncio.Event) -> None:
                         last_gc = time.time()
         except asyncio.CancelledError:
             raise
+        except ProtocolUnsupportedByAdapter as e:
+            print(f"[proxy] {engine} ws listener disabled (websockets import failed: {e.__cause__})", flush=True)
+            return
         except Exception as e:
-            _comfy_ws_connected = False
-            print(f"[proxy] ComfyUI ws disconnected ({e}); reconnect in {backoff:.0f}s", flush=True)
+            _graph_ws_connected = False
+            print(f"[proxy] {engine} ws disconnected ({e}); reconnect in {backoff:.0f}s", flush=True)
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=backoff)
             except asyncio.TimeoutError:
                 pass
             backoff = min(backoff * 2, 30.0)
         else:
-            _comfy_ws_connected = False
-    _comfy_ws_connected = False
+            _graph_ws_connected = False
+    _graph_ws_connected = False
 
 
 def _video_progress_snapshot(prompt_id: str) -> Optional[dict]:
@@ -9844,7 +9735,7 @@ def _load_video_workflow_file(workflow_cfg: dict) -> Optional[dict]:
         return None
     with open(p) as f:
         workflow = json.load(f)
-    errors = validate_comfyui_workflow_graph(workflow)
+    errors = validate_workflow_graph(workflow)
     if errors:
         print(
             f"[proxy] invalid video ComfyUI workflow {p}: {'; '.join(errors)}",
@@ -9932,10 +9823,10 @@ def _prompt_id_from_video_id(video_id: str) -> Optional[str]:
     return pid or None
 
 
-async def _comfy_history(client: httpx.AsyncClient, prompt_id: str, headers: dict) -> Optional[dict]:
+async def _graph_history(client: httpx.AsyncClient, prompt_id: str, headers: dict) -> Optional[dict]:
     try:
-        resp = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers, timeout=15)
-        if resp.status_code != 200:
+        resp = await _graph(client, "videos").history(prompt_id, headers=headers, timeout=15)
+        if resp.status != 200:
             return None
         data = resp.json()
         return data.get(prompt_id) if isinstance(data, dict) else None
@@ -9943,15 +9834,15 @@ async def _comfy_history(client: httpx.AsyncClient, prompt_id: str, headers: dic
         return None
 
 
-async def _comfy_queue_status(client: httpx.AsyncClient, prompt_id: str, headers: dict) -> str:
+async def _graph_queue_status(client: httpx.AsyncClient, prompt_id: str, headers: dict) -> str:
     """Return one of: queued, running, unknown.
 
-    ComfyUI's `/queue` returns {queue_running: [...], queue_pending: [...]}, where
+    The engine's queue answer is {queue_running: [...], queue_pending: [...]}, where
     each entry is a tuple-like list `[priority, prompt_id, ...]`.
     """
     try:
-        resp = await client.get(f"{COMFY_HOST}/queue", headers=headers, timeout=10)
-        if resp.status_code != 200:
+        resp = await _graph(client, "videos").queue(headers=headers, timeout=10)
+        if resp.status != 200:
             return "unknown"
         data = resp.json() or {}
         for entry in data.get("queue_running", []) or []:
@@ -9965,9 +9856,24 @@ async def _comfy_queue_status(client: httpx.AsyncClient, prompt_id: str, headers
     return "unknown"
 
 
+def _graph_video_unavailable_response() -> Response:
+    """502 for a video route whose engine could not be reached; the engine's name is the adapter's label."""
+    return Response(
+        content=json.dumps({"error": {"message": _graph_adapter("videos").unavailable_message(_graph_connection()),
+                                      "type": "api_error"}}),
+        status_code=502,
+        media_type="application/json"
+    )
+
+
+def _graph_reply_text(reply: Any) -> str:
+    """The body of an upload or submit answer as text, decoded by the charset the answer declares."""
+    return reply.read_text()
+
+
 def _job_status_from_history(job: dict) -> tuple[str, int]:
     """Translate a ComfyUI history entry to (sora_status, progress_0_to_100)."""
-    if _comfy_execution_error_message(job):
+    if _graph_error_message(job):
         return "failed", 100
 
     status_block = (job or {}).get("status", {}) or {}
@@ -9975,34 +9881,6 @@ def _job_status_from_history(job: dict) -> tuple[str, int]:
         return "succeeded", 100
     # If history has the entry but not yet completed, treat as running.
     return "running", 50
-
-
-def _extract_video_output(job: dict) -> Optional[dict]:
-    """Find the first video file produced by the workflow.
-
-    ComfyUI's SaveVideo node writes to outputs[node_id]['videos'] = [{filename, subfolder, type}].
-    Some older workflows surface the file under 'gifs' or 'images' (frame sequences) instead.
-    """
-    outputs = (job or {}).get("outputs", {}) or {}
-    # ComfyUI's LoadVideo node can echo the uploaded source under ``images``.
-    # Prefer the output directory marker; history object order is not stable.
-    fallback = None
-    for node_id, node_output in outputs.items():
-        for key in ("videos", "gifs", "images"):
-            entries = node_output.get(key) or []
-            for entry in entries:
-                filename = entry.get("filename") or ""
-                if filename.lower().endswith((".mp4", ".webm", ".mov", ".mkv")):
-                    candidate = {
-                        "filename": filename,
-                        "subfolder": entry.get("subfolder", ""),
-                        "type": entry.get("type", "output"),
-                    }
-                    if candidate["type"] == "output":
-                        return candidate
-                    if fallback is None:
-                        fallback = candidate
-    return fallback
 
 
 class _InputReferenceError(ValueError):
@@ -10264,7 +10142,7 @@ async def _load_completed_video_bytes(
 ) -> tuple[bytes, str]:
     """Return (mp4 bytes, filename) of a completed gateway video the caller owns.
 
-    Mirrors proxy_comfy_video_content's ownership gate: a tracked job must be
+    Mirrors proxy_graph_video_content's ownership gate: a tracked job must be
     visible to the caller; an untracked id (gateway restarted since submit)
     falls through to ComfyUI's history, as the status route does.
     """
@@ -10275,9 +10153,9 @@ async def _load_completed_video_bytes(
         raise _VideoAssetError("invalid video_id", param=param)
     if _video_job_blocked(prompt_id, auth_context):
         raise _VideoAssetError("video_id not found", param=param, status=404)
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
-        job = await _comfy_history(client, prompt_id, headers)
+        job = await _graph_history(client, prompt_id, headers)
         if job is None:
             raise _VideoAssetError("video_id not found", param=param, status=404)
         status, _ = _job_status_from_history(job)
@@ -10286,23 +10164,27 @@ async def _load_completed_video_bytes(
                 f"Source video is not completed (status={_openai_video_status(status)})",
                 param=param, code="video_not_ready",
             )
-        file_info = _extract_video_output(job)
+        file_info = _first_video_output(job)
         if not file_info:
             raise _VideoAssetError("Source video has no output", param=param, status=404)
         params = {"filename": file_info["filename"], "type": file_info["type"]}
         if file_info["subfolder"]:
             params["subfolder"] = file_info["subfolder"]
-        async with client.stream(
-            "GET", f"{COMFY_HOST}/view",
-            headers={**headers, "accept-encoding": "identity"}, params=params,
-        ) as view:
-            if view.status_code != 200:
-                raise _VideoAssetError(f"ComfyUI /view error: {view.status_code}", param=param, status=502)
-            try:
-                data = await media_fetch.read_bounded_media_response(view)
-            except media_fetch.MediaFetchError as exc:
-                raise _VideoAssetError(str(exc), param=param) from exc
-            return data, Path(file_info["filename"]).name
+        graph = _graph(client, "videos")
+        try:
+            async with graph.view_stream(params, headers={**headers, "accept-encoding": "identity"}) as view:
+                if view.status_code != 200:
+                    raise _VideoAssetError(f"{_graph_adapter('videos').label} /view error: {view.status_code}",
+                                           param=param, status=502)
+                try:
+                    data = await media_fetch.read_bounded_media_response(view)
+                except media_fetch.MediaFetchError as exc:
+                    raise _VideoAssetError(str(exc), param=param) from exc
+                return data, Path(file_info["filename"]).name
+        except TransportFailure as error:
+            # A transport failure of this read has always reached the callers as the client's own error (a media
+            # job records its type name), so the original error is raised again, not the adapter's typed failure.
+            raise error.__cause__ from None
 
 
 def _asset_reference_video_id(value: Any) -> str | None:
@@ -10385,7 +10267,7 @@ async def _resolve_video_workflow_assets(
     if not isinstance(block, Mapping):
         raise _VideoAssetError("extensions must be a mapping", param="extensions")
     specs = manifest.get("inputs") or {}
-    binding_map = (((manifest.get("bindings") or {}).get("comfyui") or {}).get("map")) or {}
+    binding_map = (((manifest.get("bindings") or {}).get(_GRAPH_BINDING) or {}).get("map")) or {}
     source_input = workflow_cfg.get("source_video_input")
     ext_param = f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}"
     if source_input and source_input not in block:
@@ -10439,31 +10321,28 @@ async def _upload_video_workflow_assets(
     assets: Mapping[str, tuple[bytes, str, str]],
     auth_context: AuthContext | None,
 ) -> tuple[dict[str, Any], Response | None]:
-    """Upload resolved assets to ComfyUI's input dir; return the body with filenames."""
+    """Upload resolved assets to the graph engine's input dir; return the body with filenames."""
     updated = dict(body)
     extensions = dict(updated.get("extensions") or {})
     block = dict(extensions.get(WORKFLOW_EXTENSION_NAMESPACE) or {})
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
+            graph = _graph(client, "videos")
             for name, (data, filename, mime) in assets.items():
-                resp = await client.post(
-                    f"{COMFY_HOST}/upload/image",
-                    headers=headers,
-                    files={"image": (filename, data, mime)},
-                )
-                uploaded = resp.json().get("name") if resp.status_code == 200 else None
+                resp = await graph.upload({"image": (filename, data, mime)}, headers=headers)
+                uploaded = resp.json().get("name") if resp.status == 200 else None
                 if not uploaded:
                     return updated, Response(
                         content=json.dumps({"error": {
-                            "message": f"ComfyUI upload failed for {name}: {resp.text[:200]}",
+                            "message": f"{_graph_adapter('videos').label} upload failed for {name}: {_graph_reply_text(resp)[:200]}",
                             "type": "api_error",
                         }}),
                         status_code=502,
                         media_type="application/json",
                     )
                 block[name] = str(uploaded)
-    except httpx.HTTPError as exc:
+    except TransportFailure as exc:
         return updated, Response(
             content=json.dumps({"error": {"message": f"Asset upload failed: {exc}", "type": "api_error"}}),
             status_code=502,
@@ -10501,27 +10380,26 @@ async def _submit_video_graph(
     add fields to the stored record and to the response. `progress_units` names
     the per-segment sampler/decode nodes so progress spans the whole chain.
     """
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
             admission = _dispatch_admission_response(
-                "video.generate", auth_context=auth_context, service_id="comfyui",
+                "video.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
                 service_available=COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
                 return admission
             # client_id routes ws events for this submission to our listener.
-            resp = await client.post(
-                f"{COMFY_HOST}/prompt",
-                headers=headers,
-                json=_build_comfy_submit_payload(workflow, client_id=COMFY_CLIENT_ID),
+            resp = await _graph(client, "videos").submit(
+                _build_graph_submit_payload(workflow, client_id=COMFY_CLIENT_ID), headers=headers,
             )
-            if resp.status_code != 200:
+            if resp.status != 200:
                 # Do NOT record _video_progress here: no prompt_id means there
                 # is nothing to reconcile against, and a partial entry would
                 # leak as a stale "running" job. Surface the error instead.
                 return Response(
-                    content=json.dumps({"error": {"message": f"ComfyUI error: {resp.text[:500]}", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": f"{_graph_adapter('videos').label} error: {resp.text[:500]}",
+                                                  "type": "api_error"}}),
                     status_code=502,
                     media_type="application/json"
                 )
@@ -10632,7 +10510,7 @@ async def _submit_video_graph(
                             requested_model=public_model,
                             resolved_model=workflow_name,
                             workflow_id=f"video.generate.{workflow_name}",
-                            backend="comfyui",
+                            backend=_GRAPH_BACKEND_ID,
                             seed=seed_val,
                             parameters={
                                 **(media_delivery.current().parameters if media_delivery.current() else {}),
@@ -10700,13 +10578,9 @@ async def _submit_video_graph(
                 headers=response_headers,
             )
 
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
     except Exception as e:
+        if isinstance(e, TransportFailure) and e.kind == "unreachable":
+            return _graph_video_unavailable_response()
         return Response(
             content=json.dumps({"error": {"message": f"Video submit error: {str(e)}", "type": "api_error"}}),
             status_code=502,
@@ -10714,7 +10588,7 @@ async def _submit_video_graph(
         )
 
 
-async def proxy_comfy_video_create(
+async def proxy_graph_video_create(
     request: Request,
     auth_context: AuthContext,
     *,
@@ -10727,7 +10601,7 @@ async def proxy_comfy_video_create(
     pipeline with an already-parsed body.
     """
     admission = _dispatch_admission_response(
-        'video.generate', auth_context=auth_context, service_id="comfyui",
+        'video.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -10739,8 +10613,8 @@ async def proxy_comfy_video_create(
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
-        service_label="ComfyUI",))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
+        service_label=_graph_adapter().label,))
     if service_response is not None:
         return service_response
 
@@ -10886,7 +10760,7 @@ async def proxy_comfy_video_create(
             intent=INTENT_VIDEO_GENERATE,
             model=str(requested_model) if requested_model is not None else None,
             workflow=f"video.generate.{workflow_name}",
-            backend="comfyui",
+            backend=_GRAPH_BACKEND_ID,
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="expensive",
@@ -11202,16 +11076,12 @@ async def proxy_comfy_video_create(
                 media_type="application/json"
             )
 
-        # Upload to ComfyUI's input cache (same endpoint /upload/image used by image-edit).
-        upload_headers = configured_downstream_headers(auth_context, "comfyui")
+        # Upload to the engine's input cache (same upload used by image-edit).
+        upload_headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10)) as upload_client:
                 files = {"image": (image_filename, image_bytes, "image/png")}
-                upload_resp = await upload_client.post(
-                    f"{COMFY_HOST}/upload/image",
-                    headers=upload_headers,
-                    files=files,
-                )
+                upload_resp = await _graph(upload_client, "videos").upload(files, headers=upload_headers)
         except Exception as e:
             return Response(
                 content=json.dumps({
@@ -11220,11 +11090,11 @@ async def proxy_comfy_video_create(
                 status_code=502,
                 media_type="application/json"
             )
-        if upload_resp.status_code != 200:
+        if upload_resp.status != 200:
             return Response(
                 content=json.dumps({
                     "error": {
-                        "message": f"ComfyUI image upload failed: {upload_resp.text[:300]}",
+                        "message": f"{_graph_adapter('videos').label} image upload failed: {upload_resp.text[:300]}",
                         "type": "api_error",
                     }
                 }),
@@ -11238,7 +11108,7 @@ async def proxy_comfy_video_create(
         if not uploaded_filename:
             return Response(
                 content=json.dumps({
-                    "error": {"message": "ComfyUI did not return uploaded filename", "type": "api_error"}
+                    "error": {"message": f"{_graph_adapter('videos').label} did not return uploaded filename", "type": "api_error"}
                 }),
                 status_code=502,
                 media_type="application/json"
@@ -11423,7 +11293,7 @@ def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workfl
             intent=INTENT_VIDEO_GENERATE,
             model=str(requested_model) if requested_model is not None else None,
             workflow=f"video.generate.{workflow_name}",
-            backend="comfyui",
+            backend=_GRAPH_BACKEND_ID,
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="expensive",
@@ -11533,18 +11403,18 @@ def _parse_chain_shots(body: Mapping[str, Any], *, default_seconds: float, min_s
     return out
 
 
-async def _upload_comfy_input(data: bytes, filename: str, mime: str, auth_context: AuthContext) -> str:
-    """Upload bytes to ComfyUI's input dir. Return the stored file name."""
-    headers = configured_downstream_headers(auth_context, "comfyui")
+async def _upload_graph_input(data: bytes, filename: str, mime: str, auth_context: AuthContext) -> str:
+    """Upload bytes to the graph engine's input dir. Return the stored file name."""
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+    engine = _graph_adapter("videos").label
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
-            resp = await client.post(f"{COMFY_HOST}/upload/image", headers=headers,
-                                     files={"image": (filename, data, mime)})
-    except httpx.HTTPError as exc:
-        raise _VideoAssetError(f"ComfyUI upload failed: {exc}", status=502) from exc
-    name = resp.json().get("name") if resp.status_code == 200 else None
+            resp = await _graph(client, "videos").upload({"image": (filename, data, mime)}, headers=headers)
+    except TransportFailure as exc:
+        raise _VideoAssetError(f"{engine} upload failed: {exc}", status=502) from exc
+    name = resp.json().get("name") if resp.status == 200 else None
     if not name:
-        raise _VideoAssetError(f"ComfyUI upload failed: {resp.text[:200]}", status=502)
+        raise _VideoAssetError(f"{engine} upload failed: {_graph_reply_text(resp)[:200]}", status=502)
     return str(name)
 
 
@@ -11647,14 +11517,14 @@ async def _submit_video_chain(
     first_frame_strength = 1.0
     try:
         if source_bytes is not None:
-            uploaded = await _upload_comfy_input(
+            uploaded = await _upload_graph_input(
                 source_bytes, source_name or "source.mp4", "video/mp4", auth_context)
         if body.get("input_reference"):
             try:
                 image_bytes, image_name = await _resolve_input_reference(body["input_reference"], auth_context, request=request)
             except _InputReferenceError as exc:
                 return _json_error(400, str(exc), param="input_reference")
-            first_frame_image = await _upload_comfy_input(image_bytes, image_name, "image/png", auth_context)
+            first_frame_image = await _upload_graph_input(image_bytes, image_name, "image/png", auth_context)
             if body.get("image_strength") is not None:
                 try:
                     first_frame_strength = max(0.0, min(1.0, float(body["image_strength"])))
@@ -11714,7 +11584,7 @@ def _seconds_text(value: float) -> str:
     return str(int(value)) if float(value).is_integer() else f"{value:.3f}".rstrip("0").rstrip(".")
 
 
-async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) -> Response:
+async def proxy_graph_video_extend(request: Request, auth_context: AuthContext) -> Response:
     """POST /v1/videos/extensions -- Sora's extend shape: `{"video": {"id"}, "prompt", "seconds"}`.
 
     The result is a new video: the source followed by `seconds` of new footage.
@@ -11724,7 +11594,7 @@ async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) 
     """
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
-        'video.extend', auth_context=auth_context, service_id="comfyui",
+        'video.extend', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -11732,7 +11602,7 @@ async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) 
 
     if not COMFY_ENABLED:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
     if service_response is not None:
         return service_response
     if not VIDEO_EXTEND_WORKFLOW:
@@ -11785,7 +11655,7 @@ async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) 
 
 
 
-async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> Response:
+async def proxy_graph_video_status(video_id: str, auth_context: AuthContext) -> Response:
     """GET /v1/videos/{video_id} — poll status."""
     await _warm_video_owner_keys(auth_context)
     if not COMFY_ENABLED:
@@ -11813,10 +11683,10 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
             media_type="application/json"
         )
 
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
-            job = await _comfy_history(client, prompt_id, headers)
+            job = await _graph_history(client, prompt_id, headers)
             if job is None:
                 # Not in history yet — prefer live ws state, fall back to /queue.
                 live = _video_progress_snapshot(prompt_id)
@@ -11840,7 +11710,7 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
                         status_code=200,
                         media_type="application/json",
                     )
-                queue_status = await _comfy_queue_status(client, prompt_id, headers)
+                queue_status = await _graph_queue_status(client, prompt_id, headers)
                 if queue_status == "unknown":
                     return Response(
                         content=json.dumps({"error": {"message": "video_id not found", "type": "not_found"}}),
@@ -11890,20 +11760,16 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
             if sora_status == "failed":
                 payload["error"] = _chain_failure_error(
                     _video_job_records.get(prompt_id), job,
-                    _comfy_execution_error_message(job) or "ComfyUI execution_error",
+                    _graph_error_message(job) or f"{_graph_adapter('videos').label} execution_error",
                 )
             return Response(
                 content=json.dumps(payload),
                 status_code=200,
                 media_type="application/json"
             )
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
     except Exception as e:
+        if isinstance(e, TransportFailure) and e.kind == "unreachable":
+            return _graph_video_unavailable_response()
         return Response(
             content=json.dumps({"error": {"message": f"Video status error: {str(e)}", "type": "api_error"}}),
             status_code=502,
@@ -11911,7 +11777,7 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
         )
 
 
-async def proxy_comfy_video_content(
+async def proxy_graph_video_content(
     video_id: str,
     auth_context: AuthContext,
     *,
@@ -11937,7 +11803,7 @@ async def proxy_comfy_video_content(
             status_code=400,
             media_type="application/json"
         )
-    # Same ownership + tombstone gate as proxy_comfy_video_status.
+    # Same ownership + tombstone gate as proxy_graph_video_status.
     if _video_job_blocked(prompt_id, auth_context):
         return Response(
             content=json.dumps({"error": {"message": "video_id not found", "type": "not_found"}}),
@@ -11945,13 +11811,13 @@ async def proxy_comfy_video_content(
             media_type="application/json"
         )
 
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10)) as client:
-            job = await _comfy_history(client, prompt_id, headers)
+            job = await _graph_history(client, prompt_id, headers)
             if job is None:
                 live = _video_progress_snapshot(prompt_id)
-                queue_status = await _comfy_queue_status(client, prompt_id, headers)
+                queue_status = await _graph_queue_status(client, prompt_id, headers)
                 if live or queue_status in {"queued", "running"}:
                     internal_status = (
                         str(live.get("status"))
@@ -11991,7 +11857,7 @@ async def proxy_comfy_video_content(
                     media_type="application/json"
                 )
 
-            file_info = _extract_video_output(job)
+            file_info = _first_video_output(job)
             if not file_info:
                 return Response(
                     content=json.dumps({"error": {"message": "No video output found in job", "type": "api_error"}}),
@@ -12002,10 +11868,11 @@ async def proxy_comfy_video_content(
             params = {"filename": file_info["filename"], "type": file_info["type"]}
             if file_info["subfolder"]:
                 params["subfolder"] = file_info["subfolder"]
-            view_resp = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
-            if view_resp.status_code != 200:
+            view_resp = await _graph(client, "videos").view(params, headers=headers)
+            if view_resp.status != 200:
                 return Response(
-                    content=json.dumps({"error": {"message": f"ComfyUI /view error: {view_resp.status_code}", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": f"{_graph_adapter('videos').label} /view error: {view_resp.status}",
+                                                  "type": "api_error"}}),
                     status_code=502,
                     media_type="application/json"
                 )
@@ -12018,7 +11885,7 @@ async def proxy_comfy_video_content(
                 ".mkv": "video/x-matroska",
             }.get(ext, "application/octet-stream")
 
-            video_bytes = view_resp.content
+            video_bytes = view_resp.raw
             record = _video_job_records.get(prompt_id) or {}
             person_id = record.get("person_id")
             saved_prompt_id = str(record.get("asset_id") or f"video_{prompt_id}")
@@ -12090,13 +11957,9 @@ async def proxy_comfy_video_content(
                     "Content-Disposition": f'inline; filename="{file_info["filename"]}"',
                 },
             )
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
     except Exception as e:
+        if isinstance(e, TransportFailure) and e.kind == "unreachable":
+            return _graph_video_unavailable_response()
         return Response(
             content=json.dumps({"error": {"message": f"Video content error: {str(e)}", "type": "api_error"}}),
             status_code=502,
@@ -12125,7 +11988,7 @@ _VIDEO_LIST_DEFAULT_LIMIT = 20
 _VIDEO_LIST_MAX_LIMIT = 100
 
 
-async def proxy_comfy_video_list(request: Request, auth_context: AuthContext) -> Response:
+async def proxy_graph_video_list(request: Request, auth_context: AuthContext) -> Response:
     """GET /v1/videos — list video jobs submitted via this route.
 
     Scope, matching the rest of /v1/videos' existing stateless design (see
@@ -12143,7 +12006,7 @@ async def proxy_comfy_video_list(request: Request, auth_context: AuthContext) ->
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
     if service_response is not None:
         return service_response
 
@@ -12222,13 +12085,13 @@ async def proxy_comfy_video_list(request: Request, auth_context: AuthContext) ->
     page = records[:limit]
     has_more = len(records) > len(page)
 
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     data: list[dict[str, Any]] = []
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
             for prompt_id, record in page:
                 video_id = _video_id_from_prompt_id(prompt_id)
-                job = await _comfy_history(client, prompt_id, headers)
+                job = await _graph_history(client, prompt_id, headers)
                 entry: dict[str, Any] = {
                     "id": video_id,
                     "object": "video",
@@ -12248,25 +12111,23 @@ async def proxy_comfy_video_list(request: Request, auth_context: AuthContext) ->
                             if fresh is not None:
                                 entry["completed_at"] = fresh.get("completed_at")
                     if status == "failed":
-                        entry["error"] = _comfy_execution_error_message(job) or "ComfyUI execution_error"
+                        entry["error"] = _graph_error_message(job) or f"{_graph_adapter('videos').label} execution_error"
                 else:
                     live = _video_progress_snapshot(prompt_id)
                     if live and live.get("status") in ("queued", "running"):
                         status = "running" if live.get("percent", 0) > 0 or live.get("node") else live.get("status", "running")
                         progress = int(live.get("percent") or 0)
                     else:
-                        queue_status = await _comfy_queue_status(client, prompt_id, headers)
+                        queue_status = await _graph_queue_status(client, prompt_id, headers)
                         status = queue_status if queue_status != "unknown" else "queued"
                         progress = 25 if status == "running" else 0
                 entry["status"] = status
                 entry["progress"] = progress
                 data.append(entry)
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
+    except TransportFailure as e:
+        if e.kind != "unreachable":
+            raise
+        return _graph_video_unavailable_response()
 
     return Response(
         content=json.dumps({
@@ -12281,7 +12142,7 @@ async def proxy_comfy_video_list(request: Request, auth_context: AuthContext) ->
     )
 
 
-async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> Response:
+async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> Response:
     """DELETE /v1/videos/{video_id}.
 
     A queued/running job is actively cancelled (ComfyUI's
@@ -12306,7 +12167,7 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
     if service_response is not None:
         return service_response
 
@@ -12335,10 +12196,10 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
             media_type="application/json"
         )
 
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
-            job = await _comfy_history(client, prompt_id, headers)
+            job = await _graph_history(client, prompt_id, headers)
             if job is not None:
                 current_status, _ = _job_status_from_history(job)
             else:
@@ -12346,7 +12207,7 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
                 if live and live.get("status") in ("queued", "running"):
                     current_status = "running"
                 else:
-                    queue_status = await _comfy_queue_status(client, prompt_id, headers)
+                    queue_status = await _graph_queue_status(client, prompt_id, headers)
                     current_status = queue_status if queue_status != "unknown" else "succeeded"
                     # "unknown" here means ComfyUI has no record of this
                     # prompt_id at all (not in /history, not in /queue) --
@@ -12355,10 +12216,7 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
 
             if current_status in ("queued", "running"):
                 try:
-                    cancel_resp = await client.post(
-                        f"{COMFY_HOST}/api/jobs/{prompt_id}/cancel",
-                        headers=headers,
-                    )
+                    cancel_resp = await _graph(client, "videos").cancel(prompt_id, headers=headers)
                 except Exception as e:
                     return Response(
                         content=json.dumps({"error": {
@@ -12369,10 +12227,10 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
                         status_code=409,
                         media_type="application/json",
                     )
-                if cancel_resp.status_code != 200:
+                if cancel_resp.status != 200:
                     return Response(
                         content=json.dumps({"error": {
-                            "message": f"ComfyUI cancel request failed: HTTP {cancel_resp.status_code}",
+                            "message": f"{_graph_adapter('videos').label} cancel request failed: HTTP {cancel_resp.status}",
                             "type": "api_error",
                             "code": "video_cancel_failed",
                         }}),
@@ -12391,16 +12249,12 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
             # we just cancelled while still queued has no history entry to
             # drop; the delete call is simply a no-op for it.
             try:
-                await client.post(f"{COMFY_HOST}/history", headers=headers, json={"delete": [prompt_id]})
+                await _graph(client, "videos").delete_history([prompt_id], headers=headers)
             except Exception:
                 pass
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
     except Exception as e:
+        if isinstance(e, TransportFailure) and e.kind == "unreachable":
+            return _graph_video_unavailable_response()
         return Response(
             content=json.dumps({"error": {"message": f"Video delete error: {str(e)}", "type": "api_error"}}),
             status_code=502,
@@ -12520,7 +12374,7 @@ async def _submit_video_remix(
         "source_video": source,
     }
     create_body["extensions"] = extensions
-    return await proxy_comfy_video_create(
+    return await proxy_graph_video_create(
         request,
         auth_context,
         body_override=create_body,
@@ -12528,7 +12382,7 @@ async def _submit_video_remix(
     )
 
 
-async def proxy_comfy_video_remix(
+async def proxy_graph_video_remix(
     video_id: str,
     auth_context: AuthContext,
     request: Request | None = None,
@@ -12543,7 +12397,7 @@ async def proxy_comfy_video_remix(
     """
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
-        'video.remix', auth_context=auth_context, service_id="comfyui",
+        'video.remix', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -12555,7 +12409,7 @@ async def proxy_comfy_video_remix(
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
     if service_response is not None:
         return service_response
 
@@ -12593,7 +12447,7 @@ async def proxy_comfy_video_remix(
     )
 
 
-async def proxy_comfy_video_edit(request: Request, auth_context: AuthContext) -> Response:
+async def proxy_graph_video_edit(request: Request, auth_context: AuthContext) -> Response:
     """POST /v1/videos/edits -- OpenAI's video edit: prompt plus a source video.
 
     `video` is either an uploaded file (multipart) or a reference to a
@@ -12602,7 +12456,7 @@ async def proxy_comfy_video_edit(request: Request, auth_context: AuthContext) ->
     """
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
-        'video.edit', auth_context=auth_context, service_id="comfyui",
+        'video.edit', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -12610,7 +12464,7 @@ async def proxy_comfy_video_edit(request: Request, auth_context: AuthContext) ->
 
     if not COMFY_ENABLED:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
     if service_response is not None:
         return service_response
     try:
@@ -12789,7 +12643,7 @@ async def lifespan(app: FastAPI):
     print(f"[proxy] Model compatibility: {'enabled' if MODEL_COMPAT_ENABLED else 'disabled'}", flush=True)
     # Keep the last good ComfyUI node definitions on disk, so embedding a workflow
     # in generated media survives a ComfyUI that is restarting at submit time.
-    comfy_object_info.DISK_CACHE_DIR = Path(__file__).resolve().parent / "cache" / "comfy_object_info"
+    node_info.DISK_CACHE_DIR = Path(__file__).resolve().parent / "cache" / "comfy_object_info"
 
     # Replay persisted firehose metrics so per-key counters and the recent-event
     # timeline survive proxy restarts. The window stays bounded at 24h; older
@@ -12818,7 +12672,7 @@ async def lifespan(app: FastAPI):
     video_reconcile_stop = asyncio.Event()
     video_reconcile_task = None
     if COMFY_ENABLED:
-        comfy_ws_task = asyncio.create_task(_comfy_ws_listener(comfy_ws_stop))
+        comfy_ws_task = asyncio.create_task(_graph_ws_listener(comfy_ws_stop))
         print(f"[proxy] ComfyUI ws listener started (client_id={COMFY_CLIENT_ID})", flush=True)
 
         # Startup reconciliation: safety net for any persisted/hydrated
@@ -13162,10 +13016,10 @@ def _target_activation(auth_context: AuthContext) -> str:
     return "may_activate" if _access_for_auth_context(auth_context).can_load_models else "existing_only"
 
 
-def _comfy_target_available() -> bool:
+def _graph_target_available() -> bool:
     if not COMFY_ENABLED:
         return False
-    override = _operator_service_availability_overrides().get("comfyui", {})
+    override = _operator_service_availability_overrides().get(_GRAPH_BACKEND_ID, {})
     state = str((override or {}).get("state") or "available").strip().lower()
     return state not in {"disabled", "maintenance", "draining"}
 
@@ -13244,7 +13098,7 @@ def _workflow_target_policy_decision(
             manifest=manifest,
             extra_ids=extra_ids,
         )
-        if _comfy_target_available()
+        if _graph_target_available()
         else set()
     )
     return _target_activation_policy_decision(
@@ -13633,7 +13487,7 @@ def _gateway_catalog_finish(
                     record,
                     backend=backend,
                     execution="job",
-                    resources=ResourceEstimate(gpu_required=backend == "comfyui"),
+                    resources=ResourceEstimate(gpu_required=backend == _GRAPH_BINDING),
                 ))
             except Exception:
                 continue
@@ -14221,7 +14075,7 @@ class _SessionMakeRuntime:
                 headers=Headers({"content-type": asset_media_type(source_asset_id, source)}),
             )))
             request: Any = _FormBodyRequestShim(form=FormData(fields), scheme="http", netloc="127.0.0.1")
-            route, call = "/v1/images/edits", proxy_comfy_edit_request
+            route, call = "/v1/images/edits", proxy_graph_image_edit_request
         else:
             request = _JsonBodyRequestShim(body=body, headers={}, scheme="http", netloc="127.0.0.1")
             route, call = "/v1/images/generations", proxy_image_request
@@ -14688,7 +14542,7 @@ FRONTEND_TRANSLATORS.register_owned("a1111", lambda app: a1111_api.register_a111
 IDENTITY_CFG = config.get("identity", {}) or {}
 IDENTITY_MODEL_ID = "image-identity"
 IDENTITY_MANIFEST_ID = "image.edit.image-identity"
-_IDENTITY_ROUTE_POLICY = {"protocol": "openai.images", "intent": "image.edit", "backend": "comfyui"}
+_IDENTITY_ROUTE_POLICY = {"protocol": "openai.images", "intent": "image.edit", "backend": _GRAPH_BACKEND_ID}
 _identity_template_cache: tuple[dict[str, Any], dict[str, Any]] | None = None
 
 
@@ -14742,24 +14596,30 @@ def _identity_template() -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any], uploads: dict[str, bytes]) -> bytes:
+    engine = _graph_adapter().label
     if not COMFY_ENABLED:
-        raise RuntimeError("ComfyUI media backend is disabled")
-    headers = configured_downstream_headers(auth_context, "comfyui")
+        raise RuntimeError(f"{engine} media backend is disabled")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
         for node_id, content in uploads.items():
-            name, upload_error = await _upload_comfy_image_bytes(
-                client, headers, content, filename=f"identity-{uuid.uuid4().hex}.png"
-            )
+            try:
+                name, upload_error = await _upload_graph_image_bytes(
+                    client, headers, content, filename=f"identity-{uuid.uuid4().hex}.png"
+                )
+            except TransportFailure as failure:
+                # The identity routes handle httpx.HTTPError: raise the error the adapter translated, as before.
+                cause = failure.__cause__
+                raise cause if isinstance(cause, Exception) else failure
             if upload_error is not None:
-                raise RuntimeError("ComfyUI image upload failed")
+                raise RuntimeError(f"{engine} image upload failed")
             graph[node_id]["inputs"]["image"] = name
         admission = _dispatch_admission_response(
-            "image.edit", auth_context=auth_context, service_id="comfyui",
+            "image.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
             service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
         )
         if admission is not None:
             raise identity_api.IdentityUnavailable(admission)
-        error, images = await _comfy_run_round(
+        error, images = await _graph_run_round(
             client, graph, dict(headers), "identity scene",
             max_wait_s=int(IDENTITY_CFG.get("max_wait_s", 3600)),
         )
@@ -14767,10 +14627,10 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
         try:
             message = json.loads(error.body.decode("utf-8"))["error"]["message"]
         except Exception:  # noqa: BLE001
-            message = "ComfyUI returned an error"
+            message = f"{engine} returned an error"
         raise RuntimeError(str(message)[:300])
     if not images:
-        raise RuntimeError("ComfyUI returned no image")
+        raise RuntimeError(f"{engine} returned no image")
     return images[0]
 
 
@@ -14799,7 +14659,7 @@ def _identity_store_image(request: Request, auth_context: AuthContext, content: 
         kind="image",
         workflow_id=IDENTITY_MANIFEST_ID,
         resolved_model=IDENTITY_MODEL_ID,
-        backend="comfyui",
+        backend=_GRAPH_BACKEND_ID,
         parameters=delivery.parameters or None,
     )
     content = media_delivery.attach_provenance(content, ".png", record)
@@ -14848,7 +14708,7 @@ async def _identity_submit_job(
     job = media_jobs.MediaJob(
         intent=_IDENTITY_JOB_INTENT,
         workflow=IDENTITY_MANIFEST_ID,
-        backend="comfyui",
+        backend=_GRAPH_BACKEND_ID,
         request_id=f"identity-{uuid.uuid4().hex}",
         app_profile=plan_ref(auth_context.identity),
         api_key_name=auth_context.identity.name if auth_context.identity else None,
@@ -14971,7 +14831,7 @@ def _identity_admission(auth: AuthContext, path: str) -> Response | None:
     if denied is not None:
         return denied
     return _dispatch_admission_response(
-        "image.edit", auth_context=auth, service_id="comfyui",
+        "image.edit", auth_context=auth, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
 
@@ -15417,6 +15277,7 @@ app.include_router(
         ),
         # Add engine never calls the gateway itself: its default ports and the one it listens on.
         engine_fetch=engine_check.make_http_fetch(gateway_ports=_engine_check_self_ports),
+        engine_hop_timeout=lambda: UPSTREAM_READ_TIMEOUT,
         frontend_status=lambda: FRONTEND_MOUNTS.status(),
         registry_problem=lambda: REGISTRY_APPLY_PROBLEM,
     )
@@ -18351,7 +18212,7 @@ def start_image_route_receipt(
         protocol="openai.images",
         path=path,
         intent=intent,
-        backend="comfyui",
+        backend=_GRAPH_BACKEND_ID,
         api_key_name=key_name,
         app_id=app_id,
         owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
@@ -18694,7 +18555,7 @@ def _manifest_input_default(
     return fallback
 
 
-async def _upload_comfy_image_bytes(
+async def _upload_graph_image_bytes(
     client: Any,
     headers: Mapping[str, str],
     content: bytes,
@@ -18703,12 +18564,8 @@ async def _upload_comfy_image_bytes(
     media_type: str = "image/png",
 ) -> tuple[str | None, Response | None]:
     files = {"image": (filename, content, media_type)}
-    upload_resp = await client.post(
-        f"{COMFY_HOST}/upload/image",
-        headers=dict(headers),
-        files=files,
-    )
-    if upload_resp.status_code != 200:
+    upload_resp = await _graph(client).upload(files, headers=dict(headers))
+    if upload_resp.status != 200:
         return None, Response(
             content=json.dumps({
                 "error": {
@@ -18831,7 +18688,7 @@ def _set_workflow_seed(
     inputs[seed_field] = int(seed)
 
 
-async def _run_single_comfy_image(
+async def _run_single_graph_image(
     *,
     request: Request | None = None,
     client: httpx.AsyncClient,
@@ -18851,7 +18708,7 @@ async def _run_single_comfy_image(
         seed_field=_seed_field_for_workflow(round_workflow, seed_node_str),
         seed=seed,
     )
-    err, images = await _comfy_run_round(
+    err, images = await _graph_run_round(
         client,
         round_workflow,
         dict(headers),
@@ -18864,7 +18721,7 @@ async def _run_single_comfy_image(
         return Response(
             content=json.dumps({
                 "error": {
-                    "message": "ComfyUI returned no images",
+                    "message": f"{_graph_adapter().label} returned no images",
                     "type": "api_error",
                 }
             }),
@@ -18953,8 +18810,8 @@ async def _proxy_offset_inpaint_tile_request(
         "inpaint_model",
         fallback="flux2-klein-4b-inpaint",
     )
-    base_workflow = load_comfy_workflow(base_model)
-    inpaint_workflow = load_comfy_workflow(inpaint_model)
+    base_workflow = load_graph_workflow(base_model)
+    inpaint_workflow = load_graph_workflow(inpaint_model)
     base_manifest = _find_image_manifest("image.generate", base_model)
     inpaint_manifest = _find_image_manifest("image.edit", inpaint_model)
     if not base_workflow or not inpaint_workflow or base_manifest is None or inpaint_manifest is None:
@@ -18998,7 +18855,7 @@ async def _proxy_offset_inpaint_tile_request(
     if base_extension_inputs:
         base_workflow = bind_backend_request(
             base_manifest,
-            "comfyui",
+            _GRAPH_BINDING,
             base_workflow,
             base_extension_inputs,
         ).request
@@ -19042,7 +18899,7 @@ async def _proxy_offset_inpaint_tile_request(
                     else None
                 )
                 seam_seed = base_seed + 1 if base_seed is not None else None
-                err, base_image = await _run_single_comfy_image(
+                err, base_image = await _run_single_graph_image(
                     request=request,
                     client=client,
                     workflow=base_workflow,
@@ -19064,7 +18921,7 @@ async def _proxy_offset_inpaint_tile_request(
                     seam_width=seam_width,
                 )
 
-                uploaded_image, upload_error = await _upload_comfy_image_bytes(
+                uploaded_image, upload_error = await _upload_graph_image_bytes(
                     client,
                     headers,
                     offset_image,
@@ -19072,7 +18929,7 @@ async def _proxy_offset_inpaint_tile_request(
                 )
                 if upload_error is not None:
                     return upload_error
-                uploaded_mask, upload_error = await _upload_comfy_image_bytes(
+                uploaded_mask, upload_error = await _upload_graph_image_bytes(
                     client,
                     headers,
                     mask,
@@ -19088,7 +18945,7 @@ async def _proxy_offset_inpaint_tile_request(
                 set_workflow_background_removal(edit_workflow, edit_meta, False)
                 edit_workflow = bind_backend_request(
                     inpaint_manifest,
-                    "comfyui",
+                    _GRAPH_BINDING,
                     edit_workflow,
                     {
                         "prompt": seam_prompt,
@@ -19105,7 +18962,7 @@ async def _proxy_offset_inpaint_tile_request(
                     },
                 ).request
 
-                err, repaired_offset = await _run_single_comfy_image(
+                err, repaired_offset = await _run_single_graph_image(
                     request=request,
                     client=client,
                     workflow=edit_workflow,
@@ -19125,19 +18982,10 @@ async def _proxy_offset_inpaint_tile_request(
                         y_fraction=-0.5,
                     )
                 )
-    except httpx.TimeoutException:
-        return Response(
-            content=json.dumps({"error": {"message": "ComfyUI request timeout", "type": "api_error"}}),
-            status_code=504,
-            media_type="application/json",
-        )
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json",
-        )
     except Exception as e:
+        failure = _graph_failure_response(e)
+        if failure is not None:
+            return failure
         return Response(
             content=json.dumps({"error": {"message": f"Gateway tile composition error: {e}", "type": "api_error"}}),
             status_code=502,
@@ -19164,7 +19012,7 @@ def _manifest_uses_source_alpha_mask(manifest: Mapping[str, Any] | None) -> bool
     if not isinstance(manifest, Mapping):
         return False
     bindings = manifest.get("bindings")
-    comfyui = bindings.get("comfyui") if isinstance(bindings, Mapping) else None
+    comfyui = bindings.get(_GRAPH_BINDING) if isinstance(bindings, Mapping) else None
     return bool(comfyui.get("mask_to_source_alpha")) if isinstance(comfyui, Mapping) else False
 
 
@@ -19172,7 +19020,7 @@ def _manifest_route_managed_mask_input(manifest: Mapping[str, Any] | None) -> st
     if not isinstance(manifest, Mapping):
         return None
     inputs = manifest.get("inputs")
-    binding = (manifest.get("bindings") or {}).get("comfyui")
+    binding = (manifest.get("bindings") or {}).get(_GRAPH_BINDING)
     mapping = binding.get("map") if isinstance(binding, Mapping) else None
     if not isinstance(inputs, Mapping) or not isinstance(mapping, Mapping):
         return None
@@ -19209,7 +19057,7 @@ def _apply_manifest_route_inputs(
     """
     if not isinstance(manifest, Mapping):
         return dict(workflow)
-    binding = (manifest.get("bindings") or {}).get("comfyui")
+    binding = (manifest.get("bindings") or {}).get(_GRAPH_BINDING)
     mapping = binding.get("map") if isinstance(binding, Mapping) else None
     if not isinstance(mapping, Mapping):
         return dict(workflow)
@@ -19222,7 +19070,7 @@ def _apply_manifest_route_inputs(
         return dict(workflow)
     return bind_backend_request(
         dict(manifest),
-        "comfyui",
+        _GRAPH_BINDING,
         dict(workflow),
         mapped_values,
     ).request
@@ -19233,7 +19081,7 @@ def _prefer_inpaint_workflow_for_mask(model: str) -> str:
         return model
     base = model.removesuffix("-edit")
     candidate = f"{base}-inpaint"
-    return candidate if load_comfy_workflow(candidate) else model
+    return candidate if load_graph_workflow(candidate) else model
 
 
 def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> str:
@@ -19245,7 +19093,7 @@ def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> st
         return selected
 
     if not (selected.endswith("-edit") or selected.endswith("-inpaint")):
-        direct_workflow = load_comfy_workflow(selected)
+        direct_workflow = load_graph_workflow(selected)
         direct_meta = direct_workflow.get("_meta", {}) if isinstance(direct_workflow, Mapping) else {}
         if not isinstance(direct_meta, Mapping) or not (direct_meta.get("image_node") or direct_meta.get("image_nodes")):
             selected = f"{selected}-edit"
@@ -19448,7 +19296,7 @@ def _allowed_image_extension_asset_fields(
             "manifest must define an 'inputs' mapping",
         )
 
-    supported = set(_workflow_extension_supported_names(manifest, "comfyui"))
+    supported = set(_workflow_extension_supported_names(manifest, _GRAPH_BINDING))
     fields: set[str] = set()
     for input_name, field_name in references.items():
         spec = inputs.get(input_name)
@@ -19630,7 +19478,7 @@ async def _upload_image_workflow_extension_assets(
     if not isinstance(inputs, Mapping):
         return updated, None
 
-    supported = set(_workflow_extension_supported_names(manifest, "comfyui"))
+    supported = set(_workflow_extension_supported_names(manifest, _GRAPH_BINDING))
     allowed_fields, allow_error = _allowed_image_extension_asset_fields(
         request_body=request_body,
         manifest=manifest,
@@ -19697,36 +19545,11 @@ async def _upload_image_workflow_extension_assets(
 
             filename = getattr(upload, "filename", None) or f"{field_name}.png"
             content_type = getattr(upload, "content_type", None) or "image/png"
-        files = {"image": (filename, content, content_type)}
-        upload_resp = await client.post(
-            f"{COMFY_HOST}/upload/image",
-            headers=dict(headers),
-            files=files,
+        uploaded_filename, upload_error = await _upload_graph_image_bytes(
+            client, headers, content, filename=filename, media_type=content_type,
         )
-        if upload_resp.status_code != 200:
-            return updated, Response(
-                content=json.dumps({
-                    "error": {
-                        "message": f"Image upload failed: {upload_resp.text}",
-                        "type": "api_error",
-                    }
-                }),
-                status_code=502,
-                media_type="application/json",
-            )
-
-        uploaded_filename = upload_resp.json().get("name")
-        if not uploaded_filename:
-            return updated, Response(
-                content=json.dumps({
-                    "error": {
-                        "message": "No filename returned from upload",
-                        "type": "api_error",
-                    }
-                }),
-                status_code=502,
-                media_type="application/json",
-            )
+        if upload_error is not None:
+            return updated, upload_error
 
         next_block[input_key] = str(uploaded_filename)
         uploaded_any = True
@@ -19790,9 +19613,9 @@ async def _apply_workflow_extensions_to_image_request(
         result = bind_workflow_extensions(
             extension_body,
             manifest,
-            "comfyui",
+            _GRAPH_BINDING,
             backend_request,
-            supported_names=_workflow_extension_supported_names(manifest, "comfyui"),
+            supported_names=_workflow_extension_supported_names(manifest, _GRAPH_BINDING),
             standard_fields=standard_fields,
         )
         if receipt is not None:
@@ -21524,17 +21347,17 @@ def _media_job_admission_response(
     app_id = (auth_context.identity.app_id if auth_context and auth_context.identity
               else receipt.app_id if receipt else None)
     app_limits = admission_cfg.get("max_app_concurrency") if count_queue else None
-    service_override = _operator_service_availability_overrides().get("comfyui", {})
+    service_override = _operator_service_availability_overrides().get(_GRAPH_BACKEND_ID, {})
     override_state = str(service_override.get("state") or "available")
     service_blocked = override_state in {"disabled", "maintenance", "draining"}
     service_degraded = override_state == "degraded"
     resource_class = _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT.get(intent, "media")
     service_reasons_list: list[str] = []
     if not COMFY_ENABLED:
-        service_reasons_list.append("ComfyUI media backend disabled")
+        service_reasons_list.append(f"{_graph_adapter().label} media backend disabled")
     if service_blocked or service_degraded:
         reason = str(service_override.get("reason") or "").strip()
-        service_reasons_list.append(reason or f"ComfyUI operator mode: {override_state}")
+        service_reasons_list.append(reason or f"{_graph_adapter().label} operator mode: {override_state}")
     max_queue_depth = _optional_int_config(admission_cfg, "max_queue_depth") if count_queue else None
     service_retry_after = (
         _optional_int_config(service_override, "retry_after_seconds")
@@ -21908,7 +21731,7 @@ async def _submit_audio_media_job(
             intent=intent,
             model=str(requested_model) if requested_model is not None else None,
             workflow=f"audio.generate.{workflow_name}",
-            backend="comfyui",
+            backend=_GRAPH_BACKEND_ID,
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="batch",
@@ -21932,7 +21755,7 @@ async def _submit_audio_media_job(
         body,
         request_id=request_id,
         workflow=f"audio.generate.{workflow_name}",
-        backend="comfyui",
+        backend=_GRAPH_BACKEND_ID,
         app_profile=plan_ref(auth_context.identity),
         api_key_name=auth_context.identity.name if auth_context.identity else None,
         parent_request_id=request_id,
@@ -22237,7 +22060,7 @@ async def _run_video_media_job(job_id: str) -> None:
                 )
                 worker_token = _ADMISSION_WORKER.set(True)
                 try:
-                    submit_response = await proxy_comfy_video_create(request_shim, auth_context)
+                    submit_response = await proxy_graph_video_create(request_shim, auth_context)
                 finally:
                     _ADMISSION_WORKER.reset(worker_token)
             except asyncio.CancelledError:
@@ -22305,7 +22128,7 @@ async def _run_video_media_job(job_id: str) -> None:
                 _mark_video_media_job_failed(job_id, step[0], error_info=step[1])
                 return
             auth_context = step
-            status_response = await proxy_comfy_video_status(video_id, auth_context)
+            status_response = await proxy_graph_video_status(video_id, auth_context)
             status_code = int(getattr(status_response, "status_code", 0) or 0)
             if status_code >= 500:
                 message, error_info = _media_job_failure(status_response)
@@ -22345,7 +22168,7 @@ async def _run_video_media_job(job_id: str) -> None:
                 _mark_video_media_job_failed(job_id, step[0], error_info=step[1])
                 return
             auth_context = step
-            content_response = await proxy_comfy_video_content(video_id, auth_context, index_library=False, metadata_mode=provenance.METADATA_NONE)
+            content_response = await proxy_graph_video_content(video_id, auth_context, index_library=False, metadata_mode=provenance.METADATA_NONE)
             content_status = int(getattr(content_response, "status_code", 0) or 0)
             if not 200 <= content_status < 300:
                 message, error_info = _media_job_failure(content_response)
@@ -22485,7 +22308,7 @@ def _video_job_policy_decision(auth_context: AuthContext, requested_model: Any, 
             intent=INTENT_VIDEO_GENERATE,
             model=str(requested_model) if requested_model is not None else None,
             workflow=f"video.generate.{workflow_name}",
-            backend="comfyui",
+            backend=_GRAPH_BACKEND_ID,
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="expensive",
@@ -22562,7 +22385,7 @@ async def _submit_video_media_job(
         body,
         video_media_job_http.VideoRequestContext(
             workflow=workflow_name,
-            backend="comfyui",
+            backend=_GRAPH_BACKEND_ID,
             request_id=request_id,
             idempotency_key=request.headers.get("idempotency-key"),
             app_profile=plan_ref(auth_context.identity),
@@ -23018,7 +22841,7 @@ async def images_variations(request: Request):
         finish_image_route_receipt(receipt, response)
         return response
     try:
-        response = await proxy_comfy_variations_request(request, auth_context, receipt=receipt)
+        response = await proxy_graph_image_variations_request(request, auth_context, receipt=receipt)
     except asyncio.CancelledError:
         finish_image_route_receipt(receipt, None, status="cancelled")
         raise
@@ -23038,7 +22861,7 @@ async def images_edits(request: Request):
         finish_image_route_receipt(receipt, response)
         return response
     try:
-        response = await proxy_comfy_edit_request(request, auth_context, receipt=receipt)
+        response = await proxy_graph_image_edit_request(request, auth_context, receipt=receipt)
     except asyncio.CancelledError:
         finish_image_route_receipt(receipt, None, status="cancelled")
         raise
@@ -23290,16 +23113,17 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
             status_code=404, media_type="application/json",
         )
     admission = _dispatch_admission_response(
-        "video.edit", auth_context=auth_context, service_id="comfyui",
+        "video.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
-    binding = (record.manifest.get("bindings") or {}).get("comfyui")
+    adapter = _graph_adapter("videos")
+    binding = (record.manifest.get("bindings") or {}).get(_GRAPH_BINDING)
     artifact = binding.get("workflow") if isinstance(binding, Mapping) else None
     if not isinstance(artifact, str):
         return Response(
-            content=json.dumps({"error": {"message": "Workflow has no ComfyUI binding", "type": "api_error"}}),
+            content=json.dumps({"error": {"message": f"Workflow has no {adapter.label} binding", "type": "api_error"}}),
             status_code=501, media_type="application/json",
         )
     workflow_path = Path(__file__).parent / artifact
@@ -23371,36 +23195,31 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
             status_code=500, media_type="application/json",
         )
 
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+        graph = _graph(client, "videos")
         for input_name, (filename, raw_bytes, content_type) in asset_uploads.items():
-            upload = await client.post(
-                f"{COMFY_HOST}/upload/image", headers=headers,
-                files={"image": (filename, raw_bytes, content_type)},
-            )
-            uploaded_name = upload.json().get("name") if upload.status_code == 200 else None
+            upload = await graph.upload({"image": (filename, raw_bytes, content_type)}, headers=headers)
+            uploaded_name = upload.json().get("name") if upload.status == 200 else None
             if not uploaded_name:
                 return Response(
-                    content=json.dumps({"error": {"message": f"ComfyUI upload failed for {input_name}", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": f"{adapter.label} upload failed for {input_name}", "type": "api_error"}}),
                     status_code=502, media_type="application/json",
                 )
             validation.accepted[input_name] = uploaded_name
         workflow = bind_backend_request(
-            record.manifest, "comfyui", workflow_template, validation.accepted
+            record.manifest, _GRAPH_BINDING, workflow_template, validation.accepted
         ).request
 
         async def submit_and_collect() -> tuple[dict[str, Any] | None, Response | None]:
             admission = _dispatch_admission_response(
-                "video.edit", auth_context=auth_context, service_id="comfyui",
+                "video.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
                 service_available=COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
                 return None, admission
-            submitted = await client.post(
-                f"{COMFY_HOST}/prompt", headers=headers,
-                json=_build_comfy_submit_payload(workflow),
-            )
-            if submitted.status_code != 200:
+            submitted = await graph.submit(_build_graph_submit_payload(workflow), headers=headers)
+            if submitted.status != 200:
                 return None, Response(
                     content=json.dumps({"error": {"message": submitted.text[:500], "type": "api_error"}}),
                     status_code=502, media_type="application/json",
@@ -23408,16 +23227,16 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
             prompt_id = submitted.json().get("prompt_id")
             if not prompt_id:
                 return None, Response(
-                    content=json.dumps({"error": {"message": "ComfyUI returned no prompt_id", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": f"{adapter.label} returned no prompt_id", "type": "api_error"}}),
                     status_code=502, media_type="application/json",
                 )
             for _ in range(COMFY_TIMEOUT * 2):
                 await asyncio.sleep(0.5)
-                history = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers)
-                job = history.json().get(prompt_id) if history.status_code == 200 else None
+                history = await graph.history(prompt_id, headers=headers)
+                job = history.json().get(prompt_id) if history.status == 200 else None
                 if not isinstance(job, Mapping):
                     continue
-                error_message = _comfy_execution_error_message(job)
+                error_message = _graph_error_message(job)
                 if error_message:
                     return dict(job), Response(
                         content=json.dumps({"error": {"message": error_message, "type": "api_error"}}),
@@ -23434,11 +23253,11 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         if error is not None and IMAGE_FREE_VRAM_ON_EXHAUSTION:
             message = str((json.loads(error.body.decode("utf-8")).get("error") or {}).get("message", "")).lower()
             if any(marker in message for marker in ("cuda out of memory", "out of memory", "cuda oom")):
-                if await _free_comfy_models_if_idle(client):
+                if await _free_graph_models_if_idle(client):
                     job, error = await submit_and_collect()
         if error is not None:
             return error
-        file_info = _extract_video_output(job or {})
+        file_info = _first_video_output(job or {})
         if not file_info:
             return Response(
                 content=json.dumps({"error": {"message": "Workflow returned no video output", "type": "api_error"}}),
@@ -23447,15 +23266,15 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         params = {"filename": file_info["filename"], "type": file_info["type"]}
         if file_info.get("subfolder"):
             params["subfolder"] = file_info["subfolder"]
-        rendered = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
-        if rendered.status_code != 200:
+        rendered = await graph.view(params, headers=headers)
+        if rendered.status != 200:
             return Response(
-                content=json.dumps({"error": {"message": "ComfyUI could not read the rendered video", "type": "api_error"}}),
+                content=json.dumps({"error": {"message": f"{adapter.label} could not read the rendered video", "type": "api_error"}}),
                 status_code=502, media_type="application/json",
             )
         suffix = Path(file_info["filename"]).suffix.lower()
         media_type = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska"}.get(suffix, "application/octet-stream")
-        rendered_bytes = rendered.content
+        rendered_bytes = rendered.raw
         try:
             if media_delivery.current_mode() == provenance.METADATA_NONE:
                 rendered_bytes = await asyncio.to_thread(
@@ -23474,7 +23293,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
                         workflow_id=identity.id,
                         workflow_version=identity.version,
                         workflow_hash=identity.manifest_hash,
-                        backend="comfyui",
+                        backend=_GRAPH_BACKEND_ID,
                         parameters=validation.accepted,
                     ),
                 )
@@ -23496,7 +23315,7 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
     if isinstance(auth_context, Response):
         return auth_context
     if not COMFY_ENABLED:
-        return Response(status_code=503, content=json.dumps({"error": {"message": "ComfyUI media backend is disabled", "type": "service_unavailable"}}), media_type="application/json")
+        return Response(status_code=503, content=json.dumps({"error": {"message": f"{_graph_adapter('videos').label} media backend is disabled", "type": "service_unavailable"}}), media_type="application/json")
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/gateway/v1/workflows/{workflow_id}/run"))
     if policy_response is not None:
         return policy_response
@@ -23528,7 +23347,7 @@ async def videos_create(request: Request):
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos"))
     if policy_response is not None:
         return policy_response
-    return await proxy_comfy_video_create(request, auth_context)
+    return await proxy_graph_video_create(request, auth_context)
 
 
 async def videos_status(video_id: str, request: Request):
@@ -23539,7 +23358,7 @@ async def videos_status(video_id: str, request: Request):
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}"))
     if policy_response is not None:
         return policy_response
-    return await proxy_comfy_video_status(video_id, auth_context)
+    return await proxy_graph_video_status(video_id, auth_context)
 
 
 async def videos_content(video_id: str, request: Request):
@@ -23559,7 +23378,7 @@ async def videos_content(video_id: str, request: Request):
     delivery = media_delivery.current()
     if delivery is not None and delivery.requested_mode is None and record:
         delivery.requested_mode = record.get("metadata_mode")  # the submit-time choice
-    return await proxy_comfy_video_content(
+    return await proxy_graph_video_content(
         video_id, auth_context, metadata_mode=media_delivery.current_mode()
     )
 
@@ -23575,7 +23394,7 @@ async def videos_list(request: Request):
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos", policy=_video_route_policy()))
     if policy_response is not None:
         return policy_response
-    return await proxy_comfy_video_list(request, auth_context)
+    return await proxy_graph_video_list(request, auth_context)
 
 
 async def videos_delete(video_id: str, request: Request):
@@ -23589,7 +23408,7 @@ async def videos_delete(video_id: str, request: Request):
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}", policy=_video_route_policy()))
     if policy_response is not None:
         return policy_response
-    return await proxy_comfy_video_delete(video_id, auth_context)
+    return await proxy_graph_video_delete(video_id, auth_context)
 
 
 async def videos_remix(video_id: str, request: Request):
@@ -23600,7 +23419,7 @@ async def videos_remix(video_id: str, request: Request):
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}/remix"))
     if policy_response is not None:
         return policy_response
-    return await proxy_comfy_video_remix(video_id, auth_context, request)
+    return await proxy_graph_video_remix(video_id, auth_context, request)
 
 
 async def videos_edit(request: Request):
@@ -23611,7 +23430,7 @@ async def videos_edit(request: Request):
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/edits"))
     if policy_response is not None:
         return policy_response
-    return await proxy_comfy_video_edit(request, auth_context)
+    return await proxy_graph_video_edit(request, auth_context)
 
 
 async def videos_extend(request: Request):
@@ -23622,7 +23441,7 @@ async def videos_extend(request: Request):
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/extensions"))
     if policy_response is not None:
         return policy_response
-    return await proxy_comfy_video_extend(request, auth_context)
+    return await proxy_graph_video_extend(request, auth_context)
 
 
 # =============================================================================
@@ -23664,10 +23483,10 @@ def _load_audio_workflow_file(workflow_cfg: dict):
         return None
     with open(p) as f:
         workflow = json.load(f)
-    errors = validate_comfyui_workflow_graph(workflow)
+    errors = validate_workflow_graph(workflow)
     if errors:
         print(
-            f"[proxy] invalid audio ComfyUI workflow {p}: {'; '.join(errors)}",
+            f"[proxy] invalid audio {_graph_adapter('audio.generate').label} workflow {p}: {'; '.join(errors)}",
             flush=True,
         )
         return None
@@ -23735,10 +23554,10 @@ def _load_audio_workflow_manifest(workflow_name: str) -> dict[str, Any] | None:
         bindings = record.manifest.get("bindings")
         if not isinstance(bindings, Mapping):
             continue
-        comfy = bindings.get("comfyui")
-        if not isinstance(comfy, Mapping):
+        graph_binding = bindings.get(_GRAPH_BINDING)
+        if not isinstance(graph_binding, Mapping):
             continue
-        artifact = comfy.get("workflow")
+        artifact = graph_binding.get("workflow")
         if isinstance(artifact, str) and Path(artifact).stem == workflow_name:
             return copy.deepcopy(dict(record.manifest))
     return None
@@ -23760,22 +23579,6 @@ def _audio_extension_error_response(message: str, *, param: str = "extensions") 
     )
 
 
-def _extract_audio_output(job: dict):
-    """Extract audio file info from ComfyUI job outputs."""
-    outputs = (job or {}).get("outputs", {}) or {}
-    for node_id, node_output in outputs.items():
-        for key in ("audios", "audio", "wav", "mp3"):
-            entries = node_output.get(key) or []
-            for entry in entries:
-                if isinstance(entry, dict):
-                    return {
-                        "filename": entry.get("filename"),
-                        "subfolder": entry.get("subfolder", ""),
-                        "type": entry.get("type", "output"),
-                    }
-    return None
-
-
 async def proxy_audio_generate(request: Request, auth_context, *, store_full: bool = False, receipt: RouteReceipt | None = None):
     """POST /v1/audio/generate — submit audio generation via ComfyUI.
 
@@ -23783,7 +23586,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
     keep full metadata and the delivery mode is applied when the asset is served.
     """
     admission = _dispatch_admission_response(
-        'audio.generate', auth_context=auth_context, service_id="comfyui",
+        'audio.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
         service_available=COMFY_ENABLED, resource_class='audio', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -23795,8 +23598,9 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
-        service_label="ComfyUI",))
+    adapter = _graph_adapter("audio.generate")
+    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
+        service_label=adapter.label,))
     if service_response is not None:
         return service_response
     try:
@@ -23924,7 +23728,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             intent=INTENT_AUDIO_GENERATE,
             model=str(model) if model is not None else None,
             workflow=f"audio.generate.{workflow_name}",
-            backend="comfyui",
+            backend=_GRAPH_BACKEND_ID,
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="batch",
@@ -23993,7 +23797,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             extension_result = bind_audio_workflow_extensions(
                 body,
                 manifest,
-                "comfyui",
+                _GRAPH_BINDING,
                 workflow,
             )
         except (ExtensionError, ManifestError) as e:
@@ -24009,23 +23813,23 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             )
         workflow = extension_result.request
 
-    headers = configured_downstream_headers(auth_context, "comfyui")
+    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+            graph = _graph(client, "audio.generate")
             admission = _dispatch_admission_response(
-                "audio.generate", auth_context=auth_context, service_id="comfyui",
+                "audio.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
                 service_available=COMFY_ENABLED, resource_class="audio", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
                 return admission
-            resp = await client.post(
-                f"{COMFY_HOST}/prompt",
+            resp = await graph.submit(
+                _build_graph_submit_payload(workflow, client_id=COMFY_CLIENT_ID),
                 headers=headers,
-                json=_build_comfy_submit_payload(workflow, client_id=COMFY_CLIENT_ID),
             )
-            if resp.status_code != 200:
+            if resp.status != 200:
                 return Response(
-                    content=json.dumps({"error": {"message": f"ComfyUI error: {resp.text[:500]}", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": f"{adapter.label} error: {resp.text[:500]}", "type": "api_error"}}),
                     status_code=502,
                     media_type="application/json"
                 )
@@ -24043,8 +23847,8 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             # Wait for completion (simple polling)
             for _ in range(600):  # 10 min max
                 await asyncio.sleep(2)
-                history_resp = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers)
-                if history_resp.status_code != 200:
+                history_resp = await graph.history(prompt_id, headers=headers)
+                if history_resp.status != 200:
                     continue
                 history = history_resp.json()
                 if prompt_id not in history:
@@ -24053,16 +23857,16 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                 status_obj = job.get("status", {}) or {}
                 status = status_obj.get("status_str") or status_obj.get("status") or ""
                 if status == "success":
-                    file_info = _extract_audio_output(job)
+                    file_info = _first_audio_output(job)
                     if file_info and file_info.get("filename"):
                         # Fetch the audio file
                         params = {"filename": file_info["filename"], "type": file_info.get("type", "output")}
                         if file_info.get("subfolder"):
                             params["subfolder"] = file_info["subfolder"]
-                        audio_resp = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
-                        if audio_resp.status_code == 200:
+                        audio_resp = await graph.view(params, headers=headers)
+                        if audio_resp.status == 200:
                             content_type = audio_resp.headers.get("content-type", "audio/wav")
-                            audio_bytes = audio_resp.content
+                            audio_bytes = audio_resp.raw
                             peak_db = workflow_cfg.get("normalize_peak_db")
                             if peak_db is not None:
                                 audio_bytes = await asyncio.to_thread(
@@ -24090,7 +23894,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                                             requested_model=str(model),
                                             resolved_model=workflow_name,
                                             workflow_id=f"audio.generate.{workflow_name}",
-                                            backend="comfyui",
+                                            backend=_GRAPH_BACKEND_ID,
                                             seed=seed_val,
                                             parameters={
                                                 **media_delivery.current().parameters,
@@ -24119,10 +23923,10 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                         media_type="application/json"
                     )
                 elif status == "error":
-                    err_msg = "ComfyUI generation failed"
+                    err_msg = f"{adapter.label} generation failed"
                     for tag, payload in (status_obj.get("messages") or []):
                         if tag == "execution_error" and isinstance(payload, dict):
-                            err_msg = _comfy_execution_error_message({"status": {"messages": [["execution_error", payload]]}})
+                            err_msg = _graph_error_message({"status": {"messages": [["execution_error", payload]]}})
                             break
                     return Response(
                         content=json.dumps({"error": {"message": err_msg, "type": "api_error"}}),
@@ -24135,15 +23939,21 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                 status_code=504,
                 media_type="application/json"
             )
-    except httpx.TimeoutException:
+    except TransportFailure as e:
+        if e.kind == "timeout":
+            return Response(
+                content=json.dumps({"error": {"message": f"{adapter.label} request timeout", "type": "api_error"}}),
+                status_code=504,
+                media_type="application/json"
+            )
+        if e.kind == "unreachable":
+            return Response(
+                content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection()), "type": "api_error"}}),
+                status_code=502,
+                media_type="application/json"
+            )
         return Response(
-            content=json.dumps({"error": {"message": "ComfyUI request timeout", "type": "api_error"}}),
-            status_code=504,
-            media_type="application/json"
-        )
-    except httpx.ConnectError:
-        return Response(
-            content=json.dumps({"error": {"message": f"ComfyUI unavailable at {COMFY_HOST}", "type": "api_error"}}),
+            content=json.dumps({"error": {"message": f"Audio proxy error: {str(e)}", "type": "api_error"}}),
             status_code=502,
             media_type="application/json"
         )
@@ -24309,10 +24119,8 @@ async def _probed_context_window(backend: str) -> int | None:
 
     value: int | None = None
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0), verify=tls_context()) as client:
-            resp = await client.get(f"{_backend_base_url(backend)}{endpoint}")
-        if resp.status_code == 200:
-            payload = resp.json()
+        payload = await _engine_probe_json(backend, endpoint, 2.0)
+        if payload is not None:
             data = payload.get("data") if isinstance(payload, Mapping) else None
             if isinstance(data, list):
                 for item in data:
@@ -24478,8 +24286,8 @@ def _workflow_public_model_id(manifest: Mapping[str, Any]) -> str | None:
     if model_id:
         return model_id
     bindings = manifest.get("bindings") if isinstance(manifest.get("bindings"), Mapping) else {}
-    comfy = bindings.get("comfyui") if isinstance(bindings.get("comfyui"), Mapping) else {}
-    artifact = comfy.get("workflow")
+    graph_binding = bindings.get(_GRAPH_BINDING) if isinstance(bindings.get(_GRAPH_BINDING), Mapping) else {}
+    artifact = graph_binding.get("workflow")
     if not isinstance(artifact, str) or not artifact:
         return None
     return Path(artifact).stem or None
@@ -24696,17 +24504,17 @@ def _build_workflow_model_entries(
         bindings = record.manifest.get("bindings")
         if not isinstance(bindings, dict):
             continue
-        backend = "comfyui"
+        backend = _GRAPH_BINDING
         model_id = _gateway_image_model_id(record.manifest)
         workflow_artifact = ""
         if model_id:
             backend = "gateway"
             workflow_artifact = str(record.source_path) if record.source_path else ""
         else:
-            comfy = bindings.get("comfyui")
-            if not isinstance(comfy, dict):
+            graph_binding = bindings.get(_GRAPH_BINDING)
+            if not isinstance(graph_binding, dict):
                 continue
-            artifact = comfy.get("workflow")
+            artifact = graph_binding.get("workflow")
             if not isinstance(artifact, str) or not artifact:
                 continue
             workflow_artifact = artifact
@@ -27955,7 +27763,16 @@ async def _forward_current_loaded_openai_request(
                 owner.report(status="failed", reason="failed")
                 return policy_error
             query = backend_query_string(request.url.query)
-            url = f"{target.host}{request_path}"
+            record = (ADMIN_STORE.get_service_registry().get("services") or {}).get(target.backend)
+            try:
+                connection = inference_connection(
+                    record, request_path.removeprefix("/v1"), fallback_address=f"{target.host}/v1",
+                    fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
+                )
+            except InferenceConnectionError as exc:
+                owner.report(status="failed", reason="configuration_error")
+                return openai_error_response(str(exc), status_code=503, code="engine_credential_unavailable")
+            url = connection.url
             if query:
                 url = f"{url}?{query}"
 
@@ -27967,6 +27784,8 @@ async def _forward_current_loaded_openai_request(
             )
             headers.setdefault("content-type", "application/json")
             headers.setdefault("accept", "application/json")
+            headers = {name.lower(): value for name, value in headers.items()}
+            headers.update(connection.headers)
 
             if execution_body is None:
                 execution_body = json.dumps(body).encode()
@@ -27975,7 +27794,7 @@ async def _forward_current_loaded_openai_request(
                 url=url,
                 headers=headers,
                 body=execution_body,
-                read_timeout=UPSTREAM_READ_TIMEOUT,
+                read_timeout=connection.read_timeout,
             )
 
             record_request_shape_stage(
@@ -29146,12 +28965,26 @@ async def _forward_internal_litellm_local_upstream(
         return admission
 
     body["model"] = activation.backend_model or target_model
+    # Read the saved service, not the boot-time host table: an owner edit
+    # changes the final hop even while the model router retains its hop URL.
+    record = (ADMIN_STORE.get_service_registry().get("services") or {}).get(backend)
+    try:
+        connection = inference_connection(
+            record, "/chat/completions", fallback_address=f"{upstream_base}/v1",
+            fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
+        )
+    except InferenceConnectionError as exc:
+        _record_internal_hop_receipt(
+            request_path="/v1/chat/completions", parent_request_id=_internal_request_id_from_headers(request.headers),
+            body=body, status_code=503, terminal_reason="configuration_error",
+        )
+        return openai_error_response(str(exc), status_code=503, code="engine_credential_unavailable")
     execution_request = LlmExecutionRequest(
         method="POST",
-        url=f"{upstream_base}/v1/chat/completions",
-        headers={"content-type": "application/json"},
+        url=connection.url,
+        headers=connection.headers,
         body=json.dumps(body).encode("utf-8"),
-        read_timeout=UPSTREAM_READ_TIMEOUT,
+        read_timeout=connection.read_timeout,
     )
 
     # This route runs behind LiteLLM's own httpx client, not the original

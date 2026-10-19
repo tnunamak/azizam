@@ -2,7 +2,7 @@
 
 /**
  * The typed form of each request adjustment, the sentence that says what it
- * does, and the picker that adds one. No JSON anywhere.
+ * does, and the picker that adds one. Preserved options are shown as plain text.
  */
 import { useState } from "react";
 import { ArrowRight, Plus, Trash2 } from "lucide-react";
@@ -41,14 +41,16 @@ function PairsTable({
   const set = (j: number, patch: Partial<PairRow>) => onChange(rows.map((r, i) => (i === j ? { ...r, ...patch } : r)));
   return (
     <div className="flex flex-col gap-2">
-      <div aria-hidden="true" className="text-label text-muted-foreground hidden grid-cols-[1fr_auto_1fr_auto] gap-2 sm:grid">
+      <div aria-hidden="true" className="text-label text-muted-foreground hidden grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] gap-2 sm:grid">
         <span>{left}</span>
         <span className="w-4" />
         <span>{right}</span>
         <span className="w-8" />
       </div>
       {rows.map((row, j) => (
-        <div key={j} className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2">
+        <div key={j} className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto]">
+          <label className="min-w-0">
+            <span className="text-meta mb-1 block sm:hidden">{left}</span>
           <Input
             size="sm"
             className="font-mono"
@@ -60,7 +62,10 @@ function PairsTable({
             spellCheck={false}
             onChange={(event) => set(j, { a: event.target.value })}
           />
-          <ArrowRight aria-hidden="true" className="text-muted-foreground size-4" />
+          </label>
+          <ArrowRight aria-hidden="true" className="text-muted-foreground hidden size-4 sm:block" />
+          <label className="min-w-0">
+            <span className="text-meta mb-1 block sm:hidden">{right}</span>
           <Input
             size="sm"
             className="font-mono"
@@ -72,10 +77,12 @@ function PairsTable({
             spellCheck={false}
             onChange={(event) => set(j, { b: event.target.value })}
           />
+          </label>
           <Button
             type="button"
             variant="ghost"
             size="icon"
+            className="justify-self-end max-sm:min-h-11 max-sm:min-w-11"
             aria-label={`Remove row ${j + 1}`}
             disabled={disabled}
             onClick={() => onChange(rows.filter((_, i) => i !== j))}
@@ -298,14 +305,19 @@ export function AdjustmentsEditor({
   const replace = (index: number, card: AdjustmentCard) => onChange(cards.map((c, i) => (i === index ? card : c)));
   return (
     <div className="flex flex-col gap-3">
-      {cards.length === 0 && <p className="text-meta text-muted-foreground">No adjustments. Requests go to the server as they arrive.</p>}
+      {cards.length === 0 && <p className="text-meta text-muted-foreground">No extra request or reply adjustments are configured.</p>}
       {cards.map((card, index) => {
         const name = kindName(card);
         const readOnly = card.kind === "builtin" || card.kind === "other";
         return (
           <div key={card.key} data-testid="adjustment" className="rounded-control border">
             <div className="bg-muted/40 flex flex-wrap items-center gap-2 border-b px-3 py-2">
-              <h5 className="text-meta flex-1 font-medium">{readOnly ? sayAdjustment(card) : name}</h5>
+              <div className="flex-1">
+                <h5 className="text-meta font-medium">
+                  {card.kind === "builtin" ? `Built-in adjustment: ${card.name}` : readOnly ? sayAdjustment(card) : name}
+                </h5>
+                {card.kind === "builtin" && <p className="text-meta text-muted-foreground">Its behavior is not described here. Read-only.</p>}
+              </div>
               {"phase" in card && (
                 <label className="text-meta text-muted-foreground flex items-center gap-2">
                   <span aria-hidden="true">Applies to</span>

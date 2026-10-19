@@ -58,6 +58,7 @@ export function AccessAnswer({
   errorText = "Azizam couldn’t read the access plans. You can still add the engine; check who can use it on its page.",
   qualifier,
   newTab,
+  workflows,
 }: {
   access?: EngineAccess | null;
   loading?: boolean;
@@ -70,6 +71,7 @@ export function AccessAnswer({
   qualifier?: string;
   /** Open plan links in a new tab, so a dialog in progress is not lost. */
   newTab?: boolean;
+  workflows?: boolean;
 }) {
   const headingId = useId();
   const target = newTab ? { target: "_blank", rel: "noopener" } : {};
@@ -101,7 +103,7 @@ export function AccessAnswer({
           <ul aria-label="Plans that include these models" className="bg-card rounded-control divide-y border">
             {access.plans.map((plan) => (
               <li key={plan.id} className="text-meta flex flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-1.5 max-sm:py-0">
-                <Link prefetch={false} href={plan.link} className={LINK_CLASS} {...target}>
+                <Link prefetch={false} href={plan.link} className={`${LINK_CLASS} min-w-0 [overflow-wrap:anywhere]`} {...target}>
                   {plan.name}
                   {opens}
                 </Link>
@@ -123,7 +125,7 @@ export function AccessAnswer({
     <section aria-labelledby={headingId} aria-live="polite" className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <h3 id={headingId} className="text-body font-medium">
-          Who can use these models
+          {workflows ? "Who can use this engine’s models and workflows" : "Who can use these models"}
         </h3>
         {qualifier && <Tag tone="changed">{qualifier}</Tag>}
       </div>
