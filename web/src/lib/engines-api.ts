@@ -302,11 +302,27 @@ export interface EngineView {
   /** The origin a saved key is sent to. Nowhere else gets it. */
   credential_destination?: string | { origin?: string } | null;
   ignored_headers?: string[];
+  /** How long recordings are cut for this transcription engine, with the values that come from the bundled defaults. */
+  stt_chunking?: SttChunking | null;
   /** The effective reply timeout and where it comes from. Absent on older gateways. */
   reply_timeout?: { seconds: number | null; source: string };
   /** Things about this engine that want a look, such as a key variable that is not set. */
   attention?: { code: string; message: string }[];
 }
+
+export type SttChunking =
+  | { invalid: string }
+  | {
+      enabled: boolean;
+      cut_files_longer_than_seconds: number;
+      target_seconds: number;
+      search_seconds: number;
+      max_segment_seconds: number;
+      native_long_audio: boolean;
+      /** Keys of `chunking` the record does not save; their values come from the bundled defaults. */
+      from_bundled_defaults: string[];
+      note: string;
+    };
 
 export interface RequestPath {
   /** direct: the router calls the address. gateway_lifecycle: the gateway's start-and-stop hop calls it. */

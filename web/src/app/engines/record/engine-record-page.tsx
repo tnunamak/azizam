@@ -57,7 +57,7 @@ import {
   fieldPart,
   lockReason,
 } from "./contract-sections";
-import { RemoveSection, StoredRecordSection, errorText } from "./record-sections";
+import { LongAudioSection, RemoveSection, StoredRecordSection, errorText } from "./record-sections";
 import { cardProblem, cardsFromTransforms, transformsFromCards, type AdjustmentCard } from "./adjustments";
 import {
   FieldGroups,
@@ -1121,6 +1121,8 @@ function RecordForm({
           <ResourceFacts v2={view.v2} />
         </div>
       </section>
+
+      <LongAudioSection chunking={view.stt_chunking} />
 
       <StoredRecordSection view={view} />
 

@@ -188,6 +188,24 @@ the file exists. The file is gitignored.
   so each additional Python worker multiplies allowed uploads and reserved disk
   budget.
 
+## Long transcription audio (`backends.<service>.chunking`)
+
+A transcription service that cannot take a long recording in one request sets these in its `chunking` block. Every
+key is optional; a key left out takes its value from the bundled data file `registry/stt_chunking_defaults.yml`, and the
+engine page shows which values came from there (`stt_chunking.from_bundled_defaults`).
+
+| Key | Meaning |
+|---|---|
+| `threshold_seconds` | Files longer than this are cut (a file longer than `max_segment_seconds` is always cut). |
+| `target_seconds` | Distance between cuts. |
+| `search_seconds` | The cut goes to the quietest 20 ms frame within this many seconds of each target (at most a quarter of the target). |
+| `max_segment_seconds` | The longest piece sent to the engine. No planned piece is longer. At least `target_seconds`. |
+| `native_long_audio` | `true` when the engine takes long audio whole. A file the gateway cannot cut is then sent whole; otherwise a file longer than `max_segment_seconds` that cannot be cut is refused (HTTP 422 or 502, code `stt_audio_cannot_be_split`). |
+
+Pieces do not overlap and the texts are joined as they come. The silence keys (`silence_noise_db`,
+`silence_min_seconds`, `silence_search_seconds`) are no longer read. The measure action finds good values for an engine
+(`scripts/stt-seam-check`, `scripts/stt_seam_check/README.md`).
+
 ## Request body limits
 
 Backend requests forward only `Content-Type`, `Accept`, and `User-Agent` from
