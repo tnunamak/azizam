@@ -230,7 +230,7 @@ class AudioFailurePollingGaps(unittest.IsolatedAsyncioTestCase):
         job_error = {"status": {"status_str": "error", "messages": []}}
         job_empty = {"status": {"status_str": "success"}, "outputs": {}}
         cases = (
-            ("submit_error", "audio-submit-text-reply", {"status": 500, "text": "synthetic failure"}, 502, 0, 0, "ComfyUI error"),
+            ("submit_error", "audio-submit-text-reply", {"status": 500, "text": "synthetic failure"}, 502, 0, 0, "ComfyUI: The engine refused"),
             ("missing_id", "audio-submit-json-reply", {"status": 200, "reply": {}}, 502, 0, 0, "No prompt_id"),
             ("transport_timeout", "audio-submit-slow-first-byte", {"wire": True}, 504, 0, 0, "timeout"),
             ("connect_error", None, {"refused": True}, 502, 0, 0, "unavailable"),
@@ -253,6 +253,7 @@ class AudioFailurePollingGaps(unittest.IsolatedAsyncioTestCase):
                 payload = json.loads(response.body)
                 self.assertEqual(payload["error"]["type"], "api_error")
                 self.assertIn(message.lower(), payload["error"]["message"].lower())
+                self.assertNotIn("synthetic failure", payload["error"]["message"])  # the engine's words are not passed on (D44)
                 if fake is not None:
                     self.assertEqual(len(fake.calls("prompt")), 1)
                     history_calls = [r for r in fake.requests if r.path.startswith("/history/")]

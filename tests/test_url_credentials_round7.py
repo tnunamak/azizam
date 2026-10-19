@@ -119,10 +119,11 @@ def test_the_formatters_say_a_status_a_size_a_class_and_an_origin_and_nothing_el
 
 def test_the_structural_checker_fails_on_a_new_log_of_an_upstream_body():
     import ast
-    from tests import test_no_upstream_text_in_logs as rule
+    from tests.support import upstream_taint as taint
 
-    scan = rule._Scan("new.py")
-    scan.visit(ast.parse("async def f(client):\n    r = await client.get('x')\n    print(f'bad {r.text[:200]}')\n"))
+    tree = ast.parse("async def f(client):\n    r = await client.get('x')\n    print(f'bad {r.text[:200]}')\n")
+    scan = taint.Scan("new.py", taint.module_info(tree), taint.is_log_call, traceback_is_sink=True)
+    scan.visit(tree)
     assert [what for _, _, what in scan.found] == ["a response or process text"]
 
 
@@ -156,7 +157,7 @@ def test_the_first_value_survives_513_and_66000_later_registrations():
     assert "R7-FIRST-VALUE-SECRET" not in runtime_secrets.scrub("echo R7-FIRST-VALUE-SECRET")
     for index in range(513, 66000):
         runtime_secrets.remember(f"R7-LATER-{index:06d}-SECRET", f"ref:{index}")
-    assert len(log_scrub._RESOLVED) == 66001, "sources are bounded by configuration, nothing is evicted"
+    assert len(log_scrub.sources()) == 66001, "sources are bounded by configuration, nothing is evicted"
     assert "R7-FIRST-VALUE-SECRET" not in runtime_secrets.scrub("echo R7-FIRST-VALUE-SECRET")
 
 
@@ -193,12 +194,15 @@ def test_a_line_is_scrubbed_before_it_is_cut_so_a_value_across_the_cut_is_not_ha
     assert "CROSS" not in cleaned and cleaned.startswith("x" * 290 + "[removed]")
 
 
-def test_a_value_too_long_to_register_makes_every_line_unloggable_until_it_is_replaced():
+def test_a_value_too_long_to_register_makes_every_line_unloggable_until_its_source_is_forgotten():
     log_scrub.clear()
     assert runtime_secrets.remember("L" * (64 * 1024), "long") is True
     assert runtime_secrets.remember("L" * (64 * 1024 + 1), "too-long") is False
     assert runtime_secrets.scrub("any line at all") == log_scrub.WITHHELD
+    # a shorter value under the same source does not make the longer one safe to log (decision D44)
     assert runtime_secrets.remember("short-enough-now", "too-long") is True
+    assert runtime_secrets.scrub("any line at all") == log_scrub.WITHHELD
+    log_scrub.forget("too-long")
     assert runtime_secrets.scrub("any line at all") == "any line at all"
 
 
@@ -213,12 +217,12 @@ def test_a_secret_that_is_deleted_is_forgotten_and_one_that_exists_is_not(store)
     assert cleaned == "[removed] R7-GONE-SECRET-VALUE"
 
 
-def test_a_source_keeps_its_last_three_values_for_a_rotation():
+def test_a_source_keeps_the_values_it_held_before_a_rotation():
     log_scrub.clear()
     for value in ("R7-ROTATION-ONE", "R7-ROTATION-TWO", "R7-ROTATION-THREE", "R7-ROTATION-FOUR"):
         runtime_secrets.remember(value, "env:ROTATING")
     cleaned = runtime_secrets.scrub("R7-ROTATION-ONE R7-ROTATION-TWO R7-ROTATION-THREE R7-ROTATION-FOUR")
-    assert cleaned == "R7-ROTATION-ONE [removed] [removed] [removed]"
+    assert cleaned == "[removed] [removed] [removed] [removed]"
 
 
 def test_a_value_is_registered_under_a_source_always():
@@ -275,13 +279,19 @@ def test_the_destination_shown_has_its_dot_segments_resolved_as_the_readers_reso
 
 
 @pytest.mark.parametrize("path,dialed", [
-    ("/a/../ready", "/ready"), ("/a/./b", "/a/b"), ("/../x", "/x"), ("/ready", "/ready"), ("/a//b", "/a//b"),
+    ("/a/../ready", "/ready"), ("/a/./b", "/a/b"), ("/../x", "/x"), ("/ready", "/ready"),
 ])
 def test_the_dialed_path_is_what_the_readers_and_the_http_client_request(path, dialed):
     from gateway import url_binding
 
     assert url_binding.dialed_path(path) == dialed
     assert httpx.URL(f"http://h.invalid:9{path}").path == dialed, "the same resolution the HTTP client applies"
+
+
+def test_an_empty_segment_has_no_single_destination_because_urljoin_collapses_it_and_the_client_keeps_it():
+    from gateway import url_binding
+
+    assert url_binding.dialed_path("/a//b") is None
 
 
 def test_a_path_that_ends_in_a_dot_segment_has_no_single_destination():

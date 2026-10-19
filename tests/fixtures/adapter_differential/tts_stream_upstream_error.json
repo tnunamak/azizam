@@ -19,10 +19,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"error\": {\"type\": \"rate_limited\", \"message\": \"slow down\"}}"
+          "text": "{\"error\": {\"message\": \"The engine is busy or limiting requests. Try again later.\", \"type\": \"rate_limited\", \"param\": null, \"code\": null}}"
         },
         "headers": {
-          "content-length": "59",
+          "content-length": "136",
           "content-type": "application/json",
           "retry-after": "7",
           "x-request-id": "<req:1>"

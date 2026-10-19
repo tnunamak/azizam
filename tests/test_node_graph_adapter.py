@@ -143,13 +143,14 @@ def test_a_view_reply_never_parses_json() -> None:
     (httpx.ReadTimeout("slow"), "timeout"), (httpx.ConnectTimeout("slow"), "timeout"),
     (httpx.ConnectError("refused"), "unreachable"), (httpx.RemoteProtocolError("dropped"), "aborted"),
 ])
-def test_transport_errors_are_typed_failures_with_the_original_text(error: Exception, kind: str) -> None:
+def test_transport_errors_are_typed_failures_that_name_the_class_and_not_the_text(error: Exception, kind: str) -> None:
     def fail(method, url, kwargs):
         raise error
 
     with pytest.raises(TransportFailure) as raised:
         run(session(RecordingClient(fail)).queue())
-    assert raised.value.kind == kind and str(raised.value) == str(error) and raised.value.__cause__ is error
+    assert raised.value.kind == kind and raised.value.__cause__ is error
+    assert type(error).__name__ in str(raised.value) and str(error) not in str(raised.value)  # decision D44
 
 
 def test_an_error_that_is_not_from_httpx_passes_through_unchanged() -> None:
@@ -193,7 +194,8 @@ def test_submit_names_a_refusal_and_a_missing_prompt_id() -> None:
 
     with pytest.raises(UpstreamError) as refused:
         run(go(RecordingClient(lambda m, u, k: Response(400, content=b"bad prompt"))))
-    assert (refused.value.status, str(refused.value)) == (400, "bad prompt")
+    # what the engine said is kept apart from the error's text (decision D44)
+    assert (refused.value.status, str(refused.value), refused.value.excerpt) == (400, "The prompt answered HTTP 400.", "bad prompt")
     with pytest.raises(MalformedResponse):
         run(go(RecordingClient(lambda m, u, k: Response(200, {"node_errors": {}}))))
     with pytest.raises(UnknownOperation):
@@ -316,7 +318,7 @@ def test_health_is_failing_when_the_engine_cannot_be_reached(fake_upstreams) -> 
 
     serve(fake_upstreams, refuse)
     health = run(NodeGraphAdapter().health(CONN))
-    assert health.state == "failing" and health.detail.startswith("unreachable")
+    assert health.state == "failing" and health.detail.startswith("unreachable") and "refused" not in health.detail
 
 
 # --- what the engine's answers mean ------------------------------------------------------------------------------
@@ -330,7 +332,9 @@ def test_health_is_failing_when_the_engine_cannot_be_reached(fake_upstreams) -> 
     ({"status": {"messages": [["execution_error", {}]]}}, "L execution error: execution failed"),
     ({"status": {"messages": [["execution_error", {"node_id": " 4 "}]]}}, "L node 4: execution failed"),
     ({"status": {"messages": [["execution_error", {"node_type": "VAEDecode"}]]}}, "L VAEDecode: execution failed"),
-    ({"status": {"messages": [["execution_error", {"node_type": "X" * 600, "node_id": "1"}]]}}, ("L " + "X" * 600 + " node 1: execution failed")[:500]),
+    # a node type that is not a short plain label is the engine's text and is not repeated
+    ({"status": {"messages": [["execution_error", {"node_type": "X" * 600, "node_id": "1"}]]}}, "L node 1: execution failed"),
+    ({"status": {"messages": [["execution_error", {"node_type": "A node: bad key sk-1", "node_id": "1"}]]}}, "L node 1: execution failed"),
     ({"status": "weird"}, None),
 ])
 def test_execution_errors_read_as_they_always_did(job: Any, expected: str | None) -> None:

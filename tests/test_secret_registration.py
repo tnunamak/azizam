@@ -19,7 +19,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-REGISTERS = {"remember", "env_secret", "resolve"}
+REGISTERS = {"remember", "add", "hold", "env_secret", "resolve", "_remember_config_secret"}
 # A name that says its value is a credential. It decides what a literal environment name, a configuration key or a
 # configuration attribute is: ``os.environ.get("OPENAI_API_KEY")`` and ``cfg.client_secret`` read a secret as surely as
 # ``os.environ.get(name)`` does.

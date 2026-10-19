@@ -57,10 +57,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"error\": {\"message\": \"Image upload failed: {\\\"error\\\": \\\"disk full\\\"}\", \"type\": \"api_error\"}}"
+          "text": "{\"error\": {\"message\": \"Image upload failed: the engine refused the file.\", \"type\": \"api_error\", \"param\": null, \"code\": null}}"
         },
         "headers": {
-          "content-length": "94",
+          "content-length": "125",
           "content-type": "application/json"
         },
         "status": 502

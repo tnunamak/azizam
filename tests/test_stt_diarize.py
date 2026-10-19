@@ -90,12 +90,13 @@ class DiarizeRoutingTests(SttCase):
         kinds = [json.loads(line[6:])["type"] for line in resp.text.splitlines() if line.startswith("data: {")]
         self.assertEqual(kinds, ["transcript.text.delta", "transcript.text.segment", "transcript.text.done"])
 
-    def test_service_400_is_returned_as_is(self) -> None:
+    def test_service_400_keeps_its_machine_fields_and_none_of_its_words(self) -> None:
         error = {"error": {"message": "known speakers", "type": "invalid_request_error", "param": "known_speaker_names[]", "code": "invalid_known_speakers"}}
         self.use_upstream(lambda r: httpx.Response(400, json=error))
         resp = self._post([("model", "gpt-4o-transcribe-diarize"), ("known_speaker_names[]", "a")])
         self.assertEqual(resp.status_code, 400)
-        self.assertEqual(resp.json(), error)
+        # the engine's message is replaced by the gateway's sentence (decision D44)
+        self.assertEqual(resp.json(), {"error": {**error["error"], "message": "The engine rejected the request."}})
 
 
 class DiarizeNotDeployedTests(SttCase):

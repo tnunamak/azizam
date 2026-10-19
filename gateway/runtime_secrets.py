@@ -54,7 +54,6 @@ class StructuredEnvValue(SecretUnavailable):
 remember = log_scrub.remember
 env_secret = log_scrub.env_secret
 scrub = log_scrub.scrub
-_RESOLVED = log_scrub._RESOLVED
 describe_error = log_scrub.describe_error
 
 

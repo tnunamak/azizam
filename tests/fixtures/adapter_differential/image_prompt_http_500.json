@@ -19,10 +19,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"error\": {\"message\": \"ComfyUI error: {\\\"error\\\": {\\\"type\\\": \\\"server_error\\\", \\\"message\\\": \\\"boom\\\"}}\", \"type\": \"api_error\"}}"
+          "text": "{\"error\": {\"message\": \"ComfyUI: The engine refused this request.\", \"type\": \"api_error\", \"param\": null, \"code\": null}}"
         },
         "headers": {
-          "content-length": "126",
+          "content-length": "117",
           "content-type": "application/json"
         },
         "status": 502

@@ -10,7 +10,6 @@ knows the origin a credential is bound to.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import AsyncIterator, Protocol
 
@@ -19,20 +18,6 @@ import httpx
 from gateway import engine_check
 from gateway.engine_protocol.errors import TransportFailure
 from gateway.engine_protocol.types import Timeouts
-
-
-class _HideQuery(logging.Filter):
-    """httpx logs every request URL at INFO. A key sent as a query value is in that URL, so the query is never logged."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        if isinstance(record.args, tuple):
-            record.args = tuple(arg.copy_with(query=b"hidden") if isinstance(arg, httpx.URL) and arg.query else arg for arg in record.args)
-        return True
-
-
-_httpx_log = logging.getLogger("httpx")
-if not any(isinstance(f, _HideQuery) for f in _httpx_log.filters):
-    _httpx_log.addFilter(_HideQuery())
 
 
 @dataclass(frozen=True)
@@ -73,9 +58,9 @@ class _HttpxResponse:
             async for chunk in source:
                 yield chunk
         except httpx.TimeoutException as exc:
-            raise TransportFailure("timeout", f"The engine stopped sending: {exc or type(exc).__name__}") from None
+            raise TransportFailure("timeout", f"The engine stopped sending ({type(exc).__name__}).") from None
         except httpx.HTTPError as exc:
-            raise TransportFailure("aborted", f"The connection to the engine broke: {exc or type(exc).__name__}") from None
+            raise TransportFailure("aborted", f"The connection to the engine broke ({type(exc).__name__}).") from None
 
     async def aclose(self) -> None:
         if not self._closed:
@@ -116,14 +101,15 @@ class HttpxTransport:
             response = await client.send(built, stream=True)
         except httpx.TimeoutException as exc:
             await client.aclose()
-            raise TransportFailure("timeout", f"The engine did not answer in time: {exc or type(exc).__name__}") from None
+            raise TransportFailure("timeout", f"The engine did not answer in time ({type(exc).__name__}).") from None
         except httpx.ConnectError as exc:
             await client.aclose()
-            kind, detail = engine_check.connect_failure(exc)
-            raise TransportFailure("unreachable" if kind == "refused" else kind, f"Azizam could not connect to the engine: {detail}") from None
+            kind, _ = engine_check.connect_failure(exc)  # the text is the system's and the engine's; only the kind is kept
+            said = {"dns": "its name could not be resolved", "tls": "the secure connection failed"}.get(kind, "it refused the connection")
+            raise TransportFailure("unreachable" if kind == "refused" else kind, f"Azizam could not connect to the engine: {said}.") from None
         except httpx.HTTPError as exc:
             await client.aclose()
-            raise TransportFailure("aborted", f"The connection to the engine failed: {exc or type(exc).__name__}") from None
+            raise TransportFailure("aborted", f"The connection to the engine failed ({type(exc).__name__}).") from None
         except BaseException:
             await client.aclose()
             raise

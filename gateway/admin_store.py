@@ -31,7 +31,7 @@ of scope here — this module is the durable substrate those routes call into.
 
 from __future__ import annotations
 
-from gateway import request_connections
+from gateway import request_connections, secret_store
 from gateway.compat import get_env
 from gateway.sqlite_startup import check_quarantine_pending, connect, store_startup
 
@@ -869,13 +869,16 @@ def transaction(path: Path = DB_PATH):
     """Commit every write made through the yielded ``Transaction``, or none of them."""
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        secret_store.transaction_begun(conn)
         tx = Transaction(conn)
         try:
             yield tx
             conn.commit()
         except BaseException:
             conn.rollback()
+            secret_store.transaction_ended(conn, False)
             raise
+        secret_store.transaction_ended(conn, True)
     failures: list[BaseException] = []
     for action in tx._after_commit:
         try:

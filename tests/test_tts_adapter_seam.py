@@ -81,21 +81,23 @@ class SpeechSeamTests(RouteCase):
         self._use(Refusing(TransportFailure("unreachable", "refused")))
         resp = self.client.post("/v1/audio/speech", json={"model": "tts-fast", "voice": "alloy", "input": "x", "response_format": "wav"})
         self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (502, "tts_backend_unavailable"))
-        self.assertRegex(resp.json()["error"]["message"], r"^TTS backend unavailable at http://127\.0\.0\.1:\d+$")
+        self.assertEqual(resp.json()["error"]["message"], "TTS backend unavailable.")  # no address: it can hold a credential (decision D44)
 
-    def test_any_other_failure_keeps_its_original_text(self) -> None:
+    def test_any_other_failure_does_not_repeat_its_text(self) -> None:
         self._use(Refusing(TransportFailure("aborted", "weird failure")))
         resp = self.client.post("/v1/audio/speech", json={"model": "tts-fast", "voice": "alloy", "input": "x", "response_format": "wav"})
-        self.assertEqual((resp.status_code, resp.json()["error"]["message"]), (502, "TTS proxy error: weird failure"))
+        self.assertEqual((resp.status_code, resp.json()["error"]["message"]), (502, "TTS proxy error."))
 
-    def test_a_refused_stream_start_keeps_status_body_and_retry_after(self) -> None:
+    def test_a_refused_stream_start_keeps_status_and_retry_after_and_not_the_engines_words(self) -> None:
         class Refused(inline_tts.InlineTtsAdapter):
             async def invoke(self, conn, op, request):
                 return Reply(429, {"content-type": "application/json", "retry-after": "7"}, raw=b'{"error":"slow down"}')
         self._use(Refused())
         self.cfg["model_aliases"]["speech"]["engines"]["supertonic"]["native_sample_rate"] = 24000
         resp = self.client.post("/v1/audio/speech", json={"model": "supertonic", "voice": "alloy", "input": "x", "response_format": "pcm"})
-        self.assertEqual((resp.status_code, resp.headers["retry-after"], resp.content), (429, "7", b'{"error":"slow down"}'))
+        self.assertEqual((resp.status_code, resp.headers["retry-after"]), (429, "7"))
+        self.assertNotIn(b"slow down", resp.content)
+        self.assertEqual(resp.json()["error"]["message"], "The engine is busy or limiting requests. Try again later.")
 
 
 class Answering(inline_tts.InlineTtsAdapter):
@@ -183,11 +185,11 @@ class VoiceOperationTests(RouteCase):
         self.assertEqual(conn.address, f"http://{backend['host']}:{backend['port']}")
         self.assertEqual((conn.timeouts.connect_s, conn.timeouts.first_byte_s), (10, 180))
 
-    def test_voice_design_failures_keep_their_texts(self) -> None:
+    def test_voice_design_failures_say_what_failed_in_our_words(self) -> None:
         from gateway import custom_voices
         self.cfg["voices"] = {"design_engine": "omnivoice"}
         for answer, expected in (
-            (TransportFailure("timeout", "read timed out"), (502, "backend_error", "Voice design failed: read timed out")),
+            (TransportFailure("timeout", "read timed out"), (502, "backend_error", "Voice design failed.")),  # the transport text is not repeated (D44)
             (Reply(400, {}, raw=b"no"), (400, "invalid_prompt", "The voice design engine rejected this description.")),
             (Reply(500, {}, raw=b"no"), (502, "backend_error", "Voice design failed with HTTP 500.")),
         ):

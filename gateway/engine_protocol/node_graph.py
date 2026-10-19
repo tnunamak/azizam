@@ -31,12 +31,15 @@ connection, as one client did before.
 
 from __future__ import annotations
 
+import re
 import json
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Callable, Mapping, Sequence
 from urllib.parse import quote
 
 import httpx
+
+from gateway import log_scrub
 
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION
 from gateway.engine_protocol.assets import AssetStore, served_media_type
@@ -68,6 +71,15 @@ _DEFAULT_LABEL = "the engine"
 # ---------------------------------------------------------------------------
 
 
+_LABEL_TOKEN = re.compile(r"[A-Za-z0-9_.\- ]{1,64}")
+
+
+def _label_token(value: Any) -> str:
+    """A node type or id the engine named, kept only when it is a short plain label (it is the engine's text)."""
+    text = str(value or "").strip()
+    return text if _LABEL_TOKEN.fullmatch(text) else ""
+
+
 def execution_error_message(job: Mapping[str, Any] | None, label: str = _DEFAULT_LABEL) -> str | None:
     """A safe, short summary of an execution error in a history entry, or ``None``."""
     status_block = (job or {}).get("status", {}) if isinstance(job, Mapping) else {}
@@ -79,8 +91,8 @@ def execution_error_message(job: Mapping[str, Any] | None, label: str = _DEFAULT
         if not (isinstance(msg, (list, tuple)) and msg and msg[0] == "execution_error"):
             continue
         payload = msg[1] if len(msg) > 1 and isinstance(msg[1], Mapping) else {}
-        node_type = str(payload.get("node_type") or "").strip()
-        node_id = str(payload.get("node_id") or "").strip()
+        node_type = _label_token(payload.get("node_type"))
+        node_id = _label_token(payload.get("node_id"))
 
         location = f"{label} execution error"
         if node_type and node_id:
@@ -345,7 +357,7 @@ class NodeGraphAdapter:
     # --- caller-facing messages (the engine's name is data) -----------------------------------
 
     def unavailable_message(self, conn: Connection) -> str:
-        return f"{self.label} unavailable at {conn.address}"
+        return f"{self.label} unavailable at {log_scrub.describe_origin(conn.address)}"
 
     # --- the interface ----------------------------------------------------------------------
 
@@ -354,7 +366,7 @@ class NodeGraphAdapter:
             async with self._use(conn, None) as session:
                 reply = await session.stats(timeout=CONTROL_TIMEOUT_S)
         except TransportFailure as error:
-            return Health("failing", f"{error.kind}: {error}", "graph.stats")
+            return Health("failing", f"{error.kind}: {error}", "graph.stats")  # a TransportFailure message is ours
         if reply.status == 200:
             return Health("ok", "", "graph.stats")
         return Health("failing", f"HTTP {reply.status}", "graph.stats")
@@ -403,7 +415,7 @@ class NodeGraphAdapter:
         reply = await self.invoke(conn, op, request)
         assert isinstance(reply, WireReply)
         if reply.status != 200:
-            raise UpstreamError(reply.status, reply.text or "", body=reply.raw or b"")
+            raise UpstreamError(reply.status, f"The prompt answered HTTP {reply.status}.", body=reply.raw or b"", excerpt=reply.text or "")
         prompt_id = reply.json().get("prompt_id")
         if not prompt_id:
             raise MalformedResponse("No prompt_id returned")
@@ -541,10 +553,10 @@ class NodeGraphAdapter:
                 info = decode_output(handle)
                 reply = await use.view(view_params(info))
                 if reply.status != 200 or not reply.raw:
-                    raise UpstreamError(reply.status, f"The file '{info.get('filename')}' could not be read.")
+                    raise UpstreamError(reply.status, "An output file could not be read.")
                 content_type = served_media_type(reply.headers.get("content-type"), reply.raw[:16])
                 if content_type is None:
-                    raise MalformedResponse(f"The file '{info.get('filename')}' is not a media type that is served.")
+                    raise MalformedResponse("An output file is not a media type that is served.")
 
                 async def chunks(data: bytes = reply.raw) -> AsyncIterator[bytes]:
                     yield data

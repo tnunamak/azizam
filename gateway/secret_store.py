@@ -8,6 +8,7 @@ import secrets
 import sqlite3
 import stat
 import tempfile
+import threading
 import time
 import fcntl
 import hashlib
@@ -22,6 +23,36 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from gateway import log_scrub, sqlite_startup
 
 DEFAULT_KEY_FILE = "provider-secrets.key"
+
+# What must wait for a commit: the scrubber forgets a deleted secret only once its deletion is durable (a rolled-back
+# deletion leaves the secret stored and so still to be scrubbed). Keyed by connection; the connection is held so its id
+# is not reused. Holds no secret value. ``transaction_begun`` drops what a transaction nobody settled left behind.
+_PENDING: "dict[int, tuple[sqlite3.Connection, list[Callable[[], None]]]]" = {}
+_PENDING_LOCK = threading.Lock()
+
+
+def transaction_begun(conn: sqlite3.Connection) -> None:
+    """A new write transaction starts on ``conn``: whatever an earlier, unsettled one deferred is dropped."""
+    with _PENDING_LOCK:
+        _PENDING.pop(id(conn), None)
+
+
+def transaction_ended(conn: sqlite3.Connection, committed: bool) -> None:
+    """The write transaction on ``conn`` committed (the deferred actions run) or rolled back (they are dropped)."""
+    with _PENDING_LOCK:
+        _, actions = _PENDING.pop(id(conn), (conn, []))
+    if committed:
+        for action in actions:
+            action()
+
+
+def _after_commit(conn: sqlite3.Connection | None, action: Callable[[], None]) -> None:
+    """Run ``action`` now (no caller transaction; the caller has committed) or once the caller's transaction commits."""
+    if conn is None:
+        action()
+        return
+    with _PENDING_LOCK:
+        _PENDING.setdefault(id(conn), (conn, []))[1].append(action)
 
 
 @contextmanager
@@ -133,6 +164,9 @@ def put_provider_secret(secret_id: str, value: str, *, db_path: Path, key_path: 
         with closing(sqlite_startup.connect(db_path)) as own:
             own.execute(insert, row)
             own.commit()
+    # Registered at once, committed or not: a value that was never stored is scrubbed for nothing, and a rolled-back
+    # replacement leaves the stored value in the retired ones. The registry never drops a value because of this call.
+    log_scrub.hold(log_scrub.secret_source(secret_id), [value])
     return SecretStatus(secret_id, "set", suffix, timestamp)
 
 
@@ -196,6 +230,7 @@ def bind_provider_secrets(items: "list[tuple[str, Any]]", *, db_path: Path, guar
     with closing(sqlite_startup.connect(db_path)) as conn:
         try:
             conn.execute("BEGIN IMMEDIATE")
+            transaction_begun(conn)
             if guard is not None:
                 guard(conn)
             for secret_id, origin in items:
@@ -210,21 +245,25 @@ def bind_provider_secrets(items: "list[tuple[str, Any]]", *, db_path: Path, guar
             conn.commit()
         except BaseException:
             conn.rollback()
+            transaction_ended(conn, False)
             raise
+        transaction_ended(conn, True)
     return changed
 
 
 def delete_provider_secret(secret_id: str, *, db_path: Path, conn: sqlite3.Connection | None = None) -> SecretStatus:
     """Delete one secret. With ``conn``, delete inside the caller's open transaction (see :func:`put_provider_secret`)."""
     secret_id = _normalize_secret_id(secret_id)
-    log_scrub.forget(secret_id)  # the registry is bounded by the secrets that exist
+    forget = lambda: log_scrub.forget(log_scrub.secret_source(secret_id))  # noqa: E731 - the registry is bounded by the secrets that exist
     if conn is not None:
         conn.execute("DELETE FROM provider_secrets WHERE id = ?", (secret_id,))
+        _after_commit(conn, forget)  # not before the caller's commit: a rollback leaves the secret stored
         return SecretStatus(secret_id, "missing", None, None)
     ensure_provider_secret_schema(db_path)
     with closing(sqlite_startup.connect(db_path)) as own:
         own.execute("DELETE FROM provider_secrets WHERE id = ?", (secret_id,))
         own.commit()
+    _after_commit(None, forget)
     return SecretStatus(secret_id, "missing", None, None)
 
 

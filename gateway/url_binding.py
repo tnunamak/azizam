@@ -152,33 +152,76 @@ def binding_marks(record: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(marks))
 
 
-def dialed_path(path: str) -> str | None:
-    """The path a reader requests for ``path``, with dot segments resolved; ``None`` when the readers do not agree on it.
+def dialed_path(path: str, base_path: str = "") -> str | None:
+    """The path a reader requests for ``path`` joined onto a base whose path is ``base_path``, dot segments resolved.
 
-    A reader joins the field to its base with ``urljoin`` (which resolves dot segments) or by concatenation (the HTTP client
-    then resolves them); both give ``/a/../ready`` as ``/ready``. They differ only for a path that ends in a dot segment
-    (``/a/b/..``: ``/a/`` or ``/a``), and such a path has no single destination to show. The destination the owner reviews uses
-    this, so what is shown is what is dialed.
+    A reader puts the field on its base in one of two ways: by concatenation (``base + path``, then the HTTP client resolves
+    the dot segments) or with ``urljoin`` on the base and the path without its leading slash. Both keep the base's own path
+    (``/prefix`` + ``/a/../ready`` is ``/prefix/ready``, never ``/ready``). They differ only for a path that ends in a dot
+    segment (``/a/b/..``: ``/a/`` or ``/a``), and such a path has no single destination to show: ``None``. The destination
+    the owner reviews uses this, so what is shown is what is dialed. An absolute field has no base: pass ``base_path=""``.
     """
-    joined = urlsplit(urljoin("http://x.invalid/", path)).path or ("/" if path.startswith("/") else "")
-    client = httpx.URL("http://x.invalid" + (path if path.startswith("/") else "/" + path)).path
+    prefix = base_path.rstrip("/") if path.startswith("/") else ""
+    joined = urlsplit(urljoin(f"http://x.invalid{prefix}/", path.lstrip("/"))).path or ("/" if path.startswith("/") else "")
+    client = httpx.URL(f"http://x.invalid{prefix}" + (path if path.startswith("/") else "/" + path)).path
     return joined if joined == client else None
 
 
-def destination(public: Any, base: Any = None) -> str | None:
+def dial_bases(record: Mapping[str, Any], path: str) -> tuple[str, ...]:
+    """Every base the readers of the URL field at ``path`` join it onto: one entry per way they differ.
+
+    An observation is joined onto its connection address; a driver key onto the address the driver dials (host and port, else
+    the origin of the base URL). Any other path field (a health endpoint, the context-window probe) is read by readers that
+    differ: some dial the server root (``scheme://host:port``) and some keep the path of an explicit base URL
+    (``base_url``, ``api_base``, ``default_base_url``). Both are returned when both exist, and ``destination`` shows an
+    address only when they agree on it.
+    """
+    config = record.get("config") if isinstance(record.get("config"), Mapping) else {}
+    if path.startswith("observations.") or ".driver_config." in f".{path}":
+        return (base_of(record, path),)
+    explicit = next((str(config.get(key) or "").strip().rstrip("/") for key in ("base_url", "api_base", "default_base_url")
+                     if str(config.get(key) or "").strip()), "")
+    host, port = str(config.get("host") or "").strip(), config.get("port")
+    root = ""
+    if host and port not in (None, ""):
+        root = f"{str(config.get('scheme') or 'http').strip() or 'http'}://{host if ':' not in host or host.startswith('[') else f'[{host}]'}:{port}"
+    found = tuple(dict.fromkeys(base for base in (root, explicit) if base))
+    return found or (base_of(record, path),)
+
+
+def destination(public: Any, base: Any = None, bases: "tuple[str, ...] | None" = None) -> str | None:
     """The address the owner reviews before credentials are bound to it: ``scheme://host:port`` and the path, no more.
 
-    It is the field's effective origin (normalized: lower case, the port always written) followed by the path of the field's
-    public text. It carries no user info, no query and no fragment, so it is never a credential. ``None`` for a field that
-    has no origin. The credentials are bound to the origin; the path is shown so the owner sees where on it a request goes.
+    It is the field's effective origin (normalized: lower case, the port always written) followed by the path the readers
+    dial: the path of the field's public text joined onto the path of each base they join it onto (``bases``, else
+    ``base``; an absolute field has none), dot segments resolved (see ``dialed_path``). It carries no user info, no query
+    and no fragment, so it is never a credential. ``None`` for a field that has no origin, and for one whose readers do not
+    agree on the path (the owner enters the credentials again instead of confirming an address one reader would not dial).
+    The credentials are bound to the origin; the path is shown so the owner sees where on it a request goes.
     """
     origin = field_origin(public, base)
     if origin is None:
         return None
     text = str(public or "").strip()
-    path = urlsplit(text).path if is_absolute(text) else re.split(r"[?#]", text, maxsplit=1)[0]
-    resolved = dialed_path(path)
+    if is_absolute(text):
+        resolved = dialed_path(urlsplit(text).path)
+    else:
+        route = re.split(r"[?#]", text, maxsplit=1)[0]
+        paths = {dialed_path(route, _path_of(each)) for each in (bases or (base,))}
+        resolved = next(iter(paths)) if len(paths) == 1 else None
     return None if resolved is None else origin + resolved
+
+
+def destination_of(record: Mapping[str, Any], path: str, public: Any) -> str | None:
+    """``destination`` of the URL field at ``path`` of ``record`` as the readers of that field dial it."""
+    return destination(public, base_of(record, path), dial_bases(record, path))
+
+
+def _path_of(base: Any) -> str:
+    try:
+        return urlsplit(str(base or "").strip()).path
+    except ValueError:
+        return ""
 
 
 def credential_states(record: Mapping[str, Any], origin_of_ref: Callable[[str], str | None]) -> list[dict[str, Any]]:
@@ -203,6 +246,6 @@ def credential_states(record: Mapping[str, Any], origin_of_ref: Callable[[str], 
         if whole:
             row.update(destination=None, reenter=True)
         else:
-            row.update(destination=destination(parent.get(key), base_of(record, path)), reenter=False)
+            row.update(destination=destination_of(record, path, parent.get(key)), reenter=False)
         states.append(row)
     return states

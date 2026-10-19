@@ -16,7 +16,10 @@ Features:
 """
 
 from gateway.compat import get_env
-from gateway import log_scrub
+from gateway import client_errors, log_egress, log_scrub
+
+# Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
+log_egress.install()
 
 import asyncio
 import shutil
@@ -2446,14 +2449,18 @@ def pop_header(headers: dict, header_name: str):
             headers.pop(key, None)
 
 
-def resolve_secret_value(value) -> str:
-    """Resolve a literal or env-backed secret value from auth config."""
+def resolve_secret_value(value, source: str = "config:downstream") -> str:
+    """Resolve a literal or env-backed secret value from auth config.
+
+    ``source`` names where the value is configured (a downstream secret name or header name), never the value: a literal
+    is registered for the log scrub under that stable name (decision D44).
+    """
     if isinstance(value, dict):
         secret = value.get("value", "")
         env_name = value.get("env", "")
         if env_name:
             secret = get_env(env_name, secret)
-        _remember_config_secret(secret, env_name)
+        _remember_config_secret(secret, env_name, source)
         prefix = value.get("prefix", "")
         if prefix and secret:
             return f"{prefix} {secret}"
@@ -2463,26 +2470,40 @@ def resolve_secret_value(value) -> str:
         return log_scrub.env_secret(value.removeprefix("env:"))
 
     literal = str(value or "")
-    _remember_config_secret(literal, "")
+    _remember_config_secret(literal, "", source)
     return literal
 
 
-def _remember_config_secret(secret: Any, env_name: str) -> None:
-    """Register a secret from the auth configuration (a literal, or the value of the variable that overrides it)."""
+def _remember_config_secret(secret: Any, env_name: str, source: str) -> None:
+    """Register a secret from the auth configuration (a literal, or the value of the variable that overrides it).
+
+    The source is a configured name, never a hash of the value, so the registry does not grow with the values it has seen:
+    a literal that changes replaces the one before it (the last few stay, an upstream may still echo them).
+    """
     text = str(secret or "")
-    log_scrub.remember(text, f"env:{env_name}" if env_name else "config:" + hashlib.sha256(text.encode()).hexdigest()[:16])
+    log_scrub.remember(text, f"env:{env_name}" if env_name else source)
+
+
+class _ConfiguredService(dict):
+    """A service's downstream configuration for one identity, which names where it is configured (the scrub's source)."""
+
+    source = "config:downstream"
 
 
 def service_auth_config(auth_context: AuthContext, service: str) -> dict:
     if not auth_context.identity:
         return {}
     service_cfg = auth_context.identity.downstream.get(service, {})
-    return service_cfg if isinstance(service_cfg, dict) else {}
+    if not isinstance(service_cfg, dict):
+        return {}
+    labelled = _ConfiguredService(service_cfg)
+    labelled.source = f"config:{auth_context.identity.name}:{service}"
+    return labelled
 
 
 def downstream_secret(service_cfg: dict, name: str, default: str = "") -> str:
     if name in service_cfg:
-        return resolve_secret_value(service_cfg[name])
+        return resolve_secret_value(service_cfg[name], f"{getattr(service_cfg, 'source', 'config:downstream')}:{name}")
 
     env_name = service_cfg.get(f"{name}_env", "")
     if env_name:
@@ -2497,7 +2518,8 @@ def apply_configured_downstream_headers(headers: dict, service_cfg: dict):
         return
 
     for header_name, header_value in configured_headers.items():
-        resolved_value = resolve_secret_value(header_value)
+        resolved_value = resolve_secret_value(
+            header_value, f"{getattr(service_cfg, 'source', 'config:downstream')}:header:{str(header_name).lower()}")
         if resolved_value:
             headers[str(header_name)] = resolved_value
 
@@ -3956,7 +3978,7 @@ async def _design_voice(instruct: str, script: str, seed: int) -> bytes:
                 _voice_design_settings(), script=script, instructions=instruct, seed=seed)),
         )
     except TransportFailure as exc:
-        raise custom_voices.VoiceError(502, "backend_error", f"Voice design failed: {exc}") from exc
+        raise custom_voices.VoiceError(502, "backend_error", "Voice design failed.") from exc
     if resp.status == 400:
         raise custom_voices.VoiceError(400, "invalid_prompt", "The voice design engine rejected this description.", param="prompt")
     if resp.status != 200:
@@ -4128,20 +4150,15 @@ async def _stream_tts_upstream(
                 if _speech_allocation_failed(refused.status, refused.raw.decode("utf-8", "replace")):
                     return _tts_gpu_memory_response()
                 retry_after = refused.headers.get("retry-after")
-                return Response(
-                    content=refused.raw,
-                    status_code=refused.status,
-                    media_type=refused.headers.get("content-type", "application/json"),
-                    headers={"Retry-After": retry_after} if retry_after else None,
-                )
+                return client_errors.upstream_error_response(refused.status, refused.raw, refused.headers)
         except TransportFailure as e:
             if e.kind == "timeout":
                 return _tts_error("TTS request timeout", 504)
             if e.kind == "unreachable":
-                return _tts_error(f"TTS backend unavailable at {url}", 502, "tts_backend_unavailable")
-            return _tts_error(f"TTS proxy error: {e}", 502)
-        except Exception as e:  # noqa: BLE001
-            return _tts_error(f"TTS proxy error: {e}", 502)
+                return _tts_error("TTS backend unavailable.", 502, "tts_backend_unavailable")
+            return _tts_error("TTS proxy error.", 502)
+        except Exception:  # noqa: BLE001
+            return _tts_error("TTS proxy error.", 502)
 
         # An engine that loads its model lazily (a cold audio.cpp or Python unit) sends "200 chunked"
         # first and fails inside the stream when GPU0 is full, so the status alone cannot be
@@ -4441,9 +4458,9 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
                     requested_response_format,
                 )
                 content_type = TTS_RESPONSE_MEDIA_TYPES[requested_response_format]
-            except Exception as e:
+            except Exception:
                 return Response(
-                    content=json.dumps({"error": {"message": f"TTS audio conversion failed: {e}", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": "TTS audio conversion failed.", "type": "api_error"}}),
                     status_code=502,
                     media_type="application/json",
                 )
@@ -4451,9 +4468,9 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             try:
                 content = await asyncio.to_thread(convert_wav_to_mp3, resp.raw)
                 content_type = TTS_RESPONSE_MEDIA_TYPES["mp3"]
-            except Exception as e:
+            except Exception:
                 return Response(
-                    content=json.dumps({"error": {"message": f"TTS audio conversion failed: {e}", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": "TTS audio conversion failed.", "type": "api_error"}}),
                     status_code=502,
                     media_type="application/json",
                 )
@@ -4482,7 +4499,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
                     media_delivery.deliver_bytes, content, content_type, provenance.METADATA_NONE
                 )
             except media_metadata.MediaMetadataError as exc:
-                print(f"[proxy] speech metadata strip failed: {exc}", flush=True)
+                print(f"[proxy] speech metadata strip failed: {log_scrub.describe_error(exc)}", flush=True)
                 return _tts_error("Could not prepare audio for delivery", 502)
         return Response(
             content=content,
@@ -4494,10 +4511,10 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         if e.kind == "timeout":
             return _tts_error("TTS request timeout", 504)
         if e.kind == "unreachable":
-            return _tts_error(f"TTS backend unavailable at {_tts_host}", 502, "tts_backend_unavailable")
-        return _tts_error(f"TTS proxy error: {str(e)}", 502)
-    except Exception as e:
-        return _tts_error(f"TTS proxy error: {str(e)}", 502)
+            return _tts_error("TTS backend unavailable.", 502, "tts_backend_unavailable")
+        return _tts_error("TTS proxy error.", 502)
+    except Exception:
+        return _tts_error("TTS proxy error.", 502)
 
 
 # =============================================================================
@@ -4675,6 +4692,9 @@ def _speech_fallback_reason(response: Response) -> str | None:
     a timeout and any other 5xx are returned to the caller: another engine would not fix them.
     """
     status = response.status_code
+    tagged = getattr(response, "speech_failure", None)
+    if tagged:
+        return str(tagged)
     raw = getattr(response, "body", b"")
     text = raw[:4096].decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else ""
     try:
@@ -4950,6 +4970,12 @@ def _stt_receipt(
 
 def _stt_response_from_upstream(response: stt_chunking.UpstreamResponse) -> Response:
     """Return an upstream STT response without dropping safe response metadata."""
+    if response.status_code >= 400:
+        refusal = client_errors.upstream_error_response(response.status_code, response.body, response.headers)
+        # The engine's words decide whether the tier tries its next engine; they are not passed on (decision D44).
+        if _speech_allocation_failed(response.status_code, bytes(response.body or b"")[:4096].decode("utf-8", "replace")):
+            refusal.speech_failure = "gpu_oom"  # type: ignore[attr-defined]
+        return refusal
     headers = stt_chunking.filtered_response_headers(response.headers)
     body = response.body
     content_type = response.headers.get("content-type", "application/json")
@@ -5457,7 +5483,7 @@ def _derive_ui_workflow(api: Mapping[str, Any]) -> Optional[dict]:
     try:
         return node_ui_graph.derive_ui_workflow(api, _graph_node_info)
     except Exception as exc:  # noqa: BLE001 - never fail a render over metadata
-        print(f"[proxy] UI workflow derivation failed: {type(exc).__name__}: {exc}", flush=True)
+        print(f"[proxy] UI workflow derivation failed: {log_scrub.describe_error(exc)}", flush=True)
         return None
 
 
@@ -5846,7 +5872,7 @@ async def graph_vram_snapshot(
         total_i = int(total) if isinstance(total, (int, float)) else None
         return free_i, total_i
     except Exception as e:
-        print(f"[proxy] comfy_vram_snapshot: {e}", flush=True)
+        print(f"[proxy] comfy_vram_snapshot: {log_scrub.describe_error(e)}", flush=True)
         return None, None
 
 
@@ -6100,7 +6126,7 @@ class _VramProbe:
                 _sample_comfy_vram_bytes, self._comfy_pids, self._gpu0_uuid
             )
         except Exception as e:
-            self.error = f"{type(e).__name__}: {e}"
+            self.error = log_scrub.describe_error(e)
             comfy_used = None
 
         if isinstance(comfy_used, int):
@@ -6142,7 +6168,7 @@ class _VramProbe:
             # One final sample after stop to catch end-of-run state.
             await self._record_sample()
         except Exception as e:
-            self.error = f"{type(e).__name__}: {e}"
+            self.error = log_scrub.describe_error(e)
 
     def start(self) -> None:
         if self._task is None:
@@ -6155,7 +6181,7 @@ class _VramProbe:
             try:
                 await self._task
             except Exception as e:
-                self.error = f"{type(e).__name__}: {e}"
+                self.error = log_scrub.describe_error(e)
 
     # ----- whole-GPU view (legacy, for status "system pressure") -----------
 
@@ -6668,7 +6694,7 @@ async def decide_image_background_removal(
         async with httpx.AsyncClient(timeout=httpx.Timeout(IMAGE_BACKGROUND_REMOVAL_TIMEOUT, connect=5)) as client:
             resp = await client.post(f"{target_host}/v1/chat/completions", headers=headers, json=payload)
         if resp.status_code != 200:
-            return _background_removal_fallback("llm_error", f"HTTP {resp.status_code}: {resp.text[:120]}")
+            return _background_removal_fallback("llm_error", log_scrub.describe_response(resp, "the chat engine refused the request"))
         data = resp.json()
         content = (
             ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
@@ -6677,7 +6703,7 @@ async def decide_image_background_removal(
         )
         return parse_background_removal_decision(content, source="llm")
     except Exception as e:
-        return _background_removal_fallback("llm_error", str(e))
+        return _background_removal_fallback("llm_error", log_scrub.describe_error(e))
 
 
 def set_workflow_background_removal(workflow: dict, meta: dict, enabled: bool) -> bool:
@@ -7156,6 +7182,15 @@ def has_vision_content(messages) -> bool:
     return False
 
 
+def _says_out_of_memory(text: str, *, plain: bool = False) -> bool:
+    """Whether an engine's error text reports that it ran out of memory (the text decides a retry; it is never passed on).
+
+    ``plain`` leaves out the bare ``oom`` marker (it is in "boom"): the retry accepts it, the sentence to the caller does not.
+    """
+    lowered = str(text or "").lower()
+    return any(marker in lowered for marker in ("cuda out of memory", "cuda oom", "out of memory", *(() if plain else ("oom",))))
+
+
 def _graph_error_message(job: Mapping[str, Any] | None) -> str | None:
     """A safe, short summary of an execution error in a history entry, or None."""
     return node_graph.execution_error_message(job, _graph_adapter().label)
@@ -7233,7 +7268,7 @@ async def _graph_cancel(
         print(f"[proxy] {adapter.label} cancel failed for {prompt_id} after {reason}: HTTP {e.status}", flush=True)
         return False
     except Exception as e:
-        print(f"[proxy] {adapter.label} cancel failed for {prompt_id} after {reason}: {e}", flush=True)
+        print(f"[proxy] {adapter.label} cancel failed for {prompt_id} after {reason}: {log_scrub.describe_error(e)}", flush=True)
         return False
     print(f"[proxy] {adapter.label} prompt cancelled after {reason}: {prompt_id}", flush=True)
     return True
@@ -7371,11 +7406,13 @@ async def _graph_run_round(
                 media_type="application/json",
             ), []
         except ProtocolUpstreamError as e:
-            return Response(
-                content=json.dumps({"error": {"message": f"{engine} error: {e}", "type": "api_error"}}),
-                status_code=502,
-                media_type="application/json",
-            ), []
+            # What the engine said decides whether to free its memory and retry; it is never passed on (decision D44).
+            if _says_out_of_memory(e.excerpt, plain=True):
+                refused = client_errors.client_error(502, "upstream_out_of_memory", error_type="api_error", subject=engine)
+            else:
+                refused = client_errors.client_error(502, "upstream_refused", error_type="api_error", subject=engine)
+            refused.out_of_memory = _says_out_of_memory(e.excerpt)  # type: ignore[attr-defined]
+            return refused, []
         except ProtocolMalformedResponse:
             return Response(
                 content=json.dumps({"error": {"message": "No prompt_id returned", "type": "api_error"}}),
@@ -7681,7 +7718,7 @@ async def _generate_images_with_adaptive_batching(
                 error_text = str(((body.get("error") or {}).get("message") or "")).lower()
             except Exception:
                 error_text = ""
-            if any(marker in error_text for marker in ("cuda out of memory", "cuda oom", "out of memory", "oom")):
+            if getattr(err, "out_of_memory", False) or _says_out_of_memory(error_text):
                 models_freed = await _free_graph_models_if_idle(client)
                 if models_freed:
                     round_workflow = copy.deepcopy(base_workflow)
@@ -7885,16 +7922,7 @@ async def _generate_images_with_adaptive_batching(
         try:
             images_collected = [image_transform(raw) for raw in images_collected]
         except Exception as e:
-            return Response(
-                content=json.dumps({
-                    "error": {
-                        "message": f"Image post-processing failed: {e}",
-                        "type": "api_error",
-                    }
-                }),
-                status_code=502,
-                media_type="application/json",
-            )
+            return client_errors.client_error(502, "proxy_error", error_type="api_error", code="image_post_processing_failed")
 
     if warnings:
         # Single header, comma-joined per RFC 7234. Visible to the client.
@@ -8284,11 +8312,7 @@ async def proxy_graph_image_request(
         failure = _graph_failure_response(e)
         if failure is not None:
             return failure
-        return Response(
-            content=json.dumps({"error": {"message": f"{_graph_adapter().label} proxy error: {str(e)}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
+        return client_errors.client_error(502, "proxy_error", error_type="api_error", subject=_graph_adapter().label)
 
 
 # Multipart field names OpenAI clients use for edit reference image(s). The
@@ -8367,8 +8391,8 @@ async def _identity_edit_alias(
         return identity_api.error(400, getattr(exc, "code", "invalid_request"), str(exc), param=getattr(exc, "param", None), faces=getattr(exc, "faces", None))
     except (TypeError, ValueError) as exc:
         return identity_api.error(400, "invalid_option", f"invalid identity option: {exc}", param="extensions")
-    except (httpx.HTTPError, RuntimeError) as exc:
-        return identity_api.error(502, "identity_backend_error", f"identity workflow failed: {str(exc) or type(exc).__name__}")
+    except (httpx.HTTPError, RuntimeError):
+        return identity_api.error(502, "identity_backend_error", "identity workflow failed.")
 
 
 async def proxy_graph_image_edit_request(
@@ -8404,11 +8428,7 @@ async def proxy_graph_image_edit_request(
         form = await request.form()
     except Exception as e:
         _record_image_input(receipt, "body", rejected_reason="invalid_form")
-        return Response(
-            content=json.dumps({"error": {"message": f"Invalid form data: {e}", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json"
-        )
+        return client_errors.client_error(400, "invalid_form", error_type="invalid_request_error")
     for key, value in form.multi_items():
         if key in form_dict:
             continue
@@ -8698,11 +8718,7 @@ async def proxy_graph_image_edit_request(
             upload_resp = await graph.upload(files, headers=headers)
 
             if upload_resp.status != 200:
-                return Response(
-                    content=json.dumps({"error": {"message": f"Image upload failed: {upload_resp.text}", "type": "api_error"}}),
-                    status_code=502,
-                    media_type="application/json"
-                )
+                return client_errors.client_error(502, "upload_failed", error_type="api_error")
 
             upload_result = upload_resp.json()
             uploaded_filename = upload_result.get("name")
@@ -8768,11 +8784,7 @@ async def proxy_graph_image_edit_request(
                     headers=headers,
                 )
                 if extra_upload_resp.status != 200:
-                    return Response(
-                        content=json.dumps({"error": {"message": f"Image upload failed: {extra_upload_resp.text}", "type": "api_error"}}),
-                        status_code=502,
-                        media_type="application/json"
-                    )
+                    return client_errors.client_error(502, "upload_failed", error_type="api_error")
                 extra_upload_result = extra_upload_resp.json()
                 extra_filename = extra_upload_result.get("name")
                 if not extra_filename:
@@ -8797,11 +8809,7 @@ async def proxy_graph_image_edit_request(
                 mask_files = {"image": ("normalized-mask.png", mask_context.edit_mask, "image/png")}
                 mask_upload_resp = await graph.upload(mask_files, headers=headers)
                 if mask_upload_resp.status != 200:
-                    return Response(
-                        content=json.dumps({"error": {"message": f"Mask upload failed: {mask_upload_resp.text}", "type": "api_error"}}),
-                        status_code=502,
-                        media_type="application/json"
-                    )
+                    return client_errors.client_error(502, "mask_upload_failed", error_type="api_error")
                 mask_upload_result = mask_upload_resp.json()
                 uploaded_mask_filename = mask_upload_result.get("name")
                 if not uploaded_mask_filename:
@@ -8944,11 +8952,7 @@ async def proxy_graph_image_edit_request(
         failure = _graph_failure_response(e)
         if failure is not None:
             return failure
-        return Response(
-            content=json.dumps({"error": {"message": f"{_graph_adapter().label} edit error: {str(e)}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
+        return client_errors.client_error(502, "proxy_error", error_type="api_error", subject=_graph_adapter().label)
 
 
 # OpenAI's variations request has no prompt (unlike edits); there is no local
@@ -9028,11 +9032,7 @@ async def proxy_graph_image_variations_request(
         form = await request.form()
     except Exception as e:
         _record_image_input(receipt, "body", rejected_reason="invalid_form")
-        return Response(
-            content=json.dumps({"error": {"message": f"Invalid form data: {e}", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json"
-        )
+        return client_errors.client_error(400, "invalid_form", error_type="invalid_request_error")
 
     form_dict: dict[str, Any] = {}
     for key, value in form.multi_items():
@@ -9765,18 +9765,18 @@ async def _graph_ws_listener(stop_event: asyncio.Event) -> None:
                     try:
                         await _record_event(evt)
                     except Exception as e:
-                        print(f"[proxy] ws event handler error: {e}", flush=True)
+                        print(f"[proxy] ws event handler error: {log_scrub.describe_error(e)}", flush=True)
                     if time.time() - last_gc > 600:
                         await _gc_video_progress()
                         last_gc = time.time()
         except asyncio.CancelledError:
             raise
         except ProtocolUnsupportedByAdapter as e:
-            print(f"[proxy] {engine} ws listener disabled (websockets import failed: {e.__cause__})", flush=True)
+            print(f"[proxy] {engine} ws listener disabled (websockets import failed)", flush=True)
             return
         except Exception as e:
             _graph_ws_connected = False
-            print(f"[proxy] {engine} ws disconnected ({e}); reconnect in {backoff:.0f}s", flush=True)
+            print(f"[proxy] {engine} ws disconnected ({log_scrub.describe_error(e)}); reconnect in {backoff:.0f}s", flush=True)
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=backoff)
             except asyncio.TimeoutError:
@@ -10446,11 +10446,7 @@ async def _upload_video_workflow_assets(
                     )
                 block[name] = str(uploaded)
     except TransportFailure as exc:
-        return updated, Response(
-            content=json.dumps({"error": {"message": f"Asset upload failed: {exc}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json",
-        )
+        return updated, client_errors.client_error(502, "asset_upload_failed", error_type="api_error")
     extensions[WORKFLOW_EXTENSION_NAMESPACE] = block
     updated["extensions"] = extensions
     return updated, None
@@ -10500,12 +10496,7 @@ async def _submit_video_graph(
                 # Do NOT record _video_progress here: no prompt_id means there
                 # is nothing to reconcile against, and a partial entry would
                 # leak as a stale "running" job. Surface the error instead.
-                return Response(
-                    content=json.dumps({"error": {"message": f"{_graph_adapter('videos').label} error: {resp.text[:500]}",
-                                                  "type": "api_error"}}),
-                    status_code=502,
-                    media_type="application/json"
-                )
+                return client_errors.client_error(502, "upstream_refused", error_type="api_error", subject=_graph_adapter('videos').label)
             try:
                 result = resp.json()
             except Exception:
@@ -10684,11 +10675,7 @@ async def _submit_video_graph(
     except Exception as e:
         if isinstance(e, TransportFailure) and e.kind == "unreachable":
             return _graph_video_unavailable_response()
-        return Response(
-            content=json.dumps({"error": {"message": f"Video submit error: {str(e)}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
+        return client_errors.client_error(502, "video_failed", error_type="api_error")
 
 
 async def proxy_graph_video_create(
@@ -11185,25 +11172,10 @@ async def proxy_graph_video_create(
             async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10)) as upload_client:
                 files = {"image": (image_filename, image_bytes, "image/png")}
                 upload_resp = await _graph(upload_client, "videos").upload(files, headers=upload_headers)
-        except Exception as e:
-            return Response(
-                content=json.dumps({
-                    "error": {"message": f"Image upload failed: {e}", "type": "api_error"}
-                }),
-                status_code=502,
-                media_type="application/json"
-            )
+        except Exception:
+            return client_errors.client_error(502, "upload_failed", error_type="api_error")
         if upload_resp.status != 200:
-            return Response(
-                content=json.dumps({
-                    "error": {
-                        "message": f"{_graph_adapter('videos').label} image upload failed: {upload_resp.text[:300]}",
-                        "type": "api_error",
-                    }
-                }),
-                status_code=502,
-                media_type="application/json"
-            )
+            return client_errors.client_error(502, "upload_failed", error_type="api_error", subject=_graph_adapter('videos').label)
         try:
             uploaded_filename = upload_resp.json().get("name")
         except Exception:
@@ -11514,10 +11486,10 @@ async def _upload_graph_input(data: bytes, filename: str, mime: str, auth_contex
         async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
             resp = await _graph(client, "videos").upload({"image": (filename, data, mime)}, headers=headers)
     except TransportFailure as exc:
-        raise _VideoAssetError(f"{engine} upload failed: {exc}", status=502) from exc
+        raise _VideoAssetError(f"{engine} upload failed.", status=502) from exc
     name = resp.json().get("name") if resp.status == 200 else None
     if not name:
-        raise _VideoAssetError(f"{engine} upload failed: {_graph_reply_text(resp)[:200]}", status=502)
+        raise _VideoAssetError(f"{engine} upload failed.", status=502)
     return str(name)
 
 
@@ -11873,11 +11845,7 @@ async def proxy_graph_video_status(video_id: str, auth_context: AuthContext) -> 
     except Exception as e:
         if isinstance(e, TransportFailure) and e.kind == "unreachable":
             return _graph_video_unavailable_response()
-        return Response(
-            content=json.dumps({"error": {"message": f"Video status error: {str(e)}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
+        return client_errors.client_error(502, "video_failed", error_type="api_error")
 
 
 async def proxy_graph_video_content(
@@ -12063,11 +12031,7 @@ async def proxy_graph_video_content(
     except Exception as e:
         if isinstance(e, TransportFailure) and e.kind == "unreachable":
             return _graph_video_unavailable_response()
-        return Response(
-            content=json.dumps({"error": {"message": f"Video content error: {str(e)}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
+        return client_errors.client_error(502, "video_failed", error_type="api_error")
 
 
 async def _record_video_job_terminal_timestamp(prompt_id: str, status: str) -> None:
@@ -12320,16 +12284,8 @@ async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> 
             if current_status in ("queued", "running"):
                 try:
                     cancel_resp = await _graph(client, "videos").cancel(prompt_id, headers=headers)
-                except Exception as e:
-                    return Response(
-                        content=json.dumps({"error": {
-                            "message": f"Could not cancel in-progress video job: {e}",
-                            "type": "api_error",
-                            "code": "video_cancel_failed",
-                        }}),
-                        status_code=409,
-                        media_type="application/json",
-                    )
+                except Exception:
+                    return client_errors.client_error(409, "cancel_failed", error_type="api_error", code="video_cancel_failed")
                 if cancel_resp.status != 200:
                     return Response(
                         content=json.dumps({"error": {
@@ -12358,11 +12314,7 @@ async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> 
     except Exception as e:
         if isinstance(e, TransportFailure) and e.kind == "unreachable":
             return _graph_video_unavailable_response()
-        return Response(
-            content=json.dumps({"error": {"message": f"Video delete error: {str(e)}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
+        return client_errors.client_error(502, "video_failed", error_type="api_error")
 
     now = int(time.time())
     async with _video_progress_lock:
@@ -16377,7 +16329,7 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
         return _browser_signin_failure(
             request, return_to=request.query_params.get("return_to"),
         ) or Response(
-            content=f"OIDC login failed to start: {str(e)[:200]}",
+            content="OIDC login failed to start.",
             status_code=500,
             media_type="text/plain; charset=utf-8",
         )
@@ -18105,15 +18057,10 @@ async def _handle_rerank(request: Request, path: str) -> Response:
         return _rerank_error(502, f"The rerank engine did not answer: {type(exc).__name__}.", code="backend_error", tei=tei, kind="api_error")
     if upstream.status_code != 200:
         status = 400 if upstream.status_code in (400, 413, 422) else 502
-        detail = ""
-        try:
-            err = upstream.json().get("error")
-            detail = str(err.get("message") if isinstance(err, Mapping) else err or "")[:300]
-        except (ValueError, AttributeError):
-            pass
+        # The engine's own words are not passed on (decision D44).
         return _rerank_error(
             status,
-            detail or f"The rerank engine answered HTTP {upstream.status_code}.",
+            f"The rerank engine answered HTTP {upstream.status_code}.",
             code="invalid_request" if status == 400 else "backend_error",
             tei=tei,
             kind="invalid_request_error" if status == 400 else "api_error",
@@ -18606,16 +18553,7 @@ async def _upload_graph_image_bytes(
     files = {"image": (filename, content, media_type)}
     upload_resp = await _graph(client).upload(files, headers=dict(headers))
     if upload_resp.status != 200:
-        return None, Response(
-            content=json.dumps({
-                "error": {
-                    "message": f"Image upload failed: {upload_resp.text}",
-                    "type": "api_error",
-                }
-            }),
-            status_code=502,
-            media_type="application/json",
-        )
+        return None, client_errors.client_error(502, "upload_failed", error_type="api_error")
 
     uploaded_filename = upload_resp.json().get("name")
     if not uploaded_filename:
@@ -19026,11 +18964,7 @@ async def _proxy_offset_inpaint_tile_request(
         failure = _graph_failure_response(e)
         if failure is not None:
             return failure
-        return Response(
-            content=json.dumps({"error": {"message": f"Gateway tile composition error: {e}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json",
-        )
+        return client_errors.client_error(502, "proxy_error", error_type="api_error")
 
     response_headers["X-Image-Rounds"] = str(rounds)
     response_headers["X-Image-Returned"] = str(len(images))
@@ -23251,6 +23185,8 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
             record.manifest, _GRAPH_BINDING, workflow_template, validation.accepted
         ).request
 
+        refusal = {"out_of_memory": False}
+
         async def submit_and_collect() -> tuple[dict[str, Any] | None, Response | None]:
             admission = _dispatch_admission_response(
                 "video.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
@@ -23260,10 +23196,9 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
                 return None, admission
             submitted = await graph.submit(_build_graph_submit_payload(workflow), headers=headers)
             if submitted.status != 200:
-                return None, Response(
-                    content=json.dumps({"error": {"message": submitted.text[:500], "type": "api_error"}}),
-                    status_code=502, media_type="application/json",
-                )
+                # What the engine said decides whether to retry; it is never passed on (decision D44).
+                refusal["out_of_memory"] = any(marker in submitted.text.lower() for marker in ("cuda out of memory", "out of memory", "cuda oom"))
+                return None, client_errors.client_error(502, "upstream_refused", error_type="api_error", subject=adapter.label)
             prompt_id = submitted.json().get("prompt_id")
             if not prompt_id:
                 return None, Response(
@@ -23291,9 +23226,9 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
 
         job, error = await submit_and_collect()
         if error is not None and IMAGE_FREE_VRAM_ON_EXHAUSTION:
-            message = str((json.loads(error.body.decode("utf-8")).get("error") or {}).get("message", "")).lower()
-            if any(marker in message for marker in ("cuda out of memory", "out of memory", "cuda oom")):
+            if refusal["out_of_memory"]:
                 if await _free_graph_models_if_idle(client):
+                    refusal["out_of_memory"] = False
                     job, error = await submit_and_collect()
         if error is not None:
             return error
@@ -23868,11 +23803,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                 headers=headers,
             )
             if resp.status != 200:
-                return Response(
-                    content=json.dumps({"error": {"message": f"{adapter.label} error: {resp.text[:500]}", "type": "api_error"}}),
-                    status_code=502,
-                    media_type="application/json"
-                )
+                return client_errors.client_error(502, "upstream_refused", error_type="api_error", subject=adapter.label)
             prompt_id = resp.json().get("prompt_id")
             if not prompt_id:
                 return Response(
@@ -23992,17 +23923,9 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                 status_code=502,
                 media_type="application/json"
             )
-        return Response(
-            content=json.dumps({"error": {"message": f"Audio proxy error: {str(e)}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
+        return client_errors.client_error(502, "audio_failed", error_type="api_error")
     except Exception as e:
-        return Response(
-            content=json.dumps({"error": {"message": f"Audio proxy error: {str(e)}", "type": "api_error"}}),
-            status_code=502,
-            media_type="application/json"
-        )
+        return client_errors.client_error(502, "audio_failed", error_type="api_error")
 
 
 async def audio_generate(request: Request):
@@ -25157,14 +25080,8 @@ async def _render_status_html(request: Request) -> Response:
             logout_url=logout_url,
         )
     except Exception as e:  # noqa: BLE001
-        import traceback as _tb
-        _tb_str = _tb.format_exc()
-        print(f"[proxy] status render error: {e}\n{_tb_str}", flush=True)
-        body = (
-            "<html><body><pre>status render failed: "
-            + str(e)[:200]
-            + "</pre></body></html>"
-        )
+        print(f"[proxy] status render error: {log_scrub.describe_error(e)}", flush=True)
+        body = "<html><body><pre>status render failed.</pre></body></html>"
     return Response(
         content=body,
         status_code=200,
@@ -26645,7 +26562,7 @@ async def create_response(request: Request):
         try:
             req_body = json.loads(raw) if raw else {}
         except json.JSONDecodeError as e:
-            return _responses_error(f"Invalid JSON in request body: {e}", code="invalid_request_error")
+            return _responses_error("Invalid JSON in request body.", code="invalid_request_error")
         if not isinstance(req_body, dict):
             return _responses_error("Request body must be a JSON object.", code="invalid_request_error")
 
@@ -26862,7 +26779,7 @@ async def create_response(request: Request):
             except Exception as error:
                 owner.report(status="failed", reason="read_error")
                 return _responses_error(
-                    f"Upstream returned non-JSON: {error}",
+                    "Upstream returned non-JSON.",
                     code="upstream_error",
                     status=502,
                 )
@@ -26915,7 +26832,7 @@ async def create_response(request: Request):
             )
     except Exception as error:  # noqa: BLE001
         print(f"[proxy] /v1/responses internal error: {log_scrub.describe_error(error)}", flush=True)
-        return _responses_error(f"Internal error: {log_scrub.describe_error(error)}", code="internal_error", status=500)
+        return _responses_error("Internal error.", code="internal_error", status=500)
 
 
 async def retrieve_response(response_id: str, request: Request):
@@ -26934,7 +26851,7 @@ async def retrieve_response(response_id: str, request: Request):
         row = await asyncio.to_thread(responses_store.get, response_id)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] responses_store.get failed: {e}", flush=True)
-        return _responses_error(f"Internal error: {e}", code="internal_error", status=500)
+        return _responses_error("Internal error.", code="internal_error", status=500)
     if not _responses_row_visible(row, auth_context):
         return _responses_error(
             f"Response with id '{response_id}' not found.",
@@ -27048,7 +26965,7 @@ async def delete_response(response_id: str, request: Request):
             responses_store.delete(response_id)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] responses_store.delete failed: {e}", flush=True)
-        return _responses_error(f"Internal error: {e}", code="internal_error", status=500)
+        return _responses_error("Internal error.", code="internal_error", status=500)
     if not existed:
         return _responses_error(
             f"Response with id '{response_id}' not found.",
@@ -27508,6 +27425,27 @@ def _attach_litellm_response_metadata(
         receipt.metadata["litellm"] = facts
 
 
+async def _bounded_chunks(chunks: AsyncIterator[bytes], limit: int) -> AsyncIterator[bytes]:
+    """The first ``limit`` bytes of a stream, then nothing more is read."""
+    sent = 0
+    async for chunk in chunks:
+        yield chunk[: max(limit - sent, 0)]
+        sent += len(chunk)
+        if sent >= limit:
+            return
+
+
+def _engine_error_response(resp: Any, content: bytes | None, response_headers: Mapping[str, str], request_id: str) -> Response:
+    """An engine's or sidecar's error reply, passed on without its words or its headers (decision D44).
+
+    The caller gets the status, the OpenAI error type, the machine code and ``Retry-After`` the engine named, our own
+    sentence for them, and our own ``X-Azizam-*`` headers: an engine echoes what it was sent, and an error message or a
+    header is where the credential the gateway sent it would come back.
+    """
+    own = {name: value for name, value in response_headers.items() if name.lower().startswith("x-azizam-")}
+    return client_errors.upstream_error_response(resp.status_code, content, resp.headers, request_id=request_id, own_headers=own)
+
+
 def _normalize_litellm_error_envelope(
     payload: dict[str, Any],
     *,
@@ -27920,7 +27858,7 @@ async def _forward_current_loaded_openai_request(
                 and _request_had_tools(body)
             )
 
-            if "text/event-stream" in content_type:
+            if "text/event-stream" in content_type and resp.status_code < 400:
                 _tc_detector = _ToolcallStreamDetector(
                     had_tools=_tc_had_tools,
                     backend_hint=_tc_backend_hint,
@@ -27930,7 +27868,7 @@ async def _forward_current_loaded_openai_request(
                 # concurrently with StreamingResponse's receive loop.
                 await cancellation_span.stop_watcher_for_streaming_handoff()
 
-                sse_repair = _ChatCompletionSseRepair() if request_path == "/v1/chat/completions" else None
+                sse_repair = _ChatCompletionSseRepair(repair=request_path == "/v1/chat/completions")
 
                 async def stream_response():
                     try:
@@ -28020,6 +27958,8 @@ async def _forward_current_loaded_openai_request(
                 reason="completed" if 200 <= resp.status_code < 400 else "failed",
                 status="succeeded" if 200 <= resp.status_code < 400 else "failed",
             )
+            if resp.status_code >= 400:
+                return _engine_error_response(resp, content, response_headers, receipt.request_id)
             return Response(
                 content=content,
                 status_code=resp.status_code,
@@ -28298,7 +28238,7 @@ async def _forward_litellm_proxy_request(
             and _request_had_tools(dict(body_json))
         )
 
-        if "text/event-stream" in content_type:
+        if "text/event-stream" in content_type and resp.status_code < 400:
             _tc_detector = _ToolcallStreamDetector(
                 had_tools=_tc_had_tools,
                 backend_hint=_tc_backend_hint,
@@ -28308,7 +28248,7 @@ async def _forward_litellm_proxy_request(
             # concurrently with StreamingResponse's receive loop.
             await cancellation_span.stop_watcher_for_streaming_handoff()
 
-            sse_repair = _ChatCompletionSseRepair() if request_path == "/v1/chat/completions" else None
+            sse_repair = _ChatCompletionSseRepair(repair=request_path == "/v1/chat/completions")
 
             async def stream_response():
                 try:
@@ -28453,6 +28393,8 @@ async def _forward_litellm_proxy_request(
             status="succeeded" if 200 <= resp.status_code < 400 else "failed",
             reason="completed" if 200 <= resp.status_code < 400 else "failed",
         )
+        if resp.status_code >= 400:
+            return _engine_error_response(resp, content, response_headers, receipt.request_id)
         return Response(
             content=content,
             status_code=resp.status_code,
@@ -28523,7 +28465,7 @@ def _provider_alias_model(engine_id: str, service_id: str | None, spec: Mapping[
 
 def _protocol_failure(error: ProtocolError) -> Response:
     # Internal diagnostics can hold filesystem paths or upstream error bodies.
-    logging.getLogger("gateway.engine_protocol").warning("Engine protocol failure (%s): %s", error.code, error)
+    logging.getLogger("gateway.engine_protocol").warning("Engine protocol failure (%s): %s", error.code, type(error).__name__)
     status, code = 502, error.code
     messages = {
         "invalid_description": "The engine protocol description is invalid. Check Status for the file name.",
@@ -28811,7 +28753,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
             raise
         response = openai_error_response("Generation was canceled by the requester.", status_code=409, code="job_canceled")
     except ProtocolSwitchUnavailable as error:
-        logging.getLogger("gateway.engine_protocol").warning("Engine selection failed: %s", error.detail)
+        logging.getLogger("gateway.engine_protocol").warning("Engine selection failed (%s).", type(error).__name__)
         response = openai_error_response("The engine selection could not be completed or verified.", status_code=503, code="selection_unavailable")
         response.headers.update(error.headers or {})
     except media_jobs.IdempotencyConflict:
@@ -29377,8 +29319,9 @@ class _ChatCompletionSseRepair:
     never sees a cut event. ``flush`` returns what is left at the end.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, repair: bool = True) -> None:
         self._pending = b""
+        self._repair = repair
 
     def feed(self, chunk: bytes) -> bytes:
         data = self._pending + chunk
@@ -29386,11 +29329,15 @@ class _ChatCompletionSseRepair:
         for match in _SSE_EVENT_BOUNDARY.finditer(data):
             end = match.end()
         self._pending = data[end:]
-        return _normalize_chat_completion_sse_chunk(data[:end]) if end else b""
+        if not end:
+            return b""
+        # An error event inside the stream carries the engine's own words; it goes out without them (decision D44).
+        whole = client_errors.rewrite_stream_errors(data[:end])
+        return _normalize_chat_completion_sse_chunk(whole) if self._repair else whole
 
     def flush(self) -> bytes:
         rest, self._pending = self._pending, b""
-        return rest
+        return client_errors.rewrite_stream_errors(rest)
 
 
 def _normalize_chat_completion_sse_chunk(chunk: bytes) -> bytes:
@@ -30103,7 +30050,7 @@ async def _forward_provider_native(
             await client.aclose()
             owner.report(status="failed", reason="internal_error")
             return openai_error_response(
-                f"Provider-native passthrough failed: {str(error)[:200]}",
+                "Provider-native passthrough failed.",
                 status_code=502,
                 error_type="api_error",
                 code="provider_passthrough_error",
@@ -30119,6 +30066,17 @@ async def _forward_provider_native(
             await client.aclose()
             owner.report(status="failed", reason="failed")
             return openai_error_response(refusal[2], status_code=refusal[0], error_type="api_error", code=refusal[1])
+
+        if upstream.status_code >= 400:
+            # An engine's error reply is not relayed: it echoes what it was sent (decision D44).
+            try:
+                refused_body = b"".join([chunk async for chunk in _bounded_chunks(upstream.aiter_bytes(), 65536)])
+            finally:
+                await stream_context.__aexit__(None, None, None)
+                await client.aclose()
+            owner.report(status="failed", reason="failed")
+            return client_errors.upstream_error_response(upstream.status_code, refused_body, upstream.headers,
+                                                         request_id=receipt.request_id)
 
         response_headers = native_lane.relayed_headers(upstream.headers)
 

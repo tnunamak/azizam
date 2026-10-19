@@ -142,7 +142,7 @@ def test_upstream_error_surfaces_message(fake_upstreams) -> None:
     with pytest.raises(LiteLLMAdminError) as error:
         asyncio.run(_client().generate_key({"team_id": "ghost"}))
 
-    assert (error.value.code, error.value.message, error.value.upstream_status) == ("litellm_key_api_error", "LiteLLM: no such team", 400)
+    assert (error.value.code, error.value.message, error.value.upstream_status) == ("litellm_key_api_error", "LiteLLM key API returned HTTP 400.", 400)
 
 
 def test_enabled_property_requires_base_url() -> None:

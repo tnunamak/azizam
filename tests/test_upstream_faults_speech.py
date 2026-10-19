@@ -96,7 +96,8 @@ def test_an_engine_that_drops_mid_stream_aborts_the_client_stream(fake_upstreams
 
     with pytest.raises(Exception) as dropped:
         asyncio.run(call())
-    assert "peer closed connection" in str(dropped.value)
+    # the failure names the class of the transport error and not its text (decision D44)
+    assert "RemoteProtocolError" in str(dropped.value) and "peer closed connection" not in str(dropped.value)
     _expect_forwarded(fake)
 
 

@@ -220,11 +220,19 @@ resources:
     reads, from the store or from an environment variable, is registered for the log scrub
     (`gateway/log_scrub.py`; `tests/test_secret_registration.py` finds each reader, including a literal
     environment name or a configuration key that names a credential, and fails for one that neither registers
-    nor says why it need not). The registry is keyed by source (a secret reference, `env:NAME`), so it is bounded
-    by configuration and nothing in use is evicted; a source keeps its last three values and is forgotten when its
-    secret is deleted. A value is scrubbed in every form the gateway can produce (raw, URL-encoded, JSON-escaped,
+    nor says why it need not). The registry is keyed by source (a stored secret's id, `env:NAME`, a configured
+    name; never a hash of a value), so it is bounded by configuration and nothing in use is evicted; a source keeps
+    the values it held before its last eight rotations, is set when a secret is stored and forgotten after its
+    deletion has committed. A value is scrubbed in every form the gateway can produce (raw, URL-encoded, JSON-escaped,
     base64, and base64 of `user:password`) before the line is cut to length. A value longer than 64 KiB is not
-    registered and every line is withheld while one is held.
+    registered and every line is withheld while a source holds one.
+    The scrubber and the call-site check are secondary guards (decision D44). The boundary is the egress:
+    `gateway/log_egress.py` cleans every log record when it is made (message scrubbed, exception reduced to its type
+    and the location of each frame, `httpx` and `httpcore` pinned to WARNING and cut to method, origin and status),
+    wraps `print` and the standard streams, and routes warnings and uncaught exceptions through the same path;
+    `gateway/client_errors.py` builds every error to an API caller from a fixed reason, our code and the request id,
+    and passes an engine's error on with its status, machine code and `Retry-After` and none of its words or headers.
+    `UpstreamError` keeps the engine's text in `excerpt`, which no `str()`, `repr()` or log line shows.
   - **What a read shows** (decision D28). Every management response is built from
     a registered projection type (`gateway/projection_types.py`): each field is
     classified once as public data, a reference to the store, a carrier of

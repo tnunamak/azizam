@@ -174,7 +174,7 @@ class HttpV1Executor:
         key = json_key(raw)
         state = poll.status.states.get(key)
         if state is None:
-            raise MalformedResponse(f"The engine reported the job status {key!r}, which the protocol description does not map.")
+            raise MalformedResponse(f"The engine reported a job status ({_plain(key)}) that the protocol description does not map.")
         detail = None
         if poll.error_segments is not None:
             found = pointer.get(parsed, poll.error_segments)
@@ -494,8 +494,7 @@ class HttpV1Executor:
         excerpt = _scrub_text_cut(" ".join(body.decode("utf-8", "replace").split()), secrets_, 160)
         row = self.description.advice_for(response.status)
         keep = {k: _scrub(v, secrets_) for k, v in response.headers.items() if k in ("retry-after", "content-type")}
-        message = f"The engine answered {response.status}" + (f": {excerpt}" if excerpt else ".")
-        raise UpstreamError(response.status, message, body=body, headers=keep,
+        raise UpstreamError(response.status, f"The engine answered {response.status}.", body=body, headers=keep, excerpt=excerpt,
                             advice_code=row.code if row else None, advice=row.advice if row else None)
 
     # --- reading ---------------------------------------------------------------------------------
@@ -729,6 +728,12 @@ def _variants(secrets_: tuple[str, ...]) -> list[str]:
 
 def _secrets(conn: Connection) -> list[str]:
     return _variants(tuple(c.secret for c in conn.credentials.values()))
+
+
+def _plain(value: object) -> str:
+    """A value the engine sent, for a message: only when it is a short plain word (it is the engine's text, not ours)."""
+    text = str(value)
+    return text if re.fullmatch(r"[A-Za-z0-9_.\-]{1,32}", text) else "unrecognized"
 
 
 def _scrub(text: str, secrets_: list[str]) -> str:

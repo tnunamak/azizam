@@ -176,7 +176,7 @@ class LiteLLMKeyAdminClient:
             raise LiteLLMAdminError(
                 503,
                 "litellm_unreachable",
-                f"Could not reach the LiteLLM sidecar key API: {exc}",
+                "Could not reach the LiteLLM sidecar key API.",
             ) from exc
 
         if resp.status_code == 401 or resp.status_code == 403:
@@ -209,19 +209,8 @@ class LiteLLMKeyAdminClient:
 
 
 def _upstream_message(resp: httpx.Response) -> str:
-    """Best-effort human message from a LiteLLM error body."""
-    try:
-        data = resp.json()
-    except json.JSONDecodeError:
-        return f"LiteLLM key API returned HTTP {resp.status_code}."
-    if isinstance(data, Mapping):
-        err = data.get("error")
-        if isinstance(err, Mapping) and err.get("message"):
-            return f"LiteLLM: {err['message']}"
-        if isinstance(err, str) and err:
-            return f"LiteLLM: {err}"
-        if data.get("detail"):
-            return f"LiteLLM: {data['detail']}"
+    """The message for a failed LiteLLM key call: ours, from the status alone. The sidecar's own words are not passed on
+    (it echoes what it was sent, and it was sent the master key; decision D44)."""
     return f"LiteLLM key API returned HTTP {resp.status_code}."
 
 

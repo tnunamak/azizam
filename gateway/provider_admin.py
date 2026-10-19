@@ -439,7 +439,7 @@ def create_provider_admin_router(
                 if api_key_env and not _provider_env_ref_origin_matches(config):
                     raise provider_listing.ProviderListingError("The provider key is approved for a different endpoint. Re-enter the key for this endpoint before running Gateway check.")
                 api_key = get_env(api_key_env, "")
-            log_scrub.remember(api_key, f"provider-key:{provider_id}")
+            log_scrub.remember(api_key, log_scrub.secret_source(secret_id) if secret_id else f"env:{api_key_env}")
             result = await provider_listing.probe_provider(config, api_key)
         except provider_listing.ProviderListingError as exc:
             with secret_store.provider_mutation_lock(_admin_db_path(store)):

@@ -144,7 +144,7 @@ async def models(registry: Mapping) -> list[dict]:
                 _cache.popitem(last=False)
             return copy.deepcopy(rows)
         except Exception as error:  # one engine cannot take the aggregate down; cancellation still propagates
-            _LOG.warning('Protocol inventory failed for %s: %s', engine_id, error)
+            _LOG.warning('Protocol inventory failed for %s: %s', engine_id, type(error).__name__)
             _issues[engine_id] = 'The engine model list is unavailable or invalid.'
             return []
 

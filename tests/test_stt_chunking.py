@@ -1325,6 +1325,14 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
                     response = await proxy.proxy_stt_request(request, access_context())
 
                 self.assertEqual(response.status_code, status)
+                if status >= 400:
+                    # an engine's error reply is not relayed, its words or its headers (decision D44)
+                    self.assertNotIn(b"decoded", response.body)
+                    self.assertNotIn("x-safe", response.headers)
+                    for header in ("content-encoding", "etag", "digest"):
+                        self.assertNotIn(header, response.headers)
+                    self.assertEqual(json.loads(response.body)["error"]["message"], "The engine failed while handling the request.")
+                    continue
                 self.assertEqual(response.body, decoded)
                 self.assertEqual(response.headers["x-safe"], "retained")
                 for header in ("content-encoding", "etag", "digest"):

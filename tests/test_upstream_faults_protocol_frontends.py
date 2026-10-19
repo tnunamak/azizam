@@ -22,6 +22,8 @@ import proxy
 from tests.support.fake_upstream import FakeUpstreams, KnownBug, expect_fixed, fake_upstreams, load_scenario, read_deadline  # noqa: F401 - fixture
 from tests.support.gateway import ResponseTap, gateway_client, register_litellm, use_admin_db
 
+# the engine's message is replaced by the gateway's sentence for its machine code (decision D44)
+BUSY = "The engine is busy or limiting requests. Try again later."
 MODEL = "fk-model"
 MESSAGES = [{"role": "user", "content": "hi"}]
 HANG_BOUND_SECONDS = 10
@@ -222,7 +224,7 @@ def test_upstream_drop_mid_stream_ends_with_a_protocol_error(frontend_gateway, f
 
 @pytest.mark.parametrize("stream", [False, True], ids=["text", "stream"])
 @pytest.mark.parametrize("frontend", list(FRONTENDS))
-def test_rate_limit_keeps_status_retry_after_and_message(frontend_gateway, fake_upstreams, frontend, stream) -> None:
+def test_rate_limit_keeps_status_retry_after_and_says_it_in_our_words(frontend_gateway, fake_upstreams, frontend, stream) -> None:
     serve, hop = frontend_gateway
     fake = serve("rate-limited")
 
@@ -231,8 +233,8 @@ def test_rate_limit_keeps_status_retry_after_and_message(frontend_gateway, fake_
     assert response.status_code == 429
     assert response.headers["content-type"].startswith("application/json")
     expected = (
-        {"type": "error", "error": {"type": "rate_limit_error", "message": "Rate limit reached for requests"}}
-        if frontend == "anthropic" else {"error": "Rate limit reached for requests"}
+        {"type": "error", "error": {"type": "rate_limit_error", "message": BUSY}}
+        if frontend == "anthropic" else {"error": BUSY}
     )
     assert json.loads(raw) == expected
     [forwarded] = fake.calls("chat")

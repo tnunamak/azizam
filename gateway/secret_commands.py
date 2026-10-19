@@ -489,7 +489,7 @@ def _whole_label(label: Any, url: str) -> str:
 def reviewed_destination(record: Mapping[str, Any], carrier: str) -> str | None:
     """The destination a confirmation of ``carrier`` would bind to, from ``record`` as it stands (None: nothing to bind to)."""
     parent, key = _parent(dict(record) if not isinstance(record, dict) else record, carrier)
-    return url_binding.destination(parent.get(key), url_binding.base_of(record, carrier))
+    return url_binding.destination_of(record, carrier, parent.get(key))
 
 
 def _confirm_address(record: Mapping[str, Any], parent: Mapping[str, Any], key: str, command: Mapping[str, Any],
@@ -508,7 +508,7 @@ def _confirm_address(record: Mapping[str, Any], parent: Mapping[str, Any], key: 
     if isinstance(held, Mapping) and held.get("whole"):
         raise CommandError("reenter_required", "that URL is kept whole, so its address is inside the secret and there is nothing "
                            "to review; enter it again with set_credentials")
-    destination = url_binding.destination(parent.get(key), url_binding.base_of(record, carrier))
+    destination = url_binding.destination_of(record, carrier, parent.get(key))
     if destination is None:
         raise CommandError("url_unbound", str(record_carriers.UrlUnbound(carrier)))
     if command["expected_destination"] != destination:

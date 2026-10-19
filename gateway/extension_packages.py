@@ -357,8 +357,8 @@ def _run_git(cmd: list[str]) -> str:
     except subprocess.TimeoutExpired as exc:
         raise ValueError("git operation timed out while importing extension source") from exc
     except subprocess.CalledProcessError as exc:
-        message = (exc.stderr or exc.stdout or str(exc)).strip()
-        raise ValueError(f"git operation failed: {message[:400]}") from exc
+        # What git wrote is not passed on: it names the repository address, which can hold a credential.
+        raise ValueError(f"git operation failed (exit status {exc.returncode}).") from exc
     return completed.stdout
 
 
