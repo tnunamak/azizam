@@ -197,11 +197,10 @@ def paired_excess(
     return Estimate(count, total_words, value, draws[int(0.025 * resamples)], draws[int(0.975 * resamples) - 1])
 
 
-def seam_excess(
+def seam_pairs(
     first: Scored, second: Scored, *, half: float = 2.0, clear: float = 2.5, placebo_offset: float | None = None,
-    resamples: int = 4000,
-) -> tuple[Estimate, Estimate]:
-    """(excess at the cuts, placebo) pooled over the cuts of both runs.
+) -> tuple[list[tuple[int, int, int]], list[tuple[int, int, int]]]:
+    """(pairs at the cuts, pairs at the noise-floor places) from the cuts of both runs.
 
     ``placebo_offset`` is the distance from a cut to the place used as the noise floor (a quarter of the target).
     """
@@ -215,6 +214,15 @@ def seam_excess(
             # Away from every cut in both runs, so neither run is paying for one.
             places = [p for p in places if all(abs(p - s) >= clear for s in seams)]
             placebo += _pairs(here, there, places, half, clear)
+    return pairs, placebo
+
+
+def seam_excess(
+    first: Scored, second: Scored, *, half: float = 2.0, clear: float = 2.5, placebo_offset: float | None = None,
+    resamples: int = 4000,
+) -> tuple[Estimate, Estimate]:
+    """(excess at the cuts, placebo) pooled over the cuts of both runs."""
+    pairs, placebo = seam_pairs(first, second, half=half, clear=clear, placebo_offset=placebo_offset)
     return paired_excess(pairs, resamples=resamples), paired_excess(placebo, resamples=resamples)
 
 
