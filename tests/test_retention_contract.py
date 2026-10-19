@@ -490,6 +490,7 @@ def test_removed_stored_period_has_one_display_decision_and_writer_deadline(tmp_
         household_provider=lambda: prompt_memory.household_settings(admin_path=admin_path)))
     response = TestClient(app).get("/me/api/prompt-memory")
     assert response.status_code == 200
+    assert response.json()["prompt_memory"]["retention"] == "3_months"
     assert response.json()["prompt_memory"]["effective_retention"] == "3_months"
 
 
