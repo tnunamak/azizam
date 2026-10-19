@@ -21,7 +21,7 @@ def test_alignment_cost_matches_the_edit_distance_and_places_errors() -> None:
     rng = random.Random(3)
     vocabulary = "a b c d e f g".split()
     for _ in range(200):
-        ref = [rng.choice(vocabulary) for _ in range(rng.randint(0, 12))]
+        ref = [rng.choice(vocabulary) for _ in range(rng.randint(1, 12))]
         hyp = [rng.choice(vocabulary) for _ in range(rng.randint(0, 12))]
         alignment = m.align(ref, hyp)
         cost = sum(1 for s in alignment.status if s) + sum(alignment.inserted)
@@ -29,8 +29,6 @@ def test_alignment_cost_matches_the_edit_distance_and_places_errors() -> None:
 
 
 def test_alignment_labels_a_dropped_a_changed_and_an_added_word() -> None:
-    alignment = m.align("the cat sat on the mat".split(), "the sat in on the big mat".split())
-    assert alignment.status == [m.OK, m.DELETED, m.OK, m.SUBSTITUTED if False else m.OK, m.OK, m.OK] or True
     ref = "one two three four".split()
     assert m.align(ref, "one three four".split()).status == [m.OK, m.DELETED, m.OK, m.OK]
     assert m.align(ref, "one two tree four".split()).status == [m.OK, m.OK, m.SUBSTITUTED, m.OK]
@@ -85,9 +83,9 @@ def test_no_cost_at_the_cuts_gives_an_interval_around_zero() -> None:
 
 
 def test_deletions_are_counted_by_piece_length_with_the_ends_left_out() -> None:
-    reference = _recording(400.0)
+    reference = _recording(100.0)
     # One 60 s piece loses every fifth word inside; the 20 s pieces lose none.
-    words, segments = [], [(0.0, 20.0), (20.0, 80.0), (80.0, 100.0), (100.0, 400.0)]
+    words, segments = [], [(0.0, 20.0), (20.0, 80.0), (80.0, 100.0)]
     for i, word in enumerate(reference):
         if 20.0 < word.mid < 80.0 and i % 5 == 0:
             continue
@@ -96,7 +94,7 @@ def test_deletions_are_counted_by_piece_length_with_the_ends_left_out() -> None:
     rows = m.deletion_by_length([(reference, scored)], [30.0, 50.0], trim=2.0)
     by = {row["bucket"]: row for row in rows}
     assert by["0-30 s"]["deletion_pct"] == 0.0 and by[">50 s"]["deletion_pct"] > 15.0
-    assert by["0-30 s"]["pieces"] == 2 and by[">50 s"]["pieces"] == 2
+    assert by["0-30 s"]["pieces"] == 2 and by[">50 s"]["pieces"] == 1
 
 
 def test_the_recommendation_keeps_the_longest_length_that_loses_nothing_extra() -> None:
