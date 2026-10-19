@@ -338,13 +338,19 @@ def test_migration_refuses_a_setting_it_cannot_read(tmp_path, payload):
         admin_store.init_db(path)
 
 
-def test_migration_logs_a_field_it_does_not_carry(tmp_path, capsys):
+def test_migration_preserves_unknown_fields_without_exposing_them(tmp_path):
     path = tmp_path / "admin.db"
-    _legacy_database(path, {"never_keep": False, "x": 1, "retention_cap": "3_months"})
+    _legacy_database(path, {"never_keep": False, "x": {"future": 1}, "retention_cap": "3_months"})
     admin_store.init_db(path)
-    assert "x" in capsys.readouterr().out
-    assert admin_store.get_operator_setting("retention", path=path)["value"] == {
-        "never_keep": False, "groups": {"prompts": {"retention_cap": "3_months"}}}
+    stored = admin_store.get_operator_setting("retention", path=path)["value"]
+    assert stored["legacy_unclassified"] == {"x": {"future": 1}}
+    from gateway import settings_api
+    assert settings_api.prompt_memory_settings(path) == {
+        "default_remember": True, "never_keep": False, "retention_cap": "3_months"}
+    admin_store.put_operator_setting("prompt_memory", {
+        "default_remember": False, "never_keep": False, "retention_cap": "3_months"}, path=path)
+    assert admin_store.get_operator_setting("retention", path=path)["value"]["legacy_unclassified"] == {
+        "x": {"future": 1}}
 
 
 def test_a_database_that_never_had_the_setting_stays_without_one(tmp_path):
@@ -419,6 +425,57 @@ def test_the_validator_refuses_each_illegal_value(name):
     with pytest.raises(retention.RetentionDataError) as error:
         retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()), source="retention.yml")
     assert "retention.yml" in str(error.value)
+
+
+@pytest.mark.parametrize("kind,readers", [("library_prompt", "maker_signed_in"),
+                                            ("conversation", "maker_signed_in")])
+def test_unenforced_reader_controls_are_refused_until_slice_5(kind, readers):
+    data = _bundled_data()
+    data["kinds"][kind]["readers"] = readers
+    with pytest.raises(retention.RetentionDataError, match="slice 5.*reader"):
+        retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
+
+
+def test_unenforced_conversation_parts_are_refused_until_slice_5():
+    data = _bundled_data()
+    data["kinds"]["conversation"]["parts"]["default"] = ["accepted"]
+    with pytest.raises(retention.RetentionDataError, match="slice 5.*parts"):
+        retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
+
+
+def test_a_renamed_prompts_group_is_refused_until_slice_5():
+    data = _bundled_data()
+    data["groups"]["saved"] = data["groups"].pop("prompts")
+    with pytest.raises(retention.RetentionDataError, match="slice 5.*group"):
+        retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
+
+
+def test_removed_stored_period_has_one_display_decision_and_writer_deadline(tmp_path, monkeypatch):
+    from gateway import prompt_memory
+    data = _bundled_data()
+    data["groups"]["prompts"].update(choices=["3_months"], default_retention="3_months", default_cap="3_months")
+    contract = retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
+    monkeypatch.setattr(retention, "bundled", lambda: contract)
+    admin_path = tmp_path / "admin.db"
+    media_path = tmp_path / "media.db"
+    admin_store.init_db(admin_path)
+    person = admin_store.upsert_oidc_user("iss", "removed-period", path=admin_path)["id"]
+    with sqlite3.connect(admin_path) as conn:
+        conn.execute("UPDATE prompt_memory_preferences SET retention='never' WHERE user_id=?", (person,))
+        conn.execute("INSERT INTO operator_settings(key,value_json,updated_at,updated_by) "
+                     "VALUES('retention', ?, 1, NULL)",
+                     (json.dumps({"groups": {"prompts": {"retention_cap": "never"}}}),))
+    member = {"remember": True, "retention": "never"}
+    household = {"never_keep": False, "default_remember": True, "retention_cap": "never"}
+    started = int(time.time())
+    expected_deadline = started + contract.seconds_map()["3_months"]
+    assert retention.effective(member, household)["retention"] == "3_months"
+    decision = retention.decide(retention.LIBRARY_PROMPT, person_id=person, member=member,
+                                household_policy=household, request_body={}, now=started)
+    assert decision.kept_until == expected_deadline
+    assert prompt_memory.put("removed-period-asset", person, "prompt sentinel", kept_until=decision.kept_until,
+                             created_at=started, path=media_path, admin_path=admin_path)
+    assert prompt_memory.get("removed-period-asset", person, path=media_path)["kept_until"] == expected_deadline
 
 
 def test_a_missing_file_stops_startup_with_a_plain_message(tmp_path, monkeypatch):
