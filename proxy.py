@@ -138,7 +138,7 @@ from gateway import a1111_api
 from gateway import mcp_oauth, mcp_oauth_store, mcp_server, session_guard
 from gateway import identity_api, identity_scene
 from gateway import likeness as likeness_module
-from gateway import stt_chunking
+from gateway import stt_chunking, stt_measurement
 from gateway.lifecycle_drivers import SwapRecoveryFailed
 from gateway.swap_drain import ServingLease, SwapDeferred, SwapDrain, SwapDrainSettings
 from gateway.alias_policy import (
@@ -4086,6 +4086,8 @@ async def _ensure_speech_service_ready(service_id: str, *, label: str) -> Respon
     bcfg = (config.get("backends") or {}).get(service_id) or {}
     if await _poll_health(bcfg, 0.0):
         return None
+    if stt_measurement.TRIAL.get() is not None:
+        return _stt_error("Start the engine before measuring long-audio settings.", status_code=503, code="measurement_engine_offline")
     if await ensure_target(service_id, None):
         return None
     return Response(
@@ -4584,7 +4586,7 @@ def _stt_execution_snapshot(
         service_id, service_config = selected
     return stt_chunking.SttExecutionConfig.from_service(
         service_id=service_id,
-        service_config=service_config,
+        service_config=stt_measurement.trial_config(service_id, service_config),
         config_directory=CONFIG_PATH.parent,
     )
 
@@ -5042,7 +5044,7 @@ async def _stt_terminal_response(
 
 
 def _stt_audio_not_splittable_response(error: stt_chunking.SttAudioNotSplittable) -> Response:
-    """The audio is longer than the engine takes in one piece and could not be cut: say so, with the gateway's own words."""
+    """Turn an unverified or uncut upload into a plain gateway refusal."""
     return client_errors.stt_audio_cannot_be_split(error.reason, error.limit_seconds)
 
 
@@ -5246,6 +5248,7 @@ async def proxy_stt_request(
             streams = wants_stream and native_stream and len(uploads) == 1
 
             def record_outcome(outcome: stt_chunking.ChunkingOutcome) -> None:
+                stt_measurement.observe_outcome(outcome)
                 # Receipts are core's: the adapter reports the chunking outcome before any later request.
                 receipt.metadata["stt"].update({"attempts_started": outcome.attempts_started, "chunked": outcome.mode == "chunked"})
                 if outcome.fallback_reason:
@@ -5321,6 +5324,7 @@ async def proxy_stt_request(
                     media_type="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
                 )
+            stt_measurement.observe_reply(reply.status, reply.mode)
             if reply.mode == "chunked":
                 return Response(content=json.dumps(reply.body), status_code=200, media_type="application/json")
             upstream = stt_chunking.UpstreamResponse(reply.status, reply.raw, reply.headers)
@@ -12711,6 +12715,7 @@ async def lifespan(app: FastAPI):
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
+    await asyncio.to_thread(STT_MEASUREMENTS.startup_cleanup)
     await asyncio.to_thread(_adopt_bootstrap_signin_lists)
     await asyncio.to_thread(_migrate_host_command_permission)
     from gateway.lifecycle_drivers import _process_driver
@@ -14411,6 +14416,27 @@ MCP_OAUTH = mcp_oauth.McpOAuth(mcp_oauth.McpOAuthDeps(
 ))
 
 
+async def _mcp_stt_measurement(request, auth, args):
+    from gateway.stt_measurement_api import operate
+    from gateway.workflow_call import CallError
+    identity = getattr(auth, "identity", None)
+    person_id = getattr(identity, "person_id", None)
+    # An App key, even one accountable to the owner, is not a management credential.
+    roles = await asyncio.to_thread(admin_store.effective_admin_roles, "user", person_id, path=ADMIN_STORE.path) if person_id else frozenset()
+    if not getattr(identity, "connection_id", None) or "owner" not in roles:
+        raise CallError("Only the owner, signed in through MCP OAuth, can use long-audio operator commands.")
+    ctx = AdminContext(subject=person_id, actor_id=person_id, actor_kind="user", roles=roles,
+                       connection_id=identity.connection_id)
+    try:
+        return await operate(STT_MEASUREMENTS, ctx, str(args.get("service_id") or ""), str(args.get("action") or "options"),
+            body=args.get("settings") if args.get("action") == "configure" else args.get("inputs"),
+            job_id=args.get("job_id"), revision=args.get("revision"))
+    except stt_measurement.EngineRouteError as error:
+        raise CallError(error.message, code=error.code) from None
+    except admin_store.OperatorSettingsGenerationConflict:
+        raise CallError("The registry changed; refresh and try again.", code="generation_mismatch") from None
+
+
 def _mount_mcp(app: FastAPI) -> None:
     if MCP_OAUTH_ENABLED:
         MCP_OAUTH.register(app)
@@ -14419,6 +14445,7 @@ def _mount_mcp(app: FastAPI) -> None:
         mcp_server.McpDeps(
             authenticate=lambda request, path: authenticate_request(request, path),
             call=_mcp_dispatch_call,
+            stt_measurement=_mcp_stt_measurement,
             catalog=_mcp_catalog,
             aliases=lambda: _gateway_aliases_provider(),
             visible=lambda _request, auth, entry: isinstance(auth, AuthContext) and _category_entry_visible(auth, entry),
@@ -15351,6 +15378,93 @@ def _engine_check_self_ports() -> set[int]:
     return {int(PROXY_PORT), *engine_check.GATEWAY_PORTS}
 
 
+async def _operator_stt_transcribe(ctx, service_id: str, model: str | None, audio: Path) -> str:
+    person_id = (ctx.audit_actor_id if ctx.actor_kind == "user" else
+                 admin_store.instance_owner_id(path=ADMIN_STORE.path))
+    if not person_id:
+        raise stt_measurement.EngineRouteError(403, "owner_required", "An owner person is required for measurement.")
+    session_app = await asyncio.to_thread(admin_store.ensure_session_app_for_user, person_id, name="Owner measurements", path=ADMIN_STORE.path)
+    identity = await asyncio.to_thread(runtime_identity_for_session_app, str(session_app["id"]), person_id, path=ADMIN_STORE.path)
+    if identity is None or identity.denial:
+        raise stt_measurement.EngineRouteError(403, "measurement_access_denied", "The owner's plan does not allow this measurement.")
+    # Resolve a public alias of this exact service; never a tier with fallback engines.
+    candidates = ((((config.get("model_aliases") or {}).get("transcriptions") or {}).get("engines")) or {})
+    aliases = [name for name, spec in candidates.items() if isinstance(spec, Mapping) and spec.get("service") == service_id]
+    selected = model or next(iter(aliases), None)
+    if selected not in aliases:
+        raise stt_measurement.EngineRouteError(400, "measurement_model_required", "Choose a public transcription engine alias belonging to this service.")
+    resolution = resolve_model_for_operation("transcriptions", selected)
+    if resolution.alias is None or resolution.alias.service != service_id or resolution.alias.fallbacks:
+        raise stt_measurement.EngineRouteError(400, "measurement_model_required", "Choose a transcription alias without fallback engines.")
+    try:
+        with _identity_handoff(AuthContext(identity=identity)) as headers:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=None), base_url="http://gateway.internal", timeout=None) as client:
+                with audio.open("rb") as handle:
+                    reply = await client.post("/v1/audio/transcriptions", headers=headers,
+                        data={"model": selected, "response_format": "json"}, files={"file": ("measurement.wav", handle, "audio/wav")})
+    except httpx.TimeoutException:
+        raise stt_measurement.EngineRouteError(504, "measurement_timeout", "Gateway transcription timed out; no length recommendation was inferred.") from None
+    if reply.status_code != 200:
+        # Classify trusted execution evidence and status, never upstream error text.
+        trial = stt_measurement.TRIAL.get()
+        observed_upstream = trial is not None and trial.get("upstream_status") == reply.status_code
+        policy = yaml.safe_load(stt_measurement.POLICY.read_text())
+        size_refused = observed_upstream and reply.status_code in policy["length_refusal_statuses"]
+        timed_out = reply.status_code == 504
+        outcome = "measurement_timeout" if timed_out else "measurement_backend_refused" if size_refused else "measurement_request_refused"
+        raise stt_measurement.EngineRouteError(reply.status_code, outcome,
+            f"Gateway transcription returned HTTP {reply.status_code}; the measurement stopped. Check admission and engine availability.")
+    text = reply.json().get("text")
+    if not isinstance(text, str):
+        raise stt_measurement.EngineRouteError(502, "measurement_invalid_transcript", "The gateway did not return transcript text.")
+    return text
+
+
+async def _operator_stt_admit(ctx, service_id: str) -> dict:
+    import status_endpoint
+    registry = await asyncio.to_thread(ADMIN_STORE.get_service_registry)
+    record = registry.get("services", {}).get(service_id) or {}
+    resources = record.get("resources") or (record.get("config") or {}).get("resources") or {}
+    policy = yaml.safe_load(stt_measurement.POLICY.read_text())
+    # CPU work needs no GPU probe. GPU work yields to the shared queued/running media work.
+    if resources.get("gpu_required") is not True:
+        return stt_measurement.gpu_admission(record, None, None, policy)
+    gpus, depth = await asyncio.gather(asyncio.to_thread(status_endpoint._gpus_raw), asyncio.to_thread(_media_job_queue_depth))
+    attribution = await asyncio.to_thread(status_endpoint._vram_attribution, gpus, config)
+    resident = {gpu["index"]: sum(row.get("used_mb", 0) for row in gpu.get("services", [])
+                                  if row.get("service") == service_id
+                                  and service_id != "desktop"
+                                  and not str(row.get("service", "")).startswith("__"))
+                for gpu in attribution.get("per_gpu", [])}
+    return stt_measurement.gpu_admission(record, gpus, depth, policy, resident_mb=resident)
+
+
+async def _operator_stt_preflight(ctx, service_id: str, model: str | None) -> None:
+    candidates = ((((config.get("model_aliases") or {}).get("transcriptions") or {}).get("engines")) or {})
+    aliases = [name for name, spec in candidates.items() if isinstance(spec, Mapping) and spec.get("service") == service_id]
+    selected = model or next(iter(aliases), None)
+    if selected not in aliases:
+        raise stt_measurement.EngineRouteError(400, "measurement_model_required", "Choose a public transcription engine alias belonging to this service.")
+    resolution = resolve_model_for_operation("transcriptions", selected)
+    if resolution.alias is None or resolution.alias.service != service_id or resolution.alias.fallbacks:
+        raise stt_measurement.EngineRouteError(400, "measurement_model_required", "Choose a transcription alias without fallback engines.")
+    probe = _service_resource_probe_config(service_id)
+    if probe and probe.get("health_endpoint") and not await check_service_health(service_id):
+        raise stt_measurement.EngineRouteError(503, "measurement_backend_unavailable", "The transcription service is unavailable; measurement stopped before downloading samples.")
+
+
+def _operator_stt_owner_active(ctx) -> bool:
+    person_id = ctx.audit_actor_id if ctx.actor_kind == "user" else None
+    if not person_id or "owner" not in admin_store.effective_admin_roles("user", person_id, path=ADMIN_STORE.path):
+        return False
+    connection_id = getattr(ctx, "connection_id", None)
+    return not connection_id or (MCP_OAUTH_ENABLED and MCP_OAUTH.connection_active(connection_id, person_id))
+
+
+STT_MEASUREMENTS = stt_measurement.Measurements(ADMIN_STORE, _operator_stt_transcribe, admit=_operator_stt_admit,
+                                                preflight=_operator_stt_preflight, active=_operator_stt_owner_active)
+
+
 app.include_router(
     create_admin_router(
         ADMIN_STORE,
@@ -15366,6 +15480,7 @@ app.include_router(
         # Add engine never calls the gateway itself: its default ports and the one it listens on.
         engine_fetch=engine_check.make_http_fetch(gateway_ports=_engine_check_self_ports),
         engine_hop_timeout=lambda: UPSTREAM_READ_TIMEOUT,
+        stt_measurements=STT_MEASUREMENTS,
         frontend_status=lambda: FRONTEND_MOUNTS.status(),
         registry_problem=lambda: REGISTRY_APPLY_PROBLEM,
     )

@@ -1,4 +1,4 @@
-"""MCP server for the gateway: three meta-tools over the existing capability core.
+"""MCP server for the gateway: media meta-tools and optional owner operator commands.
 
 Transport: Streamable HTTP at one endpoint (``POST /mcp``). Protocol: the current
 revision (2026-07-28, stateless: every request carries its version and
@@ -26,6 +26,7 @@ per model):
 * ``run``: start a workflow or an OpenAI-style media operation (speech). Returns
   the result, or a job id when the work outlives ``wait_seconds``.
 * ``job``: poll, wait for, or cancel a job; fetches the result.
+* ``stt_measurement`` (when wired): owner long-audio settings and measurement jobs.
 
 The module owns no business logic. Authentication, profile policy, receipts and
 job storage stay in the core routes: every action is dispatched in process to
@@ -124,6 +125,7 @@ class McpDeps:
     # the scopes the 401 challenge asks for. Empty means API keys only.
     authorization_servers: Callable[[Request], list[str]] = lambda _request: []
     scopes: tuple[str, ...] = ()
+    stt_measurement: Callable[..., Awaitable[dict]] | None = None
 
 
 # ------------------------------------------------------------------ JSON-RPC
@@ -221,6 +223,19 @@ TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+TOOLS.append({
+    "name": "stt_measurement", "title": "Long-audio operator settings and measurement",
+    "description": "Owner only (MCP OAuth). Configure saved cutting settings independently, or fetch public human-transcribed samples and measure through the gateway. Start returns a durable job id; status reports progress, deletions by piece length, seam excess versus noise and a recommendation. Cancel stops work. Apply is an explicit separate action; configure/apply require the current registry revision from options.",
+    "inputSchema": {"type": "object", "properties": {
+        "service_id": {"type": "string"}, "action": {"type": "string", "enum": ["options", "configure", "start", "status", "cancel", "apply"]},
+        "job_id": {"type": "string"}, "revision": {"type": "string"},
+        "inputs": {"type": "object", "properties": {"sample_ids": {"type": "array", "items": {"type": "string"}},
+            "lengths": {"type": "array", "items": {"type": "number"}}, "search_widths": {"type": "array", "items": {"type": "number"}}, "model": {"type": "string"}}, "additionalProperties": False},
+        "settings": {"type": "object", "properties": {"target_seconds": {"type": "number", "exclusiveMinimum": 0},
+            "search_seconds": {"type": "number", "minimum": 0}, "max_segment_seconds": {"type": "number", "exclusiveMinimum": 0}, "native_long_audio": {"type": "boolean"}}, "additionalProperties": False},
+    }, "required": ["service_id", "action"], "additionalProperties": False},
+    "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
+})
 
 # ------------------------------------------------------------------ result I/O
 
@@ -562,6 +577,13 @@ def tool_result(payload: Mapping[str, Any], *, is_error: bool = False, version: 
 async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args: Mapping[str, Any],
                     version: str = MODERN_VERSION) -> dict[str, Any]:
     tools = Tools(deps, request, auth)
+    if name == "stt_measurement":
+        if deps.stt_measurement is None:
+            return tool_result({"status": "error", "error": "Long-audio operator commands are unavailable."}, is_error=True, version=version)
+        try:
+            return tool_result(await deps.stt_measurement(request, auth, args), version=version)
+        except CallError as error:
+            return tool_result({"status": "error", "error": str(error), **error.details}, is_error=True, version=version)
     handler = {"capabilities": tools.capabilities, "run": tools.run, "job": tools.job}[name]
     try:
         # Both run and job expose generation failures to the caller as errors.
@@ -648,7 +670,7 @@ async def handle_message(deps: McpDeps, request: Request, auth: Any, msg: Mappin
             "instructions": INSTRUCTIONS, "ttlMs": 3600000, "cacheScope": "public",
         }
     elif method == "tools/list":
-        result = {"tools": TOOLS}
+        result = {"tools": [tool for tool in TOOLS if tool["name"] != "stt_measurement" or deps.stt_measurement is not None]}
         if modern:
             result.update(ttlMs=300000, cacheScope="public")
     elif method == "tools/call":

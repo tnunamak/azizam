@@ -85,6 +85,8 @@ class AdminContext:
     # The first id of the browser sign-in; revoking it ends every renewal.
     session_family: str | None = None
     session_absolute_expires_at: int | None = None
+    # An MCP owner operation keeps its connection binding while background work runs.
+    connection_id: str | None = None
 
     @property
     def browser_session(self) -> BrowserSession | None:
@@ -1744,6 +1746,7 @@ def create_admin_router(
     known_model_names_getter: Callable[[], frozenset[str]] | None = None,
     engine_fetch: engine_check.Fetch | None = None,
     engine_hop_timeout: Callable[[], float] | None = None,
+    stt_measurements: Any = None,
     frontend_status: Callable[[], list[dict[str, Any]]] | None = None,
     registry_problem: Callable[[], Mapping[str, Any] | None] | None = None,
     prefix: str = "/admin/api",
@@ -1783,6 +1786,9 @@ def create_admin_router(
     engine_admin.register_engine_routes(router, service=engine_service, guard=_guard, read_json=_read_json_body)
     from gateway.engine_protocol_admin import register_engine_protocol_routes
     register_engine_protocol_routes(router, guard=_guard)
+    if stt_measurements is not None:
+        from gateway.stt_measurement_api import register_routes as register_stt_measurement_routes
+        register_stt_measurement_routes(router, runner=stt_measurements, guard=_guard)
 
     @router.get("/session")
     def session(request: Request) -> JSONResponse:

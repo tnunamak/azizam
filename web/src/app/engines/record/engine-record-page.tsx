@@ -57,7 +57,8 @@ import {
   fieldPart,
   lockReason,
 } from "./contract-sections";
-import { RemoveSection, StoredRecordSection, errorText } from "./record-sections";
+import { LongAudioControls } from "./long-audio-controls";
+import { LongAudioSection, RemoveSection, StoredRecordSection, errorText } from "./record-sections";
 import { cardProblem, cardsFromTransforms, transformsFromCards, type AdjustmentCard } from "./adjustments";
 import {
   FieldGroups,
@@ -941,6 +942,8 @@ function RecordForm({
       </section>
 
       {publicDirty && <p className="text-meta text-muted-foreground">Save or discard other settings before editing secrets. Address changes must be saved before a key can be bound to the new origin.</p>}
+      {owner && (view.capabilities.includes("audio.transcriptions") || (Array.isArray(view.record.capabilities) && view.record.capabilities.includes("transcriptions"))) && <LongAudioControls serviceId={view.service_id} locked={locked || dirty || saving} />}
+
       {commands.length > 0 && <p className="text-meta text-muted-foreground">Save or discard the secret changes before changing other settings. The secret batch is saved together.</p>}
       <SecretFields drafts={secrets} onChange={setSecrets} part="connection" excludeKinds={nativeMode ? ["headers"] : []} disabled={settingsLocked || publicDirty || saving} />
 
@@ -1121,6 +1124,8 @@ function RecordForm({
           <ResourceFacts v2={view.v2} />
         </div>
       </section>
+
+      {!owner && <LongAudioSection chunking={view.stt_chunking} />}
 
       <StoredRecordSection view={view} />
 

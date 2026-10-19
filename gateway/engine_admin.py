@@ -1183,6 +1183,45 @@ class EngineService:
         view["revision"] = f'"os-{generation}"' if generation is not None else None
         return view
 
+    def configure_stt(self, ctx: Any, service_id: str, body: Any, *, expected_generation: int, apply_recommendation: bool = False) -> dict[str, Any]:
+        """Change only the owner's cutting fields, through the existing registry CAS/hot-reload path."""
+        from gateway.stt_measurement import SETTING_KEYS, settings_patch
+        if not _is_owner(ctx):
+            raise _owner_only("Only the owner can change long-audio settings.")
+        patch = settings_patch(body)
+        registry, generation = self.store.get_service_registry_snapshot()
+        if generation != expected_generation:
+            raise EngineRouteError(409, "generation_mismatch", "The registry changed; refresh and try again.")
+        record = registry.get("services", {}).get(service_id)
+        if record is None:
+            raise EngineRouteError(404, "service_not_found", "No engine has that id.")
+        if not {"transcriptions", "audio.transcriptions"}.intersection(record.get("capabilities", [])):
+            raise EngineRouteError(400, "not_transcription_engine", "Choose an engine that offers transcription.")
+        config = copy.deepcopy(record.get("config") or {})
+        saved_chunking = config.get("chunking")
+        chunking = {**(saved_chunking if isinstance(saved_chunking, Mapping) else {}), **patch}
+        config["chunking"] = chunking
+        try:
+            if apply_recommendation:
+                chunking.update(enabled=True, threshold_seconds=chunking["max_segment_seconds"])
+            elif "target_seconds" in patch and "threshold_seconds" not in patch:
+                threshold = chunking.get("threshold_seconds", stt_chunking.bundled_chunking_defaults()["threshold_seconds"])
+                if isinstance(threshold, (int, float)) and patch["target_seconds"] >= threshold:
+                    # Resolve the effective maximum without saving derived defaults.
+                    # A one-second gap keeps exact-cut records (maximum == target)
+                    # valid too, without exposing floating-point epsilon values.
+                    target = patch["target_seconds"]
+                    provisional = stt_chunking.SttExecutionConfig.from_service(
+                        service_id=service_id,
+                        service_config={**config, "chunking": {**chunking, "threshold_seconds": target + max(1, target * .01)}},
+                        config_directory=self.db_path.parent)
+                    chunking["threshold_seconds"] = max(provisional.max_segment_seconds, target + 1)
+            stt_chunking.SttExecutionConfig.from_service(service_id=service_id, service_config=config, config_directory=self.db_path.parent)
+        except stt_chunking.SttConfigurationError:
+            raise EngineRouteError(400, "invalid_stt_settings", "The target must fit the hard maximum and all cutting limits must be valid.") from None
+        result = self.store.update_service(service_id=service_id, data={"chunking": chunking}, actor=ctx, expected_generation=expected_generation)
+        return {"settings": {k: chunking[k] for k in SETTING_KEYS if k in chunking}, "revision": f'"os-{result["operator_settings_generation"]}"'}
+
     async def create(self, ctx: Any, body: Mapping[str, Any], *, expected_generation: int) -> dict[str, Any]:
         catalog = self.catalog()
         definition = _definition(catalog, body.get("definition"))
