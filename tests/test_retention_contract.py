@@ -606,6 +606,30 @@ def test_maintenance_uses_normalized_member_period(tmp_path, monkeypatch, remove
     assert prompt_memory.get("asset", person, path=media_path)["kept_until"] is None
 
 
+def test_startup_repair_reads_policy_while_another_writer_holds_admin_lock(tmp_path, monkeypatch):
+    from gateway import prompt_memory
+    admin_path, media_path = tmp_path / "admin.db", tmp_path / "media.db"
+    admin_store.init_db(admin_path)
+    person = admin_store.upsert_oidc_user("iss", "writer", path=admin_path)["id"]
+    assert prompt_memory.put("asset", person, "prompt", kept_until=None, created_at=int(time.time()),
+                             path=media_path, admin_path=admin_path)
+    data = _bundled_data()
+    data["groups"]["prompts"]["default_cap"] = "1_year"
+    contract = retention.parse_contract(data, schema=json.loads(SCHEMA.read_text()))
+    monkeypatch.setattr(retention, "bundled", lambda: contract)
+    connect = prompt_memory.connect
+
+    def short_wait(path, **kwargs):
+        if Path(path) == admin_path:
+            kwargs["timeout"] = 0.05
+        return connect(path, **kwargs)
+
+    monkeypatch.setattr(prompt_memory, "connect", short_wait)
+    with sqlite3.connect(admin_path) as writer:
+        writer.execute("BEGIN IMMEDIATE")
+        assert prompt_memory.tighten_contract_periods(admin_path=admin_path, path=media_path) == 1
+
+
 def test_a_missing_file_stops_startup_with_a_plain_message(tmp_path, monkeypatch):
     import asyncio
     import proxy
