@@ -203,6 +203,12 @@ save, adding, editing, enabling or removing an engine or provider, secret comman
 record, enabling or removing an extension package). Such a save can move where a stored key is sent, so a
 sign-out that committed between its binding check and its commit stops it.
 
+Stored secrets follow the same rule: a provider key, an engine's key, the secret entries of a record and
+the identity provider's client secret are stored, replaced or deleted only when the sign-in that asks is
+still live. So are a trusted address (it lets a device in with no key) and the link of an identity-provider
+account to the owner. Clean-up of a secret that the same request stored runs even after sign-out. A
+role granted by a request in flight at sign-out is not checked; it is behind the confirmation window only.
+
 "Live" includes the deadlines. A request whose session ran past its idle timeout or its absolute
 lifetime while the request was in flight is refused too, whether or not the server requires a stored
 record for that person's sessions: the cookie's deadlines and the stored row's deadline are both

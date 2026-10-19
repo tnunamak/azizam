@@ -225,6 +225,7 @@ def create_provider_admin_router(
                         secret_value,
                         db_path=_admin_db_path(store),
                         approved_origin=_provider_credential_origin(config),
+                        session=ctx.browser_session,
                     )
                     wrote_secret = True
                 try:
@@ -365,6 +366,7 @@ def create_provider_admin_router(
                     secret_value,
                     db_path=_admin_db_path(store),
                     approved_origin=_provider_credential_origin(config),
+                    session=ctx.browser_session,
                 ).to_dict()
                 _clear_provider_connection_state(store, provider_id, actor=ctx)
         except _RouteError as exc:
@@ -384,7 +386,8 @@ def create_provider_admin_router(
                 secret_id = _current_provider_secret_id(store, provider_id)
                 if not secret_id:
                     raise _RouteError(status.HTTP_409_CONFLICT, "env_key_provider", "This provider uses an environment-variable key. Remove the environment reference from provider settings.")
-                status_row = secret_store.delete_provider_secret(secret_id, db_path=_admin_db_path(store)).to_dict()
+                status_row = secret_store.delete_provider_secret(
+                    secret_id, db_path=_admin_db_path(store), session=ctx.browser_session).to_dict()
                 _clear_provider_connection_state(store, provider_id, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()

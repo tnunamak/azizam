@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from gateway import accounts, admin_store, mcp_oauth_store, session_guard
+from gateway import accounts, admin_store, mcp_oauth_store, secret_store, session_guard, signin_admin
 from gateway.session_guard import BrowserSession, SessionEnded
 from tests.support import call_graph
 from tests.support.access import store_plan
@@ -40,8 +40,9 @@ ACT = {"x-azizam-user-action": "1"}
 # A string that creates a credential (or replaces a password), in any table that holds one.
 CREATES = re.compile(
     r"(INSERT\s+(OR\s+\w+\s+)?INTO|REPLACE\s+INTO)\s+"
-    r"(credentials|mcp_oauth_grants|mcp_oauth_codes|mcp_oauth_tokens|account_links|local_password_credentials)\b"
-    r"|UPDATE\s+local_password_credentials\b",
+    r"(credentials|mcp_oauth_grants|mcp_oauth_codes|mcp_oauth_tokens|account_links|local_password_credentials"
+    r"|provider_secrets|app_trusted_addresses|oidc_identity_links)\b"
+    r"|UPDATE\s+local_password_credentials\b|DELETE\s+FROM\s+provider_secrets\b",
     re.IGNORECASE,
 )
 
@@ -54,6 +55,10 @@ GUARDED = {
     "gateway/mcp_oauth_store.py::Store.create_grant": "an MCP connection (consent)",
     # A registry save can move where a stored key is sent (the credential binding), so the writers of the
     # registry are credential writers too. They are found by their call of write_service_registry_in_transaction.
+    "gateway/secret_store.py::put_provider_secret": "a provider key, an engine key, the secret entries of a record, the OIDC client secret",
+    "gateway/secret_store.py::delete_provider_secret": "removing a stored secret",
+    "gateway/admin_store.py::add_trusted_address": "a trusted address lets a device in with no key",
+    "gateway/signin_admin.py::link_identity": "an identity-provider login bound to the owner's account",
     "gateway/admin_store.py::write_service_registry": "a registry save",
     "gateway/admin_store.py::write_service_registry_with_audit": "a registry save with its audit fact",
     "gateway/admin_store.py::write_service_registry_and_setting_with_audits": "a registry save with a setting and audit facts",
@@ -77,7 +82,21 @@ NO_BROWSER = {
 # The guarded writers by the name callers use, and the keyword that carries the sign-in.
 REGISTRY_WRITERS = {"write_service_registry", "write_service_registry_with_audit",
                     "write_service_registry_and_setting_with_audits"}
+SECRET_STORE_WRITERS = {"put_provider_secret", "delete_provider_secret"}
 CALLED_AS = {"create_credential_hash", "set_local_password_verifier", "create_link", "create_grant"} | REGISTRY_WRITERS
+# Writers whose plain name another function also has (the runtime's own ``add_trusted_address(actor=...)``), called
+# by their dotted names.
+CALLED_AS_DOTTED = {"admin_store.add_trusted_address", "signin_admin.link_identity"}
+# Calls into the secret store by their dotted names. A secret written for a browser carries its sign-in; the few
+# calls that do not are listed in NO_SESSION_SECRET_CALLS.
+SECRET_CALLS = {"secret_store.put_provider_secret", "secret_store.delete_provider_secret",
+                "secret_refs.store", "secret_refs.putter", "secret_refs.delete"}
+
+
+def _dotted(func: ast.AST) -> str:
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        return f"{func.value.id}.{func.attr}"
+    return getattr(func, "id", getattr(func, "attr", ""))
 
 
 def _functions(tree: ast.AST):
@@ -185,6 +204,8 @@ DYNAMIC_SQL = {
     "gateway/admin_store.py::get_operator_setting_in": "SELECT of the fixed setting columns",
     "gateway/admin_store.py::list_operator_settings": "SELECT of the fixed setting columns",
     "gateway/admin_store.py::_record_prompt_erasure": "INSERT into one of two prompt-erasure tables named in a fixed tuple",
+    "gateway/secret_store.py::put_provider_secret": "the INSERT is a local literal bound to a name just above the call, run on the caller's or its own connection",
+    "gateway/signin_admin.py::_connection_rows": "a SELECT helper: callers pass written-out SELECT statements",
     "gateway/accounts.py::initialize": "executes the module's own schema text",
     "gateway/accounts.py::require_live_session_in": "SELECT from one of two fixed table names",
     "gateway/accounts.py::revoke_family_in": "DELETE and UPDATE that revoke; a placeholder per session id",
@@ -295,7 +316,7 @@ def test_every_production_call_of_a_guarded_writer_names_its_session():
                 if not isinstance(node, ast.Call):
                     continue
                 name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
-                if name not in CALLED_AS:
+                if name not in CALLED_AS and _dotted(node.func) not in CALLED_AS_DOTTED:
                     continue
                 keywords = {k.arg: k.value for k in node.keywords}
                 if "session" not in keywords:
@@ -306,6 +327,90 @@ def test_every_production_call_of_a_guarded_writer_names_its_session():
 
     assert bare == [], "a guarded writer is called without `session=` (pass the sign-in, or None where none asks): " + ", ".join(bare)
     assert literal == [], "session=None where a browser can be asking; add the function to NO_BROWSER with the reason: " + ", ".join(literal)
+
+
+# Calls into the secret store that carry no sign-in, with why: clean-up that must run when the sign-in has ended, a
+# follow-on of a save that was already checked, or a start-up migration. Keyed ``file::function#call``.
+NO_SESSION_SECRET_CALLS = {
+    "gateway/secret_refs.py::delete#secret_store.delete_provider_secret": "the helper for clean-up; callers decide (see below)",
+    "gateway/provider_admin.py::create_provider_admin_router.add_provider#secret_store.delete_provider_secret":
+        "removes the key this same request stored when the save after it failed",
+    "gateway/provider_admin.py::create_provider_admin_router.remove_provider#secret_store.delete_provider_secret":
+        "removes a removed provider's key after the checked registry save",
+    "gateway/engine_admin.py::EngineService._write#secret_store.delete_provider_secret":
+        "removes what this request stored when the save failed, and the secrets the save replaced",
+    "gateway/admin_runtime.py::AdminSQLiteStore.update_oidc_config_setting_in#secret_store.delete_provider_secret":
+        "drops the replaced secret inside the transaction that was just checked",
+    "gateway/admin_store.py::_move_oidc_client_secret_to_store#secret_store.put_provider_secret": "a start-up migration",
+    "gateway/secret_externalize_migration.py::migrate#secret_refs.putter": "a start-up migration",
+}
+
+
+def test_every_production_call_into_the_secret_store_carries_its_sign_in_or_is_listed():
+    bare, listed_seen = [], set()
+    for file in call_graph.production_files():
+        rel = str(file.relative_to(call_graph.ROOT))
+        tree = ast.parse(file.read_text())
+        for qualname, function in _functions(tree):
+            for node in _own_nodes(function):
+                if not isinstance(node, ast.Call) or _dotted(node.func) not in SECRET_CALLS:
+                    continue
+                if _dotted(node.func) == "secret_refs.delete":
+                    continue   # clean-up helper: its one call into the store is listed above
+                key = f"{rel}::{qualname}#{_dotted(node.func)}"
+                if any(k.arg == "session" for k in node.keywords):
+                    continue
+                if key in NO_SESSION_SECRET_CALLS:
+                    listed_seen.add(key)
+                else:
+                    bare.append(f"{rel}:{node.lineno} {key}")
+
+    assert bare == [], (
+        "These calls store or delete a secret and carry no `session=`. Pass the browser sign-in, or list the call in "
+        "NO_SESSION_SECRET_CALLS with why it must not carry one: " + "; ".join(bare))
+    assert sorted(set(NO_SESSION_SECRET_CALLS) - listed_seen) == [], "a listed call no longer exists"
+
+
+# Every table the gateway creates, sorted by what a signed-out session writing to it could do.
+CREDENTIAL_TABLES = {
+    "credentials", "local_password_credentials", "account_links", "mcp_oauth_grants", "mcp_oauth_codes",
+    "mcp_oauth_tokens", "provider_secrets", "app_trusted_addresses", "oidc_identity_links",
+}
+# Tables that hold or grant something but whose writers are listed, not guarded, with why.
+REVIEWED_UNGUARDED_TABLES = {
+    "admin_role_assignments": "grants authority, not a secret or a way in; behind the step-up window (D36). A role granted by a "
+                              "request in flight at sign-out is the remaining limit named in D41",
+    "mcp_oauth_clients": "dynamic client registration is a public endpoint: no browser sign-in asks for it, and a client holds no access until a person consents (create_grant)",
+    "mcp_oauth_requests": "a pending authorization request; it grants nothing until the consent, which is guarded",
+    "service_accounts": "a name for an admin key's owner; the key itself is in `credentials`, guarded",
+    "account_access": "a person's plan and state, not a secret",
+    "session_apps": "the App a sign-in acts through; it cannot hold keys or trusted addresses",
+    "operator_settings": "settings; the ones that hold a secret keep it in provider_secrets, and the registry and OIDC writers are guarded",
+}
+NOT_CREDENTIAL_TABLES = {
+    "access_plans", "account_login_limits", "account_oidc_verification", "account_session_lineage",
+    "account_session_revocations", "account_sessions", "account_signin_refusals", "apps", "asset_prompts",
+    "audit_events", "media_hidden_assets", "media_job_events", "media_job_prompt_erasure_cutoffs", "media_jobs",
+    "media_jobs_migrations", "media_jobs_schema_version", "media_volume_identity", "operator_settings_generations",
+    "policy_active", "policy_audit", "policy_snapshots", "prompt_memory_erasure_cutoffs",
+    "prompt_memory_erasure_intents", "prompt_memory_preferences", "prompt_metadata_migration",
+    "prompt_metadata_migration_attempts", "prompt_purge_done", "prompt_purge_queue", "provider_spend",
+    "receipt_history", "receipts", "schema_migration_steps", "schema_version", "signin_rule_plans",
+    "signin_seen_values", "user_identity_claims", "users", "video_job_records",
+}
+
+
+def test_every_table_is_classified_so_a_new_credential_table_is_not_missed():
+    created = set()
+    for file in call_graph.production_files():
+        created |= set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", file.read_text()))
+    classified = CREDENTIAL_TABLES | set(REVIEWED_UNGUARDED_TABLES) | NOT_CREDENTIAL_TABLES
+
+    assert sorted(created - classified) == [], (
+        "A table is new. Say what writing to it could do: add it to CREDENTIAL_TABLES (and to CREATES, so its "
+        "writers are found and guarded), to REVIEWED_UNGUARDED_TABLES with why, or to NOT_CREDENTIAL_TABLES.")
+    assert sorted(classified - created) == [], "a classified table is no longer created"
+    assert CREDENTIAL_TABLES <= set(re.findall(r"\|?([a-z_]+)", CREATES.pattern)), "a credential table is missing from CREATES"
 
 
 def test_routes_that_make_a_credential_are_found_through_their_helpers():
@@ -391,8 +496,24 @@ def world(tmp_path):
             {"services": {}}, expected_generation=generation(), updated_by="u", setting_key="some_setting",
             setting_value={"a": 1}, audits=[{"action": "t"}], session=session, path=db)
 
+    def make_secret(session):
+        state["n"] += 1
+        return secret_store.put_provider_secret(f"secret-{state['n']}", "a-secret-value", db_path=db, session=session)
+
+    def make_trusted_address(session):
+        state["n"] += 1
+        return admin_store.add_trusted_address(app["id"], f"10.0.0.{state['n']}", max_entries=50, session=session, path=db)
+
+    def make_identity_link(session):
+        state["n"] += 1
+        return signin_admin.link_identity(db, "https://idp.test", f"other-{state['n']}", user["id"], linked_by=user["id"],
+                                          session=session)
+
     # writer name -> (make, a number that grows by one with each write)
     writes = {
+        "put_provider_secret": (make_secret, lambda: count("provider_secrets")),
+        "add_trusted_address": (make_trusted_address, lambda: count("app_trusted_addresses")),
+        "link_identity": (make_identity_link, lambda: count("oidc_identity_links")),
         "create_credential_hash": (make_key, lambda: count("credentials")),
         "create_link": (make_link, lambda: count("account_links")),
         "set_local_password_verifier": (make_password, lambda: count("local_password_credentials")),
@@ -405,11 +526,43 @@ def world(tmp_path):
                               "end": staticmethod(end), "writes": writes})
 
 
+TESTED = sorted(CALLED_AS | {"put_provider_secret", "add_trusted_address", "link_identity"})
+
+
+def test_every_guarded_writer_has_a_behaviour_test():
+    guarded = {key.split("::")[1].rsplit(".", 1)[-1] for key in GUARDED}
+
+    assert guarded == set(TESTED) | {"delete_provider_secret"}
+
+
+def test_deleting_a_secret_after_sign_out_deletes_nothing(world):
+    secret_store.put_provider_secret("doomed", "a-secret-value", db_path=world.db)
+    live = world.sign_in("live-session")
+    ended = world.sign_in("ended-session")
+    world.end(ended)
+
+    with pytest.raises(SessionEnded):
+        secret_store.delete_provider_secret("doomed", db_path=world.db, session=ended)
+    assert world.count("provider_secrets") == 1
+
+    secret_store.delete_provider_secret("doomed", db_path=world.db, session=live)
+    assert world.count("provider_secrets") == 0
+
+
+def test_clean_up_of_a_secret_runs_even_when_the_sign_in_has_ended(world):
+    secret_store.put_provider_secret("orphan", "a-secret-value", db_path=world.db)
+    world.end(world.sign_in("ended-session"))
+
+    secret_store.delete_provider_secret("orphan", db_path=world.db)       # no sign-in: clean-up
+
+    assert world.count("provider_secrets") == 0
+
+
 def _refused(error: BaseException) -> bool:
     return isinstance(error, SessionEnded) or (isinstance(error, accounts.AccountError) and error.code == "login_required")
 
 
-@pytest.mark.parametrize("writer", sorted(CALLED_AS))
+@pytest.mark.parametrize("writer", TESTED)
 def test_a_guarded_writer_writes_for_a_live_sign_in_and_nothing_for_an_ended_one(world, writer):
     write, counter = world.writes[writer]
     live = world.sign_in("live-session")
@@ -425,7 +578,7 @@ def test_a_guarded_writer_writes_for_a_live_sign_in_and_nothing_for_an_ended_one
     assert counter() == after_live
 
 
-@pytest.mark.parametrize("writer", sorted(CALLED_AS))
+@pytest.mark.parametrize("writer", TESTED)
 def test_a_guarded_writer_with_no_sign_in_writes(world, writer):
     write, counter = world.writes[writer]
     before = counter()
@@ -435,7 +588,7 @@ def test_a_guarded_writer_with_no_sign_in_writes(world, writer):
     assert counter() == before + 1 or writer == "set_local_password_verifier"   # the password row is replaced, not added
 
 
-@pytest.mark.parametrize("writer", sorted(CALLED_AS))
+@pytest.mark.parametrize("writer", TESTED)
 def test_a_signed_out_everywhere_person_cannot_write_through_any_of_their_sessions(world, writer):
     write, counter = world.writes[writer]
     session = world.sign_in("everywhere-session")

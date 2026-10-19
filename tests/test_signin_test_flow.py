@@ -481,6 +481,28 @@ def test_a_password_owner_who_tests_with_their_own_provider_account_is_offered_t
     assert verdict(owner, snapshot, test) == {"kind": "owner_unlinked", "email": LOCAL_OWNER, "old_link_stale": False}
 
 
+def test_linking_a_provider_account_after_sign_out_everywhere_links_nothing(sg, monkeypatch):
+    """Decision D41: the link is a way to sign in as the owner, so the sign-in that asks is checked in its write."""
+    from gateway import signin_admin
+
+    owner, record = local_owner_client(sg)
+    snapshot = get_snapshot(owner)
+    test = begin(owner, snapshot)
+    finish(sg, owner, test, sub="tims-provider-id", email=LOCAL_OWNER)
+    original = signin_admin.link_identity
+
+    def sign_out_then_link(*args, **kwargs):
+        accounts.revoke_person_sessions(record["id"], path=sg.path)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(signin_admin, "link_identity", sign_out_then_link)
+
+    refused = owner.post("/admin/api/signin/link-owner", json={"test_id": test["test_id"]}, headers=csrf_for(owner))
+
+    assert refused.status_code == 401, refused.text
+    assert sg.rows("SELECT * FROM oidc_identity_links") == []
+
+
 def test_linking_makes_that_provider_account_sign_in_as_the_owner_without_renaming_them(sg):
     owner, record = local_owner_client(sg)
     snapshot = get_snapshot(owner)

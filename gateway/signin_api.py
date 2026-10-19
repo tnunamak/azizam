@@ -503,7 +503,7 @@ def create_signin_api(
         if verdict["kind"] != "owner_unlinked":
             raise SignInError("not_linkable", "This sign-in cannot be linked to your account.", 409)
         signin_admin.link_identity(path, run.issuer or run.cfg.issuer, run.subject, ctx.audit_actor_id,
-                                   linked_by=ctx.audit_actor_id)
+                                   linked_by=ctx.audit_actor_id, session=ctx.browser_session)
         return build_snapshot(request, ctx)
 
     # -- save ---------------------------------------------------------------

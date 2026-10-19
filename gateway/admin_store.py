@@ -1909,14 +1909,19 @@ def list_trusted_addresses(
 
 def add_trusted_address(
     app_id: str, address: str, *, note: str | None = None, created_by: str | None = None,
-    max_entries: int, now: int | None = None, path: Path = DB_PATH,
+    max_entries: int, now: int | None = None, session: session_guard.BrowserSession | None = None,
+    path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Add one entry (``address`` is already normalized). A session App takes none:
-    a signed-in person acts through their session, never through an address."""
+    a signed-in person acts through their session, never through an address.
+
+    A trusted address lets a device in with no key, so it is a credential: ``session`` is the browser sign-in
+    that asked, checked in this transaction (decision D41)."""
     ts = _now() if now is None else int(now)
     entry_id = _gen_id("tad")
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        session_guard.require_live(conn, session)
         if conn.execute("SELECT 1 FROM apps WHERE id = ?", (app_id,)).fetchone() is None:
             raise LookupError(f"app {app_id!r} not found")
         if conn.execute("SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)).fetchone():

@@ -29,6 +29,7 @@ from fastapi import Request, status
 
 from gateway import admin_store, browser_sessions, engine_check, step_up, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
+from gateway import session_guard
 from gateway.session_guard import SessionEnded
 from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
@@ -576,7 +577,7 @@ class AdminSQLiteStore:
             record = admin_store.add_trusted_address(
                 app_id, address, note=str(data.get("note") or "")[:200],
                 created_by=actor.audit_actor_id, max_entries=trusted_addresses.MAX_ENTRIES_PER_APP,
-                path=self.path,
+                session=actor.browser_session, path=self.path,
             )
         except LookupError:
             return None
@@ -852,7 +853,7 @@ class AdminSQLiteStore:
                 raise PermissionError("Only the owner can add a secret.")
 
             def put(value: str, origin: str | None = None) -> str:
-                ref = secret_refs.store(value, db_path=self.path, origin=origin)
+                ref = secret_refs.store(value, db_path=self.path, origin=origin, session=actor.browser_session)
                 created.append(ref)
                 return ref
 
@@ -1085,7 +1086,7 @@ class AdminSQLiteStore:
         created: list[str] = []
 
         def put(value: str, origin: str | None = None) -> str:
-            ref = secret_refs.store(value, db_path=self.path, origin=origin)
+            ref = secret_refs.store(value, db_path=self.path, origin=origin, session=actor.browser_session)
             created.append(ref)
             return ref
 
@@ -1455,7 +1456,7 @@ class AdminSQLiteStore:
             record = (registry.get("services") or {}).get(sid)
             if record is None:
                 raise ValueError(f"service {sid!r} not found")
-            put = secret_refs.putter(self.path)
+            put = secret_refs.putter(self.path, session=actor.browser_session)
             try:
                 new_record, outcome = secret_commands.apply_commands(record, commands, put)
             except secret_commands.CommandError as error:
@@ -1606,7 +1607,7 @@ class AdminSQLiteStore:
         created: list[str] = []
 
         def put(value: str, origin: str | None = None) -> str:
-            ref = secret_refs.store(value, db_path=self.path, origin=origin)
+            ref = secret_refs.store(value, db_path=self.path, origin=origin, session=actor.browser_session)
             created.append(ref)
             return ref
 
@@ -1864,6 +1865,8 @@ class AdminSQLiteStore:
                 f"unknown oidc_provider_config fields: {sorted(unknown)}"
             )
         conn = tx.conn
+        # The issuer and the client secret decide who may sign in: a sign-out that committed first stops the write.
+        session_guard.require_live(conn, actor.browser_session)
         current = admin_store.get_operator_setting_in(conn, OIDC_PROVIDER_SETTING_KEY)
         current_revision = admin_store.operator_setting_revision(current)
         if expected_revision is not None and expected_revision != current_revision:
@@ -1890,7 +1893,8 @@ class AdminSQLiteStore:
             # A fresh id per write: a rejected settings write leaves the
             # current reference pointing at the current secret.
             new_ref = f"oidc-client-secret-{secrets.token_hex(8)}"
-            secret_store.put_provider_secret(new_ref, new_secret, db_path=self.path, conn=conn)
+            secret_store.put_provider_secret(
+                new_ref, new_secret, db_path=self.path, conn=conn, session=actor.browser_session)
             merged.pop("client_secret", None)
             merged[OIDC_CLIENT_SECRET_REF] = new_ref
 

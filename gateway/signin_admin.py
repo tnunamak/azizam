@@ -22,7 +22,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
-from gateway import accounts, admin_store, signin_rules
+from gateway import accounts, admin_store, session_guard, signin_rules
+from gateway.session_guard import BrowserSession
 from gateway.admin_runtime import LOCAL_ADMIN_KEY_ISSUER
 from gateway.signin_rules import Claims, Outcome, Rules, Standing
 
@@ -698,11 +699,19 @@ def test_verdict(path: Path, run: Any, after: World, saved: World, plans: Mappin
 
 
 def link_identity(path: Path, issuer: str, subject: str, user_id: str, *, linked_by: str | None,
-                  now: int | None = None) -> None:
-    """Make this provider identity sign in as this person."""
+                  session: BrowserSession | None = None, now: int | None = None) -> None:
+    """Make this provider identity sign in as this person.
+
+    A link is a way to sign in, so it is a credential: ``session`` is the browser sign-in that asked, checked in
+    this transaction (decision D41)."""
     ts = int(time.time()) if now is None else now
     with admin_store._conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        try:
+            session_guard.require_live(conn, session)
+        except BaseException:
+            conn.rollback()
+            raise
         existing = conn.execute(
             "SELECT id FROM users WHERE issuer=? AND subject=?", (issuer, subject)).fetchone()
         taken = conn.execute(
