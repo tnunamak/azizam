@@ -495,6 +495,7 @@ def test_removed_stored_period_has_one_display_decision_and_writer_deadline(tmp_
     assert response.status_code == 200
     assert response.json()["prompt_memory"]["retention"] == "3_months"
     assert response.json()["prompt_memory"]["effective_retention"] == "3_months"
+    assert response.json()["unoffered"] == {"retention": "never", "retention_cap": "never"}
 
 
 def test_removed_period_shortens_existing_prompt_deadlines(tmp_path, monkeypatch):
@@ -670,6 +671,31 @@ def test_known_stored_period_stays_exact_when_not_offered(tmp_path, monkeypatch)
     assert _member_settings(person, path=admin_path)["retention"] == "3_months"
     assert settings_api.prompt_memory_settings(admin_path)["retention_cap"] == "3_months"
     assert contract.public()["known_unoffered"] == [{"id": "3_months", "seconds": 90 * 86400}]
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from gateway.admin_api import AdminContext
+    from gateway.admin_oidc import AdminSession
+    from gateway.me_prompt_memory import create_me_prompt_memory_router
+    app = FastAPI()
+    app.include_router(settings_api.create_settings_router(
+        auth=lambda request: AdminContext(subject="owner", roles=frozenset({"owner"}),
+                                          auth_method="session", csrf_token="x"),
+        admin_path=admin_path, config_provider=lambda: {}, prompt_memory_path=tmp_path / "media.db"))
+    app.include_router(create_me_prompt_memory_router(
+        session_provider=lambda request: AdminSession(subject=person, role="none", email=None,
+                                                      issued_at=time.time(), expires_at=time.time() + 60),
+        admin_db_path=admin_path, prompt_memory_path=tmp_path / "media.db",
+        household_provider=lambda: {"retention_cap": "3_months"}))
+    client = TestClient(app)
+    owner = client.get("/admin/api/settings/prompt-memory", headers={"x-azizam-csrf": "x"})
+    member = client.get("/me/api/prompt-memory")
+    assert owner.status_code == member.status_code == 200
+    assert owner.json()["unoffered"] == {"retention_cap": "3_months"}
+    assert member.json()["unoffered"] == {"retention": "3_months", "retention_cap": "3_months"}
+    assert client.put("/admin/api/settings/prompt-memory", headers={"x-azizam-csrf": "x",
+               "If-Match": owner.json()["revision"]}, json={"default_remember": False,
+               "never_keep": False, "retention_cap": "3_months"}).status_code == 200
+    assert client.put("/me/api/prompt-memory", json={"remember": True, "retention": "3_months"}).status_code == 200
 
 
 def test_startup_tightens_saved_prompts_without_a_preference_row(tmp_path, monkeypatch):
