@@ -281,17 +281,54 @@ def test_failed_runs_keep_logs_without_scratch(world: World) -> None:
     assert world.run_dirs() == []
 
 
-def test_a_timed_out_step_fails_with_its_name_and_receipt(world: World) -> None:
+@pytest.mark.parametrize("timeout_rc", [124, 137])
+def test_a_timed_out_step_fails_with_its_name_and_receipt(world: World, timeout_rc: int) -> None:
     timeout = world.bin / "timeout"
     timeout.write_text("#!/usr/bin/env bash\n"
-                       "if [[ $* == *run-hermetic-pytest.sh* ]]; then exit 124; fi\n"
+                       f"if [[ $* == *run-hermetic-pytest.sh* ]]; then exit {timeout_rc}; fi\n"
                        "while [[ $1 != 1200s ]]; do shift; done\n"
                        "shift; exec \"$@\"\n")
     timeout.chmod(0o755)
     result = world.run()
     assert result.returncode == 1, result.stdout + result.stderr
     assert "python-hermetic exceeded the 1200-second step limit" in result.stdout
-    assert "python-hermetic\t124\t" in (world.receipts / "steps.tsv").read_text()
+    assert f"python-hermetic\t{timeout_rc}\t" in (world.receipts / "steps.tsv").read_text()
+
+
+def _step_with_unrelated_grandchild(world: World) -> Path:
+    script = world.repo / "scripts/run-hermetic-pytest.sh"
+    script.write_text("#!/usr/bin/env bash\n"
+                      "bash -c 'trap \"\" TERM; exec sleep 90' &\n"
+                      "echo $! > \"$HOME/step-grandchild.pid\"\n"
+                      "wait $!\n")
+    _git(world.repo, "add", "scripts/run-hermetic-pytest.sh")
+    _git(world.repo, "commit", "-qm", "step with a grandchild")
+    return world.home / "step-grandchild.pid"
+
+
+def _grandchild_has_exited(pid_file: Path) -> bool:
+    pid = pid_file.read_text().strip()
+    process = Path("/proc") / pid / "stat"
+    return not process.exists() or process.read_text().split()[2] == "Z"
+
+
+def test_interrupt_kills_step_grandchild_without_run_dir_in_command_line(world: World) -> None:
+    grandchild = _step_with_unrelated_grandchild(world)
+    signal_after_spawn = ("until [[ -s $HOME/step-grandchild.pid ]]; do sleep .01; done; "
+                          + SIGNAL_CONTROLLER.format("TERM") + "; sleep 60")
+    result = world.run(FAKE_DURING_RUN=signal_after_spawn)
+    assert result.returncode == 143, result.stdout + result.stderr
+    assert grandchild.is_file() and _grandchild_has_exited(grandchild)
+    assert world.lock_is_free(), "the grandchild must release the host lock"
+
+
+def test_expiry_kills_step_grandchild_without_run_dir_in_command_line(world: World) -> None:
+    grandchild = _step_with_unrelated_grandchild(world)
+    result = world.run(AZIZAM_CI_STEP_TIMEOUT_S="0.2")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "python-hermetic exceeded the 1200-second step limit" in result.stdout
+    assert grandchild.is_file() and _grandchild_has_exited(grandchild)
+    assert world.lock_is_free(), "the grandchild must release the host lock"
 
 
 def test_abandoned_and_legacy_kept_scratch_are_swept(world: World) -> None:

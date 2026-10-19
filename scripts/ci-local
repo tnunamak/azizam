@@ -151,9 +151,28 @@ run=$(cd "$run" && pwd)
 work=$run/web-build
 worktrees=()
 pids=()
+step_groups=$run/step-groups
+mkdir -p "$step_groups"
+stop_step_group() {
+  local pgid=$1 deadline=$((SECONDS + 3))
+  kill -TERM -- "-$pgid" 2>/dev/null || true
+  while kill -0 -- "-$pgid" 2>/dev/null && ((SECONDS < deadline)); do sleep .1; done
+  kill -KILL -- "-$pgid" 2>/dev/null || true
+}
+stop_recorded_groups() {
+  local file pgid
+  for file in "$step_groups"/$1; do
+    [[ -f $file ]] || continue
+    read -r pgid < "$file"
+    [[ $pgid =~ ^[1-9][0-9]*$ ]] && stop_step_group "$pgid"
+  done
+}
 cleanup() {
   local pid directory deadline=$((SECONDS + 20))
   trap '' INT TERM
+  # timeout uses a second process group. Kill it before removing the outer
+  # supervisor; its descendants need not mention $run in their command lines.
+  stop_recorded_groups '*'
   # Every background job has its own session: never kill the caller's group.
   for pid in "${pids[@]}"; do kill -TERM -- "-$pid" 2>/dev/null || true; done
   for pid in "${pids[@]}"; do
@@ -204,7 +223,7 @@ step() {
   printf '%s\t%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" "$(cost_columns "$name")" > "$receipts/steps/$name.tsv"
   if ((rc)); then
     failed=1
-    if ((rc == 124)); then
+    if ((rc == 124 || rc == 137)); then
       echo "   FAILED: $name exceeded the 1200-second step limit: $receipts/logs/$name.log"
     else
       echo "   FAILED (exit $rc): $receipts/logs/$name.log"
@@ -218,11 +237,22 @@ step() {
 measure_step() {
   local name=$1; shift
   local cost=$receipts/steps/$name.cost
+  local group_file=$step_groups/${CI_JOB_PID:-main}.$name deadline_pid rc=0
   if [[ $cost_mode == gnu-time ]] && : > "$cost" 2>/dev/null; then
-    "$gate_time" -q -o "$cost" -f '%e %U %S %M' timeout --signal=TERM --kill-after=20s 1200s "$@"
+    timeout --signal=TERM --kill-after=20s "${AZIZAM_CI_STEP_TIMEOUT_S:-1200}s" \
+      "$gate_time" -q -o "$cost" -f '%e %U %S %M' "$@" &
   else
-    python3 -I "$repo/scripts/ci/gate_cost.py" run "$cost" -- timeout --signal=TERM --kill-after=20s 1200s "$@"
+    timeout --signal=TERM --kill-after=20s "${AZIZAM_CI_STEP_TIMEOUT_S:-1200}s" \
+      python3 -I "$repo/scripts/ci/gate_cost.py" run "$cost" -- "$@" &
   fi
+  deadline_pid=$!
+  printf '%s\n' "$deadline_pid" > "$group_file"
+  wait "$deadline_pid" || rc=$?
+  # GNU timeout is the leader of its own group. A step may leave children
+  # after timeout itself exits; reap that group before dropping its record.
+  if kill -0 -- "-$deadline_pid" 2>/dev/null; then stop_step_group "$deadline_pid"; fi
+  rm -f "$group_file"
+  return "$rc"
 }
 # The steps.tsv columns after the name, exit code and whole seconds: wall, CPU
 # (user plus system) and peak RSS kB. A step with no measurement reports "-".
@@ -244,17 +274,18 @@ cleanup_step() {
     rm -rf -- "$@"
   fi
 }
-export receipts work skip_compose py_workers run seed repo gate_time cost_mode
-export -f step cleanup_step measure_step cost_columns
+export receipts work skip_compose py_workers run seed repo gate_time cost_mode step_groups
+export -f step cleanup_step measure_step cost_columns stop_step_group
 start_job() {
   local directory=$1; shift
-  setsid bash -c 'cd "$1" || exit; shift; "$@"' _ "$directory" "$@" &
+  setsid bash -c 'CI_JOB_PID=$BASHPID; export CI_JOB_PID; cd "$1" || exit; shift; "$@"' _ "$directory" "$@" &
   last_pid=$!
   pids+=("$last_pid")
 }
 wait_job() {
-  local pid=$1 index deadline
-  if ! wait "$pid"; then failed=1; fi
+  local pid=$1 index deadline job_failed=0
+  if ! wait "$pid"; then failed=1; job_failed=1; fi
+  if ((job_failed)); then stop_recorded_groups "$pid.*"; fi
   # A failed supervisor must not leave fixture grandchildren running.
   if kill -0 -- "-$pid" 2>/dev/null; then
     failed=1

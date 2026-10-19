@@ -86,17 +86,47 @@ test("orphaned lock from a crashed holder is reclaimed without stalling", async 
 
 test("a lock refreshed by a live holder is never removed; the store degrades within budget and logs the lock path", { timeout: 30_000 }, async (t) => {
 	const { path, lock } = freshDir("live");
-	const lockfile = createRequire(import.meta.url)("proper-lockfile");
+	const require = createRequire(import.meta.url);
+	const lockfile = require("proper-lockfile");
+	const lockFs = require("graceful-fs") as typeof import("node:fs");
 	t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
 	const release = await lockfile.lock(path, { realpath: false, stale: 2000, retries: 0 });
 	t.after(async () => { await release(); t.mock.timers.reset(); });
 	const logged = mock.method(console, "error", () => {});
 	t.after(() => logged.mock.restore());
 	const beforeRefresh = statSync(lock).mtimeMs;
+	let heartbeatDone!: () => void;
+	const heartbeat = new Promise<void>((resolve) => { heartbeatDone = resolve; });
+	const realUtimes = lockFs.utimes;
+	t.mock.method(lockFs, "utimes", (...args: Parameters<typeof lockFs.utimes>) => {
+		const [target, atime, mtime, callback] = args;
+		realUtimes(target, atime, mtime, (error) => {
+			callback(error);
+			if (target === lock && !error) heartbeatDone();
+		});
+	});
 	t.mock.timers.tick(1500);
-	for (let i = 0; i < 10 && statSync(lock).mtimeMs <= beforeRefresh; i++)
-		await new Promise(setImmediate); // let proper-lockfile's asynchronous heartbeat write finish
+	const heartbeatWatchdog = new AbortController();
+	try {
+		await Promise.race([
+			heartbeat,
+			import("node:timers/promises").then(({ setTimeout: delay }) =>
+				delay(2000, undefined, { signal: heartbeatWatchdog.signal, ref: false }).then(() => {
+					throw new Error("live holder did not refresh its lock");
+				})),
+		]);
+	} finally { heartbeatWatchdog.abort(); }
 	assert.ok(statSync(lock).mtimeMs > beforeRefresh, "live holder must refresh the lock itself");
+	// A live heartbeat is still valid partway to the orphan threshold.
+	t.mock.timers.tick(500);
+	const age = Date.now() - statSync(lock).mtimeMs;
+	assert.ok(age > 1 && age < 1800, `expected a mid-age live lock, got ${age} ms`);
+	const realCheck = lockfile.check.bind(lockfile);
+	const orphanCheckAges: number[] = [];
+	t.mock.method(lockfile, "check", (target: string, options: { stale: number; realpath: false }) => {
+		orphanCheckAges.push(options.stale);
+		return realCheck(target, options);
+	});
 	const controlled = controlledBudgets(t);
 	const store = await createRepairingModelsStore(path, { lockBudgetMs: 1200, orphanStaleMs: 1800 });
 	const read = store.read("azizam");
@@ -108,6 +138,7 @@ test("a lock refreshed by a live holder is never removed; the store degrades wit
 	controlled.budgets[1].abort(new DOMException("write lock budget", "TimeoutError"));
 	await write;
 	assert.deepEqual(controlled.durations, [1200, 1200]);
+	assert.deepEqual(orphanCheckAges, [1800, 1800], "both operations must use the configured orphan threshold");
 	assert.ok(existsSync(lock), "live lock must survive");
 	assert.equal(readFileSync(path, "utf8"), "{}", "write is skipped while the live lock is held");
 	const lines = logged.mock.calls.map((call) => String(call.arguments[0])).filter((line) => line.includes(lock));
