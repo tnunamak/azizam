@@ -22,9 +22,9 @@ Each design claim names its ground. A claim with no ground says
   installed source and ran an in-process canary harness, which now lives
   outside the repo at `~/.tmp/llm-probe`. It read the names of the live
   process's environment variables, not their values.
-- **[judge r1]**: the independent review of this design at `26b4d443`
-  (Codex GPT-6.1-Sol, high effort). Its findings are applied in this
-  revision.
+- **[judge r1]**, **[judge r2]**: the independent reviews of this design
+  at `26b4d443` and `da9d3a7b` (Codex GPT-6.1-Sol, high effort). Their
+  findings are applied in this revision.
 
 ## 1. Summary
 
@@ -226,8 +226,8 @@ disclosure:
 
 The validator (core) refuses these:
 
-- A `readers` value outside the core list (section 4), or any value but
-  `scope` for `conversation`.
+- A `readers` value outside the core list, or a value given for a kind it
+  is not legal for (section 4). `conversation` takes only `scope`.
 - A `parts` default outside `allowed`.
 - A kind in two groups, or a grouped kind that also has its own `choices`.
 - A `default_retention` outside `choices`.
@@ -406,6 +406,8 @@ R2's full classifier, made for simplicity. A reviewer should check it.
   - `created_at`, `kept_until`
   - `parts_json`, `omissions_json`, `policy_version`
   - `linked_asset_ids`
+  - `fact_revisions`: the revision hashes of the facts in force when the
+    request was sent (section 6.1)
   - a small structural summary: route, model, status, latency, so that a
     record still reads well after its receipt is pruned
 - There is **one writer** for all four kinds, `retention.write(decision,
@@ -469,11 +471,22 @@ route. It covers:
 [reach] "Enforce the rule in the shared authorization core" names the same
 coverage.
 
-**Data may narrow it.** `readers` takes values from a core list:
+**Data may narrow it.** `readers` takes values from a core list. Each
+value is legal only for the kinds named:
 
-- `maker` (the floor, and the most it allows today);
-- `maker_signed_in` (only the maker's browser session; no delegated
-  credential can read the content).
+- `maker`: the floor, and the most it allows today. For the person-scoped
+  kinds.
+- `maker_signed_in`: only the maker's browser session; no delegated
+  credential can read the content. For the person-scoped kinds.
+- `scope`: today's conversation rule (above). For `conversation` only,
+  and it is fixed there. It is the reason a saved conversation exists: the
+  app that saved it must be able to continue it.
+
+A member's `readers` in the `prompts` group therefore narrows Library
+prompts only. Conversations keep `scope`. The guided form says so: "Only
+when I am signed in (Library prompts and request history; an app can still
+continue a conversation it saved)". No `readers` value ever replaces or
+skips the conversation scope check.
 
 A household or member value of `maker_signed_in` is a real narrowing.
 Today, sharing a personal key shares the maker's prompts
@@ -563,7 +576,8 @@ upstream default change then cannot turn a sink on.
 | Spend rows: messages, response, `proxy_server_request` | `general_settings.store_prompts_in_spend_logs: false`; `disable_spend_logs: true` (key, user and team spend totals still update, so virtual-key budgets keep working; slice 3 tests this) | unset; spend rows written to the live database | GW-L2, GW-L10; survey |
 | Error rows (`metadata.error_information`: provider error text, capped; only the keys `input`, `messages` and `prompt` are redacted) | `general_settings.disable_error_logs: true` | unset; written | GW-L2; survey |
 | Database settings that override YAML | `general_settings.store_model_in_db: false`, plus the database-override precondition check below | unset | GW-L3; survey |
-| Callbacks (`callbacks`, `success_callback`, `failure_callback`, key and team callbacks) | `[]` for each; Azizam creates no key with callback metadata | unset (empty); no environment variable enables them in 1.86.2 | GW-L1, GW-L10; survey |
+| Callbacks (`callbacks`, `success_callback`, `failure_callback`) | `[]` for each | unset (empty); no environment variable enables them in 1.86.2 | GW-L1, GW-L10; survey |
+| Key and team callbacks (key `metadata.logging`, team `metadata.logging`, team `callback_settings`) | none set; the precondition check (step 2 below) fails closed on any | not checked today | `litellm/proxy/litellm_pre_call_utils.py:476-547,1722-1733`; [judge r2] |
 | Message content in logging objects | `litellm_settings.turn_off_message_logging: true`; `redact_messages_in_exceptions: true`; `redact_user_api_key_info: true` (defence in depth only) | unset | GW-L1, GW-L12 |
 | Process stdout and stderr | `LITELLM_LOG=CRITICAL` in the child environment; never `--debug`, `--detailed_debug`, `DEBUG` or `DETAILED_DEBUG` | unset: ERROR lines can carry echoed prompts | GW-L11; survey (measured) |
 | Per-request debug and no-log fields (`litellm_request_debug`, `no-log`, `success_callback` in a body) | nothing new: the gateway's body allowlist already drops them (`gateway/backends/llm_execution.py:38-124,245-268`); a test pins it | blocked | survey |
@@ -590,9 +604,11 @@ each failure (D43 `describe_*`). So the gateway's log becomes the record of
 LiteLLM failures. This is a deliberate trade: the journal is host-only (D45),
 but "never save" must also be true there.
 
-**The database override is checked, and a failure closes the path.** In
-1.86.2, YAML values can be overridden from the database only through one
-path. At startup, LiteLLM turns `store_model_in_db` on when the env var
+**The database overrides are checked, and a failure closes the path.** In
+1.86.2, a database can switch content capture back on in two ways. The
+first is the config table, which overrides the YAML. The second is per-key
+and per-team callbacks, read on each request (step 2 below). The config
+table works only one way. At startup, LiteLLM turns `store_model_in_db` on when the env var
 `STORE_MODEL_IN_DB` is set, when the YAML sets it, or when the
 `LiteLLM_Config` row `general_settings` has `store_model_in_db: true`
 (`litellm/proxy/proxy_server.py:7409-7435`). Only then does it merge that
@@ -613,23 +629,66 @@ itself:
 
 1. **Environment.** The child's allowlisted environment never carries
    `STORE_MODEL_IN_DB`, and the YAML sets `store_model_in_db: false`.
-   Deterministic tests cover both.
-2. **Database row.** Before the gateway routes any request to a newly
-   started LiteLLM, it reads the `LiteLLM_Config` rows `general_settings`
-   and `litellm_settings` with a read-only query. It already has
-   `DATABASE_URL`. The precondition fails when any of these hold:
-   - `store_model_in_db` is true;
-   - `store_prompts_in_spend_logs` is true;
-   - a `callbacks`, `success_callback`, `failure_callback` or `cache` key is
-     present.
-3. **Fail closed.** Until the check passes, every request that would go
-   through LiteLLM gets `503 litellm_content_unverified`, a gateway
-   refusal with a plain sentence that names the setting and the fix. The
-   engine page shows the same attention item. A check that cannot run
-   (for example, the database is unreachable) also fails closed, because
-   LiteLLM with a database it cannot be checked against is the case the
-   rule exists for. With no database, step 2 has nothing to check and
-   passes.
+   Deterministic tests cover both. The other steps apply to the managed
+   LiteLLM, the one `start.sh` starts. Step 6 covers any other.
+2. **Database rows.** It reads these with read-only queries, using the
+   `DATABASE_URL` it already has. `start.sh:9-13` exports the sourced
+   environment to both the gateway and the sidecar (`start.sh:105-107,173`).
+   - The `LiteLLM_Config` rows `general_settings` and `litellm_settings`.
+     The precondition fails when `store_model_in_db` or
+     `store_prompts_in_spend_logs` is true, or when a `callbacks`,
+     `success_callback`, `failure_callback` or `cache` key is present.
+   - Key and team logging. LiteLLM 1.86.2 reads callbacks per request from
+     a key's `metadata.logging`, a team's `metadata.logging` and a team's
+     `callback_settings`. It adds them after the gateway's body allowlist
+     (`litellm/proxy/litellm_pre_call_utils.py:476-547,1722-1733`; [judge
+     r2]). The precondition fails when any key or team row has a non-empty
+     value in one of these. The gateway's own virtual-key create path
+     (`gateway/admin_api.py:1126-1167`) already allows only listed fields.
+     It also refuses a team that fails the check, and re-runs the check
+     after each of its own key writes. The maintenance loop re-runs the
+     whole check hourly.
+3. **The check is bound to one LiteLLM process.** `start.sh` writes the
+   managed LiteLLM's pid file (`AZIZAM_LITELLM_PID_FILE`, default
+   `data/litellm.pid`, `start.sh:95`), and its watcher can restart LiteLLM
+   on its own (`start.sh:127-144`). The gateway identifies a generation by
+   the pid in that file plus the process start time from `/proc`. This is
+   the trust rule the repo already uses for state files (commit `b4ecc83d`:
+   "trust a state file only when pid, start time, group and command line
+   agree"). A passed check belongs to one generation. Before each
+   LiteLLM-bound request, the gate compares the current generation with the
+   checked one, which costs one `stat` and one small read. On a change, it
+   checks again before it routes. A restart with an unchanged config is
+   therefore checked again too.
+4. **The boundary is exact.** Every request the gateway sends to LiteLLM
+   is built with `llm_execution.litellm_url(base_url=runtime.base_url, ...)`
+   from `litellm_runtime_from_registry`
+   (`gateway/backends/llm_execution.py:146,210`). That covers the chat
+   lanes and the paid-provider leg (`gateway/provider_execution.py:553-560`).
+   The gate sits there. Direct engine traffic and the internal hop
+   (LiteLLM calling back into the gateway) do not pass through it. A
+   structural test lists every caller of `litellm_url` and fails for one
+   that does not pass the gate.
+5. **Fail closed for the managed LiteLLM.** Until the check passes for the
+   current generation, every request through that gate gets `503
+   litellm_content_unverified`. This is a gateway refusal with a plain
+   sentence that names the setting and the fix. The engine page shows the
+   same attention item. A check that cannot run (for example, the database
+   is unreachable) also fails closed. With no database, the database part
+   of the check has nothing to read and passes.
+6. **An unmanaged LiteLLM is disclosed, not refused.** When
+   `AZIZAM_MANAGE_LITELLM=false` (`start.sh:52`), or the substrate endpoint
+   is not the process `start.sh` runs (for example, the Compose
+   `litellm` container, `docker-compose.yml:30-52`), Azizam does not run
+   that LiteLLM and cannot see its environment or database. Its status is
+   `unmanaged`. The ledger and the "never save" text move it to "What
+   Azizam cannot control": "LiteLLM, which runs chat for Azizam, is run
+   outside Azizam. Azizam cannot confirm that it keeps nothing." The owner
+   may record that they configured it to keep nothing. The ledger then
+   shows that as declared by the owner, not observed. Refusing would break
+   every Compose install on upgrade to protect a process Azizam does not
+   run. The honest boundary is the same one used for engines and
+   providers.
 
 This is a deliberate behaviour change. On the live host it could refuse
 chat on the first deploy, if such a row exists. So the read-only count in
@@ -671,10 +730,19 @@ after it confirms the internal hop needs nothing more.
    `DATABASE_HOST`.
 3. The in-process canary test is described in section 16.2.
 4. The precondition check is tested against a fixture of query results.
-   With each overriding row, and with a failed query, chat through LiteLLM
-   is refused with `litellm_content_unverified`. With a clean result, chat
-   goes through. A live check runs it against a scratch LiteLLM database
-   (16.3).
+   With each overriding row, each key or team logging value, and a failed
+   query, chat through LiteLLM is refused with
+   `litellm_content_unverified`. With a clean result, chat goes through.
+   Generation tests cover:
+   - a restart with an unchanged config: checked again before the first
+     request;
+   - a pid file that does not match the process start time: treated as
+     unchecked;
+   - a substrate endpoint change and `AZIZAM_MANAGE_LITELLM=false`: status
+     `unmanaged`, disclosed, not refused;
+   - the paid-provider leg: gated.
+
+   A live check runs the check against a scratch LiteLLM database (16.3).
 5. The admin preview (`GET /admin/api/operator/litellm-config`, D30) shows
    the content switches and the result of the last precondition check.
 
@@ -755,8 +823,11 @@ Both kinds of fact use one schema, `retention_fact`:
   revisions, so an edit, a removal or an upgrade cannot rewrite what it
   said ([research] R8 "preserve the evidence date and exact
   route/model/config used"; [judge r1] finding 10). A revision row holds no
-  request content, so it has no deadline. It is pruned only when no
-  remaining receipt references it.
+  request content, so it has no deadline. A kept record carries the same
+  revision hashes (section 3.6), because a record can outlive its receipt
+  (receipts can be kept for only 30 days, `gateway/receipt_store.py:52-54`).
+  A revision is pruned only when no remaining receipt **and** no remaining
+  kept record references it ([judge r2] finding 3).
 - **Seed.** The seed comes from the corrected research: PT-O1 for OpenAI,
   GW-O1 to GW-O3 for OpenRouter, PT-A* for Anthropic, PT-G* and PT-VX3 for
   Gemini through the OpenAI-compatible route. PT-VX3 records implicit
@@ -847,7 +918,8 @@ It answers, in plain words:
    and their reach.
 4. **What Azizam keeps.** Each kind kept for this request, with its deadline.
    Omitted parts show with their reason.
-5. **What Azizam cannot control.** Rows 9-13 of section 5.1.
+5. **What Azizam cannot control.** Rows 9-13 of section 5.1, and an
+   unmanaged LiteLLM (section 5.2, step 6).
 
 It distinguishes what Azizam observed ("Azizam sent this to <engine> at
 14:02") from what a source declares ("the provider says it keeps prompts for
@@ -1355,10 +1427,15 @@ Each slice lists its own subset in section 17.
       removed. `max_tokens` and `top_k` are kept.
 14. **Fact revisions.** After a fact is edited, removed, or its catalog is
     upgraded, an old request's ledger renders the revision it was sent
-    under.
-15. **Conversation scope.** The existing Responses scope tests pass
-    unchanged. A conversation row with a null person is never readable
-    through a person check.
+    under. When the receipt is pruned while its kept record survives, the
+    record's ledger still renders, and pruning keeps the revision.
+15. **Conversation scope and readers.** The existing Responses scope tests
+    pass unchanged. A conversation row with a null person is never readable
+    through a person check. A member's `readers: maker_signed_in` in the
+    `prompts` group blocks a personal key from reading Library prompts and
+    leaves an app's `previous_response_id` working. The bundled
+    `registry/retention.yml` passes the validator, and each illegal
+    `readers` value fails.
 
 ### 16.2 Canary tests across every sink
 
@@ -1376,17 +1453,26 @@ find a marker.
   - a cancelled request.
 - **Credential canaries.** The caller key, a stored provider key, a stored
   header and URL credentials (D32 a).
-- **Runs and allowed places.** The assertions follow the request's
-  lifecycle:
-  - **During the request** (sampled at a barrier the fake engine holds):
-    content markers may be only in process memory and the gateway's private
-    temp directory (section 5.1, rows 4-5).
-  - **After the request ends, under forget:** the private temp directory is
-    empty, and no content marker is in any searched sink. The one exception
-    is the engine output file of the echoing fake engine (below).
-  - **After the request ends, kept:** content markers are only in the kind's
-    table (`kept_requests`, `asset_prompts` or `responses`, WAL included).
-  - **Every run:** credential markers appear nowhere.
+- **Runs and allowed places.** Each run asserts where content markers may
+  be, by phase and policy. Anything outside its cell fails.
+
+  | Phase | Under forget | Kept |
+  |---|---|---|
+  | During the request (sampled at a barrier the fake engine holds) | process memory; the gateway's private temp directory (5.1 rows 4-5); the echoing engine's output file (row 7) | the same, plus the execution spool file of an async job (row 3) |
+  | After the request ends | the echoing engine's output file only; the private temp directory is empty; no spool file | the kind's table (`kept_requests`, `asset_prompts` or `responses`, WAL included) and the echoing engine's output file only; no spool file |
+
+- **Credential markers** must not appear in any output the gateway
+  controls, in any phase:
+  - its databases and receipts;
+  - its logs and its private temp directory;
+  - the `accepted` and `sent` parts and record metadata;
+  - management, MCP and CLI outputs;
+  - LiteLLM's paths and stdout.
+
+  The fake engines echo content but never echo a credential on success.
+  A separate case labelled D45b covers an engine that echoes its own
+  credential in a success body. That case asserts only that the gateway
+  composed nothing around it.
 - **Sinks searched.** Raw bytes, with base64, URL-encoded and JSON-escaped
   forms (`log_scrub.forms`):
   - every file under the test's data, cache and private temp directories;
@@ -1468,7 +1554,7 @@ live 5000 or 15000 services.
 |---|---|---|---|
 | 1 | **Contract and data, no behaviour change.** `registry/retention.yml` and its schema, with groups and kinds; `gateway/retention.py` with `decide`, `write`, the validator and the conversation scope rule moved in unchanged; `prompt_memory.decide` and the Responses rule call it; the settings key migration (group `prompts`); remove the three duplicated default copies (Python and web read the data through the settings API). | No | 16.1.1; 16.1.2; 16.1.3, except the new-group case; 16.1.10; 16.1.15; the existing prompt-memory and Responses suites unchanged; live: existing prompt-memory flows unchanged |
 | 2 | **Receipts `retention` field** for the existing kinds, with the value guard. | Adds a field | 16.1.9; the client receipt shape snapshot updated deliberately |
-| 3 | **LiteLLM keeps nothing.** See the 5.2 profile. | LiteLLM config and environment; LiteLLM errors leave the journal; chat is refused while the precondition fails | 5.2 proofs 1-4; the 16.2 LiteLLM canary and mutation tests; live checks on a scratch instance (below) |
+| 3 | **LiteLLM keeps nothing.** See the 5.2 profile. | LiteLLM config and environment; LiteLLM errors leave the journal; chat is refused while the precondition fails | 5.2 proofs 1-5; the 16.2 LiteLLM canary and mutation tests; live checks on a scratch instance (below) |
 | 4 | **Temporary files.** A gateway-private `TMPDIR`; `PrivateTmp=yes`; the STT workspace under that directory. | Moves temporary files | the 16.2 "during the request" and "after, under forget" assertions for multipart and STT; the STT suite unchanged |
 | 5 | **Request history, end to end.** The group, the `kept_requests` table, capture of `accepted` and `received` with the full secret floor (3.5 rules 1-8), the per-request control on every data-plane route, the scope check and the `MakerContent` projection, the privacy permission on keys and MCP grants, and the member and household switches in the existing settings UI as guided-form rows. Surfaces: the maker routes under `/gateway/v1/`, and the MCP `requests` and `retention` tools for history and settings. Deletion, expiry and fences, including the Library cascade. The default comes from data (Tim's decision 1). | New group; off unless data says otherwise | 16.1.3 new-group case; 16.1.4 (history routes); 16.1.5; 16.1.6; 16.1.7; 16.1.8 (history and settings rows); 16.1.11 (history and settings controls); 16.1.13; 16.2 content and credential canaries; live checks 1 and 4 |
 | 6 | **Facts and ledger.** The `retention_fact` schema and revisions; provider catalog seeds; protocol, definition and record levels; the ledger view and its routes and MCP action; the assembled "never save" text. | Adds views | 16.1.14; schema tests; a removed fact stays removed; the stale label; no network on read; live check 5 |
@@ -1485,7 +1571,11 @@ LiteLLM database:
 - no spend row and no error row is written;
 - cancellation still correlates;
 - a seeded `store_model_in_db` row makes chat refuse with
-  `litellm_content_unverified`.
+  `litellm_content_unverified`;
+- a virtual key attached to a team with `metadata.logging` makes chat
+  refuse, and a canary sent before the fix reaches no callback;
+- killing LiteLLM so the watcher restarts it makes the next request wait
+  for a new check.
 
 Slice 3 deploys only after the live read-only count of section 19.
 
