@@ -4583,18 +4583,20 @@ def _speech_skipped_engine_notes(
 class _ReplayableBody:
     """Replays a request body to a second attempt without holding it in memory.
 
-    Every body message the first attempt reads is also written to a temp file (spilled to disk
-    above 8 MiB), up to ``limit`` bytes: the caller reserves that much disk for as long as the
-    body lives. ``request()`` then returns a request that yields the recorded messages first and
+    Every body message the first attempt reads is also written to a temp file on disk, up to
+    ``limit`` bytes: the caller reserves that much disk for as long as the body lives. ``request()`` then returns a request that yields the recorded messages first and
     the rest of the live stream after.
     """
 
-    def __init__(self, request: Request, spool_dir: Path, limit: int) -> None:
+    def __init__(self, request: Request, spool_dir: Path, limit: int, replay: stt_chunking.SttReplayReservation) -> None:
         spool_dir.mkdir(parents=True, exist_ok=True)
         self._limit = limit
         self._scope = request.scope
         self._receive = request.receive
-        self._file = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, dir=spool_dir)
+        self._replay = replay
+        # A disk file from the first byte, so every byte written is on the reserved filesystem
+        # and can be reported to the replay reservation.
+        self._file = tempfile.TemporaryFile("w+b", dir=spool_dir)
         self._log: list[tuple[int, int, bool]] = []  # (offset, size, more_body)
         self._end = 0
 
@@ -4615,6 +4617,8 @@ class _ReplayableBody:
                     raise stt_chunking.MultiPartException("Request body exceeds the configured STT limit.")
                 self._file.seek(self._end)
                 self._file.write(data)
+                self._file.flush()
+                self._replay.record_written(len(data))
                 self._log.append((self._end, len(data), bool(message.get("more_body", False))))
                 self._end += len(data)
                 index += 1
@@ -4686,7 +4690,8 @@ async def _dispatch_selected_stt_route(
         try:
             replay = stt_chunking.GLOBAL_STT_RESOURCE_GATE.reserve_replay(request_id=receipt.request_id, config=execution)
         except stt_chunking.SttResourceLimitExceeded as error:
-            return _stt_resource_limit_response(error, receipt)
+            return await _stt_terminal_response(
+                _stt_resource_limit_response(error, receipt), receipt, status="failed", reason="resource_limit")
     resolved: dict[str, Any] = {}
     engine_id = peeked_engine
     model_override: str | None = None
@@ -4696,12 +4701,14 @@ async def _dispatch_selected_stt_route(
     deadline_at = started_at + execution.deadline_seconds
     try:
         if replay is not None:
-            body = _ReplayableBody(request, execution.spool_dir, execution.replay_limit_bytes)
+            body = _ReplayableBody(request, execution.spool_dir, execution.replay_limit_bytes, replay)
         while True:
             deadline_at = min(deadline_at, started_at + execution.deadline_seconds)
             if time.monotonic() >= deadline_at:
-                return _with_fallback_header(
-                    _stt_error("STT request deadline exceeded.", status_code=504, code="stt_request_deadline"), notes)
+                return await _stt_terminal_response(
+                    _with_fallback_header(
+                        _stt_error("STT request deadline exceeded.", status_code=504, code="stt_request_deadline"), notes),
+                    receipt, status="timed_out", reason="deadline_exceeded")
             admission = _dispatch_admission_response(
                 "speech.transcription" if operation == "transcriptions" else "speech.translation",
                 auth_context=auth_context, service_id=execution.service_id,
@@ -4713,8 +4720,10 @@ async def _dispatch_selected_stt_route(
                 not_ready = None if model_unpeeked else await stt_chunking.await_with_cancellation(
                     _ensure_speech_service_ready(execution.service_id, label="STT engine"), deadline_at=deadline_at)
             except stt_chunking.SttDeadlineExceeded:
-                return _with_fallback_header(
-                    _stt_error("STT request deadline exceeded.", status_code=504, code="stt_request_deadline"), notes)
+                return await _stt_terminal_response(
+                    _with_fallback_header(
+                        _stt_error("STT request deadline exceeded.", status_code=504, code="stt_request_deadline"), notes),
+                    receipt, status="timed_out", reason="deadline_exceeded")
             if not_ready is None:
                 response = await proxy_stt_request(
                     body.request() if body is not None else request,
@@ -4730,6 +4739,7 @@ async def _dispatch_selected_stt_route(
                     resolved_model=resolved,
                 )
                 reason = _speech_fallback_reason(response) if body is not None else None
+                deadline_at = min(deadline_at, resolved.get("deadline_at", deadline_at))
                 if model_unpeeked and resolved and requested_name is None:
                     requested_name = resolved["requested"]
                     engine_id = resolved["engine"]
@@ -4773,10 +4783,12 @@ async def _dispatch_selected_stt_route(
             print(f"[proxy] STT fallback {note}", flush=True)
             engine_id, model_override = next_engine, next_engine
     finally:
-        if body is not None:
-            body.close()
-        if replay is not None:
-            replay.release()
+        try:
+            if body is not None:
+                body.close()
+        finally:
+            if replay is not None:
+                replay.release()
     return _with_fallback_header(response, notes)
 
 
@@ -4863,6 +4875,15 @@ def _stt_resource_limit_response(error: stt_chunking.SttResourceLimitExceeded, r
     if projected["reasons"]:
         body["error"]["message"] = projected["reasons"][0]["message"]
     return Response(content=json.dumps(body), status_code=413, media_type="application/json")
+
+
+async def _stt_terminal_response(
+    response: Response, receipt: RouteReceipt, *, status: str, reason: str,
+) -> Response:
+    """Record a dispatcher failure that ends before any attempt owns the receipt."""
+    async with ReceiptLifecycleOwner(receipt) as owner:
+        owner.report(status=status, reason=reason)
+    return response
 
 
 def _stt_error(message: str, *, status_code: int, code: str) -> Response:
@@ -4994,6 +5015,9 @@ async def proxy_stt_request(
                 # Upload time counts against both budgets; redispatch must not
                 # grant a new deadline or bypass the target's multipart limits.
                 deadline_at = min(deadline_at, started_at + execution.deadline_seconds)
+                if resolved_model is not None:
+                    # The dispatcher keeps the shorter budget for every later fallback.
+                    resolved_model["deadline_at"] = deadline_at
                 if len(uploads) > execution.max_files or len(fields) > execution.max_fields:
                     raise stt_chunking.MultiPartException("Too many multipart parts for the selected STT service.")
                 if sum(upload.size or 0 for _name, upload in uploads) > execution.max_input_bytes:

@@ -562,18 +562,26 @@ class SttReplayReservation:
     """Disk held for a request's replay copy from the first attempt until the dispatcher is done.
 
     It counts toward reserved disk only. The attempt lease carries the request's one concurrency slot.
+    ``record_written`` reports bytes the copy has already put on the disk of ``device``: the
+    filesystem's free space no longer includes them, so the gate does not subtract them a second time.
     """
 
-    def __init__(self, gate: "SttResourceGate", reserved_bytes: int, decision: AdmissionDecision) -> None:
+    def __init__(self, gate: "SttResourceGate", reserved_bytes: int, decision: AdmissionDecision, device: int) -> None:
         self.decision = decision
         self.reserved_bytes = reserved_bytes
+        self.device = device
+        self.written_bytes = 0
         self._gate = gate
         self._released = False
+
+    def record_written(self, size: int) -> None:
+        self.written_bytes = min(self.reserved_bytes, self.written_bytes + size)
 
     def release(self) -> None:
         if self._released:
             return
         self._released = True
+        self._gate._replays.discard(self)
         self._gate._reserved_bytes -= self.reserved_bytes
 
 
@@ -601,6 +609,7 @@ class SttResourceGate:
     def __init__(self) -> None:
         self._active = 0
         self._reserved_bytes = 0
+        self._replays: set[SttReplayReservation] = set()
 
     def acquire(
         self,
@@ -618,8 +627,10 @@ class SttResourceGate:
         """Reserve disk for the replay copy without taking a concurrency slot."""
         reservation = config.replay_limit_bytes
         decision = self._admit(request_id, config, config.replay_claim(), reservation, limit_concurrency=False)
+        replay = SttReplayReservation(self, reservation, decision, _device_of(config.spool_dir))
         self._reserved_bytes += reservation
-        return SttReplayReservation(self, reservation, decision)
+        self._replays.add(replay)
+        return replay
 
     def _admit(
         self,
@@ -636,11 +647,15 @@ class SttResourceGate:
             raise SttResourceLimitExceeded(
                 "Configured STT spool storage is unavailable"
             ) from error
-        free_bytes = _disk_free_bytes(config.spool_dir)
-        if free_bytes < reservation + config.min_free_bytes:
+        live_free_bytes = _disk_free_bytes(config.spool_dir)
+        if live_free_bytes < reservation + config.min_free_bytes:
             raise SttResourceLimitExceeded(
                 "Configured STT spool storage has insufficient free capacity"
             )
+        # Live free space already excludes replay bytes written to this filesystem, yet their
+        # reservations are still held in full: add those bytes back so each is counted once.
+        device = _device_of(config.spool_dir)
+        free_bytes = live_free_bytes + sum(r.written_bytes for r in self._replays if r.device == device)
         decision = evaluate_admission(
             AdmissionRequest(request_id=request_id, claim=claim),
             CapacitySnapshot(
@@ -1512,6 +1527,13 @@ def _unlink_chunk_path(path: Path) -> None:
 def _disk_free_bytes(path: Path) -> int:
     try:
         return shutil.disk_usage(path).free
+    except OSError as error:
+        raise SttResourceLimitExceeded("Configured STT spool storage is unavailable") from error
+
+
+def _device_of(path: Path) -> int:
+    try:
+        return os.stat(path).st_dev
     except OSError as error:
         raise SttResourceLimitExceeded("Configured STT spool storage is unavailable") from error
 

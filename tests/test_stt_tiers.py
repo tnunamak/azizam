@@ -425,20 +425,31 @@ class SttRuntimeFallbackTests(SttCase):
         service = proxy._stt_execution_snapshot("transcriptions", "stt-parakeet-gpu")
         body, ctype = _multipart([("model", "whisper-1")], _wav_bytes(16000, 1))
         attempts: list[tuple[int, int]] = []
+        written: list[int] = []
+
+        def observe(request):
+            attempts.append((gate._reserved_bytes, gate._active))
+            written.append(sum(replay.written_bytes for replay in gate._replays))
 
         def busy(request):
-            attempts.append((gate._reserved_bytes, gate._active))
+            observe(request)
             return httpx.Response(503, json={"error": {"message": "busy"}})
 
+        def cpu(request):
+            observe(request)
+            return httpx.Response(200, json={"text": "cpu"})
+
         with self.subTest("held beside each attempt's lease, one concurrency slot"):
-            self._engines(busy)
+            self._engines(busy, cpu)
             resp = self._post([("model", "whisper-1")])
             self.assertEqual(resp.status_code, 200, resp.text)
-            self.assertEqual(len(attempts), 1)
-            reserved, active = attempts[0]
-            self.assertGreaterEqual(reserved, service.max_input_bytes + service.max_decoded_bytes + len(body))
-            self.assertEqual(active, 1)
+            self.assertEqual(len(attempts), 2)  # the final CPU attempt holds the replay copy as well
+            for reserved, active in attempts:
+                self.assertGreaterEqual(reserved, service.max_input_bytes + service.max_decoded_bytes + len(body))
+                self.assertEqual(active, 1)
+            self.assertTrue(all(count >= len(body) for count in written), written)
             self.assertEqual((gate._reserved_bytes, gate._active), (0, 0))
+            self.assertEqual(len(gate._replays), 0)
 
         with self.subTest("a disk that only fits the attempt refuses the replay copy"):
             seen = self._engines(busy)
@@ -448,6 +459,58 @@ class SttRuntimeFallbackTests(SttCase):
             self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (413, "stt_resource_limit"))
             self.assertEqual(seen, [])
             self.assertEqual((gate._reserved_bytes, gate._active), (0, 0))
+
+        with self.subTest("a refused replay copy still leaves one terminal receipt"):
+            # The refusal happens before any attempt exists, so the dispatcher records it.
+            seen = self._engines(busy)
+            proxy.receipt_store.begin.reset_mock()
+            proxy.receipt_store.finalize.reset_mock()
+            with patch.object(stt_chunking, "_disk_free_bytes", return_value=1):
+                resp = self._post([("model", "whisper-1")])
+            self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (413, "stt_resource_limit"))
+            self.assertEqual(seen, [])
+            self.assertEqual((proxy.receipt_store.begin.call_count, proxy.receipt_store.finalize.call_count), (1, 1))
+            self.assertEqual(proxy.receipt_store.finalize.call_args.args[0].status, "failed")
+
+        with self.subTest("a replay copy that fails to close still releases its reservation"):
+            self._engines(lambda r: httpx.Response(200, json={"text": "ok"}))
+            real_close = proxy._ReplayableBody.close
+
+            def close_then_fail(replay_body):
+                real_close(replay_body)
+                raise OSError("replay close failed")
+
+            with patch.object(proxy._ReplayableBody, "close", close_then_fail):
+                with self.assertRaisesRegex(OSError, "replay close failed"):
+                    self._post([("model", "whisper-1")])
+            self.assertEqual((gate._reserved_bytes, gate._active), (0, 0))
+            self.assertEqual(len(gate._replays), 0)
+
+        with self.subTest("replay bytes already on disk are not subtracted twice, and nothing else is credited"):
+            replay_limit = service.replay_limit_bytes
+            attempt = service.max_input_bytes + service.max_decoded_bytes
+            gate_free = [replay_limit + attempt + service.min_free_bytes]  # the disk fits both worst cases exactly
+            materialized = replay_limit // 2
+
+            def live_free(_path):
+                return gate_free[0]
+
+            with patch.object(stt_chunking, "_disk_free_bytes", side_effect=live_free):
+                replay = gate.reserve_replay(request_id="r-replay", config=service)
+                replay.record_written(materialized)
+                gate_free[0] -= materialized  # the filesystem now reports the file's bytes as used
+                lease = gate.acquire(request_id="r-attempt", config=service)
+                self.assertEqual(gate._reserved_bytes, replay_limit + attempt)
+                with self.assertRaises(stt_chunking.SttResourceLimitExceeded):
+                    gate.acquire(request_id="r-concurrent", config=service)  # the unwritten claims still hold
+                lease.release()
+                self.assertEqual(gate._reserved_bytes, replay_limit)
+                with patch.object(stt_chunking, "_device_of", return_value=-1):
+                    with self.assertRaises(stt_chunking.SttResourceLimitExceeded):
+                        gate.acquire(request_id="r-elsewhere", config=service)  # a replay on another filesystem earns no credit
+                replay.release()
+                replay.release()
+            self.assertEqual((gate._reserved_bytes, gate._active, len(gate._replays)), (0, 0, 0))
 
         with self.subTest("a body past the reserved bound is refused"):
             self.cfg["backends"]["stt-parakeet-gpu"]["chunking"].update(
@@ -486,26 +549,48 @@ class SttRuntimeFallbackTests(SttCase):
 
         seen = self._engines(lambda request: httpx.Response(503, json={"error": {"message": "busy"}}))
         budget = {sid: proxy._stt_execution_snapshot("transcriptions", sid).deadline_seconds for sid in ("stt-parakeet-gpu", "stt")}
-        for elapsed, served in ((250.0, True), (361.0, False)):
-            with self.subTest(first_engine_spends=elapsed):
-                clock.offset = 0.0
-                deadlines.clear()
-                seen.clear()
-                spent[:] = [elapsed]
-                with patch.object(proxy, "time", clock), patch.object(stt_chunking, "time", clock), \
-                        patch.object(proxy, "_speech_fallback_reason", reason_after_the_time_passes), \
-                        patch.object(stt_chunking, "await_with_cancellation", recording_await):
-                    resp = self._post([("model", "whisper-1")])
-                # Each service's deadline is the request's one start plus that service's own budget.
-                start = deadlines[0] - budget["stt-parakeet-gpu"]
-                self.assertLessEqual(set(deadlines), {start + budget["stt-parakeet-gpu"], start + budget["stt"]})
-                if served:
-                    self.assertEqual((resp.status_code, resp.json()["text"]), (200, "cpu"), resp.text)
-                    self.assertEqual([r.url.port for r in seen], [8017, 5092])
-                else:
-                    self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (504, "stt_request_deadline"))
-                    self.assertEqual([r.url.port for r in seen], [8017])
-                    self.assertEqual(resp.headers["x-azizam-fallback"], "parakeet-gpu->parakeet (busy)")
+        self.assertLess(budget["stt-parakeet-gpu"], budget["stt"])
+
+        def peeked():
+            resp = self._post([("model", "whisper-1")])
+            return resp, resp.json()
+
+        def file_first():
+            # The model sits past the peek budget: the upload is admitted under the larger default
+            # service, and parsing then finds the model's shorter budget.
+            resp, body = SttServiceSelectionTests._post_file_first_past_peek(self, [("model", "whisper-1")])
+            return resp, json.loads(body)
+
+        for journey, post in (("model first", peeked), ("file first", file_first)):
+            for elapsed, served in ((250.0, True), (361.0, False)):
+                with self.subTest(journey=journey, first_engine_spends=elapsed):
+                    clock.offset = 0.0
+                    deadlines.clear()
+                    seen.clear()
+                    spent[:] = [elapsed]
+                    proxy.receipt_store.begin.reset_mock()
+                    proxy.receipt_store.finalize.reset_mock()
+                    with patch.object(proxy, "time", clock), patch.object(stt_chunking, "time", clock), \
+                            patch.object(proxy, "_speech_fallback_reason", reason_after_the_time_passes), \
+                            patch.object(stt_chunking, "await_with_cancellation", recording_await):
+                        resp, payload = post()
+                    # Each service's deadline is the request's one start plus that service's own budget,
+                    # and once a shorter budget is known no later attempt may extend it.
+                    start = min(deadlines) - budget["stt-parakeet-gpu"]
+                    self.assertLessEqual(set(deadlines), {start + budget["stt-parakeet-gpu"], start + budget["stt"]})
+                    self.assertEqual(deadlines, sorted(deadlines, reverse=True), deadlines)
+                    if served:
+                        self.assertEqual((resp.status_code, payload["text"]), (200, "cpu"), payload)
+                        self.assertEqual([r.url.port for r in seen], [8017, 5092])
+                        self.assertEqual(proxy.receipt_store.begin.call_count, 2)
+                    else:
+                        self.assertEqual((resp.status_code, payload["error"]["code"]), (504, "stt_request_deadline"))
+                        self.assertEqual([r.url.port for r in seen], [8017])
+                        self.assertEqual(resp.headers["x-azizam-fallback"], "parakeet-gpu->parakeet (busy)")
+                        # The expiry ends the request before the fallback attempt owns a receipt; it is still recorded.
+                        self.assertEqual(proxy.receipt_store.begin.call_count, 2)
+                        self.assertEqual(proxy.receipt_store.finalize.call_args.args[0].status, "timed_out")
+                    self.assertEqual(proxy.receipt_store.finalize.call_count, proxy.receipt_store.begin.call_count)
 
     def test_the_serving_receipt_records_the_fallback(self) -> None:
         self._engines(lambda r: httpx.Response(503, json={"error": {"message": "busy"}}))
