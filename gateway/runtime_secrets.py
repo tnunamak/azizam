@@ -13,19 +13,14 @@ moved, or whose public field was re-aimed, cannot send them somewhere else.
 
 from __future__ import annotations
 
-import collections
-import os
-import re
 import sqlite3
-import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
-from urllib.parse import quote, quote_plus
 
 from cryptography.exceptions import InvalidTag
 
-from gateway import admin_store, record_carriers, secret_refs, secret_store, url_binding
+from gateway import admin_store, log_scrub, record_carriers, secret_refs, secret_store, url_binding
 
 configure = secret_refs.configure
 use_database_of = secret_refs.use_database_of
@@ -54,62 +49,12 @@ class StructuredEnvValue(SecretUnavailable):
         self.name = name
 
 
-# Every secret value this process has resolved or read, by where it came from (a secret reference, or ``env:NAME``). The log
-# lines that can carry an upstream's text pass through ``scrub``, which removes these (a server may echo a credential it
-# received, in a body, a header or an error).
-#
-# A value is kept as long as its source exists. A source is only dropped when more than ``_SOURCE_LIMIT`` of them are held
-# at once (a store with that many secrets in use is not a store this was written for), oldest-used first, and every use
-# refreshes it; so a value still in use is never pushed out by newer ones. A source whose value changes (an environment
-# variable set again, a secret replaced under the same reference) keeps its last ``_VALUES_PER_SOURCE`` values, because an
-# upstream may still echo the one before.
-_RESOLVED: "collections.OrderedDict[str, tuple[str, ...]]" = collections.OrderedDict()
-_RESOLVED_LOCK = threading.Lock()
-_SOURCE_LIMIT = 65536
-_VALUES_PER_SOURCE = 3
-
-
-def remember(value: Any, source: str | None = None) -> None:
-    """Register a secret value for ``scrub``. ``source`` names where it came from (default: the value itself)."""
-    if not isinstance(value, str) or not value:
-        return
-    key = source or "value:" + value
-    with _RESOLVED_LOCK:
-        held = _RESOLVED.get(key, ())
-        if value not in held:
-            held = (value, *held)[:_VALUES_PER_SOURCE]
-        _RESOLVED[key] = held
-        _RESOLVED.move_to_end(key)
-        while len(_RESOLVED) > _SOURCE_LIMIT:
-            _RESOLVED.popitem(last=False)
-
-
-def env_secret(name: str, default: str = "") -> str:
-    """The value of an environment variable that holds a credential (empty is unset), registered for ``scrub``."""
-    value = os.environ.get(name) or default
-    remember(value, f"env:{name}")
-    return value
-
-
-def scrub(text: Any, *, limit: int = 300) -> str:
-    """``text`` for a log line: every secret value this process resolved is removed (as stored and URL-encoded), and the
-    result is cut to ``limit`` characters.
-
-    A value of four characters or more is removed wherever it appears. A shorter one is removed only where it stands alone
-    (between characters that are not letters or digits): anywhere else it would take letters out of every line.
-    """
-    out = str(text)
-    with _RESOLVED_LOCK:
-        values = sorted({value for held in _RESOLVED.values() for value in held}, key=len, reverse=True)
-    for value in values:
-        for form in dict.fromkeys((value, quote(value, safe=""), quote_plus(value), quote(value))):
-            if not form:
-                continue
-            if len(form) >= 4:
-                out = out.replace(form, "[removed]")
-            else:
-                out = re.sub(rf"(?<![A-Za-z0-9]){re.escape(form)}(?![A-Za-z0-9])", "[removed]", out)
-    return out if len(out) <= limit else out[:limit] + "...[cut]"
+# The registry of resolved values lives in ``log_scrub`` (any module that reads a key may register without importing this
+# resolver). These are the names callers of this module use.
+remember = log_scrub.remember
+env_secret = log_scrub.env_secret
+scrub = log_scrub.scrub
+_RESOLVED = log_scrub._RESOLVED
 
 
 _REFUSALS: dict[str, float] = {}

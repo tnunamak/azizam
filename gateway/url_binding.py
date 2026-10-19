@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Callable, Iterator, Mapping
+from urllib.parse import urlsplit
 
 from gateway import secret_store
 
@@ -149,22 +150,43 @@ def binding_marks(record: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(marks))
 
 
-def credential_states(record: Mapping[str, Any], origin_of_ref: Callable[[str], str | None]) -> list[dict[str, str]]:
+def destination(public: Any, base: Any = None) -> str | None:
+    """The address the owner reviews before credentials are bound to it: ``scheme://host:port`` and the path, no more.
+
+    It is the field's effective origin (normalized: lower case, the port always written) followed by the path of the field's
+    public text. It carries no user info, no query and no fragment, so it is never a credential. ``None`` for a field that
+    has no origin. The credentials are bound to the origin; the path is shown so the owner sees where on it a request goes.
+    """
+    origin = field_origin(public, base)
+    if origin is None:
+        return None
+    text = str(public or "").strip()
+    path = urlsplit(text).path if is_absolute(text) else re.split(r"[?#]", text, maxsplit=1)[0]
+    return origin + path
+
+
+def credential_states(record: Mapping[str, Any], origin_of_ref: Callable[[str], str | None]) -> list[dict[str, Any]]:
     """For each URL field of ``record`` that holds credentials, whether they are bound to the address the field has now.
 
     ``"confirmed"`` when every stored credential is bound to the field's effective origin, ``"needs_confirmation"`` when one
     is bound to none (stored before decision D42) or to another (the field or its base moved). A URL kept whole holds its
-    address inside the secret, so it is confirmed when it is bound to any origin. The result names carriers only: no value,
-    no reference and no address.
+    address inside the secret: it is confirmed when it is bound to any origin, shows no destination, and cannot be
+    confirmed, only entered again (``reenter``). Every other row carries the ``destination`` (see ``destination``) the
+    confirmation would bind to. The result holds carriers and public addresses only: no value and no reference.
     """
     from gateway import record_carriers
 
-    states = []
+    states: list[dict[str, Any]] = []
     for path, parent, key, origin in bound_fields(record):
         held = parent[key + _ENTRIES]
         refs = record_carriers.refs_in(held)
         bound = [origin_of_ref(ref) for ref in refs]
         whole = isinstance(held, Mapping) and bool(held.get("whole"))
         ok = bool(refs) and all(item is not None and (whole or item == origin) for item in bound)
-        states.append({"carrier": path, "state": "confirmed" if ok else "needs_confirmation"})
+        row: dict[str, Any] = {"carrier": path, "state": "confirmed" if ok else "needs_confirmation"}
+        if whole:
+            row.update(destination=None, reenter=True)
+        else:
+            row.update(destination=destination(parent.get(key), base_of(record, path)), reenter=False)
+        states.append(row)
     return states

@@ -14,7 +14,7 @@ import hashlib
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -178,19 +178,26 @@ def read_provider_secret_on(conn: sqlite3.Connection, secret_id: str, *, db_path
     return value, stored_origin
 
 
-def bind_provider_secrets(items: "list[tuple[str, Any]]", *, db_path: Path) -> int:
+def bind_provider_secrets(items: "list[tuple[str, Any]]", *, db_path: Path, guard: "Callable[[sqlite3.Connection], None] | None" = None) -> int:
     """Bind stored secrets to an origin, all or none, in one transaction. Returns how many changed.
 
     Each item is ``(secret_id, origin)``; ``origin`` is an origin text, or a function of the secret's own value that returns
     one (a URL kept whole has its address inside the secret). The value is read and sealed again inside this function
     and goes nowhere else. Raises ``KeyError`` for a missing secret and ``ValueError`` when no origin results; nothing
     is changed then.
+
+    This is the one function that opens the binding transaction. ``guard(conn)``, when given, runs first, inside it, on the
+    same connection (so it reads the registry and the sign-in tables as they are at the moment of the write); whatever it
+    raises ends the call with nothing bound. The destination check of ``confirm_address`` is a guard, and the check that the
+    signed-in session is still live (``session_guard.require_live``, on ``auth/sliding-sessions``) goes in the same place.
     """
     ensure_provider_secret_schema(db_path)
     changed = 0
     with closing(sqlite_startup.connect(db_path)) as conn:
         try:
             conn.execute("BEGIN IMMEDIATE")
+            if guard is not None:
+                guard(conn)
             for secret_id, origin in items:
                 value, stored_origin = read_provider_secret_on(conn, secret_id, db_path=db_path)
                 target = origin(value) if callable(origin) else origin

@@ -22,6 +22,7 @@ import httpx
 import pytest
 
 import proxy
+from gateway import log_scrub
 from gateway import (
     admin_store, engine_connection, lifecycle_drivers, record_carriers, runtime_secrets, secret_refs, secret_store, service_registry,
     url_binding,
@@ -154,8 +155,17 @@ def test_the_engine_view_flags_a_field_that_was_moved_after_its_credentials_were
     assert states["config.context_window_probe.endpoint"] == "confirmed"
 
 
-def _confirm(client, carrier="config.health_endpoint"):
-    return client.post(f"{SERVICE}/secret-entries", headers=_etag(client), json={"commands": [{"carrier": carrier, "operation": "confirm_address"}]})
+def _reviewed(client, carrier="config.health_endpoint"):
+    """What the owner reads in the engine view for a carrier: the destination a confirmation would bind to."""
+    rows = {row["carrier"]: row for row in _engine_view(client)["url_credentials"]}
+    return rows[carrier]["destination"]
+
+
+def _confirm(client, carrier="config.health_endpoint", destination="reviewed"):
+    if destination == "reviewed":
+        destination = _reviewed(client, carrier)
+    return client.post(f"{SERVICE}/secret-entries", headers=_etag(client), json={"commands": [
+        {"carrier": carrier, "operation": "confirm_address", "expected_destination": destination or "none"}]})
 
 
 def test_an_administrator_cannot_confirm_an_address(gateway, host_isolated):
@@ -191,7 +201,7 @@ def test_confirming_a_field_that_a_reader_would_send_somewhere_else_is_refused(g
     held, refs = _unbound_plant(gateway, owner)
     gateway_write = change(owner, lambda services: services["d39"]["config"].update(health_endpoint="//attacker.invalid/collect"))
     assert gateway_write.status_code in (200, 400)
-    refused = _confirm(owner)
+    refused = _confirm(owner, destination="none")
     assert refused.status_code == 400 and error_code(refused) == "url_unbound", refused.text
     assert CANARY not in refused.text
     assert {secret_rows(gateway)[ref] for ref in record_carriers.refs_in(held["config"]["health_endpoint_entries"])} == {None}
@@ -200,7 +210,7 @@ def test_confirming_a_field_that_a_reader_would_send_somewhere_else_is_refused(g
 def test_confirming_a_field_with_no_stored_credentials_is_refused(gateway, host_isolated):
     owner, *_ = owner_and_admin(gateway)
     _plant(gateway, owner)
-    refused = _confirm(owner, "config.key_url")
+    refused = _confirm(owner, "config.key_url", destination="none")
     assert refused.status_code == 400, refused.text
 
 
@@ -288,7 +298,7 @@ def test_the_native_call_goes_to_the_url_its_headers_were_resolved_for(store):
 def test_an_environment_key_a_driver_reads_never_reaches_a_log_line(store, fake_upstreams, capsys, monkeypatch):
     monkeypatch.setenv("R5_ADMIN_KEY", "R5-ENV-ADMIN-KEY-VALUE")
     monkeypatch.setenv("R5_API_KEY", "R5-ENV-API-KEY-VALUE")
-    runtime_secrets._RESOLVED.clear()
+    log_scrub.clear()
     record = {"id": "lu", "name": "lu", "kind": "engine", "enabled": True, "capabilities": ["chat"],
               "config": {"base_url": f"{GOOD}/v1", "host": "good.invalid", "port": 9, "protocol": "openai-compatible",
                          "models": [{"id": "m", "upstream_model": "m"}], "driver_credential_origin": GOOD},
@@ -314,7 +324,7 @@ def test_an_environment_key_a_driver_reads_never_reaches_a_log_line(store, fake_
 
 def test_the_inference_key_a_probe_sends_is_registered(store, monkeypatch):
     monkeypatch.setenv("R5_INFERENCE_KEY", "R5-INFERENCE-KEY-VALUE")
-    runtime_secrets._RESOLVED.clear()
+    log_scrub.clear()
     record = {"config": {"base_url": f"{GOOD}/v1", "api_key_env": "R5_INFERENCE_KEY", "credential_origin": GOOD}, "secret_refs": {}}
     connection = engine_connection.inference_connection(record, "", fallback_address="", fallback_timeout=0.0, db_path=store, env=lambda name, default=None: __import__("os").environ.get(name, default))
     assert connection.headers["authorization"].endswith("R5-INFERENCE-KEY-VALUE")
@@ -322,7 +332,7 @@ def test_the_inference_key_a_probe_sends_is_registered(store, monkeypatch):
 
 
 def test_a_value_is_not_forgotten_after_many_newer_ones(store):
-    runtime_secrets._RESOLVED.clear()
+    log_scrub.clear()
     refs = [secret_refs.store(f"R5-VALUE-{index:05d}-SECRET", db_path=store) for index in range(700)]
     for ref in refs:
         runtime_secrets.resolve(ref)
@@ -331,8 +341,8 @@ def test_a_value_is_not_forgotten_after_many_newer_ones(store):
 
 
 def test_when_the_limit_is_reached_a_value_in_use_is_kept_and_the_unused_one_goes(store, monkeypatch):
-    monkeypatch.setattr(runtime_secrets, "_SOURCE_LIMIT", 3)
-    runtime_secrets._RESOLVED.clear()
+    monkeypatch.setattr(log_scrub, "_SOURCE_LIMIT", 3)
+    log_scrub.clear()
     refs = [secret_refs.store(f"R5-LIMIT-{index}-SECRET", db_path=store) for index in range(4)]
     for ref in refs[:3]:
         runtime_secrets.resolve(ref)
@@ -344,7 +354,7 @@ def test_when_the_limit_is_reached_a_value_in_use_is_kept_and_the_unused_one_goe
 
 
 def test_a_value_replaced_under_the_same_source_is_still_scrubbed_until_newer_ones_push_it_out(store, monkeypatch):
-    runtime_secrets._RESOLVED.clear()
+    log_scrub.clear()
     for value in ("R5-ROTATED-ONE-VALUE", "R5-ROTATED-TWO-VALUE"):
         monkeypatch.setenv("R5_ROTATING", value)
         runtime_secrets.env_secret("R5_ROTATING")

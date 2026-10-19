@@ -11,6 +11,7 @@ plans cap the accountable person's and the App's totals (design §2.11).
 from __future__ import annotations
 
 from gateway.compat import get_env
+from gateway import log_scrub
 
 import json
 import os
@@ -964,11 +965,13 @@ def _raise_mapped_response_error(response: httpx.Response) -> None:
 def resolve_provider_api_key(provider: ProviderRef, *, db_path: Path | None = None) -> str:
     if provider.api_key_secret_id:
         try:
-            return secret_store.get_provider_secret(
+            value = secret_store.get_provider_secret(
                 provider.api_key_secret_id,
                 db_path=db_path or admin_store.DB_PATH,
                 expected_origin=secret_store.credential_origin_from_url(provider.base_url),
             )
+            log_scrub.remember(value, provider.api_key_secret_id)
+            return value
         except Exception:
             return ""
     if provider.api_key_env:
@@ -984,6 +987,7 @@ def resolve_provider_api_key(provider: ProviderRef, *, db_path: Path | None = No
             return ""
         value = get_env(provider.api_key_env, "")
         if value:
+            log_scrub.remember(value, f"env:{provider.api_key_env}")
             return value
     return ""
 

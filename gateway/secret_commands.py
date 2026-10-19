@@ -41,7 +41,8 @@ _ALLOWED_KEYS = {
     "set": {"carrier", "operation", "items", "clear"},  # an item is a literal, a retain, a replace (same id) or a new secret
     "set_credentials": {"carrier", "operation", "url", "whole", "label"},  # whole + label: the URL is one secret with a public name
     "clear_credentials": {"carrier", "operation"},
-    "confirm_address": {"carrier", "operation"},  # bind the stored credentials of a URL to the address the field has now (D42)
+    # bind the stored credentials of a URL to the address the field has now, which the owner reviewed (D42)
+    "confirm_address": {"carrier", "operation", "expected_destination"},
 }
 
 
@@ -63,6 +64,8 @@ class Outcome:
     # (secret reference, origin or function of the value) for each stored credential the owner confirmed an address for.
     # The caller binds them (``secret_store.bind_provider_secrets``); this module never decrypts one.
     confirm: list[tuple[str, Any]] = field(default_factory=list)
+    # (carrier, destination the owner reviewed) for each confirmation, so the binding can check it again where it commits.
+    confirmations: list[tuple[str, str]] = field(default_factory=list)
 
 
 def carrier_kind(carrier: Any) -> str | None:
@@ -139,6 +142,8 @@ def parse_commands(body: Any) -> list[dict[str, Any]]:
         extra = set(command) - _ALLOWED_KEYS[operation]
         if extra:
             raise CommandError("invalid_command", f"command {index + 1} has a field the {operation} operation does not take")
+        if operation == "confirm_address" and not (isinstance(command.get("expected_destination"), str) and command["expected_destination"]):
+            raise CommandError("invalid_command", f"command {index + 1} must name the destination it confirms (expected_destination)")
         kind = carrier_kind(command.get("carrier"))
         if kind is None:
             raise CommandError("unknown_carrier", f"command {index + 1} names a carrier the record model does not have")
@@ -481,30 +486,44 @@ def _whole_label(label: Any, url: str) -> str:
     return label
 
 
-def _confirm_address(record: Mapping[str, Any], parent: Mapping[str, Any], key: str, carrier: str, out: Outcome) -> None:
-    """The owner says the address a URL field has now is the one its stored credentials are for (decision D42).
+def reviewed_destination(record: Mapping[str, Any], carrier: str) -> str | None:
+    """The destination a confirmation of ``carrier`` would bind to, from ``record`` as it stands (None: nothing to bind to)."""
+    parent, key = _parent(dict(record) if not isinstance(record, dict) else record, carrier)
+    return url_binding.destination(parent.get(key), url_binding.base_of(record, carrier))
 
-    The credentials are bound to that address's effective origin. A field with no origin to bind to is refused.
+
+def _confirm_address(record: Mapping[str, Any], parent: Mapping[str, Any], key: str, command: Mapping[str, Any],
+                     out: Outcome) -> None:
+    """The owner says the address a URL field has now, which they reviewed, is the one its stored credentials are for (D42).
+
+    The command names that address (``expected_destination``, as the engine view shows it) and it is refused when the record,
+    read under the lock, would bind to another one: a field changed after the owner looked is not confirmed by a click
+    on what they saw. A URL kept whole has no address to review (it is inside the secret): it is entered again.
     """
+    carrier = command["carrier"]
     held = parent.get(key + record_carriers.SECRETS_SUFFIX)
     refs = record_carriers.refs_in(held)
     if not refs:
         raise CommandError("invalid_value", "that field has no stored credentials to confirm an address for")
-    base = url_binding.base_of(record, carrier)
     if isinstance(held, Mapping) and held.get("whole"):
-        origin: Any = lambda value: url_binding.field_origin(value, base)  # noqa: E731 - the address is inside the secret
-    else:
-        origin = url_binding.field_origin(parent.get(key), base)
-        if origin is None:
-            raise CommandError("url_unbound", str(record_carriers.UrlUnbound(carrier)))
+        raise CommandError("reenter_required", "that URL is kept whole, so its address is inside the secret and there is nothing "
+                           "to review; enter it again with set_credentials")
+    destination = url_binding.destination(parent.get(key), url_binding.base_of(record, carrier))
+    if destination is None:
+        raise CommandError("url_unbound", str(record_carriers.UrlUnbound(carrier)))
+    if command["expected_destination"] != destination:
+        raise CommandError("destination_changed", "the address this field would bind to is not the one you reviewed; "
+                           "read the engine again and confirm the address it shows now")
+    origin = url_binding.field_origin(parent.get(key), url_binding.base_of(record, carrier))
     out.confirm.extend((ref, origin) for ref in refs)
+    out.confirmations.append((carrier, destination))
 
 
 def _url(record: dict[str, Any], command: Mapping[str, Any], put: Put, out: Outcome) -> None:
     parent, key = _parent(record, command["carrier"])
     secrets_key = key + record_carriers.SECRETS_SUFFIX
     if command["operation"] == "confirm_address":
-        _confirm_address(record, parent, key, command["carrier"], out)
+        _confirm_address(record, parent, key, command, out)
         return
     out.retired.extend(record_carriers.refs_in(parent.get(secrets_key)))
     parent.pop(secrets_key, None)

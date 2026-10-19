@@ -9,6 +9,7 @@ API projections never return their values.
 from __future__ import annotations
 
 from gateway.compat import get_env
+from gateway import log_scrub
 
 import hmac
 import math
@@ -400,6 +401,7 @@ def create_provider_admin_router(
             service = provider_configuration.provider_service_from_body(body)
             config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
             api_key = str(body.get("api_key") or "") if body.get("key_mode") != "env" else get_env(str(config.get("api_key_env") or ""), "")
+            log_scrub.remember(api_key, "provider-test-key")
             result = await provider_listing.probe_provider(config, api_key)
         except provider_configuration.ProviderConfigurationError as exc:
             return _RouteError(exc.status_code, exc.code, exc.message).as_response()
@@ -437,6 +439,7 @@ def create_provider_admin_router(
                 if api_key_env and not _provider_env_ref_origin_matches(config):
                     raise provider_listing.ProviderListingError("The provider key is approved for a different endpoint. Re-enter the key for this endpoint before running Gateway check.")
                 api_key = get_env(api_key_env, "")
+            log_scrub.remember(api_key, f"provider-key:{provider_id}")
             result = await provider_listing.probe_provider(config, api_key)
         except provider_listing.ProviderListingError as exc:
             with secret_store.provider_mutation_lock(_admin_db_path(store)):

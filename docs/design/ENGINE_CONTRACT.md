@@ -198,16 +198,25 @@ resources:
     the unbound credentials and writes one audit entry (service ids and a count). The runtime sends
     a credential bound to no address nowhere. The engine view (`url_credentials`, and an
     `engine_address_needs_confirmation` item in `attention`) names each field as `confirmed` or
-    `needs_confirmation`, with no value and no reference. Only an owner write binds: entering the
-    credentials again, or the `confirm_address` command of `POST .../secret-entries` (owner-only,
-    403 for anyone else), which binds them to the address the field has at that moment, and is
-    refused for a field with no origin. A record written by the owner is bound at the write; a
+    `needs_confirmation`, with no value and no reference, and for each field the `destination` a
+    confirmation would bind to (`scheme://host:port` and the path of the field, no credential in it).
+    Only an owner write binds: entering the credentials again, or the `confirm_address` command of
+    `POST .../secret-entries` (owner-only, 403 for anyone else). The command must name the
+    `expected_destination` the owner read; inside the binding transaction the destination is computed
+    again from the registry as it is then and from the generation the view came from, and a
+    difference refuses with `destination_changed` (or a 412) and binds nothing. A field with no origin
+    is refused (`url_unbound`), and a URL kept whole, which has no address to review, is refused
+    (`reenter_required`): it is entered again. `secret_store.bind_provider_secrets(items, guard=)`
+    is the one function that opens that transaction; its `guard(conn)` runs first inside it. A record written by the owner is bound at the write; a
     record read from an older database keeps a path's credentials unbound and a URL's bound to its own
     origin. Every reader builds its request once (`runtime_secrets.url(..., dial=)`): the credentials
     are attached to the address the reader will send to, checked for that address, and that
     address is returned, so a configuration reload between a check and a send cannot redirect it.
-    Every secret a driver or probe resolves, from the store or from an environment variable, is
-    registered for the log scrub, and a registered value is kept while its source exists.
+    Every secret a driver, a probe or the native lane reads, from the store or from an environment variable, is
+    registered for the log scrub (`gateway/log_scrub.py`; `tests/test_secret_registration.py` finds each reader
+    and fails for one that neither registers nor says why it need not). A registered value is kept while its
+    source exists, at most 8 KiB of it, and the registry holds at most 4 MiB and 65536 sources, least recently
+    used first.
   - **What a read shows** (decision D28). Every management response is built from
     a registered projection type (`gateway/projection_types.py`): each field is
     classified once as public data, a reference to the store, a carrier of

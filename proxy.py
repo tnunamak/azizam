@@ -16,6 +16,7 @@ Features:
 """
 
 from gateway.compat import get_env
+from gateway import log_scrub
 
 import asyncio
 import shutil
@@ -2452,13 +2453,14 @@ def resolve_secret_value(value) -> str:
         env_name = value.get("env", "")
         if env_name:
             secret = get_env(env_name, secret)
+        log_scrub.remember(secret, f"env:{env_name}" if env_name else "config-secret")
         prefix = value.get("prefix", "")
         if prefix and secret:
             return f"{prefix} {secret}"
         return str(secret or "")
 
     if isinstance(value, str) and value.startswith("env:"):
-        return get_env(value.removeprefix("env:"), "")
+        return log_scrub.env_secret(value.removeprefix("env:"))
 
     return str(value or "")
 
@@ -2476,7 +2478,7 @@ def downstream_secret(service_cfg: dict, name: str, default: str = "") -> str:
 
     env_name = service_cfg.get(f"{name}_env", "")
     if env_name:
-        return get_env(env_name, default)
+        return log_scrub.env_secret(env_name, default)
 
     return default
 
@@ -2529,7 +2531,7 @@ def _resolve_inject_secret(service_cfg: dict, rule: Mapping) -> str:
             return value
     secret_env = rule.get("secret_env")
     if secret_env:
-        return get_env(str(secret_env), "")
+        return log_scrub.env_secret(str(secret_env))
     return ""
 
 
@@ -29863,12 +29865,13 @@ async def _native_credential_headers(
     secret = ""
     try:
         if credential.secret_env:
-            secret = get_env(credential.secret_env, "")
+            secret = log_scrub.env_secret(credential.secret_env)
         elif credential.secret_ref:
             secret = await asyncio.to_thread(
                 secret_store.get_provider_secret, credential.secret_ref,
                 db_path=ADMIN_DB_PATH, expected_origin=credential.origin,
             )
+            log_scrub.remember(secret, credential.secret_ref)
     except Exception:  # noqa: BLE001 - a secret that cannot be read is not sent
         secret = ""
     if not secret:

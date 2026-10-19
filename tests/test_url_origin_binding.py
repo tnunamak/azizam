@@ -24,6 +24,7 @@ import httpx
 import pytest
 
 import proxy
+from gateway import log_scrub
 from gateway import (
     admin_store, decision_routing, engine_observations, lifecycle_drivers, record_carriers, runtime_secrets, secret_refs,
     secret_store, service_registry, url_binding,
@@ -728,7 +729,7 @@ def test_the_schema_13_migration_writes_nothing_to_a_database_with_no_url_creden
 # ---------------------------------------------------------------------------
 
 def test_scrub_removes_every_resolved_value_in_every_form_and_cuts_the_line(store):
-    runtime_secrets._RESOLVED.clear()  # other tests of this process resolved values too
+    log_scrub.clear()  # other tests of this process resolved values too
     ref = secret_refs.store("tok en/&=é+1", db_path=store)
     runtime_secrets.resolve(ref)
     text = "a tok en/&=é+1 b tok%20en%2F%26%3D%C3%A9%2B1 c tok+en%2F%26%3D%C3%A9%2B1 d tok%20en/%26%3D%C3%A9%2B1 " + "x" * 2000
@@ -739,7 +740,7 @@ def test_scrub_removes_every_resolved_value_in_every_form_and_cuts_the_line(stor
 
 
 def test_scrub_removes_a_short_value_only_where_it_stands_alone(store):
-    runtime_secrets._RESOLVED.clear()
+    log_scrub.clear()
     runtime_secrets.resolve(secrets_store_short(store, "ab"))
     assert runtime_secrets.scrub("token=ab and ab, but table and cab stay") == "token=[removed] and [removed], but table and cab stay"
 
