@@ -21,7 +21,7 @@ from typing import Any, Iterable, Iterator, Mapping
 import os
 
 from gateway import admin_store, directory_index, media_jobs, media_metadata, request_connections, retention
-from gateway.sqlite_startup import connect
+from gateway.sqlite_startup import connect, connect_readonly
 from gateway.public_failure import PublicFailure
 
 DB_PATH = media_jobs.DB_PATH
@@ -294,12 +294,13 @@ def tighten_contract_periods(*, admin_path: Path, path: Path | None = None) -> i
 
     Stored member and household choices stay unchanged. The same normalized
     period used for display and new writes determines the older rows' ceiling.
-    Settings writes wait on the admin lock while this update runs.
+    Read one policy snapshot. Setting writes can proceed and independently
+    tighten deadlines; neither path extends an existing deadline.
     """
     contract = retention.bundled()
-    admin_conn = connect(admin_path, timeout=5)
+    admin_conn = connect_readonly(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     try:
-        admin_conn.execute("BEGIN IMMEDIATE")
+        admin_conn.execute("BEGIN")
         row = admin_conn.execute("SELECT value_json FROM operator_settings WHERE key=?",
                                  (retention.SETTING_KEY,)).fetchone()
         cap = contract.household_defaults(retention.LIBRARY_PROMPT)["retention_cap"]
