@@ -180,6 +180,7 @@ def create_me_avatar_router(
         if mutation_validator is not None:
             error = await asyncio.to_thread(mutation_validator, request, session)
             if error is not None:
+                error.headers["Cache-Control"] = "no-store"
                 return error
         try:
             body = await request.json()
@@ -228,10 +229,17 @@ def create_me_avatar_router(
         missing = _error("avatar_picture_unavailable", "No picture to show.", 404)
         if person_id != viewer_id and not await asyncio.to_thread(_is_admin, viewer_id):
             return missing
-        record = await asyncio.to_thread(avatars.get, person_id, path=db())
-        url = record["picture_url"]
-        # Others see the picture only when the person chose it.
-        if not url or (person_id != viewer_id and record["choice"] != avatars.PICTURE):
+
+        async def shown_url() -> str | None:
+            # The picture to show right now: others see it only when the person chose it.
+            record = await asyncio.to_thread(avatars.get, person_id, path=db())
+            url = record["picture_url"]
+            if not url or (person_id != viewer_id and record["choice"] != avatars.PICTURE):
+                return None
+            return url
+
+        url = await shown_url()
+        if url is None:
             return missing
         key = (person_id, url)
         entry = kept.get(key)
@@ -242,6 +250,9 @@ def create_me_avatar_router(
                 task = inflight[key] = asyncio.ensure_future(_fetch_and_keep(key, url))
                 task.add_done_callback(lambda _done, key=key: inflight.pop(key, None))
             entry = await asyncio.shield(task)
+            # The choice or the picture may have changed while we waited: answer as a request made now would.
+            if await shown_url() != url:
+                return missing
         if entry.data is None or entry.content_type is None:
             return missing
         # The copy is kept on the server, per person and URL. The browser keeps nothing: whether it may
