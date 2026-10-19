@@ -4154,7 +4154,6 @@ async def _stream_tts_upstream(
                 refused, upstream = upstream, None
                 if _speech_allocation_failed(refused.status, refused.raw.decode("utf-8", "replace")):
                     return _tts_gpu_memory_response()
-                retry_after = refused.headers.get("retry-after")
                 return client_errors.upstream_error_response(refused.status, refused.raw, refused.headers,
                                                              request_fields=_request_fields(body))
         except TransportFailure as e:
@@ -9204,6 +9203,17 @@ _SAMPLER_HINT_SUBSTRINGS = ("sampler", "ksampler")
 _DECODE_HINT_SUBSTRINGS = ("vaedecode", "savevideo", "videocombine", "save_video", "save")
 
 
+def _known_graph_node(workflow: dict | None, node_id: Any) -> str | None:
+    """The engine's node id when it names a node of the graph the gateway submitted; otherwise None.
+
+    A video status shows the node the engine says it is running. Only an id the gateway can find in its own graph is
+    shown: any other value is the engine's text (D45b), and after a restart the graph is not known at all.
+    """
+    if node_id is None or not isinstance(workflow, dict):
+        return None
+    return str(node_id) if str(node_id) in workflow else None
+
+
 def _node_class_from_workflow(workflow: dict | None, node_id: str | None) -> str:
     if not workflow or not node_id:
         return ""
@@ -9490,9 +9500,10 @@ async def _record_event(event: dict) -> None:
             entry["unit_node"] = str(event_node)
 
         if etype == "executing":
-            node_id = data.get("node")
+            node_id = _known_graph_node(wf, data.get("node"))
             if node_id is None:
-                # null node => execution complete for this prompt (legacy signal).
+                # null node => execution complete for this prompt (legacy signal);
+                # a node the submitted graph does not have is not shown.
                 pass
             else:
                 node_class = _node_class_from_workflow(wf, str(node_id))
@@ -9509,7 +9520,7 @@ async def _record_event(event: dict) -> None:
         elif etype == "progress":
             value = int(data.get("value") or 0)
             maxv = int(data.get("max") or 0)
-            node_id = str(data.get("node") or entry.get("node") or "")
+            node_id = _known_graph_node(wf, data.get("node")) or str(entry.get("node") or "")
             node_class = _node_class_from_workflow(wf, node_id) or entry.get("node_class") or ""
             phase = _classify_phase(node_class) if node_class else entry.get("phase", "sampling")
             entry["node"] = node_id or entry.get("node")
@@ -9526,7 +9537,7 @@ async def _record_event(event: dict) -> None:
             best = None  # (frac, value, max, node_id, node_class)
             for node_id, ns in nodes.items():
                 state = (ns or {}).get("state")
-                if state != "running":
+                if state != "running" or _known_graph_node(wf, node_id) is None:
                     continue
                 v = float(ns.get("value") or 0)
                 m = float(ns.get("max") or 0)
@@ -25670,15 +25681,15 @@ def _upstream_admission_response(upstream: httpx.Response, protocol: str) -> Res
     if "decision" not in error:
         return None
     body = resource_admission_http.admission_protocol_body(payload, protocol)
-    headers = {"Retry-After": upstream.headers["retry-after"]} if "retry-after" in upstream.headers else {}
+    headers = _upstream_retry_after(upstream)
     return Response(content=json.dumps(body), status_code=upstream.status_code,
                     media_type="application/json", headers=headers)
 
 
 def _upstream_retry_after(upstream: Any) -> dict[str, str]:
-    """Keep the upstream's Retry-After when a frontend re-shapes its error."""
-    value = getattr(upstream, "headers", {}).get("retry-after")
-    return {"Retry-After": value} if value else {}
+    """Keep the upstream's Retry-After, as a number the gateway writes, when a frontend re-shapes its error."""
+    seconds = client_errors.retry_after(getattr(upstream, "headers", {}).get("retry-after"))
+    return {"Retry-After": seconds} if seconds is not None else {}
 
 
 def _response_error_message(response: Any, fallback: str) -> str:
@@ -28687,7 +28698,8 @@ def _protocol_failure(error: ProtocolError) -> Response:
     if isinstance(error, ProtocolUpstreamError):
         status = error.status if error.status in {400, 404, 409, 422, 429, 503} else 502
         code = error.advice_code or code
-        headers = {k: v for k, v in error.headers.items() if k == "retry-after"}
+        seconds = client_errors.retry_after(next((v for k, v in error.headers.items() if str(k).lower() == "retry-after"), None))
+        headers = {"retry-after": seconds} if seconds is not None else {}
         message = "The engine refused the request. Check its status and protocol configuration."
         # Advice is operator-authored public copy, but must not expose a filesystem path.
         if error.advice and len(error.advice) <= 512 and not re.search(r"/\S|[A-Za-z]:[\\/]|\\\\", error.advice):
