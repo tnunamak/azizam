@@ -112,6 +112,13 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 
 def pytest_configure(config: pytest.Config) -> None:
     _GUARD.install()
+    # xdist waits 10 s for a worker to leave after the last test, then kills it. The worker that ran the heaviest
+    # tests can need longer than that to close its ~850 MB heap on a busy host, and the kill is refused here (the
+    # guard blocks os.kill), which fails a session in which every test passed and leaves no JUnit file. A worker
+    # that is slow but not hung gets time to finish.
+    from xdist.workermanage import NodeManager
+
+    NodeManager.EXIT_TIMEOUT = max(NodeManager.EXIT_TIMEOUT, 120)
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
