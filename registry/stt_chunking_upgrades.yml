@@ -7,8 +7,8 @@
 upgrades:
   - note: >-
       The seeded GPU transcription record as 915dc190 shipped it: 30 s target, 10 s silence search, 40 s threshold.
-      Measured on 734 seams (stt-seam-eval, 2026-10-19): the energy minimum within 2 s of a target beats the old
-      silence midpoint, and this engine deletes words in pieces over 40 s.
+      Checked on public speech (stt-seam-eval, 2026-10-19): the 40 s maximum is a safety bound, while the
+      piece-length sweep found no clear deletion rise through 60 s. The quality difference remains unproven.
     service_id: stt-parakeet-gpu
     when: {enabled: true, target_seconds: 30, threshold_seconds: 40, silence_search_seconds: 10}
     allowed: {silence_noise_db: [null, "-30dB"], silence_min_seconds: [null, 0.5]}

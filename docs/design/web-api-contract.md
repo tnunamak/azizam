@@ -344,6 +344,11 @@ The engine preset list is gone. Engine kinds are data in
     direct record with no saved timeout (the page shows the `source` alone and
     invents no number). `values.reply_timeout_s` is the effective number, or
     `""` when absent; saving it unchanged keeps it absent.
+  - `stt_chunking`: `null` for a record with no `chunking` settings, else the long-audio numbers in force
+    (`cut_files_longer_than_seconds`, `target_seconds`, `search_seconds`, `max_segment_seconds`,
+    `native_long_audio`, `enabled`), `from_bundled_defaults` (the keys the record does not save; their values come
+    from `registry/stt_chunking_defaults.yml`) and a `note`; or `{invalid}` when the settings do not load.
+    The page shows it read-only under "Long recordings".
   - `attention`: `[{code, message}]`, for example `engine_credential_unavailable`
     ("Key not available: ENV_NAME is not set"). The page shows each message as
     an alert on Connection.

@@ -31,3 +31,22 @@ record names no protocol), `label` (the engine's name in caller-facing
 messages) and, for `node-graph`, `binding` (the key under a workflow manifest's
 `bindings`). An engine record selects an adapter by naming its protocol, or by
 the capability of the route it serves.
+
+## STT sample recordings
+
+`stt_samples.yml` lists long recordings with human reference transcripts
+(AMI, ICSI, Earnings-21) for measuring long-audio transcription settings.
+It is data only: each sample names its licence, every file to download
+(https URL, sha256, size) and a recipe (`ami-words`, `icsi-words` or
+`earnings21`) that says how to read the reference words. Azizam ships no
+audio.
+
+`gateway/stt_samples.py` reads the file (`load_manifest`) and prepares one
+sample on demand (`fetch_sample`). It downloads each source into a cache
+named by sha256, so an archive that several samples share downloads once.
+It refuses a file that is larger than declared or does not match its
+checksum, and deletes it. It then writes a 16 kHz mono PCM16 WAV with
+ffmpeg and builds the word list `[(word, t0, t1), ...]`. To add a sample
+from a corpus that a recipe already reads, add a row; a new corpus format
+needs a new recipe function. Read each licence note before you use a
+sample: the Earnings-21 audio is for private local evaluation only.
