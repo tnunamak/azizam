@@ -1462,9 +1462,23 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
                         return {"type": "http.request", "body": body, "more_body": False}
                     await asyncio.Future()
 
+                contacted = []
+
                 class NeverCalled:
                     def __init__(self, *args, **kwargs):
-                        raise AssertionError("the engine must not be contacted")
+                        pass
+
+                    def build_request(self, *args, **kwargs):
+                        contacted.append("build_request")
+
+                    async def post(self, *args, **kwargs):
+                        contacted.append("post")
+
+                    async def send(self, *args, **kwargs):
+                        contacted.append("send")
+
+                    async def aclose(self):
+                        return None
 
                 request = Request(
                     {"type": "http", "method": "POST", "path": "/v1/audio/transcriptions", "headers": [(b"content-type", content_type.encode())]},
@@ -1488,6 +1502,7 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("secret-path", response.body.decode())
                 self.assertNotIn("sk-1234", response.body.decode())
                 self.assertEqual((finalized[0].status, finalized[0].metadata["stt"]["attempts_started"]), ("failed", 0))
+                self.assertEqual(contacted, [])
                 self.assertEqual(list((root / "spool").glob("*")), [])
 
     async def test_decoded_direct_success_error_and_redirect_drop_representation_headers(self) -> None:
