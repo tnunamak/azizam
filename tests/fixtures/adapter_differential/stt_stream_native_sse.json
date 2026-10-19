@@ -252,14 +252,21 @@
                 "observed_at": "<time>",
                 "quality": "declared",
                 "resource_class": "disk",
-                "value": 0
+                "value": 520
               },
               {
                 "name": "available_disk_mb",
                 "observed_at": "<time>",
                 "quality": "declared",
                 "resource_class": "disk",
-                "value": 10240
+                "value": 9720
+              },
+              {
+                "name": "replay_reserved_disk_mb",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "disk",
+                "value": 520
               }
             ],
             "outcome": "accepted",
