@@ -131,11 +131,11 @@ restish azizam owner-patch-admin-api-apps-app-id-keys-credential-id "$APP_ID" "$
 Who may rename follows who may change the app: the owner any app, an administrator any app except one that
 answers to the owner (`403 app_outranks_you`), and a member only their own apps and keys, through
 `PATCH /me/api/apps/{app_id}` (`name`) and `PATCH /me/api/credentials/{credential_id}` (`display_name`) with
-the sign-in's cookie, CSRF token and the action header. A name that is empty, too long or has hidden characters
+the sign-in's cookie, CSRF token and the action header. A name that is empty, has no visible character (only zero-width or combining marks), is too long or has hidden characters
 is `400` (`app_name_required`, `app_name_too_long`, `app_name_not_allowed`; for a key `key_label_...`). A name
 another active app of the same person already has, or another active key of the same app, is `409`
 (`app_name_taken`, `key_label_taken`). The Try page's app is named `Try` and keeps that name
-(`409 app_name_reserved`). Only active app keys can be renamed here; an admin automation key cannot. Each rename
+(`409 app_name_reserved`; also for a name that is `Try` once folded to Unicode compatibility form and lower case). Two names are the same name when they are equal after Unicode NFKC and case folding (`Café` and `CAFÉ`, or a fullwidth `Ｃａｆé`), in a write and in an MCP lookup alike. Only active app keys can be renamed here; an admin automation key cannot. Each rename
 writes an audit event (`app.update` with `previous_name`, `credential.rename`, or `app.self_rename` and
 `credential.self_rename` for a person's own).
 

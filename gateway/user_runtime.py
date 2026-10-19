@@ -582,22 +582,16 @@ def _rename_app(
     try:
         cleaned = admin_store.clean_name(name, code="app_name", noun="app")
         renamed = admin_store.update_app(
-            str(app["id"]), name=cleaned, owner_user_id=str(user["id"]), session=browser_session, path=path)
+            str(app["id"]), name=cleaned, owner_user_id=str(user["id"]), session=browser_session,
+            audit={"action": "app.self_rename", "actor_kind": "user", "actor_id": str(user["id"]),
+                   "metadata": {"via": via} if via else {}},
+            path=path)
     except admin_store.NameRejected as exc:
         raise _name_error(exc) from None
     except session_guard.SessionEnded as exc:
         raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
     if renamed is None:
         raise UserPortalError("app_not_found", "App not found for this account", status_code=404)
-    admin_store.record_audit(
-        "app.self_rename",
-        actor_kind="user",
-        actor_id=str(user["id"]),
-        target_kind="app",
-        target_id=str(app["id"]),
-        metadata={"name": renamed["name"], "previous_name": app.get("name"), **({"via": via} if via else {})},
-        path=path,
-    )
     return {"app": _app_payload(renamed, path=path)}
 
 
@@ -608,7 +602,10 @@ def _rename_key(
     try:
         label = admin_store.clean_name(display_name, code="key_label", noun="key")
         renamed = admin_store.rename_app_credential(
-            str(before["id"]), label, owner_user_id=str(user["id"]), session=browser_session, path=path)
+            str(before["id"]), label, owner_user_id=str(user["id"]), session=browser_session,
+            audit={"action": "credential.self_rename", "actor_kind": "user", "actor_id": str(user["id"]),
+                   "metadata": {"via": via} if via else {}},
+            path=path)
     except admin_store.NameRejected as exc:
         raise _name_error(exc) from None
     except session_guard.SessionEnded as exc:
@@ -616,17 +613,6 @@ def _rename_key(
     if renamed is None:
         raise _credential_not_found()
     _, after = renamed
-    admin_store.record_audit(
-        "credential.self_rename",
-        actor_kind="user",
-        actor_id=str(user["id"]),
-        target_kind="credential",
-        target_id=str(before["id"]),
-        metadata={"app_id": after.get("app_id") or after.get("subject_id"), "prefix": after.get("prefix"),
-                  "name": after.get("display_name"), "previous_name": before.get("display_name"),
-                  **({"via": via} if via else {})},
-        path=path,
-    )
     out = _sanitize_credential(after)
     out["active"] = True
     return out
@@ -682,7 +668,7 @@ def _find_app(user_id: str, ref: str, *, path: Path) -> dict[str, Any]:
     sessions = admin_store.session_app_ids([str(app["id"]) for app in apps], path=path)
     owned = [app for app in apps if not app.get("disabled_at") and str(app["id"]) not in sessions]
     matches = [app for app in owned if app["id"] == ref] or [
-        app for app in owned if ref and str(app["name"]).lower() == ref.lower()]
+        app for app in owned if ref and admin_store.name_key(app["name"]) == admin_store.name_key(ref)]
     if not matches:
         raise UserPortalError("app_not_found", f"No app of yours is named \u201c{ref}\u201d.", status_code=404)
     if len(matches) > 1:
@@ -697,7 +683,7 @@ def _find_key(app: Mapping[str, Any], ref: str, *, path: Path) -> dict[str, Any]
     ref = str(ref or "").strip()
     keys = admin_store.list_active_credentials(subject_kind="app", app_id=str(app["id"]), path=path)
     matches = [key for key in keys if key["id"] == ref] or [
-        key for key in keys if ref and str(key.get("display_name") or "").lower() == ref.lower()]
+        key for key in keys if ref and admin_store.name_key(key.get("display_name")) == admin_store.name_key(ref)]
     if not matches:
         raise UserPortalError(
             "credential_not_found", f"No key of \u201c{app['name']}\u201d is named \u201c{ref}\u201d.", status_code=404)

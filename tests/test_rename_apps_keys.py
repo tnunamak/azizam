@@ -14,6 +14,7 @@ import pytest
 from gateway import accounts, admin_runtime, admin_store, session_guard
 from gateway.admin_oidc import AdminSession
 from gateway.runtime_auth import hash_api_key
+from gateway import user_runtime as user
 from gateway.user_runtime import UserPortalError, build_user_portal_snapshot, mint_user_app_key, rename_user_app, rename_user_app_key
 from tests.test_credential_writers_check_the_session import sign_out_just_before
 from tests.test_session_lifecycle import (  # noqa: F401  (gateway and sg are fixtures)
@@ -762,3 +763,118 @@ def test_the_owner_openapi_document_gives_the_command_line_both_rename_commands(
     for op in commands.values():
         assert op["security"] == [{"OwnerBearer": []}] and op["tags"] == ["apps and keys"]
     assert not any(path.startswith("/me/api/") for path in schema["paths"]), "a person's own routes stay out of the owner document"
+
+
+# -- review round: one comparison key, names with nothing visible, audit inside the write --------------------------
+
+@pytest.mark.parametrize("first, second", [
+    ("Café", "CAFÉ"), ("Café", "café"), ("Café", "Ｃａｆé"), ("straße", "STRASSE"),
+])
+def test_two_names_that_differ_only_by_case_or_unicode_form_are_the_same_name(db, first, second):
+    mine = person(db)
+    one, other = make_app(db, mine, first), make_app(db, mine, "Second")
+
+    with pytest.raises(admin_store.NameRejected) as taken:
+        admin_store.update_app(other["id"], name=second, path=db)
+
+    assert taken.value.code == "app_name_taken" and taken.value.status_code == 409
+    assert admin_store.get_app(other["id"], path=db)["name"] == "Second"
+    assert admin_store.update_app(one["id"], name=second, path=db)["name"] == second      # its own name, written another way
+
+
+@pytest.mark.parametrize("first, second", [("Café", "CAFÉ"), ("Café", "café")])
+def test_key_labels_compare_the_same_way(db, first, second):
+    laptop = make_app(db, person(db), "Laptop")
+    make_key(db, laptop, first)
+    other = make_key(db, laptop, "Notes")
+
+    with pytest.raises(admin_store.NameRejected) as taken:
+        admin_store.rename_app_credential(other["id"], second, path=db)
+
+    assert taken.value.code == "key_label_taken"
+
+
+def test_an_mcp_client_naming_an_app_or_key_uses_the_same_comparison(db):
+    mine = person(db)
+    cafe = make_app(db, mine, "Café")
+    key = make_key(db, cafe, "Notes É")
+
+    renamed = user.rename_person_app(mine["id"], "CAFÉ", "Coffee", via="mcp", path=db)
+    labelled = user.rename_person_key(mine["id"], "Coffee", "NOTES é", "Memo", via="mcp", path=db)
+
+    assert renamed["app"]["id"] == cafe["id"] and labelled["id"] == key["id"]
+
+
+def test_a_fullwidth_try_is_the_reserved_name_but_a_cyrillic_lookalike_is_just_another_name(db):
+    other = make_app(db, person(db), "Laptop")
+
+    with pytest.raises(admin_store.NameRejected) as reserved:
+        admin_store.update_app(other["id"], name="Ｔｒｙ", path=db)
+
+    assert reserved.value.code == "app_name_reserved"
+    assert admin_store.update_app(other["id"], name="Trу", path=db)["name"] == "Trу"
+
+
+@pytest.mark.parametrize("text", [
+    "\u200b", "\u2060", "\ufeff", "\u200b\u2060\ufeff", " \u200b ", "\u0301", "\u200d", "\u00a0\u200b"])
+def test_a_name_with_nothing_visible_is_no_name(text):
+    with pytest.raises(admin_store.NameRejected) as refused:
+        admin_store.clean_name(text, code="app_name", noun="app")
+
+    assert refused.value.code == "app_name_required"
+
+
+@pytest.mark.parametrize("text", ["T\u200bry", "e\u0301", "\U0001F468\u200d\U0001F469\u200d\U0001F467", "\u2764\ufe0f", "a\u2060b"])
+def test_a_name_with_a_visible_character_may_carry_invisible_ones(text):
+    assert admin_store.clean_name(text, code="app_name", noun="app") == text
+
+
+def test_the_previous_name_in_the_audit_is_the_one_the_write_replaced_even_when_another_rename_came_between(db, monkeypatch):
+    mine = person(db)
+    app = make_app(db, mine, "Initial")
+    original = admin_store.update_app
+
+    def interleaved(app_id, **kwargs):
+        original(app_id, name="Concurrent", path=db)       # commits between the caller's read and its write
+        return original(app_id, **kwargs)
+
+    monkeypatch.setattr(admin_store, "update_app", interleaved)
+    user.rename_person_app(mine["id"], app["id"], "Final", via="review", path=db)
+
+    [event] = [e for e in admin_store.list_audit(action_prefix="app.self_rename", path=db)]
+    assert event["metadata"]["previous_name"] == "Concurrent" and event["metadata"]["name"] == "Final"
+
+
+def test_the_previous_label_in_the_audit_is_the_one_the_write_replaced_even_when_another_rename_came_between(db, monkeypatch):
+    mine = person(db)
+    app = make_app(db, mine, "Laptop")
+    key = make_key(db, app, "Initial key")
+    original = admin_store.rename_app_credential
+
+    def interleaved(key_id, label, **kwargs):
+        original(key_id, "Concurrent key", path=db)
+        return original(key_id, label, **kwargs)
+
+    monkeypatch.setattr(admin_store, "rename_app_credential", interleaved)
+    user.rename_person_key(mine["id"], app["id"], key["id"], "Final key", via="review", path=db)
+
+    [event] = admin_store.list_audit(action_prefix="credential.self_rename", path=db)
+    assert event["metadata"]["previous_name"] == "Concurrent key" and event["metadata"]["name"] == "Final key"
+
+
+def test_a_rename_and_its_audit_fact_commit_together_or_not_at_all(db, monkeypatch):
+    mine = person(db)
+    app = make_app(db, mine, "Laptop")
+    key = make_key(db, app, "Editor")
+
+    def broken(*_args, **_kwargs):
+        raise sqlite3.OperationalError("audit table is locked")
+
+    monkeypatch.setattr(admin_store, "_record_audit_in_transaction", broken)
+    with pytest.raises(sqlite3.OperationalError):
+        admin_store.update_app(app["id"], name="Work", audit={"action": "app.update"}, path=db)
+    with pytest.raises(sqlite3.OperationalError):
+        admin_store.rename_app_credential(key["id"], "Code", audit={"action": "credential.rename"}, path=db)
+
+    assert admin_store.get_app(app["id"], path=db)["name"] == "Laptop"
+    assert admin_store.get_credential(key["id"], path=db)["display_name"] == "Editor"

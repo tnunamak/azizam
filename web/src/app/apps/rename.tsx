@@ -150,19 +150,14 @@ export function RenameAppDialog({
   );
 }
 
-function KeyRow({
+/** The edit of one key's name. It is mounted only while the key is edited, so each edit starts from the saved
+ * name with no error, and nothing needs resetting when an edit opens. */
+function KeyNameForm({
   keyRecord,
-  editing,
-  disabled,
-  onEdit,
   onSaved,
   onCancel,
 }: {
   keyRecord: Credential;
-  editing: boolean;
-  /** Another row is being saved or edited. */
-  disabled: boolean;
-  onEdit: () => void;
   onSaved: (key: Credential) => void;
   onCancel: () => void;
 }) {
@@ -175,14 +170,9 @@ function KeyRow({
   const errorId = `key-error-${keyRecord.id}`;
 
   useEffect(() => {
-    if (!editing) return;
-    setDraft(label);
-    setError(null);
     input.current?.focus();
     input.current?.select();
-    // Start from the saved name each time an edit opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing]);
+  }, []);
   // After a refusal the person edits the name again.
   useEffect(() => {
     if (error) input.current?.focus();
@@ -203,41 +193,70 @@ function KeyRow({
   }
 
   return (
+    <>
+      <form onSubmit={save} className="space-y-2">
+        <label htmlFor={`key-name-${keyRecord.id}`} className="text-label">
+          Key name
+        </label>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            ref={input}
+            id={`key-name-${keyRecord.id}`}
+            required
+            maxLength={NAME_LIMIT}
+            value={draft}
+            readOnly={busy}
+            className="min-w-0 flex-1 basis-48"
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setError(null);
+            }}
+          />
+          <Button type="submit" disabled={busy || next === null}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+        </div>
+      </form>
+      {error && (
+        <p id={errorId} role="alert" className="text-destructive text-meta">
+          {error}
+        </p>
+      )}
+    </>
+  );
+}
+
+function KeyRow({
+  keyRecord,
+  editing,
+  disabled,
+  onEdit,
+  onSaved,
+  onCancel,
+}: {
+  keyRecord: Credential;
+  editing: boolean;
+  /** Another row is being saved or edited. */
+  disabled: boolean;
+  onEdit: () => void;
+  onSaved: (key: Credential) => void;
+  onCancel: () => void;
+}) {
+  const label = keyRecord.display_name;
+  return (
     <li className="space-y-2 py-3">
       {editing ? (
-        <form onSubmit={save} className="space-y-2">
-          <label htmlFor={`key-name-${keyRecord.id}`} className="text-label">
-            Key name
-          </label>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              ref={input}
-              id={`key-name-${keyRecord.id}`}
-              required
-              maxLength={NAME_LIMIT}
-              value={draft}
-              readOnly={busy}
-              className="min-w-0 flex-1 basis-48"
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? errorId : undefined}
-              onChange={(event) => {
-                setDraft(event.target.value);
-                setError(null);
-              }}
-            />
-            <Button type="submit" disabled={busy || next === null}>
-              {busy ? "Saving…" : "Save"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={busy}
-              onClick={onCancel}
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
+        <KeyNameForm keyRecord={keyRecord} onSaved={onSaved} onCancel={onCancel} />
       ) : (
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -269,11 +288,6 @@ function KeyRow({
             Rename
           </Button>
         </div>
-      )}
-      {error && (
-        <p id={errorId} role="alert" className="text-destructive text-meta">
-          {error}
-        </p>
       )}
     </li>
   );

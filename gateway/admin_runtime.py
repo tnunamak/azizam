@@ -445,18 +445,9 @@ class AdminSQLiteStore:
             name=name,
             access_plan=access_plan,
             session=actor.browser_session,
-            path=self.path,
-        )
-        admin_store.record_audit(
-            "app.update",
-            actor_kind=actor.actor_kind,
-            actor_id=actor.audit_actor_id,
-            actor_label=actor.actor_label,
-            target_kind="app",
-            target_id=app_id,
-            metadata={
-                "name": name, "access_plan": access_plan,
-                **({"previous_name": before.get("name")} if name is not None and name != before.get("name") else {}),
+            audit={
+                "action": "app.update", "actor_kind": actor.actor_kind, "actor_id": actor.audit_actor_id,
+                "actor_label": actor.actor_label, "metadata": {"name": name, "access_plan": access_plan},
             },
             path=self.path,
         )
@@ -2017,21 +2008,13 @@ class AdminSQLiteStore:
             "so only a person with at least their access can rename its keys.")
         label = admin_store.clean_name(data.get("display_name"), code="key_label", noun="key")
         renamed = admin_store.rename_app_credential(
-            credential_id, label, app_id=app_id, session=actor.browser_session, path=self.path)
+            credential_id, label, app_id=app_id, session=actor.browser_session,
+            audit={"action": "credential.rename", "actor_kind": actor.actor_kind, "actor_id": actor.audit_actor_id,
+                   "actor_label": actor.actor_label},
+            path=self.path)
         if renamed is None:
             return None
-        before, after = renamed
-        admin_store.record_audit(
-            "credential.rename",
-            actor_kind=actor.actor_kind,
-            actor_id=actor.audit_actor_id,
-            actor_label=actor.actor_label,
-            target_kind="credential",
-            target_id=credential_id,
-            metadata={"app_id": app_id, "prefix": after.get("prefix"),
-                      "name": after.get("display_name"), "previous_name": before.get("display_name")},
-            path=self.path,
-        )
+        _, after = renamed
         return _sanitize_credential(after)
 
     def revoke_credential(
