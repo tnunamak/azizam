@@ -376,6 +376,16 @@ export default function PeoplePage() {
       ref={container}
       tabIndex={-1}
       aria-label="People workspace"
+      onPointerDownCapture={(event) => {
+        const button =
+          event.target instanceof Element
+            ? event.target.closest("button")
+            : null;
+        // Dropdown triggers prevent pointer focus; record the opener before
+        // the new dialog's focus trap can intercept menu-close autofocus.
+        if (button && !button.closest('[role="dialog"]'))
+          invoker.current = button;
+      }}
       onFocusCapture={(event) => {
         if (
           event.target instanceof HTMLButtonElement &&

@@ -8,11 +8,11 @@ export default defineConfig({
   ...base,
   testMatch: ["isolation.proof.ts", "invite-signin.spec.ts"],
   testIgnore: [],
-  // The second global-state project and the fresh first-run project match
+  // The second global-state, first-run and People projects match
   // their own files at project level, which would override the proof's
   // testMatch: they run no proof case.
   projects: base.projects?.map((project) =>
-    project.name === "chromium-global-state-2" || project.name === "chromium-first-run"
+    ["chromium-global-state-2", "chromium-first-run", "chromium-people"].includes(project.name ?? "")
       ? { ...project, testMatch: "no-test-runs-here.never" }
       : project,
   ),

@@ -1040,45 +1040,75 @@ class WebBuildTests(unittest.TestCase):
 class SmokeAuthModeTests(unittest.TestCase):
     def smoke(self, *, mode=None, status=200, body=None):
         # No network and no model calls: every curl invocation is a local fake.
-        fake = r"""#!/usr/bin/env python3
-import json, os, pathlib, sys
-args = sys.argv[1:]
-url = next(a for a in args if a.startswith("http"))
-path = url.split("://", 1)[1].partition("/")[2]
-code, content_type, redirect = "200", "application/json", ""
-headers = ""
-if path == "v1/chat/completions":
-    body = '{"choices":[{"message":{"content":"OK"}}]}'
-elif path == "v1/audio/speech":
-    body = "x" * 1200
-elif path == "sdapi/v1/sd-models":
-    body = "[]"
-elif path == "":
-    content_type, body = "text/html", '<script src="/_next/static/a123456789abcdef.js"></script>'
-elif path == "library":
-    code, redirect, body = "308", "/library/", ""
-elif path.startswith("_next/static/"):
-    headers, body = "HTTP/1.1 200 OK\nCache-Control: public, immutable\n", ""
-elif path == "v1/models":
-    if "-I" in args:
-        code, body = "405", ""
-    else:
-        code, body = os.environ["FAKE_MODELS_STATUS"], os.environ["FAKE_MODELS_BODY"]
-elif path == "mcp":
-    headers, body = "HTTP/1.1 405 Method Not Allowed\nAllow: POST\n", ""
-elif path == "ui/home/":
-    code, content_type, body = "404", "text/html", "<html>not found</html>"
-else:
-    raise AssertionError(url)
-if "-D" in args:
-    sys.stdout.write(headers)
-if "-o" in args:
-    pathlib.Path(args[args.index("-o") + 1]).write_text(body)
-else:
-    sys.stdout.write(body)
-if "-w" in args:
-    fmt = args[args.index("-w") + 1].replace("\\n", "\n")
-    sys.stdout.write(fmt.replace("%{http_code}", code).replace("%{content_type}", content_type).replace("%{redirect_url}", redirect))
+        fake = r"""#!/bin/bash
+set -eu
+args=("$@")
+url=
+out_file=
+header_target=
+write_format=
+head_request=0
+for ((i = 0; i < ${#args[@]}; i++)); do
+    arg=${args[i]}
+    case $arg in
+        http://*|https://*) url=$arg ;;
+        -o) ((i += 1)); out_file=${args[i]} ;;
+        -D) ((i += 1)); header_target=${args[i]} ;;
+        -w) ((i += 1)); write_format=${args[i]} ;;
+        -I) head_request=1 ;;
+    esac
+done
+[[ -n $url ]] || { echo "fake curl received no URL" >&2; exit 2; }
+rest=${url#*://}
+if [[ $rest == */* ]]; then path=${rest#*/}; else path=; fi
+code=200
+content_type=application/json
+redirect=
+headers=
+response_body=
+case $path in
+    v1/chat/completions)
+        response_body='{"choices":[{"message":{"content":"OK"}}]}' ;;
+    v1/audio/speech)
+        printf -v response_body '%1200s' ''
+        response_body=${response_body// /x} ;;
+    sdapi/v1/sd-models)
+        response_body='[]' ;;
+    '')
+        content_type=text/html
+        response_body='<script src="/_next/static/a123456789abcdef.js"></script>' ;;
+    library)
+        code=308
+        redirect=/library/ ;;
+    _next/static/*)
+        headers=$'HTTP/1.1 200 OK\nCache-Control: public, immutable\n' ;;
+    v1/models)
+        if ((head_request)); then
+            code=405
+        else
+            code=$FAKE_MODELS_STATUS
+            response_body=$FAKE_MODELS_BODY
+        fi ;;
+    mcp)
+        headers=$'HTTP/1.1 405 Method Not Allowed\nAllow: POST\n' ;;
+    ui/home/)
+        code=404
+        content_type=text/html
+        response_body='<html>not found</html>' ;;
+    *)
+        echo "unexpected fake curl URL: $url" >&2
+        exit 1 ;;
+esac
+if [[ -n $header_target ]]; then
+    if [[ $header_target == - ]]; then printf '%s' "$headers"; else printf '%s' "$headers" > "$header_target"; fi
+fi
+if [[ -n $out_file ]]; then printf '%s' "$response_body" > "$out_file"; else printf '%s' "$response_body"; fi
+if [[ -n $write_format ]]; then
+    write_format=${write_format//%\{http_code\}/$code}
+    write_format=${write_format//%\{content_type\}/$content_type}
+    write_format=${write_format//%\{redirect_url\}/$redirect}
+    printf '%b' "$write_format"
+fi
 """
         with tempfile.TemporaryDirectory() as tmp:
             curl = Path(tmp) / "curl"

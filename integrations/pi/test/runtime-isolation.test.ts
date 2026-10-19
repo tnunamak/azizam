@@ -12,7 +12,6 @@ after(() => rmSync(root, { recursive: true, force: true }));
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
 const runs = (name: string) => (existsSync(join(root, name)) ? readFileSync(join(root, name), "utf8").split("\n").filter(Boolean).length : 0);
-const settle = () => new Promise((resolve) => setTimeout(resolve, 500));
 
 /** A fresh agent dir where unrelated providers hold `!command` keys and azizam's key is a `models.json` command. */
 function agentDir(name: string): string {
@@ -41,10 +40,27 @@ async function boot(name: string, register: "scoped" | "pi-default") {
 		}) as unknown as typeof fetch,
 	});
 	const runtime = await ModelRuntime.create({ refreshOnCreate: false });
+	const refreshes: Promise<unknown>[] = [];
+	const refresh = runtime.refresh.bind(runtime);
+	(runtime as any).refresh = (...args: Parameters<typeof refresh>) => {
+		const pending = refresh(...args);
+		refreshes.push(pending);
+		return pending;
+	};
 	if (register === "scoped") registerProviderScoped(runtime, provider);
 	else runtime.registerNativeProvider(provider);
+	await Promise.all(refreshes);
 	await provider.prefetch(runtime);
-	await settle();
+	// Registration and prefetch can queue refresh work on later turns. Drain
+	// observed work, then keep a short quiet window for delayed commands.
+	for (;;) {
+		const pending = refreshes.splice(0);
+		await Promise.all(pending);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		if (refreshes.length === 0) break;
+	}
+	await new Promise<void>((resolve) => setTimeout(resolve, 50));
+	while (refreshes.length) await Promise.all(refreshes.splice(0));
 	return { runtime, provider, auth };
 }
 

@@ -42,16 +42,33 @@ if [[ ! $seed =~ ^[0-9]{1,9}$ ]]; then
   echo "--order-seed must be an integer from 0 to 999999999" >&2
   exit 2
 fi
+step_limit_s=${AZIZAM_CI_STEP_TIMEOUT_S:-1200}
+if [[ ! $step_limit_s =~ ^([0-9]{1,9})(\.([0-9]{1,6}))?$ ]]; then
+  echo "AZIZAM_CI_STEP_TIMEOUT_S must be a positive number of seconds" >&2
+  exit 2
+fi
+whole_seconds=${BASH_REMATCH[1]}
+fraction_us=${BASH_REMATCH[3]:-}000000
+step_limit_us=$((10#$whole_seconds * 1000000 + 10#${fraction_us:0:6}))
+if ((step_limit_us == 0)); then
+  echo "AZIZAM_CI_STEP_TIMEOUT_S must be greater than zero" >&2
+  exit 2
+fi
+if ((step_limit_us > 3600000000)); then
+  step_limit_s=3600
+  step_limit_us=3600000000
+fi
 if [[ -n $closes_nightly_red && ! $closes_nightly_red =~ ^[1-9][0-9]*$ ]]; then
   echo "--closes-nightly-red must be an issue number" >&2
   exit 2
 fi
-if ((!signoff)) && [[ -n $target || -n $closes_nightly_red ]]; then
-  echo "--target and --closes-nightly-red apply only with --signoff" >&2
+if ((!signoff)) && [[ -n $closes_nightly_red ]]; then
+  echo "--closes-nightly-red applies only with --signoff" >&2
   exit 2
 fi
 command -v setsid >/dev/null || { echo "ci-local requires setsid" >&2; exit 2; }
 command -v flock >/dev/null || { echo "ci-local requires flock" >&2; exit 2; }
+command -v timeout >/dev/null || { echo "ci-local requires GNU timeout" >&2; exit 2; }
 
 repo=$(git rev-parse --show-toplevel)
 cd "$repo"
@@ -95,6 +112,11 @@ if ((signoff)); then
   gh api "repos/{owner}/{repo}/commits/$sha" --silent 2>/dev/null ||
     refuse "GitHub has no commit $sha; push the merge candidate to a branch (not $target) first"
   check_nightly_red
+fi
+
+# Non-signoff comparisons still enforce the target branch's budget ratchets.
+if ((!signoff)) && [[ -n $target ]]; then
+  target_tip=$(git rev-parse --verify "refs/remotes/origin/$target") || exit 2
 fi
 
 # Two gates on one host would share 24 cores and the 18000-18998 ports.
@@ -145,11 +167,32 @@ run=$(cd "$run" && pwd)
 work=$run/web-build
 worktrees=()
 pids=()
+step_groups=$run/step-groups
+mkdir -p "$step_groups"
+stop_step_group() {
+  local pgid=$1 deadline=$((SECONDS + 3))
+  kill -TERM -- "-$pgid" 2>/dev/null || true
+  while kill -0 -- "-$pgid" 2>/dev/null && ((SECONDS < deadline)); do sleep .1; done
+  kill -KILL -- "-$pgid" 2>/dev/null || true
+}
+stop_recorded_groups() {
+  local file pgid
+  for file in "$step_groups"/$1; do
+    [[ -f $file ]] || continue
+    read -r pgid < "$file" || pgid=
+    if [[ $pgid =~ ^[1-9][0-9]*$ && $pgid != 1 ]]; then stop_step_group "$pgid"; fi
+    rm -f -- "$file"
+  done
+}
 cleanup() {
   local pid directory deadline=$((SECONDS + 20))
   trap '' INT TERM
+  # Stop supervisors first: a live multi-step job could start another timeout
+  # group after the recorded-group sweep has already expanded its file list.
   # Every background job has its own session: never kill the caller's group.
   for pid in "${pids[@]}"; do kill -TERM -- "-$pid" 2>/dev/null || true; done
+  # timeout uses a second process group. Its descendants need not mention $run.
+  stop_recorded_groups '*'
   for pid in "${pids[@]}"; do
     while kill -0 -- "-$pid" 2>/dev/null && ((SECONDS < deadline)); do sleep .2; done
     kill -KILL -- "-$pid" 2>/dev/null || true
@@ -188,15 +231,25 @@ if [[ -x $gate_time ]]; then cost_mode=gnu-time; fi
 failed=0
 step() {
   local name=$1; shift
-  local start=$SECONDS rc=0
+  local start=$SECONDS start_us=${EPOCHREALTIME/./} rc=0 elapsed_us
   echo "== $name"
   # Run in the background and wait: a trapped INT or TERM interrupts wait at
   # once, while a foreground child would make bash defer or drop the signal.
   ( measure_step "$name" "$@" ) > "$receipts/logs/$name.log" 2>&1 &
   wait "$!" || rc=$?
+  elapsed_us=$(( ${EPOCHREALTIME/./} - start_us ))
   # One writer per file; aggregation happens only after every job is reaped.
   printf '%s\t%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" "$(cost_columns "$name")" > "$receipts/steps/$name.tsv"
-  if ((rc)); then failed=1; echo "   FAILED (exit $rc): $receipts/logs/$name.log"; fi
+  if ((rc)); then
+    failed=1
+    if ((rc == 124 || (rc == 137 && elapsed_us >= step_limit_us))); then
+      echo "   FAILED: $name exceeded the ${step_limit_s}-second step limit: $receipts/logs/$name.log"
+    elif ((rc == 137)); then
+      echo "   FAILED: $name was killed by SIGKILL (possibly OOM): $receipts/logs/$name.log"
+    else
+      echo "   FAILED (exit $rc): $receipts/logs/$name.log"
+    fi
+  fi
   return 0
 }
 # GNU time writes "wall user system max_rss_kb" with -o; -q keeps its "exited with
@@ -205,11 +258,22 @@ step() {
 measure_step() {
   local name=$1; shift
   local cost=$receipts/steps/$name.cost
+  local group_file=$step_groups/${CI_JOB_PID:-main}.$name deadline_pid rc=0
   if [[ $cost_mode == gnu-time ]] && : > "$cost" 2>/dev/null; then
-    "$gate_time" -q -o "$cost" -f '%e %U %S %M' "$@"
+    timeout --signal=TERM --kill-after=20s "${step_limit_s}s" \
+      "$gate_time" -q -o "$cost" -f '%e %U %S %M' "$@" &
   else
-    python3 -I "$repo/scripts/ci/gate_cost.py" run "$cost" -- "$@"
+    timeout --signal=TERM --kill-after=20s "${step_limit_s}s" \
+      python3 -I "$repo/scripts/ci/gate_cost.py" run "$cost" -- "$@" &
   fi
+  deadline_pid=$!
+  printf '%s\n' "$deadline_pid" > "$group_file"
+  wait "$deadline_pid" || rc=$?
+  # GNU timeout is the leader of its own group. A step may leave children
+  # after timeout itself exits; reap that group before dropping its record.
+  if kill -0 -- "-$deadline_pid" 2>/dev/null; then stop_step_group "$deadline_pid"; fi
+  rm -f "$group_file"
+  return "$rc"
 }
 # The steps.tsv columns after the name, exit code and whole seconds: wall, CPU
 # (user plus system) and peak RSS kB. A step with no measurement reports "-".
@@ -231,17 +295,18 @@ cleanup_step() {
     rm -rf -- "$@"
   fi
 }
-export receipts work skip_compose py_workers run seed repo gate_time cost_mode
-export -f step cleanup_step measure_step cost_columns
+export receipts work skip_compose py_workers run seed repo gate_time cost_mode step_groups step_limit_s step_limit_us
+export -f step cleanup_step measure_step cost_columns stop_step_group
 start_job() {
   local directory=$1; shift
-  setsid bash -c 'cd "$1" || exit; shift; "$@"' _ "$directory" "$@" &
+  setsid bash -c 'CI_JOB_PID=$BASHPID; export CI_JOB_PID; cd "$1" || exit; shift; "$@"' _ "$directory" "$@" &
   last_pid=$!
   pids+=("$last_pid")
 }
 wait_job() {
-  local pid=$1 index deadline
-  if ! wait "$pid"; then failed=1; fi
+  local pid=$1 index deadline job_failed=0
+  if ! wait "$pid"; then failed=1; job_failed=1; fi
+  if ((job_failed)); then stop_recorded_groups "$pid.*"; fi
   # A failed supervisor must not leave fixture grandchildren running.
   if kill -0 -- "-$pid" 2>/dev/null; then
     failed=1
@@ -284,17 +349,21 @@ start_job "$run/fresh" bash -c '
 fresh_pid=$last_pid
 start_job "$work" bash -c '
   failed=0
-  step web-npm-ci bash -c "cd web && npm ci --no-audit --no-fund"
+  step web-npm-ci bash -c "cd web && python3 ../scripts/ci/install_cached.py node node_modules"
   # Unit tests run beside the build, not beside the browser tests: there, CPU
   # contention pushed tests past the 5 s vitest limit. They finish before the
   # browser tests start.
   ( step web-unit env CASE_RECEIPTS_FILE="$receipts/raw/vitest.cases.jsonl" bash -c "cd web && npx vitest run --sequence.shuffle --sequence.seed \"\$1\" --reporter=default --reporter=./tests/case-receipts.ts" _ "$seed"; exit "$failed" ) &
   unit_pid=$!
   # Build the export before browsers; static checks move to the native slot.
+  ( step e2e-venv bash -c "uv venv -q --python 3.12 venv && uv pip sync -q --require-hashes --python venv/bin/python tests/requirements-hermetic.lock"; exit "$failed" ) &
+  venv_pid=$!
+  ( step e2e-browser bash -c "cd web && npx playwright install chromium"; exit "$failed" ) &
+  browser_pid=$!
   step web-build bash -c "cd web && npm run build"
   wait "$unit_pid" || failed=1
-  step e2e-venv bash -c "uv venv -q --python 3.12 venv && uv pip sync -q --python venv/bin/python --require-hashes tests/requirements-hermetic.lock"
-  step e2e-browser bash -c "cd web && npx playwright install chromium"
+  wait "$venv_pid" || failed=1
+  wait "$browser_pid" || failed=1
   exit "$failed"
 '
 web_pid=$last_pid
@@ -368,7 +437,7 @@ if ((browser_ready)); then
       name=$1; shift
       step "$name" "$@"
       exit "$failed"
-    ' _ "${browser_names[i]}" env FIRST_RUN_TIMING_OUT="$receipts/raw/first-run-ui.json" UI_E2E_PORT="${browser_ports[i]}" UI_E2E_WORKERS="$browser_workers" UI_E2E_POOL="$browser_servers" \
+    ' _ "${browser_names[i]}" env FIRST_RUN_TIMING_OUT="$receipts/raw/first-run-ui.json" UI_E2E_PORT="${browser_ports[i]}" UI_E2E_WORKERS="$browser_workers" UI_E2E_POOL="$browser_servers" UI_E2E_GLOBAL=2 \
       UI_E2E_STATE_ROOT="$run/state/${browser_names[i]}" UI_E2E_RUN_ID="$seed" UI_E2E_PYTHON="$work/venv/bin/python" \
       CASE_RECEIPTS_FILE="$receipts/raw/${browser_names[i]}.cases.jsonl" \
       ./node_modules/.bin/playwright test --config "${browser_configs[i]}"

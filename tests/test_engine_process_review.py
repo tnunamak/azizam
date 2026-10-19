@@ -100,31 +100,37 @@ def test_unhealthy_live_engine_is_replaced_by_the_restart_policy_after_drain(tmp
 
 
 def test_client_disconnect_during_cold_start_keeps_engine_and_budget(tmp_path):
-    svc = process_service(tmp_path, delay=0.4)
+    svc = process_service(tmp_path)
     svc["residency"]["idle_owner"] = "engine"
     svc["process"]["ready_timeout_s"] = 3
-    driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class HeldProbe:
+        async def read(self, *_args):
+            entered.set()
+            await release.wait()
+            return type("Fact", (), {"known": True, "value": True})()
+
+    driver = ProcessDriver(state_dir=tmp_path / "state", commands_allowed=lambda: True,
+                           observations=HeldProbe())
 
     async def scenario():
         waiter = asyncio.create_task(driver.ensure_ready(svc, 3))
-        # Cancel after the process has actually spawned, even when concurrent
-        # workers delay startup. A fixed sleep could cancel before spawn.
-        deadline = asyncio.get_running_loop().time() + 3
-        while not (tmp_path / "state" / "fixture.json").is_file():
-            assert asyncio.get_running_loop().time() < deadline, "the fixture process never spawned"
-            await asyncio.sleep(0.01)
+        await entered.wait()
         waiter.cancel()
         with pytest.raises(asyncio.CancelledError):
             await waiter
         assert await driver.status(svc) == "running"
         pid = state_pid(tmp_path)
         assert len(driver._starts["fixture"]) == 1
+        release.set()
         assert await driver.ensure_ready(svc, 3) is True
         assert state_pid(tmp_path) == pid
         assert len(driver._starts["fixture"]) == 1
 
     try:
-        run(scenario())
+        run(asyncio.wait_for(scenario(), timeout=30))
     finally:
         driver.stop(svc)
 
@@ -898,10 +904,16 @@ def test_adopted_engine_keeps_a_working_stdout_after_the_gateway_lets_go(tmp_pat
         for pipe in (child.stdout, child.stderr):  # what a gateway restart does to its end of a pipe
             if pipe:
                 pipe.close()
-        assert _wait_for(lambda: marker.exists() and marker.read_text() != "")
-        before = int(marker.read_text())
-        await asyncio.sleep(0.4)
-        assert int(marker.read_text()) > before + 3
+        before = []
+        def progressed():
+            try:
+                tick = int(marker.read_text())
+            except (FileNotFoundError, ValueError):
+                return False  # The child has not written a complete marker yet.
+            if not before:
+                before.append(tick)
+            return tick > before[0] + 3
+        assert await asyncio.to_thread(_wait_for, progressed)
         assert not Path(str(marker) + ".err").exists(), Path(str(marker) + ".err").read_text()
 
     try:

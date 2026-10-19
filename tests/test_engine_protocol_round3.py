@@ -2,7 +2,7 @@
 import asyncio
 import copy
 import json
-import time
+import threading
 from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
@@ -142,19 +142,76 @@ def _invoke_ids(monkeypatch, ids):
     monkeypatch.setattr(dispatch.Runtime, 'invoke', invoke)
 
 
-def test_M1_slow_description_load_cannot_outlive_the_listing_deadline(monkeypatch, fresh_inventory):
-    def slow(directory=None):
-        time.sleep(3)
-        return {}
-    monkeypatch.setattr(description, 'load_registry', slow)
+def _control_listing_deadline(monkeypatch, started, expected, all_started):
+    state = {'scheduled': [], 'fired': False}
 
-    async def timed():
-        started = time.perf_counter()
-        out = await inventory.models(_registry(1))
-        return time.perf_counter() - started, out
-    elapsed, out = asyncio.run(timed())
-    assert elapsed < inventory.LIST_TIMEOUT_S + 0.5, elapsed
+    class ControlledAsyncio:
+        def __getattr__(self, name):
+            return getattr(asyncio, name)
+
+        async def wait(self, tasks, timeout=None, return_when=asyncio.ALL_COMPLETED):
+            state['scheduled'].append(timeout)
+            await all_started.wait()
+            assert len(started) == expected
+            state['fired'] = True
+            return set(), set(tasks)
+
+    monkeypatch.setattr(inventory, 'time', SimpleNamespace(monotonic=lambda: 0.0))
+    monkeypatch.setattr(inventory, 'asyncio', ControlledAsyncio())
+    return state
+
+
+def _control_description_deadline(monkeypatch, load_started):
+    state = {'scheduled': [], 'fired': False}
+
+    class ControlledAsyncio:
+        def __getattr__(self, name):
+            return getattr(asyncio, name)
+
+        async def wait_for(self, awaitable, timeout):
+            state['scheduled'].append(timeout)
+            task = asyncio.ensure_future(awaitable)
+            await load_started.wait()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            state['fired'] = True
+            raise asyncio.TimeoutError
+
+    monkeypatch.setattr(inventory, 'asyncio', ControlledAsyncio())
+    return state
+
+
+def test_M1_slow_description_load_cannot_outlive_the_listing_deadline(monkeypatch, fresh_inventory):
+    loop = None
+    load_started = asyncio.Event()
+    load_finished = asyncio.Event()
+    release_load = threading.Event()
+    def slow(directory=None):
+        loop.call_soon_threadsafe(load_started.set)
+        try:
+            release_load.wait()
+            return {}
+        finally:
+            loop.call_soon_threadsafe(load_finished.set)
+    monkeypatch.setattr(description, 'load_registry', slow)
+    deadline = _control_description_deadline(monkeypatch, load_started)
+
+    async def run():
+        nonlocal loop
+        loop = asyncio.get_running_loop()
+        task = asyncio.create_task(inventory.models(_registry(1)))
+        try:
+            out = await task
+            assert not load_finished.is_set()
+            return out
+        finally:
+            release_load.set()
+            if load_started.is_set():
+                await load_finished.wait()
+    out = asyncio.run(asyncio.wait_for(run(), timeout=30))
     assert out == []
+    assert deadline['scheduled'] == [inventory.DESCRIPTION_LOAD_S]
+    assert deadline['fired']
 
 
 def test_M1_timed_out_reload_serves_the_last_good_description(monkeypatch, fresh_inventory, ollama_doc):
@@ -163,18 +220,36 @@ def test_M1_timed_out_reload_serves_the_last_good_description(monkeypatch, fresh
     asyncio.run(inventory.models(_registry(1)))
     monkeypatch.setattr(inventory, 'CACHE_TTL_S', 0.0)
 
+    loop = None
+    load_started = asyncio.Event()
+    load_finished = asyncio.Event()
+    release_load = threading.Event()
     def slow(directory=None):
-        time.sleep(3)
-        return {}
+        loop.call_soon_threadsafe(load_started.set)
+        try:
+            release_load.wait()
+            return {}
+        finally:
+            loop.call_soon_threadsafe(load_finished.set)
     monkeypatch.setattr(description, 'load_registry', slow)
+    deadline = _control_description_deadline(monkeypatch, load_started)
 
-    async def timed():
-        started = time.perf_counter()
-        out = await inventory.models(_registry(1))
-        return time.perf_counter() - started, out
-    elapsed, out = asyncio.run(timed())
-    assert elapsed < inventory.LIST_TIMEOUT_S + 0.5, elapsed
+    async def run():
+        nonlocal loop
+        loop = asyncio.get_running_loop()
+        task = asyncio.create_task(inventory.models(_registry(1)))
+        try:
+            out = await task
+            assert not load_finished.is_set()
+            return out
+        finally:
+            release_load.set()
+            if load_started.is_set():
+                await load_finished.wait()
+    out = asyncio.run(asyncio.wait_for(run(), timeout=30))
     assert [item['id'] for item in out] == ['m0']
+    assert deadline['scheduled'] == [inventory.DESCRIPTION_LOAD_S]
+    assert deadline['fired']
 
 
 def test_L4_a_record_that_cannot_be_serialised_is_isolated(monkeypatch, fresh_inventory, ollama_doc):
@@ -409,18 +484,34 @@ def _registry_of(n):
 
 def test_probe_forty_hanging_engines_share_one_listing_budget(monkeypatch, fresh_inventory, ollama_doc):
     monkeypatch.setattr(description, 'load_registry', lambda directory=None: {'ollama-native': ollama_doc})
+    started = set()
+    cancelled = set()
+    all_started = asyncio.Event()
+    deadline = _control_listing_deadline(monkeypatch, started, 40, all_started)
+    async def in_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+    monkeypatch.setattr(inventory.asyncio, 'to_thread', in_thread)
 
     async def hang(self, op, body):
-        await asyncio.sleep(3600)
+        engine_id = self.target.engine_id
+        started.add(engine_id)
+        if len(started) == 40:
+            all_started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.add(engine_id)
     monkeypatch.setattr(dispatch.Runtime, 'invoke', hang)
 
-    async def timed():
-        started = time.perf_counter()
-        out = await inventory.models(_registry_of(40))
-        return time.perf_counter() - started, out
-    elapsed, out = asyncio.run(timed())
+    out = asyncio.run(asyncio.wait_for(inventory.models(_registry_of(40)), timeout=30))
     assert out == []
-    assert elapsed < inventory.LIST_TIMEOUT_S + 0.5, elapsed
+    expected = {f'e{i}' for i in range(40)}
+    assert started == expected
+    assert cancelled == expected
+    assert {problem['engine_id'] for problem in inventory.problems()} == expected
+    assert all('total time limit' in problem['reason'] for problem in inventory.problems())
+    assert deadline['scheduled'] == [inventory.LIST_TIMEOUT_S]
+    assert deadline['fired']
 
 
 def test_probe_one_bad_engine_shape_is_isolated(monkeypatch, fresh_inventory, ollama_doc):

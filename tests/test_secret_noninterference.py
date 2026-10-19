@@ -15,6 +15,7 @@ import re
 import pytest
 
 from gateway import admin_store
+from gateway.availability import EVIDENCE_TIME_FIELDS
 from tests.support import canary
 from tests.test_admin_secret_sweep import host_isolated, sweep_get_routes  # noqa: F401
 from tests.test_secret_canary_matrix import REGISTRY, _etag, _plant
@@ -22,16 +23,37 @@ from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin  
 
 M = canary.MARKERS
 EPOCH = re.compile(r"\b1[5-9]\d{8}(?:\.\d+)?\b")
-VOLATILE_KEYS = {"updated_at", "created_at", "checked_at", "operator_settings_generation", "etag", "request_id", "latency_ms"}
+# The evidence times are the instants a health check or request produced the evidence. The status cache lives 12 s, so a
+# slow run that crosses it stamps a later second. The time is a clock reading, not a function of a secret's bytes.
+VOLATILE_KEYS = {
+    "updated_at", "created_at", "checked_at", "operator_settings_generation", "etag", "request_id", "latency_ms",
+    *EVIDENCE_TIME_FIELDS,
+}
+
+
+# The two attention texts admin_api builds from an app's request counters (error rate, median latency). The app items
+# built from configuration ("has no access plan", "has no active key") are not matched and stay compared.
+LIVE_TRAFFIC_DETAIL = re.compile(r"\d+% errors across \d+ requests in the last 24h\.|Median latency is \d+(?:\.\d+)?s\.")
+
+
+def _live_traffic_item(value) -> bool:
+    """An attention item computed from an app's request counters of the last 24 h (admin_api: error rate, latency).
+
+    Those counters are live, like the routes in NOT_A_FUNCTION_OF_STATE: this test's own reads move them, so the item's
+    numbers, and whether it appears at all, are not a function of the stored configuration."""
+    return (
+        isinstance(value, dict) and value.get("kind") == "app" and isinstance(value.get("detail"), str)
+        and LIVE_TRAFFIC_DETAIL.fullmatch(value["detail"]) is not None
+    )
 
 
 def _normalize(text: str) -> str:
-    """The reading with the approved differences set aside: a revision number and the time of a change."""
+    """The reading with the approved differences set aside: a revision number, the time of a change, live traffic."""
     def clean(value):
         if isinstance(value, dict):
             return {key: clean(item) for key, item in value.items() if key not in VOLATILE_KEYS}
         if isinstance(value, list):
-            return [clean(item) for item in value]
+            return [clean(item) for item in value if not _live_traffic_item(item)]
         return value
 
     try:
@@ -115,3 +137,16 @@ def test_the_reading_does_change_when_a_public_field_changes(gateway, host_isola
     assert renamed.status_code == 200, renamed.text
     after = _reading(gateway, owner)
     assert before[REGISTRY] != after[REGISTRY]
+
+    # A later clock reading in the evidence is no difference (the run can outlast the 12 s status cache); a changed status is.
+    evidence = {"observed_at_s": 1792370504, "last_attempt_at_s": 1792370504, "last_success_at_s": 1792370400, "status": "ready"}
+    later = {**evidence, "observed_at_s": 1792370521, "last_attempt_at_s": 1792370521, "last_success_at_s": 1792370510}
+    assert _normalize(json.dumps({"evidence": evidence})) == _normalize(json.dumps({"evidence": later}))
+    assert _normalize(json.dumps({"evidence": evidence})) != _normalize(json.dumps({"evidence": {**later, "status": "unavailable"}}))
+
+    # An app's live error-rate item is no difference (this test's own reads move the counters); a configuration item still is.
+    app_item = {"kind": "app", "target_kind": "app", "severity": "problem", "detail": "32% errors across 106 requests in the last 24h."}
+    plan_item = {"kind": "app", "target_kind": "app", "severity": "problem", "detail": "It can't run anything. Choose a plan."}
+    assert _normalize(json.dumps({"items": [app_item, plan_item]})) == _normalize(json.dumps({"items": [{**app_item, "detail": "68% errors across 318 requests in the last 24h."}, plan_item]}))
+    assert _normalize(json.dumps({"items": [app_item]})) == _normalize(json.dumps({"items": []}))
+    assert _normalize(json.dumps({"items": [plan_item]})) != _normalize(json.dumps({"items": []}))

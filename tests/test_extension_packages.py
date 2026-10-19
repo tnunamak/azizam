@@ -1178,30 +1178,60 @@ def test_a_plan_saved_between_the_removal_read_and_write_is_seen_by_the_removal(
 
 
 def test_a_plan_save_waits_for_a_removal_in_its_transaction(tmp_path, monkeypatch):
-    # Regression guard: the removal holds the write lock from its plan check to its commit.
+    # A second SQLite writer must see the removal's lock until its commit.
+    import sqlite3
     import threading
+    import pytest
     from gateway import admin_store
     store, actor, _source, _installed = _installed_lifecycle_store(tmp_path, monkeypatch)
     real_registry_write = admin_store.write_service_registry_in_transaction
     inside, release = threading.Event(), threading.Event()
+    plan_started, plan_finished = threading.Event(), threading.Event()
+    failures = []
+    plan_failures = []
 
     def paused_registry_write(*args, **kwargs):
         inside.set()
         assert release.wait(10)
         return real_registry_write(*args, **kwargs)
 
+    def remove():
+        try:
+            store.remove_extension_package(package_id="lifecycle", actor=actor)
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            inside.set()  # A failure before the write must not strand the test.
+
+    def save_plan():
+        plan_started.set()
+        try:
+            _plan_naming_the_package_service(store.path, "plan_late")
+        except BaseException as exc:
+            plan_failures.append(exc)
+        finally:
+            plan_finished.set()
+
     monkeypatch.setattr(admin_store, "write_service_registry_in_transaction", paused_registry_write)
-    remover = threading.Thread(target=lambda: store.remove_extension_package(package_id="lifecycle", actor=actor))
-    saved = threading.Event()
-    saver = threading.Thread(target=lambda: (_plan_naming_the_package_service(store.path, "plan_late"), saved.set()))
+    remover = threading.Thread(target=remove)
+    saver = threading.Thread(target=save_plan)
     remover.start()
-    assert inside.wait(10)
-    saver.start()
-    assert not saved.wait(0.5), "a plan save must wait for the removal's transaction"
-    release.set()
-    remover.join(10)
-    saver.join(10)
-    assert saved.is_set()
+    try:
+        assert inside.wait(10)
+        assert not failures
+        with sqlite3.connect(store.path, timeout=0) as competing_writer:
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                competing_writer.execute("BEGIN IMMEDIATE")
+        saver.start()
+        assert plan_started.wait(10)
+        assert not plan_finished.wait(0.2), "plan save must wait for removal's transaction"
+    finally:
+        release.set()
+        remover.join(10)
+        if saver.ident is not None:
+            saver.join(10)
+    assert not remover.is_alive() and not saver.is_alive() and not failures and not plan_failures
+    assert plan_finished.is_set()
     assert "lifecycle" not in store.get_extension_package_index()["packages"]
 
 
