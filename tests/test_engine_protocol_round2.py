@@ -361,29 +361,9 @@ def test_total_inventory_deadline_reports_cancelled_engines(engine, monkeypatch)
         all_started.set()
         try:
             await asyncio.sleep(5)
-        except asyncio.CancelledError:
-            # Distinguish aggregate cancellation from the engine timeout, including slow setup.
-            if not engine_timeouts[0].expired():
-                cancelled.append(self.target.engine_id)
-            raise
         finally:
             closed.append(self.target.engine_id)
     monkeypatch.setattr(dispatch.Runtime, 'invoke', hang)
-    real_asyncio = asyncio
-    class WaitAfterProbeEntered:
-        # The total deadline starts before the cold description read and Runtime construction, so on
-        # a slow host it can expire before the probe starts. Wait (bounded) for the probe, then run
-        # the real asyncio.wait with the deadline-derived timeout. Only inventory sees this proxy.
-        def __getattr__(self, name):
-            return getattr(real_asyncio, name)
-        def timeout(self, delay):
-            timer = real_asyncio.timeout(delay)
-            engine_timeouts.append(timer)
-            return timer
-        async def wait(self, *args, **kwargs):
-            await real_asyncio.wait_for(entered.wait(), 5)
-            return await real_asyncio.wait(*args, **kwargs)
-    monkeypatch.setattr(inventory, 'asyncio', WaitAfterProbeEntered())
     response = engine.client.get('/v1/models')
     assert response.status_code == 200
     assert started == [engine.record['id']]
