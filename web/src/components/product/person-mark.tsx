@@ -1,71 +1,47 @@
-import { cn } from "@/lib/cn";
+import {
+  PersonAvatar,
+  selectionFromChoice,
+  type PersonAvatarSize,
+} from "@/components/product/person-avatar";
 
-const hues = [
-  "bg-person-1",
-  "bg-person-2",
-  "bg-person-3",
-  "bg-person-4",
-  "bg-person-5",
-  "bg-person-6",
-  "bg-person-7",
-] as const;
-
-function hueIndex(name: string): number {
-  const key = name.trim().toLowerCase();
-  let hash = 5381;
-  for (const char of key)
-    hash = ((hash << 5) + hash + char.codePointAt(0)!) >>> 0;
-  return hash % hues.length;
-}
-
-/** A person keeps one hue everywhere: the djb2 hash of their display name. */
-export function personHue(name: string): (typeof hues)[number] {
-  return hues[hueIndex(name)];
-}
-
-export function personInitial(name: string): string {
-  const first = name.trim().match(/\p{L}|\p{N}/u)?.[0];
-  return first ? first.toLocaleUpperCase() : "?";
-}
-
-const sizes = {
-  /** 16: the maker's mark on a media tile (craft PR 5). */
-  "2xs": "size-4 text-2xs",
-  xs: "size-5 text-2xs",
-  sm: "size-6 text-xs",
-  md: "size-8 text-sm",
-  lg: "size-10 text-base",
-} as const;
+export type PersonAvatarState = {
+  choice?: string | null;
+  picture_url?: string | null;
+};
 
 /**
- * The household's visual unit: a disc with the person's initial in their hue.
- * Decorative by default; pass `label` when the mark is the only name shown.
+ * The household's visual unit: a disc with the person's initial, or their
+ * sign-in picture when they chose it. The colour comes from the stable person
+ * id (`personId`), so a rename keeps it; callers that only have a name pass no
+ * id and get a colour from the name. Decorative by default; pass `label` when
+ * the mark is the only name shown.
  */
 export function PersonMark({
   name,
+  personId,
+  avatar,
   size = "sm",
   label,
   className,
 }: {
   name: string;
-  size?: keyof typeof sizes;
+  personId?: string | null;
+  avatar?: PersonAvatarState | null;
+  size?: Exclude<PersonAvatarSize, "xl">;
   label?: string;
   className?: string;
 }) {
   return (
-    <span
-      data-slot="person-mark"
-      className={cn(
-        "text-person-ink inline-flex shrink-0 items-center justify-center rounded-full font-semibold select-none",
-        personHue(name),
-        sizes[size],
-        className,
-      )}
-      {...(label
-        ? { role: "img", "aria-label": label }
-        : { "aria-hidden": true })}
-    >
-      {personInitial(name)}
-    </span>
+    <PersonAvatar
+      slot="person-mark"
+      personId={personId}
+      name={name}
+      selection={selectionFromChoice(avatar?.choice)}
+      pictureUrl={avatar?.picture_url}
+      size={size}
+      label={label}
+      decorative={!label}
+      className={className}
+    />
   );
 }

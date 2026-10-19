@@ -38,6 +38,7 @@ NOT_MEASURABLE = {
     "/admin/api/categories/active": "409: no category snapshot is active in the fixture",
     "/admin/api/operator/litellm/keys": "503: the LLM substrate is not configured in the gate",
     "/admin/api/settings/receipts/preview": "400: needs a retention argument",
+    "/me/api/profile/avatar/picture": "404: the fixture's person has no sign-in picture, and the route fetches it from the provider",
     "/me/api/prompt-memory": "500: needs the prompt-memory store's own database and a person row",
     "/admin/api/activity/requests": "500 in some orders: its router keeps the receipts path the app was imported with, "
                                     "not the fixture's (scripts/perf/api_bench.py measures it on real data)",

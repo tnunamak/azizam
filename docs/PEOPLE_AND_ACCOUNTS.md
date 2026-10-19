@@ -68,6 +68,31 @@ members and administrators cannot use the owner-only People/invitation APIs.
 | `GET /admin/api/invites/{id}/link` | Recover the same pending invitation link; expired/used/revoked links fail |
 | `DELETE /admin/api/invites/{id}` | Revoke pending invitation |
 
+## Avatars
+
+Every person has an avatar, drawn from their stable person id (never the display name, so a rename keeps the
+colour). The choice is one word, stored in `user_avatars` (created with the account schema; a table of its own so
+no People list returns the picture URL): `auto` (the default), `v1` to `v8` (the eight generated palettes) or
+`picture` (the picture the identity provider shared).
+
+| Endpoint | Result / request |
+| --- | --- |
+| `GET /me/api/profile/avatar` | `{choice, person_id, picture_url}`; `picture_url` is a gateway path or `null`, never the provider's address |
+| `PUT /me/api/profile/avatar` | `{choice}` and nothing else, with the same user-action header and CSRF token as other `/me` writes. Any other word, extra key or URL is `400 invalid_avatar_choice`; `picture` with no stored picture is `409 picture_unavailable` |
+| `GET /me/api/profile/avatars` | `{people: {id: {choice, picture_url}}}`: the caller's own; an owner or admin also gets everyone's (People and Library draw their marks from it). Another person's `picture_url` is shown only when that person chose `picture` |
+| `GET /me/api/profile/avatar/picture[?person=id]` | The sign-in picture as `image/png`, `image/jpeg`, `image/webp` or `image/gif`, or `404` |
+
+The `picture` claim of the ID token is read at sign-in, only for a person who is let in. It is kept only when it is
+an `https` URL of at most 2048 characters with no credentials, and it is stored on the person (`user_avatars`),
+not in the session cookie. A claim that is present and fails these checks removes the stored URL; an absent claim
+leaves it. The browser never loads the provider's address (no hot-linking, so the provider learns nothing about
+who views whom): the gateway fetches it on the server with no cookie, credential or referer, over `https` only, at
+most 1 MB and 8 seconds, through the same fetcher that guards media URLs against private addresses
+(`gateway/media_fetch.py`). The header and the file signature must agree on one of the four image types. A good
+copy is kept in memory for six hours, a failure for five minutes, and a failed fetch answers `404`, so the page
+shows the generated avatar. Only the person themself and an owner or admin (who already see the person in People
+and Library) can fetch a picture, and an owner or admin only when the person chose it.
+
 The sign-in switches, the identity provider connection and the sign-in rules
 are one document with one revision, read and written only through
 `/admin/api/signin` (see "Sign-in rules and the Sign-in page" in

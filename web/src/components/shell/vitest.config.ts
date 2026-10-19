@@ -17,6 +17,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: [
+      path.join(shellDir, "account-avatar.spec.tsx"),
       path.join(shellDir, "app-shell.regression.spec.tsx"),
       path.join(shellDir, "owner-alert.spec.ts"),
     ],
