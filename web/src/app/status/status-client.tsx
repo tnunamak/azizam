@@ -1685,6 +1685,7 @@ export function StatusClient() {
                     returns, every engine would read "Unknown" for a moment. */}
                 {registryIsPending || statusIsPending ? (
                   <Skeleton
+                    role="status"
                     aria-busy="true"
                     aria-label="Checking engines"
                     className="rounded-panel h-48 w-full"

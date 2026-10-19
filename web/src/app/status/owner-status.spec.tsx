@@ -683,7 +683,8 @@ it("waits for the status check before drawing engine rows, never a passing Unkno
   expect(api.services.registry).toHaveBeenCalled();
   expect(client.getQueryData(queryKeys.serviceRegistry)).toEqual(chatRegistry);
   expect(screen.queryByRole("table", { name: "Engine status" })).toBeNull();
-  expect(screen.getByLabelText("Checking engines")).toHaveAttribute("aria-busy", "true");
+  // A named region needs a role: axe refuses aria-label on a bare div.
+  expect(screen.getByRole("status", { name: "Checking engines" })).toHaveAttribute("aria-busy", "true");
   expect(document.body.textContent).not.toMatch(/\bUnknown\b/);
   await act(async () => {
     answer({
