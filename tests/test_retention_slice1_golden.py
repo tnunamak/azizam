@@ -707,5 +707,5 @@ def test_slice1_behaviour_matches_golden(tmp_path, responses_gateway, fake_upstr
     # The new deleted-ID rule changes only old synthetic "bogus" period cases.
     # Keep the original golden immutable so every formerly valid input remains byte-identical.
     assert len(changed) == 117
-    assert all(section in {"decide_matrix", "effective"} and '"bogus"' in key
-               for section, key in changed), changed[:8]
+    unexpected = [key for key in changed if not (key[0] in {"decide_matrix", "effective"} and '"bogus"' in key[1])]
+    assert not unexpected, unexpected[:8]
