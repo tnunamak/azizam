@@ -698,12 +698,14 @@ def test_slice1_behaviour_matches_golden(tmp_path, responses_gateway, fake_upstr
         print("RETENTION_GOLDEN_BEGIN\n" + text + "RETENTION_GOLDEN_END")
         pytest.fail("tests/fixtures/retention_slice1_golden.jsonl is missing; extract it from this run's JUnit report")
     expected = GOLDEN.read_text(encoding="utf-8")
-    if text != expected:
-        got, want = text.splitlines(), expected.splitlines()
-        got_set, want_set = set(got), set(want)
-        changed = [json.loads(line) for line in got if line not in want_set]
-        missing = [json.loads(line) for line in want if line not in got_set]
-        first = next(((new, old) for new in changed for old in missing if new[:2] == old[:2]), None)
-        pytest.fail(f"behaviour changed: {len(got)} cells now, {len(want)} recorded; {len(changed)} changed; "
-                    f"first changed cells {[c[:2] for c in changed[:8]]}; first difference {first}")
-    assert text == expected
+    got, want = text.splitlines(), expected.splitlines()
+    actual = {(section, key): cell for section, key, cell in map(json.loads, got)}
+    baseline = {(section, key): cell for section, key, cell in map(json.loads, want)}
+    assert len(got) == len(want) == len(actual) == len(baseline) == 9952
+    assert actual.keys() == baseline.keys()
+    changed = [key for key in actual if actual[key] != baseline[key]]
+    # The new deleted-ID rule changes only old synthetic "bogus" period cases.
+    # Keep the original golden immutable so every formerly valid input remains byte-identical.
+    assert len(changed) == 117
+    assert all(section in {"decide_matrix", "effective"} and '"bogus"' in key
+               for section, key in changed), changed[:8]
