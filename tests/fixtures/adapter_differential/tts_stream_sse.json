@@ -1,0 +1,161 @@
+{
+  "assets": [],
+  "caller": [
+    {
+      "label": "stream_format sse",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"model\":\"tts-fast\",\"voice\":\"shimmer\",\"input\":\"hello\",\"response_format\":\"pcm\",\"stream_format\":\"sse\"}"
+        },
+        "headers": {
+          "content-length": "100",
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/audio/speech",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "events": [
+            {
+              "audio": {
+                "kind": "binary",
+                "len": 2722,
+                "magic": "c409c409c409c409",
+                "sha256": "ffbf83d29d25d807d181a6dbb2379633fce70aaaea4f2219e397d356af0dfe71"
+              },
+              "type": "speech.audio.delta (joined)"
+            },
+            "data: {\"type\":\"speech.audio.done\"}"
+          ],
+          "kind": "sse-audio"
+        },
+        "headers": {
+          "cache-control": "no-cache",
+          "content-type": "text/event-stream; charset=utf-8",
+          "x-accel-buffering": "no",
+          "x-request-id": "<req:1>"
+        },
+        "status": 200
+      }
+    }
+  ],
+  "description": "Streamed speech as SSE: speech.audio.delta events then speech.audio.done",
+  "engine_requests": [
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"model\": \"supertonic\", \"voice\": \"F4\", \"input\": \"hello\", \"response_format\": \"pcm\", \"stream_format\": \"audio\"}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "identity",
+        "connection": "keep-alive",
+        "content-length": "108",
+        "content-type": "application/json",
+        "host": "127.0.0.1:8010"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/v1/audio/speech",
+      "query": [],
+      "step": 0,
+      "to": "127.0.0.1:8010"
+    }
+  ],
+  "gateway_sleeps": [],
+  "media_jobs": {
+    "media_jobs_schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "notes": {},
+  "receipts": {
+    "receipts": [
+      {
+        "api_key_name": "test-app",
+        "app_id": "app_test",
+        "app_profile": "plan_everything",
+        "created_at": "<time>",
+        "intent": "speech.synthesis",
+        "job_id": null,
+        "parent_request_id": null,
+        "path": "/v1/audio/speech",
+        "protocol": "openai.audio",
+        "receipt_json": {
+          "accepted_at_ms": "<time>",
+          "accepted_inputs": [],
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "attempt_number": 1,
+          "backend": "tts-supertonic",
+          "client_address": null,
+          "client_hint": null,
+          "connection_id": null,
+          "cost": null,
+          "effective_output_limit": null,
+          "fallback_reasons": [],
+          "finished_at_ms": "<time>",
+          "first_output_at_ms": null,
+          "ignored_inputs": {},
+          "intent": "speech.synthesis",
+          "job_id": null,
+          "latency_ms": "<duration>",
+          "manifest_hash": null,
+          "manifest_id": null,
+          "manifest_version": null,
+          "metadata": {
+            "status_code": 200,
+            "terminal_reason": "http_200"
+          },
+          "owner_key_hash": "app:app_test",
+          "parent_request_id": null,
+          "path": "/v1/audio/speech",
+          "policy_decision": "allowed",
+          "policy_reasons": [
+            "route_authorized",
+            "allowed by your access plan"
+          ],
+          "policy_sources": [
+            "runtime_route_policy",
+            "access_plan:plan_everything"
+          ],
+          "protocol": "openai.audio",
+          "queued_at_ms": null,
+          "rejected_inputs": {},
+          "remote": false,
+          "request_id": "<req:1>",
+          "requested_model": "tts-fast",
+          "requested_workflow": null,
+          "resolved_model": "supertonic",
+          "resolved_workflow": null,
+          "source_kind": "app",
+          "source_label": "test-app",
+          "started_at_ms": null,
+          "status": "succeeded",
+          "stream": true,
+          "updated_at_ms": "<time>",
+          "usage": null,
+          "visibility": "full",
+          "warnings": []
+        },
+        "request_id": "<req:1>",
+        "status": "succeeded"
+      }
+    ],
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "tts_stream_sse",
+  "schema": 1
+}

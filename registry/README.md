@@ -23,3 +23,11 @@ async jobs). `protocol.schema.json` is their closed schema; the loader is
 `gateway/engine_protocol/description.py`. The file name must equal the `id`.
 A description names no engine and no code. See
 `docs/design/ENGINE_PROTOCOL_EXECUTOR.md`.
+
+Three descriptions say `executor: adapter:<id>`: `node-graph`, `inline-tts` and
+`chunked-stt`. They list operation names only (the reviewed adapter owns the
+wire) and carry `serves` (capabilities the adapter answers for when an engine
+record names no protocol), `label` (the engine's name in caller-facing
+messages) and, for `node-graph`, `binding` (the key under a workflow manifest's
+`bindings`). An engine record selects an adapter by naming its protocol, or by
+the capability of the route it serves.

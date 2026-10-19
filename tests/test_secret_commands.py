@@ -293,3 +293,26 @@ def test_the_answer_to_a_write_is_the_answer_to_a_read(gateway):
     read = owner.get("/admin/api/operator/service-registry")
     assert written.json()["service_registry"]["services"]["engine-a"] == read.json()["service_registry"]["services"]["engine-a"]
     assert written.json()["excluded"] == read.json()["excluded"]
+
+
+def test_protocol_provider_key_command_and_registry_echo_hide_private_reference(gateway):
+    owner, *_ = owner_and_admin(gateway)
+    saved = _record()
+    saved['config'].update(host='127.0.0.1', address='http://127.0.0.1:8080', connection={
+        'dispatch': 'protocol', 'protocol': 'openai-compatible', 'address': 'http://127.0.0.1:8080', 'transport': 'http',
+    })
+    _write(gateway, saved)
+    response = _post(owner, [{'carrier': 'config.api_key', 'operation': 'add', 'value': SEEDS['h']}])
+    assert response.status_code == 200, response.text
+    raw = admin_store.get_service_registry_with_generation(path=gateway.path)['value']['services']['engine-a']
+    private_ref = raw['config']['connection']['credentials']['inference']['secret_ref']
+    read = owner.get('/admin/api/operator/service-registry')
+    for answer in (response, read):
+        assert private_ref not in answer.text and SEEDS['h'] not in answer.text
+        shown = answer.json()['service_registry']['services']['engine-a']['config']['connection']
+        assert shown['credentials']['inference']['secret_ref'] == {'configured': True}
+    echoed = owner.put('/admin/api/operator/service-registry',
+                       headers={**csrf_for(owner), 'If-Match': read.headers['etag']}, json=read.json()['service_registry'])
+    assert echoed.status_code == 200, echoed.text
+    retained = admin_store.get_service_registry_with_generation(path=gateway.path)['value']['services']['engine-a']
+    assert retained['config']['connection']['credentials']['inference']['secret_ref'] == private_ref

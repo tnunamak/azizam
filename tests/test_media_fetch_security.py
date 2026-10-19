@@ -203,7 +203,7 @@ def test_video_create_rejects_existing_filesystem_path_with_400(tmp_path):
     )
     with patch.object(proxy, "_service_availability_response", return_value=None):
         with patch.object(proxy.httpx, "AsyncClient", side_effect=AssertionError("must not upload a local file")):
-            response = asyncio.run(proxy.proxy_comfy_video_create(request, access_context()))
+            response = asyncio.run(proxy.proxy_graph_video_create(request, access_context()))
     assert response.status_code == 400
     message = json.loads(response.body)["error"]["message"]
     assert "multipart upload" in message

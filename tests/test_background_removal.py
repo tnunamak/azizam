@@ -48,7 +48,7 @@ class TestBackgroundRemoval(unittest.TestCase):
         self.assertIn("boolean", decision.error)
 
     def test_workflow_toggle_uses_committed_rmbg_branch(self) -> None:
-        workflow = proxy.load_comfy_workflow("flux2-klein-4b")
+        workflow = proxy.load_graph_workflow("flux2-klein-4b")
         self.assertIsNotNone(workflow)
         workflow = copy.deepcopy(workflow)
         meta = workflow.pop("_meta", {})

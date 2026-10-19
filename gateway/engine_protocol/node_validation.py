@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
-def validate_comfyui_workflow_graph(workflow: Any) -> list[str]:
+def validate_workflow_graph(workflow: Any) -> list[str]:
     """Return clear validation errors for a loaded ComfyUI API workflow graph."""
     if not isinstance(workflow, Mapping):
         return ["workflow must be a mapping of node ids to node definitions"]

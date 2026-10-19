@@ -1,0 +1,214 @@
+{
+  "assets": [],
+  "caller": [
+    {
+      "label": "create a voice while the engine is down",
+      "request": {
+        "body": {
+          "boundary": "<boundary>",
+          "epilogue": "\r\n",
+          "kind": "multipart",
+          "parts": [
+            {
+              "body": {
+                "kind": "text",
+                "text": "narrator"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"name\""
+            },
+            {
+              "body": {
+                "kind": "text",
+                "text": "audio_sample"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"type\""
+            },
+            {
+              "body": {
+                "kind": "binary",
+                "len": 384044,
+                "magic": "5249464624dc0500",
+                "sha256": "e5c7d155c70a3f72b3f9873ffefdcd4ec58a2bb8bfd118c2083f29eac7420e60"
+              },
+              "crlf_after_body": true,
+              "headers": "Content-Disposition: form-data; name=\"audio_sample\"; filename=\"sample.wav\"\r\nContent-Type: audio/wav"
+            }
+          ],
+          "preamble": ""
+        },
+        "headers": {
+          "content-length": "384413",
+          "content-type": "multipart/form-data; boundary=<boundary>"
+        },
+        "method": "POST",
+        "path": "/v1/audio/voices",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"object\":\"audio.voice\",\"id\":\"voice_000000000000000000000001\",\"type\":\"audio_sample\",\"name\":\"narrator\",\"created_at\":\"<time>\",\"description\":null,\"labels\":{},\"duration_seconds\":8.0,\"consent\":null,\"seed\":null,\"prompt\":null,\"design_instruct\":null,\"quality\":{\"speaker_similarity\":null,\"encoder\":null,\"engine\":null,\"status\":\"unchecked\",\"reason\":\"engine_error: ConnectError\"},\"warnings\":[\"quality_check_unavailable\"],\"compatible_engines\":[\"omnivoice\",\"chatterbox\"]}"
+        },
+        "headers": {
+          "content-length": "<457 after normalisation>",
+          "content-type": "application/json"
+        },
+        "status": 200
+      }
+    }
+  ],
+  "description": "The voice-check call is refused three times (sleeps between tries are logged); the voice is created unchecked",
+  "engine_requests": [
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"voice_ref\":\"<tmp>/voices/<hex32:1>/voices/voice_000000000000000000000001/reference.wav\"}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "content-length": "<90 after normalisation>",
+        "content-type": "application/json",
+        "host": "127.0.0.1:8002"
+      },
+      "method": "POST",
+      "outcome": {
+        "error": "ConnectError"
+      },
+      "path": "/v1/audio/voice-check",
+      "query": [],
+      "step": 0,
+      "to": "127.0.0.1:8002"
+    },
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"voice_ref\":\"<tmp>/voices/<hex32:1>/voices/voice_000000000000000000000001/reference.wav\"}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "content-length": "<90 after normalisation>",
+        "content-type": "application/json",
+        "host": "127.0.0.1:8002"
+      },
+      "method": "POST",
+      "outcome": {
+        "error": "ConnectError"
+      },
+      "path": "/v1/audio/voice-check",
+      "query": [],
+      "step": 0,
+      "to": "127.0.0.1:8002"
+    },
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"voice_ref\":\"<tmp>/voices/<hex32:1>/voices/voice_000000000000000000000001/reference.wav\"}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "content-length": "<90 after normalisation>",
+        "content-type": "application/json",
+        "host": "127.0.0.1:8002"
+      },
+      "method": "POST",
+      "outcome": {
+        "error": "ConnectError"
+      },
+      "path": "/v1/audio/voice-check",
+      "query": [],
+      "step": 0,
+      "to": "127.0.0.1:8002"
+    }
+  ],
+  "gateway_sleeps": [
+    {
+      "after_engine_requests": 1,
+      "delay": 5.0,
+      "step": 0
+    },
+    {
+      "after_engine_requests": 2,
+      "delay": 5.0,
+      "step": 0
+    }
+  ],
+  "media_jobs": {
+    "media_jobs_schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "notes": {
+    "voice_store": [
+      {
+        "json": {
+          "consent": null,
+          "created_at": "<time>",
+          "description": null,
+          "design_instruct": null,
+          "duration_seconds": 8.0,
+          "id": "voice_000000000000000000000001",
+          "labels": {},
+          "measurements": {
+            "clipping_fraction": 0.0,
+            "denoised": false,
+            "snr_db": 45.4,
+            "source_seconds": 8.0,
+            "speech_seconds": 5.76,
+            "window_start_seconds": 0.0
+          },
+          "name": "narrator",
+          "object": "audio.voice",
+          "preprocessing": "voice_audio-1",
+          "prompt": null,
+          "quality": {
+            "encoder": null,
+            "engine": null,
+            "reason": "engine_error: ConnectError",
+            "speaker_similarity": null,
+            "status": "unchecked"
+          },
+          "seed": null,
+          "transcript": null,
+          "type": "audio_sample",
+          "warnings": [
+            "quality_check_unavailable"
+          ]
+        },
+        "name": "<hex32:1>/voices/voice_000000000000000000000001/meta.json",
+        "size": 656,
+        "suffix": ".json"
+      },
+      {
+        "name": "<hex32:1>/voices/voice_000000000000000000000001/reference.wav",
+        "sha256": "dacd0e2f3c0522fd42977a83298ae33c77b1463ea320636e98cd34e0fd7b67ca",
+        "size": 384044,
+        "suffix": ".wav"
+      },
+      {
+        "name": "<hex32:1>/voices/voice_000000000000000000000001/original.wav",
+        "sha256": "e5c7d155c70a3f72b3f9873ffefdcd4ec58a2bb8bfd118c2083f29eac7420e60",
+        "size": 384044,
+        "suffix": ".wav"
+      }
+    ]
+  },
+  "receipts": {
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "tts_voice_quality_unavailable",
+  "schema": 1
+}

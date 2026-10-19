@@ -62,7 +62,7 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(n=value), patch.object(
                 proxy, "_generate_images_with_adaptive_batching", generate,
             ):
-                response = await proxy.proxy_comfy_request(
+                response = await proxy.proxy_graph_image_request(
                     _StubJsonRequest({"prompt": "a tree", "n": value}), access_context(),
                 )
                 self.assert_invalid(response, "n")
@@ -75,7 +75,7 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
             AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False)),
         ):
             for value in (1, 10):
-                response = await proxy.proxy_comfy_request(
+                response = await proxy.proxy_graph_image_request(
                     _StubJsonRequest({"model": "flux2-klein-4b", "prompt": "a tree", "n": value}),
                     access_context(),
                 )
@@ -89,7 +89,7 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
         if size is not None:
             items.append(("size", size))
         items.extend(("image[]", _MultipartUpload("source.png", _png_bytes((1, 2, 3, 255)))) for _ in range(count))
-        handler = proxy.proxy_comfy_variations_request if variations else proxy.proxy_comfy_edit_request
+        handler = proxy.proxy_graph_image_variations_request if variations else proxy.proxy_graph_image_edit_request
         return await handler(_MultipartRequest(items), access_context())
 
     async def test_http3_03_edit_and_variations_reject_invalid_sizes(self):
@@ -119,7 +119,7 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
     async def test_http3_04_excess_images_do_not_upload(self):
         workflow = {"_meta": {"image_node": "1"}, "1": {"inputs": {"image": ""}}}
         with patch.object(proxy, "_select_edit_workflow", lambda model, **kw: model), patch.object(
-            proxy, "load_comfy_workflow", return_value=workflow,
+            proxy, "load_graph_workflow", return_value=workflow,
         ), patch.object(proxy, "_find_image_manifest", return_value=None):
             response = await self.edit(count=2)
         self.assert_invalid(response, "image[]")

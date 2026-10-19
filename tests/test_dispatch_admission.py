@@ -198,7 +198,7 @@ def test_worker_rechecks_before_executor(monkeypatch, kind, intent):
         monkeypatch.setattr(proxy, f'_request_shim_from_{kind}_job_payload', lambda _: object())
         monkeypatch.setattr(proxy, '_auth_context_from_image_job_payload', lambda _: proxy.NO_AUTH_CONTEXT)
         monkeypatch.setattr(proxy, f'_mark_{kind}_media_job_failed', lambda *a, **kw: failures.append(a))
-        target = {'image': 'proxy_comfy_request', 'audio': 'proxy_audio_generate', 'video': 'proxy_comfy_video_create'}[kind]
+        target = {'image': 'proxy_graph_image_request', 'audio': 'proxy_audio_generate', 'video': 'proxy_graph_video_create'}[kind]
         monkeypatch.setattr(proxy, target, executor)
         asyncio.run(getattr(proxy, f'_run_{kind}_media_job')('job'))
     assert failures

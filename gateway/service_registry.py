@@ -686,6 +686,12 @@ def runtime_backend_from_service(service: Mapping[str, Any]) -> dict[str, Any]:
         value = service.get(field)
         if value not in (None, ""):
             out[field] = copy.deepcopy(value)
+    # Legacy external-key placeholders are execution context too: readiness
+    # must resolve the same inference key as the eventual request.
+    if service.get("secret_refs"):
+        out["secret_refs"] = copy.deepcopy(service["secret_refs"])
+    if isinstance(service.get("offerings"), list):
+        out["offerings"] = copy.deepcopy(service["offerings"])
     # ``managed`` and the systemd service name live under ``lifecycle`` in the
     # record but flat on the backend dict; promote them for managed backends.
     process = service.get("process")
@@ -708,7 +714,9 @@ def _agreed_lifecycle(service_id: str, record: Mapping[str, Any]) -> dict[str, A
     config = record.get("config")
     nested = config.get("lifecycle") if isinstance(config, Mapping) else None
     nested = dict(nested) if isinstance(nested, Mapping) else {}
-    top = normalize_service_record(service_id, record, schema_version=1)["lifecycle"]
+    # This helper reconciles lifecycle structure, including already-projected
+    # records whose credential references are configured metadata.
+    top = normalize_service_record(service_id, record, schema_version=1, check_secrets=False)["lifecycle"]
 
     def check(dst: Mapping[str, Any], src: Mapping[str, Any], path: str) -> None:
         for key, value in src.items():
@@ -819,6 +827,13 @@ def service_record_v2(record: Mapping[str, Any], *, public: bool = True) -> dict
                           "tasks": [{"task": cap, "evidence": "declared"} for cap in normalize_string_list(record.get("capabilities"))],
                           "inputs": {}, "options": {}, "start_profile": {},
                           "adjustments": copy.deepcopy(config.get("transforms") or [])})
+    # Structured declarations already describe switch selection and workflow
+    # inputs. Legacy models supply defaults only when no declaration exists.
+    declared = record.get("offerings")
+    if not isinstance(declared, list):
+        declared = config.get("offerings")
+    if isinstance(declared, list):
+        offerings = copy.deepcopy(declared)
     lifecycle = _agreed_lifecycle(service_id, record) if "process" not in record else {}
     process = record.get("process") if isinstance(record.get("process"), Mapping) else _v2_process(lifecycle)
     if process is not None and public:
@@ -1246,7 +1261,7 @@ def _migration_refusal_text(service_id: str, raw: Mapping[str, Any]) -> str:
 # and not classified there, so a new field cannot be added without deciding what it is.
 SERVICE_RECORD_FIELDS = (
     "id", "name", "kind", "source", "enabled", "priority", "role", "capabilities", "config", "secret_refs",
-    "lifecycle", "provenance", "process", "observations", "residency", "resources", "editable",
+    "lifecycle", "provenance", "process", "observations", "residency", "resources", "editable", "offerings",
 )
 
 
@@ -1328,7 +1343,7 @@ def normalize_service_record(
         },
         "provenance": copy.deepcopy(dict(provenance)),
     }
-    for key in ("process", "observations", "residency", "resources"):
+    for key in ("process", "observations", "residency", "resources", "offerings"):
         if key in raw:
             record[key] = copy.deepcopy(raw[key])
     if schema_version >= ENGINE_RECORD_VIEW_VERSION:
@@ -1993,7 +2008,7 @@ def carry_unnamed_record_fields(
     if isinstance(existing.get("secret_refs"), Mapping):
         updated["secret_refs"] = {**copy.deepcopy(dict(existing["secret_refs"])), **updated.get("secret_refs", {})}
     lifecycle_named = "lifecycle" in named or any(key in named for key in _LIFECYCLE_FORM_KEYS)
-    for field in ("process", "observations", "residency", "resources"):
+    for field in ("process", "observations", "residency", "resources", "offerings"):
         if lifecycle_named and field in ("process", "observations", "residency"):
             continue
         if field in existing and field not in named:

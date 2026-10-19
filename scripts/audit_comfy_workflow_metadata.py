@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import comfy_workflow_catalog as catalog  # noqa: E402
+from gateway.engine_protocol import node_catalog as catalog  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "comfy_object_info_catalog.json"
 
@@ -33,7 +33,7 @@ def main() -> int:
     args = ap.parse_args()
     with urllib.request.urlopen(f"{args.host}/object_info", timeout=120) as resp:
         full = json.load(resp)
-    paths = catalog.catalog_workflow_paths(ROOT)
+    paths = catalog.catalog_workflow_paths(ROOT, "comfyui")
     if args.write_fixture:
         classes: set[str] = set()
         for p in paths:

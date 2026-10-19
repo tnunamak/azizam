@@ -321,12 +321,36 @@ The engine preset list is gone. Engine kinds are data in
   person's plan to allow the request. It saves nothing.
 - `GET /admin/api/engines/{service_id}` → `{engine}`: the record as typed values,
   key state (never the key), capabilities, models, tests, last check, other
-  settings, the stored record with secrets shown as `configured`, `access` for
-  its turned-on models (as above), and `editable`. `editable` is false when
-  the model router does not call the engine at its own address (it routes it
-  through the gateway's lifecycle hop, or not at all); then the page shows the
-  settings and an edit that names a definition answers 409
-  `engine_not_editable_here`. Rename it with a plain service edit.
+  settings, the stored record with credential references shown as `configured` and secret
+  values as `[redacted]`, `access` for
+  its turned-on models (as above), `editable`, and the Connection facts below.
+  `editable` is false only for a record the gateway derives itself; an edit
+  that names a definition then answers 403 `service_not_editable`, and the page
+  shows the settings read-only with the gateway's reason. An engine reached
+  through the gateway's start-and-stop hop is editable like any other.
+  Older records retain their original probe URLs and keyless headers until
+  creation or a Connection edit/recheck sets `config.probe_with_inference_connection`
+  to true. Then readiness and resource probes use the saved inference connection,
+  with its origin-bound key when available. A name, Enabled or unchanged-echo
+  save preserves the old probe mode. An operator can also set this flag through
+  the registry API. Inference still refuses an unavailable configured key;
+  health and resource probes proceed without it.
+  Connection facts the page shows as the gateway states them:
+  - `request_path.url` and `credential_destination` (or `key.origin`). The page
+    compares their origins, with default ports dropped (`:80` for http, `:443`
+    for https). When they differ it shows "No key is sent: the key belongs to X
+    but this engine's address is Y".
+  - `reply_timeout`: `{seconds, source}`. `seconds` is a number, or `null` for a
+    direct record with no saved timeout (the page shows the `source` alone and
+    invents no number). `values.reply_timeout_s` is the effective number, or
+    `""` when absent; saving it unchanged keeps it absent.
+  - `attention`: `[{code, message}]`, for example `engine_credential_unavailable`
+    ("Key not available: ENV_NAME is not set"). The page shows each message as
+    an alert on Connection.
+  - `values.headers`: `[{name, value}]`. A header the gateway blocks comes back
+    as `{name, value: "[redacted]", secret: true, not_sent: true}`. The page
+    shows it as Not sent, cannot edit the hidden value, can remove it, and sends
+    the flags back unchanged on save.
 
 ### POST /admin/api/operator/services  (add service)
 

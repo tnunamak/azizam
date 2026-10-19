@@ -1,8 +1,9 @@
-"""Catalog-wide check that every ComfyUI workflow can carry its UI graph.
+"""Catalog-wide check that every node-graph (ComfyUI) workflow can carry its UI graph.
 
 Pure helpers (no network, no proxy import). The caller supplies the node
 definitions, either a recorded ``/object_info`` fixture (tests) or a live
-fetch (``scripts/audit_comfy_workflow_metadata.py``).
+fetch (``scripts/audit_comfy_workflow_metadata.py``), and the manifest binding
+key that names the engine's workflow artifact.
 """
 
 from __future__ import annotations
@@ -13,24 +14,25 @@ from typing import Any, Callable, Mapping, Optional
 
 import yaml
 
-from gateway import comfy_ui_graph
-from gateway.comfyui_workflow_validation import validate_comfyui_workflow_graph
+from gateway.engine_protocol import node_ui_graph
+from gateway.engine_protocol.node_validation import validate_workflow_graph
 
-# Hidden ComfyUI inputs that make a save node embed `prompt` and `workflow`.
+# Hidden engine inputs that make a save node embed `prompt` and `workflow`.
 _EMBEDS_WORKFLOW = "EXTRA_PNGINFO"
 _SKIP_PARTS = {".backup", "_drafts"}
 
 
-def catalog_workflow_paths(root: Path) -> list[Path]:
+def catalog_workflow_paths(root: Path, binding: str) -> list[Path]:
     """Every API-format workflow JSON the gateway can load, sorted.
 
-    Union of the paths manifests bind (``bindings.comfyui.workflow``) and every
-    ``workflows/**/*.json`` (dir-loaded names, identity, drafts excluded).
+    Union of the paths manifests bind (``bindings.<binding>.workflow``, for
+    example ``bindings.comfyui.workflow``) and every ``workflows/**/*.json``
+    (dir-loaded names, identity, drafts excluded).
     """
     paths: set[Path] = set()
     for manifest in sorted((root / "manifests" / "workflows").glob("*.yml")):
         data = yaml.safe_load(manifest.read_text()) or {}
-        artifact = ((data.get("bindings") or {}).get("comfyui") or {}).get("workflow")
+        artifact = ((data.get("bindings") or {}).get(binding) or {}).get("workflow")
         if isinstance(artifact, str) and artifact:
             path = root / artifact.removeprefix("package://").lstrip("/")
             if path.suffix == ".json":
@@ -70,16 +72,16 @@ def audit_workflow(
 ) -> list[str]:
     """Problems for one workflow file; empty means the UI graph is complete."""
     workflow = json.loads(path.read_text())
-    errors = validate_comfyui_workflow_graph(workflow)
+    errors = validate_workflow_graph(workflow)
     if errors:
         return [f"invalid API graph: {e}" for e in errors]
     unknown = sorted(c for c in class_types(workflow) if not object_info_for(c))
     if unknown:
         return [f"no object_info for node types {unknown}"]
-    ui = comfy_ui_graph.derive_ui_workflow(workflow, object_info_for)
+    ui = node_ui_graph.derive_ui_workflow(workflow, object_info_for)
     if ui is None:
         return ["derive_ui_workflow returned None"]
-    problems = comfy_ui_graph.validate_ui_workflow(workflow, ui)
+    problems = node_ui_graph.validate_ui_workflow(workflow, ui)
     if not embedding_output_nodes(workflow, object_info_for):
         problems.append("no output node embeds the workflow (needs a hidden EXTRA_PNGINFO input)")
     return problems

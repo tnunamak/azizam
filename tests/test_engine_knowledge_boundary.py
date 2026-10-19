@@ -324,7 +324,7 @@ _SEMANTIC_POLICY_ANCHORS: dict[str, dict[str, set[str]]] = {
     },
     "P2-8 public design alias": {"gateway/voices_api.py": {"register_voice_routes"}},
     "P2-9 generic STT planning": {
-        "gateway/stt_chunking.py": {"SttExecutionConfig", "plan_silence_only_segments"},
+        "gateway/stt_chunking.py": {"SttExecutionConfig", "plan_silence_preferred_segments"},
     },
     "P2-10 think format": {
         "gateway/transforms.py": {"split_reasoning_visible_text", "StreamingThinkSplitTransform"},

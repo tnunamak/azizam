@@ -1,0 +1,332 @@
+{
+  "assets": [
+    {
+      "json": {
+        "asset_id": "aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9",
+        "owner_key_hashes": [
+          "app:app_test"
+        ],
+        "updated_at": "<time>"
+      },
+      "name": "7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9.meta.json",
+      "size": 148,
+      "suffix": ".json"
+    },
+    {
+      "name": "7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9.wav",
+      "sha256": "7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9",
+      "size": 3244,
+      "suffix": ".wav"
+    }
+  ],
+  "caller": [
+    {
+      "label": "submit the audio job",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"intent\":\"audio.generate\",\"request\":{\"prompt\":\"a door creaks\",\"model\":\"tangoflux\",\"duration\":4}}"
+        },
+        "headers": {
+          "content-length": "97",
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/gateway/v1/media/jobs",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:1>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:1>\", \"intent\": \"audio.generate\", \"job_id\": \"<job:1>\", \"object\": \"media.job\", \"parent_request_id\": \"<job:2>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:1>\", \"previous_attempts\": [], \"progress\": 0, \"queued_at\": \"<time>\", \"request_id\": \"<job:2>\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
+        },
+        "headers": {
+          "content-length": "<641 after normalisation>",
+          "content-type": "application/json",
+          "location": "/gateway/v1/media/jobs/<job:1>"
+        },
+        "status": 202
+      }
+    },
+    {
+      "label": "poll the finished job",
+      "request": {
+        "body": {
+          "kind": "empty"
+        },
+        "headers": {},
+        "method": "GET",
+        "path": "/gateway/v1/media/jobs/<job:1>",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[{\"asset_id\":\"aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9\",\"index\":0,\"kind\":\"audio\",\"media_type\":\"audio/wav\",\"size_bytes\":3644}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"audio.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"completed_at\":\"<time>\",\"duration\":4,\"mode\":\"async_audio_generation\",\"model\":\"tangoflux\",\"started_at\":\"<time>\"},\"parent_request_id\":\"<job:2>\",\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<job:2>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"audio.generate.tangoflux\",\"asset_url_ttl_s\":3600}"
+        },
+        "headers": {
+          "content-length": "<906 after normalisation>",
+          "content-type": "application/json"
+        },
+        "status": 200
+      }
+    },
+    {
+      "label": "job content",
+      "request": {
+        "body": {
+          "kind": "empty"
+        },
+        "headers": {},
+        "method": "GET",
+        "path": "/gateway/v1/media/jobs/<job:1>/content",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"object\": \"audio.generation\", \"created\": \"<time>\", \"job_id\": \"<job:1>\", \"data\": [{\"asset_id\": \"aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9\", \"media_type\": \"audio/wav\", \"size_bytes\": 3644, \"index\": 0, \"url\": \"http://gateway.test/v1/assets/aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9/content?expires=<expires>&md=none&sig=<sig>\", \"asset_url\": \"http://gateway.test/v1/assets/aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9/content?expires=<expires>&md=none&sig=<sig>\", \"content_url\": \"http://gateway.test/v1/assets/aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9/content?expires=<expires>&md=none&sig=<sig>\"}]}"
+        },
+        "headers": {
+          "content-length": "<700 after normalisation>",
+          "content-type": "application/json"
+        },
+        "status": 200
+      }
+    },
+    {
+      "label": "job events",
+      "request": {
+        "body": {
+          "kind": "empty"
+        },
+        "headers": {},
+        "method": "GET",
+        "path": "/gateway/v1/media/jobs/<job:1>/events",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"schema_version\":1,\"audience\":\"internal\",\"job_id\":\"<job:1>\",\"events\":[{\"id\":1,\"sequence\":1,\"job_id\":\"<job:1>\",\"created_at\":\"<time>\",\"event_type\":\"queued\",\"source\":\"gateway\",\"attempt_number\":1,\"payload\":{\"phase\":\"queued\",\"progress\":0,\"status\":\"queued\"}},{\"id\":2,\"sequence\":2,\"job_id\":\"<job:1>\",\"created_at\":\"<time>\",\"event_type\":\"started\",\"source\":\"gateway\",\"attempt_number\":1,\"payload\":{\"phase\":\"running\",\"progress\":5,\"status\":\"running\"}},{\"id\":3,\"sequence\":3,\"job_id\":\"<job:1>\",\"created_at\":\"<time>\",\"event_type\":\"completed\",\"source\":\"gateway\",\"attempt_number\":1,\"payload\":{\"asset_count\":1,\"media_types\":[\"audio/wav\"],\"phase\":\"completed\",\"progress\":100,\"status\":\"succeeded\"}}]}"
+        },
+        "headers": {
+          "content-length": "<679 after normalisation>",
+          "content-type": "application/json"
+        },
+        "status": 200
+      }
+    }
+  ],
+  "description": "queued audio media job through the generic submit route, executor run explicitly",
+  "engine_requests": [
+    {
+      "body": {
+        "kind": "json",
+        "text": "{\"prompt\":{\"1\":{\"class_type\":\"TangoFluxLoader\",\"inputs\":{\"enable_teacache\":false,\"rel_l1_thresh\":0.25}},\"2\":{\"class_type\":\"TangoFluxSampler\",\"inputs\":{\"model\":[\"1\",0],\"prompt\":\"a door creaks\",\"steps\":50,\"guidance_scale\":4,\"duration\":4.0,\"seed\":192058881,\"batch_size\":1,\"offload_model_to_cpu\":false}},\"3\":{\"class_type\":\"TangoFluxVAEDecodeAndPlay\",\"inputs\":{\"vae\":[\"1\",1],\"tile_size\":32,\"latents\":[\"2\",0],\"filename_prefix\":\"tangoflux\",\"format\":\"wav\",\"save_output\":true}}},\"client_id\":\"<hex32:1>\"}"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "content-length": "<494 after normalisation>",
+        "content-type": "application/json",
+        "host": "comfy.fk.test"
+      },
+      "method": "POST",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/prompt",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/history/p1",
+      "query": [],
+      "step": 0,
+      "to": "comfy.fk.test"
+    },
+    {
+      "body": {
+        "kind": "empty"
+      },
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br",
+        "connection": "keep-alive",
+        "host": "comfy.fk.test"
+      },
+      "method": "GET",
+      "outcome": {
+        "status": 200
+      },
+      "path": "/view",
+      "query": [
+        [
+          "filename",
+          "tone_00001_.wav"
+        ],
+        [
+          "type",
+          "output"
+        ]
+      ],
+      "step": 0,
+      "to": "comfy.fk.test"
+    }
+  ],
+  "gateway_sleeps": [
+    {
+      "after_engine_requests": 1,
+      "delay": 2.0,
+      "step": 0
+    }
+  ],
+  "media_jobs": {
+    "media_job_events": [
+      {
+        "attempt_number": 1,
+        "created_at": "<time>",
+        "event_type": "queued",
+        "id": 1,
+        "job_id": "<job:1>",
+        "payload_json": {
+          "phase": "queued",
+          "progress": 0,
+          "status": "queued"
+        },
+        "sequence": 1,
+        "source": "gateway"
+      },
+      {
+        "attempt_number": 1,
+        "created_at": "<time>",
+        "event_type": "started",
+        "id": 2,
+        "job_id": "<job:1>",
+        "payload_json": {
+          "phase": "running",
+          "progress": 5,
+          "status": "running"
+        },
+        "sequence": 2,
+        "source": "gateway"
+      },
+      {
+        "attempt_number": 1,
+        "created_at": "<time>",
+        "event_type": "completed",
+        "id": 3,
+        "job_id": "<job:1>",
+        "payload_json": {
+          "asset_count": 1,
+          "media_types": [
+            "audio/wav"
+          ],
+          "phase": "completed",
+          "progress": 100,
+          "status": "succeeded"
+        },
+        "sequence": 3,
+        "source": "gateway"
+      }
+    ],
+    "media_jobs": [
+      {
+        "api_key_name": "test-app",
+        "app_profile": "plan_everything",
+        "backend": "comfyui",
+        "created_at": "<time>",
+        "error": null,
+        "intent": "audio.generate",
+        "job_id": "<job:1>",
+        "job_json": {
+          "accepted_at": "<time>",
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": "plan_everything",
+          "assets": [
+            {
+              "asset_id": "aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9",
+              "index": 0,
+              "kind": "audio",
+              "media_type": "audio/wav",
+              "size_bytes": 3644
+            }
+          ],
+          "attempt_number": 1,
+          "backend": "comfyui",
+          "cancel_requested": false,
+          "created_at": "<time>",
+          "creating_receipt_id": "<job:2>",
+          "error": null,
+          "error_category": null,
+          "error_code": null,
+          "finished_at": "<time>",
+          "first_output_at": "<time>",
+          "input_hash": "<digest>",
+          "intent": "audio.generate",
+          "job_id": "<job:1>",
+          "metadata": {
+            "completed_at": "<time>",
+            "duration": 4,
+            "mode": "async_audio_generation",
+            "model": "tangoflux",
+            "started_at": "<time>"
+          },
+          "owner_key_hash": "app:app_test",
+          "owner_scope": "app:app_test",
+          "parent_request_id": "<job:2>",
+          "previous_attempts": [],
+          "progress": 100,
+          "queued_at": "<time>",
+          "request_id": "<job:2>",
+          "retryable": null,
+          "started_at": "<time>",
+          "status": "succeeded",
+          "updated_at": "<time>",
+          "upstream_http_status": null,
+          "workflow": "audio.generate.tangoflux"
+        },
+        "parent_request_id": "<job:2>",
+        "progress": 100,
+        "request_id": "<job:2>",
+        "status": "succeeded",
+        "updated_at": "<time>",
+        "workflow": "audio.generate.tangoflux"
+      }
+    ],
+    "media_jobs_schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "notes": {
+    "content_status": 200
+  },
+  "receipts": {
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "audio_generate_job",
+  "schema": 1
+}
