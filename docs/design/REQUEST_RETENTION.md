@@ -706,9 +706,13 @@ itself:
    (`start.sh:52`), to a substrate endpoint that is not the managed or the
    Compose one, and to a Compose service whose database the gateway cannot
    see. Its status is `unmanaged`. The ledger and the "never save" text
-   move it to "What Azizam cannot control": "LiteLLM, which runs chat for
-   Azizam, is run outside Azizam. Azizam cannot confirm that it keeps
-   nothing." The owner may record that they configured it to keep nothing,
+   move it to "What Azizam cannot control", with one of two sentences:
+   - For a LiteLLM that Azizam does not run: "LiteLLM, which runs chat for
+     Azizam, is run outside Azizam. Azizam cannot confirm that it keeps
+     nothing."
+   - For the shipped Compose service with a database the gateway cannot
+     see: "Azizam cannot check the database settings of the LiteLLM that
+     runs chat for it." The owner may record that they configured it to keep nothing,
    and the ledger shows that as declared by the owner, not observed. This
    is the boundary already used for engines and providers. It is not a
    control that does nothing: the copy changes, and it never claims what
