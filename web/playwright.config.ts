@@ -168,10 +168,22 @@ export default defineConfig({
         storageState: `${results}/auth-${port}.json`,
       },
     },
+    // Start this long serial file before the pool can leave it as a tail.
+    // It keeps its existing in-file order and shares the same seeded gateway.
+    {
+      name: "chromium-people",
+      grepInvert: GLOBAL_STATE,
+      testMatch: "**/people.spec.ts",
+      workers: 1,
+      use: {
+        baseURL: `http://127.0.0.1:${port}`,
+        storageState: `${results}/auth-${port}.json`,
+      },
+    },
     {
       name: "chromium",
       grepInvert: GLOBAL_STATE,
-      testIgnore: [...CONFIG_IGNORE, ...TRY_FILES],
+      testIgnore: [...CONFIG_IGNORE, ...TRY_FILES, "**/people.spec.ts"],
       // Cases of one file spread over the pool's workers, so one long file does
       // not hold the tail. A file whose cases share a beforeAll or an order
       // says so with test.describe.configure({ mode: "default" | "serial" }).

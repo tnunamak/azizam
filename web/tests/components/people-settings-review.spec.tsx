@@ -167,6 +167,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   client?.clear();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -482,12 +483,22 @@ describe("People and Settings red-team regressions", () => {
   it("names invitation recipients in revoke confirmations", async () => {
     mount(<PeoplePage />);
     await userEvent.click(await screen.findByRole("tab", { name: "Invites" }));
-    await userEvent.click(
-      await screen.findByRole("button", {
-        name: "Actions for invitation to sam@example.test",
-      }),
-    );
-    await userEvent.click(
+    const trigger = await screen.findByRole("button", {
+      name: "Actions for invitation to sam@example.test",
+    });
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    vi.useFakeTimers();
+    // The dialog's focus trap can swallow the dropdown's return-focus attempt.
+    // Remembering the opener must not depend on that intermediate focus event.
+    const triggerFocus = vi.spyOn(trigger, "focus").mockImplementation(() => {});
+    fireEvent.pointerDown(trigger.firstElementChild!, {
+      button: 0,
+      ctrlKey: false,
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    fireEvent.click(
       screen.getByRole("menuitem", { name: "Revoke invitation" }),
     );
     expect(screen.getByRole("dialog")).toHaveTextContent("sam@example.test");
@@ -496,6 +507,20 @@ describe("People and Settings red-team regressions", () => {
         name: "Revoke invitation",
       }),
     ).toBeEnabled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(triggerFocus).toHaveBeenCalled();
+    triggerFocus.mockRestore();
+    fireEvent.keyDown(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }),
+      { key: "Escape" },
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(trigger).toHaveFocus();
   });
   it.each(["https://public.example.test", ""])(
     "resolves reset links with public URL %s and restores focus",

@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { UptimeBar } from "@/components/product/uptime-bar";
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -12,6 +13,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   ApiError,
   api,
+  queryKeys,
   type CurrentHealthService,
   type ServiceRegistry,
   type StatusPayload,
@@ -68,6 +70,7 @@ vi.mock("next/link", () => ({
 }));
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   providerState.state = "hidden";
   providerState.providers = [];
@@ -659,6 +662,7 @@ it("tells the 24-hour story from the strip's own hours and names who is affected
 });
 
 it("waits for the status check before drawing engine rows, never a passing Unknown", async () => {
+  vi.useFakeTimers();
   vi.spyOn(api.services, "registry").mockResolvedValue(chatRegistry);
   let answer: (value: StatusPayload) => void = () => undefined;
   vi.spyOn(api, "status").mockReturnValue(
@@ -675,38 +679,42 @@ it("waits for the status check before drawing engine rows, never a passing Unkno
     </QueryClientProvider>,
   );
   // The registry answered first: the rows still wait for their health.
-  await waitFor(() => expect(api.services.registry).toHaveBeenCalled());
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+  expect(api.services.registry).toHaveBeenCalled();
+  expect(client.getQueryData(queryKeys.serviceRegistry)).toEqual(chatRegistry);
   expect(screen.queryByRole("table", { name: "Engine status" })).toBeNull();
   expect(screen.getByLabelText("Checking engines")).toHaveAttribute("aria-busy", "true");
   expect(document.body.textContent).not.toMatch(/\bUnknown\b/);
-  answer({
-    current_health: {
-      state: "ok",
-      tone: "ok",
-      label: "Ready",
-      detail: "Ready",
-      observation_available: true,
-      services: [
-        {
-          service_id: "chat",
-          name: "Local chat",
-          engine_label: "Local chat",
-          capability_title: "Chat",
-          capability_labels: ["Chat"],
-          icon_key: "chat",
-          configured: true,
-          enabled: true,
-          role: "primary",
-          routable: true,
-          observation: "up",
-          tone: "ok",
-          last_error: null,
-        },
-      ],
-    },
-  } as StatusPayload);
-  const engine = await screen.findByRole("button", { name: "Local chat" });
+  await act(async () => {
+    answer({
+      current_health: {
+        state: "ok",
+        tone: "ok",
+        label: "Ready",
+        detail: "Ready",
+        observation_available: true,
+        services: [
+          {
+            service_id: "chat",
+            name: "Local chat",
+            engine_label: "Local chat",
+            capability_title: "Chat",
+            capability_labels: ["Chat"],
+            icon_key: "chat",
+            configured: true,
+            enabled: true,
+            role: "primary",
+            routable: true,
+            observation: "up",
+            tone: "ok",
+            last_error: null,
+          },
+        ],
+      },
+    } as StatusPayload);
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  const engine = screen.getByRole("button", { name: "Local chat" });
   expect(within(engine.closest("tr")!).getByText("Ready")).toBeVisible();
 });
 

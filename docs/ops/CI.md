@@ -17,8 +17,9 @@ were still stored.
 
 - `scripts/ci-local` runs the same four jobs as `.github/workflows/ci.yml`
   (web check, Python tests, fresh instance, production UI journey) on HEAD,
-  in a clean detached worktree with `npm ci` and fresh Python environments
-  from `tests/requirements-hermetic.lock`.
+  in clean detached worktrees with private Node dependencies from the installed
+  cache described below. Cache misses use `npm ci`. All Python environments
+  install from the hashed lock and retain uv's download cache.
 - It writes receipts to `~/.tmp/azizam-ci-receipts/<tree>/`: `run.tsv`
   (SHA, seed, layout), `steps.tsv` (step, exit code, whole seconds, wall
   seconds, CPU seconds (user plus system), peak RSS kB), `cost.json` (totals,
@@ -36,10 +37,9 @@ were still stored.
   `steps.tsv` and `cost.json` only for the newest 20 runs and recent signoffs,
   so older runs drop out of `gate-cost`.
 - Its worktrees and dependency copies live in `~/.tmp/azizam-ci-local.*`
-  (about 7 GB). Exit removes that directory, except after a failed run:
-  ci-local then keeps it, prints its path and records it in
-  `~/.tmp/azizam-ci-local.kept`; the next failed run deletes it. A run
-  directory left by a killed `ci-local` is deleted by the next run.
+  (about 7 GB). Exit removes that directory on success and failure. Logs and
+  case receipts survive under the receipts directory. A run directory left by
+  a killed `ci-local` is deleted by the next run.
 - At the start of each run, receipts are pruned (`scripts/ci/prune_receipts.py`):
   the newest 20 runs, and any run with a signoff receipt from the last 7 days,
   keep everything. Older runs keep only `run.tsv`, `PASS`, `FAIL` and
@@ -58,6 +58,14 @@ were still stored.
   its surviving jobs end; `fuser -v ~/.tmp/azizam-ci.lock` lists them. Do
   not wrap `ci-local` in `flock` on the same file: the inner lock would wait
   for the outer one forever.
+- Each step has a 1200-second wall-clock limit. Set
+  `AZIZAM_CI_STEP_TIMEOUT_S` to a positive number of seconds for a test run;
+  values above 3600 are clamped to 3600. GNU `timeout` sends TERM at the
+  limit and KILL 20 seconds later. On interruption, `ci-local` stops job
+  supervisors before sweeping their recorded timeout process groups, so a
+  multi-step job cannot start an unrecorded next step. It also sweeps remaining
+  descendants on expiry. Exit 124, or exit 137 after the configured limit,
+  reports a timeout; an earlier exit 137 reports SIGKILL (possibly OOM).
 - The hosted workflow runs only when started by hand
   (`gh workflow run CI --ref <branch>`). It uploads diagnostics only when a
   job fails, keeps them 1 day, and cancels an older run on the same ref.
@@ -180,10 +188,10 @@ interrupted run, lock waiting, and a killed controller.
 
 ## Parallel local layout
 
-- At start, three jobs run side by side, each in its own clean detached
-  worktree: the Python hermetic suite; the fresh-instance venv and Compose
-  journey; and web install, then unit tests beside check/build, then the
-  browser venv, Chromium and the lane plan.
+- At start, four jobs run across three clean detached worktrees: hermetic
+  Python; the fresh-instance venv and Compose journey; web dependency setup,
+  followed by unit tests, build, browser venv and Chromium in parallel; and
+  Node compatibility, Pi and MCP conformance checks in the shared web tree.
 - The Python suite runs under pytest-xdist: `--py-workers N` (default `12`)
   workers with `--dist worksteal`. Each worker keeps its gateway stores in a
   private subdirectory of the run's state directory. The serial and parallel
@@ -194,14 +202,14 @@ interrupted run, lock waiting, and a killed controller.
   so the browser lanes start only after Compose finishes. The native
   fresh-instance journey runs beside the lanes; it needs no Docker network.
 - `--browser-workers N` (default `10`) and `--browser-servers N` (default `2`)
-  size the main run. It is one `playwright test` invocation with up to five
+  size the main run. It is one `playwright test` invocation with up to six
   servers: the parallel pool (project `chromium`, N workers spread over the
   pool's servers by worker index) on ports `BASE+10`, `BASE+50`, `BASE+60`,
   and two serial `@global-state` projects, each with one worker and a server of
   its own (`chromium-global-state` on `BASE+20`, `chromium-global-state-2` on
-  `BASE+70`). The 33 cases write owner-wide settings, services, profiles,
+  `BASE+70`). These cases write owner-wide settings, services, profiles,
   categories or providers. `SECOND_GLOBAL_FILES` in `web/playwright.config.ts`
-  names the files that run on the second server (23 cases); any other file,
+  names the files that run on the second server; any other file,
   including a new one, runs on the first. The two projects are listed before
   `chromium`, so they start with the pool and run beside it. `chromium-first-run`
   (`BASE+80`, one case) runs `first-run.spec.ts` on a gateway that global setup
@@ -244,8 +252,9 @@ interrupted run, lock waiting, and a killed controller.
   `web/test-results` is a symlink to it. The step `e2e-tree-unchanged` fails
   the run if any other file in `web/` changed.
 - Every step writes a private receipt and log. The parent waits for every job,
-  aggregates receipts, rejects missing/nonzero/skipped steps, and retains all
-  failing-run browser evidence. Interrupts terminate job process groups
+  aggregates receipts, rejects missing/nonzero/skipped steps, and retains logs
+  and case receipts. Browser traces and mutable state are deleted on exit,
+  including after failures. Interrupts terminate job process groups
   before worktrees are removed. `setsid` is required.
 
 ## Duration
@@ -266,8 +275,8 @@ host was shared with other agents (load 13-40).
 
 Wall seconds stay noisy while other agents use the host (load 15-31 here). The
 two serial `@global-state` projects each run about 115 s of test time; the pool
-ends at about the same time. The tail now is `try.spec.ts`: its cases share the
-lane's Try key and run one after another, and the file sorts last. The rest of
+ends at about the same time. At that point `try.spec.ts` was the tail: its cases shared the lane's Try key
+and ran one after another, and the file sorted last. The rest of
 the gate (Python tier) is unchanged.
 
 ## Priority
@@ -303,3 +312,58 @@ while working, not a gate: `scripts/ci-local` still runs everything.
   allocate one ("Pool overlaps with other one on this address space"), the
   run fails. `--skip-compose` records the step as skipped, and the run then
   cannot pass.
+
+## Installed dependency cache
+
+The gate keeps successful web `node_modules` in
+`~/Documents/azizam/ci-cache` (`AZIZAM_CI_CACHE` overrides it). This directory is
+outside the scratch reaper. Delete its entries while no gate runs to reclaim disk
+or force a cold dependency install. Download caches and Docker layers are separate;
+a cold installed-cache run does not clear them. The cache keeps the current and
+one recent snapshot for Node and protects active keys with locks during eviction.
+The current lockfile has dependency install hooks, so Node cache reuse requires
+the same Git tree; a new tree installs again. Browser Python environments use
+fresh uv installs from the existing download cache; validated snapshot copies
+were slower in the measured comparison.
+
+`scripts/ci/install_cached.py` keys entries on manifests and lockfile contents,
+Node and npm versions, platform, effective npm configuration and the helper.
+Installer environment inputs are allowlisted: `npm_config_*`, `NPM_*`, `NODE_*`,
+`UV_*`, `PIP_*`, `PYTHON*`, proxy and SSL certificate variables, and `CI`.
+Session labels and unrelated variables do not change the key.
+The npm key includes effective npm configuration and the complete Git tree when
+a dependency has an install hook, since hooks can read arbitrary project files.
+Root install hooks, workspaces and local dependencies bypass the npm cache
+because they can read arbitrary source.
+Keys contain hashes; configuration and environment values are never logged.
+
+The cache root is created with mode `0700` and must belong to the current user,
+including when `AZIZAM_CI_CACHE` selects another location. An existing install
+destination is refused before either installation or restoration.
+A key lock serializes population. Free disk space is not checked. A full disk
+fails the install and the partial entry is removed. An install failure publishes
+no completed entry.
+Only a complete entry whose file contents, modes and symlink targets match its
+stored digest can be reused; a damaged entry is rebuilt. Each run gets an ordinary
+private copy (`cp -a --reflink=auto`, with a full-copy fallback), so test or tool writes cannot
+change the cache or another run. The fresh-instance journey and hermetic pytest still create clean environments from
+the hashed lock on every run. Every test still runs, including on cache hits.
+
+Browser Python setup and browser installation start beside the web build and unit
+suite after web dependencies are ready. Browsers still wait for all these steps,
+Compose and conformance. Compose cannot overlap Chromium because Docker network
+changes abort in-flight browser requests. The gate enables the existing two-server
+global-state split (`UI_E2E_GLOBAL=2`); each server owns separate state and ports.
+The long serial People file starts early in its own one-worker project on the
+existing gateway. Its case order stays intact, and it is excluded from the pool
+project to avoid duplicate runs. The parallel pool, Try serialization, all three
+browser configurations, unchanged build check, journey clock, case aggregation
+and policy checks remain in the gate.
+`--target main` also selects the local `origin/main` budget comparison without
+posting signoff. Signoff still requires `--signoff --force` and remote checks.
+
+Round 1 observed roughly 15-25% speedup, mostly from browser scheduling. The
+sample contains one baseline, four initial after runs and later verification,
+including a 350 s warm run. These are shared-host observations, not a controlled
+causal estimate. See [the dated receipts](../verification/CI_GATE_SPEED_RECEIPTS.md)
+for timings, measurement limits and evidence locations.
