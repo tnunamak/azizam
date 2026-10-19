@@ -63,8 +63,8 @@ KINDS = (LIBRARY_PROMPT, CONVERSATION)
 GROUP_PROMPTS = "prompts"
 #: What a record of each kind can hold at most: the boundaries the code can capture.
 CAPTURE_POINTS = {LIBRARY_PROMPT: ("accepted",), CONVERSATION: ("accepted", "received")}
-#: Who can read, by kind. ``scope`` is the conversation rule; ``maker`` is the floor of the person-scoped kinds.
-READERS = {LIBRARY_PROMPT: ("maker", "maker_signed_in"), CONVERSATION: ("scope",)}
+#: Only reader rules enforced by the existing Library and Responses routes belong in slice 1.
+READERS = {LIBRARY_PROMPT: ("maker",), CONVERSATION: ("scope",)}
 
 #: The names of the prompts group's view (the settings screens' wire names).
 PROMPTS_VIEW_FIELDS = frozenset({"default_remember", "never_keep", "retention_cap"})
@@ -142,6 +142,10 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
     errors: list[str] = []
     seconds = data["retention_choices"]
     seen_in: dict[str, str] = {}
+    if set(data["groups"]) != {GROUP_PROMPTS}:
+        errors.append("groups: slice 5 adds another group; slice 1 enforces only prompts")
+    elif set(data["groups"][GROUP_PROMPTS]["kinds"]) != set(KINDS):
+        errors.append("groups/prompts/kinds: slice 5 adds group routing; slice 1 keeps both existing kinds in prompts")
     for kind in data["kinds"]:
         if kind not in KINDS:
             errors.append(f"kinds/{kind}: the kind is not one the gateway can capture ({', '.join(KINDS)})")
@@ -168,8 +172,10 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
         if kind not in KINDS:
             continue
         if values["readers"] not in READERS[kind]:
-            errors.append(f"kinds/{kind}/readers: {values['readers']} is not legal for {kind} (legal: {', '.join(READERS[kind])})")
+            errors.append(f"kinds/{kind}/readers: slice 5 adds reader controls; slice 1 enforces only {', '.join(READERS[kind])}")
         parts = values["parts"]
+        if set(parts["allowed"]) != set(CAPTURE_POINTS[kind]) or set(parts["default"]) != set(CAPTURE_POINTS[kind]):
+            errors.append(f"kinds/{kind}/parts: slice 5 adds part-aware capture; slice 1 enforces only the current parts")
         for part in parts["allowed"]:
             if part not in CAPTURE_POINTS[kind]:
                 errors.append(f"kinds/{kind}/parts/allowed: {part} is not captured for {kind} (captured: {', '.join(CAPTURE_POINTS[kind])})")
@@ -316,11 +322,22 @@ def household(document: Mapping[str, Any] | None) -> dict[str, Any]:
 # ---------------------------------------------------------------------- periods
 
 
+def _normalize_period(value: str, *, kind: str, owner_cap: bool) -> str:
+    """Map a stored choice removed from this group's choices to its current default."""
+    contract = bundled()
+    if value in contract.choices(kind):
+        return value
+    field = "default_cap" if owner_cap else "default_retention"
+    return contract.group(kind)[field]
+
+
 def effective_period(member_period: str, cap: str, kind: str = LIBRARY_PROMPT) -> str:
-    """The shorter of the member's period and the household cap. A value that is not a choice is no limit."""
+    """The shorter normalized period; display, decisions and writes use this same result."""
     contract = bundled()
     seconds = contract.seconds_map()
-    finite = [value for value in (member_period, cap) if seconds.get(value) is not None]
+    periods = (_normalize_period(member_period, kind=kind, owner_cap=False),
+               _normalize_period(cap, kind=kind, owner_cap=True))
+    finite = [value for value in periods if seconds[value] is not None]
     if not finite:
         return contract.no_expiry(kind)
     return min(finite, key=lambda value: seconds[value] or 0)
@@ -396,11 +413,10 @@ def decide(
     if not preference.get("remember", policy["default_remember"]):
         return Decision(person_id, False, "member_disabled", kind=kind)
     started = int(time.time()) if now is None else now
-    seconds = contract.seconds_map()
-    member_period = seconds.get(preference.get("retention", contract.member_defaults(kind)["retention"]))
-    cap_period = seconds.get(policy.get("retention_cap", contract.household_defaults(kind)["retention_cap"]))
-    finite = [period for period in (member_period, cap_period) if period is not None]
-    expiry = started + min(finite) if finite else None
+    period = effective_period(preference.get("retention", contract.member_defaults(kind)["retention"]),
+                              policy.get("retention_cap", contract.household_defaults(kind)["retention_cap"]), kind)
+    seconds = contract.seconds_map()[period]
+    expiry = started + seconds if seconds is not None else None
     return Decision(person_id, True, "remembered", expiry, started, kind, contract.parts(kind))
 
 
@@ -521,11 +537,11 @@ def guard(admin_path: Path | None, person_id: str | None = None) -> Iterator[dic
 def _library_prompt_gate(policy: Mapping[str, Any], started: int, kept_until: int | None) -> tuple[bool, int | None]:
     if policy["never_keep"] or not policy["remember"] or started <= policy.get("forgot_before", 0):
         return False, None
-    seconds = seconds_map()
-    periods = [seconds[value] for value in (policy["retention"], policy["retention_cap"])
-               if seconds[value] is not None]
+    period = effective_period(policy["retention"], policy["retention_cap"])
+    seconds = seconds_map()[period]
     limits = [kept_until] if kept_until is not None else []
-    limits.extend(started + period for period in periods)
+    if seconds is not None:
+        limits.append(started + seconds)
     deadline = min(limits) if limits else None
     if deadline is not None and deadline <= int(time.time()):
         return False, None

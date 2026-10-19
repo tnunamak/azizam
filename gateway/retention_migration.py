@@ -52,7 +52,10 @@ def migrate(conn: sqlite3.Connection) -> dict[str, object]:
     if not isinstance(legacy, dict):
         raise RetentionMigrationError(f"operator setting {LEGACY_KEY!r} is not an object; fix or remove it and start again")
     document = retention.document_from_prompts_view(legacy)
-    dropped = sorted(set(legacy) - _LEGACY_FIELDS)
+    unclassified = {key: value for key, value in legacy.items() if key not in _LEGACY_FIELDS}
+    if unclassified:
+        # D34: unknown settings remain stored for a future classification, outside every API projection.
+        document["legacy_unclassified"] = unclassified
     conn.execute(
         "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) VALUES (?, ?, ?, ?)",
         (retention.SETTING_KEY, json.dumps(document, ensure_ascii=False, sort_keys=True), row[1], row[2]),
@@ -64,6 +67,5 @@ def migrate(conn: sqlite3.Connection) -> dict[str, object]:
         (retention.SETTING_KEY, LEGACY_KEY),
     )
     conn.execute("DELETE FROM operator_settings WHERE key=?", (LEGACY_KEY,))
-    if dropped:
-        print(f"[migration 14] the old prompt-memory setting held fields with no meaning, which were not carried over: {', '.join(dropped)}", flush=True)
-    return {"moved": LEGACY_KEY, "to": retention.SETTING_KEY, "dropped": dropped}
+    return {"moved": LEGACY_KEY, "to": retention.SETTING_KEY,
+            "unclassified": len(unclassified)}
