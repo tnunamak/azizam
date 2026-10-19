@@ -22,8 +22,9 @@ Each design claim names its ground. A claim with no ground says
   installed source and ran an in-process canary harness, which now lives
   outside the repo at `~/.tmp/llm-probe`. It read the names of the live
   process's environment variables, not their values.
-- **[judge r1]**, **[judge r2]**: the independent reviews of this design
-  at `26b4d443` and `da9d3a7b` (Codex GPT-6.1-Sol, high effort). Their
+- **[judge r1]**, **[judge r2]**, **[judge r3]**: the independent reviews
+  of this design at `26b4d443`, `da9d3a7b` and `8711a9ec` (Codex
+  GPT-6.1-Sol, high effort). Their
   findings are applied in this revision.
 
 ## 1. Summary
@@ -629,8 +630,9 @@ itself:
 
 1. **Environment.** The child's allowlisted environment never carries
    `STORE_MODEL_IN_DB`, and the YAML sets `store_model_in_db: false`.
-   Deterministic tests cover both. The other steps apply to the managed
-   LiteLLM, the one `start.sh` starts. Step 6 covers any other.
+   Deterministic tests cover both. Steps 2-5 apply to the managed LiteLLM,
+   the one `start.sh` starts. Step 6 covers the shipped Compose service,
+   and step 7 any other.
 2. **Database rows.** It reads these with read-only queries, using the
    `DATABASE_URL` it already has. `start.sh:9-13` exports the sourced
    environment to both the gateway and the sidecar (`start.sh:105-107,173`).
@@ -660,15 +662,24 @@ itself:
    checked one, which costs one `stat` and one small read. On a change, it
    checks again before it routes. A restart with an unchanged config is
    therefore checked again too.
-4. **The boundary is exact.** Every request the gateway sends to LiteLLM
-   is built with `llm_execution.litellm_url(base_url=runtime.base_url, ...)`
-   from `litellm_runtime_from_registry`
-   (`gateway/backends/llm_execution.py:146,210`). That covers the chat
-   lanes and the paid-provider leg (`gateway/provider_execution.py:553-560`).
-   The gate sits there. Direct engine traffic and the internal hop
-   (LiteLLM calling back into the gateway) do not pass through it. A
-   structural test lists every caller of `litellm_url` and fails for one
-   that does not pass the gate.
+4. **The boundary is exact: content execution only.** Requests to LiteLLM
+   are built with `llm_execution.litellm_url` (`gateway/backends/llm_execution.py:210`).
+   They have two purposes:
+   - **Execution** carries request content, and it is gated. These are the
+     chat lanes (`proxy.py:28337`) and the paid-provider leg
+     (`gateway/provider_execution.py:555`).
+   - **Management** carries no request content, and it is not gated: model
+     listing (`proxy.py:24759`) and virtual-key administration
+     (`gateway/backends/litellm_admin.py:112,163`).
+
+   So the owner can still list and delete an offending key while execution
+   is refused. That is the remedy ([judge r3] finding 2). A structural
+   test lists every caller of `litellm_url`. Each caller must be either
+   gated execution or a listed management caller, with the reason it
+   carries no content. A new caller fails until it is classified. Direct
+   engine traffic and the internal hop (LiteLLM calling back into the
+   gateway) do not reach LiteLLM's front door, so they are outside the
+   gate.
 5. **Fail closed for the managed LiteLLM.** Until the check passes for the
    current generation, every request through that gate gets `503
    litellm_content_unverified`. This is a gateway refusal with a plain
@@ -676,19 +687,32 @@ itself:
    same attention item. A check that cannot run (for example, the database
    is unreachable) also fails closed. With no database, the database part
    of the check has nothing to read and passes.
-6. **An unmanaged LiteLLM is disclosed, not refused.** When
-   `AZIZAM_MANAGE_LITELLM=false` (`start.sh:52`), or the substrate endpoint
-   is not the process `start.sh` runs (for example, the Compose
-   `litellm` container, `docker-compose.yml:30-52`), Azizam does not run
-   that LiteLLM and cannot see its environment or database. Its status is
-   `unmanaged`. The ledger and the "never save" text move it to "What
-   Azizam cannot control": "LiteLLM, which runs chat for Azizam, is run
-   outside Azizam. Azizam cannot confirm that it keeps nothing." The owner
-   may record that they configured it to keep nothing. The ledger then
-   shows that as declared by the owner, not observed. Refusing would break
-   every Compose install on upgrade to protect a process Azizam does not
-   run. The honest boundary is the same one used for engines and
-   providers.
+6. **The shipped Compose LiteLLM gets the same profile.** `docker-compose.yml`
+   is Azizam's own file. Its `litellm` service runs the config the gateway
+   generates (`docker-compose.yml:30-52`), and today its environment holds
+   only `LITELLM_MASTER_KEY`. So the profile's environment values
+   (`LITELLM_LOG=CRITICAL`, `LITELLM_MODE=PRODUCTION`, `DISABLE_ADMIN_UI`,
+   `NO_DOCS`, `NO_REDOC`) are added there. A test parses the file and
+   asserts that the service environment equals the profile, that there is
+   no `DATABASE_URL`, and that the config is the generated one. With no
+   database, the database part of the check has nothing to read and passes.
+   The pid generation does not apply in a container. The config and the
+   environment are static files that the test covers. If the owner adds a
+   database to that service, the gateway runs the database check when its
+   own environment has the URL. Otherwise it reports the status `unmanaged`
+   (step 7).
+7. **A LiteLLM that Azizam does not run is disclosed, not refused.** This
+   applies to `AZIZAM_MANAGE_LITELLM=false` with an owner-run LiteLLM
+   (`start.sh:52`), to a substrate endpoint that is not the managed or the
+   Compose one, and to a Compose service whose database the gateway cannot
+   see. Its status is `unmanaged`. The ledger and the "never save" text
+   move it to "What Azizam cannot control": "LiteLLM, which runs chat for
+   Azizam, is run outside Azizam. Azizam cannot confirm that it keeps
+   nothing." The owner may record that they configured it to keep nothing,
+   and the ledger shows that as declared by the owner, not observed. This
+   is the boundary already used for engines and providers. It is not a
+   control that does nothing: the copy changes, and it never claims what
+   Azizam cannot see.
 
 This is a deliberate behaviour change. On the live host it could refuse
 chat on the first deploy, if such a row exists. So the read-only count in
@@ -740,7 +764,10 @@ after it confirms the internal hop needs nothing more.
      unchecked;
    - a substrate endpoint change and `AZIZAM_MANAGE_LITELLM=false`: status
      `unmanaged`, disclosed, not refused;
-   - the paid-provider leg: gated.
+   - the paid-provider leg: gated;
+   - while execution is refused, listing and deleting a virtual key still
+     work;
+   - `docker-compose.yml`: the `litellm` service matches the profile.
 
    A live check runs the check against a scratch LiteLLM database (16.3).
 5. The admin preview (`GET /admin/api/operator/litellm-config`, D30) shows
@@ -828,6 +855,15 @@ Both kinds of fact use one schema, `retention_fact`:
   (receipts can be kept for only 30 days, `gateway/receipt_store.py:52-54`).
   A revision is pruned only when no remaining receipt **and** no remaining
   kept record references it ([judge r2] finding 3).
+- **Library prompts and conversations keep their schemas.** They do not
+  carry revision references. Their ledger uses the revisions on their
+  receipt while the receipt exists. After the owner's receipt setting has
+  removed the receipt, the ledger shows today's facts, labelled: "Today's
+  facts. The facts in force when this was made are no longer kept: its
+  receipt was removed under the receipt-retention setting." This is
+  honest and needs no change to the existing tables ([judge r3] finding
+  3). Adding references to those tables can come later, if someone needs
+  the history.
 - **Seed.** The seed comes from the corrected research: PT-O1 for OpenAI,
   GW-O1 to GW-O3 for OpenRouter, PT-A* for Anthropic, PT-G* and PT-VX3 for
   Gemini through the OpenAI-compatible route. PT-VX3 records implicit
@@ -919,7 +955,7 @@ It answers, in plain words:
 4. **What Azizam keeps.** Each kind kept for this request, with its deadline.
    Omitted parts show with their reason.
 5. **What Azizam cannot control.** Rows 9-13 of section 5.1, and an
-   unmanaged LiteLLM (section 5.2, step 6).
+   unmanaged LiteLLM (section 5.2, step 7).
 
 It distinguishes what Azizam observed ("Azizam sent this to <engine> at
 14:02") from what a source declares ("the provider says it keeps prompts for
@@ -1428,7 +1464,9 @@ Each slice lists its own subset in section 17.
 14. **Fact revisions.** After a fact is edited, removed, or its catalog is
     upgraded, an old request's ledger renders the revision it was sent
     under. When the receipt is pruned while its kept record survives, the
-    record's ledger still renders, and pruning keeps the revision.
+    record's ledger still renders, and pruning keeps the revision. With
+    request history off and the receipt pruned, a Library prompt's ledger
+    shows today's facts with the "no longer kept" label.
 15. **Conversation scope and readers.** The existing Responses scope tests
     pass unchanged. A conversation row with a null person is never readable
     through a person check. A member's `readers: maker_signed_in` in the
@@ -1554,7 +1592,7 @@ live 5000 or 15000 services.
 |---|---|---|---|
 | 1 | **Contract and data, no behaviour change.** `registry/retention.yml` and its schema, with groups and kinds; `gateway/retention.py` with `decide`, `write`, the validator and the conversation scope rule moved in unchanged; `prompt_memory.decide` and the Responses rule call it; the settings key migration (group `prompts`); remove the three duplicated default copies (Python and web read the data through the settings API). | No | 16.1.1; 16.1.2; 16.1.3, except the new-group case; 16.1.10; 16.1.15; the existing prompt-memory and Responses suites unchanged; live: existing prompt-memory flows unchanged |
 | 2 | **Receipts `retention` field** for the existing kinds, with the value guard. | Adds a field | 16.1.9; the client receipt shape snapshot updated deliberately |
-| 3 | **LiteLLM keeps nothing.** See the 5.2 profile. | LiteLLM config and environment; LiteLLM errors leave the journal; chat is refused while the precondition fails | 5.2 proofs 1-5; the 16.2 LiteLLM canary and mutation tests; live checks on a scratch instance (below) |
+| 3 | **LiteLLM keeps nothing.** See the 5.2 profile: the managed LiteLLM, the shipped Compose service and the `unmanaged` disclosure. | LiteLLM config and environment; LiteLLM errors leave the journal; chat is refused while the precondition fails | 5.2 proofs 1-5; the 16.2 LiteLLM canary and mutation tests; live checks on a scratch instance (below) |
 | 4 | **Temporary files.** A gateway-private `TMPDIR`; `PrivateTmp=yes`; the STT workspace under that directory. | Moves temporary files | the 16.2 "during the request" and "after, under forget" assertions for multipart and STT; the STT suite unchanged |
 | 5 | **Request history, end to end.** The group, the `kept_requests` table, capture of `accepted` and `received` with the full secret floor (3.5 rules 1-8), the per-request control on every data-plane route, the scope check and the `MakerContent` projection, the privacy permission on keys and MCP grants, and the member and household switches in the existing settings UI as guided-form rows. Surfaces: the maker routes under `/gateway/v1/`, and the MCP `requests` and `retention` tools for history and settings. Deletion, expiry and fences, including the Library cascade. The default comes from data (Tim's decision 1). | New group; off unless data says otherwise | 16.1.3 new-group case; 16.1.4 (history routes); 16.1.5; 16.1.6; 16.1.7; 16.1.8 (history and settings rows); 16.1.11 (history and settings controls); 16.1.13; 16.2 content and credential canaries; live checks 1 and 4 |
 | 6 | **Facts and ledger.** The `retention_fact` schema and revisions; provider catalog seeds; protocol, definition and record levels; the ledger view and its routes and MCP action; the assembled "never save" text. | Adds views | 16.1.14; schema tests; a removed fact stays removed; the stale label; no network on read; live check 5 |
