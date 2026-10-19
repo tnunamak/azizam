@@ -107,7 +107,7 @@ def test_a_rate_limited_engine_status_and_retry_after_reach_the_caller(fake_upst
     response = asyncio.run(_open(fake))
 
     assert response.status_code == 429
-    assert json.loads(response.body)["error"]["type"] == "rate_limited"
+    assert json.loads(response.body)["error"]["type"] == "rate_limit_error"   # the engine's own type is not on the list: the status's type
     assert response.headers.get("retry-after") == "7"
     _expect_forwarded(fake)
 

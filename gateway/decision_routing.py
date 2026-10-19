@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from gateway import runtime_secrets
+from gateway import client_errors, runtime_secrets
 from gateway.capabilities import Capability
 from gateway.decisions_api import DecisionDispatchResult, DecisionModel, DecisionsError
 from gateway.stable_aliases import AliasResolution, AliasUnavailableError, pattern_names, resolve_alias
@@ -275,7 +275,8 @@ class DecisionRuntime:
             status = response.status_code if response.status_code in (200, 422, 429) else 502
             if status == 502:
                 raise DecisionsError(502, "decision_backend_error", "The configured decision engine failed.")
-            headers = {"retry-after": response.headers["retry-after"]} if "retry-after" in response.headers else {}
+            retry_after = client_errors.retry_after(response.headers.get("retry-after"))   # a number we write, not the service's text
+            headers = {"retry-after": retry_after} if retry_after is not None else {}
             if fallbacks:
                 headers["x-azizam-fallback"] = ",".join(fallbacks)
             return DecisionDispatchResult(payload, status_code=status, backend=service_id,

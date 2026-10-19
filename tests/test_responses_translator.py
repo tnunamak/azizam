@@ -40,7 +40,9 @@ class ResponsesTranslatorTests(unittest.TestCase):
         payloads = _event_payloads(frames)
         self.assertEqual(payloads[-1]["type"], "response.failed")
         self.assertEqual(payloads[-1]["response"]["status"], "failed")
-        self.assertEqual(payloads[-1]["response"]["error"]["message"], "backend failed")
+        # our sentence, not the engine's words (decision D45)
+        self.assertEqual(payloads[-1]["response"]["error"]["message"], "The engine failed while handling the request.")
+        self.assertNotIn("backend failed", json.dumps(payloads))
         self.assertEqual(payloads[-1]["response"]["output_text"], "partial")
         self.assertNotIn("response.completed", _event_names(frames))
 

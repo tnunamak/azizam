@@ -28,6 +28,7 @@ upstream excerpt must keep it out of ``str()`` (``gateway.engine_protocol.errors
 
 from __future__ import annotations
 
+import codecs
 import logging
 import sys
 import threading
@@ -136,6 +137,15 @@ def clean(record: logging.LogRecord) -> logging.LogRecord:
     return record
 
 
+def _clean_or_withhold(record: logging.LogRecord) -> logging.LogRecord:
+    try:
+        return clean(record)
+    except Exception:  # noqa: BLE001 - a record that cannot be cleaned is not emitted as it is
+        record.msg, record.args, record.exc_info, record.exc_text, record.stack_info = WITHHELD_RECORD, None, None, None, None
+        record.__dict__[_CLEAN] = True
+        return record
+
+
 class EgressFilter(logging.Filter):
     """``clean`` as a ``logging.Filter``, for a handler that is built without the record factory (a test's own)."""
 
@@ -154,6 +164,8 @@ class GuardedStream:
         self._inner = inner
         self._pending = ""
         self._lock = threading.Lock()
+        self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")   # for ``buffer`` writes
+        self.decoder_lock = threading.Lock()
 
     @property
     def inner(self) -> Any:
@@ -175,7 +187,11 @@ class GuardedStream:
     def _emit(self, text: str) -> None:
         self._inner.write(log_scrub.scrub(text, limit=1 << 30))
 
-    def flush(self) -> None:
+    def flush(self, *, final: bool = False) -> None:
+        if final:   # the process is done with this stream: a character still cut is written as the replacement mark
+            with self.decoder_lock:
+                tail = self.decoder.decode(b"", final=True)
+            self.write(tail)
         with self._lock:
             if self._pending:
                 head, self._pending = self._pending, ""
@@ -198,13 +214,19 @@ class GuardedStream:
 
 
 class _GuardedBytes:
-    """``stream.buffer`` of a guarded stream: bytes are decoded, scrubbed and written through the text path."""
+    """``stream.buffer`` of a guarded stream: bytes are decoded, scrubbed and written through the text path.
+
+    A character cut between two ``write`` calls is held until its end arrives (one decoder per stream), so a credential
+    that has a multi-byte character in it is found whole.
+    """
 
     def __init__(self, stream: GuardedStream) -> None:
         self._stream = stream
 
     def write(self, data: bytes) -> int:
-        self._stream.write(bytes(data).decode("utf-8", "replace"))
+        with self._stream.decoder_lock:
+            text = self._stream.decoder.decode(bytes(data))
+        self._stream.write(text)
         return len(data)
 
     def flush(self) -> None:
@@ -241,15 +263,25 @@ def install(*, streams: bool = True) -> None:
         previous_factory = logging.getLogRecordFactory()
 
         def factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
-            record = previous_factory(*args, **kwargs)
-            try:
-                return clean(record)
-            except Exception:  # noqa: BLE001 - a record that cannot be cleaned is not emitted as it is
-                record.msg, record.args, record.exc_info, record.exc_text, record.stack_info = WITHHELD_RECORD, None, None, None, None
-                return record
+            return _clean_or_withhold(previous_factory(*args, **kwargs))
 
         logging.setLogRecordFactory(factory)
         _STATE["factory"] = (previous_factory, factory)
+        # A record can skip the factory (``logging.makeLogRecord`` fills the fields after the factory ran) and reach a
+        # handler that was added after this install (a later ``propagate = False`` handler has no filter of ours). Both
+        # are closed at the places every record passes: ``makeLogRecord`` and ``Handler.handle``.
+        previous_make, previous_handle = logging.makeLogRecord, logging.Handler.handle
+
+        def make_log_record(dictionary: Any) -> logging.LogRecord:
+            record = previous_make(dictionary)
+            record.__dict__.pop(_CLEAN, None)
+            return _clean_or_withhold(record)
+
+        def handle(self: logging.Handler, record: logging.LogRecord) -> Any:
+            return previous_handle(self, _clean_or_withhold(record))
+
+        logging.makeLogRecord, logging.Handler.handle = make_log_record, handle  # type: ignore[method-assign]
+        _STATE["patches"] = (previous_make, make_log_record, previous_handle, handle)
         # The factory has cleaned every record already. The filter on the handlers that exist now is the second line for a
         # record made some other way (``logging.makeLogRecord``, a record handed over from another process).
         for name in ("", "uvicorn", "uvicorn.error", "uvicorn.access"):
@@ -282,6 +314,11 @@ def uninstall() -> None:
         previous_factory, factory = _STATE["factory"]
         if logging.getLogRecordFactory() is factory:
             logging.setLogRecordFactory(previous_factory)
+        previous_make, make_log_record, previous_handle, handle = _STATE["patches"]
+        if logging.makeLogRecord is make_log_record:
+            logging.makeLogRecord = previous_make
+        if logging.Handler.handle is handle:
+            logging.Handler.handle = previous_handle  # type: ignore[method-assign]
         for name, level in _STATE["levels"].items():
             logging.getLogger(name).setLevel(level)
         if not _STATE["warnings_were_captured"]:
@@ -291,7 +328,7 @@ def uninstall() -> None:
             originals, wrapped = _STATE["streams"]
             for stream in wrapped:
                 if isinstance(stream, GuardedStream):
-                    stream.flush()
+                    stream.flush(final=True)
             if (sys.stdout, sys.stderr) == wrapped:
                 sys.stdout, sys.stderr = originals
         _STATE.clear()

@@ -74,6 +74,7 @@ CLEAN_UP_ONLY = {
     ("DELETE", "/admin/api/providers/{provider_id}"): "deletes the removed provider's key after the guarded save",
     ("POST", "/admin/api/operator/services/{service_id}/enabled"): "a switch; it stores no secret",
     ("PUT", "/admin/api/providers/{provider_id}/models"): "a model list; it stores no secret",
+    ("POST", "/admin/api/config/reload"): "a reload; opening the store moves a legacy sign-in client secret once, which no sign-in asked for",
 }
 
 # Routes with their own race below (not a registry or secret-store probe).

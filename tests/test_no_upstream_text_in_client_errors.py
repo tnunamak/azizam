@@ -140,3 +140,124 @@ async def i(client, url):
     return upstream_error_response(resp.status_code, resp.content, resp.headers)
 '''
     assert taint.scan_source(source, is_client_sink, traceback_is_sink=False, bare_exception=False) == {"a", "b", "d", "f", "g"}
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Relays inside translators and stream rewriters (decision D45)
+#
+# A translator that builds a dict, an event or a message from the fields of an upstream's ``error`` object relays the
+# upstream's words even when no response is built from a body (the Responses translator copied ``error.message``,
+# ``error.code`` and ``error.param`` of a chat chunk into its SSE error event and its stored final response). The scan below
+# lists every read of ``message``, ``code``, ``type``, ``param``, ``detail`` or ``reason`` from a value taken from an
+# ``error`` key, in every production module that handles replies (``gateway/**``, ``proxy.py``, ``responses_translator.py``).
+# A read passes only when listed here with the reason it does not reach a caller; a value that went through
+# ``client_errors`` is clean.
+# ---------------------------------------------------------------------------------------------------------------------
+
+ERROR_TEXT_FIELDS = {"message", "code", "type", "param", "detail", "reason", "msg", "error_description"}
+
+ALLOWED_READS: dict[str, str] = {
+    "gateway/client_errors.py::rewrite_stream_errors": "the helper itself: it reads the fields it replaces",
+    "gateway/decisions_api.py::_systemone_body_for_client": "the local decision service is dialed with no credential (decision_routing posts no headers but a deadline), so it has none to echo",
+    "gateway/mcp_server.py::_normalize_job": "the payload is the gateway's own media job answer, whose error sentence is fixed copy (proxy._media_job_failure)",
+    "gateway/mcp_server.py::register_mcp_routes": "the code of the gateway's own JSON-RPC reply",
+    "gateway/mcp_server.py::dispatch": "the code of the gateway's own JSON-RPC reply",
+    "gateway/resource_admission_http.py::admission_protocol_body": "the body is the gateway's own projected admission refusal",
+    "gateway/workflow_call.py::error_from": "the reply is the gateway's own route answer, built by gateway.client_errors",
+    "proxy.py::_speech_fallback_reason": "reads the code to decide a fallback; nothing is sent on",
+    "proxy.py::_stt_resource_limit_response": "the body is the gateway's own refusal; the message is replaced by the gateway's projected reason",
+    "proxy.py::_generate_images_with_adaptive_batching": "the text is lowercased to decide whether to retry; it is not sent on",
+    "proxy.py::_resolve_gateway_media_url": "reads the gateway's own signed-asset response",
+    "proxy.py::_admission_refusal_message": "reads the gateway's own admission refusal",
+    "proxy.py::_identity_run_workflow": "reads the gateway's own graph error response (built by gateway.client_errors)",
+    "proxy.py::_image_response_error": "reads the gateway's own image response, built by gateway.client_errors",
+    "proxy.py::_media_job_failure": "the code is kept only from a fixed list (_JOB_KNOWN_ERROR_CODES); the sentence is fixed copy",
+    "proxy.py::_drain_streaming_upstream_error": "compares the code to find the gateway's own admission refusal; the message goes through client_errors",
+    "proxy.py::_upstream_admission_response": "compares the code to find the gateway's own admission refusal",
+    "proxy.py::_response_error_message": "reads the gateway's own policy refusals (an engine's reply goes through _upstream_reply_message)",
+    "proxy.py::_normalize_litellm_error_envelope": "fills a missing type; the envelope then goes through client_errors.upstream_error_response",
+}
+
+_CLEAN_CALLS = ("client_errors.",)
+
+
+def _key_read(node: ast.AST) -> tuple[str, ast.AST] | None:
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get" and node.args \
+            and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+        return node.args[0].value, node.func.value
+    if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+        return node.slice.value, node.value
+    return None
+
+
+def _reads_error_key(node: ast.AST) -> bool:
+    return any((read := _key_read(inner)) is not None and read[0] == "error" for inner in ast.walk(node))
+
+
+def _from_clean_call(node: ast.AST) -> bool:
+    return isinstance(node, ast.Call) and taint.chain(node.func).startswith(_CLEAN_CALLS)
+
+
+def error_field_reads(trees: list[tuple[str, ast.Module]]) -> set[str]:
+    """``file::function`` of every function that reads an error text field from a value taken from an ``error`` key."""
+    found: set[str] = set()
+    for relative, tree in trees:
+        for function in ast.walk(tree):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            derived: set[str] = set()
+            clean: set[str] = set()
+            for node in ast.walk(function):
+                if isinstance(node, ast.Assign):
+                    names = {target.id for target in node.targets if isinstance(target, ast.Name)}
+                    if _from_clean_call(node.value):
+                        clean |= names
+                    elif _reads_error_key(node.value):
+                        derived |= names
+            for node in ast.walk(function):
+                read = _key_read(node)
+                if read is None or read[0] not in ERROR_TEXT_FIELDS:
+                    continue
+                receiver = read[1]
+                if isinstance(receiver, ast.Name) and receiver.id in clean:
+                    continue
+                if _reads_error_key(receiver) or (isinstance(receiver, ast.Name) and receiver.id in derived):
+                    found.add(f"{relative}::{function.name}")
+    return found
+
+
+def reply_handling_modules() -> list[tuple[str, ast.Module]]:
+    modules = list(taint.gateway_modules())
+    translator = taint.ROOT / "responses_translator.py"
+    modules.append((translator.name, ast.parse(translator.read_text(encoding="utf-8"))))
+    return modules
+
+
+def test_no_translator_or_rewriter_builds_text_from_an_upstream_error_object():
+    found = error_field_reads(reply_handling_modules())
+    new = sorted(found - set(ALLOWED_READS))
+    assert not new, ("a function reads an error text field (message, code, type, param, detail, reason) of an upstream's error "
+                     "object: pass it through gateway.client_errors.error_fields / stream_error, or list it in ALLOWED_READS "
+                     f"with the reason it does not reach a caller: {new}")
+
+
+def test_the_allowed_reads_hold_no_stale_entry():
+    stale = sorted(set(ALLOWED_READS) - error_field_reads(reply_handling_modules()))
+    assert not stale, f"ALLOWED_READS lists a function that no longer reads an error field: {stale}"
+
+
+def test_the_read_scan_finds_the_translator_relay_it_is_meant_to_find():
+    relay = '''
+def handle_chunk(chunk, fail):
+    if chunk.get("error") is not None:
+        error = chunk["error"]
+        return fail(str(error.get("message") or "failed"), code=str(error.get("code")), param=error.get("param"))
+def inline(payload):
+    return {"message": payload["error"]["message"]}
+def through_helper(chunk):
+    fields = client_errors.stream_error(chunk["error"])
+    return fields["message"]
+def unrelated(payload):
+    return payload.get("message")
+'''
+    assert error_field_reads([("x.py", ast.parse(relay))]) == {"x.py::handle_chunk", "x.py::inline"}

@@ -8,8 +8,10 @@ error response is built from upstream text at all.
 ``client_error`` is the one builder. It takes the status the gateway answers with, a *key* into the fixed public reasons
 below (a key, not text: nothing derived from a reply or an exception can be passed as a reason), the gateway's own error
 code, and the request id. ``upstream_error_response`` is the same for a reply the gateway received from an engine and
-must pass on as an error: it keeps the status class, the machine code (a short token), the error type and ``Retry-After``,
-and replaces the message and drops every other header.
+must pass on as an error. It is deny-default (decision D45): the error ``type`` and ``code`` pass only from the fixed
+lists below, ``param`` only when it names a field of the caller's own request, ``Retry-After`` only as a number the gateway
+writes itself. The message is the gateway's sentence for the code (with a limit the gateway knows locally), and every
+other header and field is dropped.
 
 ``tests/test_no_upstream_text_in_client_errors.py`` fails for a response, an ``HTTPException`` or an error builder that is
 given text derived from an upstream reply or from an exception caught around a call to an upstream.
@@ -17,9 +19,12 @@ given text derived from an upstream reply or from an exception caught around a c
 
 from __future__ import annotations
 
+import datetime
+import email.utils
 import json
+import math
 import re
-from typing import Any, Mapping
+from typing import Any, Collection, Mapping
 
 from starlette.responses import Response
 
@@ -66,18 +71,116 @@ STATUS_REASONS: dict[int, str] = {
 }
 _SERVER_REASON = "The engine failed while handling the request."
 
-# Machine codes an engine may name that clients branch on; the text is ours.
+# Machine codes a client branches on, with the gateway's own sentence for each. An engine's wording is never relayed.
 CODE_REASONS: dict[str, str] = {
     "context_length_exceeded": "The request is longer than the model's context window.",
     "model_not_found": "The model was not found.",
+    "model_not_deployed": "The model is not deployed.",
     "rate_limit_exceeded": "The engine is busy or limiting requests. Try again later.",
     "insufficient_quota": "The provider quota is used up.",
+    "billing_not_active": "The provider account is not active.",
+    "billing_hard_limit_reached": "The provider spending limit is reached.",
     "content_policy_violation": "The request was refused by the model's content policy.",
+    "content_filter": "The request was refused by the model's content policy.",
     "string_above_max_length": "A value in the request is longer than the engine accepts.",
+    "string_below_min_length": "A value in the request is shorter than the engine accepts.",
+    "array_above_max_length": "A list in the request has more items than the engine accepts.",
+    "array_below_min_length": "A list in the request has fewer items than the engine needs.",
+    "integer_above_max_value": "A number in the request is larger than the engine accepts.",
+    "integer_below_min_value": "A number in the request is smaller than the engine accepts.",
+    "decimal_above_max_value": "A number in the request is larger than the engine accepts.",
+    "decimal_below_min_value": "A number in the request is smaller than the engine accepts.",
+    "empty_string": "A value in the request is empty.",
+    "invalid_api_key": "The credentials were not accepted.",
+    "invalid_value": "A value in the request is not valid.",
+    "invalid_type": "A value in the request has the wrong type.",
+    "unsupported_value": "A value in the request is not supported.",
+    "unsupported_parameter": "A field in the request is not supported.",
+    "unknown_parameter": "A field in the request is not known.",
+    "missing_required_parameter": "A required field is missing from the request.",
+    "invalid_image": "The image could not be read.",
+    "invalid_image_format": "The image format is not supported.",
+    "invalid_image_url": "The image address could not be used.",
+    "invalid_prompt": "The prompt was refused.",
+    "invalid_json": "The request body is not valid JSON.",
+    "json_validate_failed": "The model's reply did not match the requested format.",
+    "tool_use_failed": "The model could not complete the tool call.",
+    "request_too_large": "The request is larger than the engine accepts.",
+    "payload_too_large": "The request is larger than the engine accepts.",
+    "file_too_large": "The file is larger than the engine accepts.",
+    "overloaded": "The engine is overloaded. Try again later.",
+    "engine_overloaded": "The engine is overloaded. Try again later.",
+    "model_overloaded": "The engine is overloaded. Try again later.",
+    "service_unavailable": "The engine is unavailable. Try again later.",
+    "backend_unavailable": "The engine is unavailable. Try again later.",
+    "timeout": "The engine did not answer in time.",
+    "request_timeout": "The engine did not answer in time.",
+    "server_error": _SERVER_REASON,
+    "internal_error": _SERVER_REASON,
+    "upstream_error": _SERVER_REASON,
+    "upstream_stream_interrupted": "The LLM execution stream ended before the response was complete.",
+    "unsupported_country_region_territory": "The provider does not serve this region.",
 }
 
-_TOKEN = re.compile(r"^[a-z0-9][a-z0-9_.\-\[\]]{0,63}$")  # ``known_speaker_names[]`` is a form field
-_RETRY_AFTER = re.compile(r"^[0-9A-Za-z ,:\-]{1,64}$")
+# Codes the gateway's own routes put in an error. A reply that crosses the gateway again (a protocol frontend reading the
+# chat route, the router behind it) keeps them; an engine that echoes one gains nothing, because each is a fixed word.
+GATEWAY_CODES = frozenset({
+    "access_plan_editor_unavailable", "account_disabled", "adapter_not_registered", "adapter_required", "adapter_version_mismatch",
+    "address_invalid", "admin_action_header_required", "admin_csrf_required", "admin_forbidden", "alias_policy_unavailable",
+    "ambiguous_faces", "asset_missing", "backend_error", "backend_not_found", "backend_recovery_failed", "both_methods_off",
+    "builtin_disabled", "canceled", "cannot_start_model", "client_disconnected", "csrf_required", "current_model_unavailable",
+    "cursor_not_found", "custom_voice_engine_unsupported", "decision_backend_error", "engine_address_needs_confirmation",
+    "engine_credential_origin_mismatch", "engine_credential_unavailable", "engine_protocol_unavailable", "export_failed",
+    "face_too_small", "gpu_memory_unavailable", "hosted_tool_not_supported", "idempotency_conflict", "image_client_disconnected",
+    "image_generation_timeout", "image_post_processing_failed", "incomplete_rule", "invalid_client", "invalid_connection",
+    "invalid_cursor", "invalid_decision", "invalid_defaults", "invalid_engine_connection", "invalid_extension",
+    "invalid_gateway_extensions", "invalid_instance", "invalid_mask_dimensions", "invalid_native_path", "invalid_prompt_memory",
+    "invalid_prompt_memory_settings", "invalid_prompt_mode", "invalid_request", "invalid_request_error", "invalid_retention", "invalid_sessions",
+    "invalid_shots", "invalid_source", "invalid_stt_chunk_response", "invalid_stt_stream_response", "invalid_workflow_extension",
+    "job_canceled", "litellm_unconfigured", "login_required", "long_video_not_supported", "malformed_response",
+    "media_job_assets_missing", "media_job_not_found", "media_job_not_ready", "media_payload_capacity", "method_not_allowed",
+    "missing_file", "missing_required_image", "model_policy_schema_unavailable", "model_switch_deferred", "native_ambiguous_path",
+    "native_credential_origin_mismatch", "native_credential_unavailable", "native_destination_blocked", "native_not_allowed",
+    "native_not_enabled", "native_owner_only", "native_remote_forbidden", "native_request_too_large", "no_access",
+    "no_asset_store", "no_face", "not_found", "not_in_access_plan", "owner_needs_password", "owner_required",
+    "paid_option_unsupported", "pose_rewritten", "pose_risks_likeness", "previous_response_not_found", "profile_result",
+    "prompt_erasure_unavailable", "prompt_not_accessible", "prompt_retention_pending", "provider_auth_failed", "provider_error",
+    "provider_model_list_invalid", "provider_native_paid_remote_forbidden", "provider_no_sign_in_time", "provider_not_found",
+    "provider_passthrough_error", "provider_timeout", "provider_unavailable", "reauth_required", "receipt_retention_unavailable",
+    "reference_skipped", "reload_failed", "request_expired", "resource_admission_denied", "same_face", "secret_needed",
+    "selection_unavailable", "settings_conflict", "settings_revision_required", "shots_seconds_mismatch",
+    "stt_backend_connection_lost", "stt_backend_unavailable", "stt_cancellation_capacity", "stt_chunk_attempt_failed",
+    "stt_cleanup_failed", "stt_configuration_invalid", "stt_media_setup_failed", "stt_proxy_error", "stt_request_deadline",
+    "stt_request_timeout", "stt_resource_limit", "stt_response_limit", "stt_upload_limit", "test_required", "too_many_images",
+    "tts_backend_error", "unauthorized", "unsupported_audio_translation", "unsupported_media_job_content",
+    "unsupported_media_job_intent", "unsupported_operation", "unsupported_response_format", "unsupported_stream_format",
+    "unsupported_stream_response_format", "unsupported_stt_operation", "user_action_header_required", "user_csrf_required",
+    "video_cancel_failed", "video_extend_not_configured", "video_extend_not_supported", "video_fps_unsupported",
+    "video_generation_failed", "video_not_ready", "video_remix_not_configured", "video_too_short", "video_total_length_exceeded",
+    "vision_unsupported", "voice_not_available", "workflow_manifest_missing",
+})
+
+ERROR_CODES = frozenset(CODE_REASONS) | GATEWAY_CODES
+
+# The error ``type`` values OpenAI, Anthropic and the gateway use. Anything else is replaced by the type for the status.
+ERROR_TYPES = frozenset({
+    "invalid_request_error", "authentication_error", "permission_error", "not_found_error", "rate_limit_error",
+    "api_error", "server_error", "insufficient_quota", "overloaded_error", "request_too_large", "timeout_error",
+    "upstream_error", "service_unavailable", "requests", "tokens",
+})
+
+MODEL_NOT_FOUND = CODE_REASONS["model_not_found"]
+
+# A router that names no code says it in words. The words decide only that the model is unknown (a decision, as for an
+# out-of-memory retry); the sentence and the model name that follow are ours, and the name is the caller's own.
+_UNKNOWN_MODEL = re.compile(
+    r"Invalid model name passed in model=\S+"
+    r"|model [\"'`]?[^\s\"'`]+[\"'`]? (?:not found|does not exist)",
+    re.IGNORECASE,
+)
+
+_RETRY_AFTER_NUMBER = re.compile(r"^[0-9]{1,9}(\.[0-9]{1,3})?$")
+_RETRY_AFTER_MAX = 86400
 
 
 def status_reason(status: int) -> str:
@@ -87,6 +190,72 @@ def status_reason(status: int) -> str:
 
 def _default_type(status: int) -> str:
     return "invalid_request_error" if 400 <= status < 500 else "api_error"
+
+
+# The type for an engine's error that named none on the list: the one OpenAI and Anthropic give the status.
+_TYPE_BY_STATUS = {401: "authentication_error", 403: "permission_error", 404: "not_found_error", 429: "rate_limit_error"}
+
+
+def retry_after(value: Any) -> str | None:
+    """``Retry-After`` as whole seconds the gateway writes itself, from a number or an HTTP date; anything else is dropped.
+
+    The engine's text is never passed on: only the number it stands for, at most one day.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if _RETRY_AFTER_NUMBER.fullmatch(text):
+        seconds = math.ceil(float(text))
+    else:
+        try:
+            moment = email.utils.parsedate_to_datetime(text)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if moment.tzinfo is None:
+            return None
+        seconds = math.ceil((moment - datetime.datetime.now(datetime.timezone.utc)).total_seconds())
+    return str(max(0, min(seconds, _RETRY_AFTER_MAX)))
+
+
+def error_fields(
+    error: Any,
+    status: int | None = None,
+    *,
+    request_fields: Collection[str] | None = None,
+    limits: Mapping[str, int] | None = None,
+) -> dict[str, Any]:
+    """The ``error`` object a caller gets for an error an engine named: ``message``, ``type``, ``param`` and ``code``.
+
+    Each field is the gateway's. ``code`` and ``type`` pass only when they are in ``ERROR_CODES`` and ``ERROR_TYPES``;
+    ``param`` passes only when it is a top-level field of the caller's own request (``request_fields``); the message is
+    our sentence for the code, else for ``status`` (an in-stream error has none). ``limits`` carries what the gateway
+    knows locally (``context_window``: the model's window from its records) and is written into the sentence.
+    """
+    fields = error if isinstance(error, Mapping) else {}
+    raw_code, raw_type, raw_param = fields.get("code"), fields.get("type"), fields.get("param")
+    code = raw_code if isinstance(raw_code, str) and raw_code in ERROR_CODES else None
+    words = fields.get("message")
+    if code is None and isinstance(words, str) and (status is None or status in (400, 404)) and _UNKNOWN_MODEL.search(words):
+        code = "model_not_found"
+    kind = raw_type if isinstance(raw_type, str) and raw_type in ERROR_TYPES else None
+    param = raw_param if isinstance(raw_param, str) and request_fields is not None and raw_param in request_fields else None
+    message = CODE_REASONS.get(code or "") or (status_reason(status) if status is not None else _SERVER_REASON)
+    window = (limits or {}).get("context_window")
+    if code == "context_length_exceeded" and isinstance(window, int) and not isinstance(window, bool) and window > 0:
+        message = f"The request is longer than the model's context window of {window} tokens."
+    return {"message": message,
+            "type": kind or (_TYPE_BY_STATUS.get(status) or _default_type(status) if status is not None else "api_error"),
+            "param": param, "code": code}
+
+
+def error_code(body: bytes | str | None) -> str | None:
+    """The allowlisted machine code in an engine's error body, or None."""
+    try:
+        parsed = json.loads(body) if body else None
+    except (ValueError, TypeError, UnicodeDecodeError):
+        return None
+    error = parsed.get("error") if isinstance(parsed, Mapping) else None
+    return error_fields(error)["code"]
 
 
 def _response(status: int, error: dict[str, Any], request_id: str | None, headers: Mapping[str, str] | None) -> Response:
@@ -125,12 +294,14 @@ def upstream_error_response(
     *,
     request_id: str | None = None,
     own_headers: Mapping[str, str] | None = None,
+    request_fields: Collection[str] | None = None,
+    limits: Mapping[str, int] | None = None,
 ) -> Response:
-    """Pass an engine's error reply on to the caller without its words.
+    """Pass an engine's error reply on to the caller without its words (decision D45).
 
-    Kept: the status, and the error ``type``, the machine ``code`` and ``param`` when each is a short lower-case token
-    (``requests``, ``context_length_exceeded``, ``model``), and ``Retry-After``. Replaced: the message (by the fixed sentence for the code, else for the
-    status). Dropped: every other header and every other field. ``own_headers`` are the gateway's (``X-Azizam-*``).
+    The caller gets the status, the error object of ``error_fields`` and ``Retry-After`` as a number. ``headers`` are the
+    engine's, read only for ``Retry-After``. ``own_headers`` are the gateway's, built by the caller from values the
+    gateway produced (never from the engine's headers, not even by a name prefix). Every other header is dropped.
     """
     error: Any = None
     try:
@@ -138,47 +309,29 @@ def upstream_error_response(
         error = parsed.get("error") if isinstance(parsed, dict) else None
     except (ValueError, TypeError, UnicodeDecodeError):
         error = None
-    fields = error if isinstance(error, dict) else {}
-
-    def token(name: str) -> str | None:
-        value = fields.get(name)
-        return value if isinstance(value, str) and _TOKEN.fullmatch(value) else None
-
-    code, param, kind = token("code"), token("param"), token("type")
     out = {str(name): str(value) for name, value in (own_headers or {}).items()}
-    retry_after = next((value for name, value in (headers or {}).items() if str(name).lower() == "retry-after"), None)
-    if isinstance(retry_after, str) and _RETRY_AFTER.fullmatch(retry_after):
-        out["retry-after"] = retry_after
-    message = CODE_REASONS.get(code or "") or status_reason(status)
-    return _response(status, {"message": message, "type": kind or _default_type(status), "param": param, "code": code},
-                     request_id, out)
+    seconds = retry_after(next((value for name, value in (headers or {}).items() if str(name).lower() == "retry-after"), None))
+    if seconds is not None:
+        out["retry-after"] = seconds
+    return _response(status, error_fields(error, status, request_fields=request_fields, limits=limits), request_id, out)
 
 
-def _stream_error(error: Any) -> dict[str, Any]:
-    """The error object of an in-stream error event, made of the fixed message and the tokens the engine named."""
-    fields = error if isinstance(error, dict) else {}
-
-    def token(name: str) -> str | None:
-        value = fields.get(name)
-        return value if isinstance(value, str) and _TOKEN.fullmatch(value) else None
-
-    code = token("code")
-    return {"message": CODE_REASONS.get(code or "") or _SERVER_REASON, "type": token("type") or "api_error",
-            "param": token("param"), "code": code}
+def stream_error(error: Any, *, request_fields: Collection[str] | None = None, limits: Mapping[str, int] | None = None) -> dict[str, Any]:
+    """The error object of an in-stream error event: the same fields as ``error_fields``, with no status to speak of."""
+    return error_fields(error, None, request_fields=request_fields, limits=limits)
 
 
-def rewrite_stream_errors(data: bytes) -> bytes:
+def rewrite_stream_errors(data: bytes, *, request_fields: Collection[str] | None = None,
+                          limits: Mapping[str, int] | None = None) -> bytes:
     """``data`` is whole server-sent events; an event that carries an ``error`` is rewritten without the engine's words.
 
-    The status of a stream is sent before its body, so an engine reports a failure inside the stream. Its message is the
-    engine's text like any error reply. Every other event is left as it is.
+    The status of a stream is sent before its body, so an engine reports a failure inside the stream. The event goes out
+    with ``error_fields`` (our message, a code and type from the fixed lists, a param only from the caller's request).
+    Every other event is left as it is.
     """
     if b"error" not in data:
         return data
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        return data
+    text = data.decode("utf-8", errors="replace")   # the bytes go out unchanged unless an error event is rewritten
     out: list[str] = []
     changed = False
     for line in text.splitlines(keepends=True):
@@ -192,9 +345,11 @@ def rewrite_stream_errors(data: bytes) -> bytes:
         except ValueError:
             out.append(line)
             continue
-        if isinstance(payload, dict) and "error" in payload:
+        # Three shapes carry an error: {"error": {...}}, a flat {"type": "error", ...} and {"object": "error", ...}.
+        flat = isinstance(payload, dict) and "error" not in payload and "error" in (payload.get("type"), payload.get("object"))
+        if isinstance(payload, dict) and (payload.get("error") is not None or flat):
             payload = {**{key: value for key, value in payload.items() if key == "type" and value == "error"},
-                       "error": _stream_error(payload["error"])}
+                       "error": stream_error(payload if flat else payload["error"], request_fields=request_fields, limits=limits)}
             newline = line[len(line.rstrip("\r\n")):]
             out.append("data: " + json.dumps(payload, separators=(",", ":")) + newline)
             changed = True

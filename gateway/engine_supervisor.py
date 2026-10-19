@@ -18,6 +18,7 @@ It needs the standard library only: it runs as a script in a new session.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -30,6 +31,7 @@ from typing import BinaryIO, Iterable
 _SECRET_NAME = re.compile(r"(?<![a-z])(key|token|secret|passw(?:or)?d|credential|auth)(?![a-z])", re.IGNORECASE)
 _KNOWN_SECRET = re.compile(rb"\b(?:opk_|oak_)[A-Za-z0-9_-]+")
 _LINE_BYTES = 4096
+_SCRUBBER = None
 
 
 def argv_secrets(argv: Iterable[str]) -> list[str]:
@@ -48,13 +50,28 @@ def argv_secrets(argv: Iterable[str]) -> list[str]:
     return sorted(value for value in values if len(value) >= 4)
 
 
+def _forms_of(value: str) -> list[str]:
+    """Every form of ``value`` the gateway's log scrubber removes (raw, URL-encoded, JSON-escaped, base64 and URL-safe base64,
+    padded or not). The scrubber is loaded from its file: this script runs isolated (``-I``) and imports no package."""
+    global _SCRUBBER
+    try:
+        if _SCRUBBER is None:
+            spec = importlib.util.spec_from_file_location("azizam_log_scrub", Path(__file__).resolve().with_name("log_scrub.py"))
+            _SCRUBBER = importlib.util.module_from_spec(spec)   # type: ignore[arg-type]
+            spec.loader.exec_module(_SCRUBBER)                   # type: ignore[union-attr]
+        return list(_SCRUBBER.forms(value))
+    except Exception:  # noqa: BLE001 - without the scrubber the raw value is still removed
+        return [value]
+
+
 class LogPump:
-    """Copy engine output to a redacted, size-capped, rotating log."""
+    """Copy engine output to a redacted, size-capped, rotating log (the file is 0600: defence in depth, decision D45)."""
 
     def __init__(self, path: Path, *, limit: int, secrets: Iterable[str]) -> None:
         self.path = Path(path)
         self.limit = max(1024, int(limit))
-        self.secrets = sorted((s.encode() for s in secrets if len(s) >= 4), key=len, reverse=True)
+        forms = {form for secret in secrets if len(secret) >= 4 for form in _forms_of(secret) if len(form) >= 4}
+        self.secrets = sorted((form.encode() for form in forms), key=len, reverse=True)
         self._fd: int | None = None
         self._size = 0
 

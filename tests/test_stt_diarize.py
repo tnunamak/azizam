@@ -95,8 +95,9 @@ class DiarizeRoutingTests(SttCase):
         self.use_upstream(lambda r: httpx.Response(400, json=error))
         resp = self._post([("model", "gpt-4o-transcribe-diarize"), ("known_speaker_names[]", "a")])
         self.assertEqual(resp.status_code, 400)
-        # the engine's message is replaced by the gateway's sentence (decision D44)
-        self.assertEqual(resp.json(), {"error": {**error["error"], "message": "The engine rejected the request."}})
+        # the engine's message is replaced by the gateway's sentence (decision D44); a code it made up is not passed on, a
+        # param that names a form field the caller sent is (decision D45)
+        self.assertEqual(resp.json(), {"error": {**error["error"], "message": "The engine rejected the request.", "code": None}})
 
 
 class DiarizeNotDeployedTests(SttCase):

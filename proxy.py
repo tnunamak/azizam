@@ -52,7 +52,7 @@ import contextlib
 import contextvars
 import io
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, Optional, Sequence
+from typing import Any, AsyncIterator, Awaitable, Callable, Collection, Iterable, Iterator, Mapping, Optional, Sequence
 from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlsplit
 
 import httpx
@@ -4155,7 +4155,8 @@ async def _stream_tts_upstream(
                 if _speech_allocation_failed(refused.status, refused.raw.decode("utf-8", "replace")):
                     return _tts_gpu_memory_response()
                 retry_after = refused.headers.get("retry-after")
-                return client_errors.upstream_error_response(refused.status, refused.raw, refused.headers)
+                return client_errors.upstream_error_response(refused.status, refused.raw, refused.headers,
+                                                             request_fields=_request_fields(body))
         except TransportFailure as e:
             if e.kind == "timeout":
                 return _tts_error("TTS request timeout", 504)
@@ -4973,10 +4974,14 @@ def _stt_receipt(
     )
 
 
-def _stt_response_from_upstream(response: stt_chunking.UpstreamResponse) -> Response:
-    """Return an upstream STT response without dropping safe response metadata."""
+def _stt_response_from_upstream(response: stt_chunking.UpstreamResponse, request_fields: Collection[str] | None = None) -> Response:
+    """Return an upstream STT response without dropping safe response metadata.
+
+    ``request_fields`` are the form fields the caller sent: an error may name one of them as its ``param`` and no other.
+    """
     if response.status_code >= 400:
-        refusal = client_errors.upstream_error_response(response.status_code, response.body, response.headers)
+        refusal = client_errors.upstream_error_response(response.status_code, response.body, response.headers,
+                                                        request_fields=request_fields)
         # The engine's words decide whether the tier tries its next engine; they are not passed on (decision D44).
         if _speech_allocation_failed(response.status_code, bytes(response.body or b"")[:4096].decode("utf-8", "replace")):
             refusal.speech_failure = "gpu_oom"  # type: ignore[attr-defined]
@@ -5314,10 +5319,11 @@ async def proxy_stt_request(
             if reply.mode == "chunked":
                 return Response(content=json.dumps(reply.body), status_code=200, media_type="application/json")
             upstream = stt_chunking.UpstreamResponse(reply.status, reply.raw, reply.headers)
+            form_fields = frozenset(name for name, _ in fields)
             if reply.mode != "direct":
-                return _stt_response_from_upstream(upstream)
+                return _stt_response_from_upstream(upstream, form_fields)
             receipt.metadata["status_code"] = reply.status
-            response = _stt_response_from_upstream(upstream)
+            response = _stt_response_from_upstream(upstream, form_fields)
             if wants_stream and not native_stream and reply.status == 200:
                 try:
                     events = speech_stream.transcript_json_to_sse(json.loads(reply.raw))
@@ -25317,11 +25323,16 @@ async def _build_prior_messages(previous_response_id: Optional[str], auth_contex
     return responses_translator.stored_chain_to_messages(chain)
 
 
-def _responses_upstream_error(message: str, status_code: int) -> Response:
-    """OpenAI-shaped error for a failed chat call behind /v1/responses."""
-    match = _UNKNOWN_MODEL_ERROR_RE.search(message or "")
-    if match and status_code in (400, 404):
-        model = match.group("model") or match.group("model2")
+def _responses_upstream_error(payload: Any, status_code: int, request_body: Mapping[str, Any]) -> Response:
+    """OpenAI-shaped error for a failed chat call behind /v1/responses.
+
+    Built from ``client_errors.error_fields``: the code and type only from the fixed lists, the param only when it names a
+    field of the caller's request, our sentence for the message (decision D45).
+    """
+    error = payload.get("error") if isinstance(payload, Mapping) else None
+    fields = client_errors.error_fields(error, status_code, request_fields=_request_fields(request_body))
+    model = request_body.get("model")
+    if fields["code"] == "model_not_found" and status_code in (400, 404) and isinstance(model, str):
         return _responses_error(
             f"The model `{model}` does not exist.",
             code="model_not_found",
@@ -25331,20 +25342,14 @@ def _responses_upstream_error(message: str, status_code: int) -> Response:
         )
     return Response(
         content=json.dumps({"error": {
-            "message": message or "Upstream chat-completions error.",
+            "message": fields["message"],
             "type": "upstream_error",
-            "code": "upstream_error",
+            "param": fields["param"],
+            "code": fields["code"] or "upstream_error",
         }}),
         status_code=status_code,
         media_type="application/json",
     )
-
-
-def _upstream_error_message(payload: Any) -> str:
-    """The message of an upstream error body; valid JSON need not be an error object."""
-    error = payload.get("error") if isinstance(payload, Mapping) else None
-    message = error.get("message") if isinstance(error, Mapping) else error
-    return message if isinstance(message, str) else ""
 
 
 async def _close_upstream_stream(client: httpx.AsyncClient, upstream: httpx.Response) -> None:
@@ -25516,33 +25521,41 @@ async def _drain_streaming_upstream_error(
     try:
         payload = json.loads(text)
     except Exception:
-        return text[:1000]
+        payload = None
     if isinstance(payload, Mapping):
         error = payload.get("error")
         if isinstance(error, Mapping) and error.get("code") == "resource_admission_denied":
             upstream.extensions["resource_admission"] = dict(payload)
-    if isinstance(payload, Mapping):
-        error = payload.get("error")
-        if isinstance(error, Mapping):
-            message = error.get("message")
-            if isinstance(message, str) and message:
-                return message
-        if isinstance(error, str) and error:
-            return error
-    return text[:1000] or fallback
+    return _upstream_reply_message(payload, upstream.status_code)
+
+
+def _upstream_reply_message(payload: Any, status_code: int) -> str:
+    """The sentence a protocol frontend gives for a chat reply that failed: ours, for the code it names or the status.
+
+    A frontend reads the gateway's own chat answer, but it does not rely on that: the reply's words are never copied
+    (decision D45), so a reply that was not rewritten still cannot carry an engine's text to the caller.
+    """
+    error = payload.get("error") if isinstance(payload, Mapping) else None
+    return client_errors.error_fields(error, status_code)["message"]
 
 
 class UpstreamStreamError(Exception):
     """The chat stream carried an in-band error event after its headers."""
 
 
+def _stream_failure_message(error: BaseException) -> str:
+    """The sentence for a stream that failed after its headers: ours. The text of an exception (a read error names its
+    URL) is never sent to the caller."""
+    if isinstance(error, UpstreamStreamError):
+        return str(error)   # made from client_errors.stream_error in _raise_on_stream_error_event
+    return client_errors.REASONS["upstream_failed"]
+
+
 def _raise_on_stream_error_event(event: Mapping[str, Any]) -> None:
     """An ``{"error": ...}`` event ends the stream as a failure, not a finish."""
     error = event.get("error")
-    if isinstance(error, Mapping):
-        raise UpstreamStreamError(str(error.get("message") or "Upstream chat stream failed."))
-    if isinstance(error, str) and error:
-        raise UpstreamStreamError(error)
+    if isinstance(error, Mapping) or (isinstance(error, str) and error):
+        raise UpstreamStreamError(client_errors.stream_error(error)["message"])
 
 
 async def _iter_openai_sse_json(upstream: httpx.Response):
@@ -25734,11 +25747,6 @@ _ANTHROPIC_ERROR_TYPES_BY_STATUS = {
     529: "overloaded_error",
 }
 
-_UNKNOWN_MODEL_ERROR_RE = re.compile(
-    r"Invalid model name passed in model=(?P<model>\S+?)\.?(?:\s|$)"
-    r"|model [\"'`]?(?P<model2>[^\s\"'`]+)[\"'`]? (?:not found|does not exist)",
-    re.IGNORECASE,
-)
 
 
 def _anthropic_error_type_for_status(status_code: int) -> str:
@@ -25754,15 +25762,17 @@ def _anthropic_error_response(
     status_code: int = 400,
     error_type: str | None = None,
     headers: Mapping[str, str] | None = None,
+    model: str | None = None,
 ) -> Response:
-    """Anthropic-shaped error. The type follows the status unless given."""
-    match = _UNKNOWN_MODEL_ERROR_RE.search(message or "")
-    if match and status_code in (400, 404):
-        # The backend says the model is unknown. Anthropic answers 404 with
-        # ``not_found_error`` and ``model: <name>``.
+    """Anthropic-shaped error. The type follows the status unless given.
+
+    ``model`` is the model the caller asked for: when the message is our sentence for an unknown model, Anthropic
+    answers 404 with ``not_found_error`` and ``model: <name>`` (the caller's own name, never the engine's text).
+    """
+    if model and status_code in (400, 404) and message == client_errors.MODEL_NOT_FOUND:
         status_code = 404
         error_type = "not_found_error"
-        message = f"model: {match.group('model') or match.group('model2')}"
+        message = f"model: {model}"
     return _json_error_response(
         {
             "type": "error",
@@ -25789,15 +25799,12 @@ def _ollama_model_not_found(model: str) -> str:
 
 
 def _ollama_error_response(
-    message: str, *, status_code: int = 400, headers: Mapping[str, str] | None = None,
+    message: str, *, status_code: int = 400, headers: Mapping[str, str] | None = None, model: str | None = None,
 ) -> Response:
-    match = _UNKNOWN_MODEL_ERROR_RE.search(message or "")
-    if match and status_code in (400, 404):
-        # Ollama answers an unknown model with 404 and this wording.
+    if model and status_code in (400, 404) and message == client_errors.MODEL_NOT_FOUND:
+        # Ollama answers an unknown model with 404 and this wording (the caller's own model name).
         status_code = 404
-        message = _ollama_model_not_found(
-            match.group("model") or match.group("model2")
-        )
+        message = _ollama_model_not_found(model)
     return _json_error_response({"error": message}, status_code=status_code, headers=headers)
 
 
@@ -25959,6 +25966,7 @@ async def anthropic_messages(request: Request):
                 message,
                 status_code=upstream.status_code,
                 headers=_upstream_retry_after(upstream),
+                model=canonical.get("model"),
             )
 
         translator = anthropic_protocol.MessagesStreamTranslator(
@@ -25976,7 +25984,7 @@ async def anthropic_messages(request: Request):
             except Exception as e:  # noqa: BLE001
                 payload = {
                     "type": "error",
-                    "error": {"type": "api_error", "message": str(e)},
+                    "error": {"type": "api_error", "message": _stream_failure_message(e)},
                 }
                 yield f"event: error\ndata: {json.dumps(payload, separators=(',', ':'))}\n\n"
             finally:
@@ -26007,9 +26015,10 @@ async def anthropic_messages(request: Request):
         if refusal is not None:
             return refusal
         return _anthropic_error_response(
-            _response_error_message(upstream, "Upstream chat-completions error."),
+            _upstream_reply_message(_response_json_payload(upstream), int(getattr(upstream, "status_code", 502) or 502)),
             status_code=int(getattr(upstream, "status_code", 502) or 502),
             headers=_upstream_retry_after(upstream),
+            model=canonical.get("model"),
         )
 
     try:
@@ -26103,9 +26112,10 @@ async def _ollama_forward_non_streaming(
         if refusal is not None:
             return refusal
         return _ollama_error_response(
-            _response_error_message(upstream, "upstream chat-completions error"),
+            _upstream_reply_message(_response_json_payload(upstream), int(getattr(upstream, "status_code", 502) or 502)),
             status_code=int(getattr(upstream, "status_code", 502) or 502),
             headers=_upstream_retry_after(upstream),
+            model=canonical.get("model"),
         )
     return _response_json_payload(upstream)
 
@@ -26152,6 +26162,7 @@ async def _ollama_forward_streaming(
             message,
             status_code=upstream.status_code,
             headers=_upstream_retry_after(upstream),
+            model=canonical.get("model"),
         )
 
     def ndjson_line(payload: Mapping[str, Any]) -> str:
@@ -26166,7 +26177,7 @@ async def _ollama_forward_streaming(
                 yield ndjson_line(payload)
         except Exception as e:  # noqa: BLE001
             # Ollama reports a failure after the first byte as an error line.
-            yield ndjson_line({"error": str(e)})
+            yield ndjson_line({"error": _stream_failure_message(e)})
         finally:
             try:
                 await upstream.aclose()
@@ -26210,8 +26221,9 @@ async def _ollama_forward_embeddings(
         if refusal is not None:
             return refusal
         return _ollama_error_response(
-            _response_error_message(upstream, "upstream embeddings error"),
+            _upstream_reply_message(_response_json_payload(upstream), int(getattr(upstream, "status_code", 502) or 502)),
             status_code=int(getattr(upstream, "status_code", 502) or 502),
+            model=canonical.get("model"),
         )
     return _response_json_payload(upstream)
 
@@ -26822,15 +26834,12 @@ async def create_response(request: Request):
                     try:
                         upstream_json = json.loads(body_bytes.decode("utf-8", errors="replace") or "{}")
                     except Exception:
-                        upstream_json = {"error": {"message": body_bytes.decode("utf-8", errors="replace")[:1000]}}
+                        upstream_json = {}   # not JSON: nothing in it is passed on
                     upstream.extensions["resource_admission"] = upstream_json
                     refusal = _upstream_admission_response(upstream, "openai")
                     if refusal is not None:
                         return refusal
-                    return _responses_upstream_error(
-                        _upstream_error_message(upstream_json),
-                        upstream.status_code,
-                    )
+                    return _responses_upstream_error(upstream_json, upstream.status_code, req_body)
 
                 translator = responses_translator.StreamTranslator(
                     response_id=response_id,
@@ -26881,7 +26890,7 @@ async def create_response(request: Request):
                             yield ev
                     except Exception as error:  # noqa: BLE001
                         owner.report(status="failed", reason="read_error")
-                        for ev in translator.fail(str(error)):
+                        for ev in translator.fail(_stream_failure_message(error)):
                             yield ev
                         for ev in translator.finish():
                             yield ev
@@ -26904,15 +26913,12 @@ async def create_response(request: Request):
                 try:
                     upstream_json = upstream.json()
                 except Exception:
-                    upstream_json = {"error": {"message": upstream.text[:1000]}}
+                    upstream_json = {}   # not JSON: nothing in it is passed on
                 owner.report(status="failed", reason="failed")
                 refusal = _upstream_admission_response(upstream, "openai")
                 if refusal is not None:
                     return refusal
-                return _responses_upstream_error(
-                    _upstream_error_message(upstream_json),
-                    upstream.status_code,
-                )
+                return _responses_upstream_error(upstream_json, upstream.status_code, req_body)
 
             try:
                 cc_json = upstream.json()
@@ -26934,7 +26940,9 @@ async def create_response(request: Request):
                 )
             except ValueError as error:
                 owner.report(status="failed", reason="read_error")
-                return _responses_error(str(error), code="upstream_error", status=502)
+                return _responses_error(
+                    str(error) if isinstance(error, responses_translator.UpstreamShapeError) else responses_translator.UPSTREAM_UNREADABLE,
+                    code="upstream_error", status=502)
 
             if store:
                 try:
@@ -27575,15 +27583,73 @@ async def _bounded_chunks(chunks: AsyncIterator[bytes], limit: int) -> AsyncIter
             return
 
 
-def _engine_error_response(resp: Any, content: bytes | None, response_headers: Mapping[str, str], request_id: str) -> Response:
-    """An engine's or sidecar's error reply, passed on without its words or its headers (decision D44).
+def _clean_success_error_object(payload: dict[str, Any], status_code: int, request_body: Mapping[str, Any]) -> None:
+    """An engine can answer 200 with an ``error`` object. It goes on with the fields ``client_errors`` allows and our sentence."""
+    if status_code < 400 and payload.get("error") is not None:
+        payload["error"] = client_errors.error_fields(payload["error"], 502, request_fields=_request_fields(request_body))
 
-    The caller gets the status, the OpenAI error type, the machine code and ``Retry-After`` the engine named, our own
-    sentence for them, and our own ``X-Azizam-*`` headers: an engine echoes what it was sent, and an error message or a
-    header is where the credential the gateway sent it would come back.
+
+# The headers of a successful engine reply that go on to the caller (decision D45: deny-default). An engine chooses its
+# header names and values, and a debugging engine echoes what it was sent, so only these cache, rate-limit and id headers
+# pass, and only with a plain short value. ``Retry-After`` is re-emitted as a number, ``Content-Type`` is the media type
+# and a charset. Everything else, ``X-Azizam-*`` included, is the gateway's to write.
+_RELAYED_ENGINE_HEADER_NAMES = frozenset({"cache-control", "vary", "x-request-id", "request-id", "x-accel-buffering", "openai-processing-ms",
+                                          "openai-version"})
+_RELAYED_ENGINE_HEADER_PREFIXES = ("x-ratelimit-", "anthropic-ratelimit-")
+_PLAIN_HEADER_VALUE = re.compile(r"^[A-Za-z0-9 ,;=._:/+\-]{0,200}$")
+_SAFE_CONTENT_TYPE = re.compile(r"^([a-z0-9][a-z0-9.+\-]*/[a-z0-9][a-z0-9.+\-]*)(?:\s*;\s*charset=([A-Za-z0-9_\-]{1,32}))?\s*(?:;.*)?$")
+
+
+def _relayed_engine_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    """The headers of a successful engine reply that the caller gets (see ``_RELAYED_ENGINE_HEADER_NAMES``)."""
+    out: dict[str, str] = {}
+    for name, value in headers.items():
+        lowered = name.lower()
+        if lowered == "retry-after":
+            seconds = client_errors.retry_after(value)
+            if seconds is not None:
+                out[name] = seconds
+        elif (lowered in _RELAYED_ENGINE_HEADER_NAMES or lowered.startswith(_RELAYED_ENGINE_HEADER_PREFIXES)) \
+                and isinstance(value, str) and _PLAIN_HEADER_VALUE.fullmatch(value):
+            out[name] = value
+    return out
+
+
+def _safe_content_type(value: str, default: str = "application/json") -> str:
+    """The media type of an engine's reply with its charset, nothing else it wrote in the header."""
+    match = _SAFE_CONTENT_TYPE.fullmatch((value or "").strip().lower()) if value else None
+    if match is None:
+        return default
+    return match.group(1) + (f"; charset={match.group(2)}" if match.group(2) else "")
+
+
+async def _engine_error_response(resp: Any, content: bytes | None, gateway_headers: Mapping[str, str], request_id: str,
+                                 *, request_body: Mapping[str, Any] | None = None, model: str | None = None) -> Response:
+    """An engine's or sidecar's error reply, passed on without its words or its headers (decisions D44 and D45).
+
+    The caller gets the status, the error type and machine code the engine named when each is on the fixed list, the
+    ``param`` when it names a field of the caller's own request, our own sentence (with the model's context window, which
+    the gateway knows from its records), ``Retry-After`` as a number, and ``gateway_headers``: values the gateway made
+    itself, never the engine's headers (an engine echoes what it was sent, and a header is where it would come back).
     """
-    own = {name: value for name, value in response_headers.items() if name.lower().startswith("x-azizam-")}
-    return client_errors.upstream_error_response(resp.status_code, content, resp.headers, request_id=request_id, own_headers=own)
+    limits: dict[str, int] = {}
+    if model and client_errors.error_code(content) == "context_length_exceeded":
+        window = await _context_window_for_model_id(model)
+        if window:
+            limits["context_window"] = window
+    return client_errors.upstream_error_response(
+        resp.status_code, content, resp.headers, request_id=request_id, own_headers=gateway_headers,
+        request_fields=_request_fields(request_body), limits=limits)
+
+
+def _request_fields(body: Mapping[str, Any] | bytes | str | None) -> frozenset[str]:
+    """The top-level field names of the caller's own request (a JSON object, parsed or raw): the only ``param`` an error may name."""
+    if isinstance(body, (bytes, str)):
+        try:
+            body = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
+            return frozenset()
+    return frozenset(str(name) for name in body) if isinstance(body, Mapping) else frozenset()
 
 
 def _normalize_litellm_error_envelope(
@@ -27977,20 +28043,20 @@ async def _forward_current_loaded_openai_request(
                 await cancellation_span.aclose()
                 owner.report(status="cancelled", reason="cancelled")
                 return Response(status_code=499)
-            content_type = resp.headers.get("content-type", "") or "application/json"
+            content_type = _safe_content_type(resp.headers.get("content-type", ""))
             record_request_shape_stage(
                 receipt.metadata, "backend_egress", body,
                 extra={"status_code": resp.status_code},
             )
-            excluded = ("content-length", "transfer-encoding", "content-type", "x-azizam-request-id", "x-azizam-receipt-id")
-            response_headers = {
-                k: v for k, v in resp.headers.items() if k.lower() not in excluded
+            # The gateway's headers are its own values; an error reply carries these and nothing from the engine (D45).
+            gateway_headers = {
+                "X-Azizam-LLM-Execution": "current-loaded",
+                "X-Azizam-Request-Id": receipt.request_id,
+                "X-Azizam-Receipt-Id": receipt.request_id,
+                "X-Azizam-Backend": target.backend,
+                "X-Azizam-Resolved-Model": target.model,
             }
-            response_headers["X-Azizam-LLM-Execution"] = "current-loaded"
-            response_headers["X-Azizam-Request-Id"] = receipt.request_id
-            response_headers["X-Azizam-Receipt-Id"] = receipt.request_id
-            response_headers["X-Azizam-Backend"] = target.backend
-            response_headers["X-Azizam-Resolved-Model"] = target.model
+            response_headers = {**_relayed_engine_headers(resp.headers), **gateway_headers}
 
             _tc_backend_hint = _toolcall_backend_hint(target.backend)
             _tc_had_tools = (
@@ -28008,7 +28074,7 @@ async def _forward_current_loaded_openai_request(
                 # concurrently with StreamingResponse's receive loop.
                 await cancellation_span.stop_watcher_for_streaming_handoff()
 
-                sse_repair = _ChatCompletionSseRepair(repair=request_path == "/v1/chat/completions")
+                sse_repair = _ChatCompletionSseRepair(repair=request_path == "/v1/chat/completions", request_fields=_request_fields(body_json))
 
                 async def stream_response():
                     try:
@@ -28070,6 +28136,7 @@ async def _forward_current_loaded_openai_request(
                 try:
                     response_json = json.loads(content)
                     if isinstance(response_json, dict):
+                        _clean_success_error_object(response_json, resp.status_code, body_json)
                         if 200 <= resp.status_code < 300 and request_path == "/v1/chat/completions":
                             _normalize_chat_completion_payload(response_json)
                             _normalize_toolcall_args(response_json)
@@ -28099,7 +28166,8 @@ async def _forward_current_loaded_openai_request(
                 status="succeeded" if 200 <= resp.status_code < 400 else "failed",
             )
             if resp.status_code >= 400:
-                return _engine_error_response(resp, content, response_headers, receipt.request_id)
+                return await _engine_error_response(resp, content, gateway_headers, receipt.request_id,
+                                                    request_body=body_json, model=target.model)
             return Response(
                 content=content,
                 status_code=resp.status_code,
@@ -28353,16 +28421,15 @@ async def _forward_litellm_proxy_request(
                 media_type="application/json",
                 headers={"Retry-After": "10"},
             )
-        content_type = resp.headers.get("content-type", "") or "application/json"
-        excluded = ("content-length", "transfer-encoding", "content-type", "x-azizam-request-id", "x-azizam-receipt-id")
-        response_headers = {
-            k: v for k, v in resp.headers.items() if k.lower() not in excluded
+        content_type = _safe_content_type(resp.headers.get("content-type", ""))
+        gateway_headers = {
+            "X-Azizam-LLM-Execution": "litellm",
+            "X-Azizam-Request-Id": receipt.request_id,
+            "X-Azizam-Receipt-Id": receipt.request_id,
         }
-        response_headers["X-Azizam-LLM-Execution"] = "litellm"
-        response_headers["X-Azizam-Request-Id"] = receipt.request_id
-        response_headers["X-Azizam-Receipt-Id"] = receipt.request_id
         if fallback_reasons:
-            response_headers["x-azizam-fallback"] = ", ".join(fallback_reasons)
+            gateway_headers["x-azizam-fallback"] = ", ".join(fallback_reasons)
+        response_headers = {**_relayed_engine_headers(resp.headers), **gateway_headers}
         _attach_litellm_response_metadata(receipt, resp.headers)
         record_request_shape_stage(
             receipt.metadata,
@@ -28388,7 +28455,7 @@ async def _forward_litellm_proxy_request(
             # concurrently with StreamingResponse's receive loop.
             await cancellation_span.stop_watcher_for_streaming_handoff()
 
-            sse_repair = _ChatCompletionSseRepair(repair=request_path == "/v1/chat/completions")
+            sse_repair = _ChatCompletionSseRepair(repair=request_path == "/v1/chat/completions", request_fields=_request_fields(body_json))
 
             async def stream_response():
                 try:
@@ -28485,6 +28552,7 @@ async def _forward_litellm_proxy_request(
             try:
                 response_json = json.loads(content)
                 if isinstance(response_json, dict):
+                    _clean_success_error_object(response_json, resp.status_code, body_json)
                     if 200 <= resp.status_code < 300:
                         if request_path == "/v1/chat/completions":
                             # Step 4a: delegate to the registered transform function.
@@ -28534,7 +28602,8 @@ async def _forward_litellm_proxy_request(
             reason="completed" if 200 <= resp.status_code < 400 else "failed",
         )
         if resp.status_code >= 400:
-            return _engine_error_response(resp, content, response_headers, receipt.request_id)
+            return await _engine_error_response(resp, content, gateway_headers, receipt.request_id,
+                                                request_body=body_json, model=model_name)
         return Response(
             content=content,
             status_code=resp.status_code,
@@ -29459,9 +29528,10 @@ class _ChatCompletionSseRepair:
     never sees a cut event. ``flush`` returns what is left at the end.
     """
 
-    def __init__(self, *, repair: bool = True) -> None:
+    def __init__(self, *, repair: bool = True, request_fields: Collection[str] | None = None) -> None:
         self._pending = b""
         self._repair = repair
+        self._request_fields = request_fields
 
     def feed(self, chunk: bytes) -> bytes:
         data = self._pending + chunk
@@ -29472,12 +29542,12 @@ class _ChatCompletionSseRepair:
         if not end:
             return b""
         # An error event inside the stream carries the engine's own words; it goes out without them (decision D44).
-        whole = client_errors.rewrite_stream_errors(data[:end])
+        whole = client_errors.rewrite_stream_errors(data[:end], request_fields=self._request_fields)
         return _normalize_chat_completion_sse_chunk(whole) if self._repair else whole
 
     def flush(self) -> bytes:
         rest, self._pending = self._pending, b""
-        return client_errors.rewrite_stream_errors(rest)
+        return client_errors.rewrite_stream_errors(rest, request_fields=self._request_fields)
 
 
 def _normalize_chat_completion_sse_chunk(chunk: bytes) -> bytes:

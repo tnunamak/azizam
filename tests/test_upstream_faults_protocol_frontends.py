@@ -27,6 +27,7 @@ BUSY = "The engine is busy or limiting requests. Try again later."
 MODEL = "fk-model"
 MESSAGES = [{"role": "user", "content": "hi"}]
 HANG_BOUND_SECONDS = 10
+TIMED_OUT = "The engine did not answer in time."   # the gateway's sentence for the code `timeout` (decision D45)
 INTERRUPTED = "The LLM execution stream ended before the response was complete."
 
 
@@ -258,8 +259,8 @@ def test_first_byte_past_the_read_budget_gives_a_504(frontend_gateway, fake_upst
     [forwarded] = fake.calls("chat")
     assert forwarded.json["model"] == MODEL and forwarded.json["messages"] == MESSAGES and forwarded.json["stream"] is stream
     expected = (
-        {"type": "error", "error": {"type": "api_error", "message": "Upstream chat request timed out."}}
-        if frontend == "anthropic" else {"error": "Upstream chat request timed out."}
+        {"type": "error", "error": {"type": "api_error", "message": TIMED_OUT}}
+        if frontend == "anthropic" else {"error": TIMED_OUT}
     )
     expect_fixed("FK-B3", json.loads(raw), expected)
 

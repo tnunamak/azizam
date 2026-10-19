@@ -91,7 +91,7 @@ def _hold(source: str, values: Iterable[str], *, keep_current: bool) -> bool:
                 return ok
             held = _SOURCES[source] = _Source()
         if keep_current:
-            fresh = {value: _forms(value) for value in wanted if value not in held.current}
+            fresh = {value: forms(value) for value in wanted if value not in held.current}
             if not fresh and oversize <= held.oversize:
                 return ok
             held.current.update(fresh)
@@ -100,7 +100,7 @@ def _hold(source: str, values: Iterable[str], *, keep_current: bool) -> bool:
             if tuple(held.current) == tuple(wanted) and oversize == held.oversize:
                 return ok
             previous = held.current
-            held.current = {value: previous.get(value) or _forms(value) for value in wanted}
+            held.current = {value: previous.get(value) or forms(value) for value in wanted}
             retired = [item for item in held.retired if item[0] not in held.current]
             retired += [(value, forms) for value, forms in previous.items()
                         if value not in held.current and all(value != old for old, _ in retired)]
@@ -167,7 +167,7 @@ def env_secret(name: str, default: str = "") -> str:
     return value
 
 
-def _forms(value: str) -> tuple[str, ...]:
+def forms(value: str) -> tuple[str, ...]:
     """Every form of ``value`` the gateway can put in a line, longest first."""
     forms = {value, quote(value, safe=""), quote(value), quote_plus(value),
              json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1]}

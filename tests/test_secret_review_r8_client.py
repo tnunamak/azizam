@@ -83,10 +83,10 @@ def test_an_engine_error_keeps_its_status_machine_code_and_retry_after_and_loses
         429,
         json.dumps({"error": {"message": f"slow down {WORDS}", "type": "requests", "param": "model", "code": "rate_limit_exceeded"}}),
         {"retry-after": "7", "www-authenticate": f"Bearer realm={WORDS}", "x-echo": WORDS, "set-cookie": WORDS},
-        request_id="req_1", own_headers={"X-Azizam-Backend": "d39"})
+        request_id="req_1", own_headers={"X-Azizam-Backend": "d39"}, request_fields={"model", "messages"})
     assert reply.status_code == 429
     assert json.loads(reply.body) == {"error": {"message": client_errors.CODE_REASONS["rate_limit_exceeded"], "type": "requests",
-                                                 "param": "model", "code": "rate_limit_exceeded"}}
+                                                 "param": "model", "code": "rate_limit_exceeded"}}   # param: a field the caller sent
     assert reply.headers["retry-after"] == "7" and reply.headers["x-request-id"] == "req_1" and reply.headers["x-azizam-backend"] == "d39"
     assert WORDS not in str(reply.headers) and "www-authenticate" not in reply.headers and "set-cookie" not in reply.headers
 

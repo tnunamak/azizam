@@ -150,7 +150,7 @@ def test_a_confirmation_read_against_an_older_registry_generation_is_refused(gat
 
 
 def _owner_actor():
-    return types.SimpleNamespace(actor_kind="owner", audit_actor_id="owner", actor_label="owner", roles={"owner"})
+    return types.SimpleNamespace(actor_kind="owner", audit_actor_id="owner", actor_label="owner", roles={"owner"}, browser_session=None)
 
 
 def test_the_binding_transaction_refuses_a_registry_that_changed_after_the_check(gateway, host_isolated):
