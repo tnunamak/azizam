@@ -135,7 +135,9 @@ def ensure_access_row(conn: sqlite3.Connection, user_id: str) -> None:
 # already in flight when the browser swaps cookies is not refused; after it, the old id is a stolen copy.
 ROTATION_GRACE_SECONDS = 60
 
-LIVE, GRACE, REUSED, DENIED = "live", "grace", "reused", "denied"
+# ``lost`` is a retired id shown after its grace window whose successor no request has ever carried: the
+# response with the successor was lost, so the person is still the only holder (decision D35b).
+LIVE, GRACE, LOST, REUSED, DENIED = "live", "grace", "lost", "reused", "denied"
 
 
 def _tables(conn: sqlite3.Connection) -> set[str]:
@@ -143,11 +145,21 @@ def _tables(conn: sqlite3.Connection) -> set[str]:
         "SELECT name FROM sqlite_master WHERE name IN ('account_session_revocations','account_session_lineage')")}
 
 
-def session_verdict_in(conn: sqlite3.Connection, user_id: str, session_id: str, family_id: str | None = None, *,
-                       now: float | None = None) -> str:
-    """What a session id is worth right now: ``live``, ``grace`` (retired a moment ago), ``reused`` or ``denied``.
+def _successor_used(conn: sqlite3.Connection, family_id: str, retired_rowid: int) -> bool:
+    """Whether any id minted after a retired one (rows are added in order, so a later rowid is a later id) was ever used."""
+    return conn.execute("SELECT 1 FROM account_session_lineage WHERE family_id=? AND rowid>? AND used_at IS NOT NULL",
+                        (family_id, retired_rowid)).fetchone() is not None
 
-    ``reused`` is a retired id shown after its grace window: the caller revokes the family.
+
+def session_verdict_in(conn: sqlite3.Connection, user_id: str, session_id: str, family_id: str | None = None, *,
+                       now: float | None = None, note_use: bool = False) -> str:
+    """What a session id is worth right now: ``live``, ``grace`` (retired a moment ago), ``lost``, ``reused`` or ``denied``.
+
+    A retired id shown after its grace window is ``lost`` when no later id of the sign-in has been used (the
+    response that carried the successor never arrived; the caller issues a new one) and ``reused`` otherwise
+    (two holders: the caller revokes the family). An id that a later reissue replaced unused is always ``reused``.
+
+    ``note_use`` records the first request that carries a live id (one write per id, none after).
     """
     ts = int(time.time() if now is None else now)
     family = family_id or session_id
@@ -167,16 +179,27 @@ def session_verdict_in(conn: sqlite3.Connection, user_id: str, session_id: str, 
     # Service-account sessions have no access row. A person without one still cannot
     # generate: the runtime treats them as disabled.
     if "account_session_lineage" in present:
-        retired = conn.execute("SELECT retired_at FROM account_session_lineage WHERE session_id=?", (session_id,)).fetchone()
-        if retired is not None and retired[0] is not None:
-            return GRACE if ts <= retired[0] + ROTATION_GRACE_SECONDS else REUSED
+        row = conn.execute("SELECT rowid, retired_at, used_at, superseded FROM account_session_lineage WHERE session_id=?",
+                           (session_id,)).fetchone()
+        if row is None:
+            return LIVE
+        if row["retired_at"] is None:
+            if note_use and row["used_at"] is None:
+                conn.execute("UPDATE account_session_lineage SET used_at=? WHERE session_id=? AND used_at IS NULL",
+                             (ts, session_id))
+            return LIVE
+        if row["superseded"]:
+            return REUSED
+        if ts <= row["retired_at"] + ROTATION_GRACE_SECONDS:
+            return GRACE
+        return REUSED if _successor_used(conn, family, row["rowid"]) else LOST
     return LIVE
 
 
 def session_verdict(user_id: str, session_id: str, family_id: str | None = None, *, path: Path,
-                    now: float | None = None) -> str:
+                    now: float | None = None, note_use: bool = False) -> str:
     with connection(path) as conn:
-        return session_verdict_in(conn, user_id, session_id, family_id, now=now)
+        return session_verdict_in(conn, user_id, session_id, family_id, now=now, note_use=note_use)
 
 
 def session_allowed(user_id: str, session_id: str, *, path: Path, family_id: str | None = None) -> bool:
@@ -212,13 +235,50 @@ def rotate_session(user_id: str, old_id: str, family_id: str, new_id: str, *, ol
             return False
         if conn.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone() is None:
             return False  # no person to record it for; the session runs out as it was
-        conn.execute("DELETE FROM account_sessions WHERE expires_at<=?", (ts,))
-        conn.execute("DELETE FROM account_session_lineage WHERE expires_at<=?", (ts,))
-        conn.execute("INSERT INTO account_session_lineage VALUES(?,?,?,?) ON CONFLICT(session_id) "
-                     "DO UPDATE SET retired_at=excluded.retired_at", (old_id, family_id, ts, old_expires_at))
-        conn.execute("INSERT INTO account_session_lineage VALUES(?,?,NULL,?)", (new_id, family_id, expires_at))
-        conn.execute("INSERT INTO account_sessions VALUES(?,?,?) ON CONFLICT(session_id) "
-                     "DO UPDATE SET expires_at=MAX(expires_at, excluded.expires_at)", (new_id, user_id, expires_at))
+        _retire_and_register(conn, user_id, old_id, family_id, new_id, old_expires_at, expires_at, ts)
+    return True
+
+
+def _retire_and_register(conn: sqlite3.Connection, user_id: str, old_id: str, family_id: str, new_id: str,
+                         old_expires_at: int, expires_at: int, ts: int) -> None:
+    """Retire ``old_id`` as of ``ts`` (it has just been shown, so it counts as used) and register ``new_id``."""
+    conn.execute("DELETE FROM account_sessions WHERE expires_at<=?", (ts,))
+    conn.execute("DELETE FROM account_session_lineage WHERE expires_at<=?", (ts,))
+    conn.execute("INSERT INTO account_session_lineage(session_id,family_id,retired_at,expires_at,used_at) VALUES(?,?,?,?,?) "
+                 "ON CONFLICT(session_id) DO UPDATE SET retired_at=excluded.retired_at, "
+                 "used_at=COALESCE(used_at, excluded.used_at)", (old_id, family_id, ts, old_expires_at, ts))
+    conn.execute("INSERT INTO account_session_lineage(session_id,family_id,retired_at,expires_at) VALUES(?,?,NULL,?)",
+                 (new_id, family_id, expires_at))
+    conn.execute("INSERT INTO account_sessions VALUES(?,?,?) ON CONFLICT(session_id) "
+                 "DO UPDATE SET expires_at=MAX(expires_at, excluded.expires_at)", (new_id, user_id, expires_at))
+
+
+def reissue_session(user_id: str, old_id: str, family_id: str, new_id: str, *, old_expires_at: int, expires_at: int,
+                    path: Path, now: float | None = None) -> bool:
+    """Rotate again from a retired id whose successor was never used (decision D35b): the response was lost.
+
+    One transaction that decides again from the stored state, so concurrent requests with the same retired
+    id mint exactly one successor. The request that commits first returns True. The state it leaves, with
+    ``old_id`` retired again as of ``now``, makes every later or concurrent request with ``old_id`` ``grace``:
+    served, given no cookie, never renewed. Its answer is False, changing nothing, so the caller issues none.
+
+    The unused successor is marked superseded and unregistered: its cookie, if it ever arrives, is a second
+    holder and ``session_verdict_in`` calls it ``reused``. The family, and so the CSRF token and the Try keys,
+    stay.
+    """
+    ts = int(time.time() if now is None else now)
+    with connection(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if session_verdict_in(conn, user_id, old_id, family_id, now=ts) != LOST:
+            return False
+        if conn.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone() is None:
+            return False
+        superseded = [row[0] for row in conn.execute(
+            "SELECT session_id FROM account_session_lineage WHERE family_id=? AND retired_at IS NULL", (family_id,))]
+        for unused in superseded:
+            conn.execute("UPDATE account_session_lineage SET retired_at=?, superseded=1 WHERE session_id=?", (ts, unused))
+            conn.execute("DELETE FROM account_sessions WHERE session_id=?", (unused,))
+        _retire_and_register(conn, user_id, old_id, family_id, new_id, old_expires_at, expires_at, ts)
     return True
 
 

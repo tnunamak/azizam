@@ -53,12 +53,15 @@ def issue(claims: Mapping[str, Any], *, role: str, cookie: CookieConfig, path: P
 def _check(session: AdminSession, policy: SessionPolicy, current: float, path: Path) -> str:
     """The server-side verdict for a session whose cookie checked out, or ``SessionError``.
 
-    A retired id shown after its grace window is a copy of a cookie that was already replaced: the whole
-    sign-in is revoked (decision D35) and the person has to sign in again.
+    A retired id shown after its grace window is a copy of a cookie that was already replaced. When a later
+    id of the sign-in has been used, two holders exist: the whole sign-in is revoked (decision D35) and the
+    person has to sign in again. When none has, the response that carried the successor was lost, the person
+    is the only holder, and the verdict is ``lost`` (decision D35b): ``advance`` issues a new successor.
     """
     if not session_policy.is_usable(session, policy, current):
         raise SessionError("session idle or past its lifetime")
-    verdict = accounts.session_verdict(session.subject, session.session_id, session.family_id, path=path, now=current)
+    verdict = accounts.session_verdict(session.subject, session.session_id, session.family_id, path=path, now=current,
+                                       note_use=True)
     if verdict == accounts.REUSED:
         accounts.revoke_session(session.session_id, int(_revoke_until(session)), family_id=session.family_id, path=path)
         admin_store.record_audit(
@@ -74,7 +77,8 @@ def _check(session: AdminSession, policy: SessionPolicy, current: float, path: P
 def read(token: str, *, signing_key: bytes, path: Path, now: float | None = None) -> AdminSession:
     """The session this cookie proves, or ``SessionError``.
 
-    Refuses a forged, expired, idle, past-absolute-deadline, revoked or replayed session.
+    Refuses a forged, expired, idle, past-absolute-deadline, revoked or replayed session. A retired id
+    whose successor was never used is accepted; ``advance`` (the response middleware) replaces it.
     """
     current = time.time() if now is None else now
     session = decode_session_cookie(token, signing_key=signing_key, now=current)
@@ -93,16 +97,35 @@ def _rotate(session: AdminSession, renewed: AdminSession, *, path: Path, now: fl
     return rotated
 
 
+def _reissue(session: AdminSession, renewed: AdminSession, policy: SessionPolicy, current: float, path: Path) -> AdminSession | None:
+    """``renewed`` as a new successor of a retired id whose own successor never arrived (decision D35b).
+
+    Concurrent requests with the same retired id mint one successor: ``reissue_session`` decides inside one
+    transaction, the first to commit wins, and the others are served under a fresh grace window with no cookie.
+    """
+    reissued = replace(renewed, session_id=new_session_id(), family=session.family_id)
+    if accounts.reissue_session(
+        session.subject, session.session_id, session.family_id, reissued.session_id,
+        old_expires_at=int(session.expires_at), expires_at=int(reissued.expires_at), path=path, now=current,
+    ):
+        return reissued
+    _check(session, policy, current, path)  # revoked or found to be a fork meanwhile: say so; reissued by a concurrent request: carry on
+    return None
+
+
 def advance(session: AdminSession, *, path: Path, now: float | None = None) -> AdminSession | None:
     """Check a decoded session is still live and, once a quarter of the idle window has passed, renew it.
 
-    Renewing replaces the session id and retires the old one. Returns the renewed session, or None when
-    nothing is due. Raises ``SessionError`` when the session has ended. The server-side record is written
-    first: a cookie must never outlive it.
+    Renewing replaces the session id and retires the old one. A retired id whose successor was never used
+    is replaced again (``_reissue``). Returns the new session, or None when nothing is due. Raises
+    ``SessionError`` when the session has ended. The server-side record is written first: a cookie must
+    never outlive it.
     """
     current = time.time() if now is None else now
     policy = session_policy.load_policy(path)
     verdict = _check(session, policy, current, path)
+    if verdict == accounts.LOST:
+        return _reissue(session, session_policy.renewal(session, policy, current) or session, policy, current, path)
     if verdict != accounts.LIVE:
         return None  # a retired id in its grace window is served but never renews
     renewed = session_policy.renewal(session, policy, current)
@@ -118,8 +141,11 @@ def confirm(session: AdminSession, *, path: Path, now: float | None = None) -> A
     """The same sign-in, under a new session id, after the person proved who they are again."""
     current = time.time() if now is None else now
     policy = session_policy.load_policy(path)
-    _check(session, policy, current, path)
-    rotated = _rotate(session, session_policy.confirmed(session, policy, current), path=path, now=current)
+    confirmed = session_policy.confirmed(session, policy, current)
+    if _check(session, policy, current, path) == accounts.LOST:
+        rotated = _reissue(session, confirmed, policy, current, path)
+    else:
+        rotated = _rotate(session, confirmed, path=path, now=current)
     if rotated is None:
         raise SessionError("session ended or replaced while confirming")
     return rotated

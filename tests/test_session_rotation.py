@@ -1,13 +1,16 @@
-"""A renewal replaces the session id; a retired id shown late revokes the sign-in (decision D35).
+"""A renewal replaces the session id; a retired id shown late revokes the sign-in only if its successor
+was used (decisions D35, D35b).
 
 Same real routes and database as tests/test_session_lifecycle.py. Time passes by moving the
 ``retired_at`` stamp back, so no test waits and no clock is patched.
 """
+import sqlite3
+import threading
 import time
 from dataclasses import replace
 
-from gateway import accounts
-from gateway.admin_oidc import AdminSession, csrf_token_for_session, encode_session_cookie
+from gateway import accounts, admin_store, browser_sessions
+from gateway.admin_oidc import AdminSession, csrf_token_for_session, decode_session_cookie, encode_session_cookie
 from gateway.session_policy import DAY
 from tests.test_session_lifecycle import (  # noqa: F401  (sg is a fixture, and needs gateway)
     OWNER, SIGNING_KEY, COOKIE, cookie_session, csrf, forge, gateway, owner_client, person_id, put_cookie,
@@ -30,6 +33,10 @@ def age_retirement(g, seconds):
     """Let ``seconds`` pass for every retired id."""
     with accounts.connection(g.path) as conn:
         conn.execute("UPDATE account_session_lineage SET retired_at=retired_at-? WHERE retired_at IS NOT NULL", (seconds,))
+
+
+def decode_cookie(cookie):
+    return decode_session_cookie(cookie, signing_key=SIGNING_KEY)
 
 
 def copy_of(g, client):
@@ -179,15 +186,19 @@ def test_a_retired_id_inside_the_grace_window_is_not_theft(sg):
     assert sg.rows("SELECT * FROM audit_events WHERE action='account.session.reuse_detected'") == []
 
 
-def test_when_the_thief_renews_first_the_person_is_signed_out_at_their_next_request(sg):
+def test_when_the_thief_renews_first_the_person_is_signed_out_when_the_thiefs_id_is_next_shown(sg):
     client = owner_client(sg)
     due_session(sg, client)
     thief = copy_of(sg, client)
-    thief.get("/me/api/session")                                  # the thief's request renews first
+    thief.get("/me/api/session")                                  # the thief's request renews first; the thief has not used the new id
     age_retirement(sg, 120)
 
-    assert not signed_in_state(client)                            # the person shows the retired id
-    assert not signed_in_state(thief)                             # and the thief's newer id goes with it
+    assert signed_in_state(client)                                # the person shows the retired id: reissued, not theft (D35b)
+    assert sg.rows("SELECT * FROM audit_events WHERE action='account.session.reuse_detected'") == []
+
+    assert not signed_in_state(thief)                             # the thief's id was replaced unused: two holders
+    assert not signed_in_state(client)                            # and the sign-in goes with it
+    assert len(sg.rows("SELECT * FROM audit_events WHERE action='account.session.reuse_detected'")) == 1
 
 
 def test_revoking_one_sign_in_leaves_the_persons_other_devices_alone(sg):
@@ -197,6 +208,7 @@ def test_revoking_one_sign_in_leaves_the_persons_other_devices_alone(sg):
     forge(sg, other_device, OWNER, issued_ago=DAY, sid="other_device_session_1")
     stolen = client.cookies.get(COOKIE)
     renew(client)
+    assert signed_in_state(client)                                # the person uses the new id
     age_retirement(sg, 120)
     thief = sg.client()
     put_cookie(thief, stolen)
@@ -256,6 +268,7 @@ def test_theft_detected_on_a_retired_id_revokes_the_try_key_too(sg):
     make_due(client)
     renew(client)
     assert runtime_ok(client, key["api_key"])
+    assert signed_in_state(client)                                # the new id is used: a fork, not a lost response
     age_retirement(sg, 120)
     put_cookie(client, stolen)
 
@@ -299,3 +312,245 @@ def test_only_one_of_two_renewals_of_the_same_id_wins(sg):
 
     assert (first, second) == (True, False)
     assert registry(sg, "winner") != [] and registry(sg, "loser") == []
+
+
+# -- a lost renewal response is not theft (decision D35b) ---------------------
+
+def lose_the_response(g, client):
+    """Renew, and keep only what the phone still holds: the old cookie. Returns (old cookie, lost cookie)."""
+    old_cookie = client.cookies.get(COOKIE)
+    renew(client)
+    return old_cookie, client.cookies.get(COOKIE)
+
+
+def phone_with(g, cookie):
+    phone = g.client()
+    put_cookie(phone, cookie)
+    return phone
+
+
+def reuse_events(g):
+    return g.rows("SELECT * FROM audit_events WHERE action='account.session.reuse_detected'")
+
+
+def test_a_lost_renewal_response_leaves_the_person_signed_in_with_a_new_id(sg):
+    client = owner_client(sg)
+    due_session(sg, client)
+    old_cookie, lost_cookie = lose_the_response(sg, client)
+    old, lost = decode_cookie(old_cookie), decode_cookie(lost_cookie)
+    age_retirement(sg, 120)
+    phone = phone_with(sg, old_cookie)
+
+    response = phone.get("/me/api/session")
+
+    assert response.json()["authenticated"] is True
+    assert len(session_cookies(response)) == 1 and "Max-Age=0" not in session_cookies(response)[0]
+    again = cookie_session(phone)
+    assert again.session_id not in {old.session_id, lost.session_id} and again.family_id == old.family_id
+    assert current_ids(sg, again.family_id) == [again.session_id]
+    assert registry(sg, again.session_id) != [] and registry(sg, lost.session_id) == []
+    assert reuse_events(sg) == []
+    assert signed_in_state(phone)                                 # the new cookie works, and it keeps working
+
+
+def test_the_successor_that_never_arrived_is_refused_once_it_is_replaced(sg):
+    client = owner_client(sg)
+    due_session(sg, client)
+    old_cookie, lost_cookie = lose_the_response(sg, client)
+    age_retirement(sg, 120)
+    phone = phone_with(sg, old_cookie)
+    assert signed_in_state(phone)
+
+    straggler = phone_with(sg, lost_cookie)                       # the response turns up after all
+
+    assert not signed_in_state(straggler)
+    assert len(reuse_events(sg)) == 1                             # two holders: the sign-in ends
+    assert not signed_in_state(phone)
+
+
+def test_a_reissue_keeps_the_csrf_token_and_the_deadline(sg):
+    client = owner_client(sg)
+    old = due_session(sg, client, authenticated_ago=9 * DAY)
+    token = csrf_token_for_session(old, signing_key=SIGNING_KEY)
+    old_cookie, _ = lose_the_response(sg, client)
+    age_retirement(sg, 120)
+    phone = phone_with(sg, old_cookie)
+
+    phone.get("/me/api/session")
+
+    again = cookie_session(phone)
+    assert csrf_token_for_session(again, signing_key=SIGNING_KEY) == token
+    assert int(again.absolute_expires_at) == int(old.absolute_expires_at)
+    assert int(again.last_authenticated) == int(old.last_authenticated)
+
+
+def test_the_try_key_survives_a_lost_renewal_response(sg):
+    client = owner_client(sg)
+    forge(sg, client, OWNER, issued_ago=DAY, renewed_ago=0, authenticated_ago=0)
+    key = mint_try_key(client)
+    make_due(client)
+    old_cookie, _ = lose_the_response(sg, client)
+    age_retirement(sg, 120)
+    phone = phone_with(sg, old_cookie)
+
+    assert signed_in_state(phone)
+
+    assert runtime_ok(phone, key["api_key"])
+    again = phone.post("/me/api/try-key", json={"reuse_id": key["id"]}, headers={**csrf(phone), "x-azizam-user-action": "1"})
+    assert again.status_code == 200 and again.json()["credential"]["reused"] is True
+
+
+def test_the_try_key_ends_when_the_successor_was_used_and_the_old_id_comes_back(sg):
+    client = owner_client(sg)
+    forge(sg, client, OWNER, issued_ago=DAY, renewed_ago=0, authenticated_ago=0)
+    key = mint_try_key(client)
+    stolen = client.cookies.get(COOKIE)
+    make_due(client)
+    renew(client)
+    assert signed_in_state(client)                                # the successor is used
+    age_retirement(sg, 120)
+    thief = phone_with(sg, stolen)
+
+    assert not signed_in_state(thief)
+
+    assert not runtime_ok(client, key["api_key"]) and len(reuse_events(sg)) == 1
+
+
+def test_the_first_use_of_an_id_is_recorded_once(sg):
+    client = owner_client(sg)
+    due_session(sg, client)
+    _, new = renew(client)
+    assert lineage(sg, new.session_id)[0]["used_at"] is None      # issued, not yet seen on a request
+    assert signed_in_state(client)
+    first = lineage(sg, new.session_id)[0]["used_at"]
+    assert first is not None
+
+    with accounts.connection(sg.path) as conn:
+        conn.execute("UPDATE account_session_lineage SET used_at=used_at-1000 WHERE session_id=?", (new.session_id,))
+    assert signed_in_state(client)
+    assert lineage(sg, new.session_id)[0]["used_at"] == first - 1000     # later requests do not write it again
+
+
+def test_a_second_lost_response_is_reissued_again(sg):
+    client = owner_client(sg)
+    due_session(sg, client)
+    old_cookie, first_lost = lose_the_response(sg, client)
+    age_retirement(sg, 120)
+    phone = phone_with(sg, old_cookie)
+    phone.get("/me/api/session")
+    second_lost = phone.cookies.get(COOKIE)                       # this response is lost too
+    age_retirement(sg, 120)
+    phone = phone_with(sg, old_cookie)
+
+    response = phone.get("/me/api/session")
+
+    assert response.json()["authenticated"] is True and len(session_cookies(response)) == 1
+    final = cookie_session(phone)
+    family = decode_cookie(old_cookie).family_id
+    assert current_ids(sg, family) == [final.session_id]
+    assert len({decode_cookie(old_cookie).session_id, decode_cookie(first_lost).session_id,
+                decode_cookie(second_lost).session_id, final.session_id}) == 4
+    assert reuse_events(sg) == []
+
+
+def test_after_a_reissue_the_old_id_is_a_fork_once_the_new_id_is_used(sg):
+    client = owner_client(sg)
+    due_session(sg, client)
+    old_cookie, _ = lose_the_response(sg, client)
+    age_retirement(sg, 120)
+    phone = phone_with(sg, old_cookie)
+    assert signed_in_state(phone) and signed_in_state(phone)      # reissued, then used
+    age_retirement(sg, 120)
+    copy = phone_with(sg, old_cookie)
+
+    assert not signed_in_state(copy)
+
+    assert not signed_in_state(phone) and len(reuse_events(sg)) == 1
+
+
+def test_the_old_id_is_served_but_not_renewed_again_inside_the_new_grace_window(sg):
+    client = owner_client(sg)
+    due_session(sg, client)
+    old_cookie, _ = lose_the_response(sg, client)
+    age_retirement(sg, 120)
+    first = phone_with(sg, old_cookie)
+    first.get("/me/api/session")
+
+    second = phone_with(sg, old_cookie).get("/me/api/session")    # the next request of the same burst
+
+    assert second.json()["authenticated"] is True and session_cookies(second) == []
+    assert len(current_ids(sg, decode_cookie(old_cookie).family_id)) == 1
+
+
+def test_concurrent_requests_with_one_retired_id_make_one_successor(sg):
+    client = owner_client(sg)
+    due_session(sg, client)
+    old = cookie_session(client)
+    lose_the_response(sg, client)
+    age_retirement(sg, 120)
+    start, results, errors = threading.Barrier(6), [], []
+
+    def request():
+        try:
+            start.wait()
+            results.append(browser_sessions.advance(old, path=sg.path))
+        except Exception as exc:  # noqa: BLE001  (a thread's failure must reach the assertion)
+            errors.append(exc)
+
+    threads = [threading.Thread(target=request) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    winners = [result for result in results if result is not None]
+    assert len(winners) == 1 and len(results) == 6                # the others are served with no cookie
+    assert current_ids(sg, old.family_id) == [winners[0].session_id]
+    assert [row for row in lineage(sg) if row["superseded"]] != [] and reuse_events(sg) == []
+    assert signed_in_state(phone_with(sg, encode_session_cookie(winners[0], signing_key=SIGNING_KEY)))
+
+
+def test_a_reissue_that_loses_to_a_sign_out_registers_nothing(sg):
+    client = owner_client(sg)
+    due_session(sg, client)
+    old = cookie_session(client)
+    lose_the_response(sg, client)
+    age_retirement(sg, 120)
+    accounts.revoke_person_sessions(old.subject, path=sg.path)
+
+    reissued = accounts.reissue_session(old.subject, old.session_id, old.family_id, "late-id",
+                                        old_expires_at=int(old.expires_at), expires_at=int(time.time()) + DAY, path=sg.path)
+
+    assert reissued is False and registry(sg, "late-id") == []
+
+
+def test_confirming_with_a_retired_id_whose_successor_was_lost_succeeds(sg):
+    client = owner_client(sg)
+    due_session(sg, client)
+    old = cookie_session(client)
+    lose_the_response(sg, client)
+    age_retirement(sg, 120)
+
+    confirmed = browser_sessions.confirm(old, path=sg.path)
+
+    assert confirmed.family_id == old.family_id and confirmed.session_id != old.session_id
+    assert current_ids(sg, old.family_id) == [confirmed.session_id]
+
+
+def test_lineage_tables_from_before_first_use_was_recorded_gain_the_columns_and_count_as_used(tmp_path):
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute("DROP TABLE account_session_lineage")
+        conn.execute("CREATE TABLE account_session_lineage (session_id TEXT PRIMARY KEY, family_id TEXT NOT NULL, "
+                     "retired_at INTEGER, expires_at INTEGER NOT NULL)")
+        conn.execute("INSERT INTO account_session_lineage VALUES('old','fam',100,9999999999),('current','fam',NULL,9999999999)")
+
+    admin_store.init_db(db)
+
+    with sqlite3.connect(db) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = {row["session_id"]: row for row in conn.execute("SELECT * FROM account_session_lineage")}
+    assert rows["old"]["used_at"] == 100 and rows["current"]["used_at"] is not None
+    assert rows["old"]["superseded"] == rows["current"]["superseded"] == 0

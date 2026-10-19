@@ -301,9 +301,13 @@ CREATE TABLE IF NOT EXISTS account_session_revocations (
 );
 -- The ids a sign-in has held since its first renewal (decision D35). ``retired_at`` is when an id was
 -- replaced by its successor; the row for the id in use has none. A retired id shown after the grace
--- window means a copy of the cookie exists, so the whole family is revoked.
+-- window means a copy of the cookie exists, so the whole family is revoked, unless no later id was ever
+-- used (decision D35b): then the response carrying the successor was lost and the sign-in is reissued.
+-- ``used_at`` is the first request that carried the id; ``superseded`` marks an unused id that a reissue
+-- replaced. Rows are added in order, so a later rowid is a later id.
 CREATE TABLE IF NOT EXISTS account_session_lineage (
- session_id TEXT PRIMARY KEY, family_id TEXT NOT NULL, retired_at INTEGER, expires_at INTEGER NOT NULL
+ session_id TEXT PRIMARY KEY, family_id TEXT NOT NULL, retired_at INTEGER, expires_at INTEGER NOT NULL,
+ used_at INTEGER, superseded INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS account_session_lineage_family ON account_session_lineage(family_id);
 CREATE TABLE IF NOT EXISTS account_links (
@@ -428,6 +432,13 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE credentials ADD COLUMN session_id TEXT")
         _revoke_unbound_try_keys(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS credentials_session ON credentials(session_id)")
+    lineage = {row[1] for row in conn.execute("PRAGMA table_info(account_session_lineage)")}
+    if "used_at" not in lineage:
+        # Ids recorded before first use was kept count as used: a stale cookie among them revokes the sign-in, as before.
+        conn.execute("ALTER TABLE account_session_lineage ADD COLUMN used_at INTEGER")
+        conn.execute("UPDATE account_session_lineage SET used_at=COALESCE(retired_at, ?)", (_now(),))
+    if "superseded" not in lineage:
+        conn.execute("ALTER TABLE account_session_lineage ADD COLUMN superseded INTEGER NOT NULL DEFAULT 0")
     # Keys made on a session App before the trigger existed stop working.
     conn.execute(
         "UPDATE credentials SET revoked_at = ? WHERE revoked_at IS NULL "

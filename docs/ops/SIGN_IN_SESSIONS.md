@@ -35,18 +35,43 @@ outlives its record.
 Renewing does not count as confirming who you are. Only a sign-in or a password
 confirmation does.
 
-### Copied cookies (decision D35)
+### Copied cookies and lost responses (decisions D35, D35b)
 
 All ids that descend from one sign-in are its *family*. A renewal retires the
 old id and keeps it for about 60 seconds, so a request that was already in
-flight when the browser swapped cookies still works. After that, showing the
-retired id means a copy of the cookie exists: the gateway **revokes the whole
-family** (the person's other sign-ins are not touched), ends the keys made on it
-for the Try page, writes `account.session.reuse_detected` to the audit log and
-asks for a fresh sign-in. If a thief renews first, the person's own next request
-shows the retired id and ends both. The CSRF token belongs to the family, so a
-page that is open across a renewal keeps working. A retired id never renews.
-Confirming a password does the same swap.
+flight when the browser swapped cookies still works. A retired id never renews.
+The CSRF token belongs to the family, so a page that is open across a renewal
+keeps working. Confirming a password does the same swap.
+
+The server notes the first request that carries each id (`used_at` on its row in
+`account_session_lineage`, one write per id). After the 60 seconds, showing a
+retired id has two possible causes, and the gateway tells them apart by that
+note:
+
+- **No later id of the sign-in was ever used.** The response that carried the
+  new id was lost (a phone that was suspended, a dropped connection), so the
+  person is still the only holder. The gateway signs them in again: it issues a
+  new id in the same family, retires the old one again (a new 60-second grace
+  window) and marks the id that never arrived as replaced. The person stays
+  signed in; their Try keys and CSRF token are unchanged. Nothing is written to
+  the audit log.
+- **A later id was used.** Two holders exist. The gateway **revokes the whole
+  family** (the person's other sign-ins are not touched), ends the keys made on it
+  for the Try page, writes `account.session.reuse_detected` to the audit log and
+  asks for a fresh sign-in. An id that a reissue replaced is treated the same
+  way when it is shown later: it was handed out, so someone received it.
+
+Several requests with the same retired id (a phone that wakes up and fires a
+burst) make one new id. The reissue is a single database transaction that checks
+the state again, so the first request to commit gets the new cookie, and the
+others find the old id inside its new grace window: they are served, get no
+cookie and do not renew. If the response with the new id is lost as well, the
+next request after the window reissues again.
+
+Cost of this rule: a thief who shows a stolen retired id before the person has
+used their newer id also gets a session. The person's next request shows the id
+that was replaced and ends both, so detection comes at the person's next use
+rather than at the thief's first.
 
 ### Sessions from before this change
 
