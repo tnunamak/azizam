@@ -278,7 +278,8 @@ class SttExecutionConfig:
         target = positive_float("target_seconds", float(fallback["target_seconds"]))
         if target >= threshold:
             raise SttConfigurationError("STT target_seconds must be less than threshold_seconds")
-        search = positive_float("search_seconds", float(fallback["search_seconds"]))
+        search = 0.0 if str(chunking.get("search_seconds")).strip() in {"0", "0.0"} else positive_float(
+            "search_seconds", float(fallback["search_seconds"]))  # 0 cuts exactly at each target
         # The hard maximum is the longest piece the engine takes without losing words. A record that does not
         # declare one gets the bundled fallback; `derive` there means the longest piece the cut rules can produce
         # (target plus the search width on each side).

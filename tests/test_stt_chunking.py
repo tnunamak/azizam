@@ -216,7 +216,7 @@ class SttChunkMergeTests(unittest.TestCase):
 
     def test_plan_tiles_the_file_without_overlap_and_never_exceeds_the_hard_maximum(self) -> None:
         for duration, target, search, maximum in (
-            (80, 20, 2, 24), (31, 2, 0.5, 2.5), (60, 30, 2, 40), (30.001, 30, 2, 40), (125, 45, 2, 60),
+            (80, 20, 2, 24), (80, 20, 0, 20), (31, 2, 0.5, 2.5), (60, 30, 2, 40), (30.001, 30, 2, 40), (125, 45, 2, 60),
             (1321.62, 30, 2, 40), (4 * 3600.3, 30, 2, 40), (200, 30, 10, 30), (200, 30, 2, 31), (36, 30, 2, 40),
         ):
             with self.subTest(duration=duration, target=target, maximum=maximum):
@@ -300,6 +300,7 @@ class SttChunkMergeTests(unittest.TestCase):
             self.assertEqual(declared.chunk_above_seconds, 40.0)
             with self.assertRaises(stt_chunking.SttConfigurationError):
                 _config(root, target_seconds=30, threshold_seconds=60, max_segment_seconds=20)
+            self.assertEqual(_config(root, target_seconds=30, threshold_seconds=40, search_seconds=0).search_seconds, 0.0)
             # Keys of the silence-based planner are no longer read; a record that still holds them gets the defaults.
             legacy = _config(root, target_seconds=30, threshold_seconds=40, silence_search_seconds=10, silence_noise_db="-30dB", silence_min_seconds=0.5)
             self.assertEqual((legacy.search_seconds, legacy.max_segment_seconds), (2.0, 34.0))
